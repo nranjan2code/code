@@ -38,7 +38,10 @@ fn body_serialization_matches_anthropic_shape() {
     assert_eq!(body["model"], "claude-sonnet-4-5");
     assert_eq!(body["max_tokens"], 8192);
     assert_eq!(body["stream"], true);
-    assert_eq!(body["system"], "You are a coding agent.");
+    let system = body["system"].as_array().unwrap();
+    assert_eq!(system[0]["type"], "text");
+    assert_eq!(system[0]["text"], "You are a coding agent.");
+    assert_eq!(system[0]["cache_control"]["type"], "ephemeral");
     let tools = body["tools"].as_array().unwrap();
     assert_eq!(tools[0]["name"], "bash");
     assert!(tools[0]["input_schema"].is_object());

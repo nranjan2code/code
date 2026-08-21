@@ -53,13 +53,13 @@ impl Provider for TaggedScripted {
         } else {
             self.steps.lock().unwrap().pop_front()
         };
-        let (sink, rx) = stream::channel(64);
+        let (mut sink, rx) = stream::channel(64);
         match msg {
             Some(m) => {
                 sink.push(stream::StreamEvent::Start { partial: m.clone() });
-                sink.close_message(m);
+                sink.close_message(m).await;
             }
-            None => sink.close_error(LlmError::Parse("exhausted".into())),
+            None => sink.close_error(LlmError::Parse("exhausted".into())).await,
         }
         Ok(rx)
     }
@@ -150,26 +150,31 @@ async fn overflow_triggers_compaction_then_run_completes() {
     );
 
     // The ledger now carries a compaction entry; projection reflects it.
-    let session = agent.session.lock().await;
-    let msgs = session.derive_messages();
-    let summary_present = msgs.iter().any(|m| {
-        m.text_content().contains("<context_summary>") && m.text_content().contains("Task:")
-    });
-    assert!(summary_present, "summary must be in projection");
+    let path = {
+        let session = agent.session.lock().await;
+        let msgs = session.derive_messages();
+        let summary_present = msgs.iter().any(|m| {
+            m.text_content().contains("<context_summary>") && m.text_content().contains("Task:")
+        });
+        assert!(summary_present, "summary must be in projection");
 
-    // Recent verbatim turns survive (the kept tail incl. the live prompt).
-    assert!(
-        msgs.iter()
-            .any(|m| m.text_content().starts_with("finish it")),
-        "recent turns stay verbatim"
-    );
-    assert!(
-        msgs.iter().any(|m| m.text_content() == "step one done"),
-        "post-compaction exchange stays verbatim"
-    );
+        // Recent verbatim turns survive (the kept tail incl. the live prompt).
+        assert!(
+            msgs.iter()
+                .any(|m| m.text_content().starts_with("finish it")),
+            "recent turns stay verbatim"
+        );
+        assert!(
+            msgs.iter().any(|m| m.text_content() == "step one done"),
+            "post-compaction exchange stays verbatim"
+        );
+        session.path().to_path_buf()
+    };
 
-    // Compaction entry persisted on disk.
-    let reopened = SessionLog::open(session.path().to_path_buf()).unwrap();
+    // Compaction entry persisted on disk. The agent holds an exclusive
+    // lock on the ledger for its lifetime, so drop it before reopening.
+    drop(agent);
+    let reopened = SessionLog::open(path).unwrap();
     assert!(
         reopened
             .derive_messages()
@@ -257,13 +262,15 @@ mod pair_boundary_and_reuse {
             request: ChatRequest,
             _c: CancellationToken,
         ) -> Result<EventStream, LlmError> {
-            let key = request
+            let key = if request
                 .system
-                .clone()
-                .unwrap_or_default()
-                .contains("context compactor")
-                .then(|| "compact".to_string())
-                .unwrap_or_else(|| "step".to_string());
+                .as_deref()
+                .is_some_and(|s| s.contains("context compactor"))
+            {
+                "compact".to_string()
+            } else {
+                "step".to_string()
+            };
             if key == "compact" {
                 let transcript = request.messages[0].text_content();
                 self.seen_prompts.lock().unwrap().push(transcript);
@@ -274,13 +281,16 @@ mod pair_boundary_and_reuse {
                 .unwrap()
                 .get_mut(&key)
                 .and_then(|d| d.pop_front());
-            let (sink, rx) = stream::channel(64);
+            let (mut sink, rx) = stream::channel(64);
             match msg {
                 Some(m) => {
                     sink.push(stream::StreamEvent::Start { partial: m.clone() });
-                    sink.close_message(m);
+                    sink.close_message(m).await;
                 }
-                None => sink.close_error(LlmError::Parse(format!("exhausted: {key}"))),
+                None => {
+                    sink.close_error(LlmError::Parse(format!("exhausted: {key}")))
+                        .await
+                }
             }
             Ok(rx)
         }

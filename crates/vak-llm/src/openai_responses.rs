@@ -348,7 +348,7 @@ impl Provider for OpenAiResponsesProvider {
         }
 
         let model = request.model.clone();
-        let (sink, stream_rx) = channel(256);
+        let (mut sink, stream_rx) = channel(256);
         let mut byte_stream = response.bytes_stream();
         let mut decoder = SseDecoder::new();
         let mut acc = Accumulator::new(&model);
@@ -358,7 +358,7 @@ impl Provider for OpenAiResponsesProvider {
                 tokio::select! {
                     _ = cancel.cancelled() => {
                         let partial = (!acc.message.content.is_empty()).then(|| acc.message.clone());
-                        sink.close_error(LlmError::Aborted { partial });
+                        sink.close_error(LlmError::Aborted { partial }).await;
                         return;
                     }
                     chunk = byte_stream.next() => {
@@ -370,23 +370,23 @@ impl Provider for OpenAiResponsesProvider {
                                         Ok(Some(event)) => sink.push(event),
                                         Ok(None) => {}
                                         Err(e) => {
-                                            sink.close_error(e);
+                                            sink.close_error(e).await;
                                             return;
                                         }
                                     }
                                 }
                             }
                             Some(Err(e)) => {
-                                sink.close_error(LlmError::Network(e.to_string()));
+                                sink.close_error(LlmError::Network(e.to_string())).await;
                                 return;
                             }
                             None => {
                                 if acc.saw_completed {
-                                    sink.close_message(acc.message.clone());
+                                    sink.close_message(acc.message.clone()).await;
                                 } else {
                                     sink.close_error(LlmError::Parse(
                                         "stream closed before response.completed".into(),
-                                    ));
+                                    )).await;
                                 }
                                 return;
                             }

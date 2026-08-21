@@ -104,3 +104,85 @@ fn sequences_are_per_session() {
     assert_eq!(checkpoints::list(&home, "sess-a").unwrap().len(), 2);
     assert_eq!(checkpoints::list(&home, "sess-b").unwrap().len(), 1);
 }
+
+#[test]
+fn restore_never_deletes_files_capture_could_not_store() {
+    let dir = tempdir().unwrap();
+    write(dir.path(), "small.txt", "ok");
+
+    // Oversized: capture skips the CONTENT but must record the path.
+    let big = vec![b'x'; 9 * 1024 * 1024];
+    fs::write(dir.path().join("asset.bin"), &big).unwrap();
+    // Secret files are never captured either.
+    write(dir.path(), ".env", "SECRET=1");
+
+    let cp = checkpoints::capture(dir.path(), "s", 0, "before").unwrap();
+    assert!(
+        !cp.files.iter().any(|f| f.rel_path == "asset.bin"),
+        "oversized content must not be stored"
+    );
+    assert!(cp.observed.contains(&"asset.bin".to_string()));
+    assert!(cp.observed.contains(&".env".to_string()));
+
+    let (restored, deleted) = checkpoints::restore(dir.path(), &cp).unwrap();
+    assert!(restored >= 1);
+    assert_eq!(
+        deleted, 0,
+        "rewind deleted a file it never stored — data loss"
+    );
+    assert!(
+        dir.path().join("asset.bin").exists(),
+        "oversized file destroyed"
+    );
+    assert_eq!(fs::read(dir.path().join("asset.bin")).unwrap(), big);
+    assert!(dir.path().join(".env").exists(), "secret file destroyed");
+}
+
+#[test]
+fn restore_removes_only_files_created_after_checkpoint() {
+    let dir = tempdir().unwrap();
+    write(dir.path(), "base.txt", "base");
+    let cp = checkpoints::capture(dir.path(), "s", 0, "c").unwrap();
+
+    write(dir.path(), "created-later.txt", "junk");
+    checkpoints::restore(dir.path(), &cp).unwrap();
+
+    assert!(!dir.path().join("created-later.txt").exists());
+    assert!(dir.path().join("base.txt").exists());
+}
+
+#[test]
+fn gitignored_and_secret_files_are_not_captured() {
+    let dir = tempdir().unwrap();
+    write(dir.path(), ".gitignore", "secrets/\n*.local\n!keep.local\n");
+    write(dir.path(), "src/main.rs", "code");
+    write(dir.path(), "secrets/token.txt", "t");
+    write(dir.path(), "cfg.local", "x");
+    write(dir.path(), "keep.local", "y");
+    write(dir.path(), ".env", "K=V");
+    write(dir.path(), "server.pem", "pem");
+
+    let cp = checkpoints::capture(dir.path(), "s", 0, "c").unwrap();
+    let paths: Vec<&str> = cp.files.iter().map(|f| f.rel_path.as_str()).collect();
+    assert!(paths.contains(&"src/main.rs"));
+    assert!(paths.contains(&"keep.local"), "negation must un-ignore");
+    assert!(!paths.iter().any(|p| p.starts_with("secrets/")));
+    assert!(!paths.contains(&"cfg.local"));
+    assert!(!paths.contains(&".env"));
+    assert!(!paths.contains(&"server.pem"));
+}
+
+#[test]
+fn store_prunes_old_checkpoints() {
+    let dir = tempdir().unwrap();
+    let home = dir.path().join("home");
+    write(dir.path(), "f.txt", "v");
+
+    for seq in 0..25u32 {
+        let cp = checkpoints::capture(dir.path(), "s", seq, "turn").unwrap();
+        checkpoints::store(&home, &cp).unwrap();
+    }
+    let list = checkpoints::list(&home, "s").unwrap();
+    assert_eq!(list.len(), 20, "old checkpoints must be pruned");
+    assert_eq!(list[0].seq, 5, "oldest pruned first");
+}

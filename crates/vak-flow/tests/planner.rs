@@ -71,7 +71,7 @@ impl Provider for ScriptedPlanner {
         _cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
         let next = self.responses.lock().unwrap().pop_front();
-        let (sink, rx) = stream::channel(64);
+        let (mut sink, rx) = stream::channel(64);
         match next {
             Some(ScriptedResponse::Text(t)) => {
                 let msg = AssistantMessage {
@@ -83,9 +83,9 @@ impl Provider for ScriptedPlanner {
                 sink.push(stream::StreamEvent::Start {
                     partial: msg.clone(),
                 });
-                sink.close_message(msg);
+                sink.close_message(msg).await;
             }
-            None => sink.close_error(LlmError::Parse("exhausted".into())),
+            None => sink.close_error(LlmError::Parse("exhausted".into())).await,
         }
         Ok(rx)
     }

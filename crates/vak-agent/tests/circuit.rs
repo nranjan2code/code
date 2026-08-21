@@ -69,8 +69,8 @@ impl Provider for Scripted {
         _cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
         *self.calls.lock().unwrap() += 1;
-        let (sink, rx) = stream::channel(8);
-        sink.close_error(self.fail_with.clone());
+        let (mut sink, rx) = stream::channel(8);
+        sink.close_error(self.fail_with.clone()).await;
         Ok(rx)
     }
 }
@@ -186,12 +186,12 @@ async fn second_run_fails_fast_when_circuit_is_open() {
             _r: ChatRequest,
             _c: CancellationToken,
         ) -> Result<EventStream, LlmError> {
-            let (sink, rx) = stream::channel(8);
+            let (mut sink, rx) = stream::channel(8);
             let msg = text_msg("recovered");
             sink.push(stream::StreamEvent::Start {
                 partial: msg.clone(),
             });
-            sink.close_message(msg);
+            sink.close_message(msg).await;
             Ok(rx)
         }
     }

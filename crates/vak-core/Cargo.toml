@@ -7,11 +7,13 @@ license.workspace = true
 [dependencies]
 base64 = { workspace = true }
 chrono = { workspace = true }
+globset = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+uuid = { workspace = true }
 vak-agent = { workspace = true }
 vak-config = { workspace = true }
 vak-hooks = { workspace = true }

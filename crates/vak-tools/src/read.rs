@@ -30,6 +30,14 @@ impl Tool for ReadTool {
         })
     }
 
+    fn claims(&self, _args: &Value) -> crate::ResourceClaims {
+        crate::ResourceClaims {
+            exclusive: false,
+            read_only: true,
+            paths: Vec::new(),
+        }
+    }
+
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(path_str) = args.get("path").and_then(|p| p.as_str()) else {
             return ToolOutput::error("missing required parameter: path");

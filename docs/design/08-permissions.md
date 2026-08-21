@@ -66,3 +66,15 @@ constrains *what the process can touch* even when allowed.
 - session-scoped "always allow" learned rules persisted to project config
 - OS sandbox backends (Seatbelt/Landlock) as a second enforcement layer under
   the same Decision vocabulary
+
+## Diff note — severity aggregation + opaque commands (this change)
+
+`evaluate` aggregates matching rules by severity (Deny > Ask > Allow) instead
+of first-match-wins, so deny precedence is a property of the engine rather
+than of rule insertion order. Bash commands containing newlines, backticks,
+or `$()`/`<()`/`>()` produce NO arg candidates: pattern-based allow rules
+cannot see inside them, so they fall through to the mode default / approver,
+which sees the full command. Blanket (patternless) rules still apply. MCP
+calls expose `server/tool` candidates (`Mcp(docs/*)`), tasks expose their
+label, and Ask reasons for mcp/task include the resolved target instead of
+approving blind.

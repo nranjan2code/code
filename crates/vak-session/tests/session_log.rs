@@ -54,6 +54,9 @@ fn append_and_derive_roundtrip() {
     })
     .unwrap();
 
+    // The create handle holds the ledger's exclusive lock; release it
+    // before reopening.
+    drop(log);
     let reopened = SessionLog::open(path).unwrap();
     assert_eq!(reopened.len(), 3);
     let msgs = reopened.derive_messages();
@@ -195,4 +198,84 @@ fn second_compaction_summarizes_the_prior_summary() {
 
 fn serde_like_contains(msgs: &[vak_llm::Message], needle: &str) -> bool {
     msgs.iter().any(|m| m.text_content().contains(needle))
+}
+
+#[test]
+fn torn_trailing_line_is_skipped_not_fatal() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let mut log = SessionLog::create(path.clone(), header()).unwrap();
+    log.append_message(user_msg("safe")).unwrap();
+    drop(log);
+
+    // Simulate a crash mid-append: a partial JSON line at EOF.
+    use std::io::Write as _;
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    write!(f, "{{\"id\":\"torn\", \"pay").unwrap();
+    drop(f);
+
+    let reopened = SessionLog::open(path).unwrap();
+    assert_eq!(reopened.len(), 2);
+    assert!(!reopened.warnings().is_empty(), "skip must be surfaced");
+    let msgs = reopened.derive_messages();
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].text_content(), "safe");
+}
+
+#[test]
+fn second_handle_on_same_file_is_locked_out() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let log = SessionLog::create(path.clone(), header()).unwrap();
+    assert!(
+        SessionLog::open(path.clone()).is_err(),
+        "concurrent open must fail while a handle is alive"
+    );
+    drop(log);
+    assert!(SessionLog::open(path).is_ok());
+}
+
+#[test]
+fn create_on_existing_nonempty_file_refuses() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let log = SessionLog::create(path.clone(), header()).unwrap();
+    drop(log);
+    assert!(
+        SessionLog::create(path, header()).is_err(),
+        "must not append a second header to an existing ledger"
+    );
+}
+
+#[test]
+fn total_usage_counts_active_chain_only() {
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
+
+    let usage_msg = |text: &str, out: u64| MessageRecord {
+        message: Message::user_text(text),
+        meta: Some(MessageMeta {
+            usage: Some(Usage {
+                input_tokens: 100,
+                output_tokens: out,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+    };
+
+    let fork = log.append_message(usage_msg("branch-a", 50)).unwrap().id;
+    log.append_message(usage_msg("branch-a-2", 70)).unwrap();
+
+    // Abandon that branch: rewind to the first entry and grow elsewhere.
+    log.branch_at(&fork).unwrap();
+    log.append_message(usage_msg("active", 10)).unwrap();
+
+    // Old code summed every entry (100/130 from the abandoned branch).
+    let u = log.total_usage();
+    assert_eq!(u.input_tokens, 200);
+    assert_eq!(u.output_tokens, 60);
 }

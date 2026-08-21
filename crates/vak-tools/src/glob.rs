@@ -32,6 +32,14 @@ impl Tool for GlobTool {
         })
     }
 
+    fn claims(&self, _args: &Value) -> crate::ResourceClaims {
+        crate::ResourceClaims {
+            exclusive: false,
+            read_only: true,
+            paths: Vec::new(),
+        }
+    }
+
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(pattern) = args.get("pattern").and_then(|p| p.as_str()) else {
             return ToolOutput::error("missing required parameter: pattern");
@@ -53,28 +61,37 @@ impl Tool for GlobTool {
             Err(e) => return ToolOutput::error(format!("invalid pattern: {e}")),
         };
 
-        let mut matches = Vec::new();
-        for entry in WalkDir::new(&base)
-            .follow_links(false)
-            .into_iter()
-            .filter_entry(|e| !is_ignored(e.path()))
-            .flatten()
-        {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let rel = entry
-                .path()
-                .strip_prefix(&base)
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|_| entry.path().to_path_buf());
-            if gs.is_match(&rel) || gs.is_match(entry.path()) {
-                matches.push(rel.display().to_string());
-                if matches.len() >= MAX_MATCHES {
-                    break;
+        // Directory walks are blocking; keep them off the async workers.
+        let walk = tokio::task::spawn_blocking(move || {
+            let mut matches = Vec::new();
+            for entry in WalkDir::new(&base)
+                .follow_links(false)
+                .into_iter()
+                .filter_entry(|e| !is_ignored(e.path()))
+                .flatten()
+            {
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                let rel = entry
+                    .path()
+                    .strip_prefix(&base)
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|_| entry.path().to_path_buf());
+                if gs.is_match(&rel) || gs.is_match(entry.path()) {
+                    matches.push(rel.display().to_string());
+                    if matches.len() >= MAX_MATCHES {
+                        break;
+                    }
                 }
             }
-        }
+            matches
+        })
+        .await;
+        let mut matches = match walk {
+            Ok(m) => m,
+            Err(e) => return ToolOutput::error(format!("glob walk failed: {e}")),
+        };
 
         if matches.is_empty() {
             return ToolOutput::ok("no files matched");

@@ -37,3 +37,14 @@ one walk (`chain_to_root`). No special-case machinery per feature.
 
 - receipts as first-class entries (unified WorkReceipt stream)
 - subagent sessions linked via `parent_session_id` + spawning tool-call id
+
+## Diff note — ledger robustness (this change)
+
+Session directories hash the cwd with FNV-1a (fixed), not `DefaultHasher`
+whose output changes across Rust releases — old sessions stay reachable
+after toolchain upgrades. `open`/`create` take an exclusive `try_lock` for
+the handle's lifetime (second process gets `SessionError::Locked`);
+`create` on a non-empty file is refused (no double headers). A torn or
+damaged line no longer makes a session unresumable: it is skipped and
+surfaced via `warnings()`. `total_usage` sums the active chain only, so
+abandoned branches stop inflating counts.

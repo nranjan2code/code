@@ -17,6 +17,20 @@ pub struct ProviderAuth {
 
 type Factory = Arc<dyn Fn(&ProviderAuth) -> Result<Arc<dyn Provider>, LlmError> + Send + Sync>;
 
+/// Cache identity: same provider name but a different key or base URL is
+/// a DIFFERENT provider — returning the cached one would silently send
+/// requests with stale credentials to the wrong endpoint.
+fn cache_key(name: &str, auth: &ProviderAuth) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    auth.api_key.hash(&mut h);
+    format!(
+        "{name}\u{0}{}\u{0}{:016x}",
+        auth.base_url.as_deref().unwrap_or(""),
+        h.finish()
+    )
+}
+
 #[derive(Default)]
 pub struct ProviderRegistry {
     factories: RwLock<HashMap<String, Factory>>,
@@ -40,11 +54,12 @@ impl ProviderRegistry {
     }
 
     pub fn get(&self, name: &str, auth: &ProviderAuth) -> Result<Arc<dyn Provider>, LlmError> {
+        let key = cache_key(name, auth);
         if let Some(cached) = self
             .cache
             .read()
             .unwrap_or_else(PoisonError::into_inner)
-            .get(name)
+            .get(&key)
         {
             return Ok(cached.clone());
         }
@@ -59,7 +74,7 @@ impl ProviderRegistry {
         self.cache
             .write()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(name.to_string(), provider.clone());
+            .insert(key, provider.clone());
         Ok(provider)
     }
 

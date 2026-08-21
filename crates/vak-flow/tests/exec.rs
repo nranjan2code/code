@@ -48,13 +48,16 @@ impl Provider for TaggedScripted {
             .unwrap()
             .get_mut(&key)
             .and_then(|d| d.pop_front());
-        let (sink, rx) = stream::channel(64);
+        let (mut sink, rx) = stream::channel(64);
         match next {
             Some(m) => {
                 sink.push(stream::StreamEvent::Start { partial: m.clone() });
-                sink.close_message(m);
+                sink.close_message(m).await;
             }
-            None => sink.close_error(LlmError::Parse(format!("exhausted: {key}"))),
+            None => {
+                sink.close_error(LlmError::Parse(format!("exhausted: {key}")))
+                    .await
+            }
         }
         Ok(rx)
     }

@@ -302,3 +302,48 @@ async fn output_truncation_keeps_head_and_tail() {
     assert!(t.contains("L0000"), "head preserved");
     assert!(t.contains("L0199"), "tail preserved");
 }
+
+#[test]
+fn truncate_output_handles_multibyte_without_overflow() {
+    let ctx = ToolContext {
+        cwd: std::env::temp_dir(),
+        cancel: tokio_util::sync::CancellationToken::new(),
+        limits: OutputLimits {
+            max_bytes: 30_000,
+            max_line_chars: 2000,
+            spill_to_disk: false,
+        },
+        sandbox: None,
+    };
+    // The original underflow repro: 20k chars but 60k bytes. Byte-gating
+    // said "truncate", char math said head+tail > total => subtract
+    // overflow (debug panic). Char-gated code must return it unchanged.
+    let line: String = "あ".repeat(1000);
+    let out: String = (0..20).map(|_| format!("{line}\n")).collect();
+    let t = ctx.truncate_output(out);
+    assert_eq!(t.chars().count(), 20 * 1001);
+
+    // Real truncation on multibyte content stays correct too.
+    let big: String = "あ".repeat(40_000);
+    let t2 = ctx.truncate_output(big);
+    assert!(t2.contains("truncated"));
+}
+
+#[tokio::test]
+async fn edit_rejects_non_utf8_instead_of_corrupting() {
+    let dir = tempdir().unwrap();
+    let bytes: &[u8] = &[0x68, 0x69, 0xFF, 0xFE, 0x00, 0x01];
+    std::fs::write(dir.path().join("blob.bin"), bytes).unwrap();
+    let out = run(
+        &EditTool,
+        dir.path(),
+        serde_json::json!({"path": "blob.bin", "edits": [{"old_text": "hi", "new_text": "ho"}]}),
+    )
+    .await;
+    assert!(out.is_error, "non-UTF-8 edit must be refused");
+    assert_eq!(
+        std::fs::read(dir.path().join("blob.bin")).unwrap(),
+        bytes,
+        "file must be untouched"
+    );
+}

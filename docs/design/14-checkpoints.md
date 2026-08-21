@@ -37,3 +37,17 @@ with a typed error. Cleanup: `git worktree remove --force` + branch delete.
   (they are workspace state, never model-visible context).
 - Restore deletes only within the tracked scope and only files absent from
   the snapshot — untracked-but-ignored paths are never touched.
+
+## Diff note — restore-safety rework (this change)
+
+`capture` now records an `observed` manifest: every regular-file path the
+walk saw, including files whose content was NOT stored (oversized, unreadable,
+secret, gitignored, beyond-budget). `restore` deletes only files that are
+present now and absent from `observed` — anything capture could not vouch
+for is left untouched. Legacy checkpoints without a manifest delete nothing.
+Capture additionally skips secret paths (`.env*`, `*.pem`, `*.key`,
+`id_rsa*`, `id_ed25519*`, `credentials.json`) and honors a gitignore subset
+(root + nested `.gitignore`, dir-only rules, negation; last match wins).
+`store` prunes to the newest 20 checkpoints per session. Invariant: rewind
+can lose in-session changes; it must never destroy files it knows nothing
+about.

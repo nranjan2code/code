@@ -26,6 +26,18 @@ impl Tool for WriteTool {
         })
     }
 
+    fn claims(&self, args: &Value) -> crate::ResourceClaims {
+        crate::ResourceClaims {
+            exclusive: false,
+            read_only: false,
+            paths: args
+                .get("path")
+                .and_then(|p| p.as_str())
+                .map(|p| vec![p.to_string()])
+                .unwrap_or_default(),
+        }
+    }
+
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(path_str) = args.get("path").and_then(|p| p.as_str()) else {
             return ToolOutput::error("missing required parameter: path");
@@ -40,8 +52,26 @@ impl Tool for WriteTool {
         {
             return ToolOutput::error(format!("cannot create directory {}: {e}", parent.display()));
         }
-        match tokio::fs::write(&path, content).await {
-            Ok(_) => ToolOutput::ok(format!(
+        // Temp file + rename: a crash mid-write cannot truncate the target.
+        let tmp = path.with_extension(format!(
+            "{}vak-tmp",
+            path.extension()
+                .map(|e| format!("{}.", e.to_string_lossy()))
+                .unwrap_or_default()
+        ));
+        let write_res = tokio::fs::write(&tmp, content).await;
+        let rename_res = match write_res {
+            Ok(()) => {
+                let r = std::fs::rename(&tmp, &path);
+                if r.is_err() {
+                    let _ = std::fs::remove_file(&tmp);
+                }
+                r
+            }
+            Err(e) => Err(e),
+        };
+        match rename_res {
+            Ok(()) => ToolOutput::ok(format!(
                 "wrote {} bytes to {}",
                 content.len(),
                 path.display()

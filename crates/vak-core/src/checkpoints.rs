@@ -2,7 +2,15 @@
 //! stored under the sessions home. Rewind restores file contents and removes
 //! files created after the checkpoint. Bash mutations are covered because
 //! snapshots are state-based, not operation-based.
+//!
+//! Safety contract: `restore` only deletes files that were OBSERVED at
+//! capture time and are absent from the stored set's deletion candidates —
+//! i.e. files the capture walk never saw (over budget, unreadable, secret,
+//! gitignored, or beyond the walk break) are left untouched. A rewind can
+//! lose the changes made during a session; it must never destroy files it
+//! knows nothing about.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -11,6 +19,8 @@ use walkdir::WalkDir;
 const IGNORED_DIRS: [&str; 5] = [".git", "target", "node_modules", ".vakcoder", "dist"];
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
+/// Checkpoints accumulate once per turn; keep only the newest N per session.
+const MAX_STORED_CHECKPOINTS: usize = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileSnapshot {
@@ -41,7 +51,13 @@ pub struct Checkpoint {
     pub session_id: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub label: String,
+    /// Files whose CONTENT is stored and will be rewritten on restore.
     pub files: Vec<FileSnapshot>,
+    /// Every regular-file path the capture walk observed, including files
+    /// whose content was NOT stored (oversized, unreadable, secret,
+    /// gitignored). Restore only deletes files absent from this list.
+    #[serde(default)]
+    pub observed: Vec<String>,
 }
 
 fn is_ignored(rel: &Path) -> bool {
@@ -54,9 +70,137 @@ fn is_ignored(rel: &Path) -> bool {
     })
 }
 
+/// Paths that must never be captured into checkpoints nor deleted by a
+/// rewind, regardless of what any .gitignore says.
+fn is_secret_path(rel: &Path) -> bool {
+    let Some(name) = rel.file_name().and_then(|n| n.to_str()) else {
+        return true;
+    };
+    let lower = name.to_ascii_lowercase();
+    lower == ".env"
+        || lower.starts_with(".env.")
+        || lower.ends_with(".pem")
+        || lower.ends_with(".key")
+        || lower.starts_with("id_rsa")
+        || lower.starts_with("id_ed25519")
+        || lower == "credentials.json"
+}
+
+// ---------------------------------------------------------------------------
+// Minimal .gitignore support (subset): root + nested .gitignore files,
+// last matching rule wins, negation (`!pat`) supported. Patterns without
+// '/' match against the file name anywhere below their directory; patterns
+// with '/' match against the path relative to their directory.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+struct IgnoreRule {
+    /// Directory containing the .gitignore this rule came from, relative
+    /// to the capture root ("." for the root).
+    base: PathBuf,
+    negate: bool,
+    dir_only: bool,
+    matcher: globset::GlobSet,
+}
+
+#[derive(Debug, Default)]
+struct IgnoreRules {
+    rules: Vec<IgnoreRule>,
+}
+
+impl IgnoreRules {
+    fn load_dir(&mut self, root: &Path, dir_rel: &Path) {
+        let file = root.join(dir_rel).join(".gitignore");
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            return;
+        };
+        for raw in text.lines() {
+            let line = raw.trim_end_matches(['\r', ' ']).trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let (negate, line) = match line.strip_prefix('!') {
+                Some(rest) => (true, rest),
+                None => (false, line),
+            };
+            if line.is_empty() {
+                continue;
+            }
+            let (dir_only, line) = match line.strip_suffix('/') {
+                Some(rest) => (true, rest),
+                None => (false, line),
+            };
+            // Anchored when it contains a '/' anywhere (leading slash just
+            // anchors to the rule's directory).
+            let anchored = line.trim_start_matches('/').contains('/');
+            let pattern_text = line.trim_start_matches('/');
+            let mut gb = globset::GlobBuilder::new(pattern_text);
+            gb.literal_separator(anchored);
+            let Ok(glob) = gb.build() else { continue };
+            let Ok(matcher) = globset::GlobSetBuilder::new().add(glob).build() else {
+                continue;
+            };
+            self.rules.push(IgnoreRule {
+                // "" (not "."): strip_prefix(".") never matches plain
+                // relative paths, which would silently disable every
+                // root-level rule.
+                base: if dir_rel.as_os_str() == "." {
+                    PathBuf::new()
+                } else {
+                    dir_rel.to_path_buf()
+                },
+                negate,
+                dir_only,
+                matcher,
+            });
+        }
+    }
+
+    fn is_ignored(&self, rel: &Path, is_dir: bool) -> bool {
+        let mut ignored = false;
+        // Shallowest ancestor first: a dir-only rule like `secrets/`
+        // prunes everything beneath it. Deeper matches (and later rules)
+        // override, mirroring gitignore's last-match-wins.
+        let ancestors: Vec<&Path> = rel.ancestors().collect();
+        for candidate in ancestors.iter().rev() {
+            if candidate.as_os_str().is_empty() {
+                continue;
+            }
+            let candidate_is_dir = *candidate != rel || is_dir;
+            for rule in &self.rules {
+                let Ok(sub) = candidate.strip_prefix(&rule.base) else {
+                    continue;
+                };
+                if sub.as_os_str().is_empty() {
+                    continue;
+                }
+                let name_hit = sub
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| rule.matcher.is_match(n))
+                    .unwrap_or(false);
+                let path_hit = sub
+                    .to_str()
+                    .map(|p| rule.matcher.is_match(p))
+                    .unwrap_or(false);
+                if (name_hit || path_hit) && (candidate_is_dir || !rule.dir_only) {
+                    ignored = !rule.negate;
+                }
+            }
+        }
+        ignored
+    }
+}
+
 /// Captures every regular file under `cwd` (bounded), sorted by path.
+/// `observed` records every walked path even when its content was skipped.
 pub fn capture(cwd: &Path, session_id: &str, seq: u32, label: &str) -> std::io::Result<Checkpoint> {
+    let canonical_root = cwd.canonicalize().unwrap_or_else(|_| cwd.into());
+    let mut ignores = IgnoreRules::default();
+    ignores.load_dir(cwd, Path::new("."));
+
     let mut files = Vec::new();
+    let mut observed: Vec<String> = Vec::new();
     let mut total = 0usize;
     for entry in WalkDir::new(cwd)
         .follow_links(false)
@@ -69,24 +213,45 @@ pub fn capture(cwd: &Path, session_id: &str, seq: u32, label: &str) -> std::io::
         })
         .flatten()
     {
+        let rel_rooted = match entry.path().strip_prefix(cwd) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if entry.file_type().is_dir() {
+            if !ignores.is_ignored(rel_rooted, true) && !rel_rooted.as_os_str().is_empty() {
+                ignores.load_dir(cwd, rel_rooted);
+            }
+            continue;
+        }
         if !entry.file_type().is_file() {
             continue;
         }
-        let Ok(meta) = entry.metadata() else { continue };
-        if meta.len() > MAX_FILE_BYTES {
+        let rel = match entry.path().canonicalize() {
+            Ok(abs) => abs
+                .strip_prefix(&canonical_root)
+                .unwrap_or(rel_rooted)
+                .to_path_buf(),
+            Err(_) => rel_rooted.to_path_buf(),
+        };
+        if is_ignored(&rel) || is_secret_path(&rel) || ignores.is_ignored(&rel, false) {
+            // Observed but deliberately not captured: restore must leave
+            // these alone either way.
+            observed.push(rel.display().to_string());
             continue;
         }
-        let Ok(abs) = entry.path().canonicalize() else {
-            continue;
+        observed.push(rel.display().to_string());
+
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
         };
-        let Ok(rel) = abs.strip_prefix(cwd.canonicalize().unwrap_or_else(|_| cwd.into())) else {
-            continue;
-        };
-        if is_ignored(rel) {
+        if meta.len() > MAX_FILE_BYTES {
             continue;
         }
         total += meta.len() as usize;
         if total > MAX_TOTAL_BYTES {
+            // Walk budget exhausted; remaining paths are simply not
+            // observed, so restore will refuse to delete them.
             break;
         }
         match std::fs::read(entry.path()) {
@@ -97,6 +262,8 @@ pub fn capture(cwd: &Path, session_id: &str, seq: u32, label: &str) -> std::io::
             Err(_) => continue,
         }
     }
+    observed.sort();
+    observed.dedup();
     files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     Ok(Checkpoint {
         seq,
@@ -104,6 +271,7 @@ pub fn capture(cwd: &Path, session_id: &str, seq: u32, label: &str) -> std::io::
         created_at: chrono::Utc::now(),
         label: label.to_string(),
         files,
+        observed,
     })
 }
 
@@ -111,7 +279,8 @@ fn checkpoint_dir(sessions_home: &Path, session_id: &str) -> PathBuf {
     sessions_home.join("checkpoints").join(session_id)
 }
 
-/// Persists a checkpoint atomically and returns its file path.
+/// Persists a checkpoint atomically, prunes older ones, and returns the
+/// new file's path.
 pub fn store(sessions_home: &Path, cp: &Checkpoint) -> std::io::Result<PathBuf> {
     let dir = checkpoint_dir(sessions_home, &cp.session_id);
     std::fs::create_dir_all(&dir)?;
@@ -119,6 +288,22 @@ pub fn store(sessions_home: &Path, cp: &Checkpoint) -> std::io::Result<PathBuf> 
     let tmp = dir.join(format!(".{:04}.tmp", cp.seq));
     std::fs::write(&tmp, serde_json::to_vec(cp).map_err(std::io::Error::other)?)?;
     std::fs::rename(&tmp, &path)?;
+
+    let mut seqs: Vec<u32> = std::fs::read_dir(&dir)?
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || !name.ends_with(".json") {
+                return None;
+            }
+            name.trim_end_matches(".json").parse::<u32>().ok()
+        })
+        .collect();
+    seqs.sort_unstable();
+    while seqs.len() > MAX_STORED_CHECKPOINTS {
+        let oldest = seqs.remove(0);
+        let _ = std::fs::remove_file(dir.join(format!("{oldest:04}.json")));
+    }
     Ok(path)
 }
 
@@ -148,8 +333,12 @@ pub fn load(sessions_home: &Path, session_id: &str, seq: u32) -> std::io::Result
     serde_json::from_slice(&bytes).map_err(std::io::Error::other)
 }
 
-/// Restores the snapshot: rewrites snapshotted files and deletes any
-/// tracked-path file that exists now but didn't at capture time.
+/// Restores the snapshot: rewrites snapshotted files and deletes ONLY
+/// files that exist now but were never observed at capture time (i.e.
+/// created after the checkpoint, tracked scope). Anything the capture
+/// could not vouch for — oversized, unreadable, secret, gitignored,
+/// beyond-budget, or written by an old-format checkpoint without an
+/// observed manifest — is left untouched.
 pub fn restore(cwd: &Path, cp: &Checkpoint) -> std::io::Result<(usize, usize)> {
     let mut restored = 0usize;
     let mut deleted = 0usize;
@@ -163,11 +352,16 @@ pub fn restore(cwd: &Path, cp: &Checkpoint) -> std::io::Result<(usize, usize)> {
         restored += 1;
     }
 
-    // Remove files created after the checkpoint (tracked scope only),
-    // compared by relative path so symlinked roots (/tmp vs /private/tmp)
+    // Legacy checkpoints have no manifest: deleting anything would be a
+    // guess, so delete nothing.
+    if cp.observed.is_empty() {
+        return Ok((restored, deleted));
+    }
+
+    // Compared by relative path so symlinked roots (/tmp vs /private/tmp)
     // can't cause false mismatches.
-    let snap: std::collections::HashSet<&str> =
-        cp.files.iter().map(|f| f.rel_path.as_str()).collect();
+    let observed: HashSet<&str> = cp.observed.iter().map(String::as_str).collect();
+    let stored: HashSet<&str> = cp.files.iter().map(|f| f.rel_path.as_str()).collect();
     for entry in WalkDir::new(cwd)
         .follow_links(false)
         .into_iter()
@@ -185,10 +379,14 @@ pub fn restore(cwd: &Path, cp: &Checkpoint) -> std::io::Result<(usize, usize)> {
         let Ok(rel) = entry.path().strip_prefix(cwd) else {
             continue;
         };
-        if is_ignored(rel) {
+        if is_ignored(rel) || is_secret_path(rel) {
             continue;
         }
-        if !snap.contains(rel.to_string_lossy().as_ref())
+        let rel_str = rel.to_string_lossy();
+        // Present now but unknown at capture ⇒ created afterwards ⇒ safe
+        // to remove. Known-but-unstored files are preserved.
+        if !observed.contains(rel_str.as_ref())
+            && !stored.contains(rel_str.as_ref())
             && std::fs::remove_file(entry.path()).is_ok()
         {
             deleted += 1;

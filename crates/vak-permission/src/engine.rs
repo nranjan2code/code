@@ -35,7 +35,10 @@ impl PermissionEngine {
         &self.rules
     }
 
-    /// First matching rule wins; otherwise the mode's default applies.
+    /// Severity aggregation over matching rules — Deny > Ask > Allow no
+    /// matter what order the rules were registered in. A deny rule can
+    /// never be shadowed by an allow rule purely because of vec ordering.
+    /// With no matching rule, the mode's default applies.
     pub fn evaluate(
         &self,
         tool: &str,
@@ -43,9 +46,22 @@ impl PermissionEngine {
         mode: Mode,
         cwd: &std::path::Path,
     ) -> Decision {
+        let mut best: Option<(u8, Decision)> = None;
         for rule in &self.rules {
-            if rule.matches(tool, args) {
-                return match rule.decision {
+            if !rule.matches(tool, args) {
+                continue;
+            }
+            let severity = match rule.decision {
+                RuleDecision::Deny => 2u8,
+                RuleDecision::Ask => 1,
+                RuleDecision::Allow => 0,
+            };
+            let better = match &best {
+                Some((s, _)) => severity > *s,
+                None => true,
+            };
+            if better {
+                let decision = match rule.decision {
                     RuleDecision::Allow => Decision::Allow,
                     RuleDecision::Ask => Decision::Ask {
                         reason: format!("rule requires approval: {}", describe(tool, args)),
@@ -54,7 +70,11 @@ impl PermissionEngine {
                         reason: format!("denied by rule: {}", describe(tool, args)),
                     },
                 };
+                best = Some((severity, decision));
             }
+        }
+        if let Some((_, decision)) = best {
+            return decision;
         }
 
         match mode {
@@ -96,7 +116,7 @@ impl PermissionEngine {
                     };
                 }
                 Decision::Ask {
-                    reason: format!("'{tool}' needs approval"),
+                    reason: format!("'{}' needs approval: {}", tool, describe(tool, args)),
                 }
             }
         }
@@ -118,6 +138,29 @@ fn describe(tool: &str, args: &Value) -> String {
             .and_then(|p| p.as_str())
             .map(|p| format!("{tool} {p}"))
             .unwrap_or_else(|| tool.to_string()),
+        "mcp" => match (
+            args.get("action").and_then(|a| a.as_str()),
+            args.get("server").and_then(|s| s.as_str()),
+            args.get("tool").and_then(|t| t.as_str()),
+        ) {
+            (Some("call"), Some(server), Some(mcp_tool)) => {
+                format!("mcp call {server}/{mcp_tool}")
+            }
+            (Some("call"), Some(server), None) => format!("mcp call {server}/<missing tool>"),
+            (Some("list"), _, _) => "mcp list".to_string(),
+            _ => "mcp".to_string(),
+        },
+        "task" => {
+            let label = args
+                .get("label")
+                .and_then(|l| l.as_str())
+                .map(String::from)
+                .unwrap_or_else(|| {
+                    let prompt = args.get("prompt").and_then(|p| p.as_str()).unwrap_or("");
+                    prompt.chars().take(60).collect()
+                });
+            format!("task '{label}'")
+        }
         other => other.to_string(),
     }
 }

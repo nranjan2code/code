@@ -92,6 +92,10 @@ pub enum SessionError {
     Io(#[from] std::io::Error),
     #[error("json error at line {line}: {message}")]
     Corrupt { line: usize, message: String },
+    #[error("session file already exists: {0}")]
+    Exists(std::path::PathBuf),
+    #[error("session is locked by another process: {0}")]
+    Locked(std::path::PathBuf),
 }
 
 /// Projection-based compaction plan (see SessionLog::plan_compaction).

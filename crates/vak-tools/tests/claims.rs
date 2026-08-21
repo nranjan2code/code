@@ -61,3 +61,31 @@ fn normalization_handles_globs_and_slashes() {
     assert!(claims(&["src/"]).conflicts(&claims(&["src/**"])));
     assert!(claims(["src"].as_slice()).conflicts(&claims(&["src/*"])));
 }
+
+#[test]
+fn builtin_tools_declare_claims() {
+    use serde_json::json;
+    use vak_tools::{
+        Tool, bash::BashTool, edit::EditTool, glob::GlobTool, grep::GrepTool, read::ReadTool,
+        write::WriteTool,
+    };
+
+    let path_args = json!({"path": "src/a.rs"});
+    let w = WriteTool.claims(&path_args);
+    assert!(!w.is_unclaimed() && !w.read_only && w.paths == vec!["src/a.rs".to_string()]);
+    let e = EditTool.claims(&path_args);
+    assert!(!e.is_unclaimed() && !e.read_only);
+
+    let b = BashTool.claims(&json!({"command": "ls"}));
+    assert!(b.exclusive, "bash must serialize against everything");
+
+    for t in [&ReadTool as &dyn Tool, &GlobTool, &GrepTool] {
+        let c = t.claims(&path_args);
+        assert!(c.read_only, "{} must be read-only", t.name());
+    }
+
+    // Two edits to the same file conflict; different files don't.
+    assert!(w.conflicts(&e));
+    let other = WriteTool.claims(&json!({"path": "src/b.rs"}));
+    assert!(!w.conflicts(&other));
+}

@@ -193,3 +193,93 @@ fn first_matching_rule_wins_in_order() {
         "earlier ? rule wins over later allow"
     );
 }
+
+#[test]
+fn deny_beats_allow_regardless_of_registration_order() {
+    // Deny registered AFTER the allow: severity aggregation must still
+    // pick Deny. Under first-match-wins this silently allowed.
+    let eng = PermissionEngine::from_rule_strings(&[
+        "Bash(git *)".to_string(),
+        "-Bash(git push *)".to_string(),
+    ])
+    .unwrap();
+    let d = eng.evaluate(
+        "bash",
+        &bash("git push origin main"),
+        Mode::WorkspaceWrite,
+        std::path::Path::new("/tmp"),
+    );
+    assert!(matches!(d, Decision::Deny { .. }));
+
+    let d = eng.evaluate(
+        "bash",
+        &bash("git status"),
+        Mode::WorkspaceWrite,
+        std::path::Path::new("/tmp"),
+    );
+    assert_eq!(d, Decision::Allow);
+}
+
+#[test]
+fn substitution_and_newline_commands_are_opaque_to_allow_patterns() {
+    let eng = PermissionEngine::from_rule_strings(&[
+        "Bash(git *)".to_string(),
+        "-Bash(rm *)".to_string(),
+    ])
+    .unwrap();
+
+    for cmd in [
+        "git status\nrm -rf ~",
+        "git log --format=$(rm -rf ~)",
+        "git log `rm -rf ~`",
+    ] {
+        let d = eng.evaluate(
+            "bash",
+            &bash(cmd),
+            Mode::WorkspaceWrite,
+            std::path::Path::new("/tmp"),
+        );
+        assert!(
+            matches!(d, Decision::Ask { .. }),
+            "'{cmd}' must not match a patterned allow rule"
+        );
+    }
+}
+
+#[test]
+fn blanket_rules_still_cover_opaque_commands() {
+    let eng = PermissionEngine::from_rule_strings(&["Bash(*)".to_string()]).unwrap();
+    let d = eng.evaluate(
+        "bash",
+        &bash("git status\necho hi"),
+        Mode::WorkspaceWrite,
+        std::path::Path::new("/tmp"),
+    );
+    assert_eq!(d, Decision::Allow);
+}
+
+#[test]
+fn mcp_calls_match_server_tool_candidates() {
+    let eng = PermissionEngine::from_rule_strings(&[
+        "-Mcp(evil-server/*)".to_string(),
+        "Mcp(docs/*)".to_string(),
+    ])
+    .unwrap();
+    let args = json!({"action": "call", "server": "docs", "tool": "search", "arguments": {}});
+    let d = eng.evaluate(
+        "mcp",
+        &args,
+        Mode::WorkspaceWrite,
+        std::path::Path::new("/tmp"),
+    );
+    assert_eq!(d, Decision::Allow);
+
+    let args = json!({"action": "call", "server": "evil-server", "tool": "wipe"});
+    let d = eng.evaluate(
+        "mcp",
+        &args,
+        Mode::WorkspaceWrite,
+        std::path::Path::new("/tmp"),
+    );
+    assert!(matches!(d, Decision::Deny { .. }));
+}

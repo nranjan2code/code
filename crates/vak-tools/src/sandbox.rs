@@ -58,8 +58,8 @@ impl Seatbelt {
                 p.push_str("(allow iokit-get-properties)\n");
                 for path in &self.write_paths {
                     p.push_str(&format!(
-                        "(allow file-write* (subpath \"{}\"))\n",
-                        path.display()
+                        "(allow file-write* (subpath {}))\n",
+                        sbpl_quote(&path.display().to_string())
                     ));
                 }
                 for tmp in [
@@ -68,12 +68,31 @@ impl Seatbelt {
                     "/dev/null",
                     "/dev/urandom",
                 ] {
-                    p.push_str(&format!("(allow file-write* (subpath \"{tmp}\"))\n"));
+                    p.push_str(&format!(
+                        "(allow file-write* (subpath {}))\n",
+                        sbpl_quote(tmp)
+                    ));
                 }
             }
         }
         p
     }
+}
+
+/// SBPL string literal: escape backslash and double quote so a path
+/// containing quotes cannot break out of (or corrupt) the profile.
+fn sbpl_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 impl Sandbox for Seatbelt {
@@ -85,10 +104,12 @@ impl Sandbox for Seatbelt {
         if self.mode == SandboxMode::Off {
             return command.to_string();
         }
-        let profile = self.profile().replace('\'', "");
+        // The profile itself goes through single-quote shell escaping —
+        // stripping characters would silently alter the policy for paths
+        // containing them.
         format!(
-            "sandbox-exec -p '{}' -- sh -c {}",
-            profile,
+            "sandbox-exec -p {} -- sh -c {}",
+            shell_quote(&self.profile()),
             shell_quote(command)
         )
     }

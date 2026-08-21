@@ -43,6 +43,18 @@ impl Tool for EditTool {
         })
     }
 
+    fn claims(&self, args: &Value) -> crate::ResourceClaims {
+        crate::ResourceClaims {
+            exclusive: false,
+            read_only: false,
+            paths: args
+                .get("path")
+                .and_then(|p| p.as_str())
+                .map(|p| vec![p.to_string()])
+                .unwrap_or_default(),
+        }
+    }
+
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(path_str) = args.get("path").and_then(|p| p.as_str()) else {
             return ToolOutput::error("missing required parameter: path");
@@ -57,11 +69,21 @@ impl Tool for EditTool {
             Err(e) => return ToolOutput::error(format!("cannot read {}: {e}", path.display())),
         };
 
+        // Editing is a text operation on the exact bytes on disk; silently
+        // replacing invalid sequences would corrupt binary or mixed-encoding
+        // files on write-back.
+        if std::str::from_utf8(&bytes).is_err() {
+            return ToolOutput::error(format!(
+                "{} is not valid UTF-8 (binary or non-UTF-8 encoding); edit refused",
+                path.display()
+            ));
+        }
+
         let bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
         let raw = if bom {
             String::from_utf8_lossy(&bytes[3..]).into_owned()
         } else {
-            String::from_utf8_lossy(&bytes).into_owned()
+            String::from_utf8(bytes).unwrap_or_default()
         };
         let crlf = raw.contains("\r\n");
 
@@ -106,7 +128,25 @@ impl Tool for EditTool {
         } else {
             buf.as_bytes().to_vec()
         };
-        if let Err(e) = tokio::fs::write(&path, final_bytes).await {
+        // Temp file + rename: a crash mid-write cannot truncate the target.
+        let tmp = path.with_extension(format!(
+            "{}vak-tmp",
+            path.extension()
+                .map(|e| format!("{}.", e.to_string_lossy()))
+                .unwrap_or_default()
+        ));
+        let write_res = tokio::fs::write(&tmp, &final_bytes).await;
+        let rename_res = match write_res {
+            Ok(()) => {
+                let r = std::fs::rename(&tmp, &path);
+                if r.is_err() {
+                    let _ = std::fs::remove_file(&tmp);
+                }
+                r
+            }
+            Err(e) => Err(e),
+        };
+        if let Err(e) = rename_res {
             return ToolOutput::error(format!("cannot write {}: {e}", path.display()));
         }
 

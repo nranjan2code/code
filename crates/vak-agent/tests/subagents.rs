@@ -34,13 +34,16 @@ impl Provider for Scripted {
     ) -> Result<EventStream, LlmError> {
         self.requests.lock().unwrap().push(request);
         let next = self.responses.lock().unwrap().pop_front();
-        let (sink, rx) = stream::channel(64);
+        let (mut sink, rx) = stream::channel(64);
         match next {
             Some(m) => {
                 sink.push(stream::StreamEvent::Start { partial: m.clone() });
-                sink.close_message(m);
+                sink.close_message(m).await;
             }
-            None => sink.close_error(LlmError::Parse("script exhausted".into())),
+            None => {
+                sink.close_error(LlmError::Parse("script exhausted".into()))
+                    .await
+            }
         }
         Ok(rx)
     }

@@ -30,3 +30,14 @@ circuit_breaker_threshold, circuit_breaker_cooldown_secs, context_window
 - permission rules block (Phase 3)
 - hooks/skills/MCP registration blocks (Phase 5)
 - minimal|standard runtime profiles as eval baseline (Phase 7)
+
+## Diff note — workspace trust + unknown keys (this change)
+
+Project-layer privileged keys (`permission_mode`, `allow`, `hooks`,
+`anthropic_base_url`, `mcp.servers`) are ignored unless the workspace is
+trusted: `Core::new_with_trust(cwd, trust)` / CLI `--trust` / per-directory
+prompt marker under `~/.vakcoder/trusted/`. The project `.env` is likewise
+only loaded when trusted (it can inject `VAKCODER_*_BASE_URL`). Restrictive
+keys (`deny`, `ask`) still apply from untrusted projects. Unknown config
+keys are diffed against the schema and surfaced as warnings — a typo'd key
+is visible, never silently dead.

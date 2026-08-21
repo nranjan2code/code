@@ -15,6 +15,7 @@ pub struct SessionLog {
     entries: Vec<Entry>,
     by_id: HashMap<String, usize>,
     tail_id: Option<String>,
+    warnings: Vec<String>,
 }
 
 impl SessionLog {
@@ -22,13 +23,25 @@ impl SessionLog {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .truncate(false)
+            .open(&path)?;
+        // Cross-process safety: an exclusive lock for the lifetime of the
+        // handle keeps two processes from interleaving appends.
+        file.try_lock()
+            .map_err(|_| SessionError::Locked(path.clone()))?;
+        if file.metadata()?.len() > 0 {
+            return Err(SessionError::Exists(path));
+        }
         let mut log = SessionLog {
             path,
             file,
             entries: Vec::new(),
             by_id: HashMap::new(),
             tail_id: None,
+            warnings: Vec::new(),
         };
         log.append(Entry::new(None, EntryPayload::Header(header)))?;
         Ok(log)
@@ -36,9 +49,12 @@ impl SessionLog {
 
     pub fn open(path: PathBuf) -> Result<Self, SessionError> {
         let file = OpenOptions::new().append(true).open(&path)?;
+        file.try_lock()
+            .map_err(|_| SessionError::Locked(path.clone()))?;
         let reader = BufReader::new(File::open(&path)?);
         let mut entries = Vec::new();
         let mut by_id = HashMap::new();
+        let mut warnings = Vec::new();
         for (i, line) in reader.lines().enumerate() {
             let line = line.map_err(|e| SessionError::Corrupt {
                 line: i + 1,
@@ -47,10 +63,18 @@ impl SessionLog {
             if line.trim().is_empty() {
                 continue;
             }
-            let entry: Entry = serde_json::from_str(&line).map_err(|e| SessionError::Corrupt {
-                line: i + 1,
-                message: e.to_string(),
-            })?;
+            // A torn final line (crash mid-append) or a damaged interior
+            // line must not make the whole session unresumable; skip it
+            // and surface a warning. The append-only ledger on disk is
+            // never rewritten.
+            let Ok(entry) = serde_json::from_str::<Entry>(&line) else {
+                warnings.push(format!(
+                    "skipped unparseable entry at line {} of {}",
+                    i + 1,
+                    path.display()
+                ));
+                continue;
+            };
             by_id.insert(entry.id.clone(), entries.len());
             entries.push(entry);
         }
@@ -61,7 +85,13 @@ impl SessionLog {
             entries,
             by_id,
             tail_id,
+            warnings,
         })
+    }
+
+    /// Non-fatal problems seen while opening the ledger.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
     }
 
     pub fn append(&mut self, entry: Entry) -> Result<Entry, SessionError> {
@@ -254,9 +284,12 @@ impl SessionLog {
         Ok(())
     }
 
+    /// Usage summed over the ACTIVE chain only: usage recorded on
+    /// abandoned branches (superseded by branching/compaction) must not
+    /// inflate the count.
     pub fn total_usage(&self) -> vak_llm::Usage {
         let mut total = vak_llm::Usage::default();
-        for e in &self.entries {
+        for e in self.chain_to_root() {
             if let EntryPayload::Message(MessageRecord {
                 meta: Some(MessageMeta { usage: Some(u), .. }),
                 ..
@@ -282,9 +315,15 @@ impl SessionPath {
     }
 }
 
+/// FNV-1a: a fixed hash whose output does not change across Rust releases,
+/// unlike DefaultHasher (SipHash with randomly-seeded-but-toolchain-chosen
+/// parameters). Session directories must remain reachable after toolchain
+/// upgrades.
 fn hash_cwd(cwd: &Path) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    cwd.hash(&mut h);
-    format!("{:016x}", h.finish())
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in cwd.to_string_lossy().as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{h:016x}")
 }

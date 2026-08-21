@@ -151,29 +151,35 @@ async fn run_one(
         }
     };
 
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(&payload).await;
-        let _ = stdin.shutdown().await;
-    }
-
     let mut stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
     let out_fut = tokio::spawn(async move { read_capped(&mut stdout).await });
     let err_fut = tokio::spawn(async move { read_capped(&mut stderr).await });
 
+    // The stdin write happens inside the timed region too: a hook that
+    // never reads stdin would otherwise block this task forever once the
+    // payload exceeds the pipe buffer.
+    let pid = child.id();
+    let stdin = child.stdin.take();
+    let interact = async move {
+        if let Some(mut si) = stdin {
+            let _ = si.write_all(&payload).await;
+            let _ = si.shutdown().await;
+        }
+        child.wait().await
+    };
+
     let timeout = tokio::time::sleep(std::time::Duration::from_millis(hook.timeout_ms));
     tokio::select! {
         _ = timeout => {
-            kill_tree(&child.id());
-            let _ = child.wait().await;
+            kill_tree(&pid);
             HookOutcome { blocked: false, reason: Some("hook timed out".into()) }
         }
         _ = cancel.cancelled() => {
-            kill_tree(&child.id());
-            let _ = child.wait().await;
+            kill_tree(&pid);
             HookOutcome::default()
         }
-        status = child.wait() => {
+        status = interact => {
             let status = match status {
                 Ok(s) => s,
                 Err(e) => return HookOutcome { blocked: false, reason: Some(format!("hook wait failed: {e}")) },

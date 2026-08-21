@@ -213,41 +213,62 @@ impl Agent {
 
             let _ = events.send(AgentEvent::TurnStart { turn }).await;
 
-            let base_request = {
-                let mut session = self.session.lock().await;
-                let model = if self.config.model.is_empty() {
+            let model = {
+                let session = self.session.lock().await;
+                if self.config.model.is_empty() {
                     session
                         .header()
                         .map(|h| h.contract.model.clone())
                         .unwrap_or_default()
                 } else {
                     self.config.model.clone()
-                };
-                // Long-horizon guard: estimate the projection; on overflow,
-                // summarize older turns into a compaction entry and retry
-                // the same contract. Still over afterwards, or no progress,
-                // => fail closed. The session lock is NOT held across the
-                // summarizer network call.
+                }
+            };
+
+            // Long-horizon guard: estimate the projection; on overflow,
+            // summarize older turns into a compaction entry and retry
+            // the same contract. Still over afterwards, or no progress,
+            // => fail closed. The lock is taken only for short read /
+            // plan / apply phases and is NEVER held across the summarizer
+            // network call below.
+            enum CompactionNeed {
+                None,
+                Plan(vak_session::types::CompactionPlan, u64),
+                TooShortToCompact,
+            }
+            let need = {
+                let session = self.session.lock().await;
                 let policy = &self.config.context_policy;
-                let system = self.config.system_prompt.clone();
-                let mut derived = session.derive_messages();
+                let system = self.config.system_prompt.as_str();
                 let tool_defs = vak_tools::definitions(&self.config.tools);
-                let mut est = context::estimate_tokens(&derived, Some(&system), &tool_defs);
-                if est > policy.trigger_at() {
-                    let Some(plan) = session.plan_compaction(policy.keep_recent) else {
-                        return TurnOutcome::Failed {
-                            error: LlmError::Network(
-                                "context over budget but too short to compact".into(),
-                            ),
-                        };
+                let est =
+                    context::estimate_tokens(&session.derive_messages(), Some(system), &tool_defs);
+                if est <= policy.trigger_at() {
+                    CompactionNeed::None
+                } else {
+                    match session.plan_compaction(policy.keep_recent) {
+                        Some(plan) => CompactionNeed::Plan(plan, est),
+                        None => CompactionNeed::TooShortToCompact,
+                    }
+                }
+            };
+            match need {
+                CompactionNeed::TooShortToCompact => {
+                    return TurnOutcome::Failed {
+                        error: LlmError::Network(
+                            "context over budget but too short to compact".into(),
+                        ),
                     };
+                }
+                CompactionNeed::Plan(plan, tokens_before) => {
                     let transcript = context::render_transcript(&plan.older);
                     let _ = events
                         .send(AgentEvent::ContextCompacting {
-                            estimated_tokens: est,
+                            estimated_tokens: tokens_before,
                         })
                         .await;
 
+                    // Network call runs with no session lock held.
                     let req = context::compaction_request(&model, &transcript);
                     let summary_msg = match self
                         .complete_with_reliability(&req, &cancel, &events, false)
@@ -270,14 +291,25 @@ impl Agent {
                         };
                     }
 
-                    let tokens_before = est;
-                    if let Err(e) = session.apply_compaction(&plan, summary, tokens_before) {
-                        return TurnOutcome::Failed {
-                            error: LlmError::Network(format!("compaction write failed: {e}")),
-                        };
+                    {
+                        let mut session = self.session.lock().await;
+                        if let Err(e) = session.apply_compaction(&plan, summary, tokens_before) {
+                            return TurnOutcome::Failed {
+                                error: LlmError::Network(format!("compaction write failed: {e}")),
+                            };
+                        }
                     }
-                    derived = session.derive_messages();
-                    est = context::estimate_tokens(&derived, Some(&system), &tool_defs);
+
+                    let est = {
+                        let session = self.session.lock().await;
+                        let system = self.config.system_prompt.as_str();
+                        let tool_defs = vak_tools::definitions(&self.config.tools);
+                        context::estimate_tokens(
+                            &session.derive_messages(),
+                            Some(system),
+                            &tool_defs,
+                        )
+                    };
                     if est >= tokens_before {
                         return TurnOutcome::Failed {
                             error: LlmError::Network(format!(
@@ -292,15 +324,20 @@ impl Agent {
                             summarized_messages: plan.older.len(),
                         })
                         .await;
-                    if est > policy.input_budget() {
+                    if est > self.config.context_policy.input_budget() {
                         return TurnOutcome::Failed {
                             error: LlmError::Network(format!(
                                 "context still over budget after compaction (~{est} > {} tokens)",
-                                policy.input_budget()
+                                self.config.context_policy.input_budget()
                             )),
                         };
                     }
                 }
+                CompactionNeed::None => {}
+            }
+
+            let base_request = {
+                let session = self.session.lock().await;
                 ChatRequest {
                     model,
                     system: Some(self.config.system_prompt.clone()),

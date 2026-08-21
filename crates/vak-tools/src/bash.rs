@@ -32,6 +32,14 @@ impl Tool for BashTool {
         })
     }
 
+    fn claims(&self, _args: &Value) -> crate::ResourceClaims {
+        crate::ResourceClaims {
+            exclusive: true,
+            read_only: false,
+            paths: Vec::new(),
+        }
+    }
+
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(command) = args.get("command").and_then(|c| c.as_str()) else {
             return ToolOutput::error("missing required parameter: command");

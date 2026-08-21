@@ -34,6 +34,14 @@ impl Tool for GrepTool {
         })
     }
 
+    fn claims(&self, _args: &Value) -> crate::ResourceClaims {
+        crate::ResourceClaims {
+            exclusive: false,
+            read_only: true,
+            paths: Vec::new(),
+        }
+    }
+
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(pattern) = args.get("pattern").and_then(|p| p.as_str()) else {
             return ToolOutput::error("missing required parameter: pattern");
@@ -61,77 +69,41 @@ impl Tool for GrepTool {
             None => None,
         };
 
-        if base.is_file() {
-            return search_file(&base, &base, &re, None, ctx);
-        }
-        if !base.is_dir() {
+        if !base.exists() {
             return ToolOutput::error(format!("path not found: {}", base.display()));
         }
 
-        let mut out = String::new();
-        let mut count = 0usize;
-        'outer: for entry in WalkDir::new(&base)
-            .follow_links(false)
-            .into_iter()
-            .filter_entry(|e| !crate::glob::is_ignored(e.path()))
-            .flatten()
-        {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            if let Some(gs) = &include_set {
-                let name_ok = entry
-                    .file_name()
-                    .to_str()
-                    .map(|n| gs.is_match(n))
-                    .unwrap_or(false);
-                if !name_ok {
-                    continue;
-                }
-            }
-            let path = entry.path();
-            let Ok(bytes) = std::fs::read(path) else {
-                continue;
-            };
-            if bytes.iter().take(8192).any(|&b| b == 0) {
-                continue;
-            }
-            let text = String::from_utf8_lossy(&bytes);
-            for (i, line) in text.lines().enumerate() {
-                if re.is_match(line) {
-                    out.push_str(&format!(
-                        "{}:{}:{line}\n",
-                        path.strip_prefix(&ctx.cwd).unwrap_or(path).display(),
-                        i + 1
-                    ));
-                    count += 1;
-                    if count >= MAX_MATCH_LINES {
-                        out.push_str("\n[match limit reached]");
-                        break 'outer;
-                    }
-                }
-            }
-        }
+        // File IO + regex over whole trees is blocking; keep it off the
+        // async workers that carry SSE and TUI delivery.
+        let cwd = ctx.cwd.clone();
+        let walked =
+            tokio::task::spawn_blocking(move || search_tree(&base, &re, include_set, &cwd)).await;
+        let out = match walked {
+            Ok(out) => out,
+            Err(e) => return ToolOutput::error(format!("grep task failed: {e}")),
+        };
 
-        if count == 0 {
-            return ToolOutput::ok("no matches");
+        match out {
+            SearchOutcome::Empty => ToolOutput::ok("no matches"),
+            SearchOutcome::Hits(text) => ToolOutput::ok(ctx.truncate_output(text)),
         }
-        ToolOutput::ok(ctx.truncate_output(out))
     }
 }
 
-fn search_file(
-    path: &Path,
-    root: &Path,
-    re: &Regex,
-    _gs: Option<()>,
-    ctx: &ToolContext,
-) -> ToolOutput {
+enum SearchOutcome {
+    Empty,
+    Hits(String),
+}
+
+fn search_file_bytes(path: &Path, root: &Path, re: &Regex, out: &mut String) -> usize {
     let Ok(bytes) = std::fs::read(path) else {
-        return ToolOutput::error(format!("cannot read {}", path.display()));
+        return 0;
     };
+    if bytes.iter().take(8192).any(|&b| b == 0) {
+        return 0;
+    }
     let text = String::from_utf8_lossy(&bytes);
-    let mut out = String::new();
+    let mut hits = 0usize;
     for (i, line) in text.lines().enumerate() {
         if re.is_match(line) {
             out.push_str(&format!(
@@ -139,11 +111,59 @@ fn search_file(
                 path.strip_prefix(root).unwrap_or(path).display(),
                 i + 1
             ));
+            hits += 1;
         }
     }
-    if out.is_empty() {
-        ToolOutput::ok("no matches")
+    hits
+}
+
+fn search_tree(
+    base: &Path,
+    re: &Regex,
+    include_set: Option<globset::GlobSet>,
+    cwd: &Path,
+) -> SearchOutcome {
+    let mut out = String::new();
+    let mut count = 0usize;
+
+    if base.is_file() {
+        count = search_file_bytes(base, cwd, re, &mut out);
+        return if count == 0 {
+            SearchOutcome::Empty
+        } else {
+            SearchOutcome::Hits(out)
+        };
+    }
+
+    'outer: for entry in WalkDir::new(base)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| !crate::glob::is_ignored(e.path()))
+        .flatten()
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if let Some(gs) = &include_set {
+            let name_ok = entry
+                .file_name()
+                .to_str()
+                .map(|n| gs.is_match(n))
+                .unwrap_or(false);
+            if !name_ok {
+                continue;
+            }
+        }
+        count += search_file_bytes(entry.path(), cwd, re, &mut out);
+        if count >= MAX_MATCH_LINES {
+            out.push_str("\n[match limit reached]");
+            break 'outer;
+        }
+    }
+
+    if count == 0 {
+        SearchOutcome::Empty
     } else {
-        ToolOutput::ok(ctx.truncate_output(out))
+        SearchOutcome::Hits(out)
     }
 }

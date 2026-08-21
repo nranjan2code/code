@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -65,14 +66,16 @@ impl ToolContext {
             }
         }
 
-        if rendered.len() <= self.limits.max_bytes {
+        let total_chars = rendered.chars().count();
+        if total_chars <= self.limits.max_bytes {
             return rendered;
         }
 
+        // All arithmetic in chars: the byte length of multibyte content can
+        // exceed the budget while the char count does not.
         let budget = self.limits.max_bytes;
         let head_chars = (budget * 2 / 5).max(1);
         let tail_chars = (budget - head_chars).saturating_sub(120).max(1);
-        let total_chars = rendered.chars().count();
         let head: String = rendered.chars().take(head_chars).collect();
         let tail: String = rendered
             .chars()
@@ -82,17 +85,43 @@ impl ToolContext {
         let mut spill_note = String::new();
         if self.limits.spill_to_disk {
             let n = SPILL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let spill_path = std::env::temp_dir().join(format!("vakcoder-out-{n}.txt"));
-            if std::fs::write(&spill_path, &rendered).is_ok() {
+            if let Some(spill_path) = write_spill_file(n, &rendered) {
                 spill_note = format!("\n[full output saved to {}]", spill_path.display());
             }
         }
 
         format!(
             "{head}\n[… {omitted} chars truncated …]{spill_note}\n{tail}",
-            omitted = total_chars - head_chars - tail_chars
+            omitted = total_chars.saturating_sub(head_chars + tail_chars)
         )
     }
+}
+
+/// Spill files live in a per-process directory created with 0700 so other
+/// local users cannot read truncated tool output; file contents are 0600.
+fn write_spill_file(n: u64, content: &str) -> Option<PathBuf> {
+    static SPILL_DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    let dir = SPILL_DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("vakcoder-spill-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).ok()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        }
+        Some(dir)
+    });
+    let dir = dir.as_ref()?;
+    let path = dir.join(format!("out-{n}.txt"));
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    opts.open(&path).ok()?.write_all(content.as_bytes()).ok()?;
+    Some(path)
 }
 
 pub fn shared_ctx(dir: &Path) -> Arc<ToolContext> {

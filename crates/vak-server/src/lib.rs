@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -30,8 +31,13 @@ use vak_session::SessionLog;
 struct SessionHandle {
     session: Arc<Mutex<Option<SessionLog>>>,
     steering: Arc<SteeringQueues>,
-    cancel: CancellationToken,
+    /// Cancel for the CURRENT run only; replaced with a fresh token when a
+    /// run ends so one `/cancel` doesn't poison every later run.
+    cancel: Arc<std::sync::Mutex<CancellationToken>>,
     events_tx: broadcast::Sender<AgentEvent>,
+    /// Pending approval gates scoped to THIS session — a client holding
+    /// session A can never resolve session B's approvals.
+    pending: Arc<Mutex<HashMap<String, ApprovalRequest>>>,
     /// Notified when an SSE consumer attaches, so runs don't start (and
     /// finish) before anyone is listening.
     subscribed: Arc<tokio::sync::Notify>,
@@ -60,9 +66,6 @@ impl AppState {
     }
 }
 
-static PENDING_APPROVALS: std::sync::LazyLock<Mutex<HashMap<String, ApprovalRequest>>> =
-    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
-
 #[derive(Clone)]
 pub struct ApprovalRequest {
     respond: Arc<Mutex<Option<oneshot::Sender<bool>>>>,
@@ -83,6 +86,7 @@ impl ApprovalRequest {
 
 struct HttpApprover {
     events_tx: broadcast::Sender<AgentEvent>,
+    pending: Arc<Mutex<HashMap<String, ApprovalRequest>>>,
 }
 
 #[async_trait::async_trait]
@@ -90,7 +94,7 @@ impl Approver for HttpApprover {
     async fn approve(&self, tool: &str, reason: &str) -> bool {
         let id = uuid::Uuid::now_v7().to_string();
         let (respond, rx) = oneshot::channel();
-        PENDING_APPROVALS
+        self.pending
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(
@@ -105,7 +109,7 @@ impl Approver for HttpApprover {
             reason: reason.to_string(),
         });
         let approved = rx.await.unwrap_or(false);
-        PENDING_APPROVALS
+        self.pending
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&id);
@@ -128,14 +132,52 @@ pub fn router(core: Core) -> Router {
 }
 
 pub async fn serve(core: Core, addr: std::net::SocketAddr) -> std::io::Result<()> {
+    // Local-only does not mean safe-by-default: any local process could
+    // reach an unauthenticated agent and drive arbitrary tool execution
+    // plus self-approval. Every serve() instance gets a per-process
+    // bearer token; /health stays open.
+    let token = format!("vk_{}", uuid::Uuid::now_v7());
     let listener = tokio::net::TcpListener::bind(addr).await?;
     eprintln!("vakcoder server listening on http://{addr}");
-    axum::serve(listener, router(core))
+    eprintln!("auth token: {token}");
+    eprintln!("clients must send 'Authorization: Bearer {token}' (or ?token=)");
+    let app = router(core).layer(axum::middleware::from_fn_with_state(
+        token.clone(),
+        require_bearer,
+    ));
+    axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
             eprintln!("\n[shutting down: draining connections]");
         })
         .await
+}
+
+async fn require_bearer(
+    State(token): State<String>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if req.uri().path() == "/health" {
+        return next.run(req).await;
+    }
+    let provided = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(String::from)
+        .or_else(|| {
+            req.uri()
+                .query()
+                .and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("token=")))
+                .map(String::from)
+        });
+    if provided.as_deref() == Some(token.as_str()) {
+        next.run(req).await
+    } else {
+        StatusCode::UNAUTHORIZED.into_response()
+    }
 }
 
 async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -144,6 +186,8 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
         "provider": state.core.effective_provider(),
         "model": state.core.effective_model(),
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
+        "sandbox": state.core.effective_sandbox_name(),
+        "warnings": state.core.config().warnings,
     }))
 }
 
@@ -167,8 +211,9 @@ async fn create_session(State(state): State<AppState>) -> Json<serde_json::Value
             Arc::new(SessionHandle {
                 session: Arc::new(Mutex::new(Some(session))),
                 steering: Arc::new(SteeringQueues::new()),
-                cancel: CancellationToken::new(),
+                cancel: Arc::new(std::sync::Mutex::new(CancellationToken::new())),
                 events_tx,
+                pending: Arc::new(Mutex::new(HashMap::new())),
                 subscribed: Arc::new(tokio::sync::Notify::new()),
             }),
         );
@@ -194,9 +239,6 @@ fn mpsc_to_broadcast(tx: broadcast::Sender<AgentEvent>) -> mpsc::Sender<AgentEve
     });
     tx_in
 }
-
-#[allow(dead_code)]
-fn unused_marker() {}
 
 async fn run_prompt(
     State(state): State<AppState>,
@@ -227,16 +269,27 @@ async fn run_prompt(
 
     let approver: Arc<dyn Approver> = Arc::new(HttpApprover {
         events_tx: handle.events_tx.clone(),
+        pending: handle.pending.clone(),
     });
     let events = mpsc_to_broadcast(handle.events_tx.clone());
     let steering = handle.steering.clone();
-    let cancel = handle.cancel.clone();
+    let cancel = handle
+        .cancel
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     let core = state.core.clone();
 
     tokio::spawn(async move {
         let outcome = core
             .run_turn_with(taken, &body.prompt, cancel, Some(approver), None, events)
             .await;
+        // Reset the token so the next run on this session is not born
+        // already-cancelled.
+        *handle
+            .cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = CancellationToken::new();
         match outcome {
             Ok((o, session_log)) => {
                 // Return the ledger so transcript stays available.
@@ -285,7 +338,11 @@ async fn cancel_run(State(state): State<AppState>, Path(id): Path<String>) -> St
     let Some(handle) = state.get(&id) else {
         return StatusCode::NOT_FOUND;
     };
-    handle.cancel.cancel();
+    handle
+        .cancel
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .cancel();
     let _ = handle.events_tx.send(AgentEvent::RunFinished {
         summary: "cancelled by client".into(),
     });
@@ -302,10 +359,13 @@ async fn answer_approval(
     Path((id, req_id)): Path<(String, String)>,
     Json(body): Json<ApprovalBody>,
 ) -> StatusCode {
-    if state.get(&id).is_none() {
+    // Look the request up in THIS session's pending map only: approvals
+    // are never resolvable across sessions.
+    let Some(handle) = state.get(&id) else {
         return StatusCode::NOT_FOUND;
-    }
-    match PENDING_APPROVALS
+    };
+    match handle
+        .pending
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .remove(&req_id)
@@ -334,11 +394,7 @@ async fn events_sse(
             let mut rx = h.events_tx.subscribe();
             let _ = rx.try_recv();
             h.subscribed.notify_one();
-            let sent = h.events_tx.send(AgentEvent::StreamOpened);
-            eprintln!(
-                "[events] StreamOpened sent to {} receivers",
-                sent.unwrap_or(0)
-            );
+            let _ = h.events_tx.send(AgentEvent::StreamOpened);
             Box::pin(BroadcastStream::new(rx).filter_map(|ev| match ev {
                 Ok(agent_event) => Some(Ok(
                     Event::default().data(serde_json::to_string(&agent_event).unwrap_or_default()),

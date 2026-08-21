@@ -93,12 +93,22 @@ impl Rule {
 
 /// Extracts the strings a rule pattern can match against, per tool family.
 /// Bash matches its command and each subcommand split on `&&`, `;`, `|`.
-/// File tools match their path argument.
+/// File tools match their path argument. MCP calls match `server/tool`.
+///
+/// Commands containing newlines or shell substitution (`$(...)`, backticks,
+/// process substitution) deliberately produce NO candidates: pattern-based
+/// allow rules cannot see inside them, so matching them would be a lie.
+/// Blanket rules (no pattern) still apply; such commands otherwise fall
+/// through to the mode default / approver, which can see the full command
+/// via describe().
 pub fn arg_candidates(tool: &str, args: &Value) -> Vec<String> {
     match tool {
         "bash" => {
             let mut out = Vec::new();
             if let Some(cmd) = args.get("command").and_then(|c| c.as_str()) {
+                if is_opaque_command(cmd) {
+                    return Vec::new();
+                }
                 out.push(cmd.to_string());
                 for seg in split_shell(cmd) {
                     out.push(seg);
@@ -111,8 +121,35 @@ pub fn arg_candidates(tool: &str, args: &Value) -> Vec<String> {
             .and_then(|p| p.as_str())
             .map(|p| vec![p.to_string()])
             .unwrap_or_default(),
+        "mcp" => match (
+            args.get("action").and_then(|a| a.as_str()),
+            args.get("server").and_then(|s| s.as_str()),
+            args.get("tool").and_then(|t| t.as_str()),
+        ) {
+            (Some("call"), Some(server), Some(mcp_tool)) => {
+                vec![format!("{server}/{mcp_tool}")]
+            }
+            _ => Vec::new(),
+        },
+        "task" => args
+            .get("label")
+            .and_then(|l| l.as_str())
+            .map(|l| vec![l.to_string()])
+            .unwrap_or_default(),
         _ => Vec::new(),
     }
+}
+
+/// True when the command's structure can hide a second command from naive
+/// splitting: line continuations/newlines, command substitution, process
+/// substitution.
+fn is_opaque_command(cmd: &str) -> bool {
+    cmd.contains('\n')
+        || cmd.contains('\r')
+        || cmd.contains("$(")
+        || cmd.contains('`')
+        || cmd.contains("<(")
+        || cmd.contains(">(")
 }
 
 fn split_shell(cmd: &str) -> Vec<String> {

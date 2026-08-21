@@ -18,7 +18,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Interactive terminal UI (default when no subcommand given)
-    Tui,
+    Tui {
+        /// Trust this workspace's project config and .env without prompting
+        #[arg(long)]
+        trust: bool,
+    },
     /// Run one prompt headless and print the result
     Exec {
         prompt: String,
@@ -40,6 +44,9 @@ enum Command {
         /// Resume an existing session instead of starting a new one
         #[arg(long)]
         session: Option<String>,
+        /// Trust this workspace's project config and .env
+        #[arg(long)]
+        trust: bool,
     },
     /// Show the effective composed configuration
     Config {
@@ -61,6 +68,9 @@ enum Command {
         /// Run in an isolated git worktree off HEAD
         #[arg(long)]
         worktree: bool,
+        /// Trust this workspace's project config and .env
+        #[arg(long)]
+        trust: bool,
     },
     /// Run the built-in eval suite
     Eval {
@@ -79,6 +89,9 @@ enum Command {
     Serve {
         #[arg(long, default_value_t = 8901)]
         port: u16,
+        /// Trust this workspace's project config and .env
+        #[arg(long)]
+        trust: bool,
     },
     /// Workspace checkpoints: list or restore
     Checkpoints {
@@ -104,6 +117,9 @@ enum FlowAction {
         provider: Option<String>,
         #[arg(long)]
         model: Option<String>,
+        /// Trust this workspace's project config and .env
+        #[arg(long)]
+        trust: bool,
     },
 }
 
@@ -206,14 +222,32 @@ fn latest_session_id(core: &Core) -> Option<String> {
 }
 #[tokio::main]
 async fn main() {
-    vak_config::load_env_file(std::path::Path::new(".env"));
+    let cli = Cli::parse();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    // User-level secrets always load. The PROJECT .env is only loaded for
+    // trusted workspaces: a cloned repository must not be able to inject
+    // VAKCODER_*_BASE_URL (credential redirection) or other env on first
+    // run.
     if let Some(home) = std::env::var_os("HOME") {
         vak_config::load_env_file(&std::path::PathBuf::from(home).join(".vakcoder/.env"));
     }
-    let cli = Cli::parse();
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
     let code = match cli.command {
-        None | Some(Command::Tui) => run_tui(cwd).await,
+        None => {
+            let trusted = resolve_trust(&cwd, false, true);
+            if trusted {
+                vak_config::load_env_file(std::path::Path::new(".env"));
+            }
+            run_tui(cwd, trusted).await
+        }
+        Some(Command::Tui { trust }) => {
+            let trusted = resolve_trust(&cwd, trust, true);
+            if trusted {
+                vak_config::load_env_file(std::path::Path::new(".env"));
+            }
+            run_tui(cwd, trusted).await
+        }
         Some(Command::Exec {
             prompt,
             model,
@@ -224,7 +258,12 @@ async fn main() {
             permission_mode,
             worktree,
             session,
+            trust,
         }) => {
+            let trusted = resolve_trust(&cwd, trust, false);
+            if trusted {
+                vak_config::load_env_file(std::path::Path::new(".env"));
+            }
             run_exec(
                 cwd,
                 prompt,
@@ -236,6 +275,7 @@ async fn main() {
                 permission_mode,
                 worktree,
                 session,
+                trusted,
             )
             .await
         }
@@ -253,16 +293,100 @@ async fn main() {
             task,
             yes,
             worktree,
-        }) => run_plan(cwd, task, yes, worktree).await,
+            trust,
+        }) => {
+            let trusted = resolve_trust(&cwd, trust, false);
+            if trusted {
+                vak_config::load_env_file(std::path::Path::new(".env"));
+            }
+            run_plan(cwd, task, yes, worktree, trusted).await
+        }
         Some(Command::Eval {
             report,
             live,
             provider,
             model,
         }) => run_eval(report, live, provider, model).await,
-        Some(Command::Serve { port }) => run_serve(cwd, port).await,
+        Some(Command::Serve { port, trust }) => {
+            let trusted = resolve_trust(&cwd, trust, false);
+            if trusted {
+                vak_config::load_env_file(std::path::Path::new(".env"));
+            }
+            run_serve(cwd, port, trusted).await
+        }
     };
     std::process::exit(code);
+}
+
+// ---------------------------------------------------------------------------
+// Workspace trust: a project's .vakcoder/config.toml and .env can grant
+// execution power (permission mode, allow rules, hooks, MCP servers, base
+// URL redirection). First use of an untrusted workspace demotes those keys
+// until the user confirms — per-directory, remembered under ~/.vakcoder.
+// ---------------------------------------------------------------------------
+
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+fn trust_marker_path(cwd: &std::path::Path) -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|h| {
+        PathBuf::from(h)
+            .join(".vakcoder/trusted")
+            .join(format!("{:016x}", fnv1a(cwd.to_string_lossy().as_bytes())))
+    })
+}
+
+fn resolve_trust(cwd: &std::path::Path, flag: bool, interactive: bool) -> bool {
+    if !vak_config::project_path(cwd).is_file() && !cwd.join(".env").is_file() {
+        return true;
+    }
+    if flag {
+        return true;
+    }
+    if let Some(marker) = trust_marker_path(cwd)
+        && marker.is_file()
+    {
+        return true;
+    }
+    if interactive && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        eprintln!();
+        eprintln!(
+            "This directory ({}) contains a project-level vakcoder",
+            cwd.display()
+        );
+        eprintln!("config (.vakcoder/config.toml) and/or .env that can run commands,");
+        eprintln!("auto-approve tools, or redirect API traffic.");
+        eprint!("Trust this workspace? [y/N] ");
+        let _ = std::io::stderr().flush();
+        let mut answer = String::new();
+        if std::io::stdin().read_line(&mut answer).is_ok()
+            && matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+            && let Some(marker) = trust_marker_path(cwd)
+            && let Some(parent) = marker.parent()
+            && std::fs::create_dir_all(parent).is_ok()
+            && std::fs::write(&marker, cwd.to_string_lossy().as_bytes()).is_ok()
+        {
+            return true;
+        }
+    } else if !flag {
+        eprintln!(
+            "note: workspace {} is untrusted; project permission/allow/hooks/mcp/base-url settings are ignored (pass --trust to apply)",
+            cwd.display()
+        );
+    }
+    false
+}
+
+fn print_config_warnings(core: &Core) {
+    for w in &core.config().warnings {
+        eprintln!("warning: {w}");
+    }
 }
 
 fn flow_dirs(cwd: &std::path::Path) -> Vec<PathBuf> {
@@ -344,7 +468,14 @@ async fn run_flow(cwd: PathBuf, action: FlowAction) -> i32 {
             yes,
             provider,
             model,
-        } => run_flow_exec(cwd, name, resume, yes, provider, model).await,
+            trust,
+        } => {
+            let trusted = resolve_trust(&cwd, trust, false);
+            if trusted {
+                vak_config::load_env_file(std::path::Path::new(".env"));
+            }
+            run_flow_exec(cwd, name, resume, yes, provider, model, trusted).await
+        }
     }
 }
 
@@ -355,8 +486,9 @@ async fn run_flow_exec(
     yes: bool,
     provider_flag: Option<String>,
     model_flag: Option<String>,
+    trusted: bool,
 ) -> i32 {
-    let core = match Core::new(cwd.clone()) {
+    let core = match Core::new_with_trust(cwd.clone(), trusted) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");
@@ -531,14 +663,15 @@ fn load_state(state_path: &PathBuf, flow_name: &str, definition_toml: &str) -> v
     }
 }
 
-async fn run_tui(cwd: PathBuf) -> i32 {
-    let core = match Core::new(cwd.clone()) {
+async fn run_tui(cwd: PathBuf, trusted: bool) -> i32 {
+    let core = match Core::new_with_trust(cwd.clone(), trusted) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");
             return 2;
         }
     };
+    print_config_warnings(&core);
     vak_tui::run(core, vak_tui::UiConfig { cwd }).await
 }
 
@@ -554,6 +687,7 @@ async fn run_exec(
     permission_mode: Option<String>,
     worktree: bool,
     resume_session: Option<String>,
+    trusted: bool,
 ) -> i32 {
     let mut effective_cwd = cwd.clone();
     let mut created_worktree: Option<vak_core::worktree::Worktree> = None;
@@ -570,13 +704,14 @@ async fn run_exec(
             }
         }
     }
-    let core = match Core::new(effective_cwd.clone()) {
+    let core = match Core::new_with_trust(effective_cwd.clone(), trusted) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");
             return 2;
         }
     };
+    print_config_warnings(&core);
     if let Some(m) = model {
         core.set_model(m);
     }
@@ -785,7 +920,7 @@ fn run_sessions_list(cwd: PathBuf) {
     }
 }
 
-async fn run_plan(cwd: PathBuf, task: String, yes: bool, worktree: bool) -> i32 {
+async fn run_plan(cwd: PathBuf, task: String, yes: bool, worktree: bool, trusted: bool) -> i32 {
     let mut effective_cwd = cwd.clone();
     if worktree {
         match vak_core::worktree::create(&cwd, &format!("plan-{}", timestamp_id())) {
@@ -799,7 +934,7 @@ async fn run_plan(cwd: PathBuf, task: String, yes: bool, worktree: bool) -> i32 
             }
         }
     }
-    let core = match Core::new(effective_cwd.clone()) {
+    let core = match Core::new_with_trust(effective_cwd.clone(), trusted) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");
@@ -997,14 +1132,15 @@ async fn run_eval(
     if passed == total { 0 } else { 1 }
 }
 
-async fn run_serve(cwd: PathBuf, port: u16) -> i32 {
-    let core = match Core::new(cwd) {
+async fn run_serve(cwd: PathBuf, port: u16, trusted: bool) -> i32 {
+    let core = match Core::new_with_trust(cwd, trusted) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");
             return 2;
         }
     };
+    print_config_warnings(&core);
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     match vak_server::serve(core, addr).await {
         Ok(()) => 0,

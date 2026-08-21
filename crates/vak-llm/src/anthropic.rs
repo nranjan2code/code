@@ -50,7 +50,14 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
         "stream": true,
     });
     if let Some(system) = &request.system {
-        body["system"] = Value::String(system.clone());
+        // Prompt caching: the system prompt is stable across turns, so mark
+        // it ephemeral-cachable — long sessions stop re-paying full input
+        // cost every request.
+        body["system"] = serde_json::json!([{
+            "type": "text",
+            "text": system,
+            "cache_control": {"type": "ephemeral"}
+        }]);
     }
     if let Some(t) = request.temperature {
         body["temperature"] = serde_json::json!(t);
@@ -308,7 +315,9 @@ impl Accumulator {
                     },
                 })
             }
-            other => Err(LlmError::Parse(format!("unknown event type: {other}"))),
+            // Unknown event types are additive provider extensions; a new
+            // type from the server must never fail an in-flight request.
+            _other => Ok(None),
         }
     }
 }
@@ -394,7 +403,7 @@ async fn drive_stream<S>(
     byte_stream: &mut S,
     decoder: &mut SseDecoder,
     acc: &mut Accumulator,
-    sink: EventSink,
+    mut sink: EventSink,
     cancel: CancellationToken,
 ) where
     S: futures::Stream<Item = reqwest::Result<bytes::Bytes>> + Unpin,
@@ -404,7 +413,7 @@ async fn drive_stream<S>(
         tokio::select! {
             _ = cancel.cancelled() => {
                 let partial = (!acc.message.content.is_empty()).then(|| acc.message.clone());
-                sink.close_error(LlmError::Aborted { partial });
+                sink.close_error(LlmError::Aborted { partial }).await;
                 return;
             }
             chunk = byte_stream.next() => {
@@ -421,23 +430,23 @@ async fn drive_stream<S>(
                                 }
                                 Ok(None) => {}
                                 Err(e) => {
-                                    sink.close_error(e);
+                                    sink.close_error(e).await;
                                     return;
                                 }
                             }
                         }
                     }
                     Some(Err(e)) => {
-                        sink.close_error(LlmError::Network(e.to_string()));
+                        sink.close_error(LlmError::Network(e.to_string())).await;
                         return;
                     }
                     None => {
                         if saw_end {
-                            sink.close_message(acc.message.clone());
+                            sink.close_message(acc.message.clone()).await;
                         } else {
                             sink.close_error(LlmError::Parse(
                                 "stream closed before message_stop".into(),
-                            ));
+                            )).await;
                         }
                         return;
                     }

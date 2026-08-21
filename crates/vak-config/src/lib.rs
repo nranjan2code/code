@@ -164,15 +164,47 @@ fn dirs_home() -> Option<PathBuf> {
 }
 
 pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
-    let warnings = Vec::new();
+    load_with_trust(cwd, true)
+}
+
+/// Keys a PROJECT-level config may not set when its workspace has not been
+/// marked trusted: they grant execution or redirect credentials.
+const PRIVILEGED_KEYS_NOTICE: &str =
+    "permission_mode, allow, hooks, anthropic_base_url, mcp.servers";
+
+pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
+    let mut warnings = Vec::new();
     let mut layers: Vec<FileConfig> = vec![FileConfig::default()];
 
     if let Some(gp) = global_path().filter(|gp| gp.is_file()) {
-        layers.push(parse_file(&gp)?);
+        let (fc, w) = parse_file(&gp)?;
+        warnings.extend(w);
+        layers.push(fc);
     }
     let pp = project_path(cwd);
     if pp.is_file() {
-        layers.push(parse_file(&pp)?);
+        let (mut fc, w) = parse_file(&pp)?;
+        warnings.extend(w);
+        if !trust_project {
+            // A repository must not be able to configure itself into
+            // execution power on first run. Restrictive keys (deny/ask)
+            // still apply.
+            if fc.permission_mode.is_some() {
+                fc.permission_mode = None;
+            }
+            if fc.anthropic_base_url.is_some() {
+                fc.anthropic_base_url = None;
+            }
+            fc.allow.clear();
+            fc.hooks.clear();
+            fc.mcp.servers.clear();
+            warnings.push(format!(
+                "project .vakcoder/config.toml is not trusted for this workspace; \
+                 ignored privileged keys ({PRIVILEGED_KEYS_NOTICE}). \
+                 Re-run and confirm the workspace prompt, or pass --trust, to apply them."
+            ));
+        }
+        layers.push(fc);
     }
 
     let mut merged = FileConfig::default();
@@ -265,15 +297,110 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
     Ok(cfg)
 }
 
-fn parse_file(path: &Path) -> Result<FileConfig, ConfigError> {
+fn parse_file(path: &Path) -> Result<(FileConfig, Vec<String>), ConfigError> {
     let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
         path: path.to_path_buf(),
         source,
     })?;
-    toml::from_str(&text).map_err(|source| ConfigError::Parse {
+    let fc: FileConfig = toml::from_str(&text).map_err(|source| ConfigError::Parse {
         path: path.to_path_buf(),
         source,
-    })
+    })?;
+    let warnings = unknown_key_warnings(path, &text);
+    Ok((fc, warnings))
+}
+
+const KNOWN_TOP_KEYS: &[&str] = &[
+    "provider",
+    "model",
+    "max_tokens",
+    "max_turns",
+    "permission_mode",
+    "profile",
+    "profiles",
+    "anthropic_base_url",
+    "allow",
+    "ask",
+    "deny",
+    "subagents",
+    "hooks",
+    "max_retries",
+    "retry_base_backoff_ms",
+    "request_timeout_secs",
+    "circuit_breaker_threshold",
+    "circuit_breaker_cooldown_secs",
+    "context_window",
+    "mcp",
+];
+const KNOWN_PROFILE_KEYS: &[&str] = &["model", "provider", "permission_mode", "max_turns"];
+const KNOWN_HOOK_KEYS: &[&str] = &["event", "match", "command", "timeout_ms"];
+const KNOWN_MCP_SERVER_KEYS: &[&str] = &["command", "args", "env"];
+
+/// A typo'd key must be visible, not silently dead: diff the raw TOML
+/// against the known schema and surface every unrecognized key.
+fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
+    let Ok(v) = toml::from_str::<toml::Value>(text) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let Some(top) = v.as_table() else {
+        return out;
+    };
+    for key in top.keys() {
+        if !KNOWN_TOP_KEYS.contains(&key.as_str()) {
+            out.push(format!(
+                "{}: unknown config key '{key}' (ignored)",
+                path.display()
+            ));
+        }
+    }
+    if let Some(profiles) = top.get("profiles").and_then(toml::Value::as_table) {
+        for (name, t) in profiles {
+            if let Some(t) = t.as_table() {
+                for key in t.keys() {
+                    if !KNOWN_PROFILE_KEYS.contains(&key.as_str()) {
+                        out.push(format!(
+                            "{}: unknown profile key 'profiles.{name}.{key}' (ignored)",
+                            path.display()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    if let Some(hooks) = top.get("hooks").and_then(toml::Value::as_array) {
+        for (i, h) in hooks.iter().enumerate() {
+            if let Some(h) = h.as_table() {
+                for key in h.keys() {
+                    if !KNOWN_HOOK_KEYS.contains(&key.as_str()) {
+                        out.push(format!(
+                            "{}: unknown hook key 'hooks[{i}].{key}' (ignored)",
+                            path.display()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    if let Some(servers) = top
+        .get("mcp")
+        .and_then(|m| m.get("servers"))
+        .and_then(toml::Value::as_table)
+    {
+        for (name, t) in servers {
+            if let Some(t) = t.as_table() {
+                for key in t.keys() {
+                    if !KNOWN_MCP_SERVER_KEYS.contains(&key.as_str()) {
+                        out.push(format!(
+                            "{}: unknown mcp server key 'mcp.servers.{name}.{key}' (ignored)",
+                            path.display()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 fn merge_into(base: &mut FileConfig, over: FileConfig) {

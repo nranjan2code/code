@@ -37,7 +37,7 @@ impl Provider for Scripted {
         _cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
         let next = self.steps.lock().unwrap().pop_front();
-        let (sink, rx) = stream::channel(64);
+        let (mut sink, rx) = stream::channel(64);
         match next {
             Some(Step::Text(t)) => {
                 let msg = AssistantMessage {
@@ -49,10 +49,10 @@ impl Provider for Scripted {
                 sink.push(stream::StreamEvent::Start {
                     partial: msg.clone(),
                 });
-                sink.close_message(msg);
+                sink.close_message(msg).await;
             }
-            Some(Step::Err(e)) => sink.close_error(e),
-            None => sink.close_error(LlmError::Parse("exhausted".into())),
+            Some(Step::Err(e)) => sink.close_error(e).await,
+            None => sink.close_error(LlmError::Parse("exhausted".into())).await,
         }
         Ok(rx)
     }

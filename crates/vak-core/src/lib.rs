@@ -31,6 +31,8 @@ pub enum CoreError {
     Llm(#[from] vak_llm::LlmError),
     #[error("permission rule error: {0}")]
     Rule(#[from] vak_permission::RuleError),
+    #[error("blocked by hook: {0}")]
+    HookBlocked(String),
     #[error("internal: permission engine missing")]
     MissingEngine,
 }
@@ -56,7 +58,15 @@ pub struct Core {
 
 impl Core {
     pub fn new(cwd: PathBuf) -> Result<Self, CoreError> {
-        let config = vak_config::load(&cwd)?;
+        Self::new_with_trust(cwd, true)
+    }
+
+    /// `trust_project_config == false` demotes privileged project-layer
+    /// keys (permission_mode, allow, hooks, base URLs, mcp servers) so a
+    /// cloned repository cannot grant itself full access, auto-approvals,
+    /// or hook/base-URL redirection on first run.
+    pub fn new_with_trust(cwd: PathBuf, trust_project_config: bool) -> Result<Self, CoreError> {
+        let config = vak_config::load_with_trust(&cwd, trust_project_config)?;
         let sessions_home = vak_config::get_var("VAKCODER_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
@@ -390,6 +400,7 @@ impl Core {
             ))
         };
         cfg.context_policy.context_window = self.inner.config.context_window;
+        cfg.context_policy.max_output = u64::from(self.inner.config.max_tokens);
         cfg.circuit_breaker = Some(self.inner.breaker.clone());
         cfg.approver = approver.clone();
         cfg.mode = match self.effective_permission_mode() {
@@ -448,7 +459,36 @@ impl Core {
             tools.push(Arc::new(vak_mcp::McpTool::new(manager)));
         }
         cfg.tools = tools;
-        cfg.hooks = Some(Arc::new(build_hooks(&self.inner.config)?));
+        let hooks: Option<std::sync::Arc<Vec<vak_hooks::HookDef>>> =
+            Some(std::sync::Arc::new(build_hooks(&self.inner.config)?));
+        cfg.hooks = hooks.clone();
+
+        // session-start hooks fire once per run, before any tool or
+        // checkpoint activity. A block aborts the run before it starts.
+        if let Some(hook_defs) = &hooks
+            && hook_defs
+                .iter()
+                .any(|h| h.event == vak_hooks::HookEvent::SessionStart)
+        {
+            let session_id = session
+                .header()
+                .map(|h| h.session_id.clone())
+                .unwrap_or_default();
+            let outcome = vak_hooks::run_hooks(
+                hook_defs.clone(),
+                vak_hooks::HookEvent::SessionStart,
+                &session_id,
+                &self.inner.cwd,
+                None,
+                None,
+                &cancel,
+            )
+            .await;
+            if outcome.blocked {
+                let reason = outcome.reason.unwrap_or_else(|| "blocked by hook".into());
+                return Err(CoreError::HookBlocked(format!("session-start: {reason}")));
+            }
+        }
 
         // Checkpoint the workspace before any mutation of this run.
         if let Some(h) = session.header() {
@@ -544,13 +584,12 @@ impl KebabLower for str {
     }
 }
 
+/// Session ids are UUIDv7, matching entry ids in the same tree: time-
+/// ordered and collision-safe even across clock rewinds (the previous
+/// nanosecond-hex scheme appended a second header onto an existing file
+/// on collision).
 fn uuid_like() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    format!("{nanos:032x}")
+    uuid::Uuid::now_v7().to_string()
 }
 
 pub fn build_hooks(config: &vak_config::Config) -> Result<Vec<vak_hooks::HookDef>, CoreError> {

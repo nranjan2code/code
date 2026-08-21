@@ -57,12 +57,13 @@ impl Provider for MultiScripted {
         _cancel: CancellationToken,
     ) -> Result<vak_llm::EventStream, vak_llm::LlmError> {
         let next = self.msgs.lock().unwrap().pop_front();
-        let (sink, rx) = vak_llm::stream::channel(8);
+        let (mut sink, rx) = vak_llm::stream::channel(8);
         if let Some(m) = next {
             sink.push(vak_llm::stream::StreamEvent::Start { partial: m.clone() });
-            sink.close_message(m);
+            sink.close_message(m).await;
         } else {
-            sink.close_error(vak_llm::LlmError::Parse("exhausted".into()));
+            sink.close_error(vak_llm::LlmError::Parse("exhausted".into()))
+                .await;
         }
         Ok(rx)
     }

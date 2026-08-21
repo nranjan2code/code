@@ -72,14 +72,21 @@ impl EventSink {
         let _ = self.tx.try_send(Wire::Event(event));
     }
 
-    pub fn close_message(mut self, message: AssistantMessage) {
+    /// Terminal delivery is awaited, never `try_send`: a full buffer at
+    /// message_stop must not turn a completed model turn into
+    /// "stream ended without a terminal event". Callers run inside the
+    /// provider's spawned stream task, so awaiting here is safe.
+    pub async fn close_message(&mut self, message: AssistantMessage) {
         self.closed = true;
-        let _ = self.tx.try_send(Wire::Terminal(Terminal::Message(message)));
+        let _ = self
+            .tx
+            .send(Wire::Terminal(Terminal::Message(message)))
+            .await;
     }
 
-    pub fn close_error(mut self, error: LlmError) {
+    pub async fn close_error(&mut self, error: LlmError) {
         self.closed = true;
-        let _ = self.tx.try_send(Wire::Terminal(Terminal::Error(error)));
+        let _ = self.tx.send(Wire::Terminal(Terminal::Error(error))).await;
     }
 }
 
