@@ -30,4 +30,14 @@ impl LlmError {
             LlmError::RateLimit { .. } | LlmError::Overloaded(_) | LlmError::Network(_)
         )
     }
+
+    /// Server-advised wait for RateLimit; None otherwise.
+    pub fn retry_after_secs(&self) -> Option<u64> {
+        match self {
+            LlmError::RateLimit {
+                retry_after_secs, ..
+            } => *retry_after_secs,
+            _ => None,
+        }
+    }
 }

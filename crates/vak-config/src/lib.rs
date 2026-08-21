@@ -54,6 +54,9 @@ pub struct FileConfig {
     pub subagents: Option<bool>,
     #[serde(default)]
     pub hooks: Vec<HookConfig>,
+    pub max_retries: Option<u32>,
+    pub retry_base_backoff_ms: Option<u64>,
+    pub request_timeout_secs: Option<u64>,
     #[serde(default)]
     pub mcp: McpConfig,
 }
@@ -95,6 +98,9 @@ pub struct Config {
     pub deny: Vec<String>,
     pub subagents: bool,
     pub hooks: Vec<HookConfig>,
+    pub max_retries: u32,
+    pub retry_base_backoff_ms: u64,
+    pub request_timeout_secs: u64,
     pub mcp: McpConfig,
     pub warnings: Vec<String>,
 }
@@ -113,6 +119,9 @@ impl Default for Config {
             deny: Vec::new(),
             subagents: true,
             hooks: Vec::new(),
+            max_retries: 3,
+            retry_base_backoff_ms: 500,
+            request_timeout_secs: 600,
             mcp: McpConfig::default(),
             warnings: Vec::new(),
         }
@@ -195,6 +204,15 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
     if let Some(sa) = merged.subagents {
         cfg.subagents = sa;
     }
+    if let Some(r) = merged.max_retries {
+        cfg.max_retries = r;
+    }
+    if let Some(ms) = merged.retry_base_backoff_ms {
+        cfg.retry_base_backoff_ms = ms;
+    }
+    if let Some(secs) = merged.request_timeout_secs {
+        cfg.request_timeout_secs = secs;
+    }
     cfg.hooks = merged.hooks;
     for (name, srv) in merged.mcp.servers {
         cfg.mcp.servers.insert(name, srv);
@@ -272,6 +290,15 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.subagents.is_some() {
         base.subagents = over.subagents;
+    }
+    if over.max_retries.is_some() {
+        base.max_retries = over.max_retries;
+    }
+    if over.retry_base_backoff_ms.is_some() {
+        base.retry_base_backoff_ms = over.retry_base_backoff_ms;
+    }
+    if over.request_timeout_secs.is_some() {
+        base.request_timeout_secs = over.request_timeout_secs;
     }
     base.hooks.extend(over.hooks);
     for (name, srv) in over.mcp.servers {

@@ -37,6 +37,9 @@ enum Command {
         /// Run in an isolated git worktree off HEAD
         #[arg(long)]
         worktree: bool,
+        /// Resume an existing session instead of starting a new one
+        #[arg(long)]
+        session: Option<String>,
     },
     /// Show the effective composed configuration
     Config {
@@ -205,6 +208,7 @@ async fn main() {
             yes,
             permission_mode,
             worktree,
+            session,
         }) => {
             run_exec(
                 cwd,
@@ -216,6 +220,7 @@ async fn main() {
                 yes,
                 permission_mode,
                 worktree,
+                session,
             )
             .await
         }
@@ -509,6 +514,7 @@ async fn run_exec(
     yes: bool,
     permission_mode: Option<String>,
     worktree: bool,
+    resume_session: Option<String>,
 ) -> i32 {
     let mut effective_cwd = cwd.clone();
     let mut created_worktree: Option<vak_core::worktree::Worktree> = None;
@@ -551,12 +557,24 @@ async fn run_exec(
         }
     }
 
-    let session = match core.start_session().await {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return 2;
-        }
+    let session = match resume_session {
+        Some(sid) => match core.open_session(&sid).await {
+            Ok(s) => {
+                eprintln!("▸ resuming session {sid}");
+                s
+            }
+            Err(e) => {
+                eprintln!("error: cannot open session '{sid}': {e}");
+                return 2;
+            }
+        },
+        None => match core.start_session().await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 2;
+            }
+        },
     };
     let session_path = session.path().to_path_buf();
 

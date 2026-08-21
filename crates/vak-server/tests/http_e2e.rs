@@ -293,3 +293,92 @@ async fn approval_flow_resolves_over_http() {
     assert!(answered, "an approval request must have been published");
     assert!(saw_finish, "run must finish after inline approval");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancel_endpoint_stops_a_running_session() {
+    // A provider that hangs until cancelled — mirrors a stalled stream.
+    struct Hung;
+    #[async_trait::async_trait]
+    impl Provider for Hung {
+        fn name(&self) -> &str {
+            "hung"
+        }
+        async fn stream(
+            &self,
+            _r: ChatRequest,
+            cancel: CancellationToken,
+        ) -> Result<EventStream, LlmError> {
+            let (sink, rx) = stream::channel(8);
+            sink.push(stream::StreamEvent::Start {
+                partial: AssistantMessage::empty("m"),
+            });
+            tokio::spawn(async move {
+                let _keep = sink;
+                tokio::select! {
+                    _ = cancel.cancelled() => {}
+                    _ = std::future::pending::<()>() => {}
+                }
+            });
+            Ok(rx)
+        }
+    }
+
+    let (base, _server) =
+        spawn_server(Arc::new(Hung), vak_config::PermissionMode::FullAccess).await;
+    let client = reqwest::Client::new();
+
+    let session_id: String = client
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Wait for the stream-open marker, then start the run.
+    let sse_url = format!("{base}/sessions/{session_id}/events");
+    let opened = reqwest::get(&sse_url).await.unwrap();
+    use futures::StreamExt;
+    let mut events = opened.bytes_stream();
+    let mut saw_cancelled = false;
+
+    let reader = tokio::spawn(async move {
+        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        while std::time::Instant::now() < deadline {
+            if let Some(Ok(chunk)) = events.next().await {
+                let text = String::from_utf8_lossy(&chunk);
+                if text.contains("RunFinished") && text.contains("cancelled") {
+                    saw_cancelled = true;
+                    break;
+                }
+            }
+        }
+        saw_cancelled
+    });
+
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({"prompt": "hang forever"}))
+        .send()
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let res = client
+        .post(format!("{base}/sessions/{session_id}/cancel"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 202);
+
+    let saw = tokio::time::timeout(Duration::from_secs(9), reader)
+        .await
+        .expect("reader timed out")
+        .unwrap();
+    assert!(saw, "RunFinished(cancelled) must be observed after /cancel");
+}

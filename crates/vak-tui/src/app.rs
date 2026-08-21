@@ -301,6 +301,14 @@ fn render_agent_event(
             *total_in += usage.input_tokens;
             *total_out += usage.output_tokens;
         }
+        AgentEvent::RetryScheduled {
+            attempt,
+            delay_ms,
+            reason,
+        } => {
+            screen.clear_input_row();
+            screen.dim(&format!("⟳ retry {attempt} in {delay_ms}ms — {reason}"));
+        }
         AgentEvent::TurnStart { .. } => {}
         AgentEvent::StopHookContinuation { reason } => {
             screen.clear_input_row();

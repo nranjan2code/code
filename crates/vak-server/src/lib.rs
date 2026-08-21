@@ -120,6 +120,7 @@ pub fn router(core: Core) -> Router {
         .route("/sessions", post(create_session))
         .route("/sessions/{id}/run", post(run_prompt))
         .route("/sessions/{id}/steering", post(send_steering))
+        .route("/sessions/{id}/cancel", post(cancel_run))
         .route("/sessions/{id}/approvals/{req_id}", post(answer_approval))
         .route("/sessions/{id}/events", get(events_sse))
         .route("/sessions/{id}/transcript", get(transcript))
@@ -129,7 +130,12 @@ pub fn router(core: Core) -> Router {
 pub async fn serve(core: Core, addr: std::net::SocketAddr) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     eprintln!("vakcoder server listening on http://{addr}");
-    axum::serve(listener, router(core)).await
+    axum::serve(listener, router(core))
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+            eprintln!("\n[shutting down: draining connections]");
+        })
+        .await
 }
 
 async fn health() -> &'static str {
@@ -267,6 +273,17 @@ async fn send_steering(
         return StatusCode::NOT_FOUND;
     };
     handle.steering.push_steering(body.text);
+    StatusCode::ACCEPTED
+}
+
+async fn cancel_run(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
+    let Some(handle) = state.get(&id) else {
+        return StatusCode::NOT_FOUND;
+    };
+    handle.cancel.cancel();
+    let _ = handle.events_tx.send(AgentEvent::RunFinished {
+        summary: "cancelled by client".into(),
+    });
     StatusCode::ACCEPTED
 }
 

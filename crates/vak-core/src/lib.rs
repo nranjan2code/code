@@ -147,6 +147,16 @@ impl Core {
         &self.inner.cwd
     }
 
+    /// Reopens an existing session ledger for resumed runs.
+    pub async fn open_session(&self, session_id: &str) -> Result<SessionLog, CoreError> {
+        let path = vak_session::SessionPath::new_session_file(
+            &self.sessions_home(),
+            &self.inner.cwd,
+            session_id,
+        );
+        Ok(SessionLog::open(path)?)
+    }
+
     /// SDK seam: relocate session storage (tests, embedded runtimes).
     pub fn set_sessions_home(&self, path: PathBuf) {
         if let Ok(mut h) = self.inner.sessions_home_override.lock() {
@@ -349,6 +359,15 @@ impl Core {
         cfg.tools = vak_tools::default_tools();
         cfg.max_turns = self.effective_max_turns();
         cfg.parallel_tools = true;
+        cfg.max_retries = self.inner.config.max_retries;
+        cfg.retry_base_backoff_ms = self.inner.config.retry_base_backoff_ms;
+        cfg.request_timeout = if self.inner.config.request_timeout_secs == 0 {
+            None
+        } else {
+            Some(std::time::Duration::from_secs(
+                self.inner.config.request_timeout_secs,
+            ))
+        };
         cfg.approver = approver.clone();
         cfg.mode = match self.effective_permission_mode() {
             vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,

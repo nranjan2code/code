@@ -47,6 +47,11 @@ pub enum AgentEvent {
     StopHookContinuation {
         reason: String,
     },
+    RetryScheduled {
+        attempt: u32,
+        delay_ms: u64,
+        reason: String,
+    },
     StreamOpened,
     ApprovalRequested {
         id: String,
@@ -77,6 +82,12 @@ pub struct AgentConfig {
     pub approver: Option<Arc<dyn Approver>>,
     pub sandbox: Option<Arc<dyn vak_tools::sandbox::Sandbox>>,
     pub hooks: Option<Arc<Vec<vak_hooks::HookDef>>>,
+    /// Retries for transient provider errors (429/529/network) per step.
+    pub max_retries: u32,
+    /// Exponential backoff base: delay = base * 2^(attempt-1), jittered.
+    pub retry_base_backoff_ms: u64,
+    /// Whole-step deadline (connect + stream + collect). None disables.
+    pub request_timeout: Option<std::time::Duration>,
 }
 
 impl AgentConfig {
@@ -92,6 +103,9 @@ impl AgentConfig {
             approver: None,
             sandbox: None,
             hooks: None,
+            max_retries: 3,
+            retry_base_backoff_ms: 500,
+            request_timeout: Some(std::time::Duration::from_secs(600)),
         }
     }
 }
@@ -182,7 +196,7 @@ impl Agent {
 
             let _ = events.send(AgentEvent::TurnStart { turn }).await;
 
-            let request = {
+            let base_request = {
                 let session = self.session.lock().await;
                 let model = if self.config.model.is_empty() {
                     session
@@ -201,27 +215,70 @@ impl Agent {
                     temperature: None,
                 }
             };
+            let request = base_request.clone();
 
-            let mut stream = match self.provider.stream(request, cancel.clone()).await {
-                Ok(s) => s,
-                Err(e) => return llm_error_outcome(e),
-            };
-
-            while let Some(ev) = futures::StreamExt::next(&mut stream).await {
-                if events.send(AgentEvent::Stream(ev)).await.is_err() {
-                    cancel.cancel();
+            // One model step = connect + stream + collect. Transient
+            // failures (429/529/network/deadline) are retried with
+            // exponential backoff honoring Retry-After; user aborts and
+            // partial-output aborts are never retried.
+            let mut attempt: u32 = 0;
+            let response = loop {
+                if cancel.is_cancelled() {
+                    return TurnOutcome::Aborted { partial: None };
                 }
-            }
-
-            let response = match stream.result().await {
-                Ok(r) => r,
-                Err(LlmError::Aborted { partial }) => {
-                    if let Some(p) = &partial {
-                        self.append_assistant(p).await;
+                let request = request.clone();
+                let step = async {
+                    let mut stream = self.provider.stream(request, cancel.clone()).await?;
+                    while let Some(ev) = futures::StreamExt::next(&mut stream).await {
+                        if events.send(AgentEvent::Stream(ev)).await.is_err() {
+                            cancel.cancel();
+                        }
                     }
-                    return TurnOutcome::Aborted { partial };
+                    stream.result().await
+                };
+
+                let outcome = match self.config.request_timeout {
+                    Some(t) => match tokio::time::timeout(t, step).await {
+                        Ok(r) => r,
+                        Err(_) => Err(LlmError::Network(format!(
+                            "model step exceeded deadline of {}s",
+                            t.as_secs()
+                        ))),
+                    },
+                    None => step.await,
+                };
+
+                match outcome {
+                    Ok(r) => break r,
+                    Err(LlmError::Aborted { partial }) => {
+                        if let Some(p) = &partial {
+                            self.append_assistant(p).await;
+                        }
+                        return TurnOutcome::Aborted { partial };
+                    }
+                    Err(e) if e.is_retryable() && attempt < self.config.max_retries => {
+                        attempt += 1;
+                        let delay = backoff_delay(
+                            attempt,
+                            e.retry_after_secs(),
+                            self.config.retry_base_backoff_ms,
+                        );
+                        let _ = events
+                            .send(AgentEvent::RetryScheduled {
+                                attempt,
+                                delay_ms: delay.as_millis() as u64,
+                                reason: e.to_string(),
+                            })
+                            .await;
+                        tokio::select! {
+                            _ = cancel.cancelled() => {
+                                return TurnOutcome::Aborted { partial: None };
+                            }
+                            _ = tokio::time::sleep(delay) => {}
+                        }
+                    }
+                    Err(e) => return TurnOutcome::Failed { error: e },
                 }
-                Err(e) => return TurnOutcome::Failed { error: e },
             };
 
             let usage = response.usage.clone();
@@ -617,9 +674,20 @@ fn extract_tool_calls(response: &AssistantMessage) -> Vec<PendingToolCall> {
         .collect()
 }
 
-fn llm_error_outcome(e: LlmError) -> TurnOutcome {
-    match e {
-        LlmError::Aborted { partial } => TurnOutcome::Aborted { partial },
-        other => TurnOutcome::Failed { error: other },
+fn backoff_delay(attempt: u32, retry_after_secs: Option<u64>, base_ms: u64) -> std::time::Duration {
+    if let Some(secs) = retry_after_secs {
+        return std::time::Duration::from_secs(secs.max(1));
     }
+    let exp = base_ms.saturating_mul(1u64 << (attempt - 1).min(6));
+    let jitter = rand_jitter(exp);
+    std::time::Duration::from_millis((exp / 2).max(1).saturating_add(jitter).min(30_000))
+}
+
+fn rand_jitter(ms: u64) -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static STATE: AtomicU64 = AtomicU64::new(0);
+    let x = STATE
+        .fetch_add(0x9E3779B97F4A7C15, Ordering::Relaxed)
+        .wrapping_add(0x9E3779B97F4A7C15);
+    (x >> 33) % ms.max(2)
 }
