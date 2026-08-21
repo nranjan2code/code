@@ -100,6 +100,10 @@ enum FlowAction {
         resume: bool,
         #[arg(long)]
         yes: bool,
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
     },
 }
 
@@ -334,11 +338,24 @@ async fn run_flow(cwd: PathBuf, action: FlowAction) -> i32 {
                 }
             }
         }
-        FlowAction::Run { name, resume, yes } => run_flow_exec(cwd, name, resume, yes).await,
+        FlowAction::Run {
+            name,
+            resume,
+            yes,
+            provider,
+            model,
+        } => run_flow_exec(cwd, name, resume, yes, provider, model).await,
     }
 }
 
-async fn run_flow_exec(cwd: PathBuf, name: String, resume: bool, yes: bool) -> i32 {
+async fn run_flow_exec(
+    cwd: PathBuf,
+    name: String,
+    resume: bool,
+    yes: bool,
+    provider_flag: Option<String>,
+    model_flag: Option<String>,
+) -> i32 {
     let core = match Core::new(cwd.clone()) {
         Ok(c) => c,
         Err(e) => {
@@ -362,6 +379,12 @@ async fn run_flow_exec(cwd: PathBuf, name: String, resume: bool, yes: bool) -> i
         }
     };
 
+    if let Some(p) = provider_flag {
+        core.set_provider(p);
+    }
+    if let Some(m) = model_flag {
+        core.set_model(m);
+    }
     let provider = match core.provider() {
         Ok(p) => p,
         Err(e) => {
