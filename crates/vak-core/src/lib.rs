@@ -131,8 +131,9 @@ impl Core {
         cfg.tools = vak_tools::default_tools();
         cfg.max_turns = self.config.max_turns;
         cfg.parallel_tools = true;
+        let steering = vak_agent::SteeringQueues::new();
         let mut agent = Agent::new(provider, session, cfg);
-        Ok(agent.run(prompt, cancel, events).await)
+        Ok(agent.run(prompt, &steering, cancel, events).await)
     }
 }
 

@@ -76,7 +76,6 @@ pub struct Agent {
     provider: Arc<dyn Provider>,
     pub session: Mutex<SessionLog>,
     pub config: AgentConfig,
-    pub steering: SteeringQueues,
 }
 
 impl Agent {
@@ -85,13 +84,13 @@ impl Agent {
             provider,
             session: Mutex::new(session),
             config,
-            steering: SteeringQueues::default(),
         }
     }
 
     pub async fn run(
         &mut self,
         prompt: &str,
+        steering: &SteeringQueues,
         cancel: CancellationToken,
         events: mpsc::Sender<AgentEvent>,
     ) -> TurnOutcome {
@@ -119,7 +118,7 @@ impl Agent {
 
             {
                 let mut session = self.session.lock().await;
-                for text in self.steering.drain(DrainMode::OneAtATime) {
+                for text in steering.drain(DrainMode::OneAtATime) {
                     let _ = session.append_message(MessageRecord {
                         message: Message::user_text(text),
                         meta: None,

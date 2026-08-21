@@ -7,6 +7,7 @@ members = [
     "crates/vak-agent",
     "crates/vak-config",
     "crates/vak-core",
+    "crates/vak-tui",
     "crates/vakcoder",
 ]
 
@@ -23,6 +24,9 @@ vak-tools = { path = "crates/vak-tools" }
 vak-agent = { path = "crates/vak-agent" }
 vak-config = { path = "crates/vak-config" }
 vak-core = { path = "crates/vak-core" }
+vak-tui = { path = "crates/vak-tui" }
+
+crossterm = { version = "0.28", features = ["event-stream"] }
 
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }

@@ -12,11 +12,13 @@ use vak_llm::stream::StreamEvent;
 #[command(name = "vakcoder", version, about = "A coding agent harness")]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Interactive terminal UI (default when no subcommand given)
+    Tui,
     /// Run one prompt headless and print the result
     Exec {
         prompt: String,
@@ -47,23 +49,35 @@ async fn main() {
     let cli = Cli::parse();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let code = match cli.command {
-        Command::Exec {
+        None | Some(Command::Tui) => run_tui(cwd).await,
+        Some(Command::Exec {
             prompt,
             model,
             provider,
             max_turns,
             json,
-        } => run_exec(cwd, prompt, model, provider, max_turns, json).await,
-        Command::Config { action: _ } => {
+        }) => run_exec(cwd, prompt, model, provider, max_turns, json).await,
+        Some(Command::Config { .. }) => {
             run_config_dump(cwd);
             0
         }
-        Command::Sessions => {
+        Some(Command::Sessions) => {
             run_sessions_list(cwd);
             0
         }
     };
     std::process::exit(code);
+}
+
+async fn run_tui(cwd: PathBuf) -> i32 {
+    let core = match Core::new(cwd.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    vak_tui::run(core, vak_tui::UiConfig { cwd }).await
 }
 
 async fn run_exec(

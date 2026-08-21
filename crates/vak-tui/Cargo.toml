@@ -1,24 +1,22 @@
 [package]
-name = "vakcoder"
+name = "vak-tui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[[bin]]
-name = "vakcoder"
-path = "src/main.rs"
-
 [dependencies]
-vak-agent = { workspace = true }
-vak-config = { workspace = true }
-vak-core = { workspace = true }
-vak-llm = { workspace = true }
-vak-session = { workspace = true }
-vak-tui = { workspace = true }
-clap = { workspace = true }
+crossterm = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+vak-agent = { workspace = true }
+vak-core = { workspace = true }
+vak-llm = { workspace = true }
+vak-session = { workspace = true }
+vak-tools = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

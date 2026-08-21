@@ -134,7 +134,12 @@ async fn single_turn_no_tools_completes() {
     );
     let outcome = h
         .agent
-        .run("hello", CancellationToken::new(), h.events_tx.clone())
+        .run(
+            "hello",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
         .await;
     match outcome {
         TurnOutcome::Completed { response } => assert_eq!(response.text_content(), "done"),
@@ -159,7 +164,12 @@ async fn tool_roundtrip_executes_and_feeds_result_back() {
     );
     let mut agent = h.agent;
     let outcome = agent
-        .run("run it", CancellationToken::new(), h.events_tx.clone())
+        .run(
+            "run it",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
         .await;
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
 
@@ -195,7 +205,12 @@ async fn unknown_tool_becomes_error_value_not_crash() {
     );
     let mut agent = h.agent;
     let outcome = agent
-        .run("go", CancellationToken::new(), h.events_tx.clone())
+        .run(
+            "go",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
         .await;
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
     let session = agent.session.lock().await;
@@ -242,7 +257,12 @@ async fn parallel_tools_preserve_source_order() {
     h.agent.config.parallel_tools = true;
     let mut agent = h.agent;
     let outcome = agent
-        .run("fan out", CancellationToken::new(), h.events_tx.clone())
+        .run(
+            "fan out",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
         .await;
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
 
@@ -274,7 +294,12 @@ async fn abort_mid_stream_returns_partial_and_persists_it() {
     );
     let mut agent = h.agent;
     let outcome = agent
-        .run("start", CancellationToken::new(), h.events_tx.clone())
+        .run(
+            "start",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
         .await;
     match outcome {
         TurnOutcome::Aborted { partial } => {
@@ -306,6 +331,7 @@ async fn max_turns_guard_stops_runaway_loops() {
     let outcome = agent
         .run(
             "loop forever",
+            &Default::default(),
             CancellationToken::new(),
             h.events_tx.clone(),
         )
@@ -330,6 +356,7 @@ async fn projection_invariant_every_request_message_is_logged() {
     let _ = agent
         .run(
             "invariant check",
+            &Default::default(),
             CancellationToken::new(),
             h.events_tx.clone(),
         )
