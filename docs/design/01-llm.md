@@ -33,8 +33,27 @@ Retries are a caller policy (loop/CLI), never hidden inside the provider.
 
 `Message { role, content: Vec<ContentBlock> }`,
 blocks: `Text | Thinking{signature} | ToolUse{id,name,input} | ToolResult{tool_use_id,content,is_error}`.
-Anthropic maps 1:1; OpenAI-responses/Google adapters translate in Phase 4 with
-cross-provider transforms (thinking→text, tool-id remap, orphan-result repair).
+
+## Provider families
+
+| family | adapter | covers |
+|---|---|---|
+| anthropic-messages | `anthropic.rs` | Anthropic |
+| openai-completions | `openai.rs` | OpenAI, OpenRouter, Ollama, Groq, Together, vLLM, any `/v1/chat/completions` endpoint |
+
+Registry names: `anthropic`, `openai`, `openrouter`, `ollama` (lazy-built,
+cached). Auth via `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` /
+`OPENROUTER_API_KEY`; Ollama needs no key. Base-URL overrides:
+`VAKCODER_{ANTHROPIC,OPENAI,OPENROUTER,OLLAMA}_BASE_URL`.
+
+Cross-provider history conversion happens in the request builders (stateless,
+from the neutral log): OpenAI-family drops `Thinking` blocks, re-emits
+assistant `ToolUse` as `tool_calls` with **original ids preserved** (so a
+session that starts on Anthropic continues cleanly on OpenAI and vice versa),
+and splits user `ToolResult` blocks into one `role:"tool"` message each.
+OpenAI tool-call argument fragments accumulate raw per call index (same
+lesson as Anthropic's `input_json_delta`: partial JSON never round-trips
+through a parsed Value).
 
 ## Testing
 

@@ -88,6 +88,19 @@ pub fn default_registry() -> ProviderRegistry {
             model: String::new(),
         })?))
     });
+
+    use crate::openai::{OPENAI_DEFAULT_BASE_URL, OpenAiCompletionsProvider, OpenAiConfig};
+    let openai_compat = |default_base: &'static str| {
+        move |auth: &ProviderAuth| {
+            Ok(Arc::new(OpenAiCompletionsProvider::new(OpenAiConfig {
+                api_key: auth.api_key.clone(),
+                base_url: auth.base_url.clone().unwrap_or_else(|| default_base.into()),
+            })?) as Arc<dyn Provider>)
+        }
+    };
+    registry.register("openai", openai_compat(OPENAI_DEFAULT_BASE_URL));
+    registry.register("openrouter", openai_compat("https://openrouter.ai/api/v1"));
+    registry.register("ollama", openai_compat("http://localhost:11434/v1"));
     registry
 }
 

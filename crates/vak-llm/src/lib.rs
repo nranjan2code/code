@@ -7,6 +7,7 @@
 
 pub mod anthropic;
 pub mod error;
+pub mod openai;
 pub mod registry;
 pub mod sse;
 pub mod stream;

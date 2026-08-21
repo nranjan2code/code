@@ -159,7 +159,8 @@ impl Core {
     }
 
     fn provider_auth(&self) -> Result<ProviderAuth, CoreError> {
-        match self.inner.config.provider.as_str() {
+        let provider = self.effective_provider();
+        match provider.as_str() {
             "anthropic" => {
                 let api_key =
                     std::env::var("ANTHROPIC_API_KEY").map_err(|_| CoreError::MissingAuth {
@@ -176,6 +177,37 @@ impl Core {
                         .or_else(|| std::env::var("VAKCODER_ANTHROPIC_BASE_URL").ok()),
                 })
             }
+            "openai" | "openrouter" => {
+                let (env, default_base, override_env) = if provider == "openai" {
+                    (
+                        "OPENAI_API_KEY",
+                        "https://api.openai.com/v1",
+                        "VAKCODER_OPENAI_BASE_URL",
+                    )
+                } else {
+                    (
+                        "OPENROUTER_API_KEY",
+                        "https://openrouter.ai/api/v1",
+                        "VAKCODER_OPENROUTER_BASE_URL",
+                    )
+                };
+                let api_key = std::env::var(env).map_err(|_| CoreError::MissingAuth {
+                    env: env.into(),
+                    provider,
+                })?;
+                Ok(ProviderAuth {
+                    api_key,
+                    base_url: std::env::var(override_env)
+                        .ok()
+                        .or_else(|| Some(default_base.into())),
+                })
+            }
+            "ollama" => Ok(ProviderAuth {
+                api_key: "ollama".into(),
+                base_url: std::env::var("VAKCODER_OLLAMA_BASE_URL")
+                    .ok()
+                    .or_else(|| Some("http://localhost:11434/v1".into())),
+            }),
             other => Err(CoreError::MissingAuth {
                 env: format!("(no auth wiring for '{other}' yet)"),
                 provider: other.into(),
@@ -185,10 +217,7 @@ impl Core {
 
     pub fn provider(&self) -> Result<Arc<dyn Provider>, CoreError> {
         let auth = self.provider_auth()?;
-        Ok(self
-            .inner
-            .registry
-            .get(&self.inner.config.provider, &auth)?)
+        Ok(self.inner.registry.get(&self.effective_provider(), &auth)?)
     }
 
     pub async fn start_session(&self) -> Result<SessionLog, CoreError> {
