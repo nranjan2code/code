@@ -57,6 +57,8 @@ uuid = { version = "1", features = ["v7"] }
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
 walkdir = "2"
+# checkpoint file-content encoding
+base64 = "0.22"
 globset = "0.4"
 similar = { version = "2", features = ["text"] }
 libc = "0.2"

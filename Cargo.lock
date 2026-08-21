@@ -1721,7 +1721,11 @@ dependencies = [
 name = "vak-core"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -1733,6 +1737,7 @@ dependencies = [
  "vak-permission",
  "vak-session",
  "vak-tools",
+ "walkdir",
 ]
 
 [[package]]

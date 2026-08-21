@@ -34,6 +34,9 @@ enum Command {
         yes: bool,
         #[arg(long)]
         permission_mode: Option<String>,
+        /// Run in an isolated git worktree off HEAD
+        #[arg(long)]
+        worktree: bool,
     },
     /// Show the effective composed configuration
     Config {
@@ -52,6 +55,9 @@ enum Command {
         task: String,
         #[arg(long)]
         yes: bool,
+        /// Run in an isolated git worktree off HEAD
+        #[arg(long)]
+        worktree: bool,
     },
     /// Run the built-in eval suite (deterministic, in-process)
     Eval {
@@ -63,6 +69,11 @@ enum Command {
     Serve {
         #[arg(long, default_value_t = 8901)]
         port: u16,
+    },
+    /// Workspace checkpoints: list or restore
+    Checkpoints {
+        #[command(subcommand)]
+        action: CheckpointAction,
     },
 }
 
@@ -86,6 +97,99 @@ enum FlowAction {
 enum ConfigAction {
     Dump,
 }
+
+#[derive(Subcommand)]
+enum CheckpointAction {
+    /// List checkpoints for the latest session in this project
+    List {
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// Restore a checkpoint into the workspace
+    Restore { session: String, seq: u32 },
+}
+
+async fn run_checkpoints(cwd: PathBuf, action: CheckpointAction) -> i32 {
+    let core = match Core::new(cwd) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    match action {
+        CheckpointAction::List { session } => {
+            let sid = match session {
+                Some(s) => s,
+                None => match latest_session_id(&core) {
+                    Some(s) => s,
+                    None => {
+                        println!("no sessions yet");
+                        return 0;
+                    }
+                },
+            };
+            match vak_core::checkpoints::list(&core.sessions_home(), &sid) {
+                Ok(list) if list.is_empty() => {
+                    println!("no checkpoints for {sid}");
+                    0
+                }
+                Ok(list) => {
+                    for cp in list {
+                        println!(
+                            "{:04}  {} files  {}  {}",
+                            cp.seq,
+                            cp.files.len(),
+                            cp.created_at.format("%H:%M:%S"),
+                            cp.label.chars().take(60).collect::<String>()
+                        );
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    2
+                }
+            }
+        }
+        CheckpointAction::Restore { session, seq } => {
+            match vak_core::checkpoints::load(&core.sessions_home(), &session, seq) {
+                Ok(cp) => match vak_core::checkpoints::restore(core.cwd(), &cp) {
+                    Ok((restored, deleted)) => {
+                        println!("restored {restored} files, removed {deleted} (checkpoint {seq})");
+                        0
+                    }
+                    Err(e) => {
+                        eprintln!("error: restore failed: {e}");
+                        1
+                    }
+                },
+                Err(e) => {
+                    eprintln!("error: checkpoint not found: {e}");
+                    2
+                }
+            }
+        }
+    }
+}
+
+fn latest_session_id(core: &Core) -> Option<String> {
+    let dir = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
+    let mut rows: Vec<_> = std::fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let meta = e.metadata().ok()?;
+            Some((
+                meta.modified().ok()?,
+                e.file_name().to_string_lossy().into_owned(),
+            ))
+        })
+        .collect();
+    rows.sort_by_key(|(m, _)| std::cmp::Reverse(*m));
+    rows.first()
+        .map(|(_, name)| name.trim_end_matches(".jsonl").to_string())
+}
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -100,6 +204,7 @@ async fn main() {
             json,
             yes,
             permission_mode,
+            worktree,
         }) => {
             run_exec(
                 cwd,
@@ -110,6 +215,7 @@ async fn main() {
                 json,
                 yes,
                 permission_mode,
+                worktree,
             )
             .await
         }
@@ -121,8 +227,13 @@ async fn main() {
             run_sessions_list(cwd);
             0
         }
+        Some(Command::Checkpoints { action }) => run_checkpoints(cwd, action).await,
         Some(Command::Flow { action }) => run_flow(cwd, action).await,
-        Some(Command::Plan { task, yes }) => run_plan(cwd, task, yes).await,
+        Some(Command::Plan {
+            task,
+            yes,
+            worktree,
+        }) => run_plan(cwd, task, yes, worktree).await,
         Some(Command::Eval { report }) => run_eval(report).await,
         Some(Command::Serve { port }) => run_serve(cwd, port).await,
     };
@@ -397,8 +508,24 @@ async fn run_exec(
     _json: bool,
     yes: bool,
     permission_mode: Option<String>,
+    worktree: bool,
 ) -> i32 {
-    let core = match Core::new(cwd.clone()) {
+    let mut effective_cwd = cwd.clone();
+    let mut created_worktree: Option<vak_core::worktree::Worktree> = None;
+    if worktree {
+        match vak_core::worktree::create(&cwd, &format!("exec-{}", timestamp_id())) {
+            Ok(wt) => {
+                eprintln!("▸ isolated worktree: {} ({})", wt.path.display(), wt.branch);
+                effective_cwd = wt.path.clone();
+                created_worktree = Some(wt);
+            }
+            Err(e) => {
+                eprintln!("error: worktree isolation failed: {e}");
+                return 2;
+            }
+        }
+    }
+    let core = match Core::new(effective_cwd.clone()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");
@@ -517,9 +644,27 @@ async fn run_exec(
     );
     if let TurnOutcome::Failed { error } = outcome {
         eprintln!("error: {error}");
+        if let Some(wt) = created_worktree {
+            let _ = vak_core::worktree::remove(&cwd, &wt);
+        }
         return 1;
     }
+    if let Some(wt) = created_worktree {
+        eprintln!(
+            "▸ worktree kept for inspection: {} (branch {}) — remove with git worktree remove",
+            wt.path.display(),
+            wt.branch
+        );
+    }
     0
+}
+
+fn timestamp_id() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .to_string()
 }
 
 fn run_config_dump(cwd: PathBuf) {
@@ -583,8 +728,21 @@ fn run_sessions_list(cwd: PathBuf) {
     }
 }
 
-async fn run_plan(cwd: PathBuf, task: String, yes: bool) -> i32 {
-    let core = match Core::new(cwd.clone()) {
+async fn run_plan(cwd: PathBuf, task: String, yes: bool, worktree: bool) -> i32 {
+    let mut effective_cwd = cwd.clone();
+    if worktree {
+        match vak_core::worktree::create(&cwd, &format!("plan-{}", timestamp_id())) {
+            Ok(wt) => {
+                eprintln!("▸ isolated worktree: {} ({})", wt.path.display(), wt.branch);
+                effective_cwd = wt.path.clone();
+            }
+            Err(e) => {
+                eprintln!("error: worktree isolation failed: {e}");
+                return 2;
+            }
+        }
+    }
+    let core = match Core::new(effective_cwd.clone()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");

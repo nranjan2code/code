@@ -2,7 +2,9 @@
 //! the agent loop behind one entry point. TUI, server, and exec mode are
 //! thin consumers of this crate.
 
+pub mod checkpoints;
 pub mod skills;
+pub mod worktree;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -379,11 +381,30 @@ impl Core {
         cfg.tools = tools;
         cfg.hooks = Some(Arc::new(build_hooks(&self.inner.config)?));
 
+        // Checkpoint the workspace before any mutation of this run.
+        if let Some(h) = session.header() {
+            let seq = self.next_checkpoint_seq(&h.session_id);
+            if let Ok(cp) = checkpoints::capture(
+                &self.inner.cwd,
+                &h.session_id,
+                seq,
+                &format!("turn: {prompt}"),
+            ) {
+                let _ = checkpoints::store(&self.sessions_home(), &cp);
+            }
+        }
+
         let steering = vak_agent::SteeringQueues::new();
         let mut agent = Agent::new(provider, session, cfg);
         let outcome = agent.run(prompt, &steering, cancel, events).await;
         let session = agent.into_session().await;
         Ok((outcome, session))
+    }
+
+    fn next_checkpoint_seq(&self, session_id: &str) -> u32 {
+        checkpoints::list(&self.sessions_home(), session_id)
+            .map(|list| list.last().map(|c| c.seq + 1).unwrap_or(0))
+            .unwrap_or(0)
     }
 
     fn build_sandbox(&self) -> Option<std::sync::Arc<dyn vak_tools::sandbox::Sandbox>> {

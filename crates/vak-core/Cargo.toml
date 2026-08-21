@@ -5,9 +5,12 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+base64 = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 vak-agent = { workspace = true }
 vak-config = { workspace = true }
@@ -17,6 +20,10 @@ vak-mcp = { workspace = true }
 vak-permission = { workspace = true }
 vak-session = { workspace = true }
 vak-tools = { workspace = true }
+walkdir = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }
