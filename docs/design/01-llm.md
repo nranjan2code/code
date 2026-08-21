@@ -39,12 +39,20 @@ blocks: `Text | Thinking{signature} | ToolUse{id,name,input} | ToolResult{tool_u
 | family | adapter | covers |
 |---|---|---|
 | anthropic-messages | `anthropic.rs` | Anthropic |
-| openai-completions | `openai.rs` | OpenAI, OpenRouter, Ollama, Groq, Together, vLLM, any `/v1/chat/completions` endpoint |
+| openai-completions | `openai.rs` | OpenRouter, Ollama, Groq, Together, vLLM, any `/v1/chat/completions` endpoint |
+| openai-responses | `openai_responses.rs` | OpenAI native (`/v1/responses`, GPT-5.x-class) |
 
-Registry names: `anthropic`, `openai`, `openrouter`, `ollama` (lazy-built,
-cached). Auth via `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` /
-`OPENROUTER_API_KEY`; Ollama needs no key. Base-URL overrides:
-`VAKCODER_{ANTHROPIC,OPENAI,OPENROUTER,OLLAMA}_BASE_URL`.
+Registry names: `anthropic`, `openai`, `openai-responses`, `openrouter`,
+`ollama` (lazy-built, cached). Auth via `ANTHROPIC_API_KEY` /
+`OPENAI_API_KEY` / `OPENROUTER_API_KEY`; Ollama needs no key. Base-URL
+overrides: `VAKCODER_{ANTHROPIC,OPENAI,OPENROUTER,OLLAMA}_BASE_URL`.
+
+Responses-API specifics: system prompt rides in `instructions`; history is
+typed items (`input_text`/`output_text`, `function_call`,
+`function_call_output`); SSE deltas are keyed by event name
+(`response.output_text.delta`, `response.function_call_arguments.delta`);
+any emitted `function_call` item forces `stop_reason = ToolUse` so the loop
+continues even though `response.completed` terminates the stream.
 
 Cross-provider history conversion happens in the request builders (stateless,
 from the neutral log): OpenAI-family drops `Thinking` blocks, re-emits

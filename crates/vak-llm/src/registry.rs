@@ -99,6 +99,22 @@ pub fn default_registry() -> ProviderRegistry {
         }
     };
     registry.register("openai", openai_compat(OPENAI_DEFAULT_BASE_URL));
+
+    use crate::openai_responses::{
+        OPENAI_RESPONSES_DEFAULT_BASE_URL, OpenAiResponsesConfig, OpenAiResponsesProvider,
+    };
+    let responses_factory = |auth: &ProviderAuth| {
+        Ok(
+            Arc::new(OpenAiResponsesProvider::new(OpenAiResponsesConfig {
+                api_key: auth.api_key.clone(),
+                base_url: auth
+                    .base_url
+                    .clone()
+                    .unwrap_or_else(|| OPENAI_RESPONSES_DEFAULT_BASE_URL.into()),
+            })?) as Arc<dyn Provider>,
+        )
+    };
+    registry.register("openai-responses", responses_factory);
     registry.register("openrouter", openai_compat("https://openrouter.ai/api/v1"));
     registry.register("ollama", openai_compat("http://localhost:11434/v1"));
     registry

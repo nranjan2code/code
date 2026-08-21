@@ -220,6 +220,19 @@ impl Core {
                         .or_else(|| std::env::var("VAKCODER_ANTHROPIC_BASE_URL").ok()),
                 })
             }
+            "openai-responses" => {
+                let api_key =
+                    std::env::var("OPENAI_API_KEY").map_err(|_| CoreError::MissingAuth {
+                        env: "OPENAI_API_KEY".into(),
+                        provider,
+                    })?;
+                Ok(ProviderAuth {
+                    api_key,
+                    base_url: std::env::var("VAKCODER_OPENAI_BASE_URL")
+                        .ok()
+                        .or_else(|| Some("https://api.openai.com/v1".into())),
+                })
+            }
             "openai" | "openrouter" => {
                 let (env, default_base, override_env) = if provider == "openai" {
                     (
