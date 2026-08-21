@@ -229,7 +229,14 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
         cfg.circuit_breaker_cooldown_secs = c;
     }
     if let Some(w) = merged.context_window {
-        cfg.context_window = w;
+        if w < 16_384 {
+            cfg.warnings.push(format!(
+                "context_window {w} too small; using default {}",
+                cfg.context_window
+            ));
+        } else {
+            cfg.context_window = w;
+        }
     }
     cfg.hooks = merged.hooks;
     for (name, srv) in merged.mcp.servers {

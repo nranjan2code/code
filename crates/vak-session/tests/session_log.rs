@@ -147,3 +147,52 @@ fn unknown_parent_rejected() {
     entry.parent_id = Some("nope".into());
     assert!(log.append(entry).is_err());
 }
+
+#[test]
+fn second_compaction_summarizes_the_prior_summary() {
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
+
+    // Seed 8 messages; compact down to last 2.
+    for i in 0..8 {
+        log.append_message(user_msg(&format!("m{i}"))).unwrap();
+    }
+    let plan1 = log.plan_compaction(2).expect("plan 1");
+    // Older segment = first 6 messages.
+    assert_eq!(plan1.older.len(), 6);
+    log.apply_compaction(&plan1, "summary-one".into(), 9000)
+        .unwrap();
+
+    // Projection: [summary-one, m6, m7].
+    let msgs = log.derive_messages();
+    assert_eq!(msgs.len(), 3);
+    assert!(msgs[0].text_content().contains("summary-one"));
+
+    // Second cycle: grow past again, then compact once more.
+    log.append_message(user_msg("m8")).unwrap();
+    log.append_message(user_msg("m9")).unwrap();
+    let plan2 = log.plan_compaction(2).expect("plan 2");
+    // The new older segment must START with the prior summary message —
+    // raw pre-compaction history must NOT reappear.
+    assert!(
+        plan2.older[0].text_content().contains("<context_summary>"),
+        "repeated compaction must summarize the prior summary"
+    );
+    assert_eq!(plan2.older.len(), 3); // summary-one, m7, m8 (m6 stays verbatim)
+
+    log.apply_compaction(&plan2, "summary-two".into(), 400)
+        .unwrap();
+    let final_msgs = log.derive_messages();
+    assert!(
+        final_msgs[0].text_content().contains("summary-two"),
+        "latest summary wins"
+    );
+    assert!(
+        !serde_like_contains(&final_msgs, "summary-one"),
+        "old summary must be folded away"
+    );
+}
+
+fn serde_like_contains(msgs: &[vak_llm::Message], needle: &str) -> bool {
+    msgs.iter().any(|m| m.text_content().contains(needle))
+}

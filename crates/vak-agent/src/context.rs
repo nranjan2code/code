@@ -43,8 +43,18 @@ impl ContextPolicy {
 
 /// Chars/4 heuristic — planning estimate only, never treated as provider
 /// usage (see docs/design/15-reliability.md).
-pub fn estimate_tokens(messages: &[Message], system: Option<&str>) -> u64 {
+pub fn estimate_tokens(
+    messages: &[Message],
+    system: Option<&str>,
+    tool_definitions: &[vak_llm::ToolDefinition],
+) -> u64 {
     let mut chars: u64 = system.map(|s| s.len() as u64).unwrap_or(0);
+    for t in tool_definitions {
+        chars += (t.name.len() + t.description.len()) as u64
+            + serde_json::to_string(&t.parameters)
+                .map(|s| s.len() as u64)
+                .unwrap_or(0);
+    }
     for m in messages {
         for b in &m.content {
             chars += match b {
@@ -87,7 +97,9 @@ pub fn compaction_request(model: &str, transcript: &str) -> ChatRequest {
     req
 }
 
-/// Renders messages to a readable transcript for summarization.
+/// Renders messages to a readable transcript for summarization. Tool
+/// calls carry their name+input (paths live there); results are labeled
+/// explicitly instead of masquerading as empty user turns.
 pub fn render_transcript(messages: &[Message]) -> String {
     let mut out = String::new();
     for m in messages {
@@ -95,13 +107,35 @@ pub fn render_transcript(messages: &[Message]) -> String {
             vak_llm::Role::User => "user",
             vak_llm::Role::Assistant => "assistant",
         };
-        out.push_str(&format!("[{role}]\n{}\n\n", m.text_content()));
+        let mut wrote_header = false;
         for b in &m.content {
-            if let ContentBlock::ToolResult { content, .. } = b {
-                let preview: String = content.chars().take(600).collect();
-                out.push_str(&format!("[tool-result]\n{preview}\n\n"));
+            match b {
+                ContentBlock::ToolUse { name, input, .. } => {
+                    if !wrote_header {
+                        out.push_str(&format!("[{role}]\n"));
+                        wrote_header = true;
+                    }
+                    out.push_str(&format!(
+                        "[tool-call] {name} {}\n",
+                        serde_json::to_string(input).unwrap_or_default()
+                    ));
+                }
+                ContentBlock::ToolResult { content, .. } => {
+                    if !wrote_header {
+                        out.push_str(&format!("[{role}]\n"));
+                        wrote_header = true;
+                    }
+                    let preview: String = content.chars().take(600).collect();
+                    out.push_str(&format!("[tool-result]\n{preview}\n"));
+                }
+                _ => {}
             }
         }
+        let text = m.text_content();
+        if !text.is_empty() || !wrote_header {
+            out.push_str(&format!("[{role}]\n{text}\n"));
+        }
+        out.push('\n');
     }
     out
 }
@@ -115,9 +149,9 @@ mod tests {
     fn estimate_scales_with_content() {
         let short = vec![Message::user_text("hi")];
         let long = vec![Message::user_text("x".repeat(4000))];
-        assert_eq!(estimate_tokens(&short, None), 1);
-        assert!(estimate_tokens(&long, None) >= 1000);
-        assert!(estimate_tokens(&short, Some("system ".repeat(4).as_str())) > 1);
+        assert_eq!(estimate_tokens(&short, None, &[]), 1);
+        assert!(estimate_tokens(&long, None, &[]) >= 1000);
+        assert!(estimate_tokens(&short, Some("system ".repeat(4).as_str()), &[]) > 1);
     }
 
     #[test]

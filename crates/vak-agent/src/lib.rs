@@ -55,6 +55,9 @@ pub enum AgentEvent {
         delay_ms: u64,
         reason: String,
     },
+    ContextCompacting {
+        estimated_tokens: u64,
+    },
     ContextCompacted {
         before_tokens: u64,
         after_tokens: u64,
@@ -222,42 +225,38 @@ impl Agent {
                 };
                 // Long-horizon guard: estimate the projection; on overflow,
                 // summarize older turns into a compaction entry and retry
-                // the same contract. Still over afterwards => fail closed.
+                // the same contract. Still over afterwards, or no progress,
+                // => fail closed. The session lock is NOT held across the
+                // summarizer network call.
                 let policy = &self.config.context_policy;
-                let mut derived = session.derive_messages();
                 let system = self.config.system_prompt.clone();
-                let mut est = context::estimate_tokens(&derived, Some(&system));
+                let mut derived = session.derive_messages();
+                let tool_defs = vak_tools::definitions(&self.config.tools);
+                let mut est = context::estimate_tokens(&derived, Some(&system), &tool_defs);
                 if est > policy.trigger_at() {
-                    let chain = session.message_chain();
-                    let keep = policy.keep_recent.min(chain.len());
-                    let split_at = chain.len() - keep;
-                    let older: Vec<Message> =
-                        chain[..split_at].iter().map(|(_, m)| m.clone()).collect();
-                    let transcript = context::render_transcript(&older);
-                    let _ = events.send(AgentEvent::TurnStart { turn }).await;
-                    let _ = events
-                        .send(AgentEvent::RetryScheduled {
-                            attempt: 0,
-                            delay_ms: 0,
-                            reason: format!(
-                                "context ~{est} tokens over trigger {} — compacting",
-                                policy.trigger_at()
+                    let Some(plan) = session.plan_compaction(policy.keep_recent) else {
+                        return TurnOutcome::Failed {
+                            error: LlmError::Network(
+                                "context over budget but too short to compact".into(),
                             ),
+                        };
+                    };
+                    let transcript = context::render_transcript(&plan.older);
+                    let _ = events
+                        .send(AgentEvent::ContextCompacting {
+                            estimated_tokens: est,
                         })
                         .await;
 
                     let req = context::compaction_request(&model, &transcript);
-                    let mut stream = match self.provider.stream(req, cancel.clone()).await {
-                        Ok(s) => s,
-                        Err(e) => {
-                            return TurnOutcome::Failed {
-                                error: LlmError::Network(format!("compaction call failed: {e}")),
-                            };
+                    let summary_msg = match self
+                        .complete_with_reliability(&req, &cancel, &events, false)
+                        .await
+                    {
+                        Ok(LlmAbortOr::Message(m)) => m,
+                        Ok(LlmAbortOr::Aborted) => {
+                            return TurnOutcome::Aborted { partial: None };
                         }
-                    };
-                    while futures::StreamExt::next(&mut stream).await.is_some() {}
-                    let summary_msg = match stream.result().await {
-                        Ok(m) => m,
                         Err(e) => {
                             return TurnOutcome::Failed {
                                 error: LlmError::Network(format!("compaction call failed: {e}")),
@@ -272,18 +271,25 @@ impl Agent {
                     }
 
                     let tokens_before = est;
-                    if let Err(e) = session.compact_tail(summary, keep, tokens_before) {
+                    if let Err(e) = session.apply_compaction(&plan, summary, tokens_before) {
                         return TurnOutcome::Failed {
                             error: LlmError::Network(format!("compaction write failed: {e}")),
                         };
                     }
                     derived = session.derive_messages();
-                    est = context::estimate_tokens(&derived, Some(&system));
+                    est = context::estimate_tokens(&derived, Some(&system), &tool_defs);
+                    if est >= tokens_before {
+                        return TurnOutcome::Failed {
+                            error: LlmError::Network(format!(
+                                "compaction made no progress (~{tokens_before} -> ~{est} tokens)"
+                            )),
+                        };
+                    }
                     let _ = events
                         .send(AgentEvent::ContextCompacted {
                             before_tokens: tokens_before,
                             after_tokens: est,
-                            summarized_messages: split_at,
+                            summarized_messages: plan.older.len(),
                         })
                         .await;
                     if est > policy.input_budget() {
@@ -300,96 +306,29 @@ impl Agent {
                     system: Some(self.config.system_prompt.clone()),
                     messages: session.derive_messages(),
                     tools: vak_tools::definitions(&self.config.tools),
-                    max_tokens: 8192,
+                    max_tokens: self.config.context_policy.max_output as u32,
                     temperature: None,
                 }
             };
             let request = base_request.clone();
 
-            // One model step = connect + stream + collect. Transient
-            // failures (429/529/network/deadline) are retried with
-            // exponential backoff honoring Retry-After; user aborts and
-            // partial-output aborts are never retried.
-            let mut attempt: u32 = 0;
-            let response = loop {
-                if cancel.is_cancelled() {
-                    return TurnOutcome::Aborted { partial: None };
+            // One model step = connect + stream + collect, wrapped with the
+            // full reliability machinery (watchdog, retries+backoff,
+            // circuit breaker). User aborts and partial-output aborts are
+            // never retried; they propagate for caller handling.
+            let response = match self
+                .complete_with_reliability(&request, &cancel, &events, true)
+                .await
+            {
+                Ok(LlmAbortOr::Message(r)) => r,
+                Ok(LlmAbortOr::Aborted) => unreachable!("helper maps aborts to Err"),
+                Err(LlmError::Aborted { partial }) => {
+                    if let Some(p) = &partial {
+                        self.append_assistant(p).await;
+                    }
+                    return TurnOutcome::Aborted { partial };
                 }
-                if let Some(breaker) = &self.config.circuit_breaker
-                    && let Err(open) = breaker.check()
-                {
-                    return TurnOutcome::Failed {
-                        error: LlmError::Network(open.to_string()),
-                    };
-                }
-                let request = request.clone();
-                let step = async {
-                    let mut stream = self.provider.stream(request, cancel.clone()).await?;
-                    while let Some(ev) = futures::StreamExt::next(&mut stream).await {
-                        if events.send(AgentEvent::Stream(ev)).await.is_err() {
-                            cancel.cancel();
-                        }
-                    }
-                    stream.result().await
-                };
-
-                let outcome = match self.config.request_timeout {
-                    Some(t) => match tokio::time::timeout(t, step).await {
-                        Ok(r) => r,
-                        Err(_) => Err(LlmError::Network(format!(
-                            "model step exceeded deadline of {}s",
-                            t.as_secs()
-                        ))),
-                    },
-                    None => step.await,
-                };
-
-                match outcome {
-                    Ok(r) => {
-                        if let Some(breaker) = &self.config.circuit_breaker {
-                            breaker.record_success();
-                        }
-                        break r;
-                    }
-                    Err(LlmError::Aborted { partial }) => {
-                        if let Some(p) = &partial {
-                            self.append_assistant(p).await;
-                        }
-                        return TurnOutcome::Aborted { partial };
-                    }
-                    Err(e) if e.is_retryable() && attempt < self.config.max_retries => {
-                        if let Some(breaker) = &self.config.circuit_breaker {
-                            breaker.record_failure();
-                        }
-                        attempt += 1;
-                        let delay = backoff_delay(
-                            attempt,
-                            e.retry_after_secs(),
-                            self.config.retry_base_backoff_ms,
-                        );
-                        let _ = events
-                            .send(AgentEvent::RetryScheduled {
-                                attempt,
-                                delay_ms: delay.as_millis() as u64,
-                                reason: e.to_string(),
-                            })
-                            .await;
-                        tokio::select! {
-                            _ = cancel.cancelled() => {
-                                return TurnOutcome::Aborted { partial: None };
-                            }
-                            _ = tokio::time::sleep(delay) => {}
-                        }
-                    }
-                    Err(e) => {
-                        if let Some(breaker) = &self.config.circuit_breaker
-                            && e.is_retryable()
-                        {
-                            breaker.record_failure();
-                        }
-                        return TurnOutcome::Failed { error: e };
-                    }
-                }
+                Err(e) => return TurnOutcome::Failed { error: e },
             };
 
             let usage = response.usage.clone();
@@ -493,6 +432,94 @@ impl Agent {
                 usage: Some(response.usage.clone()),
             }),
         });
+    }
+
+    /// One provider completion with watchdog, retry/backoff (honoring
+    /// Retry-After), and circuit breaker. When `forward` is true, stream
+    /// deltas are forwarded to `events`; otherwise they are drained.
+    async fn complete_with_reliability(
+        &self,
+        request: &ChatRequest,
+        cancel: &CancellationToken,
+        events: &mpsc::Sender<AgentEvent>,
+        forward: bool,
+    ) -> Result<LlmAbortOr, LlmError> {
+        if let Some(breaker) = &self.config.circuit_breaker {
+            breaker
+                .check()
+                .map_err(|open| LlmError::Network(open.to_string()))?;
+        }
+        let mut attempt: u32 = 0;
+        loop {
+            if cancel.is_cancelled() {
+                return Err(LlmError::Aborted { partial: None });
+            }
+            let step = async {
+                let mut stream = self
+                    .provider
+                    .stream(request.clone(), cancel.clone())
+                    .await?;
+                while let Some(ev) = futures::StreamExt::next(&mut stream).await {
+                    if forward && events.send(AgentEvent::Stream(ev)).await.is_err() {
+                        cancel.cancel();
+                    }
+                }
+                stream.result().await
+            };
+
+            let outcome = match self.config.request_timeout {
+                Some(t) => match tokio::time::timeout(t, step).await {
+                    Ok(r) => r,
+                    Err(_) => Err(LlmError::Network(format!(
+                        "model step exceeded deadline of {}s",
+                        t.as_secs()
+                    ))),
+                },
+                None => step.await,
+            };
+
+            match outcome {
+                Ok(r) => {
+                    if let Some(breaker) = &self.config.circuit_breaker {
+                        breaker.record_success();
+                    }
+                    return Ok(LlmAbortOr::Message(r));
+                }
+                Err(e @ LlmError::Aborted { .. }) => return Err(e),
+                Err(e) if e.is_retryable() && attempt < self.config.max_retries => {
+                    if let Some(breaker) = &self.config.circuit_breaker {
+                        breaker.record_failure();
+                    }
+                    attempt += 1;
+                    let delay = backoff_delay(
+                        attempt,
+                        e.retry_after_secs(),
+                        self.config.retry_base_backoff_ms,
+                    );
+                    let _ = events
+                        .send(AgentEvent::RetryScheduled {
+                            attempt,
+                            delay_ms: delay.as_millis() as u64,
+                            reason: e.to_string(),
+                        })
+                        .await;
+                    tokio::select! {
+                        _ = cancel.cancelled() => {
+                            return Err(LlmError::Aborted { partial: None });
+                        }
+                        _ = tokio::time::sleep(delay) => {}
+                    }
+                }
+                Err(e) => {
+                    if let Some(breaker) = &self.config.circuit_breaker
+                        && e.is_retryable()
+                    {
+                        breaker.record_failure();
+                    }
+                    return Err(e);
+                }
+            }
+        }
     }
 
     async fn execute_batch(
@@ -783,6 +810,12 @@ fn extract_tool_calls(response: &AssistantMessage) -> Vec<PendingToolCall> {
             _ => None,
         })
         .collect()
+}
+
+enum LlmAbortOr {
+    Message(vak_llm::AssistantMessage),
+    #[allow(dead_code)]
+    Aborted,
 }
 
 fn backoff_delay(attempt: u32, retry_after_secs: Option<u64>, base_ms: u64) -> std::time::Duration {

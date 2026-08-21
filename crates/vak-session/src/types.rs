@@ -93,3 +93,12 @@ pub enum SessionError {
     #[error("json error at line {line}: {message}")]
     Corrupt { line: usize, message: String },
 }
+
+/// Projection-based compaction plan (see SessionLog::plan_compaction).
+#[derive(Debug, Clone)]
+pub struct CompactionPlan {
+    pub older: Vec<vak_llm::Message>,
+    /// Id of the FIRST KEPT projected entry — the new compaction's
+    /// first_kept_entry_id anchor.
+    pub first_kept_entry_id: String,
+}

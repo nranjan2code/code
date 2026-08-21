@@ -20,7 +20,10 @@ splits without duplicating files.
 ## Current keys
 
 provider, model, max_tokens, max_turns, permission_mode, profile, profiles.*,
-anthropic_base_url.
+anthropic_base_url, allow/ask/deny, subagents, hooks.*, mcp.servers.*,
+max_retries, retry_base_backoff_ms, request_timeout_secs,
+circuit_breaker_threshold, circuit_breaker_cooldown_secs, context_window
+(min 16384; smaller values warn and fall back to the default).
 
 ## Later
 

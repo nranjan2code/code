@@ -309,6 +309,12 @@ fn render_agent_event(
             screen.clear_input_row();
             screen.dim(&format!("⟳ retry {attempt} in {delay_ms}ms — {reason}"));
         }
+        AgentEvent::ContextCompacting { estimated_tokens } => {
+            screen.clear_input_row();
+            screen.dim(&format!(
+                "📦 compacting context (~{estimated_tokens} tokens)…"
+            ));
+        }
         AgentEvent::ContextCompacted {
             before_tokens,
             after_tokens,

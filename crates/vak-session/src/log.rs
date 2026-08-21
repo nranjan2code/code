@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 
 use vak_llm::Message;
 
-use crate::types::{Entry, EntryPayload, MessageMeta, MessageRecord, SessionError, SessionHeader};
+use crate::types::{
+    CompactionPlan, Entry, EntryPayload, MessageMeta, MessageRecord, SessionError, SessionHeader,
+};
 
 pub struct SessionLog {
     path: PathBuf,
@@ -161,7 +163,7 @@ impl SessionLog {
     }
 
     /// Message entries along the active path, root→leaf, with their entry
-    /// ids — the id bookkeeping compaction needs.
+    /// ids — raw ledger view (compaction entries NOT applied).
     pub fn message_chain(&self) -> Vec<(String, Message)> {
         self.chain_to_root()
             .into_iter()
@@ -172,25 +174,7 @@ impl SessionLog {
             .collect()
     }
 
-    /// Compacts all but the last `keep_recent` message entries into a
-    /// summary. No-op when the chain is already short. Returns true if a
-    /// compaction entry was written.
-    pub fn compact_tail(
-        &mut self,
-        summary: String,
-        keep_recent: usize,
-        tokens_before: u64,
-    ) -> Result<bool, SessionError> {
-        let chain = self.message_chain();
-        if chain.len() <= keep_recent {
-            return Ok(false);
-        }
-        let first_kept = chain[chain.len() - keep_recent].0.clone();
-        self.compact(summary, first_kept, tokens_before)?;
-        Ok(true)
-    }
-
-    pub fn derive_messages(&self) -> Vec<Message> {
+    fn derive_keyed(&self) -> Vec<(String, Message)> {
         let mut out: Vec<(String, Message)> = Vec::new();
         for entry in self.chain_to_root() {
             match &entry.payload {
@@ -212,7 +196,62 @@ impl SessionLog {
                 EntryPayload::Header(_) => {}
             }
         }
-        out.into_iter().map(|(_, m)| m).collect()
+        out
+    }
+
+    pub fn derive_messages(&self) -> Vec<Message> {
+        self.derive_keyed().into_iter().map(|(_, m)| m).collect()
+    }
+
+    /// A projection-based compaction plan: `older` is everything before the
+    /// snapped boundary (prior `<context_summary>` entries included, so
+    /// repeated compaction summarizes summaries, not raw history), `keep`
+    /// is the verbatim tail. The boundary never splits an assistant
+    /// tool_use / user tool_result pair — it advances past result-bearing
+    /// user messages so the kept region always starts API-valid.
+    pub fn plan_compaction(&self, keep_recent: usize) -> Option<CompactionPlan> {
+        let keyed = self.derive_keyed();
+        if keyed.len() <= keep_recent {
+            return None;
+        }
+        let mut boundary = keyed.len() - keep_recent;
+        let has_tool_result = |m: &Message| {
+            m.content
+                .iter()
+                .any(|b| matches!(b, vak_llm::ContentBlock::ToolResult { .. }))
+        };
+        while boundary < keyed.len() && has_tool_result(&keyed[boundary].1) {
+            boundary += 1;
+        }
+        if boundary == 0 {
+            return None;
+        }
+        Some(CompactionPlan {
+            older: keyed[..boundary].iter().map(|(_, m)| m.clone()).collect(),
+            // Anchor = FIRST KEPT entry: the walker drains everything
+            // strictly before this id and inserts the summary at index 0.
+            first_kept_entry_id: keyed[boundary].0.clone(),
+        })
+    }
+
+    /// Writes a compaction entry covering everything up to and including
+    /// `plan.older_end_entry_id` in the *current* projection.
+    pub fn apply_compaction(
+        &mut self,
+        plan: &CompactionPlan,
+        summary: String,
+        tokens_before: u64,
+    ) -> Result<(), SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(
+            parent,
+            EntryPayload::Compaction(crate::types::CompactionEntry {
+                summary,
+                first_kept_entry_id: plan.first_kept_entry_id.clone(),
+                tokens_before,
+            }),
+        ))?;
+        Ok(())
     }
 
     pub fn total_usage(&self) -> vak_llm::Usage {
