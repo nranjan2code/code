@@ -53,6 +53,12 @@ enum Command {
         #[arg(long)]
         yes: bool,
     },
+    /// Run the built-in eval suite (deterministic, in-process)
+    Eval {
+        /// Write JSON report to this path
+        #[arg(long)]
+        report: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -112,6 +118,7 @@ async fn main() {
         }
         Some(Command::Flow { action }) => run_flow(cwd, action).await,
         Some(Command::Plan { task, yes }) => run_plan(cwd, task, yes).await,
+        Some(Command::Eval { report }) => run_eval(report).await,
     };
     std::process::exit(code);
 }
@@ -676,4 +683,52 @@ async fn run_plan(cwd: PathBuf, task: String, yes: bool) -> i32 {
             2
         }
     }
+}
+
+async fn run_eval(report_path: Option<PathBuf>) -> i32 {
+    let cases = vak_eval::builtin_suite();
+    let mut reports = Vec::with_capacity(cases.len());
+    for case in &cases {
+        let r = vak_eval::run_case(case).await;
+        println!(
+            "{:<12} {:>6}  in {:>5} / out {:>4}  {:>5}ms  {}",
+            r.task_id,
+            if r.passed { "PASS" } else { "FAIL" },
+            r.tokens_in,
+            r.tokens_out,
+            r.duration_ms,
+            r.error.as_deref().unwrap_or("")
+        );
+        reports.push(r);
+    }
+
+    let passed = reports.iter().filter(|r| r.passed).count();
+    let total = reports.len();
+    let tokens_in: u64 = reports.iter().map(|r| r.tokens_in).sum();
+    let tokens_out: u64 = reports.iter().map(|r| r.tokens_out).sum();
+
+    if let Some(path) = report_path {
+        let json = serde_json::to_string_pretty(&serde_json::json!({
+            "generated_at": chrono::Utc::now(),
+            "passed": passed,
+            "total": total,
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "cases": reports,
+        }))
+        .unwrap_or_default();
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match std::fs::write(&path, json) {
+            Ok(_) => eprintln!("report written to {}", path.display()),
+            Err(e) => {
+                eprintln!("error writing report: {e}");
+                return 2;
+            }
+        }
+    }
+
+    println!("\n{passed}/{total} passed · tokens in {tokens_in} / out {tokens_out}");
+    if passed == total { 0 } else { 1 }
 }
