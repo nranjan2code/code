@@ -1,0 +1,52 @@
+name: chaos-live
+
+# Live-model fault-injection campaign against OpenCode Zen (Ox Alpha Free).
+# Deterministic failure-handling regressions run on every PR in ci.yml via
+# cargo test (scripted providers, no network). This job exercises the full
+# binary end-to-end through a fault-injecting proxy with the real model.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *" # daily 06:00 UTC
+
+jobs:
+  chaos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install test deps
+        run: python3 -m pip install pytest
+      - name: Build
+        run: cargo build -p vakcoder
+      - name: Start fault proxy
+        run: |
+          printf 'pass' > /tmp/fault_mode
+          nohup python3 scripts/fault_proxy.py 8930 > /tmp/proxy.log 2>&1 &
+          sleep 1
+          curl -s http://127.0.0.1:8930/hits
+      - name: Live eval suite
+        run: target/debug/vakcoder eval --live --provider opencode-zen --model x-preview-f-free
+      - name: Chaos campaign
+        run: |
+          SID=$(target/debug/vakcoder exec \
+            --provider opencode-zen --model x-preview-f-free \
+            "Reply with exactly: ready" --trust --yes --max-turns 2 2>&1 \
+            | grep -oE "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl" \
+            | head -1 | sed 's/\.jsonl//')
+          echo "session: $SID"
+          VAK_BIN="$PWD/target/debug/vakcoder" \
+          python3 scripts/chaos_driver.py "$SID"
+      - name: Upload artifacts (logs, ledgers)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-logs
+          path: |
+            /tmp/chaos*.log
+            /tmp/proxy.log
+          if-no-files-found: ignore

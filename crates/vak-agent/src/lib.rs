@@ -101,6 +101,15 @@ pub struct AgentConfig {
     pub request_timeout: Option<std::time::Duration>,
     /// Shared cross-run provider-health breaker. None disables.
     pub circuit_breaker: Option<Arc<CircuitBreaker>>,
+    /// Run-level endurance: when a model step exhausts its retry budget with
+    /// a transient error (rate limit / overload / network / truncated
+    /// stream), back off and re-attempt the same turn this many times
+    /// before failing the run. Nothing has been committed to the ledger at
+    /// that point, so the re-attempt is exact. 0 disables (fail on first
+    /// step exhaustion).
+    pub run_retry_attempts: u32,
+    /// Exponential backoff base for run-level endurance, capped at 30s.
+    pub run_retry_base_backoff_ms: u64,
     /// Long-horizon context policy (window, reserve, compaction trigger).
     pub context_policy: context::ContextPolicy,
 }
@@ -122,6 +131,8 @@ impl AgentConfig {
             retry_base_backoff_ms: 500,
             request_timeout: Some(std::time::Duration::from_secs(600)),
             circuit_breaker: None,
+            run_retry_attempts: 6,
+            run_retry_base_backoff_ms: 2_000,
             context_policy: Default::default(),
         }
     }
@@ -130,6 +141,30 @@ impl AgentConfig {
 #[async_trait::async_trait]
 pub trait Approver: Send + Sync {
     async fn approve(&self, tool: &str, reason: &str) -> bool;
+}
+
+/// Errors worth surviving at run level: sustained fault windows, hung or
+/// truncated streams. Permanent errors (auth, bad request, non-2xx api,
+/// aborts) are excluded — retrying them cannot help.
+fn is_transient_step_error(e: &LlmError) -> bool {
+    matches!(
+        e,
+        LlmError::RateLimit { .. }
+            | LlmError::Overloaded(_)
+            | LlmError::Network(_)
+            | LlmError::Parse(_)
+    )
+}
+
+/// The breaker protects against a DEAD provider: blind failures with no
+/// server guidance (network loss, watchdog deadlines, truncated or malformed
+/// streams). Informed transience — 429 with Retry-After, explicit 503/529
+/// overload — is the server saying "try again later"; endurance handles it
+/// by waiting, and it must not open the circuit mid-window (found in the
+/// live chaos campaign: an opened breaker killed runs the window would have
+/// released seconds later).
+fn trips_breaker(e: &LlmError) -> bool {
+    matches!(e, LlmError::Network(_) | LlmError::Parse(_))
 }
 
 pub struct AutoApprove;
@@ -353,19 +388,68 @@ impl Agent {
             // full reliability machinery (watchdog, retries+backoff,
             // circuit breaker). User aborts and partial-output aborts are
             // never retried; they propagate for caller handling.
-            let response = match self
-                .complete_with_reliability(&request, &cancel, &events, true)
-                .await
-            {
-                Ok(LlmAbortOr::Message(r)) => r,
-                Ok(LlmAbortOr::Aborted) => unreachable!("helper maps aborts to Err"),
-                Err(LlmError::Aborted { partial }) => {
-                    if let Some(p) = &partial {
-                        self.append_assistant(p).await;
+            let response = {
+                // Run-level endurance: a sustained fault window (rate-limit
+                // burst, slow/hung upstream, truncating proxy) can outlast
+                // one step's retry budget. The ledger has not been touched,
+                // so re-attempting the whole turn is exact. Aborts and
+                // permanent errors still fail/abort immediately.
+                let mut run_attempt: u32 = 0;
+                let mut backoff_ms = self.config.run_retry_base_backoff_ms.max(1);
+                loop {
+                    match self
+                        .complete_with_reliability(&request, &cancel, &events, true)
+                        .await
+                    {
+                        Ok(LlmAbortOr::Message(r)) => break r,
+                        Ok(LlmAbortOr::Aborted) => unreachable!("helper maps aborts to Err"),
+                        Err(LlmError::Aborted { partial }) => {
+                            if let Some(p) = &partial {
+                                self.append_assistant(p).await;
+                            }
+                            return TurnOutcome::Aborted { partial };
+                        }
+                        Err(e)
+                            if run_attempt < self.config.run_retry_attempts
+                                && is_transient_step_error(&e) =>
+                        {
+                            run_attempt += 1;
+                            let delay = backoff_ms.min(30_000);
+                            // An open breaker fails every attempt instantly
+                            // until its cooldown elapses; pacing the wait to
+                            // the remaining cooldown lets the half-close probe
+                            // through instead of burning the budget on no-op
+                            // failures.
+                            let cooldown_ms = self
+                                .config
+                                .circuit_breaker
+                                .as_ref()
+                                .and_then(|b| b.check().err())
+                                .map(|open| open.remaining_secs * 1000 + 250)
+                                .unwrap_or(0);
+                            let delay = delay.max(cooldown_ms);
+                            let _ = events
+                                .send(AgentEvent::RetryScheduled {
+                                    attempt: run_attempt,
+                                    delay_ms: delay,
+                                    reason: format!(
+                                        "step exhausted ({e}); run-level re-attempt {run_attempt}/{}",
+                                        self.config.run_retry_attempts
+                                    ),
+                                })
+                                .await;
+                            if tokio::select! {
+                                _ = cancel.cancelled() => false,
+                                _ = tokio::time::sleep(std::time::Duration::from_millis(delay)) => true,
+                            } {
+                                backoff_ms = backoff_ms.saturating_mul(2);
+                                continue;
+                            }
+                            return TurnOutcome::Aborted { partial: None };
+                        }
+                        Err(e) => return TurnOutcome::Failed { error: e },
                     }
-                    return TurnOutcome::Aborted { partial };
                 }
-                Err(e) => return TurnOutcome::Failed { error: e },
             };
 
             let usage = response.usage.clone();
@@ -524,7 +608,9 @@ impl Agent {
                 }
                 Err(e @ LlmError::Aborted { .. }) => return Err(e),
                 Err(e) if e.is_retryable() && attempt < self.config.max_retries => {
-                    if let Some(breaker) = &self.config.circuit_breaker {
+                    if trips_breaker(&e)
+                        && let Some(breaker) = &self.config.circuit_breaker
+                    {
                         breaker.record_failure();
                     }
                     attempt += 1;
@@ -548,8 +634,8 @@ impl Agent {
                     }
                 }
                 Err(e) => {
-                    if let Some(breaker) = &self.config.circuit_breaker
-                        && e.is_retryable()
+                    if trips_breaker(&e)
+                        && let Some(breaker) = &self.config.circuit_breaker
                     {
                         breaker.record_failure();
                     }

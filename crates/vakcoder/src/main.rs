@@ -803,6 +803,23 @@ async fn run_exec(
                     }
                 );
             }
+            AgentEvent::RetryScheduled {
+                attempt,
+                delay_ms,
+                reason,
+            } => {
+                eprintln!("⟳ [{attempt}] backing off {delay_ms}ms — {reason}");
+            }
+            AgentEvent::ContextCompacting { estimated_tokens } => {
+                eprintln!("◌ compacting context (~{estimated_tokens} tokens)");
+            }
+            AgentEvent::ContextCompacted {
+                before_tokens,
+                after_tokens,
+                ..
+            } => {
+                eprintln!("◌ compacted ~{before_tokens} → ~{after_tokens} tokens");
+            }
             AgentEvent::TurnEnd { usage } => {
                 total_in += usage.input_tokens;
                 total_out += usage.output_tokens;

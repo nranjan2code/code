@@ -85,6 +85,9 @@ fn build(
     cfg.max_retries = max_retries;
     cfg.retry_base_backoff_ms = base_ms;
     cfg.request_timeout = timeout;
+    // Step-level machinery is the system under test here; run-level
+    // endurance has its own tests (tests/run_endurance.rs).
+    cfg.run_retry_attempts = 0;
     std::mem::forget(dir);
     Agent::new(
         Arc::new(Scripted {
@@ -234,6 +237,7 @@ async fn watchdog_deadline_converts_hung_step_into_retryable_failure() {
     let mut cfg = AgentConfig::new("sys");
     cfg.max_retries = 0;
     cfg.request_timeout = Some(std::time::Duration::from_millis(300));
+    cfg.run_retry_attempts = 0;
     std::mem::forget(dir);
     let mut agent = Agent::new(Arc::new(Hung), log, cfg);
 

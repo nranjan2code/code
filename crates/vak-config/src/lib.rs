@@ -57,6 +57,8 @@ pub struct FileConfig {
     pub max_retries: Option<u32>,
     pub retry_base_backoff_ms: Option<u64>,
     pub request_timeout_secs: Option<u64>,
+    pub run_retry_attempts: Option<u32>,
+    pub run_retry_base_backoff_ms: Option<u64>,
     pub circuit_breaker_threshold: Option<u32>,
     pub circuit_breaker_cooldown_secs: Option<u64>,
     pub context_window: Option<u64>,
@@ -104,6 +106,8 @@ pub struct Config {
     pub max_retries: u32,
     pub retry_base_backoff_ms: u64,
     pub request_timeout_secs: u64,
+    pub run_retry_attempts: u32,
+    pub run_retry_base_backoff_ms: u64,
     pub circuit_breaker_threshold: u32,
     pub circuit_breaker_cooldown_secs: u64,
     pub context_window: u64,
@@ -128,6 +132,8 @@ impl Default for Config {
             max_retries: 3,
             retry_base_backoff_ms: 500,
             request_timeout_secs: 600,
+            run_retry_attempts: 6,
+            run_retry_base_backoff_ms: 2_000,
             circuit_breaker_threshold: 5,
             circuit_breaker_cooldown_secs: 60,
             context_window: 128_000,
@@ -254,6 +260,12 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     if let Some(secs) = merged.request_timeout_secs {
         cfg.request_timeout_secs = secs;
     }
+    if let Some(n) = merged.run_retry_attempts {
+        cfg.run_retry_attempts = n;
+    }
+    if let Some(ms) = merged.run_retry_base_backoff_ms {
+        cfg.run_retry_base_backoff_ms = ms;
+    }
     if let Some(t) = merged.circuit_breaker_threshold {
         cfg.circuit_breaker_threshold = t;
     }
@@ -327,6 +339,8 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "max_retries",
     "retry_base_backoff_ms",
     "request_timeout_secs",
+    "run_retry_attempts",
+    "run_retry_base_backoff_ms",
     "circuit_breaker_threshold",
     "circuit_breaker_cooldown_secs",
     "context_window",

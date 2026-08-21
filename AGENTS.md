@@ -31,9 +31,15 @@ See `docs/design/00-roadmap.md` for the phase history and
    `vak-tools/src/bash.rs` (annotated).
 7. **Transient provider failures retry, then trip the breaker.** 429/529/network
    errors back off exponentially (`max_retries`, honoring `Retry-After`) under
-   a per-step watchdog deadline; consecutive retryable failures across runs open
-   a shared circuit breaker that fails fast until cooldown. Never retry user
-   aborts; never switch providers mid-contract.
+   a per-step watchdog deadline; if the window outlasts that budget,
+   **run-level endurance** (`run_retry_attempts`) re-attempts the same turn
+   after cancel-aware backoff — nothing was committed, so the re-attempt is
+   exact. Informed transience (429 with Retry-After, explicit overload) feeds
+   endurance but does not trip the shared circuit breaker; blind failures
+   (network loss, deadlines, truncated/malformed streams) do. An open breaker
+   fails fast; endurance paces its waits to the remaining cooldown so the
+   half-close probe gets through. Never retry user aborts; never switch
+   providers mid-contract.
 8. **Secrets never enter git.** API keys live in `.env` (project) or
    `~/.vakcoder/.env` (user), both gitignored, loaded via
    `vak_config::load_env_file/get_var`. Real environment variables take

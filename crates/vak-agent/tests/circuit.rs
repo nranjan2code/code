@@ -109,6 +109,9 @@ fn build_agent(
     let mut cfg = AgentConfig::new("sys");
     cfg.max_retries = 1; // one retry per run => 2 failures per run
     cfg.retry_base_backoff_ms = 1;
+    // Fail-fast contract under test: endurance disabled so step exhaustion
+    // ends the run immediately (endurance has its own test file).
+    cfg.run_retry_attempts = 0;
     cfg.circuit_breaker = Some(breaker);
     std::mem::forget(dir);
     Agent::new(provider, log, cfg)
@@ -119,7 +122,8 @@ async fn second_run_fails_fast_when_circuit_is_open() {
     let calls = Arc::new(Mutex::new(0u32));
     let provider = Arc::new(Scripted {
         calls: calls.clone(),
-        fail_with: LlmError::Overloaded("provider down".into()),
+        // Blind network loss: the only class that trips the breaker.
+        fail_with: LlmError::Network("provider unreachable".into()),
     });
     let breaker = Arc::new(CircuitBreaker::new(CircuitBreakerConfig {
         threshold: 4,

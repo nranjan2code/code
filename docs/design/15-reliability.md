@@ -15,6 +15,17 @@ The standard failure matrix and where each case is handled.
 - Surfaced as `AgentEvent::RetryScheduled{attempt, delay_ms, reason}` so all
   UIs show the wait; config keys `max_retries`, `retry_base_backoff_ms`,
   `request_timeout_secs`.
+- **Run-level endurance** (`run_retry_attempts`, default 6;
+  `run_retry_base_backoff_ms`, default 2s): a fault window can outlast one
+  step's retry budget — a sustained 429 window or slow/hung upstream used to
+  kill the whole run on first step exhaustion (found in the live chaos
+  campaign). Now, when a step exhausts its retries with a *transient* error
+  (429/529/network/truncated stream), the loop backs off cancel-aware and
+  re-attempts the same turn: nothing was committed to the ledger, so the
+  re-attempt is exact and turn budgets are not consumed by infrastructure
+  pain. An OPEN circuit breaker still fails fast — fresh evidence of a dead
+  provider must not cost the user minutes of waiting. Permanent errors
+  (auth/bad request/api) are never endured.
 - **Planner calls retry too** (found in live testing): `plan`'s model calls
   bypass the agent loop, so they carry their own bounded retry (3 attempts,
   exponential backoff, `Retry-After` honored, cancel-aware). A transient
@@ -53,13 +64,20 @@ The standard failure matrix and where each case is handled.
 Per-step retries protect one run; the **circuit breaker** protects every run
 from a dead provider. Shared via Core across all runs of a process:
 
-- Only retryable failures (429/529/network) count; auth/config errors never
-  trip it.
+- Only **blind failures** count: network loss, watchdog deadlines, truncated
+  or malformed streams. Informed transience — 429 with `Retry-After`,
+  explicit 503/529 overload — is the server saying "try again later"; it
+  feeds endurance and must not open the circuit mid-window (found in the
+  live chaos campaign: an opened breaker killed runs the window would have
+  released seconds later).
 - `circuit_breaker_threshold` consecutive failures (default 5) open the
   circuit; while open, steps fail fast with the remaining cooldown instead
   of burning their retry budget.
 - After `circuit_breaker_cooldown_secs` (default 60) the circuit half-closes:
   one probe gets through, and any success resets the counter.
+- Run-level endurance paces its waits to the breaker's remaining cooldown,
+  so a run caught on the wrong side of an open circuit waits for the probe
+  instead of exhausting its budget on instant no-op failures.
 
 Config keys: `circuit_breaker_threshold`,
 `circuit_breaker_cooldown_secs` (`0` cooldown disables opening).

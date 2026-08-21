@@ -392,6 +392,8 @@ impl Core {
         cfg.parallel_tools = true;
         cfg.max_retries = self.inner.config.max_retries;
         cfg.retry_base_backoff_ms = self.inner.config.retry_base_backoff_ms;
+        cfg.run_retry_attempts = self.inner.config.run_retry_attempts;
+        cfg.run_retry_base_backoff_ms = self.inner.config.run_retry_base_backoff_ms;
         cfg.request_timeout = if self.inner.config.request_timeout_secs == 0 {
             None
         } else {
