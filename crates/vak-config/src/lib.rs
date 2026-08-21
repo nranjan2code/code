@@ -466,6 +466,12 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     if over.request_timeout_secs.is_some() {
         base.request_timeout_secs = over.request_timeout_secs;
     }
+    if over.run_retry_attempts.is_some() {
+        base.run_retry_attempts = over.run_retry_attempts;
+    }
+    if over.run_retry_base_backoff_ms.is_some() {
+        base.run_retry_base_backoff_ms = over.run_retry_base_backoff_ms;
+    }
     if over.circuit_breaker_threshold.is_some() {
         base.circuit_breaker_threshold = over.circuit_breaker_threshold;
     }

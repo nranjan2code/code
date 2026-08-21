@@ -1,0 +1,40 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use vak_config::load_with_trust;
+
+#[test]
+fn project_layer_retry_keys_reach_effective_config() {
+    // Regression: merge_into dropped run_retry_* when layering project over
+    // user config, so the file value silently fell back to the default.
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join(".vakcoder");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("config.toml"),
+        "provider = \"opencode-zen\"\nmodel = \"x-preview-f-free\"\nrun_retry_attempts = 9\nrun_retry_base_backoff_ms = 1234\n",
+    )
+    .unwrap();
+
+    let cfg = load_with_trust(dir.path(), true).unwrap();
+    assert_eq!(cfg.run_retry_attempts, 9);
+    assert_eq!(cfg.run_retry_base_backoff_ms, 1234);
+}
+
+#[test]
+fn unknown_config_keys_warn_instead_of_failing() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join(".vakcoder");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("config.toml"),
+        "provider = \"opencode-zen\"\nmodel = \"m\"\nfuture_key = true\n",
+    )
+    .unwrap();
+
+    let cfg = load_with_trust(dir.path(), true).unwrap();
+    assert!(
+        cfg.warnings.iter().any(|w| w.contains("future_key")),
+        "typo'd keys must be visible: {:?}",
+        cfg.warnings
+    );
+}

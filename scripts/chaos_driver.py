@@ -169,7 +169,7 @@ def main():
     ok, out = run(sid,
         "Add backlinks(page_title) to WikiStore returning titles whose body links the "
         "given title as [[title]], plus tests. Keep the suite green.",
-        extra_config="request_timeout_secs = 15\nmax_retries = 2\nretry_base_backoff_ms = 300\nrun_retry_attempts = 8\n",
+        extra_config="request_timeout_secs = 15\nmax_retries = 2\nretry_base_backoff_ms = 300\nrun_retry_attempts = 8\ncircuit_breaker_threshold = 100\n",
         timeout=900)
     t = suite_ok()
     bl_ok = "backlinks" in wiki_src()
@@ -183,7 +183,7 @@ def main():
     ok, out = run(sid,
         "Add revision history: store a list of (timestamp, body) per page; add "
         "history(title) returning it; new add_page appends. Tests included. Green suite.",
-        extra_config="request_timeout_secs = 15\nmax_retries = 2\nretry_base_backoff_ms = 300\nrun_retry_attempts = 8\n",
+        extra_config="request_timeout_secs = 15\nmax_retries = 2\nretry_base_backoff_ms = 300\nrun_retry_attempts = 8\ncircuit_breaker_threshold = 100\n",
         timeout=900)
     t = suite_ok()
     rev_ok = "history" in wiki_src()
