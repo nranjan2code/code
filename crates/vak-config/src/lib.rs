@@ -59,6 +59,7 @@ pub struct FileConfig {
     pub request_timeout_secs: Option<u64>,
     pub circuit_breaker_threshold: Option<u32>,
     pub circuit_breaker_cooldown_secs: Option<u64>,
+    pub context_window: Option<u64>,
     #[serde(default)]
     pub mcp: McpConfig,
 }
@@ -105,6 +106,7 @@ pub struct Config {
     pub request_timeout_secs: u64,
     pub circuit_breaker_threshold: u32,
     pub circuit_breaker_cooldown_secs: u64,
+    pub context_window: u64,
     pub mcp: McpConfig,
     pub warnings: Vec<String>,
 }
@@ -128,6 +130,7 @@ impl Default for Config {
             request_timeout_secs: 600,
             circuit_breaker_threshold: 5,
             circuit_breaker_cooldown_secs: 60,
+            context_window: 128_000,
             mcp: McpConfig::default(),
             warnings: Vec::new(),
         }
@@ -225,6 +228,9 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
     if let Some(c) = merged.circuit_breaker_cooldown_secs {
         cfg.circuit_breaker_cooldown_secs = c;
     }
+    if let Some(w) = merged.context_window {
+        cfg.context_window = w;
+    }
     cfg.hooks = merged.hooks;
     for (name, srv) in merged.mcp.servers {
         cfg.mcp.servers.insert(name, srv);
@@ -317,6 +323,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.circuit_breaker_cooldown_secs.is_some() {
         base.circuit_breaker_cooldown_secs = over.circuit_breaker_cooldown_secs;
+    }
+    if over.context_window.is_some() {
+        base.context_window = over.context_window;
     }
     base.hooks.extend(over.hooks);
     for (name, srv) in over.mcp.servers {

@@ -389,6 +389,7 @@ impl Core {
                 self.inner.config.request_timeout_secs,
             ))
         };
+        cfg.context_policy.context_window = self.inner.config.context_window;
         cfg.circuit_breaker = Some(self.inner.breaker.clone());
         cfg.approver = approver.clone();
         cfg.mode = match self.effective_permission_mode() {

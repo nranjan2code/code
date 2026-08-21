@@ -160,6 +160,36 @@ impl SessionLog {
         chain
     }
 
+    /// Message entries along the active path, root→leaf, with their entry
+    /// ids — the id bookkeeping compaction needs.
+    pub fn message_chain(&self) -> Vec<(String, Message)> {
+        self.chain_to_root()
+            .into_iter()
+            .filter_map(|e| match &e.payload {
+                EntryPayload::Message(r) => Some((e.id.clone(), r.message.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Compacts all but the last `keep_recent` message entries into a
+    /// summary. No-op when the chain is already short. Returns true if a
+    /// compaction entry was written.
+    pub fn compact_tail(
+        &mut self,
+        summary: String,
+        keep_recent: usize,
+        tokens_before: u64,
+    ) -> Result<bool, SessionError> {
+        let chain = self.message_chain();
+        if chain.len() <= keep_recent {
+            return Ok(false);
+        }
+        let first_kept = chain[chain.len() - keep_recent].0.clone();
+        self.compact(summary, first_kept, tokens_before)?;
+        Ok(true)
+    }
+
     pub fn derive_messages(&self) -> Vec<Message> {
         let mut out: Vec<(String, Message)> = Vec::new();
         for entry in self.chain_to_root() {

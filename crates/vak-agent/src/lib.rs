@@ -5,6 +5,7 @@
 //! (model-visible means logged).
 
 pub mod circuit;
+pub mod context;
 pub mod steering;
 pub mod task;
 
@@ -54,6 +55,11 @@ pub enum AgentEvent {
         delay_ms: u64,
         reason: String,
     },
+    ContextCompacted {
+        before_tokens: u64,
+        after_tokens: u64,
+        summarized_messages: usize,
+    },
     StreamOpened,
     ApprovalRequested {
         id: String,
@@ -92,6 +98,8 @@ pub struct AgentConfig {
     pub request_timeout: Option<std::time::Duration>,
     /// Shared cross-run provider-health breaker. None disables.
     pub circuit_breaker: Option<Arc<CircuitBreaker>>,
+    /// Long-horizon context policy (window, reserve, compaction trigger).
+    pub context_policy: context::ContextPolicy,
 }
 
 impl AgentConfig {
@@ -111,6 +119,7 @@ impl AgentConfig {
             retry_base_backoff_ms: 500,
             request_timeout: Some(std::time::Duration::from_secs(600)),
             circuit_breaker: None,
+            context_policy: Default::default(),
         }
     }
 }
@@ -202,7 +211,7 @@ impl Agent {
             let _ = events.send(AgentEvent::TurnStart { turn }).await;
 
             let base_request = {
-                let session = self.session.lock().await;
+                let mut session = self.session.lock().await;
                 let model = if self.config.model.is_empty() {
                     session
                         .header()
@@ -211,6 +220,81 @@ impl Agent {
                 } else {
                     self.config.model.clone()
                 };
+                // Long-horizon guard: estimate the projection; on overflow,
+                // summarize older turns into a compaction entry and retry
+                // the same contract. Still over afterwards => fail closed.
+                let policy = &self.config.context_policy;
+                let mut derived = session.derive_messages();
+                let system = self.config.system_prompt.clone();
+                let mut est = context::estimate_tokens(&derived, Some(&system));
+                if est > policy.trigger_at() {
+                    let chain = session.message_chain();
+                    let keep = policy.keep_recent.min(chain.len());
+                    let split_at = chain.len() - keep;
+                    let older: Vec<Message> =
+                        chain[..split_at].iter().map(|(_, m)| m.clone()).collect();
+                    let transcript = context::render_transcript(&older);
+                    let _ = events.send(AgentEvent::TurnStart { turn }).await;
+                    let _ = events
+                        .send(AgentEvent::RetryScheduled {
+                            attempt: 0,
+                            delay_ms: 0,
+                            reason: format!(
+                                "context ~{est} tokens over trigger {} — compacting",
+                                policy.trigger_at()
+                            ),
+                        })
+                        .await;
+
+                    let req = context::compaction_request(&model, &transcript);
+                    let mut stream = match self.provider.stream(req, cancel.clone()).await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            return TurnOutcome::Failed {
+                                error: LlmError::Network(format!("compaction call failed: {e}")),
+                            };
+                        }
+                    };
+                    while futures::StreamExt::next(&mut stream).await.is_some() {}
+                    let summary_msg = match stream.result().await {
+                        Ok(m) => m,
+                        Err(e) => {
+                            return TurnOutcome::Failed {
+                                error: LlmError::Network(format!("compaction call failed: {e}")),
+                            };
+                        }
+                    };
+                    let summary = summary_msg.text_content();
+                    if summary.trim().is_empty() {
+                        return TurnOutcome::Failed {
+                            error: LlmError::Network("compaction produced an empty summary".into()),
+                        };
+                    }
+
+                    let tokens_before = est;
+                    if let Err(e) = session.compact_tail(summary, keep, tokens_before) {
+                        return TurnOutcome::Failed {
+                            error: LlmError::Network(format!("compaction write failed: {e}")),
+                        };
+                    }
+                    derived = session.derive_messages();
+                    est = context::estimate_tokens(&derived, Some(&system));
+                    let _ = events
+                        .send(AgentEvent::ContextCompacted {
+                            before_tokens: tokens_before,
+                            after_tokens: est,
+                            summarized_messages: split_at,
+                        })
+                        .await;
+                    if est > policy.input_budget() {
+                        return TurnOutcome::Failed {
+                            error: LlmError::Network(format!(
+                                "context still over budget after compaction (~{est} > {} tokens)",
+                                policy.input_budget()
+                            )),
+                        };
+                    }
+                }
                 ChatRequest {
                     model,
                     system: Some(self.config.system_prompt.clone()),

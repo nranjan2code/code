@@ -12,7 +12,8 @@ Phases with exit criteria. Each phase ships a usable product.
 | 5 ✅ | Extensibility complete: skills, blocking subagents, hooks, MCP client (lazy meta-tool) | fake-server roundtrip tests + e2e mcp list through the binary |
 | 6 ✅ | Agentic depth complete: fan-out scheduler, static flows, dynamic planner + bounded replan | plan/execute/replan/fail-closed all tested; e2e through binary |
 | 7 ✅ | Phase 7 complete: eval harness, HTTP+SSE server, checkpoints/rewind, worktree isolation | all slices tested + e2e through the binary |
-| post-v0.1.0 ✅ | Reliability pass: retry+backoff, watchdog, session resume, server cancel, graceful shutdown, circuit breaker | failure matrix in docs/design/15-reliability.md; 129 tests green |
+| post-v0.1.0 ✅ | Reliability pass: retry+backoff, watchdog, session resume, server cancel, graceful shutdown, circuit breaker | failure matrix in docs/design/15-reliability.md |
+| post-v0.1.0 ✅ (2) | OpenCode Zen provider + .env secrets; live-model evals; auto-compaction for long-horizon sessions (docs/design/17-context.md) | 10/10 Ox Alpha dogfood battery; compaction overflow tests; 134 tests green |
 
 ## Decisions locked during research (2026-08)
 

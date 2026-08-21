@@ -309,6 +309,16 @@ fn render_agent_event(
             screen.clear_input_row();
             screen.dim(&format!("⟳ retry {attempt} in {delay_ms}ms — {reason}"));
         }
+        AgentEvent::ContextCompacted {
+            before_tokens,
+            after_tokens,
+            summarized_messages,
+        } => {
+            screen.clear_input_row();
+            screen.dim(&format!(
+                "📦 context compacted: ~{before_tokens} → ~{after_tokens} tokens ({summarized_messages} messages summarized)"
+            ));
+        }
         AgentEvent::TurnStart { .. } => {}
         AgentEvent::StopHookContinuation { reason } => {
             screen.clear_input_row();
