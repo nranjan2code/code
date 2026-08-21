@@ -42,6 +42,32 @@ First real-model exercise of the full stack. **10/10 battery PASS.**
 applied before provider resolution). Everything else held: no panics, no
 ledger corruption, token accounting accurate across all runs.
 
+## Long-horizon campaign (Ox Alpha Free, same day)
+
+First real-model exercise of long-context behavior: build a complete
+6-feature static site generator (`sitesmith`) in one append-only ledger,
+driven by chained `exec --session` resumes.
+
+| Metric | Value |
+|---|---|
+| Turns | 1 initial + 4 resumes, single ledger |
+| Tool calls | 39 |
+| Tokens | 168.5K in / 17.4K out |
+| Auto-compactions | 3 (first live firing) |
+
+- **Auto-compaction works under real load**: summaries stayed dense, the
+  model remained coherent across context resets, no repeated work; ledger
+  grew to 80 entries with compaction as entries (never deletion).
+- **Model finding (not a harness bug)**: Ox Alpha ends its turn after each
+  milestone instead of sustaining a multi-step task solo. Chained resume on
+  one session is the working pattern; each resume projected full history
+  (9K → 29K → 123K tokens).
+- Deliverable verified independently: 30/30 tests, CLI init/build/
+  incremental/--full all correct.
+- Harness bugs found & fixed en route (see commit bbf4306): planner TOML
+  string sanitizer (newlines + nested quotes), truncated-SSE completion for
+  OpenAI-compatible proxies, planner-call retries, TUI done-signal on Err.
+
 ## Current numbers
 
 - 15 crates, ~14.5K LOC
