@@ -1639,6 +1639,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "vak-flow"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "vak-agent",
+ "vak-llm",
+ "vak-permission",
+ "vak-session",
+ "vak-tools",
+]
+
+[[package]]
 name = "vak-hooks"
 version = "0.1.0"
 dependencies = [
@@ -1745,15 +1765,20 @@ dependencies = [
 name = "vakcoder"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "clap",
  "futures",
+ "serde_json",
  "tokio",
  "tokio-util",
  "vak-agent",
  "vak-config",
  "vak-core",
+ "vak-flow",
  "vak-llm",
+ "vak-permission",
  "vak-session",
+ "vak-tools",
  "vak-tui",
 ]
 

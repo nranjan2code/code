@@ -12,6 +12,7 @@ path = "src/main.rs"
 vak-agent = { workspace = true }
 vak-config = { workspace = true }
 vak-core = { workspace = true }
+vak-flow = { workspace = true }
 vak-llm = { workspace = true }
 vak-session = { workspace = true }
 vak-tui = { workspace = true }
@@ -19,6 +20,10 @@ clap = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+vak-permission = { workspace = true }
+vak-tools = { workspace = true }
 
 [lints]
 workspace = true

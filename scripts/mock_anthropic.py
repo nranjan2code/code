@@ -50,7 +50,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("content-type", "text/event-stream")
         self.send_header("connection", "close")
         self.end_headers()
-        if n_user_msgs <= 1:
+        texts = " ".join(
+            c.get("text", "") for m in body.get("messages", [])
+            for c in (m.get("content") if isinstance(m.get("content"), list) else [{"type": "text", "text": m.get("content", "")}])
+            if isinstance(c, dict) and c.get("type") == "text"
+        )
+        if "Summarize this probe output" in texts:
+            self.wfile.write(sse([
+                {"type": "message_start", "message": {"model": "claude-sonnet-4-5", "usage": {"input_tokens": 50, "output_tokens": 5}}},
+                {"type": "content_block_start", "index": 0, "content_block": {"type": "text"}},
+                {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Probe summary: all good."}},
+                {"type": "content_block_stop", "index": 0},
+                {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 15}},
+            ]))
+        elif n_user_msgs <= 1:
             self.wfile.write(sse([TOOL_TURN] + TOOL_BLOCKS))
         else:
             self.wfile.write(sse(FINAL_TEXT))
