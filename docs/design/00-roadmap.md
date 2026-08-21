@@ -25,3 +25,10 @@ Phases with exit criteria. Each phase ships a usable product.
 - DeepSeek-Harness lessons adopted: model-visible-means-logged invariant,
   durable-vs-live event split, capability seams as traits, minimal profile as
   eval baseline, boot-tree introspection (`config dump`)
+
+## Post-v0.1.0 achievements
+
+See `16-achievements.md` for the full table. Highlights: OpenCode Zen
+provider (free Ox Alpha model), live-model eval mode, reliability pass
+(retry/watchdog/circuit-breaker/resume/cancel), and a 10/10 live dogfood
+battery — the first real-model exercise of the entire stack.
