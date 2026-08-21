@@ -14,6 +14,17 @@ pub enum PermissionMode {
     FullAccess,
 }
 
+impl PermissionMode {
+    pub fn deserialize_str(s: &str) -> Option<PermissionMode> {
+        match s {
+            "read-only" | "readonly" => Some(PermissionMode::ReadOnly),
+            "workspace-write" => Some(PermissionMode::WorkspaceWrite),
+            "full-access" | "fullaccess" => Some(PermissionMode::FullAccess),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Profile {
@@ -34,6 +45,12 @@ pub struct FileConfig {
     pub profile: Option<String>,
     pub profiles: std::collections::BTreeMap<String, Profile>,
     pub anthropic_base_url: Option<String>,
+    #[serde(default)]
+    pub allow: Vec<String>,
+    #[serde(default)]
+    pub ask: Vec<String>,
+    #[serde(default)]
+    pub deny: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +61,9 @@ pub struct Config {
     pub max_turns: usize,
     pub permission_mode: PermissionMode,
     pub anthropic_base_url: Option<String>,
+    pub allow: Vec<String>,
+    pub ask: Vec<String>,
+    pub deny: Vec<String>,
     pub warnings: Vec<String>,
 }
 
@@ -56,6 +76,9 @@ impl Default for Config {
             max_turns: 40,
             permission_mode: PermissionMode::WorkspaceWrite,
             anthropic_base_url: None,
+            allow: Vec::new(),
+            ask: Vec::new(),
+            deny: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -131,6 +154,9 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
         cfg.permission_mode = mode;
     }
     cfg.anthropic_base_url = merged.anthropic_base_url;
+    cfg.allow = merged.allow;
+    cfg.ask = merged.ask;
+    cfg.deny = merged.deny;
 
     if let Some(name) = &merged.profile {
         if let Some(profile) = merged.profiles.get(name) {
@@ -186,6 +212,21 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.anthropic_base_url.is_some() {
         base.anthropic_base_url = over.anthropic_base_url;
+    }
+    for r in over.allow {
+        if !base.allow.contains(&r) {
+            base.allow.push(r);
+        }
+    }
+    for r in over.ask {
+        if !base.ask.contains(&r) {
+            base.ask.push(r);
+        }
+    }
+    for r in over.deny {
+        if !base.deny.contains(&r) {
+            base.deny.push(r);
+        }
     }
     for (k, v) in over.profiles {
         base.profiles.insert(k, v);

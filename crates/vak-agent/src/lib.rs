@@ -15,10 +15,13 @@ use vak_llm::{
     AssistantMessage, ChatRequest, ContentBlock, LlmError, Message, Provider, Role, StopReason,
     StreamEvent, Usage,
 };
+use vak_permission::{Decision, Mode, PermissionEngine};
 use vak_session::{MessageMeta, MessageRecord, SessionLog};
 use vak_tools::Tool;
 
 pub use steering::{DrainMode, SteeringQueues};
+
+pub use async_trait;
 
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
@@ -50,19 +53,50 @@ pub enum TurnOutcome {
 
 pub struct AgentConfig {
     pub system_prompt: String,
+    pub model: String,
     pub tools: Vec<Arc<dyn Tool>>,
     pub max_turns: usize,
     pub parallel_tools: bool,
+    pub permission: Option<Arc<PermissionEngine>>,
+    pub mode: Mode,
+    pub approver: Option<Arc<dyn Approver>>,
 }
 
 impl AgentConfig {
     pub fn new(system_prompt: impl Into<String>) -> Self {
         AgentConfig {
             system_prompt: system_prompt.into(),
+            model: String::new(),
             tools: Vec::new(),
             max_turns: 40,
             parallel_tools: true,
+            permission: None,
+            mode: Mode::WorkspaceWrite,
+            approver: None,
         }
+    }
+}
+
+#[async_trait::async_trait]
+pub trait Approver: Send + Sync {
+    async fn approve(&self, tool: &str, reason: &str) -> bool;
+}
+
+pub struct AutoApprove;
+
+#[async_trait::async_trait]
+impl Approver for AutoApprove {
+    async fn approve(&self, _tool: &str, _reason: &str) -> bool {
+        true
+    }
+}
+
+pub struct AutoDeny;
+
+#[async_trait::async_trait]
+impl Approver for AutoDeny {
+    async fn approve(&self, _tool: &str, _reason: &str) -> bool {
+        false
     }
 }
 
@@ -130,11 +164,16 @@ impl Agent {
 
             let request = {
                 let session = self.session.lock().await;
-                ChatRequest {
-                    model: session
+                let model = if self.config.model.is_empty() {
+                    session
                         .header()
                         .map(|h| h.contract.model.clone())
-                        .unwrap_or_default(),
+                        .unwrap_or_default()
+                } else {
+                    self.config.model.clone()
+                };
+                ChatRequest {
+                    model,
                     system: Some(self.config.system_prompt.clone()),
                     messages: session.derive_messages(),
                     tools: vak_tools::definitions(&self.config.tools),
@@ -234,20 +273,34 @@ impl Agent {
             .map(|h| h.contract_cwd())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
 
+        let mut authz: Vec<Result<(), String>> = Vec::with_capacity(n);
+        for call in &calls {
+            authz.push(authorize(&self.config, call, &cwd).await);
+        }
+        let ids: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
+
         if !self.config.parallel_tools || n == 1 {
             let mut out = Vec::with_capacity(n);
-            for call in calls {
-                if cancel.is_cancelled() {
-                    out.push((call.id, ToolRunOutput::Err("cancelled".into())));
-                    continue;
+            for (call, verdict) in calls.into_iter().zip(authz) {
+                match verdict {
+                    Err(reason) => out.push((call.id, ToolRunOutput::Err(reason))),
+                    Ok(()) => {
+                        if cancel.is_cancelled() {
+                            out.push((call.id, ToolRunOutput::Err("cancelled".into())));
+                            continue;
+                        }
+                        out.push(execute_one(call, &self.config.tools, &cwd, cancel, events).await);
+                    }
                 }
-                out.push(execute_one(call, &self.config.tools, &cwd, cancel, events).await);
             }
             return out;
         }
 
         let mut join = tokio::task::JoinSet::new();
         for (idx, call) in calls.into_iter().enumerate() {
+            if authz[idx].is_err() {
+                continue;
+            }
             let tools = self.config.tools.clone();
             let cancel = cancel.clone();
             let events = events.clone();
@@ -263,10 +316,14 @@ impl Agent {
                 ordered[idx] = Some(pair);
             }
         }
+        for (idx, verdict) in authz.into_iter().enumerate() {
+            if let Err(reason) = verdict {
+                ordered[idx] = Some((ids[idx].clone(), ToolRunOutput::Err(reason)));
+            }
+        }
         ordered.into_iter().flatten().collect()
     }
 }
-
 async fn execute_one(
     call: PendingToolCall,
     tools: &[Arc<dyn Tool>],
@@ -318,6 +375,25 @@ async fn execute_one(
         .await;
 
     (call.id, output)
+}
+
+async fn authorize(
+    config: &AgentConfig,
+    call: &PendingToolCall,
+    cwd: &std::path::Path,
+) -> Result<(), String> {
+    let Some(engine) = &config.permission else {
+        return Ok(());
+    };
+    match engine.evaluate(&call.name, &call.input, config.mode, cwd) {
+        Decision::Allow => Ok(()),
+        Decision::Deny { reason } => Err(reason),
+        Decision::Ask { reason } => match &config.approver {
+            Some(a) if a.approve(&call.name, &reason).await => Ok(()),
+            Some(_) => Err(format!("denied by user: {reason}")),
+            None => Err(format!("{reason} (no approver available)")),
+        },
+    }
 }
 
 enum ToolRunOutput {

@@ -1,0 +1,157 @@
+use serde_json::Value;
+
+use crate::Mode;
+use crate::rules::{Rule, RuleDecision};
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Decision {
+    Allow,
+    Ask { reason: String },
+    Deny { reason: String },
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PermissionEngine {
+    rules: Vec<Rule>,
+}
+
+const READ_TOOLS: [&str; 5] = ["read", "glob", "grep", "ls", "search"];
+const WRITE_TOOLS: [&str; 2] = ["write", "edit"];
+
+impl PermissionEngine {
+    pub fn new(rules: Vec<Rule>) -> Self {
+        PermissionEngine { rules }
+    }
+
+    pub fn from_rule_strings(specs: &[String]) -> Result<Self, crate::rules::RuleError> {
+        let mut rules = Vec::with_capacity(specs.len());
+        for s in specs {
+            rules.push(Rule::parse(s)?);
+        }
+        Ok(PermissionEngine { rules })
+    }
+
+    pub fn rules(&self) -> &[Rule] {
+        &self.rules
+    }
+
+    /// First matching rule wins; otherwise the mode's default applies.
+    pub fn evaluate(
+        &self,
+        tool: &str,
+        args: &Value,
+        mode: Mode,
+        cwd: &std::path::Path,
+    ) -> Decision {
+        for rule in &self.rules {
+            if rule.matches(tool, args) {
+                return match rule.decision {
+                    RuleDecision::Allow => Decision::Allow,
+                    RuleDecision::Ask => Decision::Ask {
+                        reason: format!("rule requires approval: {}", describe(tool, args)),
+                    },
+                    RuleDecision::Deny => Decision::Deny {
+                        reason: format!("denied by rule: {}", describe(tool, args)),
+                    },
+                };
+            }
+        }
+
+        match mode {
+            Mode::FullAccess => Decision::Allow,
+            Mode::ReadOnly => {
+                if READ_TOOLS.contains(&tool) {
+                    Decision::Allow
+                } else {
+                    Decision::Deny {
+                        reason: format!(
+                            "read-only mode denies '{tool}'; switch modes or add a rule"
+                        ),
+                    }
+                }
+            }
+            Mode::WorkspaceWrite => {
+                if READ_TOOLS.contains(&tool) {
+                    return Decision::Allow;
+                }
+                if WRITE_TOOLS.contains(&tool) {
+                    return match args.get("path").and_then(|p| p.as_str()) {
+                        Some(path) => {
+                            if path_in_workspace(std::path::Path::new(path), cwd) {
+                                Decision::Allow
+                            } else {
+                                Decision::Ask {
+                                    reason: format!("'{path}' is outside the workspace"),
+                                }
+                            }
+                        }
+                        None => Decision::Ask {
+                            reason: "missing path argument".into(),
+                        },
+                    };
+                }
+                if tool == "bash" {
+                    return Decision::Ask {
+                        reason: format!("shell command needs approval: {}", describe(tool, args)),
+                    };
+                }
+                Decision::Ask {
+                    reason: format!("'{tool}' needs approval"),
+                }
+            }
+        }
+    }
+}
+
+fn describe(tool: &str, args: &Value) -> String {
+    match tool {
+        "bash" => args
+            .get("command")
+            .and_then(|c| c.as_str())
+            .map(|c| {
+                let preview: String = c.chars().take(80).collect();
+                format!("bash `{preview}`")
+            })
+            .unwrap_or_else(|| "bash".into()),
+        "write" | "edit" | "read" => args
+            .get("path")
+            .and_then(|p| p.as_str())
+            .map(|p| format!("{tool} {p}"))
+            .unwrap_or_else(|| tool.to_string()),
+        other => other.to_string(),
+    }
+}
+
+fn path_in_workspace(path: &std::path::Path, cwd: &std::path::Path) -> bool {
+    let Ok(cwd_abs) = cwd.canonicalize() else {
+        return false;
+    };
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd_abs.join(path)
+    };
+    match candidate.canonicalize() {
+        Ok(p) => p.starts_with(&cwd_abs),
+        Err(_) => {
+            let mut acc = cwd_abs.clone();
+            for comp in candidate
+                .strip_prefix(&cwd_abs)
+                .unwrap_or(candidate.components().as_path())
+                .components()
+            {
+                match comp {
+                    std::path::Component::ParentDir => {
+                        if !acc.pop() {
+                            return false;
+                        }
+                    }
+                    std::path::Component::Normal(c) => acc.push(c),
+                    std::path::Component::CurDir => {}
+                    _ => return false,
+                }
+            }
+            acc.starts_with(&cwd_abs)
+        }
+    }
+}

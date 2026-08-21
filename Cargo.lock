@@ -1605,6 +1605,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "vak-llm",
+ "vak-permission",
  "vak-session",
  "vak-tools",
 ]
@@ -1629,6 +1630,7 @@ dependencies = [
  "vak-agent",
  "vak-config",
  "vak-llm",
+ "vak-permission",
  "vak-session",
  "vak-tools",
 ]
@@ -1647,6 +1649,16 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "vak-permission"
+version = "0.1.0"
+dependencies = [
+ "globset",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -1685,6 +1697,7 @@ dependencies = [
 name = "vak-tui"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "crossterm",
  "futures",
  "tempfile",

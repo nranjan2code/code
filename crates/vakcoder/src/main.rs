@@ -30,6 +30,10 @@ enum Command {
         max_turns: usize,
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        permission_mode: Option<String>,
     },
     /// Show the effective composed configuration
     Config {
@@ -56,7 +60,21 @@ async fn main() {
             provider,
             max_turns,
             json,
-        }) => run_exec(cwd, prompt, model, provider, max_turns, json).await,
+            yes,
+            permission_mode,
+        }) => {
+            run_exec(
+                cwd,
+                prompt,
+                model,
+                provider,
+                max_turns,
+                json,
+                yes,
+                permission_mode,
+            )
+            .await
+        }
         Some(Command::Config { .. }) => {
             run_config_dump(cwd);
             0
@@ -80,6 +98,7 @@ async fn run_tui(cwd: PathBuf) -> i32 {
     vak_tui::run(core, vak_tui::UiConfig { cwd }).await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_exec(
     cwd: PathBuf,
     prompt: String,
@@ -87,8 +106,10 @@ async fn run_exec(
     provider: Option<String>,
     max_turns: usize,
     _json: bool,
+    yes: bool,
+    permission_mode: Option<String>,
 ) -> i32 {
-    let mut core = match Core::new(cwd.clone()) {
+    let core = match Core::new(cwd.clone()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");
@@ -96,12 +117,23 @@ async fn run_exec(
         }
     };
     if let Some(m) = model {
-        core.config.model = m;
+        core.set_model(m);
     }
     if let Some(p) = provider {
-        core.config.provider = p;
+        core.set_provider(p);
     }
-    core.config.max_turns = max_turns;
+    core.set_max_turns(max_turns);
+    if let Some(pm) = permission_mode {
+        match vak_config::PermissionMode::deserialize_str(&pm) {
+            Some(m) => core.set_permission_mode(m),
+            None => {
+                eprintln!(
+                    "error: unknown --permission-mode '{pm}' (read-only | workspace-write | full-access)"
+                );
+                return 2;
+            }
+        }
+    }
 
     let session = match core.start_session().await {
         Ok(s) => s,
@@ -122,7 +154,16 @@ async fn run_exec(
         }
     });
 
-    let runner = tokio::spawn(async move { core.run_turn(session, &prompt, cancel, tx).await });
+    let approver: Option<std::sync::Arc<dyn vak_agent::Approver>> = Some(if yes {
+        std::sync::Arc::new(vak_agent::AutoApprove)
+    } else {
+        std::sync::Arc::new(vak_agent::AutoDeny)
+    });
+
+    let runner = tokio::spawn(async move {
+        core.run_turn_with(session, &prompt, cancel, approver, None, tx)
+            .await
+    });
 
     let mut total_in: u64 = 0;
     let mut total_out: u64 = 0;
@@ -197,22 +238,22 @@ fn run_config_dump(cwd: PathBuf) {
         Ok(core) => {
             println!("# vakcoder effective config");
             println!("version          = {}", vak_core::APP_VERSION);
-            println!("cwd              = {}", core.cwd.display());
-            println!("provider         = {}", core.config.provider);
-            println!("model            = {}", core.config.model);
-            println!("max_tokens       = {}", core.config.max_tokens);
-            println!("max_turns        = {}", core.config.max_turns);
-            println!("permission_mode  = {:?}", core.config.permission_mode);
-            println!("sessions_home    = {}", core.sessions_home.display());
+            println!("cwd              = {}", core.cwd().display());
+            println!("provider         = {}", core.effective_provider());
+            println!("model            = {}", core.effective_model());
+            println!("max_tokens       = {}", core.config().max_tokens);
+            println!("max_turns        = {}", core.effective_max_turns());
+            println!("permission_mode  = {:?}", core.effective_permission_mode());
+            println!("sessions_home    = {}", core.sessions_home().display());
             println!(
                 "anthropic_base   = {}",
-                core.config
+                core.config()
                     .anthropic_base_url
                     .clone()
                     .unwrap_or_else(|| "https://api.anthropic.com".into())
             );
             println!("tools            = {}", core.tool_names().join(", "));
-            for w in &core.config.warnings {
+            for w in &core.config().warnings {
                 println!("warning          = {w}");
             }
         }
@@ -226,7 +267,7 @@ fn run_sessions_list(cwd: PathBuf) {
     let Ok(core) = Core::new(cwd) else {
         return;
     };
-    let dir = vak_session::SessionPath::sessions_dir(&core.sessions_home, &core.cwd);
+    let dir = vak_session::SessionPath::sessions_dir(core.sessions_home(), core.cwd());
     let Ok(entries) = std::fs::read_dir(&dir) else {
         println!("no sessions yet ({})", dir.display());
         return;

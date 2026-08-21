@@ -6,6 +6,7 @@ members = [
     "crates/vak-tools",
     "crates/vak-agent",
     "crates/vak-config",
+    "crates/vak-permission",
     "crates/vak-core",
     "crates/vak-tui",
     "crates/vakcoder",
@@ -24,6 +25,7 @@ vak-tools = { path = "crates/vak-tools" }
 vak-agent = { path = "crates/vak-agent" }
 vak-config = { path = "crates/vak-config" }
 vak-core = { path = "crates/vak-core" }
+vak-permission = { path = "crates/vak-permission" }
 vak-tui = { path = "crates/vak-tui" }
 
 crossterm = { version = "0.28", features = ["event-stream"] }

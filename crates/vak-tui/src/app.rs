@@ -1,17 +1,16 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crossterm::event::{Event, EventStream};
+use crossterm::event::{Event, EventStream, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use futures::StreamExt;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use vak_agent::{Agent, AgentConfig, AgentEvent, SteeringQueues, TurnOutcome};
+use vak_agent::{AgentEvent, Approver, SteeringQueues, TurnOutcome};
 use vak_core::Core;
 use vak_llm::stream::StreamEvent;
 use vak_session::SessionLog;
-use vak_tools::Tool;
 
 use crate::commands::{self, Command};
 use crate::editor::Editor;
@@ -20,6 +19,32 @@ use crate::render::Screen;
 
 pub struct UiConfig {
     pub cwd: PathBuf,
+}
+
+pub struct ApprovalRequest {
+    tool: String,
+    reason: String,
+    respond: oneshot::Sender<bool>,
+}
+
+struct ChannelApprover {
+    tx: mpsc::Sender<ApprovalRequest>,
+}
+
+#[async_trait::async_trait]
+impl Approver for ChannelApprover {
+    async fn approve(&self, tool: &str, reason: &str) -> bool {
+        let (respond, rx) = oneshot::channel();
+        let req = ApprovalRequest {
+            tool: tool.to_string(),
+            reason: reason.to_string(),
+            respond,
+        };
+        if self.tx.send(req).await.is_err() {
+            return false;
+        }
+        rx.await.unwrap_or(false)
+    }
 }
 
 enum RunSignal {
@@ -41,7 +66,7 @@ impl Drop for RawMode {
     }
 }
 
-pub async fn run(mut core: Core, _cfg: UiConfig) -> i32 {
+pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
     let _raw = RawMode::enable();
     let mut screen = Screen::new();
     let mut editor = Editor::new();
@@ -57,8 +82,14 @@ pub async fn run(mut core: Core, _cfg: UiConfig) -> i32 {
     };
     let session_path = session.path().display().to_string();
     let session = Arc::new(Mutex::new(Some(session)));
+    let (approval_tx, mut approval_rx) = mpsc::channel::<ApprovalRequest>(1);
+    let approver: Arc<dyn Approver> = Arc::new(ChannelApprover { tx: approval_tx });
 
-    screen.banner(vak_core::APP_VERSION, &core.config.model, &session_path);
+    screen.banner(
+        vak_core::APP_VERSION,
+        &core.config().model.clone(),
+        &session_path,
+    );
 
     let mut reader = EventStream::new();
     let mut running: Option<mpsc::Receiver<AgentEvent>> = None;
@@ -66,6 +97,7 @@ pub async fn run(mut core: Core, _cfg: UiConfig) -> i32 {
     let mut pending = String::new();
     let mut total_in: u64 = 0;
     let mut total_out: u64 = 0;
+    let mut awaiting: Option<ApprovalRequest> = None;
 
     loop {
         let input_ev = reader.next();
@@ -81,11 +113,24 @@ pub async fn run(mut core: Core, _cfg: UiConfig) -> i32 {
                 None => std::future::pending().await,
             }
         };
+        let approval_ev = approval_rx.recv();
 
         tokio::select! {
             maybe_event = input_ev => {
                 let Some(Ok(Event::Key(key))) = maybe_event else { continue };
                 if key.kind != crossterm::event::KeyEventKind::Press {
+                    continue;
+                }
+
+                if let Some(req) = awaiting.take() {
+                    let approve = matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'));
+                    let _ = req.respond.send(approve);
+                    screen.clear_input_row();
+                    screen.dim(&format!(
+                        "{} {}",
+                        if approve { "✓ allowed" } else { "✗ denied" },
+                        req.tool
+                    ));
                     continue;
                 }
                 let is_running = running.is_some();
@@ -129,7 +174,7 @@ pub async fn run(mut core: Core, _cfg: UiConfig) -> i32 {
                                     Some(Command::Context) => show_context(&mut screen, &session).await,
                                     Some(Command::Sessions) => list_sessions(&core, &mut screen),
                                     Some(Command::Model(m)) => {
-                                        core.config.model = m.clone();
+                                        core.set_model(m.clone());
                                         screen.accent(&format!("model → {m} (applies to next turn)"));
                                     }
                                     Some(Command::Clear) => {
@@ -145,7 +190,7 @@ pub async fn run(mut core: Core, _cfg: UiConfig) -> i32 {
                                 }
                                 continue;
                             }
-                            submit(&core, &session, &steering, cancel.clone(), &mut running, &mut run_done, &text).await;
+                            submit(&core, &session, &steering, approver.clone(), cancel.clone(), &mut running, &mut run_done, &text).await;
                             screen.dim(&format!("▸ {text}"));
                         }
                     }
@@ -171,6 +216,9 @@ pub async fn run(mut core: Core, _cfg: UiConfig) -> i32 {
             Some(agent_event) = agent_ev => {
                 render_agent_event(&mut screen, agent_event, &mut total_in, &mut total_out);
             }
+            Some(req) = approval_ev => {
+                awaiting = Some(req);
+            }
             signal = done_ev => {
                 if let Some(mut rx) = running.take() {
                     while let Ok(ev) = rx.try_recv() {
@@ -186,6 +234,13 @@ pub async fn run(mut core: Core, _cfg: UiConfig) -> i32 {
         }
 
         redraw(&mut screen, &editor, running.is_some(), &pending);
+        if let Some(req) = &awaiting {
+            screen.redraw_input(
+                "[approve] ",
+                &format!("{} — y/n: {}", req.tool, req.reason),
+                0,
+            );
+        }
     }
 
     screen.dim("bye");
@@ -196,7 +251,8 @@ pub async fn run(mut core: Core, _cfg: UiConfig) -> i32 {
 async fn submit(
     core: &Core,
     session: &Arc<Mutex<Option<SessionLog>>>,
-    steering: &Arc<SteeringQueues>,
+    _steering: &Arc<SteeringQueues>,
+    approver: Arc<dyn Approver>,
     cancel: CancellationToken,
     running: &mut Option<mpsc::Receiver<AgentEvent>>,
     run_done: &mut Option<mpsc::Receiver<RunSignal>>,
@@ -205,33 +261,24 @@ async fn submit(
     let Some(taken) = session.lock().await.take() else {
         return;
     };
-    let provider = match core.provider() {
-        Ok(p) => p,
-        Err(e) => {
-            *session.lock().await = Some(taken);
-            eprintln!("error: {e}");
-            return;
-        }
-    };
-    let mut cfg = AgentConfig::new(core.system_prompt());
-    cfg.tools = default_tools();
-    cfg.max_turns = core.config.max_turns;
-    let mut agent = Agent::new(provider, taken, cfg);
-
+    if core.provider().is_err() {
+        *session.lock().await = Some(taken);
+        return;
+    }
     let (ev_tx, ev_rx) = mpsc::channel(1024);
     let (done_tx, done_rx) = mpsc::channel(1);
-    let steering = steering.clone();
     let prompt = prompt.to_string();
+    let core = core.clone();
     tokio::spawn(async move {
-        let outcome = agent.run(&prompt, &steering, cancel, ev_tx).await;
-        let _ = done_tx.send(RunSignal::Done(outcome)).await;
+        let outcome = core
+            .run_turn_with(taken, &prompt, cancel, Some(approver), None, ev_tx)
+            .await;
+        if let Ok(o) = outcome {
+            let _ = done_tx.send(RunSignal::Done(o)).await;
+        }
     });
     *running = Some(ev_rx);
     *run_done = Some(done_rx);
-}
-
-fn default_tools() -> Vec<Arc<dyn Tool>> {
-    vak_tools::default_tools()
 }
 
 fn render_agent_event(
@@ -292,7 +339,7 @@ async fn show_context(screen: &mut Screen, session: &Arc<Mutex<Option<SessionLog
 }
 
 fn list_sessions(core: &Core, screen: &mut Screen) {
-    let dir = vak_session::SessionPath::sessions_dir(&core.sessions_home, &core.cwd);
+    let dir = vak_session::SessionPath::sessions_dir(core.sessions_home(), core.cwd());
     match std::fs::read_dir(&dir) {
         Ok(entries) => {
             for e in entries.flatten() {

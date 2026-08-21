@@ -43,12 +43,14 @@ not core.
 crates/vak-llm       unified provider API, SSE, event streams
 crates/vak-session   append-only JSONL trees, frozen contract, projection
 crates/vak-tools     read/write/edit/bash/glob/grep behind Tool trait
+crates/vak-permission rule engine: modes × rules -> Allow/Ask/Deny
 crates/vak-agent     loop, steering queues, parallel tool execution
 crates/vak-config    layered TOML config
 crates/vak-core      SDK facade, system prompt, session bootstrap
-crates/vakcoder      binary: exec / config dump / sessions
+crates/vak-tui       inline stream-based terminal UI
+crates/vakcoder      binary: tui / exec / config dump / sessions
 docs/design/         architecture decisions — update with behavior changes
-scripts/             dev utilities (mock server etc.)
+scripts/             dev utilities (mock server, PTY smoke driver)
 ```
 
 ## Verification before every commit
