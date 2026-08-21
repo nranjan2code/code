@@ -62,11 +62,14 @@ enum Command {
         #[arg(long)]
         worktree: bool,
     },
-    /// Run the built-in eval suite (deterministic, in-process)
+    /// Run the built-in eval suite
     Eval {
         /// Write JSON report to this path
         #[arg(long)]
         report: Option<PathBuf>,
+        /// Run the live suite against the configured provider (needs API key)
+        #[arg(long)]
+        live: bool,
     },
     /// Serve the agent over HTTP+SSE
     Serve {
@@ -239,7 +242,7 @@ async fn main() {
             yes,
             worktree,
         }) => run_plan(cwd, task, yes, worktree).await,
-        Some(Command::Eval { report }) => run_eval(report).await,
+        Some(Command::Eval { report, live }) => run_eval(report, live).await,
         Some(Command::Serve { port }) => run_serve(cwd, port).await,
     };
     std::process::exit(code);
@@ -867,21 +870,53 @@ async fn run_plan(cwd: PathBuf, task: String, yes: bool, worktree: bool) -> i32 
     }
 }
 
-async fn run_eval(report_path: Option<PathBuf>) -> i32 {
-    let cases = vak_eval::builtin_suite();
-    let mut reports = Vec::with_capacity(cases.len());
-    for case in &cases {
-        let r = vak_eval::run_case(case).await;
-        println!(
-            "{:<12} {:>6}  in {:>5} / out {:>4}  {:>5}ms  {}",
-            r.task_id,
-            if r.passed { "PASS" } else { "FAIL" },
-            r.tokens_in,
-            r.tokens_out,
-            r.duration_ms,
-            r.error.as_deref().unwrap_or("")
-        );
-        reports.push(r);
+async fn run_eval(report_path: Option<PathBuf>, live: bool) -> i32 {
+    let mut reports = Vec::new();
+
+    if !live {
+        for case in &vak_eval::builtin_suite() {
+            let r = vak_eval::run_case(case).await;
+            println!(
+                "{:<24} {:>6}  in {:>5} / out {:>4}  {:>5}ms  {}",
+                r.task_id,
+                if r.passed { "PASS" } else { "FAIL" },
+                r.tokens_in,
+                r.tokens_out,
+                r.duration_ms,
+                r.error.as_deref().unwrap_or("")
+            );
+            reports.push(r);
+        }
+    } else {
+        let core = match Core::new(std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 2;
+            }
+        };
+        let provider = match core.provider() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 2;
+            }
+        };
+        let model = core.effective_model().clone();
+        eprintln!("live eval against {} / {model}", core.effective_provider());
+        for case in &vak_eval::live_suite() {
+            let r = vak_eval::run_case_with_provider(case, provider.clone(), &model).await;
+            println!(
+                "{:<24} {:>6}  in {:>5} / out {:>4}  {:>5}ms  {}",
+                r.task_id,
+                if r.passed { "PASS" } else { "FAIL" },
+                r.tokens_in,
+                r.tokens_out,
+                r.duration_ms,
+                r.error.as_deref().unwrap_or("")
+            );
+            reports.push(r);
+        }
     }
 
     let passed = reports.iter().filter(|r| r.passed).count();

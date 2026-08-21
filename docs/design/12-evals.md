@@ -34,8 +34,11 @@ provider is scripted.
 The suite also runs as a `cargo test --workspace` integration test
 (`builtin_suite_fully_green`) so any harness regression fails CI directly.
 
-## Extending toward real-model evals
+## Live-model evals
 
-The runner accepts any `Provider`; swapping `EvalProvider` for the Anthropic/
-OpenAI adapters plus a task set without scripts yields live-model benchmarks
-(nightly). Token/cost accounting already flows through the same report.
+`vakcoder eval --live` runs `live_suite()` (create-file, sort-lines,
+json-edit — small, verifiable, environment-independent) against the
+configured provider with no scripted trajectory: the model must genuinely
+solve each task. Same report format, same token/cost accounting, so nightly
+runs track real model performance through the harness. Requires API keys in
+the environment; respects provider/model config and flags.

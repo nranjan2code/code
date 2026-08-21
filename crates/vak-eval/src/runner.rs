@@ -146,9 +146,19 @@ pub struct EvalReport {
     pub error: Option<String>,
 }
 
-/// Runs one case in an isolated tempdir workspace using the production
-/// agent loop and tools; only the provider is scripted.
+/// Runs one case with the built-in scripted provider (deterministic).
 pub async fn run_case(case: &EvalCase) -> EvalReport {
+    let provider = Arc::new(EvalProvider::new(case.script.clone()));
+    run_case_with_provider(case, provider, "eval-model").await
+}
+
+/// Runs one case against ANY provider — the live-model path. The `script`
+/// field is ignored; the model must genuinely solve the task.
+pub async fn run_case_with_provider(
+    case: &EvalCase,
+    provider: Arc<dyn Provider>,
+    model: &str,
+) -> EvalReport {
     let start = Instant::now();
     let dir = match tempfile::tempdir() {
         Ok(d) => d,
@@ -183,7 +193,7 @@ pub async fn run_case(case: &EvalCase) -> EvalReport {
         contract: FrozenContract {
             app_version: env!("CARGO_PKG_VERSION").into(),
             provider: "eval-scripted".into(),
-            model: "eval-model".into(),
+            model: model.to_string(),
             system_prompt: "eval".into(),
             tools: vak_tools::default_tools()
                 .iter()
@@ -209,8 +219,8 @@ pub async fn run_case(case: &EvalCase) -> EvalReport {
         }
     };
 
-    let provider = Arc::new(EvalProvider::new(case.script.clone()));
     let mut cfg = AgentConfig::new("eval");
+    cfg.model = model.to_string();
     cfg.tools = vak_tools::default_tools();
     cfg.max_turns = 12;
     cfg.permission = Some(Arc::new(PermissionEngine::default()));

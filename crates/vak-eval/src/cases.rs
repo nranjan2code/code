@@ -121,3 +121,48 @@ pub fn builtin_suite() -> Vec<EvalCase> {
         permission_denial_adapts(),
     ]
 }
+
+/// Tasks for LIVE model runs: no scripted trajectory, verification only.
+/// Deliberately small and environment-independent so any frontier model
+/// can attempt them and differences reflect harness+model, not tooling.
+pub fn live_suite() -> Vec<EvalCase> {
+    vec![live_create_file(), live_sort_lines(), live_json_edit()]
+}
+
+fn live_create_file() -> EvalCase {
+    let mut c = base(
+        "live-create-file",
+        "create a file with exact content from a natural-language instruction",
+    );
+    c.prompt = "Create a file named greeting.txt containing exactly one line: hello world".into();
+    c.verify = "[ \"$(tr -d '\n\r' < greeting.txt)\" = 'hello world' ]".into();
+    c
+}
+
+fn live_sort_lines() -> EvalCase {
+    let mut c = base(
+        "live-sort-lines",
+        "sort the lines of a file into a new file",
+    );
+    c.files = vec![(
+        "unsorted.txt".into(),
+        "delta\nalpha\ncharlie\nbravo\n".into(),
+    )];
+    c.prompt = "Sort the lines of unsorted.txt alphabetically and write them to sorted.txt.".into();
+    c.verify =
+        "[ \"$(cat sorted.txt)\" = \"$(printf 'alpha\\nbravo\\ncharlie\\ndelta\\n')\" ]".into();
+    c
+}
+
+fn live_json_edit() -> EvalCase {
+    let mut c = base("live-json-edit", "make a precise edit inside a JSON config");
+    c.files = vec![(
+        "config.json".into(),
+        "{\n  \"name\": \"svc\",\n  \"port\": 3000,\n  \"debug\": true\n}\n".into(),
+    )];
+    c.prompt =
+        "In config.json, change the value of \"port\" to 8080. Keep everything else identical."
+            .into();
+    c.verify = "python3 -c \"import json,sys;d=json.load(open('config.json'));sys.exit(0 if d['port']==8080 and d['name']=='svc' and d['debug']==True else 1)\"".into();
+    c
+}
