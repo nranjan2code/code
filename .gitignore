@@ -7,3 +7,4 @@ Cargo.lock.orig
 !.env.example
 .vakcoder/sessions/
 dist/
+tools belong in the session cwd

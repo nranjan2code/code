@@ -227,6 +227,13 @@ impl Agent {
         events: &mpsc::Sender<AgentEvent>,
     ) -> Vec<(String, ToolRunOutput)> {
         let n = calls.len();
+        let cwd = self
+            .session
+            .lock()
+            .await
+            .header()
+            .map(|h| h.contract_cwd())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
 
         if !self.config.parallel_tools || n == 1 {
             let mut out = Vec::with_capacity(n);
@@ -235,7 +242,7 @@ impl Agent {
                     out.push((call.id, ToolRunOutput::Err("cancelled".into())));
                     continue;
                 }
-                out.push(execute_one(call, &self.config.tools, cancel, events).await);
+                out.push(execute_one(call, &self.config.tools, &cwd, cancel, events).await);
             }
             return out;
         }
@@ -245,8 +252,9 @@ impl Agent {
             let tools = self.config.tools.clone();
             let cancel = cancel.clone();
             let events = events.clone();
+            let cwd = cwd.clone();
             join.spawn(async move {
-                let r = execute_one(call, &tools, &cancel, &events).await;
+                let r = execute_one(call, &tools, &cwd, &cancel, &events).await;
                 (idx, r)
             });
         }
@@ -263,6 +271,7 @@ impl Agent {
 async fn execute_one(
     call: PendingToolCall,
     tools: &[Arc<dyn Tool>],
+    cwd: &std::path::Path,
     cancel: &CancellationToken,
     events: &mpsc::Sender<AgentEvent>,
 ) -> (String, ToolRunOutput) {
@@ -287,7 +296,7 @@ async fn execute_one(
         )),
         Some(tool) => {
             let ctx = vak_tools::ToolContext {
-                cwd: std::env::current_dir().unwrap_or_else(|_| ".".into()),
+                cwd: cwd.to_path_buf(),
                 cancel: cancel.child_token(),
                 limits: Default::default(),
             };

@@ -25,6 +25,12 @@ pub struct SessionHeader {
     pub contract: FrozenContract,
 }
 
+impl SessionHeader {
+    pub fn contract_cwd(&self) -> PathBuf {
+        self.cwd.clone()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageRecord {
     pub message: Message,
