@@ -100,7 +100,8 @@ async fn http_lifecycle_run_events_transcript() {
     // health
     let health = client.get(format!("{base}/health")).send().await.unwrap();
     assert_eq!(health.status(), 200);
-    assert_eq!(health.text().await.unwrap(), "ok");
+    let body: serde_json::Value = health.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
 
     // create session
     let res = client

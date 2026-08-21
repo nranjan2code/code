@@ -31,6 +31,7 @@ Offline smoke tests: `scripts/mock_anthropic.py`, `scripts/mock_openai.py`,
 | Agentic depth | Parallel fan-out gated by resource-claim waves; static flow DAGs (validate-before-run, typed failure policy, resume); dynamic planner with bounded replan (fail-closed) |
 | Server | HTTP+SSE over the same core: sessions, runs, steering, approvals, transcripts |
 | Checkpoints | State-based workspace snapshots at every run start; restore reverts edits and removes post-checkpoint files; git-worktree isolation for exec/plan |
+| Reliability | Retry w/ exponential backoff + Retry-After, per-step watchdog, cross-run circuit breaker, session resume (`--session`), server cancel + graceful shutdown |
 | Evals | Deterministic in-process suite (~100ms) gated in CI; JSON reports with token/cost accounting |
 
 ## Architecture

@@ -138,8 +138,13 @@ pub async fn serve(core: Core, addr: std::net::SocketAddr) -> std::io::Result<()
         .await
 }
 
-async fn health() -> &'static str {
-    "ok"
+async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "ok",
+        "provider": state.core.effective_provider(),
+        "model": state.core.effective_model(),
+        "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
+    }))
 }
 
 async fn create_session(State(state): State<AppState>) -> Json<serde_json::Value> {
