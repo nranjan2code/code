@@ -11,7 +11,7 @@ Phases with exit criteria. Each phase ships a usable product.
 | 4 (openai-completions ✅) | Multi-provider: OpenAI/OpenRouter/Ollama live; next: openai-responses + Google | same session history converts across providers; mock e2e per family |
 | 5 ✅ | Extensibility complete: skills, blocking subagents, hooks, MCP client (lazy meta-tool) | fake-server roundtrip tests + e2e mcp list through the binary |
 | 6 ✅ | Agentic depth complete: fan-out scheduler, static flows, dynamic planner + bounded replan | plan/execute/replan/fail-closed all tested; e2e through binary |
-| 7 (evals ✅) | Server mode + checkpoints/worktrees remaining; eval harness done | `vakcoder eval` 5/5 in CI (~100ms), JSON reports, regression-gated |
+| 7 (evals ✅, server ✅) | Checkpoints/rewind + worktree isolation remaining | server: HTTP+SSE lifecycle/approvals/transcript e2e over real HTTP; evals 5/5 in CI |
 
 ## Decisions locked during research (2026-08)
 

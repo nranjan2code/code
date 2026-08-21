@@ -15,6 +15,7 @@ vak-core = { workspace = true }
 vak-eval = { workspace = true }
 vak-flow = { workspace = true }
 vak-llm = { workspace = true }
+vak-server = { workspace = true }
 vak-session = { workspace = true }
 vak-tui = { workspace = true }
 clap = { workspace = true }

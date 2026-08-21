@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use crate::error::LlmError;
 use crate::types::AssistantMessage;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum StreamEvent {
     Start {
         partial: AssistantMessage,

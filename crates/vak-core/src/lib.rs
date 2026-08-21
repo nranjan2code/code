@@ -42,6 +42,8 @@ struct CoreInner {
     provider_override: std::sync::Mutex<Option<String>>,
     max_turns_override: std::sync::Mutex<Option<usize>>,
     mode_override: std::sync::Mutex<Option<vak_config::PermissionMode>>,
+    provider_instance: std::sync::Mutex<Option<Arc<dyn Provider>>>,
+    sessions_home_override: std::sync::Mutex<Option<PathBuf>>,
 }
 
 #[derive(Clone)]
@@ -69,6 +71,8 @@ impl Core {
                 provider_override: std::sync::Mutex::new(None),
                 max_turns_override: std::sync::Mutex::new(None),
                 mode_override: std::sync::Mutex::new(None),
+                provider_instance: std::sync::Mutex::new(None),
+                sessions_home_override: std::sync::Mutex::new(None),
             }),
         })
     }
@@ -141,8 +145,27 @@ impl Core {
         &self.inner.cwd
     }
 
-    pub fn sessions_home(&self) -> &PathBuf {
-        &self.inner.sessions_home
+    /// SDK seam: relocate session storage (tests, embedded runtimes).
+    pub fn set_sessions_home(&self, path: PathBuf) {
+        if let Ok(mut h) = self.inner.sessions_home_override.lock() {
+            *h = Some(path);
+        }
+    }
+
+    /// SDK seam: inject a provider directly (tests, embedded runtimes).
+    pub fn set_provider_instance(&self, provider: Arc<dyn Provider>) {
+        if let Ok(mut p) = self.inner.provider_instance.lock() {
+            *p = Some(provider);
+        }
+    }
+
+    pub fn sessions_home(&self) -> PathBuf {
+        if let Ok(h) = self.inner.sessions_home_override.lock()
+            && let Some(p) = h.as_ref()
+        {
+            return p.clone();
+        }
+        self.inner.sessions_home.clone()
     }
 
     pub fn system_prompt(&self) -> String {
@@ -234,6 +257,11 @@ impl Core {
     }
 
     pub fn provider(&self) -> Result<Arc<dyn Provider>, CoreError> {
+        if let Ok(p) = self.inner.provider_instance.lock()
+            && let Some(provider) = p.as_ref()
+        {
+            return Ok(provider.clone());
+        }
         let auth = self.provider_auth()?;
         Ok(self.inner.registry.get(&self.effective_provider(), &auth)?)
     }
@@ -241,7 +269,7 @@ impl Core {
     pub async fn start_session(&self) -> Result<SessionLog, CoreError> {
         let session_id = uuid_like();
         let path = vak_session::SessionPath::new_session_file(
-            &self.inner.sessions_home,
+            &self.sessions_home(),
             &self.inner.cwd,
             &session_id,
         );
@@ -271,8 +299,10 @@ impl Core {
         cancel: CancellationToken,
         events: tokio::sync::mpsc::Sender<AgentEvent>,
     ) -> Result<TurnOutcome, CoreError> {
-        self.run_turn_with(session, prompt, cancel, None, None, events)
-            .await
+        let (outcome, _session) = self
+            .run_turn_with(session, prompt, cancel, None, None, events)
+            .await?;
+        Ok(outcome)
     }
 
     pub async fn run_turn_with(
@@ -283,7 +313,7 @@ impl Core {
         approver: Option<std::sync::Arc<dyn vak_agent::Approver>>,
         permission: Option<std::sync::Arc<vak_permission::PermissionEngine>>,
         events: tokio::sync::mpsc::Sender<AgentEvent>,
-    ) -> Result<TurnOutcome, CoreError> {
+    ) -> Result<(TurnOutcome, SessionLog), CoreError> {
         let provider = self.provider()?;
         let mut cfg = AgentConfig::new(self.system_prompt());
         cfg.model = self.effective_model();
@@ -351,7 +381,9 @@ impl Core {
 
         let steering = vak_agent::SteeringQueues::new();
         let mut agent = Agent::new(provider, session, cfg);
-        Ok(agent.run(prompt, &steering, cancel, events).await)
+        let outcome = agent.run(prompt, &steering, cancel, events).await;
+        let session = agent.into_session().await;
+        Ok((outcome, session))
     }
 
     fn build_sandbox(&self) -> Option<std::sync::Arc<dyn vak_tools::sandbox::Sandbox>> {

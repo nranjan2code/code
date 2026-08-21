@@ -273,7 +273,7 @@ async fn submit(
         let outcome = core
             .run_turn_with(taken, &prompt, cancel, Some(approver), None, ev_tx)
             .await;
-        if let Ok(o) = outcome {
+        if let Ok((o, _session)) = outcome {
             let _ = done_tx.send(RunSignal::Done(o)).await;
         }
     });
@@ -306,6 +306,9 @@ fn render_agent_event(
             screen.clear_input_row();
             screen.dim(&format!("[stop-hook] {reason} — continuing"));
         }
+        AgentEvent::StreamOpened
+        | AgentEvent::ApprovalRequested { .. }
+        | AgentEvent::RunFinished { .. } => {}
     }
 }
 
@@ -343,7 +346,7 @@ async fn show_context(screen: &mut Screen, session: &Arc<Mutex<Option<SessionLog
 }
 
 fn list_sessions(core: &Core, screen: &mut Screen) {
-    let dir = vak_session::SessionPath::sessions_dir(core.sessions_home(), core.cwd());
+    let dir = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
     match std::fs::read_dir(&dir) {
         Ok(entries) => {
             for e in entries.flatten() {

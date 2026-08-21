@@ -26,7 +26,7 @@ pub use steering::{DrainMode, SteeringQueues};
 
 pub use async_trait;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum AgentEvent {
     TurnStart {
         turn: usize,
@@ -46,6 +46,15 @@ pub enum AgentEvent {
     },
     StopHookContinuation {
         reason: String,
+    },
+    StreamOpened,
+    ApprovalRequested {
+        id: String,
+        tool: String,
+        reason: String,
+    },
+    RunFinished {
+        summary: String,
     },
 }
 
@@ -299,6 +308,11 @@ impl Agent {
 
             turn += 1;
         }
+    }
+
+    /// Recovers the session ledger after a run (server/API consumers).
+    pub async fn into_session(self) -> SessionLog {
+        self.session.into_inner()
     }
 
     async fn append_assistant(&self, response: &AssistantMessage) {

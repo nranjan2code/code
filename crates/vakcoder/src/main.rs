@@ -59,6 +59,11 @@ enum Command {
         #[arg(long)]
         report: Option<PathBuf>,
     },
+    /// Serve the agent over HTTP+SSE
+    Serve {
+        #[arg(long, default_value_t = 8901)]
+        port: u16,
+    },
 }
 
 #[derive(Subcommand)]
@@ -119,6 +124,7 @@ async fn main() {
         Some(Command::Flow { action }) => run_flow(cwd, action).await,
         Some(Command::Plan { task, yes }) => run_plan(cwd, task, yes).await,
         Some(Command::Eval { report }) => run_eval(report).await,
+        Some(Command::Serve { port }) => run_serve(cwd, port).await,
     };
     std::process::exit(code);
 }
@@ -487,7 +493,7 @@ async fn run_exec(
     }
 
     let outcome = match runner.await {
-        Ok(Ok(o)) => o,
+        Ok(Ok((o, _session))) => o,
         Ok(Err(e)) => {
             eprintln!("error: {e}");
             return 2;
@@ -551,7 +557,7 @@ fn run_sessions_list(cwd: PathBuf) {
     let Ok(core) = Core::new(cwd) else {
         return;
     };
-    let dir = vak_session::SessionPath::sessions_dir(core.sessions_home(), core.cwd());
+    let dir = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
     let Ok(entries) = std::fs::read_dir(&dir) else {
         println!("no sessions yet ({})", dir.display());
         return;
@@ -731,4 +737,22 @@ async fn run_eval(report_path: Option<PathBuf>) -> i32 {
 
     println!("\n{passed}/{total} passed · tokens in {tokens_in} / out {tokens_out}");
     if passed == total { 0 } else { 1 }
+}
+
+async fn run_serve(cwd: PathBuf, port: u16) -> i32 {
+    let core = match Core::new(cwd) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    match vak_server::serve(core, addr).await {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("error: {e}");
+            2
+        }
+    }
 }
