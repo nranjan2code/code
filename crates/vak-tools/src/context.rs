@@ -27,6 +27,7 @@ pub struct ToolContext {
     pub cwd: PathBuf,
     pub cancel: CancellationToken,
     pub limits: OutputLimits,
+    pub sandbox: Option<Arc<dyn crate::sandbox::Sandbox>>,
 }
 
 impl ToolContext {
@@ -35,6 +36,7 @@ impl ToolContext {
             cwd,
             cancel: CancellationToken::new(),
             limits: OutputLimits::default(),
+            sandbox: None,
         }
     }
 

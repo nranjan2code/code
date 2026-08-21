@@ -42,6 +42,25 @@ First matching rule wins. No match → mode default:
 - Approval requests are answered exactly once (oneshot channel in the TUI).
 - The engine is pure: no I/O beyond path canonicalization.
 
+## OS sandbox layer
+
+Enforcement is defense-in-depth: rules decide *whether* to run; the sandbox
+constrains *what the process can touch* even when allowed.
+
+- `vak-tools/src/sandbox.rs`: `Sandbox` trait (`wrap(command) -> command`).
+  `Seatbelt` backend wraps bash commands in `sandbox-exec -p '<profile>' -- sh -c '…'`.
+- Profiles deny-by-default: reads + process exec/fork always granted;
+  `WorkspaceWrite` adds file-write under the **canonicalized** cwd plus
+  `/private/tmp`, `/private/var/tmp`, `/dev/null`, `/dev/urandom`.
+  `ReadOnly` grants no write paths at all.
+- Derived automatically from the effective permission mode
+  (`full-access` ⇒ off); visible via `vakcoder config dump`
+  (`sandbox = seatbelt | off`). macOS only today — Landlock/seccomp backend
+  planned for Linux behind the same trait.
+- Known semantics: on macOS `/tmp` resolves to `/private/tmp`, so tmp writes
+  are permitted in workspace-write mode by design (output spill files rely on
+  it). Everything else outside the cwd is blocked at kernel level.
+
 ## Later
 
 - session-scoped "always allow" learned rules persisted to project config

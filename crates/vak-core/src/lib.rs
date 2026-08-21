@@ -252,9 +252,37 @@ impl Core {
             Some(p) => p,
             None => std::sync::Arc::new(build_engine(&self.inner.config)?),
         });
+        cfg.sandbox = self.build_sandbox();
         let steering = vak_agent::SteeringQueues::new();
         let mut agent = Agent::new(provider, session, cfg);
         Ok(agent.run(prompt, &steering, cancel, events).await)
+    }
+
+    fn build_sandbox(&self) -> Option<std::sync::Arc<dyn vak_tools::sandbox::Sandbox>> {
+        #[cfg(target_os = "macos")]
+        {
+            use vak_tools::sandbox::{SandboxMode, Seatbelt};
+            let mode = match self.effective_permission_mode() {
+                vak_config::PermissionMode::ReadOnly => SandboxMode::ReadOnly,
+                vak_config::PermissionMode::WorkspaceWrite => SandboxMode::WorkspaceWrite,
+                vak_config::PermissionMode::FullAccess => return None,
+            };
+            Some(std::sync::Arc::new(Seatbelt::new(
+                mode,
+                self.inner.cwd.as_path(),
+            )))
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            None
+        }
+    }
+
+    pub fn effective_sandbox_name(&self) -> String {
+        match self.build_sandbox() {
+            Some(sb) => sb.name().to_string(),
+            None => "off".to_string(),
+        }
     }
 }
 

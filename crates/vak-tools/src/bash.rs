@@ -42,7 +42,12 @@ impl Tool for BashTool {
             .unwrap_or(DEFAULT_TIMEOUT_MS)
             .max(1000);
 
-        let mut cmd = shell_command(command);
+        let effective = match &ctx.sandbox {
+            Some(sb) => sb.wrap(command),
+            None => command.to_string(),
+        };
+
+        let mut cmd = shell_command(&effective);
         cmd.current_dir(&ctx.cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

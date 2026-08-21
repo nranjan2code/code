@@ -60,6 +60,7 @@ pub struct AgentConfig {
     pub permission: Option<Arc<PermissionEngine>>,
     pub mode: Mode,
     pub approver: Option<Arc<dyn Approver>>,
+    pub sandbox: Option<Arc<dyn vak_tools::sandbox::Sandbox>>,
 }
 
 impl AgentConfig {
@@ -73,6 +74,7 @@ impl AgentConfig {
             permission: None,
             mode: Mode::WorkspaceWrite,
             approver: None,
+            sandbox: None,
         }
     }
 }
@@ -272,6 +274,7 @@ impl Agent {
             .header()
             .map(|h| h.contract_cwd())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+        let sandbox = self.config.sandbox.clone();
 
         let mut authz: Vec<Result<(), String>> = Vec::with_capacity(n);
         for call in &calls {
@@ -289,7 +292,17 @@ impl Agent {
                             out.push((call.id, ToolRunOutput::Err("cancelled".into())));
                             continue;
                         }
-                        out.push(execute_one(call, &self.config.tools, &cwd, cancel, events).await);
+                        out.push(
+                            execute_one(
+                                call,
+                                &self.config.tools,
+                                &cwd,
+                                sandbox.as_ref(),
+                                cancel,
+                                events,
+                            )
+                            .await,
+                        );
                     }
                 }
             }
@@ -305,8 +318,9 @@ impl Agent {
             let cancel = cancel.clone();
             let events = events.clone();
             let cwd = cwd.clone();
+            let sandbox = sandbox.clone();
             join.spawn(async move {
-                let r = execute_one(call, &tools, &cwd, &cancel, &events).await;
+                let r = execute_one(call, &tools, &cwd, sandbox.as_ref(), &cancel, &events).await;
                 (idx, r)
             });
         }
@@ -328,6 +342,7 @@ async fn execute_one(
     call: PendingToolCall,
     tools: &[Arc<dyn Tool>],
     cwd: &std::path::Path,
+    sandbox: Option<&Arc<dyn vak_tools::sandbox::Sandbox>>,
     cancel: &CancellationToken,
     events: &mpsc::Sender<AgentEvent>,
 ) -> (String, ToolRunOutput) {
@@ -355,6 +370,7 @@ async fn execute_one(
                 cwd: cwd.to_path_buf(),
                 cancel: cancel.child_token(),
                 limits: Default::default(),
+                sandbox: sandbox.cloned(),
             };
             let tool = tool.clone();
             let res = tokio::spawn(async move { tool.execute(&call.input, &ctx).await }).await;

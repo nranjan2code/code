@@ -244,6 +244,7 @@ fn run_config_dump(cwd: PathBuf) {
             println!("max_tokens       = {}", core.config().max_tokens);
             println!("max_turns        = {}", core.effective_max_turns());
             println!("permission_mode  = {:?}", core.effective_permission_mode());
+            println!("sandbox          = {}", core.effective_sandbox_name());
             println!("sessions_home    = {}", core.sessions_home().display());
             println!(
                 "anthropic_base   = {}",

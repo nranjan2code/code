@@ -20,6 +20,7 @@ async fn run(tool: &dyn Tool, dir: &Path, args: serde_json::Value) -> ToolOutput
             max_line_chars: 100,
             spill_to_disk: false,
         },
+        sandbox: None,
     };
     tool.execute(&args, &ctx).await
 }
@@ -293,6 +294,7 @@ async fn output_truncation_keeps_head_and_tail() {
             max_line_chars: 2000,
             spill_to_disk: false,
         },
+        sandbox: None,
     });
     let t = truncated.truncate_output(out.content);
     assert!(t.len() < 600);
