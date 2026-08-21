@@ -37,6 +37,8 @@ Rules:
 - Use bash for deterministic commands (build/test/inspect). Use agent nodes
   only for work needing judgment.
 - End with a merge node collecting the final results.
+- All strings are single-line TOML basic strings: write newlines as \\n and
+  escape embedded double quotes as \\\" .
 - Never invent node types or fields.";
 
 #[derive(Debug, Clone)]
@@ -79,6 +81,137 @@ pub fn extract_toml(response: &str) -> Option<String> {
     None
 }
 
+/// Structural repair for the two invalidities models actually emit:
+/// raw newlines and nested raw double quotes inside single-line TOML basic
+/// strings (shell commands like `[ "$(grep …)" ]` are written verbatim).
+/// A `"` is treated as the closing quote only when followed (after optional
+/// whitespace) by valid TOML continuation — newline, `,`, `]`, `}`, `#`, or
+/// EOF; anything else is escaped as `\"`. Raw newlines become `\n`.
+/// Multi-line (`"""`/`'''`) strings, literal strings, and comments pass
+/// through untouched; anything still invalid after this fails closed.
+pub fn sanitize_basic_string_newlines(doc: &str) -> String {
+    #[derive(PartialEq)]
+    enum St {
+        Normal,
+        Basic,
+        Literal,
+        MultiBasic,
+        MultiLiteral,
+    }
+    let mut out = String::with_capacity(doc.len());
+    let mut chars = doc.chars().peekable();
+    let mut st = St::Normal;
+    while let Some(c) = chars.next() {
+        match st {
+            St::Normal => match c {
+                '#' => {
+                    out.push(c);
+                    while let Some(n) = chars.next_if(|&n| n != '\n') {
+                        out.push(n);
+                    }
+                }
+                '"' | '\'' => {
+                    let q = c;
+                    if chars.peek() == Some(&q) {
+                        chars.next();
+                        if chars.peek() == Some(&q) {
+                            chars.next();
+                            out.push(q);
+                            out.push(q);
+                            out.push(q);
+                            st = if q == '"' {
+                                St::MultiBasic
+                            } else {
+                                St::MultiLiteral
+                            };
+                        } else {
+                            out.push(q);
+                            out.push(q);
+                        }
+                    } else {
+                        out.push(q);
+                        st = if q == '"' { St::Basic } else { St::Literal };
+                    }
+                }
+                _ => out.push(c),
+            },
+            St::Basic => match c {
+                '\\' => {
+                    out.push(c);
+                    if let Some(n) = chars.next() {
+                        out.push(n);
+                    }
+                }
+                '\n' => out.push_str("\\n"),
+                '\r' if chars.peek() == Some(&'\n') => {
+                    chars.next();
+                    out.push_str("\\n");
+                }
+                '"' => {
+                    if closes_basic_string(&mut chars) {
+                        out.push('"');
+                        st = St::Normal;
+                    } else {
+                        out.push_str("\\\"");
+                    }
+                }
+                _ => out.push(c),
+            },
+            St::Literal => {
+                out.push(c);
+                if c == '\'' {
+                    st = St::Normal;
+                }
+            }
+            St::MultiBasic => {
+                out.push(c);
+                if c == '\\' {
+                    if let Some(n) = chars.next() {
+                        out.push(n);
+                    }
+                } else if c == '"' && chars.peek() == Some(&'"') {
+                    chars.next();
+                    out.push('"');
+                    if chars.peek() == Some(&'"') {
+                        chars.next();
+                        out.push('"');
+                        st = St::Normal;
+                    }
+                }
+            }
+            St::MultiLiteral => {
+                out.push(c);
+                if c == '\'' && chars.peek() == Some(&'\'') {
+                    chars.next();
+                    out.push('\'');
+                    if chars.peek() == Some(&'\'') {
+                        chars.next();
+                        out.push('\'');
+                        st = St::Normal;
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A `"` closes a basic string only if the next non-whitespace char is valid
+/// TOML continuation (newline, `,`, `]`, `}`, `#`) or the document ends.
+fn closes_basic_string(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+    let mut lookahead = chars.clone();
+    loop {
+        match lookahead.next() {
+            None => return true,
+            Some('\n') | Some('\r') | Some(',') | Some(']') | Some('}') | Some('#') => {
+                return true;
+            }
+            Some(' ') | Some('\t') => continue,
+            Some(_) => return false,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum PlanOutcome {
     Completed {
@@ -99,6 +232,12 @@ pub enum PlanOutcome {
 
 const MAX_ATTEMPTS: usize = 2;
 
+/// Bounded retries for the planner's own model calls. The planner bypasses
+/// the agent loop, so without this a single transient provider failure
+/// (rate limit, overload, network drop) would fail-closed the whole run.
+const PLANNER_CALL_ATTEMPTS: usize = 3;
+const PLANNER_RETRY_BACKOFF_MS: u64 = 500;
+
 async fn complete_text(
     deps: &ExecutorDeps,
     system: &str,
@@ -113,13 +252,44 @@ async fn complete_text(
         max_tokens: 4096,
         temperature: None,
     };
-    let stream = deps
-        .provider
-        .stream(request, cancel.clone())
-        .await
-        .map_err(|e| e.to_string())?;
-    let response = stream.result().await.map_err(|e| e.to_string())?;
-    Ok(response.text_content())
+    let mut backoff_ms = PLANNER_RETRY_BACKOFF_MS;
+    for attempt in 1..=PLANNER_CALL_ATTEMPTS {
+        let last = attempt == PLANNER_CALL_ATTEMPTS;
+        match deps.provider.stream(request.clone(), cancel.clone()).await {
+            Ok(stream) => match stream.result().await {
+                Ok(response) => return Ok(response.text_content()),
+                Err(e) if !last && e.is_retryable() => {
+                    if !sleep_backoff(e.retry_after_secs(), backoff_ms, cancel).await {
+                        return Err("cancelled".into());
+                    }
+                }
+                Err(e) => return Err(e.to_string()),
+            },
+            Err(e) if !last && e.is_retryable() => {
+                if !sleep_backoff(e.retry_after_secs(), backoff_ms, cancel).await {
+                    return Err("cancelled".into());
+                }
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+        backoff_ms = backoff_ms.saturating_mul(2);
+    }
+    Err("planner call exhausted retries".into())
+}
+
+/// Waits `secs` (or the exponential default); returns false if cancelled.
+async fn sleep_backoff(
+    retry_after_secs: Option<u64>,
+    default_ms: u64,
+    cancel: &CancellationToken,
+) -> bool {
+    let d = std::time::Duration::from_millis(
+        retry_after_secs.map_or(default_ms, |s| s.saturating_mul(1000)),
+    );
+    tokio::select! {
+        _ = cancel.cancelled() => false,
+        _ = tokio::time::sleep(d) => true,
+    }
 }
 
 fn seed_with_settled(task: &str, state: &FlowState, failed_node: &str, reason: &str) -> String {
@@ -178,7 +348,7 @@ pub async fn plan_and_run(
             }
         };
 
-        let Some(toml_str) = extract_toml(&response) else {
+        let Some(raw_toml) = extract_toml(&response) else {
             return PlanOutcome::PlanningFailed {
                 reason: format!(
                     "planner returned no TOML plan. Response head: {}",
@@ -186,6 +356,7 @@ pub async fn plan_and_run(
                 ),
             };
         };
+        let toml_str = sanitize_basic_string_newlines(&raw_toml);
 
         let flow = match parse_flow(&toml_str) {
             Ok(f) => f,

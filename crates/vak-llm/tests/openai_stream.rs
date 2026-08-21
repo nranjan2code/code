@@ -205,6 +205,57 @@ async fn http_error_maps_to_typed_value() {
     assert!(matches!(err, LlmError::RateLimit { .. }), "got {err:?}");
 }
 
+// Regression (live, OpenCode Zen): proxies may end the body after the last
+// content chunk with neither finish_reason nor [DONE]. Content-bearing clean
+// closes complete; empty ones still fail closed.
+const FIXTURE_TRUNCATED_WITH_CONTENT: &str = "\
+data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"partial answer\"},\"finish_reason\":null}]}\n\
+\n";
+
+const FIXTURE_TRUNCATED_EMPTY: &str = "\
+data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\
+\n";
+
+#[tokio::test]
+async fn clean_close_with_content_completes_as_end_turn() {
+    let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
+        api_key: "k".into(),
+        base_url: mock_url(FIXTURE_TRUNCATED_WITH_CONTENT).await,
+    })
+    .unwrap();
+    let mut req = ChatRequest::new("m");
+    req.messages = vec![Message::user_text("hi")];
+    let mut es = provider
+        .stream(req, CancellationToken::new())
+        .await
+        .unwrap();
+    while futures::StreamExt::next(&mut es).await.is_some() {}
+    let msg = es.result().await.unwrap();
+    assert_eq!(msg.stop_reason, StopReason::EndTurn);
+    assert_eq!(msg.text_content(), "partial answer");
+}
+
+#[tokio::test]
+async fn clean_close_without_content_still_fails_closed() {
+    let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
+        api_key: "k".into(),
+        base_url: mock_url(FIXTURE_TRUNCATED_EMPTY).await,
+    })
+    .unwrap();
+    let mut req = ChatRequest::new("m");
+    req.messages = vec![Message::user_text("hi")];
+    let mut es = provider
+        .stream(req, CancellationToken::new())
+        .await
+        .unwrap();
+    while futures::StreamExt::next(&mut es).await.is_some() {}
+    let err = es.result().await.expect_err("expected parse error");
+    assert!(
+        matches!(err, LlmError::Parse(ref m) if m.contains("finish_reason")),
+        "got {err:?}"
+    );
+}
+
 async fn spawn_server(body: Vec<u8>) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

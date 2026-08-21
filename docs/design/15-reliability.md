@@ -15,6 +15,15 @@ The standard failure matrix and where each case is handled.
 - Surfaced as `AgentEvent::RetryScheduled{attempt, delay_ms, reason}` so all
   UIs show the wait; config keys `max_retries`, `retry_base_backoff_ms`,
   `request_timeout_secs`.
+- **Planner calls retry too** (found in live testing): `plan`'s model calls
+  bypass the agent loop, so they carry their own bounded retry (3 attempts,
+  exponential backoff, `Retry-After` honored, cancel-aware). A transient
+  failure mid-planning no longer fails the whole run closed.
+- **Truncated SSE streams on OpenAI-compatible proxies**: some endpoints
+  (OpenCode Zen free tier) end the body after the last content chunk without
+  `[DONE]`/`finish_reason`. The openai-completions adapter treats a clean
+  close *with content* as de facto completion (`EndTurn`); a close with no
+  content still fails closed as `Parse`.
 
 ## Crash & recovery
 

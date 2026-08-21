@@ -273,8 +273,22 @@ async fn submit(
         let outcome = core
             .run_turn_with(taken, &prompt, cancel, Some(approver), None, ev_tx)
             .await;
-        if let Ok((o, _session)) = outcome {
-            let _ = done_tx.send(RunSignal::Done(o)).await;
+        // Always release the loop back to the editor: an Err outcome must
+        // still clear `running`, or every later keystroke is swallowed as
+        // steering input and the TUI can never exit.
+        match outcome {
+            Ok((o, _session)) => {
+                let _ = done_tx.send(RunSignal::Done(o)).await;
+            }
+            Err(e) => {
+                let error = match e {
+                    vak_core::CoreError::Llm(l) => l,
+                    other => vak_llm::LlmError::InvalidRequest(other.to_string()),
+                };
+                let _ = done_tx
+                    .send(RunSignal::Done(TurnOutcome::Failed { error }))
+                    .await;
+            }
         }
     });
     *running = Some(ev_rx);

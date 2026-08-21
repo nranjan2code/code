@@ -28,6 +28,11 @@ task + tool catalog ──► planner model ──► candidate TOML DAG
   authored nodes reference real capabilities.
 - Authored DAGs are **candidates**: identical validation bar as static flows.
   Cycles, unknown types/fields/deps → `planning_failed`, never executed.
+  Deterministic pre-validation repairs are applied first (both found in live
+  testing): raw newlines inside single-line basic strings become `\n`, and
+  nested raw double quotes are escaped via terminator lookahead (a `"`
+  closes only before valid TOML continuation). Anything still invalid fails
+  closed.
 - **Bounded replan** (vakyartha pattern): max 1 retry; seeded with settled
   outputs ("do not redo this work") and the failure reason. Budget exhausted
   ⇒ `Failed` with the last failing node.
@@ -39,6 +44,7 @@ task + tool catalog ──► planner model ──► candidate TOML DAG
 ## v1 limits
 
 - No plan repair-by-LLM round-trips: invalid means failed (repair happens
-  only structurally: template refs imply deps).
+  only structurally: template refs imply deps; newline escaping in basic
+  strings before validation).
 - No tiered/escalated planner models yet; the replan uses the same model.
 - Server-initiated interactivity (clarifications) not modeled.

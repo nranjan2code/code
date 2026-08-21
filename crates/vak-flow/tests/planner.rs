@@ -11,7 +11,7 @@ use tempfile::tempdir;
 use vak_agent::AutoApprove;
 use vak_flow::{
     ExecutorDeps, PLANNER_SYSTEM, PlanOutcome, ToolCatalogEntry, build_planner_prompt,
-    extract_toml, plan_and_run,
+    extract_toml, plan_and_run, sanitize_basic_string_newlines,
 };
 use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
@@ -57,6 +57,7 @@ struct ScriptedPlanner {
 
 enum ScriptedResponse {
     Text(String),
+    Error(LlmError),
 }
 
 #[async_trait::async_trait]
@@ -85,6 +86,7 @@ impl Provider for ScriptedPlanner {
                 });
                 sink.close_message(msg).await;
             }
+            Some(ScriptedResponse::Error(e)) => sink.close_error(e).await,
             None => sink.close_error(LlmError::Parse("exhausted".into())).await,
         }
         Ok(rx)
@@ -326,4 +328,105 @@ fn planner_system_prompt_is_compact() {
         tokens_estimate < 500,
         "planner system prompt too large (~{tokens_estimate} tokens)"
     );
+}
+
+#[test]
+fn sanitizer_escapes_newlines_in_basic_strings_only() {
+    let doc = "[flow]\nname = \"x\"\n\n[[nodes]]\nid = \"a\"\ntype = \"bash\"\ncommand = \"echo one\necho two\"\n";
+    let fixed = sanitize_basic_string_newlines(doc);
+    assert_eq!(
+        fixed,
+        "[flow]\nname = \"x\"\n\n[[nodes]]\nid = \"a\"\ntype = \"bash\"\ncommand = \"echo one\\necho two\"\n"
+    );
+    assert!(vak_flow::parse_flow(&fixed).is_ok());
+
+    // Valid documents pass through byte-for-byte.
+    assert_eq!(sanitize_basic_string_newlines(GOOD_PLAN), GOOD_PLAN);
+
+    // Multi-line basic strings are untouched (already valid TOML).
+    let multi = "prompt = \"\"\"a\nb\"\"\"\n";
+    assert_eq!(sanitize_basic_string_newlines(multi), multi);
+
+    // Literal strings and comments are untouched.
+    let lit = "command = 'echo hi'\n# comment with \" quote\nname = \"z\"\n";
+    assert_eq!(sanitize_basic_string_newlines(lit), lit);
+
+    // Escaped quotes/backslashes inside basic strings survive.
+    let escaped = "prompt = \"said \\\"hi\\\" then \\\\ broke\ninto two\"\n";
+    assert_eq!(
+        sanitize_basic_string_newlines(escaped),
+        "prompt = \"said \\\"hi\\\" then \\\\ broke\\ninto two\"\n"
+    );
+}
+
+#[test]
+fn sanitizer_escapes_nested_quotes_but_keeps_closers() {
+    // Nested shell quotes are escaped; real closers survive.
+    let doc = "[flow]\nname = \"q\"\n\n[[nodes]]\nid = \"a\"\ntype = \"bash\"\ncommand = \"test -z \"$(grep x f)\" && echo \"done\"\"\n";
+    let fixed = sanitize_basic_string_newlines(doc);
+    assert!(
+        vak_flow::parse_flow(&fixed).is_ok(),
+        "sanitized doc must parse: {fixed}"
+    );
+    assert!(fixed.contains("\\\"$(grep x f)\\\""));
+    assert!(fixed.contains("\\\"done\\\""));
+
+    // Closing quotes followed by comment / whitespace+comma stay closers.
+    let ok = "name = \"x\" # trailing\nnodes-note = [ \"a\" , \"b\" ]\n";
+    assert_eq!(sanitize_basic_string_newlines(ok), ok);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn multiline_basic_string_plan_is_sanitized_and_executes() {
+    // Regression: live planner runs emitted raw newlines inside
+    // `prompt = "..."`, which is invalid TOML. The structural sanitizer must
+    // repair it so the plan parses and executes instead of failing closed.
+    let plan = "[flow]\nname = \"multiline\"\n\n[[nodes]]\nid = \"probe\"\ntype = \"bash\"\ncommand = \"echo line-one\necho line-two\"\n\n[[nodes]]\nid = \"report\"\ntype = \"merge\"\ndeps = [\"probe\"]\n";
+    let provider = Arc::new(ScriptedPlanner {
+        responses: Mutex::new(VecDeque::from([ScriptedResponse::Text(fenced(plan))])),
+    });
+    let deps = make_deps(provider);
+
+    let outcome = drain(plan_and_run(
+        deps,
+        "multiline task",
+        CancellationToken::new(),
+        mpsc::channel(64).0,
+    ))
+    .await;
+
+    match outcome {
+        PlanOutcome::Completed { outputs, .. } => {
+            let out = outputs.get("probe").unwrap();
+            assert!(out.contains("line-one") && out.contains("line-two"));
+        }
+        other => panic!("expected completed after sanitize, got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn transient_planner_failure_is_retried() {
+    // Invariant 7: the planner bypasses the loop's retry machinery, so it
+    // must retry transient provider failures itself instead of failing the
+    // whole run closed.
+    let provider = Arc::new(ScriptedPlanner {
+        responses: Mutex::new(VecDeque::from(vec![
+            ScriptedResponse::Error(LlmError::Network("connection reset".into())),
+            ScriptedResponse::Text(fenced(GOOD_PLAN)),
+        ])),
+    });
+    let deps = make_deps(provider);
+
+    let outcome = drain(plan_and_run(
+        deps,
+        "flaky provider task",
+        CancellationToken::new(),
+        mpsc::channel(64).0,
+    ))
+    .await;
+
+    match outcome {
+        PlanOutcome::Completed { attempts, .. } => assert_eq!(attempts, 1),
+        other => panic!("expected completed after retry, got {other:?}"),
+    }
 }

@@ -11,6 +11,7 @@ pub mod types;
 pub use exec::{Executor, ExecutorDeps, FlowOutcome};
 pub use parse::{ParseError, parse_flow};
 pub use planner::{
-    PLANNER_SYSTEM, PlanOutcome, ToolCatalogEntry, build_planner_prompt, extract_toml, plan_and_run,
+    PLANNER_SYSTEM, PlanOutcome, ToolCatalogEntry, build_planner_prompt, extract_toml,
+    plan_and_run, sanitize_basic_string_newlines,
 };
 pub use types::{FlowDef, FlowState, NodeDef, NodeResult, NodeStatus};

@@ -378,7 +378,12 @@ impl Provider for OpenAiCompletionsProvider {
                                 return;
                             }
                             None => {
-                                if acc.saw_end {
+                                // OpenAI-compatible proxies sometimes end the
+                                // body after the last content chunk without
+                                // [DONE]/finish_reason. A clean close with
+                                // content is de facto completion (same as the
+                                // [DONE] branch); empty content fails closed.
+                                if acc.saw_end || !acc.message.content.is_empty() {
                                     sink.close_message(acc.message.clone()).await;
                                 } else {
                                     sink.close_error(LlmError::Parse(
