@@ -100,6 +100,7 @@ fn harness(responses: Vec<ScriptedResponse>, tools: Vec<Arc<dyn Tool>>) -> Harne
             system_prompt: "sys".into(),
             tools: tools.iter().map(|t| t.name().to_string()).collect(),
             permission_mode: "full-access".into(),
+            skills: Vec::new(),
         },
     };
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();

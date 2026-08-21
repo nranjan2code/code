@@ -5,6 +5,9 @@
 //! (model-visible means logged).
 
 pub mod steering;
+pub mod task;
+
+pub use task::{TaskDeps, TaskTool};
 
 use std::sync::Arc;
 

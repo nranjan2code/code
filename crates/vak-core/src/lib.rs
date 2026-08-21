@@ -2,6 +2,8 @@
 //! the agent loop behind one entry point. TUI, server, and exec mode are
 //! thin consumers of this crate.
 
+pub mod skills;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -27,6 +29,8 @@ pub enum CoreError {
     Llm(#[from] vak_llm::LlmError),
     #[error("permission rule error: {0}")]
     Rule(#[from] vak_permission::RuleError),
+    #[error("internal: permission engine missing")]
+    MissingEngine,
 }
 
 struct CoreInner {
@@ -143,19 +147,30 @@ impl Core {
 
     pub fn system_prompt(&self) -> String {
         let project_prompt = self.inner.cwd.join(".vakcoder/SYSTEM.md");
-        if project_prompt.is_file()
+        let base = if project_prompt.is_file()
             && let Ok(custom) = std::fs::read_to_string(&project_prompt)
         {
-            return custom;
-        }
-        DEFAULT_SYSTEM_PROMPT.replace("{{version}}", APP_VERSION)
+            custom
+        } else {
+            DEFAULT_SYSTEM_PROMPT.replace("{{version}}", APP_VERSION)
+        };
+        let discovered = self.skills();
+        format!("{}{}", base, skills::prompt_section(&discovered))
+    }
+
+    pub fn skills(&self) -> Vec<skills::Skill> {
+        skills::discover(&self.inner.cwd, &self.inner.sessions_home)
     }
 
     pub fn tool_names(&self) -> Vec<String> {
-        vak_tools::default_tools()
+        let mut names: Vec<String> = vak_tools::default_tools()
             .iter()
             .map(|t| t.name().to_string())
-            .collect()
+            .collect();
+        if self.inner.config.subagents {
+            names.push("task".into());
+        }
+        names
     }
 
     fn provider_auth(&self) -> Result<ProviderAuth, CoreError> {
@@ -240,6 +255,7 @@ impl Core {
                 tools: self.tool_names(),
                 permission_mode: format!("{:?}", self.inner.config.permission_mode)
                     .to_kebab_lowercase(),
+                skills: self.skills().iter().map(|s| s.name.clone()).collect(),
             },
         };
         Ok(SessionLog::create(path, header)?)
@@ -271,7 +287,7 @@ impl Core {
         cfg.tools = vak_tools::default_tools();
         cfg.max_turns = self.effective_max_turns();
         cfg.parallel_tools = true;
-        cfg.approver = approver;
+        cfg.approver = approver.clone();
         cfg.mode = match self.effective_permission_mode() {
             vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
             vak_config::PermissionMode::WorkspaceWrite => vak_permission::Mode::WorkspaceWrite,
@@ -281,7 +297,32 @@ impl Core {
             Some(p) => p,
             None => std::sync::Arc::new(build_engine(&self.inner.config)?),
         });
+        let Some(engine) = cfg.permission.clone() else {
+            return Err(CoreError::MissingEngine);
+        };
         cfg.sandbox = self.build_sandbox();
+
+        let mut tools = vak_tools::default_tools();
+        if self.inner.config.subagents
+            && let Some(parent_id) = session.header().map(|h| h.session_id.clone())
+        {
+            tools.push(Arc::new(vak_agent::TaskTool::new(vak_agent::TaskDeps {
+                provider: provider.clone(),
+                system_prompt: self.system_prompt(),
+                model: self.effective_model(),
+                tools: vak_tools::default_tools(),
+                max_turns: self.effective_max_turns(),
+                permission: Some(engine),
+                mode: cfg.mode,
+                approver,
+                sandbox: self.build_sandbox(),
+                cwd: self.inner.cwd.clone(),
+                sessions_home: self.inner.sessions_home.clone(),
+                parent_session_id: parent_id,
+            })));
+        }
+        cfg.tools = tools;
+
         let steering = vak_agent::SteeringQueues::new();
         let mut agent = Agent::new(provider, session, cfg);
         Ok(agent.run(prompt, &steering, cancel, events).await)

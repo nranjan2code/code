@@ -21,6 +21,7 @@ fn header() -> SessionHeader {
             system_prompt: "system prompt v1".into(),
             tools: vec!["read".into(), "bash".into()],
             permission_mode: "workspace-write".into(),
+            skills: Vec::new(),
         },
     }
 }

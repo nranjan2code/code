@@ -13,6 +13,8 @@ pub struct FrozenContract {
     pub system_prompt: String,
     pub tools: Vec<String>,
     pub permission_mode: String,
+    #[serde(default)]
+    pub skills: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
