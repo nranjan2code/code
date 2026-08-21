@@ -110,6 +110,7 @@ impl Approver for AutoDeny {
     }
 }
 
+#[derive(Clone)]
 struct PendingToolCall {
     id: String,
     name: String,
@@ -371,37 +372,77 @@ impl Agent {
             return out;
         }
 
-        let mut join = tokio::task::JoinSet::new();
-        for (idx, call) in calls.into_iter().enumerate() {
-            if authz[idx].is_err() {
+        // Greedy wave scheduling: claimed calls that conflict are placed in
+        // separate waves; unclaimed and read-only calls share wave 0.
+        let claims_for = |call: &PendingToolCall| -> vak_tools::ResourceClaims {
+            self.config
+                .tools
+                .iter()
+                .find(|t| t.name() == call.name)
+                .map(|t| t.claims(&call.input))
+                .unwrap_or_default()
+        };
+        let mut waves: Vec<Vec<usize>> = vec![Vec::new()];
+        for (idx, call) in calls.iter().enumerate() {
+            let claims = claims_for(call);
+            if claims.is_unclaimed() {
+                waves[0].push(idx);
                 continue;
             }
-            let tools = self.config.tools.clone();
-            let cancel = cancel.clone();
-            let events = events.clone();
-            let cwd = cwd.clone();
-            let sandbox = sandbox.clone();
-            let session_id = session_id.clone();
-            let hooks = hooks.clone();
-            join.spawn(async move {
-                let r = execute_one(
-                    call,
-                    &tools,
-                    &cwd,
-                    &session_id,
-                    hooks.as_ref(),
-                    sandbox.as_ref(),
-                    &cancel,
-                    &events,
-                )
-                .await;
-                (idx, r)
-            });
+            let mut placed = false;
+            for wave in waves.iter_mut() {
+                let compatible = wave.iter().all(|j| {
+                    let other = claims_for(&calls[*j]);
+                    !other.conflicts(&claims) && !claims.conflicts(&other)
+                });
+                if compatible {
+                    wave.push(idx);
+                    placed = true;
+                    break;
+                }
+            }
+            if !placed {
+                waves.push(vec![idx]);
+            }
         }
+
         let mut ordered: Vec<Option<(String, ToolRunOutput)>> = (0..n).map(|_| None).collect();
-        while let Some(res) = join.join_next().await {
-            if let Ok((idx, pair)) = res {
-                ordered[idx] = Some(pair);
+        for wave in waves {
+            let mut join = tokio::task::JoinSet::new();
+            for &idx in &wave {
+                if authz[idx].is_err() {
+                    continue;
+                }
+                let call = match calls.get(idx) {
+                    Some(c) => c.clone(),
+                    None => continue,
+                };
+                let tools = self.config.tools.clone();
+                let cancel = cancel.clone();
+                let events = events.clone();
+                let cwd = cwd.clone();
+                let sandbox = sandbox.clone();
+                let session_id = session_id.clone();
+                let hooks = hooks.clone();
+                join.spawn(async move {
+                    let r = execute_one(
+                        call,
+                        &tools,
+                        &cwd,
+                        &session_id,
+                        hooks.as_ref(),
+                        sandbox.as_ref(),
+                        &cancel,
+                        &events,
+                    )
+                    .await;
+                    (idx, r)
+                });
+            }
+            while let Some(res) = join.join_next().await {
+                if let Ok((idx, pair)) = res {
+                    ordered[idx] = Some(pair);
+                }
             }
         }
         for (idx, verdict) in authz.into_iter().enumerate() {

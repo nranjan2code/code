@@ -9,7 +9,7 @@ path line enters the system prompt; the model reads the file with `read`
 when relevant — progressive disclosure, Claude Code-skill compatible.
 Discovered skills are recorded in the frozen contract.
 
-## Subagents (shipped, blocking)
+## Subagents (shipped, blocking + parallel fan-out)
 
 The `task` tool delegates a self-contained prompt to a child agent:
 - child session JSONL linked via `parent_session_id`; greppable lineage
@@ -18,6 +18,24 @@ The `task` tool delegates a self-contained prompt to a child agent:
 - final text returns as the tool result; abort/failure/turn-limit become
   typed error results
 - config: `subagents = false` disables
+
+### Resource-claim scheduling
+
+Tools declare `claims(args) -> ResourceClaims { exclusive, read_only, paths }`
+(default: unclaimed = schedule freely). The batch scheduler greedily groups
+calls into **waves**: unclaimed and read-only calls share wave 0; claimed
+calls join the first wave with no conflicting claims, else open a new wave.
+Waves execute sequentially; within a wave everything runs concurrently.
+Results are always re-ordered into assistant source order.
+
+`task` claims:
+- `readonly: true` → read_only claim + child gets read/glob/grep tools and
+  ReadOnly permission mode — fans out freely
+- `paths: ["src/auth/**", …]` → write scope; scopes conflict when one
+  normalized prefix contains the other (`src/**` ⊃ `src/auth/**`)
+- no `paths` → exclusive (unknown scope serializes against other writers)
+
+Conflict test is conservative: it may over-serialize, never under-serialize.
 
 ## Hooks (shipped)
 

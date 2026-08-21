@@ -119,6 +119,7 @@ async fn subagent_roundtrip_with_shared_scripted_provider() {
         system_prompt: "child-sys".into(),
         model: "test-model".into(),
         tools: vec![Arc::new(ReadTool)],
+        read_only_tools: vec![Arc::new(ReadTool)],
         max_turns: 5,
         permission: Some(Arc::new(PermissionEngine::default())),
         mode: vak_permission::Mode::WorkspaceWrite,

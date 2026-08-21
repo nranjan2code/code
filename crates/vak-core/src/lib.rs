@@ -314,6 +314,7 @@ impl Core {
                 system_prompt: self.system_prompt(),
                 model: self.effective_model(),
                 tools: vak_tools::default_tools(),
+                read_only_tools: vak_tools::read_only_tools(),
                 max_turns: self.effective_max_turns(),
                 permission: Some(engine.clone()),
                 mode: cfg.mode,

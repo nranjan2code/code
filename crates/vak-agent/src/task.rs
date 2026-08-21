@@ -22,6 +22,9 @@ pub struct TaskDeps {
     pub system_prompt: String,
     pub model: String,
     pub tools: Vec<Arc<dyn Tool>>,
+    /// Read-only subset (read/glob/grep) used when a task declares
+    /// `readonly: true`; children get these plus ReadOnly permission mode.
+    pub read_only_tools: Vec<Arc<dyn Tool>>,
     pub max_turns: usize,
     pub permission: Option<Arc<PermissionEngine>>,
     pub mode: Mode,
@@ -59,13 +62,57 @@ impl Tool for TaskTool {
             "type": "object",
             "properties": {
                 "prompt": {"type": "string", "description": "Complete, self-contained instructions for the subagent"},
-                "label": {"type": "string", "description": "Short label shown in the UI"}
+                "label": {"type": "string", "description": "Short label shown in the UI"},
+                "readonly": {"type": "boolean", "description": "If true, the subagent gets only read/glob/grep and may run concurrently with other tasks", "default": false},
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Path scopes (globs) this task will write to; tasks with disjoint scopes run in parallel, overlapping scopes are serialized"}
             },
             "required": ["prompt"]
         })
     }
 
+    fn claims(&self, args: &Value) -> vak_tools::ResourceClaims {
+        let readonly = args
+            .get("readonly")
+            .and_then(|r| r.as_bool())
+            .unwrap_or(false);
+        if readonly {
+            return vak_tools::ResourceClaims {
+                exclusive: false,
+                read_only: true,
+                paths: Vec::new(),
+            };
+        }
+        let paths: Vec<String> = args
+            .get("paths")
+            .and_then(|p| p.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        vak_tools::ResourceClaims {
+            exclusive: paths.is_empty(),
+            read_only: false,
+            paths,
+        }
+    }
+
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
+        let __t0 = std::time::Instant::now();
+        eprintln!(
+            "[task:start] thread={:?} t={:?}",
+            std::thread::current().id(),
+            __t0
+        );
+        let out = self.execute_inner(args, ctx).await;
+        eprintln!("[task:end] elapsed {:?}", __t0.elapsed());
+        out
+    }
+}
+
+impl TaskTool {
+    async fn execute_inner(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(prompt) = args.get("prompt").and_then(|p| p.as_str()) else {
             return ToolOutput::error("missing required parameter: prompt");
         };
@@ -77,6 +124,20 @@ impl Tool for TaskTool {
                 .unwrap_or_default()
                 .as_nanos()
         );
+        let readonly = args
+            .get("readonly")
+            .and_then(|r| r.as_bool())
+            .unwrap_or(false);
+        let child_tools = if readonly {
+            self.deps.read_only_tools.clone()
+        } else {
+            self.deps.tools.clone()
+        };
+        let child_mode = if readonly {
+            Mode::ReadOnly
+        } else {
+            self.deps.mode
+        };
         let path =
             SessionPath::new_session_file(&self.deps.sessions_home, &self.deps.cwd, &session_id);
         let header = SessionHeader {
@@ -89,13 +150,8 @@ impl Tool for TaskTool {
                 provider: self.deps.provider.name().into(),
                 model: self.deps.model.clone(),
                 system_prompt: self.deps.system_prompt.clone(),
-                tools: self
-                    .deps
-                    .tools
-                    .iter()
-                    .map(|t| t.name().to_string())
-                    .collect(),
-                permission_mode: match self.deps.mode {
+                tools: child_tools.iter().map(|t| t.name().to_string()).collect(),
+                permission_mode: match child_mode {
                     Mode::ReadOnly => "read-only",
                     Mode::WorkspaceWrite => "workspace-write",
                     Mode::FullAccess => "full-access",
@@ -111,11 +167,11 @@ impl Tool for TaskTool {
 
         let mut cfg = AgentConfig::new(self.deps.system_prompt.clone());
         cfg.model = self.deps.model.clone();
-        cfg.tools = self.deps.tools.clone();
+        cfg.tools = child_tools;
         cfg.max_turns = self.deps.max_turns;
         cfg.parallel_tools = true;
         cfg.permission = self.deps.permission.clone();
-        cfg.mode = self.deps.mode;
+        cfg.mode = child_mode;
         cfg.approver = self.deps.approver.clone();
         cfg.sandbox = self.deps.sandbox.clone();
 
