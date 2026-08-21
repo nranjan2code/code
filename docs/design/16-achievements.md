@@ -68,6 +68,26 @@ driven by chained `exec --session` resumes.
   string sanitizer (newlines + nested quotes), truncated-SSE completion for
   OpenAI-compatible proxies, planner-call retries, TUI done-signal on Err.
 
+## Extensibility battery (Ox Alpha Free, same day)
+
+First real-model exercise of hooks, MCP, steering, and the circuit
+breaker. All four PASS; no harness bugs found.
+
+| # | Scenario | Result |
+|---|---|---|
+| X1 | MCP: stdio spawn + `action=list` discovery + `action=call` round-trip | `echo: mcp-live-ok` via fake server |
+| X2 | Hooks: pre-tool-use deny, post-tool-use log, stop | deny reason surfaced to model; blocked tool never ran; side-effect log exact |
+| X3 | Mid-run steering (TUI PTY) | queued while a tool slept → honored in final reply |
+| X4 | Circuit breaker vs always-429 endpoint | run 1: 2 retries / 3 requests / typed failure; run 2 in cooldown: 0 requests, fail-fast with remaining cooldown |
+
+Bonus: X1's model issued `bash` + `mcp` in one turn — parallel
+resource-claim waves held under a real mixed workload.
+
+With this battery every major subsystem has survived contact with a real
+model: loop, tools, permissions, sandbox config, sessions/resume,
+checkpoints, flows, planner, compaction, subagents, evals, server, TUI,
+MCP, hooks, steering, breaker.
+
 ## Current numbers
 
 - 15 crates, ~14.5K LOC
