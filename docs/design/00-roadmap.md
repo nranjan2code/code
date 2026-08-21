@@ -10,7 +10,7 @@ Phases with exit criteria. Each phase ships a usable product.
 | 3 ✅ | Permission engine (rules × modes), OS sandbox backends (Seatbelt; Landlock later) | allowed vs denied calls audited in JSONL; seatbelt blocks $HOME escapes, allows cwd writes |
 | 4 (openai-completions ✅) | Multi-provider: OpenAI/OpenRouter/Ollama live; next: openai-responses + Google | same session history converts across providers; mock e2e per family |
 | 5 ✅ | Extensibility complete: skills, blocking subagents, hooks, MCP client (lazy meta-tool) | fake-server roundtrip tests + e2e mcp list through the binary |
-| 6 (fan-out ✅, flows ✅) | Agentic depth: dynamic planner + bounded replan remaining | flows: validation/layers/failure-policy/resume tested; e2e through binary |
+| 6 ✅ | Agentic depth complete: fan-out scheduler, static flows, dynamic planner + bounded replan | plan/execute/replan/fail-closed all tested; e2e through binary |
 | 7 | Server mode (HTTP+SSE), checkpoints/rewind, worktree isolation, eval harness | Terminal-Bench-style suite runs nightly; regressions block releases |
 
 ## Decisions locked during research (2026-08)

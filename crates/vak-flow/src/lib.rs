@@ -5,8 +5,12 @@
 
 pub mod exec;
 pub mod parse;
+pub mod planner;
 pub mod types;
 
 pub use exec::{Executor, ExecutorDeps, FlowOutcome};
 pub use parse::{ParseError, parse_flow};
+pub use planner::{
+    PLANNER_SYSTEM, PlanOutcome, ToolCatalogEntry, build_planner_prompt, extract_toml, plan_and_run,
+};
 pub use types::{FlowDef, FlowState, NodeDef, NodeResult, NodeStatus};

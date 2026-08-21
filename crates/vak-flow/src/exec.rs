@@ -15,6 +15,7 @@ use vak_tools::{Tool, ToolContext};
 use crate::parse::layers;
 use crate::types::{FlowDef, FlowState, NodeDef, NodeResult, NodeStatus};
 
+#[derive(Clone)]
 pub struct ExecutorDeps {
     pub provider: Arc<dyn Provider>,
     pub system_prompt: String,

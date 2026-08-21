@@ -47,6 +47,12 @@ enum Command {
         #[command(subcommand)]
         action: FlowAction,
     },
+    /// Plan and execute an open-ended task with a dynamic planner
+    Plan {
+        task: String,
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -105,6 +111,7 @@ async fn main() {
             0
         }
         Some(Command::Flow { action }) => run_flow(cwd, action).await,
+        Some(Command::Plan { task, yes }) => run_plan(cwd, task, yes).await,
     };
     std::process::exit(code);
 }
@@ -560,5 +567,113 @@ fn run_sessions_list(cwd: PathBuf) {
     }
     for (_mtime, size, name) in rows {
         println!("{name}  {size:>10} bytes");
+    }
+}
+
+async fn run_plan(cwd: PathBuf, task: String, yes: bool) -> i32 {
+    let core = match Core::new(cwd.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    let provider = match core.provider() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    let session = match core.start_session().await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    let parent_session_id = session
+        .header()
+        .map(|h| h.session_id.clone())
+        .unwrap_or_default();
+
+    let approver: Option<std::sync::Arc<dyn vak_agent::Approver>> = Some(if yes {
+        std::sync::Arc::new(vak_agent::AutoApprove)
+    } else {
+        std::sync::Arc::new(vak_agent::AutoDeny)
+    });
+    let engine = match vak_core::build_engine(core.config()) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+
+    let deps = vak_flow::ExecutorDeps {
+        provider,
+        system_prompt: core.system_prompt(),
+        model: core.effective_model(),
+        tools: vak_tools::default_tools(),
+        read_only_tools: vak_tools::read_only_tools(),
+        max_turns: core.effective_max_turns(),
+        permission: Some(std::sync::Arc::new(engine)),
+        mode: match core.effective_permission_mode() {
+            vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
+            vak_config::PermissionMode::WorkspaceWrite => vak_permission::Mode::WorkspaceWrite,
+            vak_config::PermissionMode::FullAccess => vak_permission::Mode::FullAccess,
+        },
+        approver,
+        sandbox: None,
+        cwd: core.cwd().clone(),
+        sessions_home: core.sessions_home().clone(),
+        parent_session_id,
+        state_path: core.sessions_home().join("flow-runs/plan"),
+    };
+
+    let cancel = CancellationToken::new();
+    {
+        let cancel = cancel.clone();
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                eprintln!("\n[cancelling…]");
+                cancel.cancel();
+            }
+        });
+    }
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
+    let runner = tokio::spawn(async move {
+        vak_flow::plan_and_run(std::sync::Arc::new(deps), &task, cancel, tx).await
+    });
+
+    while let Some(line) = rx.recv().await {
+        eprintln!("{line}");
+    }
+
+    match runner.await {
+        Ok(vak_flow::PlanOutcome::Completed { outputs, attempts }) => {
+            eprintln!("── plan completed after {attempts} attempt(s)");
+            for (id, out) in outputs {
+                println!("[{id}]\n{out}\n");
+            }
+            0
+        }
+        Ok(vak_flow::PlanOutcome::PlanningFailed { reason }) => {
+            eprintln!("── planning_failed (fail-closed): {reason}");
+            1
+        }
+        Ok(vak_flow::PlanOutcome::Failed { node, reason }) => {
+            eprintln!("── plan execution failed at '{node}': {reason}");
+            1
+        }
+        Ok(vak_flow::PlanOutcome::Aborted) => {
+            eprintln!("── aborted");
+            1
+        }
+        Err(e) => {
+            eprintln!("error: planner crashed: {e}");
+            2
+        }
     }
 }

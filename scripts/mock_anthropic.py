@@ -55,7 +55,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             for c in (m.get("content") if isinstance(m.get("content"), list) else [{"type": "text", "text": m.get("content", "")}])
             if isinstance(c, dict) and c.get("type") == "text"
         )
-        if "Summarize this probe output" in texts:
+        if "task planner" in body.get("system", ""):
+            plan = (
+                "```toml\n[flow]\nname = \"planned-smoke\"\n\n[[nodes]]\n"
+                "id = \"probe\"\ntype = \"bash\"\ncommand = \"echo planned-ok\"\n\n"
+                "[[nodes]]\nid = \"report\"\ntype = \"merge\"\ndeps = [\"probe\"]\n```"
+            )
+            self.wfile.write(sse([
+                {"type": "message_start", "message": {"model": "claude-sonnet-4-5", "usage": {"input_tokens": 80, "output_tokens": 20}}},
+                {"type": "content_block_start", "index": 0, "content_block": {"type": "text"}},
+                {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": plan}},
+                {"type": "content_block_stop", "index": 0},
+                {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 60}},
+            ]))
+        elif "Summarize this probe output" in texts:
             self.wfile.write(sse([
                 {"type": "message_start", "message": {"model": "claude-sonnet-4-5", "usage": {"input_tokens": 50, "output_tokens": 5}}},
                 {"type": "content_block_start", "index": 0, "content_block": {"type": "text"}},
