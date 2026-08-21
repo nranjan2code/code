@@ -41,11 +41,19 @@ blocks: `Text | Thinking{signature} | ToolUse{id,name,input} | ToolResult{tool_u
 | anthropic-messages | `anthropic.rs` | Anthropic |
 | openai-completions | `openai.rs` | OpenRouter, Ollama, Groq, Together, vLLM, any `/v1/chat/completions` endpoint |
 | openai-responses | `openai_responses.rs` | OpenAI native (`/v1/responses`, GPT-5.x-class) |
+| google-generative-ai | `google.rs` | Gemini (`streamGenerateContent?alt=sse`) |
 
 Registry names: `anthropic`, `openai`, `openai-responses`, `openrouter`,
-`ollama` (lazy-built, cached). Auth via `ANTHROPIC_API_KEY` /
-`OPENAI_API_KEY` / `OPENROUTER_API_KEY`; Ollama needs no key. Base-URL
-overrides: `VAKCODER_{ANTHROPIC,OPENAI,OPENROUTER,OLLAMA}_BASE_URL`.
+`ollama`, `google` (lazy-built, cached). Auth via `ANTHROPIC_API_KEY` /
+`OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `GEMINI_API_KEY`; Ollama needs no
+key. Base-URL overrides:
+`VAKCODER_{ANTHROPIC,OPENAI,OPENROUTER,OLLAMA,GOOGLE}_BASE_URL`.
+
+Gemini specifics: roles are `user`/`model`; tool args are JSON objects;
+function responses ride in a user turn keyed by function NAME — the adapter
+resolves ids→names by walking prior assistant `functionCall` parts; parts
+preserve assistant source order; any `functionCall` part forces
+`stop_reason = ToolUse`.
 
 Responses-API specifics: system prompt rides in `instructions`; history is
 typed items (`input_text`/`output_text`, `function_call`,

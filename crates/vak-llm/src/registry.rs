@@ -115,6 +115,17 @@ pub fn default_registry() -> ProviderRegistry {
         )
     };
     registry.register("openai-responses", responses_factory);
+
+    use crate::google::{GOOGLE_DEFAULT_BASE_URL, GoogleConfig, GoogleProvider};
+    registry.register("google", |auth| {
+        Ok(Arc::new(GoogleProvider::new(GoogleConfig {
+            api_key: auth.api_key.clone(),
+            base_url: auth
+                .base_url
+                .clone()
+                .unwrap_or_else(|| GOOGLE_DEFAULT_BASE_URL.into()),
+        })?) as Arc<dyn Provider>)
+    });
     registry.register("openrouter", openai_compat("https://openrouter.ai/api/v1"));
     registry.register("ollama", openai_compat("http://localhost:11434/v1"));
     registry

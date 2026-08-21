@@ -220,6 +220,20 @@ impl Core {
                         .or_else(|| std::env::var("VAKCODER_ANTHROPIC_BASE_URL").ok()),
                 })
             }
+            "google" => {
+                let api_key = std::env::var("GEMINI_API_KEY")
+                    .or_else(|_| std::env::var("GOOGLE_API_KEY"))
+                    .map_err(|_| CoreError::MissingAuth {
+                        env: "GEMINI_API_KEY".into(),
+                        provider,
+                    })?;
+                Ok(ProviderAuth {
+                    api_key,
+                    base_url: std::env::var("VAKCODER_GOOGLE_BASE_URL").ok().or_else(|| {
+                        Some("https://generativelanguage.googleapis.com/v1beta".into())
+                    }),
+                })
+            }
             "openai-responses" => {
                 let api_key =
                     std::env::var("OPENAI_API_KEY").map_err(|_| CoreError::MissingAuth {
