@@ -46,6 +46,7 @@ struct CoreInner {
     mode_override: std::sync::Mutex<Option<vak_config::PermissionMode>>,
     provider_instance: std::sync::Mutex<Option<Arc<dyn Provider>>>,
     sessions_home_override: std::sync::Mutex<Option<PathBuf>>,
+    breaker: Arc<vak_agent::CircuitBreaker>,
 }
 
 #[derive(Clone)]
@@ -63,6 +64,12 @@ impl Core {
                     .map(|h| PathBuf::from(h).join(".vakcoder"))
                     .unwrap_or_else(|| cwd.join(".vakcoder"))
             });
+        let breaker = Arc::new(vak_agent::CircuitBreaker::new(
+            vak_agent::CircuitBreakerConfig {
+                threshold: config.circuit_breaker_threshold,
+                cooldown: std::time::Duration::from_secs(config.circuit_breaker_cooldown_secs),
+            },
+        ));
         Ok(Core {
             inner: Arc::new(CoreInner {
                 config,
@@ -75,6 +82,7 @@ impl Core {
                 mode_override: std::sync::Mutex::new(None),
                 provider_instance: std::sync::Mutex::new(None),
                 sessions_home_override: std::sync::Mutex::new(None),
+                breaker,
             }),
         })
     }
@@ -368,6 +376,7 @@ impl Core {
                 self.inner.config.request_timeout_secs,
             ))
         };
+        cfg.circuit_breaker = Some(self.inner.breaker.clone());
         cfg.approver = approver.clone();
         cfg.mode = match self.effective_permission_mode() {
             vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,

@@ -57,6 +57,8 @@ pub struct FileConfig {
     pub max_retries: Option<u32>,
     pub retry_base_backoff_ms: Option<u64>,
     pub request_timeout_secs: Option<u64>,
+    pub circuit_breaker_threshold: Option<u32>,
+    pub circuit_breaker_cooldown_secs: Option<u64>,
     #[serde(default)]
     pub mcp: McpConfig,
 }
@@ -101,6 +103,8 @@ pub struct Config {
     pub max_retries: u32,
     pub retry_base_backoff_ms: u64,
     pub request_timeout_secs: u64,
+    pub circuit_breaker_threshold: u32,
+    pub circuit_breaker_cooldown_secs: u64,
     pub mcp: McpConfig,
     pub warnings: Vec<String>,
 }
@@ -122,6 +126,8 @@ impl Default for Config {
             max_retries: 3,
             retry_base_backoff_ms: 500,
             request_timeout_secs: 600,
+            circuit_breaker_threshold: 5,
+            circuit_breaker_cooldown_secs: 60,
             mcp: McpConfig::default(),
             warnings: Vec::new(),
         }
@@ -213,6 +219,12 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
     if let Some(secs) = merged.request_timeout_secs {
         cfg.request_timeout_secs = secs;
     }
+    if let Some(t) = merged.circuit_breaker_threshold {
+        cfg.circuit_breaker_threshold = t;
+    }
+    if let Some(c) = merged.circuit_breaker_cooldown_secs {
+        cfg.circuit_breaker_cooldown_secs = c;
+    }
     cfg.hooks = merged.hooks;
     for (name, srv) in merged.mcp.servers {
         cfg.mcp.servers.insert(name, srv);
@@ -299,6 +311,12 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.request_timeout_secs.is_some() {
         base.request_timeout_secs = over.request_timeout_secs;
+    }
+    if over.circuit_breaker_threshold.is_some() {
+        base.circuit_breaker_threshold = over.circuit_breaker_threshold;
+    }
+    if over.circuit_breaker_cooldown_secs.is_some() {
+        base.circuit_breaker_cooldown_secs = over.circuit_breaker_cooldown_secs;
     }
     base.hooks.extend(over.hooks);
     for (name, srv) in over.mcp.servers {

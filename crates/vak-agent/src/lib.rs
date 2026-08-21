@@ -4,9 +4,11 @@
 //! TurnOutcome. Model context is always projected from the session log
 //! (model-visible means logged).
 
+pub mod circuit;
 pub mod steering;
 pub mod task;
 
+pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
 pub use task::{TaskDeps, TaskTool};
 
 use std::sync::Arc;
@@ -88,6 +90,8 @@ pub struct AgentConfig {
     pub retry_base_backoff_ms: u64,
     /// Whole-step deadline (connect + stream + collect). None disables.
     pub request_timeout: Option<std::time::Duration>,
+    /// Shared cross-run provider-health breaker. None disables.
+    pub circuit_breaker: Option<Arc<CircuitBreaker>>,
 }
 
 impl AgentConfig {
@@ -106,6 +110,7 @@ impl AgentConfig {
             max_retries: 3,
             retry_base_backoff_ms: 500,
             request_timeout: Some(std::time::Duration::from_secs(600)),
+            circuit_breaker: None,
         }
     }
 }
@@ -226,6 +231,13 @@ impl Agent {
                 if cancel.is_cancelled() {
                     return TurnOutcome::Aborted { partial: None };
                 }
+                if let Some(breaker) = &self.config.circuit_breaker
+                    && let Err(open) = breaker.check()
+                {
+                    return TurnOutcome::Failed {
+                        error: LlmError::Network(open.to_string()),
+                    };
+                }
                 let request = request.clone();
                 let step = async {
                     let mut stream = self.provider.stream(request, cancel.clone()).await?;
@@ -249,7 +261,12 @@ impl Agent {
                 };
 
                 match outcome {
-                    Ok(r) => break r,
+                    Ok(r) => {
+                        if let Some(breaker) = &self.config.circuit_breaker {
+                            breaker.record_success();
+                        }
+                        break r;
+                    }
                     Err(LlmError::Aborted { partial }) => {
                         if let Some(p) = &partial {
                             self.append_assistant(p).await;
@@ -257,6 +274,9 @@ impl Agent {
                         return TurnOutcome::Aborted { partial };
                     }
                     Err(e) if e.is_retryable() && attempt < self.config.max_retries => {
+                        if let Some(breaker) = &self.config.circuit_breaker {
+                            breaker.record_failure();
+                        }
                         attempt += 1;
                         let delay = backoff_delay(
                             attempt,
@@ -277,7 +297,14 @@ impl Agent {
                             _ = tokio::time::sleep(delay) => {}
                         }
                     }
-                    Err(e) => return TurnOutcome::Failed { error: e },
+                    Err(e) => {
+                        if let Some(breaker) = &self.config.circuit_breaker
+                            && e.is_retryable()
+                        {
+                            breaker.record_failure();
+                        }
+                        return TurnOutcome::Failed { error: e };
+                    }
                 }
             };
 

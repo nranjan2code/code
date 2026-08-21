@@ -1,6 +1,6 @@
 use crate::types::AssistantMessage;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum LlmError {
     #[error("authentication failed: {0}")]
     Auth(String),

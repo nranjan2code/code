@@ -39,6 +39,22 @@ The standard failure matrix and where each case is handled.
 | resume (flow) | `flow run <name> --resume` skips completed nodes |
 | shutdown (server) | ctrl_c → graceful drain (`with_graceful_shutdown`) |
 
+## Circuit breaker (cross-run QoS)
+
+Per-step retries protect one run; the **circuit breaker** protects every run
+from a dead provider. Shared via Core across all runs of a process:
+
+- Only retryable failures (429/529/network) count; auth/config errors never
+  trip it.
+- `circuit_breaker_threshold` consecutive failures (default 5) open the
+  circuit; while open, steps fail fast with the remaining cooldown instead
+  of burning their retry budget.
+- After `circuit_breaker_cooldown_secs` (default 60) the circuit half-closes:
+  one probe gets through, and any success resets the counter.
+
+Config keys: `circuit_breaker_threshold`,
+`circuit_breaker_cooldown_secs` (`0` cooldown disables opening).
+
 ## Invariants
 
 - Retry never changes the frozen contract: same model, same request body.
