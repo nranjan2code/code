@@ -42,12 +42,18 @@ blocks: `Text | Thinking{signature} | ToolUse{id,name,input} | ToolResult{tool_u
 | openai-completions | `openai.rs` | OpenRouter, Ollama, Groq, Together, vLLM, any `/v1/chat/completions` endpoint |
 | openai-responses | `openai_responses.rs` | OpenAI native (`/v1/responses`, GPT-5.x-class) |
 | google-generative-ai | `google.rs` | Gemini (`streamGenerateContent?alt=sse`) |
+| openai-completions (zen) | `openai.rs` | OpenCode Zen (`opencode.ai/zen/v1`), incl. free models like Ox Alpha Free (`x-preview-f-free`) |
 
 Registry names: `anthropic`, `openai`, `openai-responses`, `openrouter`,
-`ollama`, `google` (lazy-built, cached). Auth via `ANTHROPIC_API_KEY` /
-`OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `GEMINI_API_KEY`; Ollama needs no
-key. Base-URL overrides:
-`VAKCODER_{ANTHROPIC,OPENAI,OPENROUTER,OLLAMA,GOOGLE}_BASE_URL`.
+`opencode-zen`, `ollama`, `google` (lazy-built, cached). Auth via
+`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` /
+`GEMINI_API_KEY` / `OPENCODE_API_KEY`; Ollama needs no key. Base-URL
+overrides: `VAKCODER_{ANTHROPIC,OPENAI,OPENROUTER,OLLAMA,GOOGLE,
+OPENCODE_ZEN}_BASE_URL`.
+
+Secrets live in `.env` (project) or `~/.vakcoder/.env` (user) — both are
+gitignored by convention and loaded at startup; real environment variables
+always take precedence. Never commit keys.
 
 Gemini specifics: roles are `user`/`model`; tool args are JSON objects;
 function responses ride in a user turn keyed by function NAME — the adapter

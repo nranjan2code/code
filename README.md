@@ -8,11 +8,13 @@ v0.1.0 — the full roadmap (docs/design/00-roadmap.md) is implemented.
 ## Quick start
 
 ```sh
-export ANTHROPIC_API_KEY=sk-ant-…        # or OPENAI_API_KEY / OPENROUTER_API_KEY / Ollama
+# keys: put them in .env (gitignored) or export directly
+export ANTHROPIC_API_KEY=sk-ant-…        # or OPENAI_API_KEY / OPENCODE_API_KEY / GEMINI_API_KEY / Ollama
 cargo run                                 # interactive TUI
 cargo run -- exec "fix the failing test"  # headless
 cargo run -- config dump                  # effective boot config
 cargo run -- eval                         # deterministic regression suite
+cargo run -- eval --live --provider opencode-zen --model x-preview-f-free  # live (free model)
 ```
 
 Offline smoke tests: `scripts/mock_anthropic.py`, `scripts/mock_openai.py`,
@@ -22,7 +24,7 @@ Offline smoke tests: `scripts/mock_anthropic.py`, `scripts/mock_openai.py`,
 
 | Capability | Notes |
 |---|---|
-| Multi-provider | Anthropic + any OpenAI-compatible endpoint (OpenAI, OpenRouter, Ollama, …); SSE streaming; delta+snapshot events; abort preserves partials |
+| Multi-provider | Anthropic, OpenAI (responses + completions), OpenRouter, OpenCode Zen (incl. free models), Gemini, Ollama; SSE streaming; delta+snapshot events; abort preserves partials |
 | Sessions | Append-only JSONL trees; frozen execution contract header; context derived only from the log (`model-visible means logged`); branch/fork/compact-as-entry |
 | Tools | read/write/edit/bash/glob/grep behind one trait; atomic edits; process-group kill; bounded outputs |
 | Safety | Rule engine (`allow/ask/deny` × read-only/workspace-write/full-access) gating every call; macOS Seatbelt sandbox derived from mode; denials feed back as error results the model adapts to |

@@ -127,6 +127,7 @@ pub fn default_registry() -> ProviderRegistry {
         })?) as Arc<dyn Provider>)
     });
     registry.register("openrouter", openai_compat("https://openrouter.ai/api/v1"));
+    registry.register("opencode-zen", openai_compat("https://opencode.ai/zen/v1"));
     registry.register("ollama", openai_compat("http://localhost:11434/v1"));
     registry
 }

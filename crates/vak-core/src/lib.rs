@@ -57,9 +57,9 @@ pub struct Core {
 impl Core {
     pub fn new(cwd: PathBuf) -> Result<Self, CoreError> {
         let config = vak_config::load(&cwd)?;
-        let sessions_home = std::env::var("VAKCODER_HOME")
+        let sessions_home = vak_config::get_var("VAKCODER_HOME")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| {
+            .unwrap_or_else(|| {
                 std::env::var_os("HOME")
                     .map(|h| PathBuf::from(h).join(".vakcoder"))
                     .unwrap_or_else(|| cwd.join(".vakcoder"))
@@ -223,11 +223,12 @@ impl Core {
         let provider = self.effective_provider();
         match provider.as_str() {
             "anthropic" => {
-                let api_key =
-                    std::env::var("ANTHROPIC_API_KEY").map_err(|_| CoreError::MissingAuth {
+                let api_key = vak_config::get_var("ANTHROPIC_API_KEY").ok_or_else(|| {
+                    CoreError::MissingAuth {
                         env: "ANTHROPIC_API_KEY".into(),
                         provider: "anthropic".into(),
-                    })?;
+                    }
+                })?;
                 Ok(ProviderAuth {
                     api_key,
                     base_url: self
@@ -235,33 +236,33 @@ impl Core {
                         .config
                         .anthropic_base_url
                         .clone()
-                        .or_else(|| std::env::var("VAKCODER_ANTHROPIC_BASE_URL").ok()),
+                        .or_else(|| vak_config::get_var("VAKCODER_ANTHROPIC_BASE_URL")),
                 })
             }
             "google" => {
-                let api_key = std::env::var("GEMINI_API_KEY")
-                    .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-                    .map_err(|_| CoreError::MissingAuth {
+                let api_key = vak_config::get_var("GEMINI_API_KEY")
+                    .or_else(|| vak_config::get_var("GOOGLE_API_KEY"))
+                    .ok_or_else(|| CoreError::MissingAuth {
                         env: "GEMINI_API_KEY".into(),
                         provider,
                     })?;
                 Ok(ProviderAuth {
                     api_key,
-                    base_url: std::env::var("VAKCODER_GOOGLE_BASE_URL").ok().or_else(|| {
+                    base_url: vak_config::get_var("VAKCODER_GOOGLE_BASE_URL").or_else(|| {
                         Some("https://generativelanguage.googleapis.com/v1beta".into())
                     }),
                 })
             }
             "openai-responses" => {
-                let api_key =
-                    std::env::var("OPENAI_API_KEY").map_err(|_| CoreError::MissingAuth {
+                let api_key = vak_config::get_var("OPENAI_API_KEY").ok_or_else(|| {
+                    CoreError::MissingAuth {
                         env: "OPENAI_API_KEY".into(),
                         provider,
-                    })?;
+                    }
+                })?;
                 Ok(ProviderAuth {
                     api_key,
-                    base_url: std::env::var("VAKCODER_OPENAI_BASE_URL")
-                        .ok()
+                    base_url: vak_config::get_var("VAKCODER_OPENAI_BASE_URL")
                         .or_else(|| Some("https://api.openai.com/v1".into())),
                 })
             }
@@ -290,10 +291,22 @@ impl Core {
                         .or_else(|| Some(default_base.into())),
                 })
             }
+            "opencode-zen" => {
+                let api_key = vak_config::get_var("OPENCODE_API_KEY").ok_or_else(|| {
+                    CoreError::MissingAuth {
+                        env: "OPENCODE_API_KEY".into(),
+                        provider,
+                    }
+                })?;
+                Ok(ProviderAuth {
+                    api_key,
+                    base_url: vak_config::get_var("VAKCODER_OPENCODE_ZEN_BASE_URL")
+                        .or_else(|| Some("https://opencode.ai/zen/v1".into())),
+                })
+            }
             "ollama" => Ok(ProviderAuth {
                 api_key: "ollama".into(),
-                base_url: std::env::var("VAKCODER_OLLAMA_BASE_URL")
-                    .ok()
+                base_url: vak_config::get_var("VAKCODER_OLLAMA_BASE_URL")
                     .or_else(|| Some("http://localhost:11434/v1".into())),
             }),
             other => Err(CoreError::MissingAuth {

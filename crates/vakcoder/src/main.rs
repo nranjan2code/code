@@ -70,6 +70,10 @@ enum Command {
         /// Run the live suite against the configured provider (needs API key)
         #[arg(long)]
         live: bool,
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
     },
     /// Serve the agent over HTTP+SSE
     Serve {
@@ -198,6 +202,10 @@ fn latest_session_id(core: &Core) -> Option<String> {
 }
 #[tokio::main]
 async fn main() {
+    vak_config::load_env_file(std::path::Path::new(".env"));
+    if let Some(home) = std::env::var_os("HOME") {
+        vak_config::load_env_file(&std::path::PathBuf::from(home).join(".vakcoder/.env"));
+    }
     let cli = Cli::parse();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let code = match cli.command {
@@ -242,7 +250,12 @@ async fn main() {
             yes,
             worktree,
         }) => run_plan(cwd, task, yes, worktree).await,
-        Some(Command::Eval { report, live }) => run_eval(report, live).await,
+        Some(Command::Eval {
+            report,
+            live,
+            provider,
+            model,
+        }) => run_eval(report, live, provider, model).await,
         Some(Command::Serve { port }) => run_serve(cwd, port).await,
     };
     std::process::exit(code);
@@ -870,7 +883,12 @@ async fn run_plan(cwd: PathBuf, task: String, yes: bool, worktree: bool) -> i32 
     }
 }
 
-async fn run_eval(report_path: Option<PathBuf>, live: bool) -> i32 {
+async fn run_eval(
+    report_path: Option<PathBuf>,
+    live: bool,
+    provider_flag: Option<String>,
+    model_flag: Option<String>,
+) -> i32 {
     let mut reports = Vec::new();
 
     if !live {
@@ -895,6 +913,12 @@ async fn run_eval(report_path: Option<PathBuf>, live: bool) -> i32 {
                 return 2;
             }
         };
+        if let Some(p) = provider_flag {
+            core.set_provider(p);
+        }
+        if let Some(m) = model_flag {
+            core.set_model(m);
+        }
         let provider = match core.provider() {
             Ok(p) => p,
             Err(e) => {

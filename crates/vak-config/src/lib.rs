@@ -326,3 +326,48 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
         base.profiles.insert(k, v);
     }
 }
+
+/// Process-wide extra environment sourced from .env files. Real
+/// environment variables always take precedence.
+type ExtraMap = std::collections::BTreeMap<String, String>;
+
+fn dotenv_extra() -> std::sync::MutexGuard<'static, ExtraMap> {
+    static EXTRA: std::sync::OnceLock<std::sync::Mutex<ExtraMap>> = std::sync::OnceLock::new();
+    EXTRA
+        .get_or_init(|| std::sync::Mutex::new(ExtraMap::new()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Loads KEY=VALUE pairs from a .env file into the extra-env table.
+/// Existing real environment variables are never overridden.
+pub fn load_env_file(path: &std::path::Path) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let mut extra = dotenv_extra();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        if key.is_empty() {
+            continue;
+        }
+        extra
+            .entry(key.to_string())
+            .or_insert_with(|| value.to_string());
+    }
+}
+
+/// Environment lookup: real env first, then loaded .env files.
+pub fn get_var(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .or_else(|| dotenv_extra().get(key).cloned())
+}
