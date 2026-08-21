@@ -1,0 +1,9 @@
+/target
+Cargo.lock.orig
+*.swp
+.DS_Store
+.env
+.env.*
+!.env.example
+.vakcoder/sessions/
+dist/
