@@ -44,6 +44,9 @@ pub enum AgentEvent {
     TurnEnd {
         usage: Usage,
     },
+    StopHookContinuation {
+        reason: String,
+    },
 }
 
 #[derive(Debug)]
@@ -64,6 +67,7 @@ pub struct AgentConfig {
     pub mode: Mode,
     pub approver: Option<Arc<dyn Approver>>,
     pub sandbox: Option<Arc<dyn vak_tools::sandbox::Sandbox>>,
+    pub hooks: Option<Arc<Vec<vak_hooks::HookDef>>>,
 }
 
 impl AgentConfig {
@@ -78,6 +82,7 @@ impl AgentConfig {
             mode: Mode::WorkspaceWrite,
             approver: None,
             sandbox: None,
+            hooks: None,
         }
     }
 }
@@ -214,6 +219,50 @@ impl Agent {
             let _ = events.send(AgentEvent::TurnEnd { usage }).await;
 
             if response.stop_reason != StopReason::ToolUse {
+                if let Some(hooks) = &self.config.hooks {
+                    let session_id = self
+                        .session
+                        .lock()
+                        .await
+                        .header()
+                        .map(|h| h.session_id.clone())
+                        .unwrap_or_default();
+                    let cwd = self
+                        .session
+                        .lock()
+                        .await
+                        .header()
+                        .map(|h| h.contract_cwd())
+                        .unwrap_or_else(|| ".".into());
+                    let stop = vak_hooks::run_hooks(
+                        hooks.clone(),
+                        vak_hooks::HookEvent::Stop,
+                        &session_id,
+                        &cwd,
+                        None,
+                        Some(&response.text_content()),
+                        &cancel,
+                    )
+                    .await;
+                    if stop.blocked && turn + 1 < self.config.max_turns {
+                        let reason = stop
+                            .reason
+                            .unwrap_or_else(|| "continue required by hook".into());
+                        let _ = events
+                            .send(AgentEvent::StopHookContinuation {
+                                reason: reason.clone(),
+                            })
+                            .await;
+                        let _ = self.session.lock().await.append_message(MessageRecord {
+                            message: Message::user_text(format!(
+                                "[stop-hook]: {reason}\nPlease continue."
+                            )),
+                            meta: None,
+                        });
+                        turn += 1;
+                        continue;
+                    }
+                }
                 return TurnOutcome::Completed { response };
             }
 
@@ -278,6 +327,14 @@ impl Agent {
             .map(|h| h.contract_cwd())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
         let sandbox = self.config.sandbox.clone();
+        let hooks = self.config.hooks.clone();
+        let session_id = self
+            .session
+            .lock()
+            .await
+            .header()
+            .map(|h| h.session_id.clone())
+            .unwrap_or_default();
 
         let mut authz: Vec<Result<(), String>> = Vec::with_capacity(n);
         for call in &calls {
@@ -300,6 +357,8 @@ impl Agent {
                                 call,
                                 &self.config.tools,
                                 &cwd,
+                                &session_id,
+                                hooks.as_ref(),
                                 sandbox.as_ref(),
                                 cancel,
                                 events,
@@ -322,8 +381,20 @@ impl Agent {
             let events = events.clone();
             let cwd = cwd.clone();
             let sandbox = sandbox.clone();
+            let session_id = session_id.clone();
+            let hooks = hooks.clone();
             join.spawn(async move {
-                let r = execute_one(call, &tools, &cwd, sandbox.as_ref(), &cancel, &events).await;
+                let r = execute_one(
+                    call,
+                    &tools,
+                    &cwd,
+                    &session_id,
+                    hooks.as_ref(),
+                    sandbox.as_ref(),
+                    &cancel,
+                    &events,
+                )
+                .await;
                 (idx, r)
             });
         }
@@ -341,10 +412,13 @@ impl Agent {
         ordered.into_iter().flatten().collect()
     }
 }
+#[allow(clippy::too_many_arguments)]
 async fn execute_one(
     call: PendingToolCall,
     tools: &[Arc<dyn Tool>],
     cwd: &std::path::Path,
+    session_id: &str,
+    hooks: Option<&Arc<Vec<vak_hooks::HookDef>>>,
     sandbox: Option<&Arc<dyn vak_tools::sandbox::Sandbox>>,
     cancel: &CancellationToken,
     events: &mpsc::Sender<AgentEvent>,
@@ -356,9 +430,38 @@ async fn execute_one(
         })
         .await;
 
-    let tool = tools.iter().find(|t| t.name() == call.name);
+    if let Some(hooks) = hooks {
+        let pre = vak_hooks::run_hooks(
+            hooks.clone(),
+            vak_hooks::HookEvent::PreToolUse,
+            session_id,
+            cwd,
+            Some((&call.name, &call.input)),
+            None,
+            cancel,
+        )
+        .await;
+        if pre.blocked {
+            let reason = pre.reason.unwrap_or_else(|| "blocked by hook".into());
+            let _ = events
+                .send(AgentEvent::ToolCallEnd {
+                    id: call.id.clone(),
+                    name: call.name.clone(),
+                    is_error: true,
+                })
+                .await;
+            return (
+                call.id,
+                ToolRunOutput::Err(format!("blocked by hook: {reason}")),
+            );
+        }
+    }
 
-    let output = match tool {
+    let tool = tools.iter().find(|t| t.name() == call.name);
+    let hook_name = call.name.clone();
+    let hook_input = call.input.clone();
+
+    let mut output = match tool {
         None => ToolRunOutput::Err(format!(
             "unknown tool: {} (available: {})",
             call.name,
@@ -384,6 +487,30 @@ async fn execute_one(
             }
         }
     };
+
+    if let Some(hooks) = hooks {
+        let post_reason = match &output {
+            ToolRunOutput::Ok(content) => content.as_str(),
+            ToolRunOutput::Err(content) => content.as_str(),
+        };
+        let post = vak_hooks::run_hooks(
+            hooks.clone(),
+            vak_hooks::HookEvent::PostToolUse,
+            session_id,
+            cwd,
+            Some((&hook_name, &hook_input)),
+            Some(post_reason),
+            cancel,
+        )
+        .await;
+        if post.blocked && matches!(output, ToolRunOutput::Ok(_)) {
+            let reason = post.reason.unwrap_or_else(|| "flagged by hook".into());
+            output = ToolRunOutput::Err(format!("{}\n[post-tool-use hook]: {reason}", post_reason));
+        } else if post.blocked {
+            let reason = post.reason.unwrap_or_else(|| "flagged by hook".into());
+            output = ToolRunOutput::Err(format!("{post_reason}\n[post-tool-use hook]: {reason}"));
+        }
+    }
 
     let _ = events
         .send(AgentEvent::ToolCallEnd {

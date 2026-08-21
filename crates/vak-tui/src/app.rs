@@ -302,6 +302,10 @@ fn render_agent_event(
             *total_out += usage.output_tokens;
         }
         AgentEvent::TurnStart { .. } => {}
+        AgentEvent::StopHookContinuation { reason } => {
+            screen.clear_input_row();
+            screen.dim(&format!("[stop-hook] {reason} — continuing"));
+        }
     }
 }
 

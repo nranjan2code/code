@@ -19,11 +19,32 @@ The `task` tool delegates a self-contained prompt to a child agent:
   typed error results
 - config: `subagents = false` disables
 
-## Hooks (planned, Phase 5 slice 2)
+## Hooks (shipped)
 
-Lifecycle events (`PreToolUse`, `PostToolUse`, `Stop`, `SessionStart`,
-`PreCompact`) with matcher syntax (`Bash(git *)`), script handlers receiving
-JSON on stdin. Durable session events stay separate from live hook events.
+Config-declared script handlers at lifecycle points:
+
+```toml
+[[hooks]]
+event = "pre-tool-use"        # session-start | pre-tool-use | post-tool-use | stop
+match = "Bash(git push *)"    # optional; same rule syntax as permissions
+command = "scripts/guard.sh"
+timeout_ms = 5000             # optional, default 10000
+```
+
+Contract: handler receives JSON on stdin
+(`{event, session_id, cwd, tool?: {name, input}, text?}`); answers via stdout
+JSON `{"decision":"block"|"approve","reason":"..."}` or exit code 2 (stderr =
+reason); silent exit 0 = no opinion. First block wins.
+
+Semantics:
+- `pre-tool-use` block ⇒ tool never executes; reason becomes an is_error
+  result the model adapts to.
+- `post-tool-use` block ⇒ annotates the tool result with the reason.
+- `stop` block ⇒ appends a logged `[stop-hook]` continuation message and the
+  loop continues (bounded by max_turns).
+- Hooks run in process groups, killed on timeout/cancel; hooks are live
+  events, never persisted as session entries (their *effects* are visible in
+  the transcript).
 
 ## MCP client (planned, Phase 5 slice 3)
 

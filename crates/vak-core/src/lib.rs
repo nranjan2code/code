@@ -322,6 +322,7 @@ impl Core {
             })));
         }
         cfg.tools = tools;
+        cfg.hooks = Some(Arc::new(build_hooks(&self.inner.config)?));
 
         let steering = vak_agent::SteeringQueues::new();
         let mut agent = Agent::new(provider, session, cfg);
@@ -403,4 +404,37 @@ fn uuid_like() -> String {
         .unwrap_or_default()
         .as_nanos();
     format!("{nanos:032x}")
+}
+
+pub fn build_hooks(config: &vak_config::Config) -> Result<Vec<vak_hooks::HookDef>, CoreError> {
+    let mut out = Vec::with_capacity(config.hooks.len());
+    for h in &config.hooks {
+        let event = match h.event.as_str() {
+            "session-start" | "session_start" | "start" => vak_hooks::HookEvent::SessionStart,
+            "pre-tool-use" | "pre_tool_use" => vak_hooks::HookEvent::PreToolUse,
+            "post-tool-use" | "post_tool_use" => vak_hooks::HookEvent::PostToolUse,
+            "stop" => vak_hooks::HookEvent::Stop,
+            other => {
+                return Err(CoreError::Config(vak_config::ConfigError::Read {
+                    path: self_path(),
+                    source: std::io::Error::other(format!("unknown hook event '{other}'")),
+                }));
+            }
+        };
+        let matcher = match &h.matcher {
+            Some(m) if !m.trim().is_empty() => Some(vak_permission::Rule::parse(m)?),
+            _ => None,
+        };
+        out.push(vak_hooks::HookDef {
+            event,
+            matcher,
+            command: h.command.clone(),
+            timeout_ms: h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS),
+        });
+    }
+    Ok(out)
+}
+
+fn self_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(".vakcoder/config.toml")
 }

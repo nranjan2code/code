@@ -1604,6 +1604,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+ "vak-hooks",
  "vak-llm",
  "vak-permission",
  "vak-session",
@@ -1629,10 +1630,25 @@ dependencies = [
  "tokio-util",
  "vak-agent",
  "vak-config",
+ "vak-hooks",
  "vak-llm",
  "vak-permission",
  "vak-session",
  "vak-tools",
+]
+
+[[package]]
+name = "vak-hooks"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "vak-permission",
 ]
 
 [[package]]

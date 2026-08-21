@@ -52,6 +52,17 @@ pub struct FileConfig {
     #[serde(default)]
     pub deny: Vec<String>,
     pub subagents: Option<bool>,
+    #[serde(default)]
+    pub hooks: Vec<HookConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HookConfig {
+    pub event: String,
+    #[serde(rename = "match")]
+    pub matcher: Option<String>,
+    pub command: String,
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +77,7 @@ pub struct Config {
     pub ask: Vec<String>,
     pub deny: Vec<String>,
     pub subagents: bool,
+    pub hooks: Vec<HookConfig>,
     pub warnings: Vec<String>,
 }
 
@@ -82,6 +94,7 @@ impl Default for Config {
             ask: Vec::new(),
             deny: Vec::new(),
             subagents: true,
+            hooks: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -163,6 +176,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
     if let Some(sa) = merged.subagents {
         cfg.subagents = sa;
     }
+    cfg.hooks = merged.hooks;
 
     if let Some(name) = &merged.profile {
         if let Some(profile) = merged.profiles.get(name) {
@@ -237,6 +251,7 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     if over.subagents.is_some() {
         base.subagents = over.subagents;
     }
+    base.hooks.extend(over.hooks);
     for (k, v) in over.profiles {
         base.profiles.insert(k, v);
     }
