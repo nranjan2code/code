@@ -54,6 +54,23 @@ pub struct FileConfig {
     pub subagents: Option<bool>,
     #[serde(default)]
     pub hooks: Vec<HookConfig>,
+    #[serde(default)]
+    pub mcp: McpConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct McpConfig {
+    #[serde(default)]
+    pub servers: std::collections::BTreeMap<String, McpServerConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpServerConfig {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -78,6 +95,7 @@ pub struct Config {
     pub deny: Vec<String>,
     pub subagents: bool,
     pub hooks: Vec<HookConfig>,
+    pub mcp: McpConfig,
     pub warnings: Vec<String>,
 }
 
@@ -95,6 +113,7 @@ impl Default for Config {
             deny: Vec::new(),
             subagents: true,
             hooks: Vec::new(),
+            mcp: McpConfig::default(),
             warnings: Vec::new(),
         }
     }
@@ -177,6 +196,9 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
         cfg.subagents = sa;
     }
     cfg.hooks = merged.hooks;
+    for (name, srv) in merged.mcp.servers {
+        cfg.mcp.servers.insert(name, srv);
+    }
 
     if let Some(name) = &merged.profile {
         if let Some(profile) = merged.profiles.get(name) {
@@ -252,6 +274,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
         base.subagents = over.subagents;
     }
     base.hooks.extend(over.hooks);
+    for (name, srv) in over.mcp.servers {
+        base.mcp.servers.insert(name, srv);
+    }
     for (k, v) in over.profiles {
         base.profiles.insert(k, v);
     }

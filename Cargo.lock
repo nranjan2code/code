@@ -1632,6 +1632,7 @@ dependencies = [
  "vak-config",
  "vak-hooks",
  "vak-llm",
+ "vak-mcp",
  "vak-permission",
  "vak-session",
  "vak-tools",
@@ -1665,6 +1666,20 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "vak-mcp"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "vak-tools",
 ]
 
 [[package]]

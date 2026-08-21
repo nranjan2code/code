@@ -9,6 +9,7 @@ members = [
     "crates/vak-permission",
     "crates/vak-core",
     "crates/vak-hooks",
+    "crates/vak-mcp",
     "crates/vak-tui",
     "crates/vakcoder",
 ]
@@ -26,6 +27,7 @@ vak-tools = { path = "crates/vak-tools" }
 vak-agent = { path = "crates/vak-agent" }
 vak-config = { path = "crates/vak-config" }
 vak-core = { path = "crates/vak-core" }
+vak-mcp = { path = "crates/vak-mcp" }
 vak-permission = { path = "crates/vak-permission" }
 vak-hooks = { path = "crates/vak-hooks" }
 vak-tui = { path = "crates/vak-tui" }

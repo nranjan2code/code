@@ -1,0 +1,11 @@
+//! vak-mcp: Model Context Protocol client over stdio (newline-delimited
+//! JSON-RPC 2.0). Servers spawn lazily on first use; tool descriptions are
+//! fetched on demand so context stays lean.
+
+pub mod client;
+pub mod manager;
+pub mod tool;
+
+pub use client::{McpClient, McpError, ServerConfig};
+pub use manager::McpManager;
+pub use tool::McpTool;

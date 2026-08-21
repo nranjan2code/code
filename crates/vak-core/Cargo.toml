@@ -13,6 +13,7 @@ vak-agent = { workspace = true }
 vak-config = { workspace = true }
 vak-hooks = { workspace = true }
 vak-llm = { workspace = true }
+vak-mcp = { workspace = true }
 vak-permission = { workspace = true }
 vak-session = { workspace = true }
 vak-tools = { workspace = true }

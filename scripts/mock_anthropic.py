@@ -2,9 +2,14 @@
 """Mock Anthropic SSE server for offline smoke tests."""
 import http.server
 import json
+import os
 import sys
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8787
+TOOL_NAME = os.environ.get("MOCK_TOOL", "bash")
+TOOL_INPUT = (
+    {"action": "list"} if TOOL_NAME == "mcp" else {"command": "echo smoke-ok"}
+)
 
 TOOL_TURN = {
     "type": "message_start",
@@ -14,8 +19,8 @@ TOOL_BLOCKS = [
     {"type": "content_block_start", "index": 0, "content_block": {"type": "text"}},
     {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Let me check. "}},
     {"type": "content_block_stop", "index": 0},
-    {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "toolu_smoke1", "name": "bash"}},
-    {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "{\"command\": \"echo smoke-ok\"}"}},
+    {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "toolu_smoke1", "name": TOOL_NAME}},
+    {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": json.dumps(TOOL_INPUT)}},
     {"type": "content_block_stop", "index": 1},
     {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 40}},
 ]

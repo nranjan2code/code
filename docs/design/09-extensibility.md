@@ -46,7 +46,27 @@ Semantics:
   events, never persisted as session entries (their *effects* are visible in
   the transcript).
 
-## MCP client (planned, Phase 5 slice 3)
+## MCP client (shipped)
 
-Lazy connect + deferred tool listing to avoid context dumps; tools appear
-behind the same Tool trait with a `mcp__<server>__<tool>` naming scheme.
+Hand-rolled stdio transport (newline-delimited JSON-RPC 2.0, zero new
+dependencies). Config:
+
+```toml
+[mcp.servers.github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+env = { GITHUB_TOKEN = "…" }
+```
+
+Design choices:
+- **Lazy connect**: servers spawn on first use; nothing runs when unused.
+- **One meta-tool** (`mcp`) instead of per-server tool dumps: `action=list`
+  returns compact server/tool names with truncated descriptions; `action=call`
+  invokes `{server, tool, arguments}`. Context cost stays ~50 tokens instead
+  of 10K+.
+- Server-side `isError` results and transport failures become is_error tool
+  results the model can react to.
+- Relative commands resolve against the workspace cwd; PATH inherited for
+  npx/uvx-style launchers.
+- v1 limits: no sampling/roots/elicitation; server-initiated requests are
+  ignored; 60s request timeout.

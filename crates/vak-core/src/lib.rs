@@ -170,6 +170,9 @@ impl Core {
         if self.inner.config.subagents {
             names.push("task".into());
         }
+        if !self.inner.config.mcp.servers.is_empty() {
+            names.push("mcp".into());
+        }
         names
     }
 
@@ -312,14 +315,35 @@ impl Core {
                 model: self.effective_model(),
                 tools: vak_tools::default_tools(),
                 max_turns: self.effective_max_turns(),
-                permission: Some(engine),
+                permission: Some(engine.clone()),
                 mode: cfg.mode,
-                approver,
+                approver: approver.clone(),
                 sandbox: self.build_sandbox(),
                 cwd: self.inner.cwd.clone(),
                 sessions_home: self.inner.sessions_home.clone(),
                 parent_session_id: parent_id,
             })));
+        }
+        if !self.inner.config.mcp.servers.is_empty() {
+            let servers = self
+                .inner
+                .config
+                .mcp
+                .servers
+                .iter()
+                .map(|(name, s)| {
+                    (
+                        name.clone(),
+                        vak_mcp::ServerConfig {
+                            command: s.command.clone(),
+                            args: s.args.clone(),
+                            env: s.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                        },
+                    )
+                })
+                .collect();
+            let manager = Arc::new(vak_mcp::McpManager::new(servers, self.inner.cwd.clone()));
+            tools.push(Arc::new(vak_mcp::McpTool::new(manager)));
         }
         cfg.tools = tools;
         cfg.hooks = Some(Arc::new(build_hooks(&self.inner.config)?));
