@@ -64,10 +64,11 @@ constrains *what the process can touch* even when allowed.
   Fail-closed: unsupported kernels report sandbox "off" (permission engine
   alone) instead of pretending; enforcement is smoke-tested on CI's ubuntu
   job (`scripts/landlock_smoke.sh`).
-- Network scoping: read-only mode also denies all TCP bind/connect
-  (Landlock ABI v4) and refuses to run when the kernel can't enforce that
-  denial (fail-closed `PartiallyEnforced` check). Workspace-write keeps the
-  network open — build tooling legitimately needs it.
+- Network scoping: every sandboxed mode denies all TCP bind/connect
+  (Landlock ABI v4 on Linux; Seatbelt's deny-default profile already does
+  this implicitly on macOS) and the Landlock runner refuses to run when the
+  kernel can't enforce the denial (fail-closed enforcement check).
+  FullAccess runs unsandboxed and keeps network access.
 - Learned allow rules: pressing `[p]` on an approval persists a SCOPED rule
   derived from the call — `bash(<first-word> *)`, `<write|edit>(<path>)`,
   `mcp(<server>/*)`, `task(<label>)` — into

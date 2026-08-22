@@ -34,4 +34,9 @@ if "$BIN" __sandbox --ro -- bash -c 'exec 3<>/dev/tcp/1.1.1.1/80' 2>/dev/null; t
   fail "read-only mode allowed an outbound TCP connect"
 fi
 
+# 7) workspace-write denies outbound TCP too (parity with Seatbelt)
+if "$BIN" __sandbox --rw "$WS" -- bash -c 'exec 3<>/dev/tcp/1.1.1.1/80' 2>/dev/null; then
+  fail "workspace-write allowed an outbound TCP connect"
+fi
+
 echo "landlock smoke: all scenarios passed ($BIN)"

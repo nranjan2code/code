@@ -36,8 +36,8 @@ fn learned_rules_persist_reload_and_cannot_shadow_denies() {
     // …but an explicit deny from config still wins by severity.
     let mut cfg_deny = cfg.clone();
     cfg_deny.deny = vec!["bash(cargo publish *)".to_string()];
-    let engine2 = vak_core::build_engine_with(&cfg_deny, &["bash(cargo *)".to_string()])
-        .expect("engine2");
+    let engine2 =
+        vak_core::build_engine_with(&cfg_deny, &["bash(cargo *)".to_string()]).expect("engine2");
     let d2 = engine2.evaluate(
         "bash",
         &serde_json::json!({"command": "cargo publish --dry-run"}),

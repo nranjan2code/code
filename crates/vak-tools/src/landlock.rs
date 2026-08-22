@@ -67,11 +67,11 @@ impl Sandbox for Landlock {
     }
 }
 
-/// Applies the ruleset to the CURRENT process. Read+execute everywhere.
-/// Writes only under `write_paths` unless `read_only`. Read-only mode also
-/// denies all TCP bind/connect (Landlock ABI v4) and FAILS CLOSED when the
-/// kernel cannot enforce that denial — an unrestricted network behind a
-/// "read-only" label is exactly the hole this exists to close.
+/// Applies the ruleset to the CURRENT process. Read+execute everywhere;
+/// writes only under `write_paths` unless `read_only`. ALL TCP bind/connect
+/// is denied in every sandboxed mode — parity with Seatbelt, whose
+/// deny-default profile leaves no network allowance — and the call FAILS
+/// CLOSED when the kernel cannot enforce that denial (needs ABI v4).
 pub fn apply(write_paths: &[PathBuf], read_only: bool) -> Result<(), String> {
     use landlock::{
         ABI, Access, AccessFs, AccessNet, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
@@ -79,32 +79,26 @@ pub fn apply(write_paths: &[PathBuf], read_only: bool) -> Result<(), String> {
     };
 
     let fs_abi = ABI::V1;
-    let created = if read_only {
-        Ruleset::default()
-            .handle_access(AccessFs::from_all(fs_abi))
-            .and_then(|r| r.handle_access(AccessNet::from_all(ABI::V4)))
-            .and_then(|r| r.create())
-    } else {
-        Ruleset::default()
-            .handle_access(AccessFs::from_all(fs_abi))
-            .and_then(|r| r.create())
-    }
-    .map_err(|e| format!("landlock: {e}"))?;
-    let restricted = (if read_only {
+    let created = Ruleset::default()
+        .handle_access(AccessFs::from_all(fs_abi))
+        .and_then(|r| r.handle_access(AccessNet::from_all(ABI::V4)))
+        .and_then(|r| r.create())
+        .map_err(|e| format!("landlock: {e}"))?;
+    let restricted = if read_only {
         created.restrict_self()
     } else {
         created
             .add_rules(path_beneath_rules(["/"], AccessFs::from_read(fs_abi)))
             .and_then(|r| r.add_rules(path_beneath_rules(write_paths, AccessFs::from_all(fs_abi))))
             .and_then(|r| r.restrict_self())
-    })
+    }
     .map_err(|e| format!("landlock: {e}"))?;
     match restricted.ruleset {
         RulesetStatus::FullyEnforced => Ok(()),
-        RulesetStatus::PartiallyEnforced if read_only => {
-            Err("landlock: kernel cannot enforce network denial (needs ABI v4)".to_string())
-        }
-        _ => Err("landlock not enforced (kernel lacks support?)".to_string()),
+        _ => Err(
+            "landlock: full enforcement unavailable (kernel needs fs ABI v1+, net ABI v4+)"
+                .to_string(),
+        ),
     }
 }
 

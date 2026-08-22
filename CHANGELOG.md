@@ -7,9 +7,11 @@
   `.vakcoder/permissions.local.toml`; loaded into every future run in that
   workspace (trusted only), round-trip validated, and unable to shadow
   explicit denies. `[a]` stays session-only for unscopeable calls.
-- Read-only sandbox on Linux now denies all outbound TCP bind/connect
-  (Landlock ABI v4) and fails closed when the kernel cannot enforce it.
-  New enforcement smoke scenario.
+- Sandbox network parity: all sandboxed modes now deny TCP bind/connect —
+  Landlock (Linux) handles it explicitly via ABI v4 with fail-closed
+  enforcement checks in both read-only and workspace-write; Seatbelt
+  (macOS) already denied network implicitly via deny-default profiles.
+  FullAccess remains unsandboxed. Smoke scenarios extended to 7.
 
 ## 0.2.0 (2026-08-22)
 
