@@ -146,6 +146,8 @@ struct UiState {
     thinking_shown: bool,
     model: String,
     cost_usd: f64,
+    sub_in: u64,
+    sub_out: u64,
 }
 
 pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
@@ -205,6 +207,8 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
         thinking_shown: false,
         model: core.effective_model(),
         cost_usd: 0.0,
+        sub_in: 0,
+        sub_out: 0,
     };
     let mut approvals: VecDeque<ApprovalRequest> = VecDeque::new();
     let mut run_started: Option<Instant> = None;
@@ -361,10 +365,19 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                         ui.total_in,
                                                         ui.total_out,
                                                     );
-                                                    let dollars = match cost {
-                                                        Some(c) =>
-                                                            format!(" · ~{}", crate::pricing::format_cost(c)),
-                                                        None => format!(
+                                                    let sub_cost = crate::pricing::session_cost(
+                                                        &ui.model,
+                                                        ui.sub_in,
+                                                        ui.sub_out,
+                                                    );
+                                                    let dollars = match (cost, sub_cost) {
+                                                        (Some(c), Some(s)) => {
+                                                            format!(
+                                                                " · ~{}",
+                                                                crate::pricing::format_cost(c + s)
+                                                            )
+                                                        }
+                                                        _ => format!(
                                                             " (no pricing for {})",
                                                             ui.model
                                                         ),
@@ -374,6 +387,20 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                         status::fmt_tokens(ui.total_in),
                                                         status::fmt_tokens(ui.total_out),
                                                     ));
+                                                    if ui.sub_in > 0 || ui.sub_out > 0 {
+                                                        let s = sub_cost
+                                                            .unwrap_or(0.0);
+                                                        let suffix = if sub_cost.is_some() {
+                                                            format!(" · ~{}", crate::pricing::format_cost(s))
+                                                        } else {
+                                                            String::new()
+                                                        };
+                                                        screen.dim(&format!(
+                                                            "  subagents: in {} / out {}{suffix}",
+                                                            status::fmt_tokens(ui.sub_in),
+                                                            status::fmt_tokens(ui.sub_out),
+                                                        ));
+                                                    }
                                                 }
                                             Some(Command::Context) => show_context(
                                                 &mut screen, &session_slot, context_window,
@@ -496,7 +523,11 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                 }
                 run_done = None;
                 flush_md(&mut screen, &mut ui, &ui_theme);
-                let cost = crate::pricing::session_cost(&ui.model, ui.total_in, ui.total_out);
+                let cost = crate::pricing::session_cost(
+                    &ui.model,
+                    ui.total_in + ui.sub_in,
+                    ui.total_out + ui.sub_out,
+                );
                 finish_outcome(
                     &mut screen,
                     outcome,
@@ -665,6 +696,14 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
                 &format!("    {} {} ({})", mark, name, trunc_cells(&label, 24)),
                 color,
             );
+        }
+        AgentEvent::SubagentUsage {
+            input_tokens,
+            output_tokens,
+            ..
+        } => {
+            ui.sub_in += input_tokens;
+            ui.sub_out += output_tokens;
         }
         AgentEvent::SubagentFinished {
             label,

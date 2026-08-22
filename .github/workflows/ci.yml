@@ -19,3 +19,20 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - name: Landlock sandbox smoke (Linux 5.13+ runners)
+        run: |
+          cargo build -p vakcoder
+          chmod +x scripts/landlock_smoke.sh
+          ./scripts/landlock_smoke.sh target/debug/vakcoder

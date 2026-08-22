@@ -8,6 +8,8 @@ pub mod context;
 pub mod edit;
 pub mod glob;
 pub mod grep;
+#[cfg(target_os = "linux")]
+pub mod landlock;
 pub mod read;
 pub mod sandbox;
 pub mod write;

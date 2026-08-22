@@ -193,16 +193,30 @@ impl TaskTool {
         let fwd_label = label.clone();
         let pump = tokio::spawn(async move {
             while let Some(ev) = ev_rx.recv().await {
-                if let (Some(parent), crate::AgentEvent::ToolCallEnd { name, is_error, .. }) =
-                    (&parent, ev)
-                {
-                    let _ = parent
-                        .send(crate::AgentEvent::SubagentToolCall {
-                            label: fwd_label.clone(),
-                            name,
-                            is_error,
-                        })
-                        .await;
+                match ev {
+                    crate::AgentEvent::ToolCallEnd { name, is_error, .. } => {
+                        if let Some(parent) = &parent {
+                            let _ = parent
+                                .send(crate::AgentEvent::SubagentToolCall {
+                                    label: fwd_label.clone(),
+                                    name,
+                                    is_error,
+                                })
+                                .await;
+                        }
+                    }
+                    crate::AgentEvent::TurnEnd { usage } => {
+                        if let Some(parent) = &parent {
+                            let _ = parent
+                                .send(crate::AgentEvent::SubagentUsage {
+                                    label: fwd_label.clone(),
+                                    input_tokens: usage.input_tokens,
+                                    output_tokens: usage.output_tokens,
+                                })
+                                .await;
+                        }
+                    }
+                    _ => {}
                 }
             }
         });

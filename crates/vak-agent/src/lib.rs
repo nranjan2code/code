@@ -80,6 +80,11 @@ pub enum AgentEvent {
         name: String,
         is_error: bool,
     },
+    SubagentUsage {
+        label: String,
+        input_tokens: u64,
+        output_tokens: u64,
+    },
     SubagentFinished {
         label: String,
         is_error: bool,

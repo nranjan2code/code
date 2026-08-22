@@ -15,6 +15,7 @@ use vak_llm::Provider;
 use vak_llm::registry::{ProviderAuth, ProviderRegistry, default_registry};
 use vak_session::SessionLog;
 use vak_session::types::{FrozenContract, SessionHeader};
+use vak_tools::sandbox::SandboxMode;
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("system-prompt.md");
@@ -542,21 +543,34 @@ impl Core {
     }
 
     fn build_sandbox(&self) -> Option<std::sync::Arc<dyn vak_tools::sandbox::Sandbox>> {
+        let mode = match self.effective_permission_mode() {
+            vak_config::PermissionMode::ReadOnly => SandboxMode::ReadOnly,
+            vak_config::PermissionMode::WorkspaceWrite => SandboxMode::WorkspaceWrite,
+            vak_config::PermissionMode::FullAccess => return None,
+        };
         #[cfg(target_os = "macos")]
         {
-            use vak_tools::sandbox::{SandboxMode, Seatbelt};
-            let mode = match self.effective_permission_mode() {
-                vak_config::PermissionMode::ReadOnly => SandboxMode::ReadOnly,
-                vak_config::PermissionMode::WorkspaceWrite => SandboxMode::WorkspaceWrite,
-                vak_config::PermissionMode::FullAccess => return None,
-            };
+            use vak_tools::sandbox::Seatbelt;
             Some(std::sync::Arc::new(Seatbelt::new(
                 mode,
                 self.inner.cwd.as_path(),
             )))
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
         {
+            // Fail-closed probe: unsupported kernels mean no OS containment,
+            // so report "off" (permission engine alone) instead of pretending.
+            if !vak_tools::landlock::Landlock::supported() {
+                return None;
+            }
+            Some(std::sync::Arc::new(vak_tools::landlock::Landlock::new(
+                mode,
+                self.inner.cwd.as_path(),
+            )))
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = mode;
             None
         }
     }

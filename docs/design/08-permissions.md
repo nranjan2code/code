@@ -55,8 +55,15 @@ constrains *what the process can touch* even when allowed.
   `ReadOnly` grants no write paths at all.
 - Derived automatically from the effective permission mode
   (`full-access` ⇒ off); visible via `vakcoder config dump`
-  (`sandbox = seatbelt | off`). macOS only today — Landlock/seccomp backend
-  planned for Linux behind the same trait.
+  (`sandbox = seatbelt | landlock | off`).
+- Linux backend (`vak-tools/src/landlock.rs`): Landlock LSM (kernel 5.13+)
+  via the safe `landlock` crate — reads+execute everywhere, writes only under
+  the canonicalized cwd in workspace-write mode. `wrap()` re-executes the
+  vakcoder binary with a hidden `__sandbox` subcommand that applies the
+  ruleset to itself before running the command, so children inherit it.
+  Fail-closed: unsupported kernels report sandbox "off" (permission engine
+  alone) instead of pretending; enforcement is smoke-tested on CI's ubuntu
+  job (`scripts/landlock_smoke.sh`).
 - Known semantics: on macOS `/tmp` resolves to `/private/tmp`, so tmp writes
   are permitted in workspace-write mode by design (output spill files rely on
   it). Everything else outside the cwd is blocked at kernel level.

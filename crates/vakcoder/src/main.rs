@@ -23,6 +23,18 @@ enum Command {
         #[arg(long)]
         trust: bool,
     },
+    /// Hidden: internal Landlock sandbox runner (Linux)
+    #[command(name = "__sandbox", hide = true)]
+    SandboxRun {
+        /// Read-only mode (deny all writes everywhere)
+        #[arg(long)]
+        ro: bool,
+        /// Paths writable by the command
+        #[arg(long = "rw")]
+        rw: Vec<std::path::PathBuf>,
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
     /// Run one prompt headless and print the result
     Exec {
         prompt: String,
@@ -203,6 +215,39 @@ async fn run_checkpoints(cwd: PathBuf, action: CheckpointAction) -> i32 {
     }
 }
 
+/// Landlock runner: restrict THIS process, then run the command as a child
+/// that inherits the restrictions. Linux only; the TUI/exec wrap() calls it
+/// via self-execution.
+#[cfg(target_os = "linux")]
+fn run_sandbox(ro: bool, rw: &[std::path::PathBuf], command: &[String]) -> i32 {
+    if command.is_empty() {
+        eprintln!("sandbox: no command given");
+        return 125;
+    }
+    if let Err(e) = vak_tools::landlock::apply(rw, ro) {
+        eprintln!("sandbox: {e}");
+        return 126;
+    }
+    match std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(command.join(" "))
+        .status()
+    {
+        Ok(s) => s.code().unwrap_or(1),
+        Err(e) => {
+            eprintln!("sandbox: exec failed: {e}");
+            127
+        }
+    }
+}
+
+/// The sandbox runner is unreachable off-Linux (wrap() is cfg-gated too).
+#[cfg(not(target_os = "linux"))]
+fn run_sandbox(_ro: bool, _rw: &[std::path::PathBuf], _command: &[String]) -> i32 {
+    eprintln!("sandbox: not supported on this platform");
+    126
+}
+
 fn latest_session_id(core: &Core) -> Option<String> {
     let dir = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
     let mut rows: Vec<_> = std::fs::read_dir(&dir)
@@ -241,6 +286,7 @@ async fn main() {
             }
             run_tui(cwd, trusted).await
         }
+        Some(Command::SandboxRun { ro, rw, command }) => run_sandbox(ro, &rw, &command),
         Some(Command::Tui { trust }) => {
             let trusted = resolve_trust(&cwd, trust, true);
             if trusted {
