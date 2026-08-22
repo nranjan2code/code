@@ -19,6 +19,8 @@ Phases with exit criteria. Each phase ships a usable product.
 | post-v0.1.0 ✅ (5) | Linux Landlock sandbox backend (safe `landlock` crate; self-exec `__sandbox` runner, fail-closed kernel probe); subagent token rollup into /cost; CI ubuntu job incl. landlock smoke | darwin+linux clippy/test green; scripts/landlock_smoke.sh 5/5 on ubuntu |
 | post-v0.1.0 ✅ (6) | Dogfood + capability gauntlet campaigns: stop-gate built from findings, sandbox temp-dir fix, learned allow rules, exec/TUI output parity; architecture ladder + extensibility battery + live brownout chaos | docs/design/16-achievements.md gauntlet sections; all live probes verified independently |
 
+| desktop ✅ | Tauri 2 native shell over the serve contract: parallel sessions + worktrees, streaming chat w/ inline approvals, diff review w/ line-comment steering, PTY terminal, file editor, @mentions, side chats as ledger branches, best-of-N compare (keep=merge/discard), PR monitor w/ auto-fix + auto-merge, local scheduled routines daemon, preview pane for dev servers (docs/design/20-tauri-desktop.md) | server_ext.rs e2e per feature; 230 tests green; live smoke via embedded loopback server |
+
 ## Decisions locked during research (2026-08)
 
 - Rust, SDK-first, server optional later

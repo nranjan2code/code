@@ -16,6 +16,24 @@ consumers.
 | POST | `/sessions/:id/approvals/:rid` `{approve}` | resolve a permission gate |
 | GET | `/sessions/:id/events` | SSE stream of `AgentEvent` JSON |
 | GET | `/sessions/:id/transcript` | derived messages + usage |
+| GET | `/sessions` | persisted session summaries (sidebar projection) |
+| POST | `/sessions/:id/attach` `{session_id}` | resume a persisted session into memory |
+| GET | `/sessions/:id/diff` | git status + diff of the session workspace |
+| POST | `/config/mode` `{mode}` | switch permission mode at runtime |
+| GET/PUT | `/fs/file` | read/write a file confined to the workspace root |
+| GET | `/fs/tree?limit=` | bounded recursive listing (@-mention autocomplete) |
+| POST | `/sessions/:id/side` `{question}` | side chat: branched turn, main chain untouched |
+| GET | `/sessions/:id/side/events` | SSE for the side-chat branch |
+| POST | `/sessions/:id/side/cancel` | cancel the side run |
+| POST | `/sessions/:id/bestofn` `{prompt,n}` | fan out n worktree-isolated runs |
+| POST | `/sessions/:id/keep` / `discard` | merge or drop a best-of-N candidate branch |
+| GET | `/sessions/:id/pr` | gh-backed PR view + check rollup (`reason: no_pr\|gh_unavailable`) |
+| POST | `/sessions/:id/pr/merge` `{number,method}` | `gh pr merge --auto` (squash/merge/rebase) |
+| GET/POST | `/tasks`, PATCH/DELETE `/tasks/:id` | scheduled-task CRUD (persisted to `~/.vakcoder/tasks.json`) |
+| POST | `/tasks/:id/run-now` | fire immediately; resets schedule |
+| GET | `/sessions/:id/launch` | dev-server configs (`.vakcoder/launch.toml` + npm autodetect) |
+| POST | `/sessions/:id/launch/start\|stop` `{name}` | manage a dev server process |
+| GET | `/sessions/:id/launch/logs?name=` | ring-buffered output tail |
 
 ## Semantics
 
@@ -29,6 +47,20 @@ consumers.
 - **Session ledger returns** after each run (`run_turn_with` now yields
   `(TurnOutcome, SessionLog)`), so transcripts stay queryable between runs.
 - Second concurrent `/run` on a live session → `409 Conflict`.
+
+## Desktop extensions (docs/design/20)
+
+- **secured_router** returns `(Router, token)` so embedded surfaces (the
+  Tauri shell) share the exact same contract; CORS allows webview origins
+  only. A scheduler task fires due `/tasks` while the server lives.
+- **Side chats** append Q+A as a sibling branch off the current tail and then
+  restore the branch pointer — reconstructable in the JSONL, invisible to
+  `derive_messages()` on the main line.
+- **spawn_isolated_run** is the shared primitive behind best-of-N and
+  scheduled tasks: child Core rooted in a fresh worktree, registered handle,
+  fired turn. Latest-run worktree retention for tasks; keep/discard for N-runs.
+- All new endpoints are bearer-gated like the originals; failures surface as
+  structured values (`{"error"}`, `{"reason": ...}`) — never hangs.
 
 ## Implementation notes
 

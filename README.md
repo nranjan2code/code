@@ -16,6 +16,10 @@ cargo run -- exec "fix the failing test"  # headless
 cargo run -- config dump                  # effective boot config
 cargo run -- eval                         # deterministic regression suite (coding + non-coding scenarios)
 cargo run -- eval --live --provider opencode-zen --model x-preview-f-free  # live (free model)
+
+# desktop app (first run builds the webview UI)
+cd crates/vak-desktop/ui && npm install && npm run build && cd -
+cargo run -p vak-desktop
 ```
 
 Offline smoke tests: `scripts/mock_anthropic.py`, `scripts/mock_openai.py`,
@@ -32,7 +36,8 @@ Offline smoke tests: `scripts/mock_anthropic.py`, `scripts/mock_openai.py`,
 | TUI | Inline stream-based rendering on native scrollback; markdown + syntax-highlighted code; tool cards with live edit diffs; status row (spinner · elapsed · tokens · ctx% · cost); approval queue with diff previews and always-allow; multiline/paste input, Tab completion, Ctrl-R search; /resume + /rewind checkpoints; themes; live subagent streams; slash commands |
 | Extensibility | Skills (progressive disclosure), blocking subagents with lineage-linked child sessions, lifecycle hooks with matcher syntax, MCP client via a lazy meta-tool |
 | Agentic depth | Parallel fan-out gated by resource-claim waves; static flow DAGs (validate-before-run, typed failure policy, resume); dynamic planner with bounded replan (fail-closed) |
-| Server | HTTP+SSE over the same core: sessions, runs, steering, approvals, transcripts |
+| Server | HTTP+SSE over the same core: sessions, runs, steering, approvals, transcripts, diffs, fs (workspace-confined), side chats, best-of-N, PR status/merge, scheduled tasks, dev-server launch |
+| Desktop | Native Tauri 2 shell over the serve contract (`cargo run -p vak-desktop`): parallel sessions with worktree isolation, streaming chat + inline approvals, diff review w/ line-comment steering, PTY terminal, file editor, @file mentions, best-of-N compare (keep=merge/discard), PR monitor with auto-fix/auto-merge, local scheduled routines, preview pane for dev servers; see docs/design/20-tauri-desktop.md |
 | Checkpoints | State-based workspace snapshots at every run start; restore reverts edits and removes post-checkpoint files; git-worktree isolation for exec/plan |
 | Reliability | Retry w/ exponential backoff + Retry-After, per-step watchdog, cross-run circuit breaker, session resume (`--session`), server cancel + graceful shutdown |
 | Evals | Deterministic in-process suite (~100ms) gated in CI; JSON reports with token/cost accounting |
@@ -41,6 +46,7 @@ Offline smoke tests: `scripts/mock_anthropic.py`, `scripts/mock_openai.py`,
 
 ```
 vakcoder (bin: tui · exec · plan · flow · serve · eval · checkpoints · config)
+  └── vak-desktop   Tauri 2 native shell (sidecar-free embed of the server contract)
   └── vak-core      SDK facade, system prompt, session bootstrap, checkpoints, worktrees
         ├── vak-agent       loop · steering · parallel tools · subagents · TurnOutcome
         │     ├── vak-tools     Tool trait · built-ins · sandbox backends
