@@ -42,7 +42,7 @@ export const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
 export const [activeId, setActiveId] = createSignal<string | null>(null);
 export const [health, setHealth] = createSignal<Health | null>(null);
 export const [density, setDensity] = createSignal<Density>("normal");
-export const [dockTab, setDockTab] = createSignal<"diff" | "terminal" | "editor" | "pr" | null>("diff");
+export const [dockTab, setDockTab] = createSignal<"preview" | "diff" | "terminal" | "editor" | "pr" | null>("diff");
 export const [showShortcuts, setShowShortcuts] = createSignal(false);
 // File-editor pane target; set from anywhere (chat links, diff headers…).
 export const [editorPath, setEditorPath] = createSignal<string | null>(null);

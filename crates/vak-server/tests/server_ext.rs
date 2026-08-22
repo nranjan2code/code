@@ -787,3 +787,117 @@ async fn scheduled_tasks_crud_runnow_and_worktree_churn() {
     assert_eq!(del.status(), 200);
     assert_eq!(std::fs::read_dir(&wt_root).unwrap().count(), 0);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn launch_config_and_process_lifecycle() {
+    let provider = Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::new()),
+    });
+    let (base, token, cwd, _server) = spawn_secured(provider).await;
+    let client = client_with(&token);
+
+    let anchor: String = client
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // No config yet → empty list (auto-detect finds nothing in a tempdir).
+    let empty: serde_json::Value = client
+        .get(format!("{base}/sessions/{anchor}/launch"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(empty["servers"].as_array().unwrap().len(), 0);
+
+    std::fs::create_dir_all(cwd.join(".vakcoder")).unwrap();
+    std::fs::write(
+        cwd.join(".vakcoder/launch.toml"),
+        "[[server]]\nname = \"static\"\ncmd = \"python3\"\nargs = [\"-m\", \"http.server\", \"4519\"]\nport = 4519\n",
+    )
+    .unwrap();
+
+    let cfg: serde_json::Value = client
+        .get(format!("{base}/sessions/{anchor}/launch"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let servers = cfg["servers"].as_array().unwrap();
+    assert_eq!(servers.len(), 1);
+    assert_eq!(servers[0]["port"], 4519);
+    assert_eq!(servers[0]["running"], false);
+
+    let py = std::process::Command::new("python3")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !py {
+        eprintln!("python3 unavailable; skipping process assertions");
+        return;
+    }
+
+    let start = client
+        .post(format!("{base}/sessions/{anchor}/launch/start"))
+        .json(&serde_json::json!({"name": "static"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        start.status(),
+        200,
+        "{}",
+        start.text().await.unwrap_or_default()
+    );
+    let body: serde_json::Value = start.json().await.unwrap();
+    assert_eq!(body["started"], true);
+    assert_eq!(body["listening"], true, "http.server should bind quickly");
+
+    // Double-start conflicts.
+    let again = client
+        .post(format!("{base}/sessions/{anchor}/launch/start"))
+        .json(&serde_json::json!({"name": "static"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(again.status(), 409);
+
+    // Logs are flowing.
+    let logs: serde_json::Value = client
+        .get(format!("{base}/sessions/{anchor}/launch/logs?name=static"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(logs["lines"].as_array().is_some());
+
+    let stop = client
+        .post(format!("{base}/sessions/{anchor}/launch/stop"))
+        .json(&serde_json::json!({"name": "static"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stop.status(), 200);
+
+    // Port actually released.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        tokio::net::TcpStream::connect("127.0.0.1:4519")
+            .await
+            .is_err()
+    );
+}

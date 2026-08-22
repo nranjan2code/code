@@ -66,6 +66,8 @@ pub struct AppState {
     best_runs: Arc<Mutex<HashMap<String, BestRunMeta>>>,
     /// Scheduled tasks for this workspace.
     tasks: Arc<Mutex<HashMap<String, TaskDef>>>,
+    /// Managed dev servers (preview pane), keyed by session::name.
+    procs: Arc<Mutex<HashMap<String, ManagedProc>>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -109,6 +111,7 @@ impl AppState {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             best_runs: Arc::new(Mutex::new(HashMap::new())),
             tasks: Arc::new(Mutex::new(HashMap::new())),
+            procs: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -191,6 +194,10 @@ fn router_with_state(state: AppState) -> Router {
             axum::routing::patch(patch_task).delete(delete_task),
         )
         .route("/tasks/{id}/run-now", post(run_task_now))
+        .route("/sessions/{id}/launch", get(get_launch))
+        .route("/sessions/{id}/launch/start", post(start_launch))
+        .route("/sessions/{id}/launch/stop", post(stop_launch))
+        .route("/sessions/{id}/launch/logs", get(launch_logs))
         .route("/sessions/{id}/run", post(run_prompt))
         .route("/sessions/{id}/steering", post(send_steering))
         .route("/sessions/{id}/cancel", post(cancel_run))
@@ -1753,4 +1760,305 @@ pub fn start_scheduler(state: &AppState) {
             }
         }
     });
+}
+
+// ---- Dev-server lifecycle (preview pane) -----------------------------------
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LaunchConfig {
+    pub name: String,
+    pub cmd: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
+}
+
+struct ManagedProc {
+    child: tokio::process::Child,
+    logs: Arc<Mutex<std::collections::VecDeque<String>>>,
+}
+
+fn parse_launch_toml(cwd: &std::path::Path) -> Result<Vec<LaunchConfig>, String> {
+    let path = cwd.join(".vakcoder/launch.toml");
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    #[derive(serde::Deserialize)]
+    struct File {
+        #[serde(rename = "server", default)]
+        servers: Vec<LaunchConfig>,
+    }
+    let f: File = toml::from_str(&raw).map_err(|e| format!("launch.toml: {e}"))?;
+    Ok(f.servers)
+}
+
+/// Sensible fallback when no launch.toml exists: a package.json dev script.
+fn detect_launch(cwd: &std::path::Path) -> Vec<LaunchConfig> {
+    let pkg = cwd.join("package.json");
+    let Ok(raw) = std::fs::read_to_string(pkg) else {
+        return Vec::new();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Vec::new();
+    };
+    if v["scripts"]["dev"].is_string() {
+        vec![LaunchConfig {
+            name: "dev".into(),
+            cmd: "npm".into(),
+            args: vec!["run".into(), "dev".into()],
+            port: None,
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
+async fn get_launch(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Json<serde_json::Value> {
+    let Some(handle) = state.get(&id) else {
+        return Json(serde_json::json!({ "error": "unknown session" }));
+    };
+    let mut servers = match parse_launch_toml(&handle.cwd) {
+        Ok(s) => s,
+        Err(e) => return Json(serde_json::json!({ "error": e })),
+    };
+    if servers.is_empty() {
+        servers = detect_launch(&handle.cwd);
+    }
+    let procs = state
+        .procs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let list: Vec<serde_json::Value> = servers
+        .into_iter()
+        .map(|mut s| {
+            let key = proc_key(&id, &s.name);
+            let running = procs.contains_key(&key);
+            if running && s.port.is_none() {
+                s.port = None;
+            }
+            serde_json::json!({
+                "name": s.name,
+                "cmd": s.cmd,
+                "args": s.args,
+                "port": s.port,
+                "running": running,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "servers": list }))
+}
+
+fn proc_key(session: &str, name: &str) -> String {
+    format!("{session}::{name}")
+}
+
+async fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    while tokio::time::Instant::now() < deadline {
+        if tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok()
+        {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    false
+}
+
+#[derive(serde::Deserialize)]
+struct LaunchNameBody {
+    name: String,
+}
+
+async fn start_launch(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<LaunchNameBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let Some(handle) = state.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mut servers = match parse_launch_toml(&handle.cwd) {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e })),
+            )
+                .into_response();
+        }
+    };
+    if servers.is_empty() {
+        servers = detect_launch(&handle.cwd);
+    }
+    let Some(cfg) = servers.iter().find(|s| s.name == body.name) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "unknown server name" })),
+        )
+            .into_response();
+    };
+
+    let key = proc_key(&id, &cfg.name);
+    {
+        let procs = state
+            .procs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if procs.contains_key(&key) {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": "already running" })),
+            )
+                .into_response();
+        }
+    }
+
+    let child = tokio::process::Command::new(&cfg.cmd)
+        .args(&cfg.args)
+        .current_dir(&handle.cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn();
+
+    let mut child = match child {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("spawn failed: {e}") })),
+            )
+                .into_response();
+        }
+    };
+
+    let logs: Arc<Mutex<std::collections::VecDeque<String>>> =
+        Arc::new(Mutex::new(std::collections::VecDeque::with_capacity(500)));
+    // Drain stdout+stderr into a bounded ring.
+    if let Some(out) = child.stdout.take() {
+        let logs_out = logs.clone();
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut reader = out;
+            let mut buf = [0u8; 1024];
+            let mut line = String::new();
+            loop {
+                match reader.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        line.push_str(&String::from_utf8_lossy(&buf[..n]));
+                        while let Some(pos) = line.find('\n') {
+                            let l: String = line.drain(..=pos).collect();
+                            let mut g = logs_out
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            if g.len() >= 500 {
+                                g.pop_front();
+                            }
+                            g.push_back(l.trim_end().to_string());
+                        }
+                    }
+                }
+            }
+        });
+    }
+    if let Some(err) = child.stderr.take() {
+        let logs_err = logs.clone();
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut reader = err;
+            let mut buf = [0u8; 1024];
+            let mut line = String::new();
+            loop {
+                match reader.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        line.push_str(&String::from_utf8_lossy(&buf[..n]));
+                        while let Some(pos) = line.find('\n') {
+                            let l: String = line.drain(..=pos).collect();
+                            let mut g = logs_err
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            if g.len() >= 500 {
+                                g.pop_front();
+                            }
+                            g.push_back(l.trim_end().to_string());
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    state
+        .procs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(key, ManagedProc { child, logs });
+
+    // Give the server a moment to bind its port so the preview iframe works
+    // immediately after start.
+    let listening = match cfg.port {
+        Some(p) => wait_for_port(p, std::time::Duration::from_secs(15)).await,
+        None => false,
+    };
+    let _ = logs;
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "started": true, "listening": listening })),
+    )
+        .into_response()
+}
+
+async fn stop_launch(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<LaunchNameBody>,
+) -> StatusCode {
+    let removed = state
+        .procs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&proc_key(&id, &body.name));
+    match removed {
+        Some(mut p) => {
+            let _ = p.child.kill().await;
+            StatusCode::OK
+        }
+        None => StatusCode::NOT_FOUND,
+    }
+}
+
+async fn launch_logs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<LaunchNameBody>,
+) -> Json<serde_json::Value> {
+    let procs = state
+        .procs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match procs.get(&proc_key(&id, &q.name)) {
+        Some(p) => {
+            let lines: Vec<String> = p
+                .logs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .cloned()
+                .collect();
+            Json(serde_json::json!({ "lines": lines }))
+        }
+        None => Json(serde_json::json!({ "lines": [], "error": "not running" })),
+    }
 }

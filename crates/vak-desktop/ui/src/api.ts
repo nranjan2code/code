@@ -234,3 +234,22 @@ export function deleteTask(id: string): Promise<unknown> {
 export function runTaskNow(id: string): Promise<unknown> {
   return req(`/tasks/${id}/run-now`, { method: "POST" });
 }
+
+export function getLaunch(id: string): Promise<{
+  servers: { name: string; cmd: string; args: string[]; port: number | null; running: boolean }[];
+  error?: string;
+}> {
+  return req(`/sessions/${id}/launch`);
+}
+
+export function startLaunch(id: string, name: string): Promise<{ started: boolean; listening: boolean; error?: string }> {
+  return req(`/sessions/${id}/launch/start`, { method: "POST", body: JSON.stringify({ name }) });
+}
+
+export function stopLaunch(id: string, name: string): Promise<unknown> {
+  return req(`/sessions/${id}/launch/stop`, { method: "POST", body: JSON.stringify({ name }) });
+}
+
+export function launchLogs(id: string, name: string): Promise<{ lines: string[] }> {
+  return req(`/sessions/${id}/launch/logs?name=${encodeURIComponent(name)}`);
+}

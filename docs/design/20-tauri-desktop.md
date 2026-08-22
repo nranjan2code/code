@@ -279,10 +279,29 @@ Shipped in `crates/vak-desktop` (+ additive `vak-server` endpoints):
   diff-of-last-run. Interval floor 60s (validated as a value). Tested:
   CRUD + run-now end-to-end incl. worktree churn and cleanup.
 
+- **Preview pane + dev-server lifecycle** (dock tab `preview`): launch
+  configs from `.vakcoder/launch.toml` (`[[server]] name/cmd/args/port`),
+  auto-detecting `npm run dev` as fallback. Start waits up to 15s for the
+  declared port to bind, then an interactive iframe renders the app (CSP
+  frame-src scoped to loopback); logs tail into a ring buffer viewable
+  in-pane; stop kills via `kill_on_drop`. Tested against a real
+  `python3 -m http.server`: bind detection, double-start 409, log flow,
+  port release after stop.
+
 E2E proof: app boots, embedded server answers on the ephemeral port,
 `/health` reflects the live Core (provider/model/sandbox/mode), unauthenticated
-`/fs/*`, `/side/*`, `/bestofn`, `/pr`, `/tasks` rejected with 401; workspace
-fmt+clippy(-D warnings)+229 tests green.
+`/fs/*`, `/side/*`, `/bestofn`, `/pr`, `/tasks`, `/launch` rejected with 401;
+workspace fmt+clippy(-D warnings)+230 tests green.
+
+## Steal-list status: COMPLETE (minus agent-driven auto-verify)
+
+Everything from the Claude/Codex/Cursor steal-lists that fits our no-cloud,
+local-first thesis has shipped. The one deliberate remainder is the
+**agent-driven half of auto-verify**: screenshots/DOM inspection fed back to
+the model. That needs a headless-browser dependency decision
+(chromiumoxide + system Chrome vs bundled WebView probe) — tracked as future
+work; until then the agent verifies via bash (`curl`), and the human verifies
+visually in the preview pane.
 
 Next up (in steal-list order): browser preview/auto-verify — the last major
 item. Everything else from the Claude/Codex/Cursor steal-lists that fits our

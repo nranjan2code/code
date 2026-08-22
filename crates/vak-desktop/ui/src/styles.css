@@ -379,3 +379,23 @@ kbd { background: var(--bg3); border: 1px solid var(--border); border-bottom-wid
 .task-add-form textarea { resize: vertical; min-height: 54px; }
 .task-add-form input:focus, .task-add-form textarea:focus { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .task-add-row { display: flex; align-items: center; gap: 10px; padding-top: 10px; }
+
+/* ---------- preview pane ---------- */
+.prevpane { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.prev-url {
+  flex: 1; min-width: 120px; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px;
+  font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 11.5px; outline: none;
+}
+.prev-servers { border-bottom: 1px solid var(--border); }
+.prev-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12.5px; }
+.prev-name { font-weight: 600; }
+.prev-cmd { color: var(--faint); font-size: 11.5px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prev-frame-wrap { flex: 1; min-height: 0; background: #fff; position: relative; }
+.prev-frame { width: 100%; height: 100%; border: none; }
+.prev-logs {
+  max-height: 160px; overflow-y: auto; margin: 0;
+  background: #10101a; color: var(--dim);
+  font-size: 11.5px; padding: 8px 10px;
+  border-top: 1px solid var(--border); white-space: pre-wrap;
+}

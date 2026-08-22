@@ -40,6 +40,7 @@ import SideChatPanel from "./components/SideChatPanel";
 import BestOfNDialog from "./components/BestOfNDialog";
 import PrPanel from "./components/PrPanel";
 import TasksModal from "./components/TasksModal";
+import PreviewPane from "./components/PreviewPane";
 import ProjectGate from "./components/ProjectGate";
 
 const streams = new Map<string, EventSource>();
@@ -269,7 +270,7 @@ export default function App() {
             {(tab) => (
               <div class="dock" data-dock={tab()}>
                 <div class="dock-tabs">
-                  <For each={["diff", "terminal", "editor", "pr"] as const}>
+                  <For each={["preview", "diff", "terminal", "editor", "pr"] as const}>
                     {(t) => (
                       <button
                         class="dock-tab"
@@ -299,6 +300,9 @@ export default function App() {
                 </Show>
                 <Show when={tab() === "pr"}>
                   <PrPanel sessionId={activeId()} />
+                </Show>
+                <Show when={tab() === "preview"}>
+                  <PreviewPane />
                 </Show>
               </div>
             )}
