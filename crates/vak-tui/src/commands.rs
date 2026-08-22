@@ -70,5 +70,8 @@ pub fn help_text() -> String {
         }
     }
     out.push_str("  Tab completes commands and @file paths");
+    out.push_str("\n  @path attaches a file's contents to your message");
+    out.push_str("\n  !cmd runs a local shell command and shares its output");
+    out.push_str("\n  while running: Enter steers · Tab queues · Esc stops/cancels queue item");
     out
 }

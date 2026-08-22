@@ -17,6 +17,7 @@ pub enum Action {
     HistoryNext,
     HistorySearch,
     Complete,
+    Queue,
     CancelOrClear,
     Exit,
     Ignore,
@@ -58,7 +59,13 @@ pub fn map_key(code: KeyCode, mods: KeyModifiers, running: bool) -> Action {
         KeyCode::End => Action::End,
         KeyCode::Up => Action::HistoryPrev,
         KeyCode::Down => Action::HistoryNext,
-        KeyCode::Tab => Action::Complete,
+        KeyCode::Tab => {
+            if running {
+                Action::Queue
+            } else {
+                Action::Complete
+            }
+        }
         KeyCode::Char(c) => {
             if mods.is_empty() || mods == KeyModifiers::SHIFT {
                 Action::Insert(c)

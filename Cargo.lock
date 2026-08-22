@@ -1941,6 +1941,7 @@ dependencies = [
  "vak-llm",
  "vak-permission",
  "vak-session",
+ "vak-tools",
 ]
 
 [[package]]

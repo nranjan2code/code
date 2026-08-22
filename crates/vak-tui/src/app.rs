@@ -15,6 +15,7 @@ use vak_agent::{AgentEvent, Approver, SteeringQueues, TurnOutcome};
 use vak_core::Core;
 use vak_llm::stream::StreamEvent;
 use vak_session::SessionLog;
+use vak_tools::Tool;
 
 use crate::commands::{self, Command};
 use crate::complete;
@@ -22,6 +23,7 @@ use crate::diffview;
 use crate::editor::Editor;
 use crate::keys::{Action, map_key};
 use crate::markdown::LineStyler;
+use crate::mentions;
 use crate::render::Screen;
 use crate::status;
 use crate::theme::{self, Theme};
@@ -211,6 +213,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
         sub_out: 0,
     };
     let mut approvals: VecDeque<ApprovalRequest> = VecDeque::new();
+    let mut follow_ups: VecDeque<String> = VecDeque::new();
     let mut run_started: Option<Instant> = None;
     let mut tick_count: usize = 0;
 
@@ -495,7 +498,29 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                         }
                                         continue;
                                     }
-                                    match ctx.spawn(&text).await {
+                                    if let Some(cmd) = text.strip_prefix('!') {
+                                        run_shell_passthrough(
+                                            &core,
+                                            &session_slot,
+                                            cmd.trim(),
+                                            &mut screen,
+                                            &ui_theme,
+                                        )
+                                        .await;
+                                        continue;
+                                    }
+                                    let expanded = mentions::expand(&text, core.cwd());
+                                    if !expanded.attached.is_empty() {
+                                        screen.dim(&format!(
+                                            "attached {} file(s): {}",
+                                            expanded.attached.len(),
+                                            expanded.attached.join(", ")
+                                        ));
+                                    }
+                                    for miss in &expanded.missing {
+                                        screen.error(&format!("no such file: {miss}"));
+                                    }
+                                    match ctx.spawn(&expanded.prompt).await {
                                         Some((ev_rx, done_rx)) => {
                                             running = Some(ev_rx);
                                             run_done = Some(done_rx);
@@ -508,11 +533,32 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                     screen.accent(&format!("▸ {}", text.replace('\n', " ⏎ ")));
                                 }
                             }
+                            Action::Queue => {
+                                if is_running {
+                                    let text = std::mem::take(&mut pending);
+                                    if !text.trim().is_empty() {
+                                        follow_ups.push_back(text);
+                                        screen.clear_input();
+                                        screen.dim(&format!(
+                                            "[queued for next turn · {} waiting]",
+                                            follow_ups.len()
+                                        ));
+                                    }
+                                }
+                            }
                             Action::CancelOrClear => {
                                 if is_running {
-                                    cancel.cancel();
-                                    screen.clear_input();
-                                    screen.dim("[cancelling…]");
+                                    if let Some(_popped) = follow_ups.pop_back() {
+                                        screen.clear_input();
+                                        screen.dim(&format!(
+                                            "[queue item removed · {} left]",
+                                            follow_ups.len()
+                                        ));
+                                    } else {
+                                        cancel.cancel();
+                                        screen.clear_input();
+                                        screen.dim("[cancelling…]");
+                                    }
                                 } else if !editor.is_empty() {
                                     editor = Editor::new();
                                 } else {
@@ -547,6 +593,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                 }
             }
             Some(outcome) = done_ev => {
+                let aborted = matches!(outcome, TurnOutcome::Aborted { .. });
                 if let Some(mut rx) = running.take() {
                     while let Ok(ev) = rx.try_recv() {
                         render_event(&mut screen, &mut ui, &ui_theme, ev);
@@ -571,6 +618,26 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                 );
                 run_started = None;
                 screen.line("");
+                // Follow-up queue drains only after a non-aborted run: a
+                // cancelled run must not silently fire what the user queued.
+                if !aborted
+                    && let Some(next) = follow_ups.pop_front()
+                {
+                    screen.accent(&format!(
+                        "▸ (queued) {}",
+                        next.replace('\n', " ⏎ ")
+                    ));
+                    match ctx.spawn(&next).await {
+                        Some((ev_rx, done_rx)) => {
+                            running = Some(ev_rx);
+                            run_done = Some(done_rx);
+                            run_started = Some(Instant::now());
+                            ui.styler = LineStyler::new();
+                            ui.partial.clear();
+                        }
+                        None => screen.dim("provider unavailable — queued item dropped"),
+                    }
+                }
             }
             _ = tokio::time::sleep(tick_delay) => {
                 tick_count += 1;
@@ -587,6 +654,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                 tick_count,
                 context_window,
                 &pending,
+                follow_ups.len(),
             ));
         } else if editor.search_active() {
             let q = editor.search_query().to_string();
@@ -938,6 +1006,7 @@ pub fn trunc_cells(s: &str, max: usize) -> String {
     s.to_string()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn status_ansi(
     theme: &Theme,
     total_in: u64,
@@ -945,7 +1014,8 @@ fn status_ansi(
     elapsed_secs: u64,
     tick: usize,
     window: u64,
-    queued: &str,
+    steering: &str,
+    queued_count: usize,
 ) -> String {
     let total = total_in + total_out;
     let pct = if window > 0 {
@@ -954,25 +1024,35 @@ fn status_ansi(
         0
     };
     let spinner = format!("{}{}", theme::fg(theme.spinner), status::frame(tick));
-    let body = format!(
-        "{}{} · ↑{} ↓{} · ctx {}%{}",
+    let mut line = format!(
+        "{}{} · ↑{} ↓{} · ctx {}%",
         theme::fg(theme.dim),
         status::fmt_elapsed(elapsed_secs),
         status::fmt_tokens(total_in),
         status::fmt_tokens(total_out),
         pct.min(999),
-        theme::fg(Color::Reset),
     );
-    if queued.is_empty() {
-        format!("{spinner} {body}")
-    } else {
-        format!(
-            "{spinner} {body}{} [queued] {}{}",
+    if !steering.is_empty() {
+        line.push_str(&format!(
+            "{} · steer: {}{}",
             theme::fg(theme.warning),
-            trunc_cells(queued, 40),
+            trunc_cells(steering, 32),
             theme::fg(Color::Reset),
-        )
+        ));
     }
+    if queued_count > 0 {
+        line.push_str(&format!(
+            "{} · ⏳{queued_count} queued{}",
+            theme::fg(theme.warning),
+            theme::fg(Color::Reset),
+        ));
+    }
+    line.push_str(&format!(
+        "{} · enter steer · tab queue · esc stop{}",
+        theme::fg(theme.dim),
+        theme::fg(Color::Reset),
+    ));
+    format!("{spinner} {line}")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1274,6 +1354,58 @@ async fn show_transcript(
                 }
             }
         }
+    }
+}
+
+/// `!cmd` runs locally through the production BashTool; output is appended
+/// to the active session as a user context entry so the model sees it on
+/// the next turn (model-visible ⇒ logged).
+async fn run_shell_passthrough(
+    core: &Core,
+    slot: &Arc<Mutex<Option<SessionLog>>>,
+    cmd: &str,
+    screen: &mut Screen,
+    theme: &Theme,
+) {
+    if cmd.is_empty() {
+        screen.dim("usage: !<shell command>");
+        return;
+    }
+    let ctx = vak_tools::ToolContext {
+        cwd: core.cwd().clone(),
+        cancel: CancellationToken::new(),
+        limits: Default::default(),
+        sandbox: None,
+    };
+    let out = vak_tools::bash::BashTool
+        .execute(&serde_json::json!({"command": cmd}), &ctx)
+        .await;
+    screen.clear_input();
+    let tail: Vec<&str> = out
+        .content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    let shown = tail.len().saturating_sub(12);
+    let mark = if out.is_error { "✗" } else { "✓" };
+    let color = if out.is_error {
+        theme.error
+    } else {
+        theme.success
+    };
+    screen.styled(&format!("{mark} !{cmd}"), color);
+    for line in &tail[shown..] {
+        screen.styled(&format!("  │ {line}"), theme.dim);
+    }
+    let mut guard = slot.lock().await;
+    if let Some(s) = guard.as_mut() {
+        let _ = s.append_message(vak_session::MessageRecord {
+            message: vak_llm::Message::user_text(format!(
+                "[! shell]\n$ {cmd}\n\noutput:\n{}",
+                out.content
+            )),
+            meta: None,
+        });
     }
 }
 

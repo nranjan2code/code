@@ -17,6 +17,7 @@ vak-core = { workspace = true }
 vak-llm = { workspace = true }
 vak-permission = { workspace = true }
 vak-session = { workspace = true }
+vak-tools = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

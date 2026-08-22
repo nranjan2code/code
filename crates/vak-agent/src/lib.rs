@@ -14,6 +14,7 @@ pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
 pub use stop_policy::{BlockReason, StopPolicy};
 pub use task::{TaskDeps, TaskTool};
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -249,6 +250,8 @@ pub struct Agent {
     provider: Arc<dyn Provider>,
     pub session: Mutex<SessionLog>,
     pub config: AgentConfig,
+    /// Identical-call detector for the doom-loop guard, reset per run.
+    run_call_counts: std::sync::Mutex<HashMap<String, u32>>,
 }
 
 impl Agent {
@@ -257,6 +260,7 @@ impl Agent {
             provider,
             session: Mutex::new(session),
             config,
+            run_call_counts: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -283,6 +287,10 @@ impl Agent {
         let mut turn = 0usize;
         let prompt_owned = prompt.to_string();
         let mut bash_calls_this_run: u32 = 0;
+        self.run_call_counts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         let mut stop_blocks_left = self
             .config
             .stop_policy
@@ -800,7 +808,7 @@ impl Agent {
 
         let mut authz: Vec<Result<(), String>> = Vec::with_capacity(n);
         for call in &calls {
-            authz.push(authorize(&self.config, call, &cwd).await);
+            authz.push(authorize(&self.config, call, &cwd, &self.run_call_counts).await);
         }
         let ids: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
 
@@ -1029,15 +1037,38 @@ async fn execute_one(
     (call.id, output)
 }
 
+/// Doom-loop threshold: the Nth identical (tool, args) call in one run is
+/// re-routed through approval instead of silently repeating.
+const DOOM_LOOP_THRESHOLD: u32 = 3;
+
 async fn authorize(
     config: &AgentConfig,
     call: &PendingToolCall,
     cwd: &std::path::Path,
+    run_call_counts: &std::sync::Mutex<HashMap<String, u32>>,
 ) -> Result<(), String> {
     let Some(engine) = &config.permission else {
         return Ok(());
     };
-    match engine.evaluate(&call.name, &call.input, config.mode, cwd) {
+    let mut decision = engine.evaluate(&call.name, &call.input, config.mode, cwd);
+    if matches!(decision, Decision::Allow) {
+        let key = format!(
+            "{}\u{0}{}",
+            call.name,
+            serde_json::to_string(&call.input).unwrap_or_default()
+        );
+        let mut counts = run_call_counts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let n = counts.entry(key).or_insert(0);
+        *n += 1;
+        if n.is_multiple_of(DOOM_LOOP_THRESHOLD) {
+            decision = Decision::Ask {
+                reason: format!("identical {} call repeated ×{n} this run", call.name),
+            };
+        }
+    }
+    match decision {
         Decision::Allow => Ok(()),
         Decision::Deny { reason } => Err(reason),
         Decision::Ask { reason } => match &config.approver {
