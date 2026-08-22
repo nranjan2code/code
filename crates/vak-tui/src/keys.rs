@@ -6,6 +6,10 @@ pub enum Action {
     Delete,
     Left,
     Right,
+    WordLeft,
+    WordRight,
+    DeleteWordBack,
+    ClearLine,
     Home,
     End,
     Submit,
@@ -29,6 +33,11 @@ pub fn map_key(code: KeyCode, mods: KeyModifiers, running: bool) -> Action {
             }
         }
         KeyCode::Char('d') if mods.contains(KeyModifiers::CONTROL) => Action::Exit,
+        KeyCode::Char('u') if mods.contains(KeyModifiers::CONTROL) => Action::ClearLine,
+        KeyCode::Char('w') if mods.contains(KeyModifiers::CONTROL) => Action::DeleteWordBack,
+        KeyCode::Backspace if mods.contains(KeyModifiers::ALT) => Action::DeleteWordBack,
+        KeyCode::Char('b') if mods.contains(KeyModifiers::ALT) => Action::WordLeft,
+        KeyCode::Char('f') if mods.contains(KeyModifiers::ALT) => Action::WordRight,
         KeyCode::Char('j') if mods.contains(KeyModifiers::CONTROL) => Action::Insert('\n'),
         KeyCode::Esc => {
             if running {

@@ -46,6 +46,7 @@ struct CoreInner {
     provider_override: std::sync::Mutex<Option<String>>,
     max_turns_override: std::sync::Mutex<Option<usize>>,
     mode_override: std::sync::Mutex<Option<vak_config::PermissionMode>>,
+    theme_override: std::sync::Mutex<Option<String>>,
     provider_instance: std::sync::Mutex<Option<Arc<dyn Provider>>>,
     sessions_home_override: std::sync::Mutex<Option<PathBuf>>,
     breaker: Arc<vak_agent::CircuitBreaker>,
@@ -90,6 +91,7 @@ impl Core {
                 provider_override: std::sync::Mutex::new(None),
                 max_turns_override: std::sync::Mutex::new(None),
                 mode_override: std::sync::Mutex::new(None),
+                theme_override: std::sync::Mutex::new(None),
                 provider_instance: std::sync::Mutex::new(None),
                 sessions_home_override: std::sync::Mutex::new(None),
                 breaker,
@@ -150,6 +152,21 @@ impl Core {
         if let Ok(mut c) = self.inner.mode_override.lock() {
             *c = Some(mode);
         }
+    }
+
+    pub fn set_theme(&self, theme: String) {
+        if let Ok(mut t) = self.inner.theme_override.lock() {
+            *t = Some(theme);
+        }
+    }
+
+    pub fn effective_theme(&self) -> String {
+        if let Ok(t) = self.inner.theme_override.lock()
+            && let Some(name) = t.as_ref()
+        {
+            return name.clone();
+        }
+        self.inner.config.ui.theme.clone()
     }
 
     pub fn effective_permission_mode(&self) -> vak_config::PermissionMode {
@@ -439,6 +456,7 @@ impl Core {
                 cwd: self.inner.cwd.clone(),
                 sessions_home: self.inner.sessions_home.clone(),
                 parent_session_id: parent_id,
+                events: Some(events.clone()),
             })));
         }
         if !self.inner.config.mcp.servers.is_empty() {

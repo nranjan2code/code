@@ -58,6 +58,49 @@ impl Editor {
         self.cursor = self.chars().count();
     }
 
+    pub fn clear(&mut self) {
+        self.buf.clear();
+        self.cursor = 0;
+        self.history_idx = None;
+    }
+
+    /// Deletes back to the start of the previous word.
+    pub fn delete_word_back(&mut self) {
+        let target = self.word_start();
+        let byte = self.byte_of_char(self.cursor);
+        let prev = self.byte_of_char(target);
+        self.buf.replace_range(prev..byte, "");
+        self.cursor = target;
+    }
+
+    pub fn word_left(&mut self) {
+        self.cursor = self.word_start();
+    }
+
+    pub fn word_right(&mut self) {
+        let chars: Vec<char> = self.buf.chars().collect();
+        let mut i = self.cursor;
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+        while i < chars.len() && !chars[i].is_whitespace() {
+            i += 1;
+        }
+        self.cursor = i;
+    }
+
+    fn word_start(&self) -> usize {
+        let chars: Vec<char> = self.buf.chars().take(self.cursor).collect();
+        let mut i = chars.len();
+        while i > 0 && chars[i - 1].is_whitespace() {
+            i -= 1;
+        }
+        while i > 0 && !chars[i - 1].is_whitespace() {
+            i -= 1;
+        }
+        i
+    }
+
     pub fn take(&mut self) -> String {
         let out = std::mem::take(&mut self.buf);
         self.cursor = 0;

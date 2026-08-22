@@ -21,6 +21,10 @@ impl Screen {
         }
     }
 
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
+    }
+
     fn put(&mut self, s: &str) {
         queue!(self.out, Print(s)).ok();
         self.out.flush().ok();

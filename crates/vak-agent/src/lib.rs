@@ -72,6 +72,14 @@ pub enum AgentEvent {
         args_json: String,
         reason: String,
     },
+    SubagentStarted {
+        label: String,
+    },
+    SubagentFinished {
+        label: String,
+        is_error: bool,
+        elapsed_ms: u64,
+    },
     RunFinished {
         summary: String,
     },

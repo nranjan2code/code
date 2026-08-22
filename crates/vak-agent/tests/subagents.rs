@@ -131,6 +131,7 @@ async fn subagent_roundtrip_with_shared_scripted_provider() {
         cwd: dir.path().to_path_buf(),
         sessions_home: home.clone(),
         parent_session_id: parent_id.clone(),
+        events: None,
     }))];
     cfg.permission = Some(Arc::new(
         PermissionEngine::from_rule_strings(&["+task".to_string()]).unwrap(),

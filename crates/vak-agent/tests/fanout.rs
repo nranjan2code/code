@@ -201,6 +201,7 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
         cwd: dir.path().to_path_buf(),
         sessions_home: home.clone(),
         parent_session_id: "fanout-parent".into(),
+        events: None,
     }))];
     cfg.permission = Some(Arc::new(
         PermissionEngine::from_rule_strings(&["+task".to_string(), "+Bash(sleep *)".to_string()])

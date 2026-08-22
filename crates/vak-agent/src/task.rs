@@ -33,6 +33,8 @@ pub struct TaskDeps {
     pub cwd: PathBuf,
     pub sessions_home: PathBuf,
     pub parent_session_id: String,
+    /// Parent-loop event channel so subagent lifecycles surface in the UI.
+    pub events: Option<tokio::sync::mpsc::Sender<crate::AgentEvent>>,
 }
 
 pub struct TaskTool {
@@ -180,7 +182,29 @@ impl TaskTool {
         let cancel = ctx.cancel.child_token();
         let (ev_tx, mut ev_rx) = tokio::sync::mpsc::channel::<crate::AgentEvent>(256);
         let pump = tokio::spawn(async move { while ev_rx.recv().await.is_some() {} });
+        let label = args
+            .get("label")
+            .and_then(|l| l.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| prompt.chars().take(48).collect());
+        if let Some(events) = &self.deps.events {
+            let _ = events
+                .send(crate::AgentEvent::SubagentStarted {
+                    label: label.clone(),
+                })
+                .await;
+        }
+        let started = std::time::Instant::now();
         let outcome = agent.run(prompt, &steering, cancel, ev_tx).await;
+        if let Some(events) = &self.deps.events {
+            let _ = events
+                .send(crate::AgentEvent::SubagentFinished {
+                    label,
+                    is_error: !matches!(outcome, crate::TurnOutcome::Completed { .. }),
+                    elapsed_ms: started.elapsed().as_millis() as u64,
+                })
+                .await;
+        }
         let _ = pump.await;
 
         match outcome {

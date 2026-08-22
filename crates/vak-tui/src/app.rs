@@ -143,13 +143,15 @@ struct UiState {
     total_in: u64,
     total_out: u64,
     tool_args: HashMap<String, (String, String)>,
+    thinking_shown: bool,
 }
 
 pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
     let _raw = RawMode::enable();
-    let ui_theme = Theme::from_name(&core.config().ui.theme);
+    let ui_theme_name = core.effective_theme();
     let bell_on = core.config().ui.bell;
     let context_window = core.config().context_window;
+    let mut ui_theme = Theme::from_name(&ui_theme_name);
     let mut screen = Screen::new(ui_theme);
     let hist_path = core.sessions_home().join("input_history.txt");
     let mut editor = Editor::new();
@@ -198,6 +200,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
         total_in: 0,
         total_out: 0,
         tool_args: HashMap::new(),
+        thinking_shown: false,
     };
     let mut approvals: VecDeque<ApprovalRequest> = VecDeque::new();
     let mut run_started: Option<Instant> = None;
@@ -285,6 +288,16 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                             Action::Delete => editor.delete(),
                             Action::Left => editor.left(),
                             Action::Right => editor.right(),
+                            Action::WordLeft => editor.word_left(),
+                            Action::WordRight => editor.word_right(),
+                            Action::DeleteWordBack => editor.delete_word_back(),
+                            Action::ClearLine => {
+                                if is_running {
+                                    pending.clear();
+                                } else {
+                                    editor.clear();
+                                }
+                            }
                             Action::Home => editor.home(),
                             Action::End => editor.end(),
                             Action::HistoryPrev => editor.history_prev(),
@@ -329,9 +342,29 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                             Some(Command::Resume(arg)) => {
                                                 cmd_resume(&core, &session_slot, arg, &mut screen).await;
                                             }
-                                            Some(Command::Rewind(arg)) => {
-                                                cmd_rewind(&core, &session_slot, arg, &mut screen).await;
-                                            }
+                                                Some(Command::Rewind(arg)) => {
+                                                    cmd_rewind(&core, &session_slot, arg, &mut screen).await;
+                                                }
+                                                Some(Command::Theme(arg)) => match arg {
+                                                    None => screen.dim(&format!(
+                                                        "themes: {} (current: {})",
+                                                        crate::theme::names().join(", "),
+                                                        core.effective_theme(),
+                                                    )),
+                                                    Some(name)
+                                                        if crate::theme::names()
+                                                            .contains(&name.as_str()) =>
+                                                    {
+                                                        core.set_theme(name.clone());
+                                                        ui_theme = Theme::from_name(&name);
+                                                        screen.set_theme(ui_theme);
+                                                        screen.accent(&format!("theme → {name}"));
+                                                    }
+                                                    Some(other) => screen.dim(&format!(
+                                                        "unknown theme '{other}' — {}",
+                                                        crate::theme::names().join(", "),
+                                                    )),
+                                                },
                                             Some(Command::Model(m)) => {
                                                 core.set_model(m.clone());
                                                 screen.accent(&format!(
@@ -448,7 +481,15 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
 fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentEvent) {
     match ev {
         AgentEvent::Stream(StreamEvent::TextDelta { delta, .. }) => {
+            ui.thinking_shown = false;
             feed_text(ui, screen, theme, &delta)
+        }
+        AgentEvent::Stream(StreamEvent::ThinkingDelta { .. }) => {
+            if !ui.thinking_shown {
+                screen.clear_input();
+                screen.dim("  · thinking…");
+                ui.thinking_shown = true;
+            }
         }
         AgentEvent::Stream(_) => {}
         AgentEvent::ToolCallStart {
@@ -510,6 +551,7 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
         AgentEvent::TurnStart { .. } => {
             ui.styler = LineStyler::new();
             ui.partial.clear();
+            ui.thinking_shown = false;
         }
         AgentEvent::RetryScheduled {
             attempt,
@@ -538,6 +580,32 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
         AgentEvent::StopHookContinuation { reason } => {
             screen.clear_input();
             screen.dim(&format!("[stop-hook] {reason} — continuing"));
+        }
+        AgentEvent::SubagentStarted { label } => {
+            flush_md(screen, ui, theme);
+            screen.clear_input();
+            screen.accent(&format!("  ◆ subagent: {}", trunc_cells(&label, 70)));
+        }
+        AgentEvent::SubagentFinished {
+            label,
+            is_error,
+            elapsed_ms,
+        } => {
+            flush_md(screen, ui, theme);
+            screen.clear_input();
+            if is_error {
+                screen.error(&format!(
+                    "  ◇ subagent failed: {} · {}",
+                    trunc_cells(&label, 60),
+                    status::fmt_elapsed(elapsed_ms / 1000)
+                ));
+            } else {
+                screen.success(&format!(
+                    "  ◇ subagent done: {} · {}",
+                    trunc_cells(&label, 60),
+                    status::fmt_elapsed(elapsed_ms / 1000)
+                ));
+            }
         }
         AgentEvent::StreamOpened
         | AgentEvent::ApprovalRequested { .. }
@@ -568,13 +636,44 @@ fn flush_md(screen: &mut Screen, ui: &mut UiState, theme: &Theme) {
 fn draw_approval(screen: &mut Screen, theme: &Theme, req: &ApprovalRequest) {
     screen.clear_input();
     screen.styled(&format!("? {} needs approval", req.tool), theme.warning);
-    for line in pretty_args_lines(&req.args_json, 6) {
-        screen.dim(&line);
+    if req.tool == "edit"
+        && let Some(diff) = approval_edit_diff(&req.args_json, theme)
+    {
+        for line in pretty_args_lines(&req.args_json, 1) {
+            screen.dim(&line);
+        }
+        for line in diff.lines() {
+            screen.md_line(&format!("  {line}"));
+        }
+    } else {
+        for line in pretty_args_lines(&req.args_json, 6) {
+            screen.dim(&line);
+        }
     }
     if !req.reason.trim().is_empty() {
         screen.dim(&format!("    rule: {}", trunc_cells(&req.reason, 90)));
     }
     screen.dim("    [y] allow once · [a] always this tool · [n]/Esc deny");
+}
+
+/// Renders the proposed edit as a unified diff so the decision is informed
+/// by what will actually change, not by a JSON blob.
+fn approval_edit_diff(args_json: &str, theme: &Theme) -> Option<String> {
+    let v = serde_json::from_str::<serde_json::Value>(args_json).ok()?;
+    let edits = v.get("edits")?.as_array()?;
+    let mut out = String::new();
+    let mut shown = 0usize;
+    for e in edits.iter().take(3) {
+        let old = e.get("old_string").and_then(|x| x.as_str()).unwrap_or("");
+        let new = e.get("new_string").and_then(|x| x.as_str()).unwrap_or("");
+        if old.is_empty() && new.is_empty() {
+            continue;
+        }
+        out.push_str(&diffview::unified(old, new, theme, 6));
+        out.push('\n');
+        shown += 1;
+    }
+    (shown > 0).then_some(out)
 }
 
 fn pretty_args_lines(args_json: &str, max_lines: usize) -> Vec<String> {

@@ -62,3 +62,20 @@ inline-streaming; nothing here introduces alternate-screen or TUI frameworks.
   engine-level rule injection needs a Core seam and stays out of scope here.
 - Wrapped-line caret placement assumes uniform terminal width between renders
   (resize redraws on next event/tick).
+
+## Slice 2 — informed decisions + input polish
+
+- **Approval diff preview**: `edit` approvals render the proposed change as a
+  unified diff (up to 3 edits × 6 lines each) before y/n — the decision is
+  informed by what will change, not by a JSON blob.
+- **Readline editing**: Ctrl-U clear line, Ctrl-W / Alt-Backspace delete word
+  back, Alt-b/f word motion (`Editor::clear/delete_word_back/word_left/
+  word_right`).
+- **Thinking indicator**: first `ThinkingDelta` of a burst prints one dim
+  `· thinking…` line; reset on TurnStart and on next text delta.
+- **Subagent visibility**: `TaskDeps.events` forwards child lifecycles to the
+  parent event stream as `AgentEvent::SubagentStarted/SubagentFinished`
+  (label, error flag, elapsed). Previously subagent events were pumped into a
+  void; parallel tasks interleave naturally through the shared channel.
+- **`/theme [dark|light|plain]`**: runtime switch via new
+  `Core::set_theme/effective_theme` override seam; no-arg lists themes.
