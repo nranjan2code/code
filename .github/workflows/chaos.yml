@@ -33,12 +33,19 @@ jobs:
         run: target/debug/vakcoder eval --live --provider opencode-zen --model x-preview-f-free
       - name: Chaos campaign
         run: |
-          SID=$(target/debug/vakcoder exec \
+          # Sessions are per-cwd-hashed: the seed session must be minted in
+          # the SAME workspace the driver executes in.
+          mkdir -p /tmp/vak-chaos-workspace
+          cd /tmp/vak-chaos-workspace
+          git init -q .
+          SID=$(VAKCODER_OPENCODE_ZEN_BASE_URL=http://127.0.0.1:8930 \
+            "$GITHUB_WORKSPACE/target/debug/vakcoder" exec \
             --provider opencode-zen --model x-preview-f-free \
             "Reply with exactly: ready" --trust --yes --max-turns 2 2>&1 \
-            | grep -oE "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl" \
-            | head -1 | sed 's/\.jsonl//')
+            | grep -oE "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" \
+            | head -1)
           echo "session: $SID"
+          cd "$GITHUB_WORKSPACE"
           VAK_BIN="$PWD/target/debug/vakcoder" \
           python3 scripts/chaos_driver.py "$SID"
       - name: Upload artifacts (logs, ledgers)
