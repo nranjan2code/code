@@ -924,7 +924,7 @@ async fn run_exec(
 
     writeln!(out).ok();
     eprintln!(
-        "\n── {} · tokens in {total_in} / out {total_out} · session {}",
+        "\n── {} · Σ tokens in {total_in} / out {total_out} · session {}",
         match &outcome {
             TurnOutcome::Completed { .. } => "completed",
             TurnOutcome::Aborted { .. } => "aborted",

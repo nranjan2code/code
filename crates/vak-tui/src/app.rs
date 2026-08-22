@@ -566,6 +566,8 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                     bell_on,
                     run_started.map(|t| t.elapsed().as_secs()).unwrap_or(0),
                     cost,
+                    ui.total_in + ui.sub_in,
+                    ui.total_out + ui.sub_out,
                 );
                 run_started = None;
                 screen.line("");
@@ -973,6 +975,7 @@ fn status_ansi(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finish_outcome(
     screen: &mut Screen,
     outcome: TurnOutcome,
@@ -980,15 +983,17 @@ fn finish_outcome(
     bell_on: bool,
     elapsed_secs: u64,
     cost_usd: Option<f64>,
+    total_in: u64,
+    total_out: u64,
 ) {
     let dollars = cost_usd
         .map(|c| format!(" · ~{}", crate::pricing::format_cost(c)))
         .unwrap_or_default();
     match outcome {
-        TurnOutcome::Completed { response } => screen.success(&format!(
-            "── completed · ↑{} ↓{}{dollars} · {} · {}",
-            response.usage.input_tokens,
-            response.usage.output_tokens,
+        TurnOutcome::Completed { response: _ } => screen.success(&format!(
+            "── completed · Σ ↑{} ↓{}{dollars} · {} · {}",
+            status::fmt_tokens(total_in),
+            status::fmt_tokens(total_out),
             status::fmt_elapsed(elapsed_secs),
             session_path
         )),
