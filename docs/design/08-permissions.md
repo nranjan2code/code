@@ -64,6 +64,10 @@ constrains *what the process can touch* even when allowed.
   Fail-closed: unsupported kernels report sandbox "off" (permission engine
   alone) instead of pretending; enforcement is smoke-tested on CI's ubuntu
   job (`scripts/landlock_smoke.sh`).
+- Network scoping: read-only mode also denies all TCP bind/connect
+  (Landlock ABI v4) and refuses to run when the kernel can't enforce that
+  denial (fail-closed `PartiallyEnforced` check). Workspace-write keeps the
+  network open — build tooling legitimately needs it.
 - Known semantics: on macOS `/tmp` resolves to `/private/tmp`, so tmp writes
   are permitted in workspace-write mode by design (output spill files rely on
   it). Everything else outside the cwd is blocked at kernel level.

@@ -29,4 +29,9 @@ if "$BIN" __sandbox --ro -- sh -c "echo no > '$WS/ro.txt'" 2>/dev/null; then
   fail "read-only mode allowed a write"
 fi
 
+# 6) read-only mode denies outbound TCP connects (Landlock ABI v4)
+if "$BIN" __sandbox --ro -- bash -c 'exec 3<>/dev/tcp/1.1.1.1/80' 2>/dev/null; then
+  fail "read-only mode allowed an outbound TCP connect"
+fi
+
 echo "landlock smoke: all scenarios passed ($BIN)"

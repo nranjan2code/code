@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Read-only sandbox on Linux now denies all outbound TCP bind/connect
+  (Landlock ABI v4) and fails closed when the kernel cannot enforce it.
+  New enforcement smoke scenario.
+
 ## 0.2.0 (2026-08-22)
 
 Five post-0.1.0 phases. Headline changes:
