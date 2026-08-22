@@ -1,12 +1,19 @@
 const HISTORY_MAX: usize = 500;
 
 #[derive(Debug, Default, Clone)]
+struct Search {
+    query: String,
+    idx: usize,
+}
+
+#[derive(Debug, Default, Clone)]
 pub struct Editor {
     buf: String,
     cursor: usize,
     history: Vec<String>,
     history_idx: Option<usize>,
     draft: Option<String>,
+    search: Option<Search>,
 }
 
 impl Editor {
@@ -220,6 +227,95 @@ impl Editor {
     }
     pub fn is_empty(&self) -> bool {
         self.buf.is_empty()
+    }
+
+    /// Reverse history search (readline-style). The buffer being edited when
+    /// search starts is snapshotted into `draft` and restored on cancel.
+    pub fn begin_search(&mut self) {
+        if self.search.is_some() {
+            return;
+        }
+        let snapshot = self.draft.take().unwrap_or_else(|| self.buf.clone());
+        self.draft = Some(snapshot);
+        self.search = Some(Search {
+            query: String::new(),
+            idx: self.history.len(),
+        });
+    }
+
+    pub fn search_active(&self) -> bool {
+        self.search.is_some()
+    }
+
+    pub fn search_query(&self) -> &str {
+        self.search.as_ref().map(|s| s.query.as_str()).unwrap_or("")
+    }
+
+    pub fn search_push(&mut self, c: char) {
+        if let Some(s) = self.search.as_mut() {
+            s.query.push(c);
+        }
+        self.search_from_cursor();
+    }
+
+    pub fn search_backspace(&mut self) {
+        if let Some(s) = self.search.as_mut() {
+            s.query.pop();
+            s.idx = self.history.len();
+        }
+        self.search_from_cursor();
+    }
+
+    pub fn search_next(&mut self) {
+        if let Some(s) = self.search.as_ref() {
+            let target = s.idx;
+            let q = s.query.clone();
+            if let Some(i) = self.find_match(q.as_str(), target) {
+                if let Some(s) = self.search.as_mut() {
+                    s.idx = i;
+                }
+                self.set_text(&self.history[i].clone());
+            }
+        }
+    }
+
+    pub fn accept_search(&mut self) {
+        self.search = None;
+        self.draft = None;
+        self.history_idx = None;
+    }
+
+    pub fn cancel_search(&mut self) {
+        self.search = None;
+        let restored = self.draft.take().unwrap_or_default();
+        self.set_text(&restored);
+    }
+
+    fn find_match(&self, query: &str, from: usize) -> Option<usize> {
+        let mut i = from.min(self.history.len());
+        while i > 0 {
+            i -= 1;
+            if !query.is_empty() && self.history[i].contains(query) {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    fn search_from_cursor(&mut self) {
+        let (q, start) = match self.search.as_ref() {
+            Some(s) => (s.query.clone(), s.idx),
+            None => return,
+        };
+        if q.is_empty() {
+            return;
+        }
+        if let Some(i) = self.find_match(&q, start) {
+            if let Some(s) = self.search.as_mut() {
+                s.idx = i;
+            }
+            self.set_text(&self.history[i].clone());
+        }
     }
 
     fn chars(&self) -> impl Iterator<Item = char> + '_ {

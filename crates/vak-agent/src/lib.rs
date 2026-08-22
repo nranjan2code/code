@@ -75,6 +75,11 @@ pub enum AgentEvent {
     SubagentStarted {
         label: String,
     },
+    SubagentToolCall {
+        label: String,
+        name: String,
+        is_error: bool,
+    },
     SubagentFinished {
         label: String,
         is_error: bool,

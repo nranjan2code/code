@@ -275,3 +275,22 @@ fn token_formatting_edges() {
     assert_eq!(fmt_tokens(1_500_000), "1.5M");
     assert_eq!(fmt_tokens(3_200_000), "3.2M");
 }
+
+#[test]
+fn pricing_matches_known_families_and_skips_unknown() {
+    assert_eq!(
+        vak_tui::pricing::usd_per_mtok("claude-sonnet-4-5"),
+        Some((3.0, 15.0))
+    );
+    assert_eq!(
+        vak_tui::pricing::usd_per_mtok("gpt-4o-mini"),
+        Some((0.15, 0.6))
+    );
+    assert!(vak_tui::pricing::usd_per_mtok("totally-unknown-model").is_none());
+
+    let c =
+        vak_tui::pricing::session_cost("claude-opus-4", 1_000_000, 1_000_000).unwrap_or(f64::NAN);
+    assert!((c - 90.0).abs() < 1e-9);
+    assert_eq!(vak_tui::pricing::format_cost(0.00005), "<$0.0001");
+    assert!(vak_tui::pricing::format_cost(0.12345).starts_with("$0.12"));
+}

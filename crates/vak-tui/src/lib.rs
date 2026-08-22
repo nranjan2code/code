@@ -10,6 +10,7 @@ pub mod diffview;
 pub mod editor;
 pub mod keys;
 pub mod markdown;
+pub mod pricing;
 pub mod render;
 pub mod status;
 pub mod theme;

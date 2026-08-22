@@ -144,6 +144,8 @@ struct UiState {
     total_out: u64,
     tool_args: HashMap<String, (String, String)>,
     thinking_shown: bool,
+    model: String,
+    cost_usd: f64,
 }
 
 pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
@@ -201,6 +203,8 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
         total_out: 0,
         tool_args: HashMap::new(),
         thinking_shown: false,
+        model: core.effective_model(),
+        cost_usd: 0.0,
     };
     let mut approvals: VecDeque<ApprovalRequest> = VecDeque::new();
     let mut run_started: Option<Instant> = None;
@@ -270,6 +274,24 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                             continue;
                         }
                         let is_running = running.is_some();
+                        if editor.search_active() && !is_running {
+                            match key.code {
+                                KeyCode::Char('r') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                                    editor.search_next();
+                                }
+                                KeyCode::Esc => editor.cancel_search(),
+                                KeyCode::Enter => editor.accept_search(),
+                                KeyCode::Backspace => editor.search_backspace(),
+                                KeyCode::Char(c)
+                                    if key.modifiers.is_empty()
+                                        || key.modifiers == crossterm::event::KeyModifiers::SHIFT =>
+                                {
+                                    editor.search_push(c);
+                                }
+                                _ => {}
+                            }
+                            continue;
+                        }
                         match map_key(key.code, key.modifiers, is_running) {
                             Action::Insert(c) => {
                                 if is_running {
@@ -302,6 +324,11 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                             Action::End => editor.end(),
                             Action::HistoryPrev => editor.history_prev(),
                             Action::HistoryNext => editor.history_next(),
+                            Action::HistorySearch => {
+                                if !is_running {
+                                    editor.begin_search();
+                                }
+                            }
                             Action::Complete => {
                                 if !is_running {
                                     handle_complete(&mut editor, &core, &mut screen);
@@ -328,10 +355,26 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                             Some(Command::Help) => {
                                                 screen.dim(&commands::help_text());
                                             }
-                                            Some(Command::Cost) => screen.dim(&format!(
-                                                "tokens in {} / out {}",
-                                                ui.total_in, ui.total_out
-                                            )),
+                                                Some(Command::Cost) => {
+                                                    let cost = crate::pricing::session_cost(
+                                                        &ui.model,
+                                                        ui.total_in,
+                                                        ui.total_out,
+                                                    );
+                                                    let dollars = match cost {
+                                                        Some(c) =>
+                                                            format!(" · ~{}", crate::pricing::format_cost(c)),
+                                                        None => format!(
+                                                            " (no pricing for {})",
+                                                            ui.model
+                                                        ),
+                                                    };
+                                                    screen.dim(&format!(
+                                                        "tokens in {} / out {}{dollars}",
+                                                        status::fmt_tokens(ui.total_in),
+                                                        status::fmt_tokens(ui.total_out),
+                                                    ));
+                                                }
                                             Some(Command::Context) => show_context(
                                                 &mut screen, &session_slot, context_window,
                                             )
@@ -441,12 +484,14 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                 }
                 run_done = None;
                 flush_md(&mut screen, &mut ui, &ui_theme);
+                let cost = crate::pricing::session_cost(&ui.model, ui.total_in, ui.total_out);
                 finish_outcome(
                     &mut screen,
                     outcome,
                     &session_path,
                     bell_on,
                     run_started.map(|t| t.elapsed().as_secs()).unwrap_or(0),
+                    cost,
                 );
                 run_started = None;
                 screen.line("");
@@ -467,6 +512,10 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                 context_window,
                 &pending,
             ));
+        } else if editor.search_active() {
+            let q = editor.search_query().to_string();
+            let (buf, cur) = editor.view();
+            screen.redraw_input(&format!("(r-search)`{q}` "), buf, cur);
         } else {
             let (buf, cur) = editor.view();
             screen.redraw_input("> ", buf, cur);
@@ -546,6 +595,11 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
         AgentEvent::TurnEnd { usage } => {
             ui.total_in += usage.input_tokens;
             ui.total_out += usage.output_tokens;
+            if let Some(c) =
+                crate::pricing::session_cost(&ui.model, usage.input_tokens, usage.output_tokens)
+            {
+                ui.cost_usd += c;
+            }
             flush_md(screen, ui, theme);
         }
         AgentEvent::TurnStart { .. } => {
@@ -585,6 +639,20 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
             flush_md(screen, ui, theme);
             screen.clear_input();
             screen.accent(&format!("  ◆ subagent: {}", trunc_cells(&label, 70)));
+        }
+        AgentEvent::SubagentToolCall {
+            label,
+            name,
+            is_error,
+        } => {
+            flush_md(screen, ui, theme);
+            screen.clear_input();
+            let mark = if is_error { "✗" } else { "·" };
+            let color = if is_error { theme.error } else { theme.dim };
+            screen.styled(
+                &format!("    {} {} ({})", mark, name, trunc_cells(&label, 24)),
+                color,
+            );
         }
         AgentEvent::SubagentFinished {
             label,
@@ -763,10 +831,14 @@ fn finish_outcome(
     session_path: &str,
     bell_on: bool,
     elapsed_secs: u64,
+    cost_usd: Option<f64>,
 ) {
+    let dollars = cost_usd
+        .map(|c| format!(" · ~{}", crate::pricing::format_cost(c)))
+        .unwrap_or_default();
     match outcome {
         TurnOutcome::Completed { response } => screen.success(&format!(
-            "── completed · ↑{} ↓{} · {} · {}",
+            "── completed · ↑{} ↓{}{dollars} · {} · {}",
             response.usage.input_tokens,
             response.usage.output_tokens,
             status::fmt_elapsed(elapsed_secs),
@@ -804,23 +876,82 @@ fn list_sessions(core: &Core, screen: &mut Screen) {
     let dir = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
     match std::fs::read_dir(&dir) {
         Ok(entries) => {
-            let mut names: Vec<String> = entries
+            let mut rows: Vec<(std::time::SystemTime, std::path::PathBuf, String)> = entries
                 .flatten()
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .filter(|n| n.ends_with(".jsonl"))
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    if !name.ends_with(".jsonl") {
+                        return None;
+                    }
+                    let m = e.metadata().ok()?.modified().ok()?;
+                    Some((m, e.path(), name))
+                })
                 .collect();
-            names.sort();
-            if names.is_empty() {
+            rows.sort_by_key(|r| std::cmp::Reverse(r.0));
+            if rows.is_empty() {
                 screen.dim("no sessions yet");
                 return;
             }
             screen.dim("sessions:");
-            for n in names.iter().rev().take(15) {
-                screen.dim(&format!("  {}", n.trim_end_matches(".jsonl")));
+            for (m, path, name) in rows.iter().rev().take(15) {
+                let snippet = first_user_prompt(path)
+                    .map(|s| format!(" · {}", trunc_cells(&s, 52)))
+                    .unwrap_or_default();
+                screen.dim(&format!(
+                    "  {}{} ({})",
+                    name.trim_end_matches(".jsonl"),
+                    snippet,
+                    age_of(*m),
+                ));
             }
             screen.dim("use /resume <id-prefix>");
         }
         Err(_) => screen.dim("no sessions yet"),
+    }
+}
+
+/// First meaningful user prompt from a session JSONL (bounded head scan).
+fn first_user_prompt(path: &std::path::Path) -> Option<String> {
+    use std::io::BufRead;
+    let file = std::fs::File::open(path).ok()?;
+    for line in std::io::BufReader::new(file).lines().take(120).flatten() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        if v.get("kind").and_then(|k| k.as_str()) != Some("message") {
+            continue;
+        }
+        let Some(msg) = v.get("message") else {
+            continue;
+        };
+        if msg.get("role").and_then(|r| r.as_str()) != Some("user") {
+            continue;
+        }
+        let text = msg
+            .get("content")
+            .and_then(|c| c.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default();
+        let t = text.trim();
+        if t.is_empty() || t.starts_with("[stop-hook]") {
+            continue;
+        }
+        return Some(t.to_string());
+    }
+    None
+}
+
+fn age_of(modified: std::time::SystemTime) -> String {
+    let secs = modified.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+    if secs < 60 {
+        "now".to_string()
+    } else {
+        status::fmt_elapsed(secs)
     }
 }
 

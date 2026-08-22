@@ -374,3 +374,63 @@ fn complete_caps_results_at_50() {
     assert_eq!(out.last().expect("nonempty").replace, "@f049.txt");
     assert!(out.windows(2).all(|w| w[0].replace < w[1].replace));
 }
+
+#[test]
+fn reverse_search_finds_refines_accepts_and_cancels() {
+    let mut e = Editor::new();
+    e.take();
+    e.insert('d');
+    e.insert('e');
+    e.insert('p');
+    e.insert(' ');
+    e.insert('o');
+    e.insert('n');
+    e.insert('e');
+    assert_eq!(e.take(), "dep one");
+    e.insert('t');
+    e.insert('w');
+    e.insert('o');
+    assert_eq!(e.take(), "two");
+    e.insert('z');
+    e.insert('z');
+    e.insert('z');
+    assert_eq!(e.take(), "zzz");
+
+    e.begin_search();
+    assert!(e.search_active());
+    e.search_push('o');
+    assert!(e.search_query().contains("o"));
+    // newest match containing "o" is "two"
+    assert_eq!(e.view().0, "two");
+    e.search_next();
+    // next older is "dep one"
+    assert_eq!(e.view().0, "dep one");
+
+    // refine: "on" still matches "dep one"
+    e.search_push('n');
+    assert_eq!(e.view().0, "dep one");
+    // refine to something unmatched: buffer stays on last match
+    e.search_push('q');
+    assert_eq!(e.view().0, "dep one");
+
+    e.accept_search();
+    assert!(!e.search_active());
+    assert_eq!(e.view().0, "dep one");
+
+    e.begin_search();
+    e.cancel_search();
+    assert!(!e.search_active());
+}
+
+#[test]
+fn search_cancel_restores_buffer_being_edited() {
+    let mut e = Editor::new();
+    e.insert('h');
+    e.insert('i');
+    e.begin_search();
+    e.search_push('h');
+    e.search_push('i');
+    e.cancel_search();
+    assert_eq!(e.view().0, "hi");
+    assert_eq!(e.view().1, 2);
+}

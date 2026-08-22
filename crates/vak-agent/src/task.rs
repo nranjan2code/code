@@ -180,13 +180,32 @@ impl TaskTool {
         let mut agent = Agent::new(self.deps.provider.clone(), log, cfg);
         let steering = Default::default();
         let cancel = ctx.cancel.child_token();
-        let (ev_tx, mut ev_rx) = tokio::sync::mpsc::channel::<crate::AgentEvent>(256);
-        let pump = tokio::spawn(async move { while ev_rx.recv().await.is_some() {} });
         let label = args
             .get("label")
             .and_then(|l| l.as_str())
             .map(String::from)
             .unwrap_or_else(|| prompt.chars().take(48).collect());
+        let (ev_tx, mut ev_rx) = tokio::sync::mpsc::channel::<crate::AgentEvent>(256);
+        // Always drain the child stream (a full channel would deadlock the
+        // child loop); tool calls are additionally forwarded to the parent
+        // event stream so parallel subagents are visible in the UI.
+        let parent = self.deps.events.clone();
+        let fwd_label = label.clone();
+        let pump = tokio::spawn(async move {
+            while let Some(ev) = ev_rx.recv().await {
+                if let (Some(parent), crate::AgentEvent::ToolCallEnd { name, is_error, .. }) =
+                    (&parent, ev)
+                {
+                    let _ = parent
+                        .send(crate::AgentEvent::SubagentToolCall {
+                            label: fwd_label.clone(),
+                            name,
+                            is_error,
+                        })
+                        .await;
+                }
+            }
+        });
         if let Some(events) = &self.deps.events {
             let _ = events
                 .send(crate::AgentEvent::SubagentStarted {
@@ -199,7 +218,7 @@ impl TaskTool {
         if let Some(events) = &self.deps.events {
             let _ = events
                 .send(crate::AgentEvent::SubagentFinished {
-                    label,
+                    label: label.clone(),
                     is_error: !matches!(outcome, crate::TurnOutcome::Completed { .. }),
                     elapsed_ms: started.elapsed().as_millis() as u64,
                 })

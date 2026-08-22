@@ -79,3 +79,19 @@ inline-streaming; nothing here introduces alternate-screen or TUI frameworks.
   void; parallel tasks interleave naturally through the shared channel.
 - **`/theme [dark|light|plain]`**: runtime switch via new
   `Core::set_theme/effective_theme` override seam; no-arg lists themes.
+
+## Slice 3 — cost, search, session browser, subagent streams
+
+- **Cost estimates**: `pricing.rs` maps model families to USD/MTok
+  (substring-matched; unknown models omit dollars instead of guessing).
+  `/cost` shows `~$x`; the completed-turn footer includes it.
+- **Ctrl-R reverse history search**: readline-style — type to refine, Ctrl-R
+  for older matches, Enter accepts, Esc restores the pre-search buffer
+  (`Editor::begin_search/…/cancel_search` with draft snapshot).
+- **Session browser**: `/sessions` shows each ledger's first user prompt
+  (bounded JSONL head scan) and relative age; mtime-sorted.
+- **Subagent tool streams**: child `ToolCallEnd`s forward to the parent as
+  `AgentEvent::SubagentToolCall{label,name,is_error}` rendered indented under
+  the ◆ header — parallel fan-out is now observable live. The child channel
+  is always drained (a full channel would deadlock the subagent); forwarding
+  is best-effort on top of that invariant.

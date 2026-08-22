@@ -15,6 +15,7 @@ pub enum Action {
     Submit,
     HistoryPrev,
     HistoryNext,
+    HistorySearch,
     Complete,
     CancelOrClear,
     Exit,
@@ -34,6 +35,7 @@ pub fn map_key(code: KeyCode, mods: KeyModifiers, running: bool) -> Action {
         }
         KeyCode::Char('d') if mods.contains(KeyModifiers::CONTROL) => Action::Exit,
         KeyCode::Char('u') if mods.contains(KeyModifiers::CONTROL) => Action::ClearLine,
+        KeyCode::Char('r') if mods.contains(KeyModifiers::CONTROL) => Action::HistorySearch,
         KeyCode::Char('w') if mods.contains(KeyModifiers::CONTROL) => Action::DeleteWordBack,
         KeyCode::Backspace if mods.contains(KeyModifiers::ALT) => Action::DeleteWordBack,
         KeyCode::Char('b') if mods.contains(KeyModifiers::ALT) => Action::WordLeft,
