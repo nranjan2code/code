@@ -68,13 +68,22 @@ constrains *what the process can touch* even when allowed.
   (Landlock ABI v4) and refuses to run when the kernel can't enforce that
   denial (fail-closed `PartiallyEnforced` check). Workspace-write keeps the
   network open — build tooling legitimately needs it.
+- Learned allow rules: pressing `[p]` on an approval persists a SCOPED rule
+  derived from the call — `bash(<first-word> *)`, `<write|edit>(<path>)`,
+  `mcp(<server>/*)`, `task(<label>)` — into
+  `.vakcoder/permissions.local.toml` (trusted workspaces only). Every spec
+  is round-trip validated (must parse AND match the triggering call) before
+  it is written. Loaded at Core startup for trusted workspaces and merged
+  into every engine build (`exec`/`plan` included); because evaluation is
+  severity-aggregated, a learned Allow can never shadow an explicit Deny.
+  `[a]` remains session-only for calls that cannot be scoped safely
+  (e.g. opaque bash with command substitution).
 - Known semantics: on macOS `/tmp` resolves to `/private/tmp`, so tmp writes
   are permitted in workspace-write mode by design (output spill files rely on
   it). Everything else outside the cwd is blocked at kernel level.
 
 ## Later
 
-- session-scoped "always allow" learned rules persisted to project config
 - OS sandbox backends (Seatbelt/Landlock) as a second enforcement layer under
   the same Decision vocabulary
 

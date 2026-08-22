@@ -20,6 +20,9 @@ use vak_tools::sandbox::SandboxMode;
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("system-prompt.md");
 
+/// Re-exported so consumers (and tests) can name config types via vak_core.
+pub use vak_config;
+
 #[derive(Debug, thiserror::Error)]
 pub enum CoreError {
     #[error("provider auth missing: set {env} for provider '{provider}'")]
@@ -51,6 +54,18 @@ struct CoreInner {
     provider_instance: std::sync::Mutex<Option<Arc<dyn Provider>>>,
     sessions_home_override: std::sync::Mutex<Option<PathBuf>>,
     breaker: Arc<vak_agent::CircuitBreaker>,
+    trust_project_config: bool,
+    extra_allow: std::sync::Mutex<Vec<String>>,
+}
+
+/// Learned permission rules live outside the main config so they can be
+/// written at runtime without touching (possibly committed) project config.
+pub const PERMISSIONS_LOCAL_FILE: &str = ".vakcoder/permissions.local.toml";
+
+#[derive(serde::Deserialize, Default)]
+struct PermissionsLocal {
+    #[serde(default)]
+    allow: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -82,6 +97,11 @@ impl Core {
                 cooldown: std::time::Duration::from_secs(config.circuit_breaker_cooldown_secs),
             },
         ));
+        let extra_allow = if trust_project_config {
+            load_permissions_local(&cwd)
+        } else {
+            Vec::new()
+        };
         Ok(Core {
             inner: Arc::new(CoreInner {
                 config,
@@ -96,6 +116,8 @@ impl Core {
                 provider_instance: std::sync::Mutex::new(None),
                 sessions_home_override: std::sync::Mutex::new(None),
                 breaker,
+                trust_project_config,
+                extra_allow: std::sync::Mutex::new(extra_allow),
             }),
         })
     }
@@ -159,6 +181,65 @@ impl Core {
         if let Ok(mut t) = self.inner.theme_override.lock() {
             *t = Some(theme);
         }
+    }
+
+    /// Persists a learned allow rule to `.vakcoder/permissions.local.toml`
+    /// (and this process's in-memory engine inputs). Trusted workspaces only:
+    /// an untrusted session must not be able to write grant files. Rules are
+    /// severity-aggregated by the engine, so a learned Allow can never
+    /// shadow an explicit Deny from any config layer.
+    pub fn learn_allow_rule(&self, spec: &str) -> Result<(), CoreError> {
+        vak_permission::Rule::parse(spec).map_err(CoreError::Rule)?;
+        if !self.inner.trust_project_config {
+            return Err(CoreError::Config(vak_config::ConfigError::Read {
+                path: std::path::PathBuf::from(PERMISSIONS_LOCAL_FILE),
+                source: std::io::Error::other(
+                    "untrusted workspace: refusing to persist permission rules",
+                ),
+            }));
+        }
+        let path = self.inner.cwd.join(PERMISSIONS_LOCAL_FILE);
+        let mut rules = load_permissions_local(&self.inner.cwd);
+        if !rules.iter().any(|r| r == spec) {
+            rules.push(spec.to_string());
+        }
+        self.write_permissions_local(&path, &rules)?;
+        if let Ok(mut extra) = self.inner.extra_allow.lock() {
+            *extra = rules;
+        }
+        Ok(())
+    }
+
+    fn write_permissions_local(
+        &self,
+        path: &std::path::Path,
+        rules: &[String],
+    ) -> Result<(), CoreError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| CoreError::Session(vak_session::SessionError::Io(e)))?;
+        }
+        let mut body = String::from(
+            "# Learned 'always allow' rules — written when you press [p] on an approval.\nallow = [\n",
+        );
+        for r in rules {
+            body.push_str(&format!("  \"{r}\",\n"));
+        }
+        body.push_str("]\n");
+        let tmp = path.with_extension("toml.tmp");
+        std::fs::write(&tmp, body)
+            .and_then(|_| std::fs::rename(&tmp, path))
+            .map_err(|e| CoreError::Session(vak_session::SessionError::Io(e)))?;
+        Ok(())
+    }
+
+    pub fn extra_allow_snapshot(&self) -> Vec<String> {
+        self.inner
+            .extra_allow
+            .lock()
+            .ok()
+            .map(|e| e.clone())
+            .unwrap_or_default()
     }
 
     pub fn effective_theme(&self) -> String {
@@ -432,7 +513,10 @@ impl Core {
         };
         cfg.permission = Some(match permission {
             Some(p) => p,
-            None => std::sync::Arc::new(build_engine(&self.inner.config)?),
+            None => std::sync::Arc::new(build_engine_with(
+                &self.inner.config,
+                &self.extra_allow_snapshot(),
+            )?),
         });
         let Some(engine) = cfg.permission.clone() else {
             return Err(CoreError::MissingEngine);
@@ -586,6 +670,15 @@ impl Core {
 pub fn build_engine(
     config: &vak_config::Config,
 ) -> Result<vak_permission::PermissionEngine, CoreError> {
+    build_engine_with(config, &[])
+}
+
+/// `extra` carries learned rules from permissions.local.toml; the engine
+/// aggregates by severity, so they can never shadow explicit denies.
+pub fn build_engine_with(
+    config: &vak_config::Config,
+    extra: &[String],
+) -> Result<vak_permission::PermissionEngine, CoreError> {
     let mut specs: Vec<String> = Vec::new();
     for (list, prefix) in [
         (&config.deny, "-"),
@@ -601,6 +694,7 @@ pub fn build_engine(
             specs.push(spec);
         }
     }
+    specs.extend(extra.iter().cloned());
     Ok(vak_permission::PermissionEngine::from_rule_strings(&specs)?)
 }
 
@@ -658,6 +752,16 @@ pub fn build_hooks(config: &vak_config::Config) -> Result<Vec<vak_hooks::HookDef
         });
     }
     Ok(out)
+}
+
+fn load_permissions_local(cwd: &std::path::Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(cwd.join(PERMISSIONS_LOCAL_FILE)) else {
+        return Vec::new();
+    };
+    match toml::from_str::<PermissionsLocal>(&text) {
+        Ok(p) => p.allow,
+        Err(_) => Vec::new(),
+    }
 }
 
 fn self_path() -> std::path::PathBuf {

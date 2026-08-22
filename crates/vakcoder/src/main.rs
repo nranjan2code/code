@@ -589,7 +589,7 @@ async fn run_flow_exec(
         std::sync::Arc::new(vak_agent::AutoDeny)
     });
 
-    let engine = match vak_core::build_engine(core.config()) {
+    let engine = match vak_core::build_engine_with(core.config(), &core.extra_allow_snapshot()) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("error: {e}");
@@ -1028,7 +1028,7 @@ async fn run_plan(cwd: PathBuf, task: String, yes: bool, worktree: bool, trusted
     } else {
         std::sync::Arc::new(vak_agent::AutoDeny)
     });
-    let engine = match vak_core::build_engine(core.config()) {
+    let engine = match vak_core::build_engine_with(core.config(), &core.extra_allow_snapshot()) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("error: {e}");

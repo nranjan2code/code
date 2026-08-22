@@ -259,6 +259,37 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                         req.tool
                                     ));
                                 }
+                                KeyCode::Char('p' | 'P') => match learned_spec(
+                                    &req.tool,
+                                    &req.args_json,
+                                ) {
+                                    Some(spec) => match core.learn_allow_rule(&spec) {
+                                        Ok(()) => {
+                                            allowed.lock().await.insert(req.tool.clone());
+                                            let _ = req.respond.send(true);
+                                            screen.clear_input();
+                                            screen.accent(&format!(
+                                                "✓ saved {} → {}",
+                                                spec,
+                                                vak_core::PERMISSIONS_LOCAL_FILE
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            approvals.push_front(req);
+                                            screen.clear_input();
+                                            screen.error(&format!("save failed: {e}"));
+                                            continue;
+                                        }
+                                    },
+                                    None => {
+                                        approvals.push_front(req);
+                                        screen.clear_input();
+                                        screen.dim(
+                                            "cannot scope this call safely — [a] for session-only, [n] deny",
+                                        );
+                                        continue;
+                                    }
+                                },
                                 KeyCode::Char('n' | 'N' | 'q' | 'Q') | KeyCode::Esc => {
                                     let _ = req.respond.send(false);
                                     screen.clear_input();
@@ -772,7 +803,48 @@ fn draw_approval(screen: &mut Screen, theme: &Theme, req: &ApprovalRequest) {
     if !req.reason.trim().is_empty() {
         screen.dim(&format!("    rule: {}", trunc_cells(&req.reason, 90)));
     }
-    screen.dim("    [y] allow once · [a] always this tool · [n]/Esc deny");
+    screen
+        .dim("    [y] allow once · [a] always this session · [p] save scoped rule · [n]/Esc deny");
+}
+
+/// Derives a scoped, round-trip-validated rule spec from the call being
+/// approved. Returns None when no safe scope can be derived (opaque bash,
+/// missing args) — those stay session-only via [a].
+pub fn learned_spec(tool: &str, args_json: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(args_json).ok()?;
+    let spec = match tool {
+        "bash" => {
+            let cmd = v.get("command").and_then(|c| c.as_str())?;
+            let word = cmd
+                .split_whitespace()
+                .next()?
+                .trim_start_matches(|c: char| {
+                    !c.is_ascii_alphanumeric() && c != '_' && c != '-' && c != '.'
+                })
+                .to_string();
+            if word.is_empty()
+                || !word
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+            {
+                return None;
+            }
+            format!("bash({word} *)")
+        }
+        "write" | "edit" => format!("{}({})", tool, v.get("path").and_then(|p| p.as_str())?),
+        "mcp" => {
+            let server = v.get("server").and_then(|s| s.as_str())?;
+            if v.get("action").and_then(|a| a.as_str()) != Some("call") {
+                return None;
+            }
+            format!("mcp({server}/*)")
+        }
+        "task" => format!("task({})", v.get("label").and_then(|l| l.as_str())?),
+        _ => return None,
+    };
+    // Round-trip gate: the persisted rule must parse AND match THIS call.
+    let rule = vak_permission::Rule::parse(&spec).ok()?;
+    rule.matches(tool, &v).then_some(spec)
 }
 
 /// Renders the proposed edit as a unified diff so the decision is informed

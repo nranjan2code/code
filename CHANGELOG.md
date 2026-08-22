@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Learned allow rules**: `[p]` on an approval persists a scoped rule
+  (`bash(cargo *)`, `edit(src/x.rs)`, `mcp(server/*)`, …) to
+  `.vakcoder/permissions.local.toml`; loaded into every future run in that
+  workspace (trusted only), round-trip validated, and unable to shadow
+  explicit denies. `[a]` stays session-only for unscopeable calls.
 - Read-only sandbox on Linux now denies all outbound TCP bind/connect
   (Landlock ABI v4) and fails closed when the kernel cannot enforce it.
   New enforcement smoke scenario.

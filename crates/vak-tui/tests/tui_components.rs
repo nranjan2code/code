@@ -434,3 +434,41 @@ fn search_cancel_restores_buffer_being_edited() {
     assert_eq!(e.view().0, "hi");
     assert_eq!(e.view().1, 2);
 }
+
+#[test]
+fn learned_spec_scopes_calls_and_rejects_unscopeable() {
+    // bash: scoped to first word
+    let s = vak_tui::app::learned_spec("bash", r#"{"command":"cargo test --lib"}"#);
+    assert_eq!(s.as_deref(), Some("bash(cargo *)"));
+
+    // opaque bash (command substitution) cannot be scoped safely
+    assert_eq!(
+        vak_tui::app::learned_spec("bash", r#"{"command":"echo $(rm -rf /)"}"#),
+        None
+    );
+
+    // file tools: exact-path scope that must round-trip match the call
+    let args = r#"{"path":"src/lib.rs","old_string":"a","new_string":"b"}"#;
+    let s = vak_tui::app::learned_spec("edit", args);
+    assert_eq!(s.as_deref(), Some("edit(src/lib.rs)"));
+
+    // mcp: server-scoped, only for calls
+    assert_eq!(
+        vak_tui::app::learned_spec("mcp", r#"{"action":"call","server":"gh","tool":"pr"}"#),
+        Some("mcp(gh/*)".to_string())
+    );
+    assert_eq!(
+        vak_tui::app::learned_spec("mcp", r#"{"action":"list"}"#),
+        None
+    );
+
+    // unknown tools get no persisted rule
+    assert_eq!(vak_tui::app::learned_spec("mystery", "{}"), None);
+
+    // round-trip: the derived bash rule actually matches a sibling command
+    let rule = vak_permission::Rule::parse("bash(cargo *)").expect("parses");
+    assert!(rule.matches(
+        "bash",
+        &serde_json::json!({"command": "cargo build --release"})
+    ));
+}

@@ -1762,6 +1762,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+ "toml",
  "uuid",
  "vak-agent",
  "vak-config",
@@ -1937,6 +1938,7 @@ dependencies = [
  "vak-agent",
  "vak-core",
  "vak-llm",
+ "vak-permission",
  "vak-session",
 ]
 
