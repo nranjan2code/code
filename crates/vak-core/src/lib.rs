@@ -370,11 +370,12 @@ impl Core {
         events: tokio::sync::mpsc::Sender<AgentEvent>,
     ) -> Result<TurnOutcome, CoreError> {
         let (outcome, _session) = self
-            .run_turn_with(session, prompt, cancel, None, None, events)
+            .run_turn_with(session, prompt, cancel, None, None, None, events)
             .await?;
         Ok(outcome)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_turn_with(
         &self,
         session: SessionLog,
@@ -382,6 +383,7 @@ impl Core {
         cancel: CancellationToken,
         approver: Option<std::sync::Arc<dyn vak_agent::Approver>>,
         permission: Option<std::sync::Arc<vak_permission::PermissionEngine>>,
+        steering: Option<std::sync::Arc<vak_agent::SteeringQueues>>,
         events: tokio::sync::mpsc::Sender<AgentEvent>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
         let provider = self.provider()?;
@@ -505,7 +507,10 @@ impl Core {
             }
         }
 
-        let steering = vak_agent::SteeringQueues::new();
+        let steering = match steering {
+            Some(s) => s,
+            None => std::sync::Arc::new(vak_agent::SteeringQueues::new()),
+        };
         let mut agent = Agent::new(provider, session, cfg);
         let outcome = agent.run(prompt, &steering, cancel, events).await;
         let session = agent.into_session().await;

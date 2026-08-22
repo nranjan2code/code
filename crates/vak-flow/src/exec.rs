@@ -349,7 +349,7 @@ async fn execute_node(
             let _ = events.send(format!("⏸ approval needed: {message}")).await;
             match &deps.approver {
                 Some(a) => {
-                    if a.approve("approval", &message).await {
+                    if a.approve("approval", "", &message).await {
                         Ok("approved".into())
                     } else {
                         Err("denied by user".into())

@@ -23,6 +23,7 @@ proc = subprocess.Popen(
     stdout=slave,
     stderr=slave,
     env=ENV,
+    cwd="/tmp/vak-smoke/project",
     close_fds=True,
 )
 os.close(slave)
@@ -57,7 +58,9 @@ try:
     send("/cost\r")
     pump(0.8)
     send("hello world\r")
-    pump(1.5)
+    pump(2.0)
+    send("y")
+    pump(2.0)
     send("/exit\r")
     deadline = time.time() + 10
     while time.time() < deadline:
@@ -86,9 +89,11 @@ clean = clean.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 text = clean.decode("utf-8", "replace")
 checks = {
     "banner version": "0.1.0" in text,
-    "help lists /model": "/model <name>" in text,
+    "help lists /model": "/model" in text and "<name>" in text,
     "cost line": "tokens in 0 / out 0" in text,
     "prompt echo": "hello world" in text,
+    "approval card": "needs approval" in text and "echo smoke-ok" in text,
+    "approval answered": "✓ allowed bash" in text,
     "tool started": "▸ bash" in text,
     "tool succeeded": "✓ bash" in text,
     "final answer streamed": "smoke-ok. Task complete." in text,

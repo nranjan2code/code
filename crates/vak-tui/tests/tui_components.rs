@@ -1,9 +1,13 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use crossterm::event::{KeyCode, KeyModifiers};
+use std::fs;
+use std::path::Path;
 use vak_tui::commands::{Command, help_text, parse};
+use vak_tui::complete::complete;
 use vak_tui::editor::Editor;
 use vak_tui::keys::{Action, map_key};
+use vak_tui::width::{char_width, str_width};
 
 fn type_str(e: &mut Editor, s: &str) {
     for c in s.chars() {
@@ -167,4 +171,206 @@ fn command_parsing() {
     assert!(parse("plain text").is_none());
     assert!(parse("").is_none());
     assert!(help_text().lines().count() > 3);
+}
+
+#[test]
+fn editor_multiline_newline_cursor_math() {
+    let mut e = Editor::new();
+    type_str(&mut e, "ab\ncd");
+    assert_eq!(e.view(), ("ab\ncd", 5));
+    assert_eq!(e.line_col(), (1, 2));
+    e.left();
+    e.left();
+    assert_eq!(e.line_col(), (1, 0));
+    assert_eq!(e.text_before(), "ab\n");
+    assert_eq!(e.text_after(), "cd");
+    e.left();
+    assert_eq!(e.line_col(), (0, 2));
+    assert!(e.is_multiline());
+    assert_eq!(e.take(), "ab\ncd");
+    assert!(!e.is_multiline());
+    assert_eq!(e.line_col(), (0, 0));
+}
+
+#[test]
+fn editor_cjk_line_col_and_width() {
+    let mut e = Editor::new();
+    type_str(&mut e, "中\n文");
+    assert_eq!(e.view().1, 3);
+    assert_eq!(e.line_col(), (1, 1));
+    assert_eq!(str_width(e.view().0), 4);
+    assert_eq!(char_width('中'), 2);
+    assert_eq!(char_width('文'), 2);
+    assert_eq!(char_width('\n'), 0);
+    assert_eq!(char_width('\u{301}'), 0);
+    assert_eq!(str_width("中文"), 4);
+    e.left();
+    assert_eq!(e.line_col(), (1, 0));
+    e.left();
+    assert_eq!(e.line_col(), (0, 1));
+}
+
+#[test]
+fn editor_paste_str_with_newlines() {
+    let mut e = Editor::new();
+    type_str(&mut e, "a");
+    e.paste_str("中\n文\n");
+    assert_eq!(e.view().0, "a中\n文\n");
+    assert_eq!(e.view().1, 5);
+    assert_eq!(e.line_col(), (2, 0));
+    assert!(e.is_multiline());
+}
+
+#[test]
+fn editor_history_save_load_roundtrip() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("hist").join("history.txt");
+    let mut e = Editor::new();
+    type_str(&mut e, "alpha");
+    let _ = e.take();
+    type_str(&mut e, "beta");
+    let _ = e.take();
+    type_str(&mut e, "beta");
+    let _ = e.take();
+    e.save_history(&path);
+    assert!(path.exists());
+
+    let mut loaded = Editor::new();
+    loaded.load_history(&path);
+    loaded.history_prev();
+    assert_eq!(loaded.view().0, "beta");
+    loaded.history_prev();
+    assert_eq!(loaded.view().0, "alpha");
+    loaded.history_next();
+    loaded.history_next();
+    assert_eq!(loaded.view().0, "", "returns to empty draft");
+
+    let manual = dir.path().join("manual.txt");
+    fs::write(&manual, "\nfirst\n\nsecond\nsecond\n").expect("write fixture");
+    let mut e2 = Editor::new();
+    e2.load_history(&manual);
+    e2.history_prev();
+    e2.history_prev();
+    e2.history_prev();
+    assert_eq!(e2.view().0, "first", "empty lines and dup-of-last skipped");
+
+    let big = dir.path().join("big.txt");
+    let content: String = (0..600).map(|i| format!("entry-{i}\n")).collect();
+    fs::write(&big, content).expect("write big fixture");
+    let mut e3 = Editor::new();
+    e3.load_history(&big);
+    let capped = dir.path().join("capped.txt");
+    e3.save_history(&capped);
+    let saved = fs::read_to_string(&capped).expect("read capped");
+    assert_eq!(saved.lines().count(), 500);
+    assert_eq!(saved.lines().next(), Some("entry-100"), "keeps newest 500");
+}
+
+#[test]
+fn tab_alt_enter_and_ctrl_j_mappings() {
+    assert!(matches!(
+        map_key(KeyCode::Tab, KeyModifiers::NONE, false),
+        Action::Complete
+    ));
+    assert!(matches!(
+        map_key(KeyCode::Enter, KeyModifiers::ALT, false),
+        Action::Insert('\n')
+    ));
+    assert!(matches!(
+        map_key(KeyCode::Char('j'), KeyModifiers::CONTROL, false),
+        Action::Insert('\n')
+    ));
+    assert!(matches!(
+        map_key(KeyCode::Enter, KeyModifiers::NONE, false),
+        Action::Submit,
+    ));
+}
+
+#[test]
+fn complete_command_names_by_prefix() {
+    let cmds = [
+        ("help", "show help"),
+        ("history", "past prompts"),
+        ("exit", "quit"),
+    ];
+    let out = complete("/h", &cmds, Path::new("."));
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[0].replace, "/help ");
+    assert_eq!(out[0].hint, "show help");
+    assert_eq!(out[1].replace, "/history ");
+    assert_eq!(out[1].hint, "past prompts");
+
+    let all = complete("/", &cmds, Path::new("."));
+    assert_eq!(all.len(), 3);
+
+    assert!(complete("plain words", &cmds, Path::new(".")).is_empty());
+    assert!(complete("", &cmds, Path::new(".")).is_empty());
+}
+
+#[test]
+fn complete_at_paths_in_temp_fixture() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    fs::create_dir_all(root.join("src/deep")).expect("mkdirs");
+    fs::write(root.join("src/main.rs"), "fn main() {}\n").expect("write");
+    fs::write(root.join("README.md"), "# t\n").expect("write");
+    fs::create_dir(root.join(".hidden")).expect("mkdir");
+    fs::write(root.join(".secret"), "").expect("write");
+    fs::create_dir(root.join("target")).expect("mkdir");
+    fs::write(root.join("target/out.bin"), "").expect("write");
+
+    let out = complete("run @sr", &[], root);
+    assert_eq!(out.len(), 3);
+    assert_eq!(
+        out.iter().map(|s| s.replace.as_str()).collect::<Vec<_>>(),
+        ["@src/", "@src/deep/", "@src/main.rs"],
+        "dirs-first; descendants share the rel-path prefix"
+    );
+    assert_eq!(out[0].hint, "dir");
+
+    let under = complete("run @src/", &[], root);
+    assert_eq!(under.len(), 2);
+    assert_eq!(under[0].replace, "@src/deep/");
+    assert_eq!(under[0].hint, "dir");
+    assert_eq!(under[1].replace, "@src/main.rs");
+    assert_eq!(under[1].hint, "file");
+
+    let bare = complete("@", &[], root);
+    assert_eq!(
+        bare.iter().map(|s| s.replace.as_str()).collect::<Vec<_>>(),
+        ["@src/", "@src/deep/", "@README.md", "@src/main.rs"],
+        "dirs-first then alpha; dotfiles and skip-list dirs excluded"
+    );
+}
+
+#[test]
+fn complete_dotfiles_only_when_prefix_starts_with_dot() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    fs::create_dir(root.join(".hidden")).expect("mkdir");
+    fs::write(root.join(".secret"), "").expect("write");
+    fs::write(root.join("visible.txt"), "").expect("write");
+
+    let no_dot = complete("@v", &[], root);
+    assert_eq!(no_dot.len(), 1);
+    assert_eq!(no_dot[0].replace, "@visible.txt");
+
+    let with_dot = complete("@.", &[], root);
+    assert_eq!(with_dot.len(), 2);
+    assert_eq!(with_dot[0].replace, "@.hidden/");
+    assert_eq!(with_dot[0].hint, "dir");
+    assert_eq!(with_dot[1].replace, "@.secret");
+}
+
+#[test]
+fn complete_caps_results_at_50() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for i in 0..80 {
+        fs::write(dir.path().join(format!("f{i:03}.txt")), "").expect("write");
+    }
+    let out = complete("@f", &[], dir.path());
+    assert_eq!(out.len(), 50);
+    assert_eq!(out.first().expect("nonempty").replace, "@f000.txt");
+    assert_eq!(out.last().expect("nonempty").replace, "@f049.txt");
+    assert!(out.windows(2).all(|w| w[0].replace < w[1].replace));
 }

@@ -769,7 +769,7 @@ async fn run_exec(
     });
 
     let runner = tokio::spawn(async move {
-        core.run_turn_with(session, &prompt, cancel, approver, None, tx)
+        core.run_turn_with(session, &prompt, cancel, approver, None, None, tx)
             .await
     });
 

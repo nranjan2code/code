@@ -64,6 +64,14 @@ pub struct FileConfig {
     pub context_window: Option<u64>,
     #[serde(default)]
     pub mcp: McpConfig,
+    pub ui: UiSettings,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct UiSettings {
+    pub theme: Option<String>,
+    pub bell: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -112,7 +120,15 @@ pub struct Config {
     pub circuit_breaker_cooldown_secs: u64,
     pub context_window: u64,
     pub mcp: McpConfig,
+    pub ui: UiResolved,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UiResolved {
+    /// "dark" | "light" | "plain"; anything else normalizes to "dark".
+    pub theme: String,
+    pub bell: bool,
 }
 
 impl Default for Config {
@@ -138,6 +154,10 @@ impl Default for Config {
             circuit_breaker_cooldown_secs: 60,
             context_window: 128_000,
             mcp: McpConfig::default(),
+            ui: UiResolved {
+                theme: "dark".into(),
+                bell: true,
+            },
             warnings: Vec::new(),
         }
     }
@@ -286,6 +306,16 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     for (name, srv) in merged.mcp.servers {
         cfg.mcp.servers.insert(name, srv);
     }
+    cfg.ui.theme = merged.ui.theme.clone().unwrap_or_else(|| "dark".into());
+    match cfg.ui.theme.as_str() {
+        "dark" | "light" | "plain" => {}
+        other => {
+            cfg.warnings
+                .push(format!("unknown ui.theme '{other}'; using 'dark'"));
+            cfg.ui.theme = "dark".into();
+        }
+    }
+    cfg.ui.bell = merged.ui.bell.unwrap_or(true);
 
     if let Some(name) = &merged.profile {
         if let Some(profile) = merged.profiles.get(name) {
@@ -345,10 +375,12 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "circuit_breaker_cooldown_secs",
     "context_window",
     "mcp",
+    "ui",
 ];
 const KNOWN_PROFILE_KEYS: &[&str] = &["model", "provider", "permission_mode", "max_turns"];
 const KNOWN_HOOK_KEYS: &[&str] = &["event", "match", "command", "timeout_ms"];
 const KNOWN_MCP_SERVER_KEYS: &[&str] = &["command", "args", "env"];
+const KNOWN_UI_KEYS: &[&str] = &["theme", "bell"];
 
 /// A typo'd key must be visible, not silently dead: diff the raw TOML
 /// against the known schema and surface every unrecognized key.
@@ -411,6 +443,16 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
                         ));
                     }
                 }
+            }
+        }
+    }
+    if let Some(ui) = top.get("ui").and_then(toml::Value::as_table) {
+        for key in ui.keys() {
+            if !KNOWN_UI_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown ui key 'ui.{key}' (ignored)",
+                    path.display()
+                ));
             }
         }
     }
@@ -484,6 +526,12 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     base.hooks.extend(over.hooks);
     for (name, srv) in over.mcp.servers {
         base.mcp.servers.insert(name, srv);
+    }
+    if over.ui.theme.is_some() {
+        base.ui.theme = over.ui.theme;
+    }
+    if over.ui.bell.is_some() {
+        base.ui.bell = over.ui.bell;
     }
     for (k, v) in over.profiles {
         base.profiles.insert(k, v);

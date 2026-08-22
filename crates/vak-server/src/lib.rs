@@ -91,7 +91,7 @@ struct HttpApprover {
 
 #[async_trait::async_trait]
 impl Approver for HttpApprover {
-    async fn approve(&self, tool: &str, reason: &str) -> bool {
+    async fn approve(&self, tool: &str, args_json: &str, reason: &str) -> bool {
         let id = uuid::Uuid::now_v7().to_string();
         let (respond, rx) = oneshot::channel();
         self.pending
@@ -106,6 +106,7 @@ impl Approver for HttpApprover {
         let _ = self.events_tx.send(AgentEvent::ApprovalRequested {
             id: id.clone(),
             tool: tool.to_string(),
+            args_json: args_json.to_string(),
             reason: reason.to_string(),
         });
         let approved = rx.await.unwrap_or(false);
@@ -282,7 +283,15 @@ async fn run_prompt(
 
     tokio::spawn(async move {
         let outcome = core
-            .run_turn_with(taken, &body.prompt, cancel, Some(approver), None, events)
+            .run_turn_with(
+                taken,
+                &body.prompt,
+                cancel,
+                Some(approver),
+                None,
+                Some(steering.clone()),
+                events,
+            )
             .await;
         // Reset the token so the next run on this session is not born
         // already-cancelled.

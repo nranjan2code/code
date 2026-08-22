@@ -14,6 +14,7 @@ Phases with exit criteria. Each phase ships a usable product.
 | 7 ✅ | Phase 7 complete: eval harness, HTTP+SSE server, checkpoints/rewind, worktree isolation | all slices tested + e2e through the binary |
 | post-v0.1.0 ✅ | Reliability pass: retry+backoff, watchdog, session resume, server cancel, graceful shutdown, circuit breaker | failure matrix in docs/design/15-reliability.md |
 | post-v0.1.0 ✅ (2) | OpenCode Zen provider + .env secrets; live-model evals; auto-compaction for long-horizon sessions (docs/design/17-context.md) | 10/10 Ox Alpha dogfood battery; compaction overflow tests; 134 tests green |
+| post-v0.1.0 ✅ (3) | TUI/UX pass: markdown+syntax rendering, tool cards w/ diffs, live status row, approval queue+always-allow, multiline+paste input, completions, /resume+/rewind, themes (docs/design/18-tui.md); steering wired through Core | PTY smoke 10/10 incl. approval flow; workspace fmt/clippy/tests green |
 
 ## Decisions locked during research (2026-08)
 

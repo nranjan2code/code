@@ -38,3 +38,42 @@ fn unknown_config_keys_warn_instead_of_failing() {
         cfg.warnings
     );
 }
+
+#[test]
+fn ui_defaults_apply_when_section_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".vakcoder")).unwrap();
+
+    let cfg = load_with_trust(dir.path(), true).unwrap();
+    assert_eq!(cfg.ui.theme, "dark");
+    assert!(cfg.ui.bell);
+}
+
+#[test]
+fn ui_layer_overrides_and_unknown_theme_normalizes_to_dark() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join(".vakcoder");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("config.toml"),
+        "[ui]\ntheme = \"light\"\nbell = false\n",
+    )
+    .unwrap();
+    let cfg = load_with_trust(dir.path(), true).unwrap();
+    assert_eq!(cfg.ui.theme, "light");
+    assert!(!cfg.ui.bell);
+
+    std::fs::write(
+        project.join("config.toml"),
+        "[ui]\ntheme = \"neon\"\nbell = true\n",
+    )
+    .unwrap();
+    let cfg = load_with_trust(dir.path(), true).unwrap();
+    assert_eq!(cfg.ui.theme, "dark");
+    assert!(cfg.ui.bell);
+    assert!(
+        cfg.warnings.iter().any(|w| w.contains("ui.theme")),
+        "unknown theme must warn: {:?}",
+        cfg.warnings
+    );
+}

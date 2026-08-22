@@ -38,11 +38,13 @@ pub enum AgentEvent {
     ToolCallStart {
         id: String,
         name: String,
+        args_json: String,
     },
     ToolCallEnd {
         id: String,
         name: String,
         is_error: bool,
+        result_preview: Option<String>,
     },
     TurnEnd {
         usage: Usage,
@@ -67,6 +69,7 @@ pub enum AgentEvent {
     ApprovalRequested {
         id: String,
         tool: String,
+        args_json: String,
         reason: String,
     },
     RunFinished {
@@ -140,7 +143,7 @@ impl AgentConfig {
 
 #[async_trait::async_trait]
 pub trait Approver: Send + Sync {
-    async fn approve(&self, tool: &str, reason: &str) -> bool;
+    async fn approve(&self, tool: &str, args_json: &str, reason: &str) -> bool;
 }
 
 /// Errors worth surviving at run level: sustained fault windows, hung or
@@ -171,7 +174,7 @@ pub struct AutoApprove;
 
 #[async_trait::async_trait]
 impl Approver for AutoApprove {
-    async fn approve(&self, _tool: &str, _reason: &str) -> bool {
+    async fn approve(&self, _tool: &str, _args_json: &str, _reason: &str) -> bool {
         true
     }
 }
@@ -180,10 +183,37 @@ pub struct AutoDeny;
 
 #[async_trait::async_trait]
 impl Approver for AutoDeny {
-    async fn approve(&self, _tool: &str, _reason: &str) -> bool {
+    async fn approve(&self, _tool: &str, _args_json: &str, _reason: &str) -> bool {
         false
     }
 }
+
+/// Compact JSON preview of a tool input; capped so UI surfaces never
+/// absorb unbounded payloads.
+fn args_preview(input: &Value) -> String {
+    let json = serde_json::to_string(input).unwrap_or_else(|_| "{}".into());
+    truncate_chars(&json, ARGS_PREVIEW_LIMIT)
+}
+
+fn result_preview(content: &str) -> Option<String> {
+    if content.is_empty() {
+        None
+    } else {
+        Some(truncate_chars(content, RESULT_PREVIEW_LIMIT))
+    }
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
+const ARGS_PREVIEW_LIMIT: usize = 400;
+const RESULT_PREVIEW_LIMIT: usize = 2000;
 
 #[derive(Clone)]
 struct PendingToolCall {
@@ -800,6 +830,7 @@ async fn execute_one(
         .send(AgentEvent::ToolCallStart {
             id: call.id.clone(),
             name: call.name.clone(),
+            args_json: args_preview(&call.input),
         })
         .await;
 
@@ -816,17 +847,16 @@ async fn execute_one(
         .await;
         if pre.blocked {
             let reason = pre.reason.unwrap_or_else(|| "blocked by hook".into());
+            let content = format!("blocked by hook: {reason}");
             let _ = events
                 .send(AgentEvent::ToolCallEnd {
                     id: call.id.clone(),
                     name: call.name.clone(),
                     is_error: true,
+                    result_preview: result_preview(&content),
                 })
                 .await;
-            return (
-                call.id,
-                ToolRunOutput::Err(format!("blocked by hook: {reason}")),
-            );
+            return (call.id, ToolRunOutput::Err(content));
         }
     }
 
@@ -885,11 +915,15 @@ async fn execute_one(
         }
     }
 
+    let result_content = match &output {
+        ToolRunOutput::Ok(content) | ToolRunOutput::Err(content) => content.as_str(),
+    };
     let _ = events
         .send(AgentEvent::ToolCallEnd {
             id: call.id.clone(),
             name: call.name.clone(),
             is_error: matches!(output, ToolRunOutput::Err(_)),
+            result_preview: result_preview(result_content),
         })
         .await;
 
@@ -908,7 +942,12 @@ async fn authorize(
         Decision::Allow => Ok(()),
         Decision::Deny { reason } => Err(reason),
         Decision::Ask { reason } => match &config.approver {
-            Some(a) if a.approve(&call.name, &reason).await => Ok(()),
+            Some(a)
+                if a.approve(&call.name, &args_preview(&call.input), &reason)
+                    .await =>
+            {
+                Ok(())
+            }
             Some(_) => Err(format!("denied by user: {reason}")),
             None => Err(format!("{reason} (no approver available)")),
         },

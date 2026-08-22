@@ -5,8 +5,14 @@
 
 pub mod app;
 pub mod commands;
+pub mod complete;
+pub mod diffview;
 pub mod editor;
 pub mod keys;
+pub mod markdown;
 pub mod render;
+pub mod status;
+pub mod theme;
+pub mod width;
 
 pub use app::{UiConfig, run};

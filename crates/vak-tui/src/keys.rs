@@ -11,6 +11,7 @@ pub enum Action {
     Submit,
     HistoryPrev,
     HistoryNext,
+    Complete,
     CancelOrClear,
     Exit,
     Ignore,
@@ -28,6 +29,7 @@ pub fn map_key(code: KeyCode, mods: KeyModifiers, running: bool) -> Action {
             }
         }
         KeyCode::Char('d') if mods.contains(KeyModifiers::CONTROL) => Action::Exit,
+        KeyCode::Char('j') if mods.contains(KeyModifiers::CONTROL) => Action::Insert('\n'),
         KeyCode::Esc => {
             if running {
                 Action::CancelOrClear
@@ -35,6 +37,7 @@ pub fn map_key(code: KeyCode, mods: KeyModifiers, running: bool) -> Action {
                 Action::Ignore
             }
         }
+        KeyCode::Enter if mods.contains(KeyModifiers::ALT) => Action::Insert('\n'),
         KeyCode::Enter => Action::Submit,
         KeyCode::Backspace => Action::Backspace,
         KeyCode::Delete => Action::Delete,
@@ -44,6 +47,7 @@ pub fn map_key(code: KeyCode, mods: KeyModifiers, running: bool) -> Action {
         KeyCode::End => Action::End,
         KeyCode::Up => Action::HistoryPrev,
         KeyCode::Down => Action::HistoryNext,
+        KeyCode::Tab => Action::Complete,
         KeyCode::Char(c) => {
             if mods.is_empty() || mods == KeyModifiers::SHIFT {
                 Action::Insert(c)
