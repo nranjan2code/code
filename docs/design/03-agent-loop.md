@@ -32,6 +32,26 @@ No panics; session-write failures become `Failed`.
   sequential tool, inside every tool via child tokens.
 - **Projection invariant**: requests are built only from `derive_messages()`.
 
+## Stop gate (built-in premature-completion policy)
+
+Small models frequently end their turn mid-plan. The loop consults an
+internal `StopPolicy` (vak-agent) at every completion point, BEFORE
+returning `Completed`:
+
+- **marker gate**: final text ends with a bare plan marker, a non-heading
+  trailing `:` line, or an unclosed fenced code block → looks truncated;
+- **verify gate**: the run's initial prompt demanded executed verification
+  ("must pass", "run it", "prove that"…) and ZERO bash commands ran all run.
+
+On a hit, the gate reuses the stop-hook continuation machinery: emits
+`StopHookContinuation`, appends `[stop-guard]: <reason> / Please continue.`
+as a user message (model-visible ⇒ logged), and continues within max_turns.
+Hard cap `stop_policy.max_blocks` (default 2) per run — the gate can nudge,
+never trap. Config (`[stop_policy]`): `enabled/marker_gate/verify_gate/
+max_blocks`; unknown keys warn, `enabled = false` restores old behavior.
+External Stop hooks still run first and keep their own `[stop-hook]`
+prefix, so operator logs can tell them apart.
+
 ## Later phases
 
 - permission gate between extract_tool_calls and execute_batch (Phase 3)

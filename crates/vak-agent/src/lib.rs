@@ -7,9 +7,11 @@
 pub mod circuit;
 pub mod context;
 pub mod steering;
+pub mod stop_policy;
 pub mod task;
 
 pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
+pub use stop_policy::{BlockReason, StopPolicy};
 pub use task::{TaskDeps, TaskTool};
 
 use std::sync::Arc;
@@ -133,6 +135,8 @@ pub struct AgentConfig {
     pub run_retry_base_backoff_ms: u64,
     /// Long-horizon context policy (window, reserve, compaction trigger).
     pub context_policy: context::ContextPolicy,
+    /// Built-in premature-completion gate. None disables entirely.
+    pub stop_policy: Option<StopPolicy>,
 }
 
 impl AgentConfig {
@@ -155,6 +159,7 @@ impl AgentConfig {
             run_retry_attempts: 6,
             run_retry_base_backoff_ms: 2_000,
             context_policy: Default::default(),
+            stop_policy: Some(StopPolicy::default()),
         }
     }
 }
@@ -276,6 +281,14 @@ impl Agent {
         }
 
         let mut turn = 0usize;
+        let prompt_owned = prompt.to_string();
+        let mut bash_calls_this_run: u32 = 0;
+        let mut stop_blocks_left = self
+            .config
+            .stop_policy
+            .as_ref()
+            .map(|p| p.max_blocks)
+            .unwrap_or(0);
         loop {
             if cancel.is_cancelled() {
                 return TurnOutcome::Aborted { partial: None };
@@ -549,14 +562,41 @@ impl Agent {
                         continue;
                     }
                 }
+                if let Some(reason) = self
+                    .stop_gate(
+                        &prompt_owned,
+                        &response,
+                        bash_calls_this_run,
+                        &mut stop_blocks_left,
+                    )
+                    .await
+                    && self.guard_continue(reason, &events, turn).await
+                {
+                    turn += 1;
+                    continue;
+                }
                 return TurnOutcome::Completed { response };
             }
 
             let calls = extract_tool_calls(&response);
             if calls.is_empty() {
+                if let Some(reason) = self
+                    .stop_gate(
+                        &prompt_owned,
+                        &response,
+                        bash_calls_this_run,
+                        &mut stop_blocks_left,
+                    )
+                    .await
+                    && self.guard_continue(reason, &events, turn).await
+                {
+                    turn += 1;
+                    continue;
+                }
                 return TurnOutcome::Completed { response };
             }
 
+            bash_calls_this_run += calls.iter().filter(|c| c.name == "bash").count() as u32;
             let results = self.execute_batch(calls, &cancel, &events).await;
             let blocks = results
                 .into_iter()
@@ -584,6 +624,47 @@ impl Agent {
 
             turn += 1;
         }
+    }
+
+    /// Internal premature-completion gate. Returns a continuation reason
+    /// when the stop policy fires and budget remains.
+    async fn stop_gate(
+        &self,
+        prompt: &str,
+        response: &AssistantMessage,
+        bash_calls_this_run: u32,
+        blocks_left: &mut u32,
+    ) -> Option<String> {
+        let policy = self.config.stop_policy.as_ref()?;
+        if *blocks_left == 0 {
+            return None;
+        }
+        let reason = policy.evaluate(prompt, &response.text_content(), bash_calls_this_run)?;
+        *blocks_left -= 1;
+        Some(reason.message())
+    }
+
+    /// Appends the continue nudge (model-visible => logged) and reports
+    /// whether the loop may continue within max_turns.
+    async fn guard_continue(
+        &mut self,
+        reason: String,
+        events: &mpsc::Sender<AgentEvent>,
+        turn: usize,
+    ) -> bool {
+        if turn + 1 >= self.config.max_turns {
+            return false;
+        }
+        let _ = events
+            .send(AgentEvent::StopHookContinuation {
+                reason: reason.clone(),
+            })
+            .await;
+        let _ = self.session.lock().await.append_message(MessageRecord {
+            message: Message::user_text(format!("[stop-guard]: {reason}\nPlease continue.")),
+            meta: None,
+        });
+        true
     }
 
     /// Recovers the session ledger after a run (server/API consumers).

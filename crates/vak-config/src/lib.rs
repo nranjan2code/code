@@ -65,6 +65,7 @@ pub struct FileConfig {
     #[serde(default)]
     pub mcp: McpConfig,
     pub ui: UiSettings,
+    pub stop_policy: Option<StopPolicySettings>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -72,6 +73,14 @@ pub struct FileConfig {
 pub struct UiSettings {
     pub theme: Option<String>,
     pub bell: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct StopPolicySettings {
+    pub enabled: Option<bool>,
+    pub marker_gate: Option<bool>,
+    pub verify_gate: Option<bool>,
+    pub max_blocks: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -121,6 +130,7 @@ pub struct Config {
     pub context_window: u64,
     pub mcp: McpConfig,
     pub ui: UiResolved,
+    pub stop_policy: StopPolicyResolved,
     pub warnings: Vec<String>,
 }
 
@@ -129,6 +139,15 @@ pub struct UiResolved {
     /// "dark" | "light" | "plain"; anything else normalizes to "dark".
     pub theme: String,
     pub bell: bool,
+}
+
+/// Built-in premature-completion gate. On by default; conservative.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopPolicyResolved {
+    pub enabled: bool,
+    pub marker_gate: bool,
+    pub verify_gate: bool,
+    pub max_blocks: u32,
 }
 
 impl Default for Config {
@@ -157,6 +176,12 @@ impl Default for Config {
             ui: UiResolved {
                 theme: "dark".into(),
                 bell: true,
+            },
+            stop_policy: StopPolicyResolved {
+                enabled: true,
+                marker_gate: true,
+                verify_gate: true,
+                max_blocks: 2,
             },
             warnings: Vec::new(),
         }
@@ -317,6 +342,14 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     }
     cfg.ui.bell = merged.ui.bell.unwrap_or(true);
 
+    let sp = merged.stop_policy.unwrap_or_default();
+    cfg.stop_policy = StopPolicyResolved {
+        enabled: sp.enabled.unwrap_or(true),
+        marker_gate: sp.marker_gate.unwrap_or(true),
+        verify_gate: sp.verify_gate.unwrap_or(true),
+        max_blocks: sp.max_blocks.unwrap_or(2),
+    };
+
     if let Some(name) = &merged.profile {
         if let Some(profile) = merged.profiles.get(name) {
             if let Some(model) = &profile.model {
@@ -376,11 +409,13 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "context_window",
     "mcp",
     "ui",
+    "stop_policy",
 ];
 const KNOWN_PROFILE_KEYS: &[&str] = &["model", "provider", "permission_mode", "max_turns"];
 const KNOWN_HOOK_KEYS: &[&str] = &["event", "match", "command", "timeout_ms"];
 const KNOWN_MCP_SERVER_KEYS: &[&str] = &["command", "args", "env"];
 const KNOWN_UI_KEYS: &[&str] = &["theme", "bell"];
+const KNOWN_STOP_POLICY_KEYS: &[&str] = &["enabled", "marker_gate", "verify_gate", "max_blocks"];
 
 /// A typo'd key must be visible, not silently dead: diff the raw TOML
 /// against the known schema and surface every unrecognized key.
@@ -451,6 +486,16 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
             if !KNOWN_UI_KEYS.contains(&key.as_str()) {
                 out.push(format!(
                     "{}: unknown ui key 'ui.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+    }
+    if let Some(sp) = top.get("stop_policy").and_then(toml::Value::as_table) {
+        for key in sp.keys() {
+            if !KNOWN_STOP_POLICY_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown stop_policy key 'stop_policy.{key}' (ignored)",
                     path.display()
                 ));
             }
@@ -532,6 +577,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.ui.bell.is_some() {
         base.ui.bell = over.ui.bell;
+    }
+    if let Some(sp) = over.stop_policy {
+        base.stop_policy = Some(sp);
     }
     for (k, v) in over.profiles {
         base.profiles.insert(k, v);

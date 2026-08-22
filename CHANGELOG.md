@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Stop gate** (built-in premature-completion policy, on by default):
+  blocks completions that look truncated (trailing plan marker, non-heading
+  colon line, unclosed code fence) or that skip verification the prompt
+  explicitly demanded with zero commands run. Reuses stop-hook
+  continuation (`[stop-guard]` prefix), capped at `max_blocks` per run so
+  it can nudge but never trap. `[stop_policy]` config section to tune or
+  disable. Born from the dogfood campaign's 5/7 premature-stop rate.
 - Workspace-write sandboxes now allow OS temp areas (/tmp plus macOS's
   /var/folders TMPDIR and $TMPDIR): test suites using tempfile/std::env::temp_dir
   no longer die under `cargo test` driven through the agent. Found by

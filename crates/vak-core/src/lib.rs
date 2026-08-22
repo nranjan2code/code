@@ -504,6 +504,16 @@ impl Core {
         };
         cfg.context_policy.context_window = self.inner.config.context_window;
         cfg.context_policy.max_output = u64::from(self.inner.config.max_tokens);
+        let sp = &self.inner.config.stop_policy;
+        cfg.stop_policy = if sp.enabled {
+            Some(vak_agent::StopPolicy {
+                marker_gate: sp.marker_gate,
+                verify_gate: sp.verify_gate,
+                max_blocks: sp.max_blocks,
+            })
+        } else {
+            None
+        };
         cfg.circuit_breaker = Some(self.inner.breaker.clone());
         cfg.approver = approver.clone();
         cfg.mode = match self.effective_permission_mode() {
