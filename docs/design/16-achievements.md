@@ -88,6 +88,38 @@ model: loop, tools, permissions, sandbox config, sessions/resume,
 checkpoints, flows, planner, compaction, subagents, evals, server, TUI,
 MCP, hooks, steering, breaker.
 
+## Chaos endurance campaign (Ox Alpha Free, same night)
+
+Full-binary fault-injection: a reverse proxy (`scripts/fault_proxy.py`)
+sits between vakcoder and Zen injecting failures mid-work while a 10-phase
+driver (`scripts/chaos_driver.py`) builds a real package on one append-only
+ledger. **Final result: 11/11 PASS** (after harness fixes below).
+
+| Phase | Fault | Result |
+|---|---|---|
+| P2 | 15×429 rate-limit window mid-feature | bridged by endurance; feature landed, suite green |
+| P3 | 12×503 storm during subagent delegation | child + parent both survived |
+| P4 | truncated SSE streams (no [DONE]) | adapter completed/retried cleanly |
+| P5 | 3s/chunk slow drip vs 75s watchdog | watchdog fired, endurance carried through window |
+| P6 | hung upstream vs watchdog | 1 hang absorbed |
+| P7 | max_tokens=120 token starvation | graceful MaxTokens stops, no corruption |
+| P8 | malformed SSE frames | parse failures retried at run level |
+| P9 | perspective probes after everything | 8/8 WikiStore methods recalled in order |
+
+**Harness bugs the campaign found & fixed (all offline-regression-tested):**
+1. No run-level endurance — sustained fault windows outlived per-step retry
+   budgets and killed whole runs (`run_retry_attempts` added).
+2. Informed transience (429+Retry-After / overload) tripped the shared
+   breaker mid-window, failing runs the window would have released seconds
+   later — breaker now counts only blind failures.
+3. Endurance burned its budget on instant circuit-open no-ops — now paces
+   waits to the remaining cooldown.
+4. Config layer merge dropped `run_retry_*` keys silently (regression test).
+
+CI: deterministic failure-handling regressions gate every PR via
+`cargo test` (`tests/run_endurance.rs`, adapter stream tests); the live
+campaign runs nightly/manual via `.github/workflows/chaos.yml`.
+
 ## Current numbers
 
 - 15 crates, ~14.5K LOC

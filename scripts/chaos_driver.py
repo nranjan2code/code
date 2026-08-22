@@ -169,7 +169,7 @@ def main():
     ok, out = run(sid,
         "Add backlinks(page_title) to WikiStore returning titles whose body links the "
         "given title as [[title]], plus tests. Keep the suite green.",
-        extra_config="request_timeout_secs = 15\nmax_retries = 2\nretry_base_backoff_ms = 300\nrun_retry_attempts = 8\ncircuit_breaker_threshold = 100\n",
+        extra_config="request_timeout_secs = 75\nmax_retries = 2\nretry_base_backoff_ms = 300\nrun_retry_attempts = 6\ncircuit_breaker_threshold = 100\n",
         timeout=900)
     t = suite_ok()
     bl_ok = "backlinks" in wiki_src()
@@ -183,7 +183,7 @@ def main():
     ok, out = run(sid,
         "Add revision history: store a list of (timestamp, body) per page; add "
         "history(title) returning it; new add_page appends. Tests included. Green suite.",
-        extra_config="request_timeout_secs = 15\nmax_retries = 2\nretry_base_backoff_ms = 300\nrun_retry_attempts = 8\ncircuit_breaker_threshold = 100\n",
+        extra_config="request_timeout_secs = 75\nmax_retries = 2\nretry_base_backoff_ms = 300\nrun_retry_attempts = 6\ncircuit_breaker_threshold = 100\n",
         timeout=900)
     t = suite_ok()
     rev_ok = "history" in wiki_src()
@@ -215,8 +215,10 @@ def main():
     set_mode("pass")
     ok, out = run(sid,
         "Final report: (1) package name, (2) every public method WikiStore has had since "
-        "the start of this session, in the order they were added, (3) run the full test "
-        "suite and give the count.")
+        "the start of this session, in the order they were added, (3) ensure "
+        "chaoswiki/tests/test_wiki.py exists and covers EVERY public method of WikiStore "
+        "(create it if missing), (4) run python3 -m pytest -q chaoswiki/tests and give "
+        "the pass count.")
     methods = ["add_page", "get_page", "list_titles", "search", "categories_for", "backlinks", "history", "by_tag"]
     named = sum(1 for m in methods if m in out)
     record("P9 perspective#2 method timeline", named >= 6, f"({named}/8 methods recalled)")

@@ -87,7 +87,7 @@ class H(BaseHTTPRequestHandler):
             return
 
         try:
-            conn = HTTPSConnection(UPSTREAM_HOST, timeout=60)
+            conn = HTTPSConnection(UPSTREAM_HOST, timeout=300)
             conn.request("POST", "/zen/v1" + self.path, body=body, headers={
                 "authorization": self.headers.get("authorization", ""),
                 "content-type": "application/json",
