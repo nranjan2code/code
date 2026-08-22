@@ -4,10 +4,10 @@ name: chaos-live
 # Deterministic failure-handling regressions run on every PR in ci.yml via
 # cargo test (scripted providers, no network). This job exercises the full
 # binary end-to-end through a fault-injecting proxy with the real model.
+# MANUAL ONLY (workflow_dispatch): live-model runner time is paid per minute,
+# so nothing here runs on a schedule.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 6 * * *" # daily 06:00 UTC
 
 jobs:
   chaos:

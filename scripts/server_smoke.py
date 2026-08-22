@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Drive vakcoder serve over HTTP+SSE end-to-end against the mock provider."""
+"""Drive vakcoder serve over HTTP+SSE end-to-end against the mock provider.
+
+Usage: server_smoke.py <vakcoder-binary> <mock-port>
+"""
 import json
 import os
 import subprocess
@@ -11,6 +14,7 @@ import urllib.request
 BASE = "http://127.0.0.1:8903"
 BIN = sys.argv[1]
 MOCK_PORT = sys.argv[2]
+REPO = os.path.dirname(os.path.abspath(__file__))
 
 env = {
     **os.environ,
@@ -20,15 +24,30 @@ env = {
 }
 
 mock = subprocess.Popen(
-    ["python3", "/Users/nisheethranjan/Projects/vakcoder/scripts/mock_anthropic.py", MOCK_PORT],
+    ["python3", f"{REPO}/mock_anthropic.py", MOCK_PORT],
 )
+# serve prints its bearer token to stderr; capture it for auth.
 server = subprocess.Popen(
     [BIN, "serve", "--port", "8903"],
     env=env,
     stdout=subprocess.DEVNULL,
-    stderr=subprocess.DEVNULL,
+    stderr=subprocess.PIPE,
 )
-time.sleep(1.5)
+token = None
+for _ in range(50):
+    line = server.stderr.readline().decode(errors="replace")
+    if "auth token:" in line:
+        token = line.split("auth token:")[1].strip()
+    if "listening" in line:
+        break
+if not token:
+    print("FAIL: no auth token from serve")
+    server.terminate()
+    mock.terminate()
+    sys.exit(1)
+
+HDR = {"Authorization": f"Bearer {token}"}
+time.sleep(0.5)
 
 events = []
 finish = threading.Event()
@@ -36,7 +55,7 @@ opened = threading.Event()
 
 
 def sse_reader(sid):
-    req = urllib.request.Request(f"{BASE}/sessions/{sid}/events")
+    req = urllib.request.Request(f"{BASE}/sessions/{sid}/events", headers=HDR)
     with urllib.request.urlopen(req, timeout=15) as resp:
         for raw in resp:
             line = raw.decode().strip()
@@ -45,9 +64,9 @@ def sse_reader(sid):
                 events.append(data)
                 try:
                     v = json.loads(data)
-                    if "StreamOpened" in data:
+                    if isinstance(v, str) and "StreamOpened" in v:
                         opened.set()
-                    if "RunFinished" in v:
+                    if isinstance(v, dict) and "RunFinished" in v:
                         finish.set()
                         return
                 except json.JSONDecodeError:
@@ -55,14 +74,21 @@ def sse_reader(sid):
 
 
 try:
-    # health
+    # health stays open
     with urllib.request.urlopen(f"{BASE}/health", timeout=5) as r:
         assert r.read() == b"ok"
 
-    # create session
-    with urllib.request.urlopen(
-        urllib.request.Request(f"{BASE}/sessions", method="POST"), timeout=5
-    ) as r:
+    # unauthenticated request must be rejected
+    try:
+        urllib.request.urlopen(urllib.request.Request(
+            f"{BASE}/sessions", method="POST"), timeout=5)
+        raise AssertionError("unauthenticated create succeeded")
+    except urllib.error.HTTPError as e:
+        assert e.code == 401, e.code
+    print("PASS: unauthenticated rejected (401)")
+
+    with urllib.request.urlopen(urllib.request.Request(
+            f"{BASE}/sessions", method="POST", headers=HDR), timeout=5) as r:
         sid = json.load(r)["session_id"]
     print(f"PASS: session created ({sid[:16]}…)")
 
@@ -71,11 +97,10 @@ try:
     assert opened.wait(timeout=5), "stream never opened"
     print("PASS: event stream opened")
 
-    # run a prompt
     req = urllib.request.Request(
         f"{BASE}/sessions/{sid}/run",
         data=json.dumps({"prompt": "run the smoke test"}).encode(),
-        headers={"content-type": "application/json"},
+        headers={**HDR, "content-type": "application/json"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=5) as r:
@@ -87,12 +112,12 @@ try:
         sys.exit(1)
     print("PASS: RunFinished received")
 
-    kinds = []
+    kinds = set()
     for e in events:
         try:
             v = json.loads(e)
             if isinstance(v, dict):
-                kinds.extend(v.keys())
+                kinds.update(v.keys())
         except json.JSONDecodeError:
             pass
     checks = {
@@ -103,8 +128,8 @@ try:
     for name, ok in checks.items():
         print(f"{'PASS' if ok else 'FAIL'}: {name}")
 
-    # transcript
-    with urllib.request.urlopen(f"{BASE}/sessions/{sid}/transcript", timeout=5) as r:
+    req = urllib.request.Request(f"{BASE}/sessions/{sid}/transcript", headers=HDR)
+    with urllib.request.urlopen(req, timeout=5) as r:
         t = json.load(r)
     ok = t.get("count") == 4 and "smoke-ok" in json.dumps(t)
     print(f"{'PASS' if ok else 'FAIL'}: transcript has full loop (count={t.get('count')})")
