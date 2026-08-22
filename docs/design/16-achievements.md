@@ -27,6 +27,22 @@ Architecture ladder — chained single-session builds, independently verified:
 - The brownout itself validated the failure matrix live: 11 retries across
   two runs, honest backoff escalation to 59s, breaker opened once on five
   blind stream-truncations, clean typed failure, zero ledger damage.
+- A3 ceiling verdict: after the sandbox adaptation, the deadlock-fix probe
+  failed twice more — once mid-brownout with a FALSE COMPLETION (claimed
+  green while the workspace no longer compiled). Stop-gate correctly stayed
+  silent there: it catches omission ("promised but never ran"), not
+  fabrication. Documented as a known boundary; concurrent-networking
+  debugging is beyond the current free-tier model when degraded.
+
+## Gauntlet phase B — extensibility battery (all live, same day)
+
+| Probe | Result |
+|---|---|
+| Skill discovery + progressive injection | ✓ `contract.skills` records it; prompt lists name/description/path only |
+| Model follows injected skill | ✓ read SKILL.md unprompted; produced `it_*` table-driven tests w/ exact messages, no unwrap |
+| Pre-tool-use hook veto | ✓ matcher-scoped (`write(*.key)` blocked exit-2); denial fed back as tool error; model adapted without blind retries |
+| Learned rules honored headless | ✓ A/B: identical `echo` command — allowed via permissions.local.toml vs engine-denied without it (no approver in either) |
+| MCP meta-tool roundtrip | ✓ listed fake server + tools over stdio, called echo, verbatim result |
 
 ## Dogfood build campaign (v0.2.0, Ox Alpha Free)
 
