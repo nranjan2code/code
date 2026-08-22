@@ -11,6 +11,23 @@ lineage-linked child ledger (read-only tool subset confirmed in header);
 `exec --session` resume with full-history projection (12.5K tok in) and a
 verified follow-up feature. No panics, no ledger corruption.
 
+## Capability gauntlet v0.2.x (Ox Alpha Free)
+
+Architecture ladder — chained single-session builds, independently verified:
+- A1 multi-crate workspace (domain trait + cli + integration tests): PASS
+  first-run with no nudges; 24 tests green; Σ 47K tok.
+- A2 polyglot evolution (Python/TOML tooling + Make + shell over the same
+  Rust crates): PASS after self-recovering from two mid-flight write
+  corruptions; cross-language math verified exactly (tiered discounts).
+- A3 threaded TCP KV service: exposed sandbox socket-denial (model adapted
+  correctly: generic pipe-driven session + capability-gated real-socket
+  test), then an unsandboxed hang — `handle.join()` on an accept-loop that
+  never exits. Deadlock-from-symptom handed back as the ceiling probe;
+  provider brownout paused this leg mid-probe.
+- The brownout itself validated the failure matrix live: 11 retries across
+  two runs, honest backoff escalation to 59s, breaker opened once on five
+  blind stream-truncations, clean typed failure, zero ledger damage.
+
 ## Dogfood build campaign (v0.2.0, Ox Alpha Free)
 
 Built a complete todo CLI through the harness itself: 4 chained `--session`
