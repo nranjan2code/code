@@ -3,6 +3,14 @@
 What has been built, verified, and survived contact with a real model.
 Companion to `00-roadmap.md` (plan) and `15-reliability.md` (failure matrix).
 
+## v0.2.0 verification battery (Ox Alpha Free via OpenCode Zen)
+
+Re-run of the live surface after the steering-through-Core change and new
+event plumbing: `eval --live` **3/3 PASS**; subagent delegation with
+lineage-linked child ledger (read-only tool subset confirmed in header);
+`exec --session` resume with full-history projection (12.5K tok in) and a
+verified follow-up feature. No panics, no ledger corruption.
+
 ## Harness milestones
 
 | Milestone | Evidence |
