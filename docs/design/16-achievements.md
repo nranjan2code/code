@@ -19,6 +19,7 @@ Companion to `00-roadmap.md` (plan) and `15-reliability.md` (failure matrix).
 | HTTP+SSE server | lifecycle/approvals/transcript e2e over real HTTP |
 | Checkpoints/rewind + worktree isolation | capture/restore incl. deletions; worktree lifecycle tests |
 | Reliability pass | retry+backoff, watchdog, session resume, server cancel, graceful shutdown, cross-run circuit breaker |
+| TUI/UX pass (docs/design/18-tui.md) | markdown+syntax rendering, tool cards w/ edit diffs, status row, approval queue w/ diff previews + always-allow, multiline/paste input, Tab completion, Ctrl-R search, /resume+/rewind, themes, cost estimates, live subagent streams | PTY smoke 10/10 (`scripts/tui_smoke.py`); steering wired through Core (was a UI-side dead end) |
 
 ## Live dogfood campaign (Ox Alpha Free via OpenCode Zen)
 
@@ -122,7 +123,7 @@ campaign runs nightly/manual via `.github/workflows/chaos.yml`.
 
 ## Current numbers
 
-- 15 crates, ~14.5K LOC
-- 129 tests green; fmt + clippy `-D warnings` clean
+- 14 crates, ~21.5K LOC
+- 191 tests green; fmt + clippy `-D warnings` clean
 - 6 provider families; 4 API wire formats
 - Failure matrix fully implemented (retry/watchdog/breaker/resume/cancel)

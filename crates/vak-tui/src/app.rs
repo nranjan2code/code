@@ -408,6 +408,18 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                         crate::theme::names().join(", "),
                                                     )),
                                                 },
+                                                Some(Command::Transcript(arg)) => {
+                                                    show_transcript(
+                                                        &mut screen,
+                                                        &session_slot,
+                                                        arg.as_deref(),
+                                                        &ui_theme,
+                                                    )
+                                                    .await;
+                                                }
+                                                Some(Command::Doctor) => {
+                                                    run_doctor(&core, &mut screen);
+                                                }
                                             Some(Command::Model(m)) => {
                                                 core.set_model(m.clone());
                                                 screen.accent(&format!(
@@ -1064,6 +1076,139 @@ fn sessions_by_mtime(core: &Core) -> Vec<String> {
     rows.into_iter()
         .map(|(_, n)| n.trim_end_matches(".jsonl").to_string())
         .collect()
+}
+
+/// Compact read-only dump of the active session's message tree.
+async fn show_transcript(
+    screen: &mut Screen,
+    slot: &Arc<Mutex<Option<SessionLog>>>,
+    arg: Option<&str>,
+    theme: &Theme,
+) {
+    let limit = arg.and_then(|a| a.parse::<usize>().ok()).unwrap_or(40);
+    let guard = slot.lock().await;
+    let Some(s) = guard.as_ref() else {
+        screen.dim("no active session");
+        return;
+    };
+    let msgs = s.derive_messages();
+    let start = msgs.len().saturating_sub(limit);
+    screen.clear_input();
+    screen.dim(&format!(
+        "transcript · showing {} of {} messages",
+        msgs.len() - start,
+        msgs.len()
+    ));
+    for m in &msgs[start..] {
+        let label_role = match m.role {
+            vak_llm::Role::User => ("▸ user", theme.accent),
+            _ => ("◆ assistant", theme.success),
+        };
+        for block in &m.content {
+            match block {
+                vak_llm::ContentBlock::Text { text } => {
+                    screen.styled(
+                        &format!("{} {}", label_role.0, trunc_cells(text.trim(), 160)),
+                        label_role.1,
+                    );
+                }
+                vak_llm::ContentBlock::Thinking { .. } => {}
+                vak_llm::ContentBlock::ToolUse { name, input, .. } => {
+                    screen.dim(&format!(
+                        "  · tool {name} {}",
+                        trunc_cells(&input.to_string(), 80)
+                    ));
+                }
+                vak_llm::ContentBlock::ToolResult {
+                    content, is_error, ..
+                } => {
+                    let mark = if *is_error { "✗" } else { "→" };
+                    screen.styled(
+                        &format!(
+                            "  {mark} {}",
+                            trunc_cells(content.replace('\n', " ").trim(), 120)
+                        ),
+                        if *is_error { theme.error } else { theme.dim },
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Health check rendered as a checklist: auth, sandbox, storage, config
+/// warnings, extension surface.
+fn run_doctor(core: &Core, screen: &mut Screen) {
+    screen.clear_input();
+    screen.accent("doctor:");
+    let mut failures = 0usize;
+
+    let provider_check = match core.provider() {
+        Ok(p) => Ok(format!("{} ready", p.name())),
+        Err(e) => Err(e.to_string()),
+    };
+    report(screen, "provider", &provider_check, &mut failures);
+
+    let home_ok = std::fs::create_dir_all(core.sessions_home()).is_ok();
+    report(
+        screen,
+        "sessions home",
+        &(if home_ok {
+            Ok(core.sessions_home().display().to_string())
+        } else {
+            Err("not writable".to_string())
+        }),
+        &mut failures,
+    );
+
+    let warnings = core.config().warnings.clone();
+    report(
+        screen,
+        "config warnings",
+        &(if warnings.is_empty() {
+            Ok("none".to_string())
+        } else {
+            Err(warnings.join("; "))
+        }),
+        &mut failures,
+    );
+
+    screen.dim(&format!(
+        "  · model {} via {} · mode {:?} · sandbox {}",
+        core.effective_model(),
+        core.effective_provider(),
+        core.effective_permission_mode(),
+        core.effective_sandbox_name(),
+    ));
+    screen.dim(&format!(
+        "  · context window {} tokens · max turns {} · retries {} (+{})",
+        core.config().context_window,
+        core.effective_max_turns(),
+        core.config().max_retries,
+        core.config().run_retry_attempts,
+    ));
+    screen.dim(&format!(
+        "  · extensions: {} skills · {} hooks · {} mcp servers · subagents {}",
+        core.skills().len(),
+        core.config().hooks.len(),
+        core.config().mcp.servers.len(),
+        if core.config().subagents { "on" } else { "off" },
+    ));
+    if failures == 0 {
+        screen.success("all checks passed");
+    } else {
+        screen.error(&format!("{failures} check(s) failed"));
+    }
+}
+
+fn report(screen: &mut Screen, label: &str, result: &Result<String, String>, failures: &mut usize) {
+    match result {
+        Ok(detail) => screen.success(&format!("  ✓ {label}: {detail}")),
+        Err(detail) => {
+            screen.error(&format!("  ✗ {label}: {detail}"));
+            *failures += 1;
+        }
+    }
 }
 
 fn handle_complete(editor: &mut Editor, core: &Core, screen: &mut Screen) {

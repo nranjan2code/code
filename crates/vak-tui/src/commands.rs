@@ -8,6 +8,8 @@ pub enum Command {
     Resume(Option<String>),
     Rewind(Option<String>),
     Theme(Option<String>),
+    Transcript(Option<String>),
+    Doctor,
     Model(String),
     Clear,
 }
@@ -23,6 +25,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("resume", "[n|id] continue a past session"),
     ("rewind", "[seq] restore a workspace checkpoint"),
     ("theme", "[dark|light|plain] switch theme now"),
+    ("transcript", "[n] dump recent messages of this session"),
+    ("doctor", "health check: auth, sandbox, config, extensions"),
     ("clear", "start a fresh session"),
     ("exit", "quit"),
 ];
@@ -43,6 +47,8 @@ pub fn parse(input: &str) -> Option<Command> {
         "resume" => Some(Command::Resume(arg_opt)),
         "rewind" => Some(Command::Rewind(arg_opt)),
         "theme" => Some(Command::Theme(arg_opt)),
+        "transcript" => Some(Command::Transcript(arg_opt)),
+        "doctor" if arg.is_empty() => Some(Command::Doctor),
         "model" if !arg.is_empty() => Some(Command::Model(arg)),
         "clear" | "new" if arg.is_empty() => Some(Command::Clear),
         _ => None,

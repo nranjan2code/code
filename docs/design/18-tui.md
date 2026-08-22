@@ -95,3 +95,14 @@ inline-streaming; nothing here introduces alternate-screen or TUI frameworks.
   the ◆ header — parallel fan-out is now observable live. The child channel
   is always drained (a full channel would deadlock the subagent); forwarding
   is best-effort on top of that invariant.
+
+## Slice 4 — introspection commands
+
+- **`/doctor`**: checklist of provider/auth readiness, sessions-home
+  writability, config warnings (fail), plus info lines for model/provider/
+  mode/sandbox, context window + retry budget, and extension surface
+  (skills/hooks/mcp/subagents).
+- **`/transcript [n]`**: read-only dump of the active session's last n
+  messages (default 40) from `derive_messages()` — roles styled, tool calls
+  summarized, results truncated; reinforces model-visible-means-logged by
+  making the ledger human-readable in place.
