@@ -294,3 +294,26 @@ fn pricing_matches_known_families_and_skips_unknown() {
     assert_eq!(vak_tui::pricing::format_cost(0.00005), "<$0.0001");
     assert!(vak_tui::pricing::format_cost(0.12345).starts_with("$0.12"));
 }
+
+#[test]
+fn strip_ansi_removes_sgr_but_keeps_text() {
+    let styled = "\x1b[32m+ added\x1b[39m plain \x1b[1;96mhead\x1b[22m";
+    assert_eq!(vak_tui::markdown::strip_ansi(styled), "+ added plain head");
+    assert_eq!(vak_tui::markdown::strip_ansi("no escapes"), "no escapes");
+}
+
+#[test]
+fn summarize_args_picks_meaningful_hints() {
+    assert_eq!(
+        vak_tui::app::summarize_args("bash", r#"{"command":"cargo test --lib"}"#),
+        "cargo test --lib"
+    );
+    assert_eq!(
+        vak_tui::app::summarize_args("edit", r#"{"path":"src/x.rs"}"#),
+        "src/x.rs"
+    );
+    // long commands truncate with an ellipsis marker
+    let long = "a".repeat(120);
+    let s = vak_tui::app::summarize_args("bash", &format!(r#"{{"command":"{long}"}}"#));
+    assert!(s.ends_with('…') && s.chars().count() < 120);
+}

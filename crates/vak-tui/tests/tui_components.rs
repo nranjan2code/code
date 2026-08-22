@@ -472,3 +472,23 @@ fn learned_spec_scopes_calls_and_rejects_unscopeable() {
         &serde_json::json!({"command": "cargo build --release"})
     ));
 }
+
+#[test]
+fn edit_diff_text_accepts_both_arg_shapes() {
+    let theme = vak_tui::theme::Theme::from_name("plain");
+    let edits_shape =
+        r#"{"path":"a.rs","edits":[{"old_string":"fn a() {}","new_string":"fn a() { b(); }"}]}"#;
+    let flat_shape = r#"{"path":"a.rs","old_string":"fn a() {}","new_string":"fn a() { b(); }"}"#;
+    for shape in [edits_shape, flat_shape] {
+        let d = vak_tui::app::edit_diff_text(shape, &theme, 10).expect("diff");
+        let plain = vak_tui::markdown::strip_ansi(&d);
+        assert!(plain.contains("+ fn a() { b(); }"), "shape: {shape}");
+        assert!(plain.contains("- fn a() {}"));
+        assert!(plain.contains("@@"));
+    }
+    // nothing renderable -> None
+    assert_eq!(
+        vak_tui::app::edit_diff_text(r#"{"path":"a.rs"}"#, &theme, 10),
+        None
+    );
+}

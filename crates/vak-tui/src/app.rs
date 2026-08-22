@@ -638,18 +638,10 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
             if name == "edit"
                 && !is_error
                 && let Some((_, args_json)) = &stored
-                && let Ok(v) = serde_json::from_str::<serde_json::Value>(args_json)
-                && let Some(edits) = v.get("edits").and_then(|e| e.as_array())
+                && let Some(diff) = edit_diff_text(args_json, theme, 10)
             {
-                for e in edits.iter().take(3) {
-                    let old = e.get("old_string").and_then(|x| x.as_str()).unwrap_or("");
-                    let new = e.get("new_string").and_then(|x| x.as_str()).unwrap_or("");
-                    if old.is_empty() && new.is_empty() {
-                        continue;
-                    }
-                    for line in diffview::unified(old, new, theme, 10).lines() {
-                        screen.md_line(&format!("  {line}"));
-                    }
+                for line in diff.lines() {
+                    screen.md_line(&format!("  {line}"));
                 }
             } else if is_error
                 && let Some(prev) = result_preview
@@ -807,6 +799,39 @@ fn draw_approval(screen: &mut Screen, theme: &Theme, req: &ApprovalRequest) {
         .dim("    [y] allow once · [a] always this session · [p] save scoped rule · [n]/Esc deny");
 }
 
+/// Builds the unified-diff text for an `edit` call, accepting both the
+/// canonical `edits[]` array and models' occasional flat
+/// `{old_string,new_string}` shape. None when nothing renderable.
+pub fn edit_diff_text(args_json: &str, theme: &Theme, max_lines: usize) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(args_json).ok()?;
+    let pairs: Vec<(String, String)> =
+        if let Some(edits) = v.get("edits").and_then(|e| e.as_array()) {
+            edits
+                .iter()
+                .filter_map(|e| {
+                    let old = e.get("old_string").and_then(|x| x.as_str())?;
+                    let new = e.get("new_string").and_then(|x| x.as_str())?;
+                    Some((old.to_string(), new.to_string()))
+                })
+                .collect()
+        } else {
+            let old = v.get("old_string").and_then(|x| x.as_str())?;
+            let new = v.get("new_string").and_then(|x| x.as_str())?;
+            vec![(old.to_string(), new.to_string())]
+        };
+    let mut out = String::new();
+    let mut any = false;
+    for (old, new) in pairs {
+        if old.is_empty() && new.is_empty() {
+            continue;
+        }
+        out.push_str(&diffview::unified(&old, &new, theme, max_lines));
+        out.push('\n');
+        any = true;
+    }
+    any.then_some(out)
+}
+
 /// Derives a scoped, round-trip-validated rule spec from the call being
 /// approved. Returns None when no safe scope can be derived (opaque bash,
 /// missing args) — those stay session-only via [a].
@@ -882,7 +907,7 @@ fn pretty_args_lines(args_json: &str, max_lines: usize) -> Vec<String> {
     lines
 }
 
-fn summarize_args(name: &str, args_json: &str) -> String {
+pub fn summarize_args(name: &str, args_json: &str) -> String {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(args_json) else {
         return trunc_cells(args_json, 60);
     };
@@ -900,7 +925,7 @@ fn summarize_args(name: &str, args_json: &str) -> String {
     trunc_cells(&hint, 90)
 }
 
-fn trunc_cells(s: &str, max: usize) -> String {
+pub fn trunc_cells(s: &str, max: usize) -> String {
     let mut w = 0usize;
     for (i, c) in s.char_indices() {
         w += crate::width::char_width(c);

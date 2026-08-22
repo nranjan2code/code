@@ -426,3 +426,23 @@ pub fn highlight(code_line: &str, lang: &str, theme: &Theme) -> String {
     }
     out
 }
+
+/// Removes SGR (and other CSI) escape sequences — for plain-text consumers
+/// like `exec` logs where ANSI would be noise.
+pub fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}

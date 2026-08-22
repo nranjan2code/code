@@ -821,6 +821,8 @@ async fn run_exec(
 
     let mut total_in: u64 = 0;
     let mut total_out: u64 = 0;
+    let mut tool_args: std::collections::HashMap<String, (String, String)> =
+        std::collections::HashMap::new();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
@@ -836,18 +838,52 @@ async fn run_exec(
                 out.flush().ok();
             }
             AgentEvent::Stream(StreamEvent::ThinkingDelta { .. }) => {}
-            AgentEvent::ToolCallStart { name, .. } => {
-                eprintln!("▸ {name}");
-            }
-            AgentEvent::ToolCallEnd { name, is_error, .. } => {
+            AgentEvent::ToolCallStart {
+                id,
+                name,
+                args_json,
+            } => {
+                tool_args.insert(id, (name.clone(), args_json.clone()));
                 eprintln!(
-                    "{}",
-                    if is_error {
-                        format!("✗ {name}")
-                    } else {
-                        format!("✓ {name}")
-                    }
+                    "▸ {} {}",
+                    name,
+                    vak_tui::app::summarize_args(&name, &args_json)
                 );
+            }
+            AgentEvent::ToolCallEnd {
+                id,
+                name,
+                is_error,
+                result_preview,
+            } => {
+                eprintln!("{} {name}", if is_error { "✗" } else { "✓" });
+                let stored = tool_args.remove(&id);
+                if name == "edit"
+                    && !is_error
+                    && let Some((_, args)) = &stored
+                    && let Some(diff) = vak_tui::app::edit_diff_text(
+                        args,
+                        &vak_tui::theme::Theme::from_name("plain"),
+                        10,
+                    )
+                {
+                    for line in vak_tui::markdown::strip_ansi(&diff).lines() {
+                        eprintln!("  {line}");
+                    }
+                } else if is_error
+                    && let Some(prev) = result_preview
+                    && !prev.trim().is_empty()
+                {
+                    let tail: Vec<&str> = prev
+                        .lines()
+                        .filter(|l| !l.trim().is_empty())
+                        .rev()
+                        .take(6)
+                        .collect();
+                    for line in tail.iter().rev() {
+                        eprintln!("  │ {line}");
+                    }
+                }
             }
             AgentEvent::RetryScheduled {
                 attempt,
