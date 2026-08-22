@@ -3,7 +3,8 @@
 A Rust coding-agent harness. Thesis: **Codex-grade safety, pi-grade
 transparency, Claude Code-grade extensibility, opencode-grade simplicity.**
 
-v0.1.0 — the full roadmap (docs/design/00-roadmap.md) is implemented.
+v0.2.0 — the full roadmap (docs/design/00-roadmap.md) is implemented, plus
+five hardening/UX phases since (CHANGELOG.md).
 
 ## Quick start
 

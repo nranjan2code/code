@@ -88,7 +88,7 @@ clean = clean.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 text = clean.decode("utf-8", "replace")
 checks = {
-    "banner version": "0.1.0" in text,
+    "banner version": "0.2.0" in text,
     "help lists /model": "/model" in text and "<name>" in text,
     "cost line": "tokens in 0 / out 0" in text,
     "prompt echo": "hello world" in text,
