@@ -11,6 +11,26 @@ lineage-linked child ledger (read-only tool subset confirmed in header);
 `exec --session` resume with full-history projection (12.5K tok in) and a
 verified follow-up feature. No panics, no ledger corruption.
 
+## Dogfood build campaign (v0.2.0, Ox Alpha Free)
+
+Built a complete todo CLI through the harness itself: 4 chained `--session`
+runs (scaffold → priorities → rm+test-consolidation → planted-bug debug),
+operator nudges between premature model stops. **All phases green** — final:
+7 unit + 1 CLI integration test, CLI replay verified independently.
+
+Harness findings (all actioned or noted):
+- **Sandbox vs tempdir**: workspace-write denied macOS /var/folders TMPDIR,
+  breaking tempfile-based suites under `cargo test`. Fixed on both backends
+  (Seatbelt + Landlock now include OS temp areas in workspace-write).
+- Reliability machinery earned its keep live: two truncated streams auto-
+  recovered via run-level endurance; overload 429s backed off cleanly.
+- x-preview-f-free stopped mid-task in 5/7 runs ("Fixing both:" → completed);
+  operator resume-nudge was the workaround. Future idea: a stop-hook policy
+  that blocks completion when promised verification didn't run.
+- Model's consolidated test suite initially lacked teeth (planted toggle bug
+  passed it) — but R4's agent then mutation-tested its own regression fix
+  unprompted before claiming victory.
+
 ## Harness milestones
 
 | Milestone | Evidence |

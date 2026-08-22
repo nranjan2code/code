@@ -35,6 +35,27 @@ impl Seatbelt {
         Seatbelt { mode, write_paths }
     }
 
+    /// Extra write allowances that keep real-world tooling working under
+    /// workspace-write: the OS per-user temp/cache areas (macOS TMPDIR lives
+    /// under /var/folders, NOT /tmp) and /tmp itself. Without these, any
+    /// test suite using tempfile/std::env::temp_dir fails under the sandbox
+    /// — found by dogfooding `cargo test` through the agent.
+    pub fn temp_write_paths() -> Vec<String> {
+        let mut out = vec![
+            "/private/tmp".to_string(),
+            "/private/var/tmp".to_string(),
+            "/private/var/folders".to_string(),
+            "/tmp".to_string(),
+        ];
+        if let Some(tmpdir) = std::env::var_os("TMPDIR") {
+            let p = std::path::PathBuf::from(&tmpdir).display().to_string();
+            if !out.contains(&p) {
+                out.push(p);
+            }
+        }
+        out
+    }
+
     pub fn profile(&self) -> String {
         let mut p = String::from("(version 1)\n");
         match self.mode {
@@ -62,15 +83,16 @@ impl Seatbelt {
                         sbpl_quote(&path.display().to_string())
                     ));
                 }
-                for tmp in [
-                    "/private/tmp",
-                    "/private/var/tmp",
-                    "/dev/null",
-                    "/dev/urandom",
-                ] {
+                for tmp in Self::temp_write_paths() {
                     p.push_str(&format!(
                         "(allow file-write* (subpath {}))\n",
-                        sbpl_quote(tmp)
+                        sbpl_quote(&tmp)
+                    ));
+                }
+                for dev in ["/dev/null", "/dev/urandom"] {
+                    p.push_str(&format!(
+                        "(allow file-write* (subpath {}))\n",
+                        sbpl_quote(dev)
                     ));
                 }
             }

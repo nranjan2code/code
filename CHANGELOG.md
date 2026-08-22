@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Workspace-write sandboxes now allow OS temp areas (/tmp plus macOS's
+  /var/folders TMPDIR and $TMPDIR): test suites using tempfile/std::env::temp_dir
+  no longer die under `cargo test` driven through the agent. Found by
+  dogfooding — the sandbox was doing its job a little too well.
 - **Learned allow rules**: `[p]` on an approval persists a scoped rule
   (`bash(cargo *)`, `edit(src/x.rs)`, `mcp(server/*)`, …) to
   `.vakcoder/permissions.local.toml`; loaded into every future run in that

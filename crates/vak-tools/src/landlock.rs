@@ -20,13 +20,24 @@ pub struct Landlock {
 
 impl Landlock {
     pub fn new(mode: SandboxMode, cwd: &Path) -> Self {
-        let write_paths = match mode {
+        let mut write_paths = match mode {
             SandboxMode::WorkspaceWrite => {
                 let canonical = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
                 vec![canonical]
             }
             _ => Vec::new(),
         };
+        // Workspace-write must include OS temp areas or every test suite
+        // using tempfile/std::env::temp_dir dies under the sandbox (found
+        // by dogfooding `cargo test` through the agent).
+        if mode == SandboxMode::WorkspaceWrite {
+            for p in super::sandbox::Seatbelt::temp_write_paths() {
+                let pb = PathBuf::from(p);
+                if !write_paths.contains(&pb) {
+                    write_paths.push(pb);
+                }
+            }
+        }
         Landlock { mode, write_paths }
     }
 
