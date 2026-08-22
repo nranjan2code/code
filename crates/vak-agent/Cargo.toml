@@ -23,6 +23,7 @@ vak-tools = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 tempfile = { workspace = true }
+vak-mcp = { workspace = true }
 
 [lints]
 workspace = true

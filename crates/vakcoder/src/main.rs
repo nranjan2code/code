@@ -1140,6 +1140,13 @@ async fn run_plan(cwd: PathBuf, task: String, yes: bool, worktree: bool, trusted
     }
 }
 
+fn builtin_cases() -> Vec<vak_eval::EvalCase> {
+    vak_eval::builtin_suite()
+        .into_iter()
+        .chain(vak_eval::general_suite())
+        .collect()
+}
+
 async fn run_eval(
     report_path: Option<PathBuf>,
     live: bool,
@@ -1149,8 +1156,8 @@ async fn run_eval(
     let mut reports = Vec::new();
 
     if !live {
-        for case in &vak_eval::builtin_suite() {
-            let r = vak_eval::run_case(case).await;
+        for case in builtin_cases() {
+            let r = vak_eval::run_case(&case).await;
             println!(
                 "{:<24} {:>6}  in {:>5} / out {:>4}  {:>5}ms  {}",
                 r.task_id,

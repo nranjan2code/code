@@ -76,7 +76,7 @@ Harness findings (all actioned or noted):
 | Skills · subagents · hooks · MCP client | Claude-Code-skill compatible; child-session lineage tests; hook unit+agent tests; fake-MCP roundtrip |
 | Resource-claim wave scheduler | timing-proven: disjoint writers overlap (~0.5s), conflicting writer serialized (~1.0s vs 1.5s serial) |
 | Static flows + dynamic planner | validation/layers/failure-policy/resume tests; plan→execute→replan→fail-closed matrix |
-| Eval harness | deterministic suite CI-gated (~100ms); live-model mode |
+| Eval harness | deterministic suite CI-gated (~100ms); general-purpose (non-coding) suite: research/data/writing/conversion/inventory; general-flow battery: steering, abort-partial, stop gate, compaction, MCP, read-only denials; live-model mode |
 | HTTP+SSE server | lifecycle/approvals/transcript e2e over real HTTP |
 | Checkpoints/rewind + worktree isolation | capture/restore incl. deletions; worktree lifecycle tests |
 | Reliability pass | retry+backoff, watchdog, session resume, server cancel, graceful shutdown, cross-run circuit breaker |

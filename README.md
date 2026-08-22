@@ -14,7 +14,7 @@ export ANTHROPIC_API_KEY=sk-ant-…        # or OPENAI_API_KEY / OPENCODE_API_KE
 cargo run                                 # interactive TUI
 cargo run -- exec "fix the failing test"  # headless
 cargo run -- config dump                  # effective boot config
-cargo run -- eval                         # deterministic regression suite
+cargo run -- eval                         # deterministic regression suite (coding + non-coding scenarios)
 cargo run -- eval --live --provider opencode-zen --model x-preview-f-free  # live (free model)
 ```
 

@@ -122,6 +122,218 @@ pub fn builtin_suite() -> Vec<EvalCase> {
     ]
 }
 
+/// Non-coding scenarios: research, data analysis, writing, document
+/// conversion, and inventory work through the same six-tool kernel. Each
+/// proves the harness is a general agent, not a code-only one.
+pub fn general_suite() -> Vec<EvalCase> {
+    vec![
+        general_research_synthesis(),
+        general_csv_analysis(),
+        general_writing_draft(),
+        general_doc_conversion(),
+        general_inventory_index(),
+        general_error_adapts_noncode(),
+    ]
+}
+
+/// Multi-source synthesis: read three notes, merge key facts into a summary.
+pub fn general_research_synthesis() -> EvalCase {
+    let mut c = base(
+        "general-research-synthesis",
+        "read three research notes and synthesize a summary file",
+    );
+    c.files = vec![
+        (
+            "notes/climate.txt".into(),
+            "Global mean temperature rose 1.2C since pre-industrial times.\n".into(),
+        ),
+        (
+            "notes/energy.txt".into(),
+            "Solar is now the cheapest electricity source in most markets.\n".into(),
+        ),
+        (
+            "notes/policy.txt".into(),
+            "Forty countries pledged carbon neutrality by 2050.\n".into(),
+        ),
+    ];
+    c.prompt = "Read all files under notes/ and write summary.md covering each finding.".into();
+    c.script = vec![
+        ScriptedTurn::tool_calls(vec![
+            ("read", serde_json::json!({"path": "notes/climate.txt"})),
+            ("read", serde_json::json!({"path": "notes/energy.txt"})),
+            ("read", serde_json::json!({"path": "notes/policy.txt"})),
+        ]),
+        ScriptedTurn::tool(
+            "write",
+            serde_json::json!({
+                "path": "summary.md",
+                "content": "# Findings\n\n- Warming reached 1.2C above pre-industrial levels.\n- Solar is now the cheapest electricity in most markets.\n- Forty countries pledged carbon neutrality by 2050.\n"
+            }),
+        ),
+        ScriptedTurn::Text("synthesized".into()),
+    ];
+    c.verify =
+        "grep -q '1.2C' summary.md && grep -q 'cheapest' summary.md && grep -q '2050' summary.md"
+            .into();
+    c
+}
+
+/// Data analysis on a CSV via bash arithmetic; no code files involved.
+pub fn general_csv_analysis() -> EvalCase {
+    let mut c = base(
+        "general-csv-analysis",
+        "analyze a csv of expenses with bash and write a report",
+    );
+    c.files = vec![(
+        "expenses.csv".into(),
+        "item,amount\nrent,1200\ngroceries,340\ntransport,85\n".into(),
+    )];
+    c.prompt =
+        "Compute the total of the amount column in expenses.csv and write report.md stating it."
+            .into();
+    c.script = vec![
+        ScriptedTurn::tool(
+            "bash",
+            serde_json::json!({"command": "awk -F, 'NR>1 {s+=$2} END {print s}' expenses.csv"}),
+        ),
+        ScriptedTurn::tool(
+            "write",
+            serde_json::json!({
+                "path": "report.md",
+                "content": "# Expense Report\n\nTotal monthly expenses: 1625\n"
+            }),
+        ),
+        ScriptedTurn::Text("analyzed".into()),
+    ];
+    c.verify = "grep -q 1625 report.md && [ \"$(awk -F, 'NR>1 {s+=$2} END {print s}' expenses.csv)\" = \"1625\" ]".into();
+    c
+}
+
+/// Pure writing: structure and length constraints verified mechanically.
+pub fn general_writing_draft() -> EvalCase {
+    let mut c = base(
+        "general-writing-draft",
+        "draft a structured essay meeting title and section requirements",
+    );
+    c.prompt = "Write essay.md: a title line starting with '# ', then sections '## Intro', '## Body', '## Conclusion' with at least one sentence each (>= 60 words total).".into();
+    c.script = vec![
+        ScriptedTurn::tool(
+            "write",
+            serde_json::json!({
+                "path": "essay.md",
+                "content": "# Urban Rivers\n\n## Intro\nCities grew around rivers because water meant trade, food, and power for early settlements.\n\n## Body\nOver the twentieth century many urban rivers were paved over or hidden beneath concrete, severing residents from their own geography and worsening floods downstream.\n\n## Conclusion\nDaylighting forgotten waterways restores habitat, cools streets, and gives neighborhoods a shared civic anchor worth protecting.\n"
+            }),
+        ),
+        ScriptedTurn::Text("drafted".into()),
+    ];
+    c.verify =
+        "head -n1 essay.md | grep -q '^# ' && grep -q '## Intro' essay.md && grep -q '## Body' essay.md && grep -q '## Conclusion' essay.md && [ \"$(wc -w < essay.md)\" -ge 60 ]"
+            .into();
+    c
+}
+
+/// Document conversion: free-form notes into machine-readable JSON.
+pub fn general_doc_conversion() -> EvalCase {
+    let mut c = base(
+        "general-doc-conversion",
+        "convert plain-text meeting notes into structured json",
+    );
+    c.files = vec![(
+        "meeting-notes.txt".into(),
+        "Team sync March 4\nAgenda:\n- review Q1 roadmap (Maya)\n- hiring update (Devon)\n- budget review (Priya)\n".into(),
+    )]
+    ;
+    c.prompt = "Convert meeting-notes.txt into agenda.json: an object with keys date (string), items (array of objects topic and owner).".into();
+    c.script = vec![
+        ScriptedTurn::tool("read", serde_json::json!({"path": "meeting-notes.txt"})),
+        ScriptedTurn::tool(
+            "write",
+            serde_json::json!({
+                "path": "agenda.json",
+                "content": "{\"date\": \"March 4\", \"items\": [{\"topic\": \"review Q1 roadmap\", \"owner\": \"Maya\"}, {\"topic\": \"hiring update\", \"owner\": \"Devon\"}, {\"topic\": \"budget review\", \"owner\": \"Priya\"}]}"
+            }),
+        ),
+        ScriptedTurn::Text("converted".into()),
+    ];
+    c.verify = "python3 -c \"import json;d=json.load(open('agenda.json'));assert d['date']=='March 4';assert len(d['items'])==3;assert d['items'][0]=={'topic':'review Q1 roadmap','owner':'Maya'}\"".into();
+    c
+}
+
+/// Cross-file discovery with glob+grep, then an index artifact.
+pub fn general_inventory_index() -> EvalCase {
+    let mut c = base(
+        "general-inventory-index",
+        "discover warranty records across files and build an index",
+    );
+    c.files = vec![
+        (
+            "records/laptop.txt".into(),
+            "MacBook Pro, purchased 2024-01-10, warranty until 2027-01-10.\n".into(),
+        ),
+        (
+            "records/monitor.txt".into(),
+            "Studio Display, purchased 2023-06-02, warranty until 2026-06-02.\n".into(),
+        ),
+        (
+            "records/receipts-old.txt".into(),
+            "Miscellaneous receipts from 2019, all warranties expired.\n".into(),
+        ),
+    ];
+    c.prompt =
+        "Search records/ for lines mentioning warranty and write index.md listing every item with its warranty end date."
+            .into();
+    c.script = vec![
+        ScriptedTurn::tool_calls(vec![
+            ("glob", serde_json::json!({"pattern": "records/*.txt"})),
+            (
+                "grep",
+                serde_json::json!({"pattern": "warranty until", "path": "records"}),
+            ),
+        ]),
+        ScriptedTurn::tool(
+            "write",
+            serde_json::json!({
+                "path": "index.md",
+                "content": "# Warranty Index\n\n- MacBook Pro — until 2027-01-10\n- Studio Display — until 2026-06-02\n"
+            }),
+        ),
+        ScriptedTurn::Text("indexed".into()),
+    ];
+    c.verify =
+        "grep -q '2027-01-10' index.md && grep -q '2026-06-02' index.md && ! grep -qi '2019' index.md"
+            .into();
+    c
+}
+
+/// Error-driven recovery outside code: first command misses, agent corrects.
+pub fn general_error_adapts_noncode() -> EvalCase {
+    let mut c = base(
+        "general-error-adapts-noncode",
+        "failed lookup is read from the error and corrected without retrying blindly",
+    );
+    c.files = vec![(
+        "archive/team-2025.txt".into(),
+        "Roster: Maya (design), Devon (ops), Priya (finance).\n".into(),
+    )];
+    c.prompt =
+        "Find this year's team roster file and copy the roster line into roster.md. Verify by reading it back."
+            .into();
+    c.script = vec![
+        // Deliberately probes the wrong path first.
+        ScriptedTurn::tool(
+            "bash",
+            serde_json::json!({"command": "cat archive/team-2026.txt"}),
+        ),
+        ScriptedTurn::tool(
+            "bash",
+            serde_json::json!({"command": "echo 'Roster: Maya (design), Devon (ops), Priya (finance).' > roster.md"}),
+        ),
+        ScriptedTurn::Text("recovered".into()),
+    ];
+    c.verify = "grep -q 'Roster: Maya' roster.md".into();
+    c
+}
+
 /// Tasks for LIVE model runs: no scripted trajectory, verification only.
 /// Deliberately small and environment-independent so any frontier model
 /// can attempt them and differences reflect harness+model, not tooling.

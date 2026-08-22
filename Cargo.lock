@@ -1734,6 +1734,7 @@ dependencies = [
  "tokio-util",
  "vak-hooks",
  "vak-llm",
+ "vak-mcp",
  "vak-permission",
  "vak-session",
  "vak-tools",

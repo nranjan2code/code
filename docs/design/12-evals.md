@@ -34,6 +34,28 @@ provider is scripted.
 The suite also runs as a `cargo test --workspace` integration test
 (`builtin_suite_fully_green`) so any harness regression fails CI directly.
 
+## General-purpose suite (non-coding)
+
+`general_suite()` proves the harness is a general agent, not a code-only
+one: the same six-tool kernel driven through research, data-analysis,
+writing, conversion, and inventory scenarios. Also runs as an integration
+test (`general_suite_fully_green`) and in the default `vakcoder eval`.
+
+| case | scenario domain exercised |
+|---|---|
+| general-research-synthesis | multi-source read → synthesized summary artifact |
+| general-csv-analysis | bash arithmetic over tabular data → report |
+| general-writing-draft | structured writing with mechanical constraints |
+| general-doc-conversion | free-form notes → machine-readable JSON |
+| general-inventory-index | glob+grep discovery across non-code records |
+| general-error-adapts-noncode | failed lookup → error-driven correction |
+
+Beyond the scripted suites, harness behavior in general flows is covered by
+`crates/vak-agent/tests/general_flows.rs`: mid-run steering, abort
+preserving partial artifacts, the stop gate blocking unverified reports,
+compaction during long research sessions (append-only asserted against the
+raw JSONL), MCP meta-tool lookups, and read-only mode denials.
+
 ## Live-model evals
 
 `vakcoder eval --live` runs `live_suite()` (create-file, sort-lines,
