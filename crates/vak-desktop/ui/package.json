@@ -1,0 +1,27 @@
+{
+  "name": "vakcoder-ui",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 1420 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-notification": "^2",
+    "@xterm/addon-fit": "^0.10",
+    "@xterm/xterm": "^5",
+    "solid-js": "^1"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "vite": "^6",
+    "vite-plugin-solid": "^2"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true
+  }
+}

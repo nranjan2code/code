@@ -14,6 +14,7 @@ members = [
     "crates/vak-eval",
     "crates/vak-server",
     "crates/vak-tui",
+    "crates/vak-desktop",
     "crates/vakcoder",
 ]
 
@@ -42,6 +43,8 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 # HTTP+SSE server for the headless agent (tokio-native standard)
 axum = { version = "0.8", features = ["json"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
+# CORS so browser/webview surfaces (tauri://localhost, vite dev) can reach it
+tower-http = { version = "0.6", features = ["cors"] }
 
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
@@ -65,6 +68,14 @@ libc = "0.2"
 tempfile = "3"
 # Linux filesystem containment: safe wrapper over the Landlock LSM syscalls
 landlock = "0.4"
+# Desktop shell (docs/design/20-tauri-desktop.md): native webview + Rust host
+tauri = "2.11"
+# Static assets/context codegen for the tauri app at compile time
+tauri-build = "2.6"
+tauri-plugin-dialog = "2.7"
+tauri-plugin-notification = "2.3"
+# Real PTY for the integrated terminal pane
+portable-pty = "0.9"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

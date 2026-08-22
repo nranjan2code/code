@@ -77,6 +77,8 @@ crates/vak-config    layered TOML config + .env secret loading
 crates/vak-core      SDK facade, system prompt, checkpoints, worktrees
 crates/vak-tui       inline stream-based terminal UI
 crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts)
+crates/vak-desktop   Tauri 2 desktop orchestrator (sidecar over vak-server;
+                     docs/design/20-tauri-desktop.md)
 crates/vakcoder      binary: tui / exec / plan / flow / serve / eval /
                      checkpoints / config dump / sessions
 docs/design/         architecture decisions — update with behavior changes

@@ -1,0 +1,412 @@
+import { createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
+import type {
+  AgentEvent,
+  AssistantMessage,
+  BackendInfo,
+  ContentBlock,
+  Health,
+  Message,
+  SessionSummary,
+  Usage,
+} from "./types";
+
+export type Density = "normal" | "verbose" | "summary";
+
+export type Item =
+  | { kind: "user"; text: string }
+  | { kind: "assistant"; key: string; text: string; streaming: boolean }
+  | { kind: "thinking"; key: string; text: string; done: boolean }
+  | {
+      kind: "tool";
+      id: string;
+      name: string;
+      argsJson: string;
+      done: boolean;
+      isError: boolean;
+      preview: string | null;
+    }
+  | {
+      kind: "approval";
+      id: string;
+      tool: string;
+      argsJson: string;
+      reason: string;
+      resolved: null | "allowed" | "denied" | "gone";
+    }
+  | { kind: "subagent"; label: string; lines: string[]; open: boolean; isError: boolean }
+  | { kind: "system"; text: string };
+
+export const [backend, setBackend] = createSignal<BackendInfo>({ ready: false });
+export const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
+export const [activeId, setActiveId] = createSignal<string | null>(null);
+export const [health, setHealth] = createSignal<Health | null>(null);
+export const [density, setDensity] = createSignal<Density>("normal");
+export const [dockTab, setDockTab] = createSignal<"diff" | "terminal" | "editor" | "pr" | null>("diff");
+export const [showShortcuts, setShowShortcuts] = createSignal(false);
+// File-editor pane target; set from anywhere (chat links, diff headers…).
+export const [editorPath, setEditorPath] = createSignal<string | null>(null);
+// `/btw` side chat panel.
+export const [sideOpen, setSideOpen] = createSignal(false);
+// Scheduled-tasks manager modal.
+export const [tasksOpen, setTasksOpen] = createSignal(false);
+// Diff pane binding: which session's changes are shown (best-of-N override).
+export const [diffTarget, setDiffTarget] = createSignal<string | null>(null);
+
+export interface BestRun {
+  session_id: string;
+  branch: string;
+  path: string;
+}
+// Dialog lifecycle: closed → config form → starting ([] pending) → runs.
+export const [bestOfOpen, setBestOfOpen] = createSignal(false);
+export const [bestOfRuns, setBestOfRuns] = createSignal<BestRun[] | null>(null);
+
+export function openInEditor(path: string) {
+  setEditorPath(path);
+  setDockTab("editor");
+}
+
+const [itemsBySession, setItemsBySession] = createStore<Record<string, Item[]>>({});
+const [runningMap, setRunningMap] = createStore<Record<string, boolean>>({});
+const [usageBySession, setUsageBySession] = createStore<Record<string, Usage>>({});
+
+// ---- selectors -------------------------------------------------------------
+
+export function itemsOf(id: string | null, bucket: Bucket = "main"): Item[] {
+  if (!id) return [];
+  return itemsBySession[K(bucket, id)] ?? [];
+}
+
+export function isRunning(id: string | null, bucket: Bucket = "main"): boolean {
+  return !!(id && runningMap[K(bucket, id)]);
+}
+
+export function usageOf(id: string | null): Usage {
+  return (id && usageBySession[id]) || {};
+}
+
+// ---- buckets: "main" transcript vs "side" (/btw) branch --------------------
+
+export type Bucket = "main" | "side";
+
+const K = (bucket: Bucket, id: string) => (bucket === "main" ? id : `side:${id}`);
+
+// ---- immutable list helpers ------------------------------------------------
+
+function updateList(bucket: Bucket, id: string, fn: (list: Item[]) => Item[]) {
+  setItemsBySession(K(bucket, id), (list) => fn(list ?? []));
+}
+
+function pushItem(bucket: Bucket, id: string, item: Item) {
+  updateList(bucket, id, (list) => [...list, item]);
+}
+
+function note(bucket: Bucket, id: string, text: string) {
+  pushItem(bucket, id, { kind: "system", text });
+}
+
+function patchById(bucket: Bucket, id: string, itemId: string, patch: (draft: Item) => Item) {
+  updateList(bucket, id, (list) =>
+    list.map((it) => {
+      if ((it.kind === "tool" || it.kind === "approval") && it.id === itemId) {
+        return patch(it);
+      }
+      return it;
+    }),
+  );
+}
+
+function patchLast(bucket: Bucket, id: string, pred: (it: Item) => boolean, patch: (draft: Item) => Item) {
+  updateList(bucket, id, (list) => {
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (pred(list[i])) {
+        const next = [...list];
+        next[i] = patch(list[i]);
+        return next;
+      }
+    }
+    return list;
+  });
+}
+
+// ---- transcript hydration --------------------------------------------------
+
+function blocksToItems(blocks: ContentBlock[], keyBase: string): Item[] {
+  const out: Item[] = [];
+  blocks.forEach((b, i) => {
+    if (b.type === "text" && b.text.trim()) {
+      out.push({ kind: "assistant", key: `${keyBase}-t${i}`, text: b.text, streaming: false });
+    } else if (b.type === "thinking" && b.text.trim()) {
+      out.push({ kind: "thinking", key: `${keyBase}-k${i}`, text: b.text, done: true });
+    } else if (b.type === "tool_use") {
+      out.push({
+        kind: "tool",
+        id: b.id,
+        name: b.name,
+        argsJson: JSON.stringify(b.input ?? null, null, 2),
+        done: false,
+        isError: false,
+        preview: null,
+      });
+    }
+    // tool_result blocks fold into their ToolUse card below.
+  });
+  return out;
+}
+
+/** Rebuild a session view from the persisted ledger. */
+export function hydrateFromTranscript(id: string, messages: Message[]) {
+  const next: Item[] = [];
+  let assistantSeq = 0;
+
+  for (const m of messages) {
+    if (m.role === "User") {
+      const texts = m.content
+        .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
+        .map((b) => b.text);
+      const results = m.content.filter(
+        (b): b is Extract<ContentBlock, { type: "tool_result" }> => b.type === "tool_result",
+      );
+      for (const tr of results) {
+        const idx = next.findIndex(
+          (it) => it.kind === "tool" && it.id === tr.tool_use_id,
+        );
+        if (idx >= 0) {
+          const it = next[idx];
+          if (it.kind === "tool") {
+            next[idx] = { ...it, done: true, isError: !!tr.is_error, preview: tr.content };
+          }
+        }
+      }
+      const joined = texts.join("\n").trim();
+      if (joined) next.push({ kind: "user", text: joined });
+    } else {
+      const baseKey = `${id}-h${assistantSeq++}`;
+      const hasText = m.content.some(
+        (b): b is Extract<ContentBlock, { type: "text" }> =>
+          b.type === "text" && b.text.trim().length > 0,
+      );
+      next.push(...blocksToItems(m.content, baseKey));
+      if (hasText) {
+        for (let i = next.length - 1; i >= 0; i--) {
+          const it = next[i];
+          if (it.kind === "assistant") {
+            next[i] = { ...it, streaming: false };
+            break;
+          }
+        }
+      }
+    }
+  }
+  setItemsBySession(id, next);
+}
+
+// ---- live event application ------------------------------------------------
+
+let assistantSeq = 0;
+
+function ensureStreamingAssistant(bucket: Bucket, id: string): void {
+  updateList(bucket, id, (list) => {
+    for (let i = list.length - 1; i >= 0; i--) {
+      const it = list[i];
+      if (it.kind === "assistant") return list;
+      if (it.kind === "user") break;
+    }
+    assistantSeq += 1;
+    return [
+      ...list,
+      { kind: "assistant", key: `live-${assistantSeq}`, text: "", streaming: true },
+    ];
+  });
+}
+
+function appendToLast(bucket: Bucket, id: string, kind: "assistant" | "thinking", delta: string) {
+  updateList(bucket, id, (list) => {
+    for (let i = list.length - 1; i >= 0; i--) {
+      const it = list[i];
+      if (it.kind === kind) {
+        const next = [...list];
+        next[i] =
+          kind === "assistant"
+            ? { ...it, kind, key: it.key, text: it.text + delta, streaming: true }
+            : { ...it, kind, key: it.key, text: it.text + delta, done: false };
+        return next;
+      }
+      // stop scanning at the last hard boundary
+      if (it.kind === "user" || it.kind === "system") break;
+    }
+    const fresh: Item =
+      kind === "assistant"
+        ? { kind: "assistant", key: `live-${++assistantSeq}`, text: delta, streaming: true }
+        : { kind: "thinking", key: `think-${Date.now()}`, text: delta, done: false };
+    return [...list, fresh];
+  });
+}
+
+export function applyEvent(
+  id: string,
+  ev: AgentEvent,
+  opts: { onFinish?: (summary: string) => void; bucket?: Bucket },
+) {
+  const b: Bucket = opts.bucket ?? "main";
+  if ("TurnStart" in ev) {
+    markRunning(id, true, b);
+  } else if ("Stream" in ev) {
+    const s = ev.Stream;
+    if ("TextDelta" in s) {
+      ensureStreamingAssistant(b, id);
+      appendToLast(b, id, "assistant", s.TextDelta.delta);
+    } else if ("ThinkingDelta" in s) {
+      appendToLast(b, id, "thinking", s.ThinkingDelta.delta);
+    } else if ("End" in s) {
+      finalizeStream(b, id);
+    }
+  } else if ("ToolCallStart" in ev) {
+    pushItem(b, id, {
+      kind: "tool",
+      id: ev.ToolCallStart.id,
+      name: ev.ToolCallStart.name,
+      argsJson: ev.ToolCallStart.args_json,
+      done: false,
+      isError: false,
+      preview: null,
+    });
+  } else if ("ToolCallEnd" in ev) {
+    patchById(b, id, ev.ToolCallEnd.id, (it) =>
+      it.kind === "tool"
+        ? {
+            ...it,
+            done: true,
+            isError: ev.ToolCallEnd.is_error,
+            preview: ev.ToolCallEnd.result_preview,
+          }
+        : it,
+    );
+  } else if ("ApprovalRequested" in ev) {
+    pushItem("main", id, {
+      kind: "approval",
+      id: ev.ApprovalRequested.id,
+      tool: ev.ApprovalRequested.tool,
+      argsJson: ev.ApprovalRequested.args_json,
+      reason: ev.ApprovalRequested.reason,
+      resolved: null,
+    });
+  } else if ("SubagentStarted" in ev) {
+    pushItem(b, id, {
+      kind: "subagent",
+      label: ev.SubagentStarted.label,
+      lines: [],
+      open: false,
+      isError: false,
+    });
+  } else if ("SubagentToolCall" in ev) {
+    patchLast(
+      b,
+      id,
+      (it) => it.kind === "subagent",
+      (it) => {
+        if (it.kind !== "subagent") return it;
+        const lines = [...it.lines, `${ev.SubagentToolCall.name}${ev.SubagentToolCall.is_error ? " ✗" : ""}`];
+        return { ...it, lines: lines.slice(-12) };
+      },
+    );
+  } else if ("SubagentUsage" in ev) {
+    patchLast(
+      b,
+      id,
+      (it) => it.kind === "subagent",
+      (it) =>
+        it.kind === "subagent"
+          ? {
+              ...it,
+              lines: [...it.lines, `tokens ↑${ev.SubagentUsage.input_tokens} ↓${ev.SubagentUsage.output_tokens}`],
+            }
+          : it,
+    );
+  } else if ("SubagentFinished" in ev) {
+    patchLast(
+      b,
+      id,
+      (it) => it.kind === "subagent",
+      (it) =>
+        it.kind === "subagent"
+          ? {
+              ...it,
+              isError: ev.SubagentFinished.is_error,
+              lines: [...it.lines, `done in ${(ev.SubagentFinished.elapsed_ms / 1000).toFixed(1)}s`],
+            }
+          : it,
+    );
+  } else if ("RetryScheduled" in ev) {
+    note(
+      b,
+      id,
+      `retrying (attempt ${ev.RetryScheduled.attempt}) in ${Math.round(ev.RetryScheduled.delay_ms / 100) / 10}s — ${ev.RetryScheduled.reason}`,
+    );
+  } else if ("ContextCompacting" in ev) {
+    note(b, id, "compacting context…");
+  } else if ("ContextCompacted" in ev) {
+    note(
+      b,
+      id,
+      `context compacted ${ev.ContextCompacted.before_tokens} → ${ev.ContextCompacted.after_tokens} tokens`,
+    );
+  } else if ("StopHookContinuation" in ev) {
+    note(b, id, `stop gate: continuing (${ev.StopHookContinuation.reason})`);
+  } else if ("TurnEnd" in ev) {
+    setUsageBySession(id, ev.TurnEnd.usage);
+  } else if ("RunFinished" in ev) {
+    markRunning(id, false, b);
+    updateList(b, id, (list) =>
+      list.map((it) => {
+        if (it.kind === "assistant" && it.streaming) return { ...it, streaming: false };
+        if (it.kind === "thinking" && !it.done) return { ...it, done: true };
+        return it;
+      }),
+    );
+    opts.onFinish?.(ev.RunFinished.summary);
+  }
+}
+
+function finalizeStream(bucket: Bucket, id: string) {
+  // The final snapshot may still be mid-flight deltas; closing streaming
+  // state happens on RunFinished or when the next user turn starts.
+}
+
+// ---- imperative helpers used by App ---------------------------------------
+
+export function appendUser(id: string, text: string, bucket: Bucket = "main") {
+  pushItem(bucket, id, { kind: "user", text });
+}
+
+export function appendSystem(id: string, text: string, bucket: Bucket = "main") {
+  note(bucket, id, text);
+}
+
+export function markRunning(id: string, on: boolean, bucket: Bucket = "main") {
+  setRunningMap(K(bucket, id), on);
+}
+
+export function resolveApproval(id: string, requestId: string, verdict: "allowed" | "denied") {
+  patchById(
+    "main",
+    id,
+    requestId,
+    (it): Item =>
+      it.kind === "approval" ? { ...it, resolved: verdict } : it,
+  );
+}
+
+export function setUsageFor(id: string, usage: Usage | Record<string, number>) {
+  setUsageBySession(id, usage as Usage);
+}
+
+// ---- session registry ------------------------------------------------------
+
+export function resetSessionView(id: string) {
+  for (const key of [K("main", id), K("side", id)]) {
+    setItemsBySession(key, []);
+    setRunningMap(key, false);
+  }
+}

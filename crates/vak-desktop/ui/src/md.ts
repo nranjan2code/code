@@ -1,0 +1,106 @@
+// Minimal, injection-safe markdown renderer. Everything is escaped first;
+// only a fixed set of constructs produces markup.
+
+function esc(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function inline(s: string): string {
+  let out = esc(s);
+  // inline code; path-looking spans become clickable editor links
+  out = out.replace(/`([^`\n]+)`/g, (_m, code: string) => {
+    const isPath =
+      /^[\w@.-]+(\/[\w@.-]+)+$/.test(code) || /^\.[\w/-]+$/.test(code) || /\.\w{1,6}$/.test(code);
+    return `<code class="ic"${isPath ? ' data-path="true" title="open in editor"' : ""}>${code}</code>`;
+  });
+  // bold then italic
+  out = out.replace(/\*\*([^*\n][^*\n]*?)\*\*/g, "<strong>$1</strong>");
+  out = out.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
+  // links → non-navigating styled span (external nav needs the opener plugin)
+  out = out.replace(
+    /\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
+    '<span class="lnk" title="$2">$1</span>',
+  );
+  return out;
+}
+
+export function renderMarkdown(src: string): string {
+  const parts = src.split(/^```(\w*)[ \t]*$\n?([\s\S]*?)^```[ \t]*$/gm);
+  if (parts.length === 1) return block(src);
+
+  let html = "";
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 3 === 0) html += block(parts[i]);
+    else if (i % 3 === 1) continue; // lang captured below
+    else {
+      const lang = parts[i - 1] || "";
+      const code = parts[i].replace(/\n$/, "");
+      html += `<div class="cb"><div class="cb-h"><span>${esc(lang || "text")}</span><button class="cb-copy" data-copy="${esc(code)}">copy</button></div><pre><code>${esc(code)}</code></pre></div>`;
+    }
+  }
+  return html;
+}
+
+function block(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let list: "ul" | "ol" | null = null;
+
+  const closeList = () => {
+    if (list) {
+      out.push(`</${list}>`);
+      list = null;
+    }
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const h = /^(#{1,4})\s+(.*)$/.exec(line);
+    if (h) {
+      closeList();
+      const lvl = h[1].length;
+      out.push(`<h${lvl + 1} class="md-h">${inline(h[2])}</h${lvl + 1}>`);
+      continue;
+    }
+    if (/^\s*[-*]\s+/.test(line)) {
+      if (list !== "ul") {
+        closeList();
+        out.push('<ul class="md-ul">');
+        list = "ul";
+      }
+      out.push(`<li>${inline(line.replace(/^\s*[-*]\s+/, ""))}</li>`);
+      continue;
+    }
+    if (/^\s*\d+[.)]\s+/.test(line)) {
+      if (list !== "ol") {
+        closeList();
+        out.push('<ol class="md-ol">');
+        list = "ol";
+      }
+      out.push(`<li>${inline(line.replace(/^\s*\d+[.)]\s+/, ""))}</li>`);
+      continue;
+    }
+    if (/^>\s?/.test(line)) {
+      closeList();
+      out.push(`<blockquote class="md-bq">${inline(line.replace(/^>\s?/, ""))}</blockquote>`);
+      continue;
+    }
+    if (/^\s*(---|\*\*\*)\s*$/.test(line)) {
+      closeList();
+      out.push('<hr class="md-hr">');
+      continue;
+    }
+    if (line.trim() === "") {
+      closeList();
+      continue;
+    }
+    closeList();
+    out.push(`<p class="md-p">${inline(line)}</p>`);
+  }
+  closeList();
+  return out.join("");
+}

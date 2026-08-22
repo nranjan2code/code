@@ -19,6 +19,9 @@ vak-core = { workspace = true }
 vak-llm = { workspace = true }
 futures = { workspace = true }
 vak-session = { workspace = true }
+tower-http = { workspace = true }
+chrono = { workspace = true }
+walkdir = { workspace = true }
 
 [dev-dependencies]
 reqwest = { workspace = true }

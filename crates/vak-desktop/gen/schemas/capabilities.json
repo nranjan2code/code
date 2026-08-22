@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"vakcoder desktop shell capabilities","local":true,"windows":["main"],"permissions":["core:default","core:event:default","dialog:allow-open","notification:default"]}}

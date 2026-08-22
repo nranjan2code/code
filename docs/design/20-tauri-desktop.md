@@ -1,0 +1,289 @@
+# 20 — Tauri desktop app: competitive research & architecture
+
+Goal: a native desktop orchestrator for vakcoder in **Tauri 2**, built by
+unapologetically copying the best features of Claude Code Desktop, OpenAI's
+Codex desktop app, and Cursor 3's Agents Window — then beating them where our
+architecture already wins. Sources: official docs/changelogs/blogs for all
+three apps (Feb–Aug 2026); Codex GitHub issues #24197/#34183; ChatML's public
+Tauri 2 field report; Tauri-vs-Electron benchmarks (2026).
+
+## Thesis
+
+Every leader converged on the same product: **the human as orchestrator**.
+Many parallel agent sessions, each isolated in its own worktree; the human
+surfaces diffs, approves actions, monitors PRs, schedules routine work. The
+desktop app is not "a chat window" — it is mission control. Our unfair
+advantages transfer directly:
+
+1. **One append-only ledger shared by every surface.** Codex's #1 desktop
+   complaint is CLI sessions being invisible in the app (#24197, still open).
+   Ours cannot happen structurally: `vak-tui`, `exec`, `serve`, and the
+   desktop app all read/write the same JSONL trees under `~/.vakcoder`.
+2. **Delta+snapshot streaming everywhere** (invariant 4). Every pane — chat,
+   diff, subagent view — consumes the same event stream at whichever level it
+   wants. No re-derivation hacks.
+3. **The backend is already Rust.** ChatML needed a Go sidecar + node-pty +
+   bundled Node runner (155 MB installed). We link/spawn Rust we already
+   ship; no Node tax, ~10 MB-class shell.
+4. Worktrees + checkpoints + permission modes + approvals + steering +
+   MCP + skills + hooks + flows/planner already exist server-side. The
+   desktop app is mostly *projection*, not new core.
+
+## What we have today (assets to project)
+
+| asset | crate | desktop use |
+|---|---|---|
+| HTTP+SSE contract: sessions/run/steering/cancel/approvals/events/transcript | vak-server | the entire agent protocol; zero new API surface |
+| append-only JSONL trees, branching via parent_id, compaction-as-entry | vak-session | unified session history across TUI/desktop; side chats as branches |
+| permission engine (modes × rules → Allow/Ask/Deny) | vak-permission | mode selector UI maps 1:1 |
+| approval FIFO with diff previews | vak-agent | approval cards in-app |
+| steering queues mid-run | vak-agent | "type while running" prompt box |
+| checkpoints + rewind | vak-core | time-travel UI |
+| worktree isolation | vak-core | per-session isolation toggle |
+| subagents (task tool) + live streams | vak-agent | tasks/subagent pane |
+| skills, hooks, lazy MCP meta-tool | vak-core/hooks/mcp | slash palette, connectors manager |
+| static flows + dynamic planner | vak-flow | best-of-N / fan-out orchestration |
+
+## Steal-list A — Claude Code Desktop (leader; redesign June 2026)
+
+| feature | copy? | mechanism here |
+|---|---|---|
+| Multi-session sidebar: parallel sessions, filter by status/project, group by repo, Cmd+N | D1 | session store query projection; statuses from run state |
+| Per-session git-worktree isolation, branch prefix, archive-on-PR-merge | D1 | existing vak-core worktrees behind a session flag |
+| Drag-and-drop panes: chat/diff/browser/terminal/file/plan/tasks | D1/D2 | dockable layout (frontend lib), panes = event consumers |
+| Integrated PTY terminal per session (shares env/cwd) | D2 | `portable-pty` behind Tauri command → xterm.js over event channel |
+| In-app file editor w/ on-disk conflict warning | D2 | CodeMirror 6 + mtime check |
+| Diff viewer: file tree, per-line comments batched into feedback (Cmd+Enter) | D1 | comments become **steering entries** (model-visible ⇒ logged) |
+| "Review code" button (high-signal review: logic/security only) | D3 | one-shot review prompt against current diff |
+| PR monitor: CI status bar via `gh`, auto-fix failing checks, auto-merge on green | D3 | gh polling loop; failures fed back as steering |
+| Browser pane: dev-server preview from `.claude/launch.json`-style config, auto-verify loop | D4 | `.vak/launch.toml`; screenshot/DOM verify tool |
+| Side chats (`/btw`): ask using session context without derailing main thread | D2 | **branch entry** (parent_id child, marked non-canonical); never merges back; satisfies invariants 1–2 |
+| Cross-session messaging ("tell payments session the schema changed") + task chips | D4 | new tool + recipient-side entry quoting sender session id |
+| Permission-mode selector remembered per folder | D0 | existing modes; persist selection per cwd in config layering |
+| @file mentions, drag-drop/paste attachments | D1 | new session entry types (invariant 1) |
+| Skills/slash palette, plugin browser, connectors (MCP graphical setup) | D3/D4 | enumerate existing registries |
+| Transcript density modes Normal/Verbose/Summary | D1 | three projections over same ledger |
+| Context usage ring (per session) | D0 | usage events already stream |
+| OS notification when unviewed session finishes | D0 | tauri-plugin-notification |
+| Split view: two sessions side-by-side | D2 | two consumers, independent cursors |
+| Scheduled routines/recurring tasks | D4 | daemon mode spawning normal runs in worktrees |
+| Environments: Local/SSH/cloud | D5 | SSH = tunnel to remote `serve`; no cloud infra needed |
+
+## Steal-list B — Codex desktop app (task-centric challenger)
+
+| feature | copy? | notes |
+|---|---|---|
+| Task-based workflow: discrete tasks w/ status, review before keep | D1 | sessions get task titles/status chips |
+| Parallel agents default-isolated in background worktrees | D1 | make worktree-per-session the *default* for background runs |
+| Scheduled tasks run locally in worktrees; sandbox scope (file/network); dry-run first recommendation | D4 | pair scheduler w/ vak-permission rules scoped per schedule |
+| Skills = folder + SKILL.md + YAML frontmatter | adopt format | compatibility with the de-facto standard both majors use |
+| Local app-server architecture (localhost API + sqlite index + JSONL) | validated | matches our vak-server contract; keep local-first |
+
+**Anti-patterns witnessed (do not repeat):**
+- #24197 — CLI-created sessions invisible in app sidebar. Impossible here:
+  one store, all surfaces. Marketing-grade differentiator; surface a badge:
+  *"started in terminal · continued here"*.
+- #34183 — remote outage replaced healthy local sidebar with cloud shell;
+  active task orphaned. Rule: **remote surfaces degrade non-blockingly**;
+  local ledger is always source of truth; never hide local runs behind
+  account/metadata fetches.
+
+## Steal-list C — Cursor 3 Agents Window
+
+| feature | copy? | mechanism here |
+|---|---|---|
+| One window managing agents across repos/environments | D2 | sidebar spans all projects under ~/.vakcoder |
+| Tabbed agent chats | D1 | trivial |
+| Best-of-N: same prompt fanned across models/worktrees, side-by-side compare, color-coded agreement (agree/partial/diverge) | D4 | N child branches off one prompt entry (ledger-native!); comparison = sibling projection; optional judge via vak-flow |
+| Aggregated diff viewer across parallel runs | D4 | union of sibling diffs, agreement coloring |
+| Hand off session between surfaces (local ↔ elsewhere) | D5 | SSH target covers it; ledger syncs by file path |
+| Design Mode: click DOM element → context to agent | D5 | browser-pane element select feeding an attachment entry |
+
+## Architecture decision
+
+**Tauri 2 shell, sidecar-first, hybrid native.**
+
+```
+┌─ vak-desktop (Tauri 2, crates/vak-desktop) ─────────────────────┐
+│ webview UI (SolidJS + Vite SPA, CodeMirror 6, xterm.js)         │
+│   │  HTTP+SSE 127.0.0.1:<ephemeral> + loopback token            │
+│   │  = the existing vak-server contract (docs/design/13)        │
+│ ├─ sidecar: `vakcoder serve --port 0` (bundled binary)          │
+│ │    health-gated startup; owns sessions/runs/approvals         │
+│ ├─ native commands (Rust): PTY terminal, dialogs, notifications,│
+│ │    deep links (gh OAuth), global shortcuts, tray              │
+│ └─ plugins: single-instance, updater, deep-link, notification,  │
+│      dialog, global-shortcut, store                             │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+Why this shape:
+
+- **Zero protocol drift.** The webview speaks the exact contract `serve`
+  already exposes; tui/exec/serve/desktop stay behaviorally identical, and
+  evals keep covering the real path. A pure-command bridge would fork the
+  API surface for no user value.
+- **Sidecar beats in-process linking** for now: process isolation keeps the
+  crash domain out of the shell, lets us attach the desktop to a *remote*
+  `serve` later (SSH target) by changing one URL, and costs nothing since
+  the binary already exists. If IPC latency ever matters, commands can move
+  into the shell incrementally — the frontend doesn't change.
+- **Frontend: SolidJS + Vite SPA.** Signals map directly onto delta+snapshot
+  SSE; no VDOM overhead in transcript-heavy views; small runtime. Alternatives
+  considered: Svelte 5 (fine), React (heavier, ecosystem not needed).
+- **Editor/diff: CodeMirror 6** (merge-view for diffs) — an order lighter
+  than Monaco, good enough for spot edits; xterm.js for PTY panes.
+- **Secrets:** unchanged — `.env` loading stays in vak_config; the renderer
+  never sees keys. Settings in tauri-plugin-store; keychain integration later.
+- **Security:** strict CSP, no remote content in the webview, capabilities
+  least-privilege, loopback token auth on the local port.
+
+### Invariant mapping (non-negotiables → desktop features)
+
+| invariant | consequence |
+|---|---|
+| 1 model-visible ⇒ logged | @mentions, attachments, diff line-comments, side-chat prompts are **new entry types or branches**, never renderer-only strings |
+| 2 append-only | side chat = branch (child entry), archived ≠ deleted; rewind = checkpoint entries |
+| 3 errors are values | tool/provider errors render as cards; breaker/endurance state visible in status row |
+| 4 delta AND snapshot | every pane subscribes at its level; Verbose=delta firehose, Summary=snapshot projection |
+| 5 abort preserves partial output | stop button cancels token; partial transcript remains visible and persisted |
+| 7 retry/breaker/endurance | watchdog + breaker states surfaced (Codex lesson: never fake-alive spinners) |
+| 8 secrets | .env/keychain only; renderer storage forbidden for keys |
+
+## What we will NOT copy
+
+- **Computer use / screen control.** Different trust boundary entirely;
+  revisit after D5. Our sandbox story (Seatbelt/Landlock) is a better spend.
+- **Cloud-managed session infra.** No backend service exists or is wanted;
+  SSH-to-serve covers remote machines without custody of user code.
+- **Phone dispatch.** Depends on cloud push plumbing; skip.
+- **Merged super-app shell** (Codex folding Codex into ChatGPT UI): their own
+  bug reports show the cost. Desktop stays a coding-agent surface.
+
+## Gap matrix (us vs leaders, post-D5 target)
+
+| capability | CC Desktop | Codex app | Cursor 3 | us (target) |
+|---|---|---|---|---|
+| multi-provider models | ❌ Anthropic-only | ❌ OpenAI-first | partial | ✅ day-1 differentiator |
+| unified CLI+GUI history | partial | ❌ (#24197) | n/a | ✅ structural |
+| worktree isolation | ✅ | ✅ | ✅ | ✅ (exists) |
+| best-of-N compare | ❌ | ❌ | ✅ | ✅ D4 (ledger-native) |
+| diff line-comment feedback | ✅ | basic | partial | ✅ D1 |
+| PR monitor + auto-fix | ✅ | partial | ✅ | ✅ D3 |
+| scheduled local tasks | ✅ | ✅ | ❌ | ✅ D4 |
+| browser preview/auto-verify | ✅ | partial | ✅ | ✅ D4 |
+| transparency (full ledger UI) | verbose mode | transcript files | hidden | ✅ structural |
+| reliability surfacing | minimal | minimal | minimal | ✅ breaker/watchdog UI |
+
+## Phases
+
+- **D0 — shell parity (walk before orchestrate).** Scaffold crates/vak-desktop
+  + ui/; bundle binary as sidecar w/ health gate; session list + single chat
+  pane streaming SSE; approvals cards; steering/cancel; permission-mode
+  selector; notifications; context ring. Exit: daily-drive a real task.
+- **D1 — orchestrator spine.** Multi-session sidebar (filter/group/status),
+  tabs + split view, worktree-per-session default for background runs, diff
+  viewer w/ line-comment→steering, transcript density modes, task titles/
+  status chips, shortcut sheet.
+- **D2 — workspace.** PTY terminal pane, file editor pane, side chats as
+  branches (/btw), @mentions + attachments (new entry types), cross-project
+  sidebar, drag-and-drop layout.
+- **D3 — delivery loop.** gh PR status bar, auto-fix/auto-merge toggles,
+  review-code action, skills/slash palette + plugin manager UI, launch
+  config (`.vak/launch.toml`) parsing.
+- **D4 — fleet features.** Best-of-N runner + aggregated/agreement diff view;
+  cross-session messaging tool + task chips; scheduled-task daemon (local
+  cron, worktree-scoped, permission-scoped); connectors/MCP manager; browser
+  preview pane + auto-verify tool.
+- **D5 — ship it.** Signing/notarization (macOS/Windows/Linux), auto-updater
+  channel, deep-link OAuth (gh), tray + global shortcuts, SSH target
+  (tunnel to remote serve), packaging sizes verified <25 MB.
+
+Verification gates per phase: `cargo fmt/clippy -D warnings/test` workspace
+green; PTY smoke script extended for desktop sidecar boot; e2e through the
+real binary (never a mock protocol) for every new entry type added.
+
+## Implementation status (first vertical slice, Aug 2026)
+
+Shipped in `crates/vak-desktop` (+ additive `vak-server` endpoints):
+
+- **Shell**: Tauri 2 window; embedded `secured_router` on an ephemeral
+  loopback port with per-process bearer token (deviation from sidecar-first:
+  in-process linking keeps one binary and the exact same HTTP+SSE contract;
+  remote/SSH targets still work later by pointing the webview at a URL).
+  Project picker gate on first run; last project persisted to
+  `~/.vakcoder/desktop.json`; project switch restarts the backend.
+- **Chat**: SSE streaming with markdown-lite renderer, thinking blocks,
+  tool cards (args/result/error), approvals inline (allow/deny), steering
+  while running, stop (Esc/cancel), transcript density modes
+  (summary/normal/verbose), context-usage ring from `/health.context_window`.
+- **Sidebar**: persisted-session listing (`GET /sessions`), search + status
+  filters, resume via `POST /sessions/{id}/attach`, new session (⌘N).
+- **Diff pane** (⌘D): git diff/status projection (`GET /sessions/{id}/diff`),
+  click-a-line → comment → steering entry.
+- **Terminal pane** (⌃\`): real PTY (`portable-pty`) → xterm.js over a Tauri
+  channel, per session cwd, resize-aware.
+- **Server additions** (all bearer-gated, tested in
+  `vak-server/tests/server_ext.rs`): CORS for webview origins,
+  `GET /sessions`, `POST /sessions/{id}/attach`, `GET /sessions/{id}/diff`,
+  `GET|PUT /fs/file` (symlink-resolved confinement to cwd),
+  `GET /fs/tree` (bounded listing, vendored dirs skipped),
+  `POST /config/mode`, `/health` gains `context_window`+`cwd`.
+- **D2 completion**: dock tab bar (diff/terminal/editor), file-editor pane
+  (open-from-chat links + diff headers, ⌘S save, disk-conflict warn via
+  refetch-compare), @file mention autocomplete in the composer (backed by
+  `/fs/tree`; the mention text ships inside the prompt so it is logged with
+  the user message — invariant 1 holds without a new entry type),
+  per-session PTY lifecycle fix (terminals keyed by session id), diff pane
+  auto-refresh on run finish.
+
+- **Side chats as branches** (`/btw`, ⌘;): server runs the Q as a sibling
+  branch off the current main tail (`branch_at` + append + restore), streams
+  deltas over a dedicated `GET /sessions/{id}/side/events` channel so the
+  main transcript never sees them; after completion the branch pointer is
+  restored and future main turns continue exactly where they were. Side
+  entries stay in the ledger — reconstructable via their parent chain,
+  invisible to `derive_messages()` on the main line. Tested:
+  `side_chat_branches_off_and_restores_main_chain` proves main count/contents
+  unchanged while the JSONL retains question+answer.
+
+- **Best-of-N runner**: `POST /sessions/{id}/bestofn` fans the prompt across
+  1–4 isolated git worktrees (`.vakcoder/worktrees/<rid>`, branch
+  `vakcoder/<rid>`), each a fully registered session with its own Core,
+  provider, event stream, and cwd — the diff endpoint is now per-session so
+  each candidate's changes render in the diff pane. `POST /{child}/keep`
+  merges the branch into the checkout (conflicts → merge aborted + error
+  surfaced), `POST /{child}/discard` drops worktree+branch. UI: N× button →
+  config modal (prompt + candidates) → live compare grid with per-candidate
+  streams, final answers, keep/discard/diff actions. Tested end-to-end:
+  fan-out, per-child transcripts, worktree cleanup on both paths.
+
+- **PR monitor + auto-fix/auto-merge** (dock tab `pr`): `GET
+  /sessions/{id}/pr` resolves the branch's PR via `gh pr view` with check
+  rollup; tooling absence surfaces as structured `{reason: no_pr |
+  gh_unavailable}` values, never hangs. Panel polls every 30s while watching;
+  toggles persist per session. Auto-fix dispatches a fix run (failing-check
+  names + log commands in the prompt) when the session is idle; auto-merge
+  calls `POST /{id}/pr/merge` (`gh pr merge --auto --squash --delete-branch`)
+  exactly once per run when all checks pass. Tested:
+  structured status on seeded repo, deterministic merge failure as a value.
+
+- **Scheduled-task daemon** (Codex/Claude routines, local-first): task CRUD
+  (`/tasks`) persisted at `~/.vakcoder/tasks.json`, scheduler loop spawned by
+  `secured_router` (20s ticks; fires tasks for the active workspace when due).
+  Each fire reuses `spawn_isolated_run` — best-of-N's shared primitive — so
+  every run lands in its own worktree with a full session in the ledger.
+  Latest-run worktree retention: replaced on the next fire, deleted with the
+  task (only while idle). Summary recorded via event watcher on the child
+  stream. UI: ⏱ sidebar button → modal with add/pause/resume/run-now/delete +
+  diff-of-last-run. Interval floor 60s (validated as a value). Tested:
+  CRUD + run-now end-to-end incl. worktree churn and cleanup.
+
+E2E proof: app boots, embedded server answers on the ephemeral port,
+`/health` reflects the live Core (provider/model/sandbox/mode), unauthenticated
+`/fs/*`, `/side/*`, `/bestofn`, `/pr`, `/tasks` rejected with 401; workspace
+fmt+clippy(-D warnings)+229 tests green.
+
+Next up (in steal-list order): browser preview/auto-verify — the last major
+item. Everything else from the Claude/Codex/Cursor steal-lists that fits our
+no-cloud, local-first thesis is now shipped.
