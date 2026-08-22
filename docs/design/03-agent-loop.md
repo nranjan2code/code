@@ -54,6 +54,7 @@ prefix, so operator logs can tell them apart.
 
 ## Later phases
 
-- permission gate between extract_tool_calls and execute_batch (Phase 3)
-- subagent `task` tool spawning child Agents with narrowed contracts (Phase 5)
-- resource-claim scheduler for parallel fan-out (Phase 6)
+All three former items shipped (permission gate, `task` subagents, resource-
+claim scheduler) — see 00-roadmap.md and 08-permissions.md. Remaining open
+ideas: stop-gate extension to catch fabricated verification (currently
+omission-only), per-subagent token attribution in the ledger itself.

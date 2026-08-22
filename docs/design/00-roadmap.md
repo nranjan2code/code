@@ -17,6 +17,7 @@ Phases with exit criteria. Each phase ships a usable product.
 | post-v0.1.0 ✅ (3) | TUI/UX pass: markdown+syntax rendering, tool cards w/ diffs, live status row, approval queue+always-allow, multiline+paste input, completions, /resume+/rewind, themes (docs/design/18-tui.md); steering wired through Core | PTY smoke 10/10 incl. approval flow; workspace fmt/clippy/tests green |
 | post-v0.1.0 ✅ (4) | TUI slices 2–3: approval diff previews, readline editing (Ctrl-U/W, Alt-b/f), thinking indicator, subagent lifecycle+tool streams, /theme runtime switch, cost estimates, Ctrl-R history search, session browser with first-prompt snippets, /doctor + /transcript | 191+ tests green; PTY smoke 10/10; clippy -D warnings clean |
 | post-v0.1.0 ✅ (5) | Linux Landlock sandbox backend (safe `landlock` crate; self-exec `__sandbox` runner, fail-closed kernel probe); subagent token rollup into /cost; CI ubuntu job incl. landlock smoke | darwin+linux clippy/test green; scripts/landlock_smoke.sh 5/5 on ubuntu |
+| post-v0.1.0 ✅ (6) | Dogfood + capability gauntlet campaigns: stop-gate built from findings, sandbox temp-dir fix, learned allow rules, exec/TUI output parity; architecture ladder + extensibility battery + live brownout chaos | docs/design/16-achievements.md gauntlet sections; all live probes verified independently |
 
 ## Decisions locked during research (2026-08)
 

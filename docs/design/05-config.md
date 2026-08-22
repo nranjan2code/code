@@ -23,13 +23,16 @@ provider, model, max_tokens, max_turns, permission_mode, profile, profiles.*,
 anthropic_base_url, allow/ask/deny, subagents, hooks.*, mcp.servers.*,
 max_retries, retry_base_backoff_ms, request_timeout_secs,
 circuit_breaker_threshold, circuit_breaker_cooldown_secs, context_window
-(min 16384; smaller values warn and fall back to the default).
+(min 16384; smaller values warn and fall back to the default),
+ui.theme, ui.bell, stop_policy.enabled/marker_gate/verify_gate/max_blocks.
 
 ## Later
 
 - permission rules block (Phase 3)
 - hooks/skills/MCP registration blocks (Phase 5)
 - minimal|standard runtime profiles as eval baseline (Phase 7)
+- headless surface for extension status: `config dump` omits skills/hooks;
+  `/doctor` is TUI-only — add a `vakcoder doctor` subcommand
 
 ## Diff note — workspace trust + unknown keys (this change)
 

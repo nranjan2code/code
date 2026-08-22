@@ -69,7 +69,8 @@ crates/vak-hooks     lifecycle hooks: pre/post-tool-use, stop, session-start
 crates/vak-mcp       MCP stdio client behind a lazy meta-tool
 crates/vak-agent     loop, steering queues, parallel tool execution w/
                      resource-claim waves, retries + watchdog + circuit
-                     breaker, subagents (task tool)
+                     breaker + stop gate (premature-completion guard),
+                     subagents (task tool)
 crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode
 crates/vak-config    layered TOML config + .env secret loading
