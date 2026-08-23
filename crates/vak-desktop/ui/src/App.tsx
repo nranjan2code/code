@@ -248,7 +248,8 @@ export async function refreshBackend(): Promise<boolean> {
         const p = await api.listProviders();
         setProviders(p);
         setSetupNeeded(!p.current_configured);
-      } catch {
+      } catch (e) {
+        console.error("refreshBackend: listProviders failed", e);
         setProviders(null);
         setSetupNeeded(false);
       }

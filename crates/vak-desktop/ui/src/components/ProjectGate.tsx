@@ -120,8 +120,8 @@ export default function ProjectGate() {
     try {
       const info = await invoke<BackendInfo>("backend_info");
       if (!info.ready && info.boot_error) setError(info.boot_error);
-    } catch {
-      /* invoke failure already surfaced by refresh */
+    } catch (e) {
+      console.error("readBootError: backend_info failed", e);
     }
   };
 
@@ -144,15 +144,16 @@ export default function ProjectGate() {
     }
   };
 
-  // Show ConnectModel when providers exist but aren't configured (setupNeeded),
-  // or when providers aren't loaded yet. Otherwise show the project picker.
-  const showConnect = setupNeeded() || !providers();
+  // Show the picker while no project has been opened yet (providers()
+  // hasn't loaded). Once a project's backend is up, fall through to
+  // ConnectModel whenever it isn't configured yet.
+  const showPicker = () => !providers();
 
   return (
     <div class="gate">
       <div class="gate-card">
         <div class="gate-mark"><Icon name="spark" size={28} /></div>
-        <Show when={showConnect} fallback={<ConnectModel />}>
+        <Show when={showPicker()} fallback={<ConnectModel />}>
           <h1>vakcoder</h1>
           <p class="gate-lead">Your code, your machine, your agent.</p>
           <div class="gate-features">
