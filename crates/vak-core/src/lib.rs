@@ -5,6 +5,7 @@
 pub mod checkpoints;
 pub mod custom_commands;
 pub mod files;
+pub mod sandbox_docker;
 pub mod session_search;
 pub mod skills;
 pub mod worktree;
@@ -73,6 +74,7 @@ struct CoreInner {
     trust_project_config: bool,
     extra_allow: std::sync::Mutex<Vec<String>>,
     user_env_override: std::sync::Mutex<Option<PathBuf>>,
+    tool_worker_exe: std::sync::Mutex<PathBuf>,
     /// provider -> (fetched_at, model ids). Discovery is a network call;
     /// pickers re-read it constantly, so results are memoised briefly.
     models_cache: std::sync::Mutex<HashMap<String, (std::time::Instant, Vec<String>)>>,
@@ -140,6 +142,10 @@ impl Core {
                 trust_project_config,
                 extra_allow: std::sync::Mutex::new(extra_allow),
                 user_env_override: std::sync::Mutex::new(None),
+                tool_worker_exe: std::sync::Mutex::new(
+                    std::env::current_exe()
+                        .unwrap_or_else(|_| PathBuf::from("__vakcoder_tool_worker_unavailable__")),
+                ),
                 models_cache: std::sync::Mutex::new(HashMap::new()),
             }),
         })
@@ -187,6 +193,38 @@ impl Core {
         if let Ok(mut c) = self.inner.max_turns_override.lock() {
             *c = Some(max_turns);
         }
+    }
+
+    pub fn set_tool_worker_exe(&self, executable: PathBuf) {
+        if let Ok(mut worker) = self.inner.tool_worker_exe.lock() {
+            *worker = executable;
+        }
+    }
+
+    pub fn agent_tools(&self) -> Vec<Arc<dyn vak_tools::Tool>> {
+        let worker = self
+            .inner
+            .tool_worker_exe
+            .lock()
+            .ok()
+            .map(|worker| worker.clone())
+            .unwrap_or_else(|| PathBuf::from("__vakcoder_tool_worker_unavailable__"));
+        vak_tools::brokered_default_tools(worker)
+    }
+
+    pub fn agent_read_only_tools(&self) -> Vec<Arc<dyn vak_tools::Tool>> {
+        let worker = self
+            .inner
+            .tool_worker_exe
+            .lock()
+            .ok()
+            .map(|worker| worker.clone())
+            .unwrap_or_else(|| PathBuf::from("__vakcoder_tool_worker_unavailable__"));
+        vak_tools::brokered_read_only_tools(worker)
+    }
+
+    pub fn agent_sandbox(&self) -> Option<Arc<dyn vak_tools::sandbox::Sandbox>> {
+        self.build_sandbox()
     }
 
     pub fn effective_max_turns(&self) -> usize {
@@ -683,7 +721,7 @@ impl Core {
         let provider = self.provider()?;
         let mut cfg = AgentConfig::new(self.system_prompt());
         cfg.model = self.effective_model();
-        cfg.tools = vak_tools::default_tools();
+        cfg.tools = self.agent_tools();
         cfg.max_turns = self.effective_max_turns();
         cfg.parallel_tools = true;
         cfg.max_retries = self.inner.config.max_retries;
@@ -728,7 +766,7 @@ impl Core {
         };
         cfg.sandbox = self.build_sandbox();
 
-        let mut tools = vak_tools::default_tools();
+        let mut tools = self.agent_tools();
         if self.inner.config.subagents
             && let Some(parent_id) = session.header().map(|h| h.session_id.clone())
         {
@@ -736,8 +774,8 @@ impl Core {
                 provider: provider.clone(),
                 system_prompt: self.system_prompt(),
                 model: self.effective_model(),
-                tools: vak_tools::default_tools(),
-                read_only_tools: vak_tools::read_only_tools(),
+                tools: self.agent_tools(),
+                read_only_tools: self.agent_read_only_tools(),
                 max_turns: self.effective_max_turns(),
                 permission: Some(engine.clone()),
                 mode: cfg.mode,
@@ -768,7 +806,11 @@ impl Core {
                     )
                 })
                 .collect();
-            let manager = Arc::new(vak_mcp::McpManager::new(servers, self.inner.cwd.clone()));
+            let manager = Arc::new(vak_mcp::McpManager::new_sandboxed(
+                servers,
+                self.inner.cwd.clone(),
+                self.build_sandbox(),
+            ));
             tools.push(Arc::new(vak_mcp::McpTool::new(manager)));
         }
         if self.inner.config.memory.search_enabled {
@@ -851,9 +893,21 @@ impl Core {
             vak_config::PermissionMode::WorkspaceWrite => SandboxMode::WorkspaceWrite,
             vak_config::PermissionMode::FullAccess => return None,
         };
+        let backend = self.inner.config.sandbox.backend.as_str();
+        if backend == "docker" {
+            // Fail closed at call time if the daemon is unreachable:
+            // BashTool surfaces the wrapped command's error verbatim, and
+            // the probe keeps startup cheap.
+            return Some(std::sync::Arc::new(sandbox_docker::DockerSandbox::new(
+                mode,
+                self.inner.config.sandbox.image.clone(),
+                self.inner.cwd.as_path(),
+            )));
+        }
         #[cfg(target_os = "macos")]
         {
             use vak_tools::sandbox::Seatbelt;
+            let _ = backend;
             Some(std::sync::Arc::new(Seatbelt::new(
                 mode,
                 self.inner.cwd.as_path(),
@@ -861,10 +915,13 @@ impl Core {
         }
         #[cfg(target_os = "linux")]
         {
-            // Fail-closed probe: unsupported kernels mean no OS containment,
-            // so report "off" (permission engine alone) instead of pretending.
-            if !vak_tools::landlock::Landlock::supported() {
-                return None;
+            if backend == "seatbelt" {
+                // Explicit cross-platform pin that cannot apply here: fall
+                // through to Landlock rather than weakening.
+                return Some(std::sync::Arc::new(vak_tools::landlock::Landlock::new(
+                    mode,
+                    self.inner.cwd.as_path(),
+                )));
             }
             Some(std::sync::Arc::new(vak_tools::landlock::Landlock::new(
                 mode,
@@ -873,8 +930,10 @@ impl Core {
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
-            let _ = mode;
-            None
+            let _ = backend;
+            Some(std::sync::Arc::new(vak_tools::sandbox::DenySandbox::new(
+                "restricted execution is unsupported on this platform",
+            )))
         }
     }
 

@@ -70,6 +70,8 @@ pub struct FileConfig {
     pub gateway: GatewaySettings,
     #[serde(default)]
     pub memory: MemorySettings,
+    #[serde(default)]
+    pub sandbox: SandboxSettings,
 }
 
 /// Cross-session recall (docs/design/23-memory.md). Read-only and
@@ -79,6 +81,18 @@ pub struct FileConfig {
 pub struct MemorySettings {
     /// Expose the `session_search` tool to agent runs. Default true.
     pub search_enabled: Option<bool>,
+}
+
+/// Execution backend selection (docs/design/25-docker-sandbox.md).
+/// Privileged: an untrusted repo must not pick the image its commands run
+/// in. "auto" keeps platform defaults (Seatbelt on macOS, Landlock on
+/// Linux); "docker" runs bash in a throwaway no-network container.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct SandboxSettings {
+    pub backend: Option<String>,
+    /// Container image for the docker backend (default alpine:3.20).
+    pub image: Option<String>,
 }
 
 /// Always-on gateway surfaces (docs/design/22-gateway.md). Privileged:
@@ -207,6 +221,7 @@ pub struct Config {
     pub stop_policy: StopPolicyResolved,
     pub gateway: GatewayResolved,
     pub memory: MemoryResolved,
+    pub sandbox: SandboxResolved,
     pub warnings: Vec<String>,
 }
 
@@ -249,6 +264,12 @@ pub struct GatewayResolved {
     pub approver: Option<String>,
     pub approval_timeout_secs: u64,
     pub webhooks: std::collections::BTreeMap<String, WebhookResolved>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxResolved {
+    pub backend: String,
+    pub image: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -315,6 +336,10 @@ impl Default for Config {
             memory: MemoryResolved {
                 search_enabled: true,
             },
+            sandbox: SandboxResolved {
+                backend: "auto".into(),
+                image: None,
+            },
             warnings: Vec::new(),
         }
     }
@@ -353,7 +378,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
 /// Keys a PROJECT-level config may not set when its workspace has not been
 /// marked trusted: they grant execution or redirect credentials.
 const PRIVILEGED_KEYS_NOTICE: &str =
-    "permission_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway";
+    "permission_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox";
 
 pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
     let mut warnings = Vec::new();
@@ -385,6 +410,10 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
                 // Outbound webhook URLs are exfil targets just like base-url
                 // redirection: the whole section is privileged.
                 fc.gateway = GatewaySettings::default();
+            }
+            // Image choice is supply-chain power; keep it with the user.
+            if fc.sandbox.backend.is_some() || fc.sandbox.image.is_some() {
+                fc.sandbox = SandboxSettings::default();
             }
             warnings.push(format!(
                 "project .vakcoder/config.toml is not trusted for this workspace; \
@@ -564,6 +593,16 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         None => {}
     }
     cfg.memory.search_enabled = merged.memory.search_enabled.unwrap_or(true);
+    cfg.sandbox.backend = match merged.sandbox.backend.as_deref() {
+        None => "auto".into(),
+        Some(b @ ("auto" | "seatbelt" | "landlock" | "docker")) => b.into(),
+        Some(other) => {
+            cfg.warnings
+                .push(format!("unknown sandbox.backend '{other}'; using 'auto'"));
+            "auto".into()
+        }
+    };
+    cfg.sandbox.image = merged.sandbox.image.clone();
     for (name, hook) in merged.gateway.outbound.webhooks {
         if hook.url.trim().is_empty() {
             cfg.warnings.push(format!(
@@ -649,6 +688,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "stop_policy",
     "gateway",
     "memory",
+    "sandbox",
 ];
 const KNOWN_PROFILE_KEYS: &[&str] = &["model", "provider", "permission_mode", "max_turns"];
 const KNOWN_HOOK_KEYS: &[&str] = &["event", "match", "command", "timeout_ms"];
@@ -685,6 +725,7 @@ const KNOWN_GATEWAY_KEYS: &[&str] = &[
     "outbound",
 ];
 const KNOWN_MEMORY_KEYS: &[&str] = &["search_enabled"];
+const KNOWN_SANDBOX_KEYS: &[&str] = &["backend", "image"];
 const KNOWN_OUTBOUND_KEYS: &[&str] = &["webhooks"];
 const KNOWN_WEBHOOK_KEYS: &[&str] = &["url", "token_env"];
 
@@ -840,6 +881,16 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
             }
         }
     }
+    if let Some(sb) = top.get("sandbox").and_then(toml::Value::as_table) {
+        for key in sb.keys() {
+            if !KNOWN_SANDBOX_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown sandbox key 'sandbox.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+    }
     out
 }
 
@@ -964,6 +1015,12 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.memory.search_enabled.is_some() {
         base.memory.search_enabled = over.memory.search_enabled;
+    }
+    if over.sandbox.backend.is_some() {
+        base.sandbox.backend = over.sandbox.backend;
+    }
+    if over.sandbox.image.is_some() {
+        base.sandbox.image = over.sandbox.image;
     }
     for (name, hook) in over.gateway.outbound.webhooks {
         base.gateway.outbound.webhooks.insert(name, hook);
