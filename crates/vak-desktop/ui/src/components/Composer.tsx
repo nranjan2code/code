@@ -49,6 +49,10 @@ export default function Composer(props: { cwd: string }) {
   });
 
   const skillMatches = () => {
+    // The skill menu renders above the textarea, so this runs once before
+    // `ta` is assigned; without the guard that first pass throws and takes
+    // down whatever triggered the render.
+    if (!ta) return [];
     const q = detectSkillQuery(text(), ta.selectionStart);
     if (q === null) return [];
     const needle = q.toLowerCase();
@@ -71,6 +75,7 @@ export default function Composer(props: { cwd: string }) {
   };
 
   const refreshMention = () => {
+    if (!ta) return;
     const mn = detectMention(text(), ta.selectionStart);
     if (!mn) {
       setMention(null);

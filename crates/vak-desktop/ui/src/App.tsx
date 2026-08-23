@@ -241,22 +241,26 @@ function ensureSideStream(id: string) {
 export async function refreshBackend(): Promise<boolean> {
   try {
     const info = await api.initBackend();
-    setBackend(info);
-    if (info.ready) {
-      await loadHealth();
-      try {
-        const p = await api.listProviders();
-        setProviders(p);
-        setSetupNeeded(!p.current_configured);
-      } catch (e) {
-        console.error("refreshBackend: listProviders failed", e);
-        setProviders(null);
-        setSetupNeeded(false);
-      }
-      await refreshSessions();
-      return true;
+    if (!info.ready) {
+      setBackend(info);
+      return false;
     }
-    return false;
+    // Resolve the provider picture *before* publishing readiness. Flipping
+    // backend() first mounts the workspace for an instant with a stale
+    // setupNeeded, and any error thrown by that render would propagate out
+    // of this function and leave providers unset — stranding the gate.
+    try {
+      const p = await api.listProviders();
+      setProviders(p);
+      setSetupNeeded(!p.current_configured);
+    } catch {
+      setProviders(null);
+      setSetupNeeded(false);
+    }
+    setBackend(info);
+    await loadHealth();
+    await refreshSessions();
+    return true;
   } catch {
     return false;
   }
