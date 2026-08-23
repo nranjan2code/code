@@ -5631,6 +5631,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "toml 0.8.2",
+ "vak-llm",
 ]
 
 [[package]]
@@ -5871,6 +5872,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "vak-agent",
+ "vak-config",
  "vak-core",
  "vak-llm",
  "vak-ops",
