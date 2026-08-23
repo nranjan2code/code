@@ -13,6 +13,8 @@ members = [
     "crates/vak-flow",
     "crates/vak-eval",
     "crates/vak-server",
+    "crates/vak-ops",
+    "crates/vak-tray",
     "crates/vak-tui",
     "crates/vak-desktop",
     "crates/vakcoder",
@@ -50,7 +52,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
 async-trait = "0.1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "blocking"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
@@ -78,6 +80,10 @@ tauri-plugin-notification = "2.3"
 tauri-plugin-single-instance = "2.3"
 # Real PTY for the integrated terminal pane
 portable-pty = "0.9"
+# Menu-bar controller (vak-tray): native tray icon + event loop
+tray-icon = "0.21"
+winit = "0.30"
+notify-rust = "4"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

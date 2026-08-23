@@ -1,0 +1,20 @@
+[package]
+name = "vak-tray"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "vakcoder-tray"
+path = "src/main.rs"
+
+[dependencies]
+tray-icon = { workspace = true }
+winit = { workspace = true }
+notify-rust = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+vak-ops = { path = "../vak-ops" }
+
+[lints]
+workspace = true

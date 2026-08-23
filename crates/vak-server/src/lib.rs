@@ -393,8 +393,16 @@ pub fn secured_router(core: Core) -> (Router, String) {
 }
 
 /// Same stack with a CLI-level gateway override (`serve --gateway`).
+///
+/// Token selection: when `VAKCODER_GATEWAY_TOKEN` is set in the
+/// environment, it is used verbatim so service-managed bridges and other
+/// long-lived clients can survive process restarts. Otherwise a fresh
+/// per-process token is minted as before. The variable is never logged.
 pub fn secured_router_with(core: Core, force_gateway: bool) -> (Router, String) {
-    let token = format!("vk_{}", uuid::Uuid::now_v7());
+    let token = std::env::var("VAKCODER_GATEWAY_TOKEN")
+        .ok()
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(|| format!("vk_{}", uuid::Uuid::now_v7()));
     // Webview origins: tauri://localhost (macOS/Linux), https://tauri.localhost
     // (Windows), plus vite dev servers.
     let origins = [
@@ -457,8 +465,12 @@ pub async fn serve_with(
     let (app, token) = secured_router_with(core, force_gateway);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     eprintln!("VakCoder server listening on http://{addr}");
-    eprintln!("auth token: {token}");
-    eprintln!("clients must send 'Authorization: Bearer {token}' (or ?token=)");
+    if std::env::var("VAKCODER_GATEWAY_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
+        eprintln!("auth token: (pinned via VAKCODER_GATEWAY_TOKEN)");
+    } else {
+        eprintln!("auth token: {token}");
+        eprintln!("clients must send 'Authorization: Bearer {token}' (or ?token=)");
+    }
     if force_gateway {
         eprintln!("gateway: ENABLED (--gateway overrides config)");
     }
