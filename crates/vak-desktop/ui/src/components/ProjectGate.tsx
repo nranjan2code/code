@@ -16,14 +16,22 @@ function ConnectModel() {
   const [error, setError] = createSignal<string | null>(null);
 
   const info = () => providers()?.providers.find((p) => p.name === provider());
-  const needsKey = () => info()?.requires_key ?? true;
+  // A provider whose key is already on this machine (env or ~/.vakcoder/.env)
+  // must not be asked for it again; offer the field only as an optional
+  // override so a configured provider can be selected and saved directly.
+  const configured = () => info()?.configured ?? false;
+  const needsKey = () => (info()?.requires_key ?? true) && !configured();
 
   const save = async () => {
     setBusy(true);
     setError(null);
     try {
-      if (needsKey()) {
-        if (!key().trim()) throw new Error(`enter the ${info()?.env_var} value`);
+      if (needsKey() && !key().trim()) {
+        throw new Error(`enter the ${info()?.env_var} value`);
+      }
+      // Send a key only when one was actually typed: an already-configured
+      // provider saves fine without re-entering it.
+      if (key().trim()) {
         await api.putProviderKey(provider(), key().trim());
       }
       await api.patchConfig({ provider: provider(), model: model().trim() || undefined });
@@ -77,14 +85,17 @@ function ConnectModel() {
             <For each={providers()?.models[provider()] ?? []}>{(m) => <option value={m} />}</For>
           </datalist>
         </label>
-        <Show when={needsKey()}>
+        <Show when={info()?.requires_key ?? true}>
           <label class="connect-field">
-            <span>{info()?.env_var}</span>
+            <span>
+              {info()?.env_var}
+              {configured() ? " — already set on this device" : ""}
+            </span>
             <input
               type="password"
               autocomplete="off"
               spellcheck={false}
-              placeholder="paste API key"
+              placeholder={configured() ? "leave blank to keep current key" : "paste API key"}
               value={key()}
               onInput={(e) => setKey(e.currentTarget.value)}
               onKeyDown={(e) => e.key === "Enter" && void save()}

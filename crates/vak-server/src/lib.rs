@@ -253,10 +253,15 @@ pub fn secured_router(core: Core) -> (Router, String) {
     .collect::<Vec<_>>();
     let cors = tower_http::cors::CorsLayer::new()
         .allow_origin(origins)
+        // Must cover every method the router exposes: PATCH (/config,
+        // /sessions/:id/config) and DELETE are preflighted, so omitting them
+        // makes the browser reject the request before it is ever sent.
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,
             axum::http::Method::PUT,
+            axum::http::Method::PATCH,
+            axum::http::Method::DELETE,
         ])
         .allow_headers([
             axum::http::header::AUTHORIZATION,

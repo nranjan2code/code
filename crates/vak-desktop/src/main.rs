@@ -192,6 +192,18 @@ fn backend_info(state: State<'_, BackendState>) -> BackendInfo {
 
 fn main() {
     tauri::Builder::default()
+        // Exactly one instance ever runs: a second launch hands its argv to
+        // the live process and refocuses that window instead of starting a
+        // rival shell with its own backend and its own project state.
+        // Must be registered first so it can bail out before any other
+        // plugin or the setup hook does work.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(BackendState(Mutex::new(None)))

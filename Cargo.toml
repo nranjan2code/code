@@ -74,6 +74,8 @@ tauri = "2.11"
 tauri-build = "2.6"
 tauri-plugin-dialog = "2.7"
 tauri-plugin-notification = "2.3"
+# Enforces one running instance; a second launch refocuses the first window
+tauri-plugin-single-instance = "2.3"
 # Real PTY for the integrated terminal pane
 portable-pty = "0.9"
 
