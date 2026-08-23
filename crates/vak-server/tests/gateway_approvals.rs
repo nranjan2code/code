@@ -118,7 +118,7 @@ fn client_with(token: &str) -> reqwest::Client {
 }
 
 fn config(toml_body: &str) -> String {
-    format!("[gateway]\nenabled = true\n{toml_body}")
+    format!("[gateway]\nenabled = true\n{toml_body}\n\n[memory]\nreflection = false\n")
 }
 
 async fn inbound(

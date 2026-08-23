@@ -129,7 +129,15 @@ async fn telegram_bridge_routes_message_and_delivers_reply() {
 
     // The gateway side of the contract.
     let dir = tempfile::tempdir().unwrap();
-    let core = Core::new(dir.path().to_path_buf()).unwrap();
+    let cwd = dir.path().to_path_buf();
+    // Hermetic against the developer's global config (e.g. reflection=true):
+    // pin learning flags off for deterministic scripted flows.
+    let _ = std::fs::create_dir_all(cwd.join(".vakcoder"));
+    let _ = std::fs::write(
+        cwd.join(".vakcoder/config.toml"),
+        "[memory]\nreflection = false\n",
+    );
+    let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_provider_instance(Arc::new(Scripted {
         responses: Mutex::new(VecDeque::from(vec![text("pong from agent")])),

@@ -60,7 +60,13 @@ async fn gateway_inbound_carries_images_to_the_model() {
 
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
-    let core = Core::new(cwd.clone()).unwrap();
+    // Hermetic against the developer's global config (reflection=true):
+    let _ = std::fs::create_dir_all(cwd.join(".vakcoder"));
+    let _ = std::fs::write(
+        cwd.join(".vakcoder/config.toml"),
+        "[memory]\nreflection = false\n",
+    );
+    let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_provider_instance(core_provider);

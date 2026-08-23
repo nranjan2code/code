@@ -22,7 +22,7 @@ import Icon, { type IconName } from "./Icon";
 /** Sentinel option that swaps the model select for a free-text field. */
 const CUSTOM_MODEL = "\u0000custom";
 
-type Page = "general" | "appearance" | "agent" | "permissions" | "reliability" | "integrations" | "services" | "advanced" | "archived";
+type Page = "general" | "appearance" | "agent" | "permissions" | "reliability" | "integrations" | "services" | "learning" | "advanced" | "archived";
 
 const pages: { id: Page; label: string; icon: IconName; hint: string }[] = [
   { id: "general", label: "General", icon: "gear", hint: "notifications suggestions" },
@@ -32,6 +32,7 @@ const pages: { id: Page; label: string; icon: IconName; hint: string }[] = [
   { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker" },
   { id: "integrations", label: "Integrations", icon: "plug", hint: "mcp hooks skills" },
   { id: "services", label: "Services", icon: "grid", hint: "gateway bridge tray watchdog background" },
+  { id: "learning", label: "Learning", icon: "history", hint: "memory notes skill proposals review promote" },
   { id: "advanced", label: "Advanced", icon: "tune", hint: "paths context configuration" },
   { id: "archived", label: "Archived tasks", icon: "archive", hint: "restore delete history" },
 ];
@@ -66,6 +67,36 @@ export default function Settings() {
       setOps(await api.opsStatus());
     } catch {
       /* gateway down is itself the state we are displaying */
+    }
+  }
+
+  const [notes, setNotes] = createSignal<api.NoteBlock[]>([]);
+  const [proposals, setProposals] = createSignal<api.SkillProposal[]>([]);
+
+  async function refreshLearning() {
+    try {
+      setNotes((await api.listMemory()).notes);
+      setProposals((await api.listProposals()).proposals);
+    } catch {
+      /* gateway down — lists simply stay stale */
+    }
+  }
+
+  async function promote(id: string) {
+    try {
+      await api.promoteProposal(id);
+      await refreshLearning();
+    } catch (e) {
+      setNotice({ kind: "error", text: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  async function reject(id: string) {
+    try {
+      await api.rejectProposal(id);
+      await refreshLearning();
+    } catch (e) {
+      setNotice({ kind: "error", text: e instanceof Error ? e.message : String(e) });
     }
   }
 
@@ -106,6 +137,12 @@ export default function Settings() {
     if (page() !== "services") return;
     void refreshOps();
     const t = setInterval(() => void refreshOps(), 5000);
+    onCleanup(() => clearInterval(t));
+  });
+  createEffect(() => {
+    if (page() !== "learning") return;
+    void refreshLearning();
+    const t = setInterval(() => void refreshLearning(), 8000);
     onCleanup(() => clearInterval(t));
   });
 
@@ -498,6 +535,51 @@ export default function Settings() {
                 <Row title="Auto-refresh" description="This panel polls service state every 5 seconds while open."><span class="settings-status good">Live</span></Row>
                 <Row title="Menu-bar controller" description="vakcoder-tray shows a colour-coded dot with the same controls and a crash watchdog."><span class="settings-status good">Available</span></Row>
                 <Row title="Install as services" description="Installs launchd/systemd units so both processes survive reboots (scripts/install_gateway_service.sh --with-tray)."><button class="settings-button" onClick={() => void runOp("gateway", "install")}>Install</button><button class="settings-button" onClick={() => void runOp("gateway", "uninstall")}>Uninstall</button></Row>
+              </Group>
+            </Show>
+
+            <Show when={page() === "learning"}>
+              <header><h1>Learning</h1><p>What the agent has remembered across sessions, and skill drafts waiting for your approval.</p></header>
+              <Group title={`Skill proposals (${proposals().length})`}>
+                <Show
+                  when={proposals().length > 0}
+                  fallback={<Row title="Queue is empty" description="Reflection and /propose_skill add drafts here; nothing reaches the agent until you promote it."><span class="settings-status good">Clean</span></Row>}
+                >
+                  <For each={proposals()}>
+                    {(p) => (
+                      <div class="setting-row">
+                        <div class="setting-copy">
+                          <strong>{p.name}</strong>
+                          <span>{p.description}</span>
+                        </div>
+                        <div class="setting-control">
+                          <button class="settings-button" onClick={() => void promote(p.id)}>Promote</button>
+                          <button class="settings-button" onClick={() => void reject(p.id)}>Reject</button>
+                        </div>
+                      </div>
+                    )}
+                  </For>
+                </Show>
+              </Group>
+              <Group title={`Memory notes (${notes().length})`}>
+                <Show
+                  when={notes().length > 0}
+                  fallback={<Row title="No notes yet" description="Chat with reflection enabled — durable decisions land here as plain markdown you can edit in ~/.vakcoder/memory/."><span class="settings-status good">Ready</span></Row>}
+                >
+                  <div class="archived-list" aria-label="Memory notes">
+                    <For each={notes().slice().reverse().slice(0, 20)}>
+                      {(n) => (
+                        <div class="task-row">
+                          <div>
+                            <strong>{n.tag || n.kind}</strong>
+                            <small>{new Date(n.ts).toLocaleString()} · {n.kind} · from {n.session_id.slice(0, 8)}</small>
+                            <p>{n.text}</p>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
               </Group>
             </Show>
 

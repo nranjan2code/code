@@ -77,7 +77,14 @@ async fn spawn_gateway(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
-    let core = Core::new(cwd.clone()).unwrap();
+    // Hermetic against the developer's global config (e.g. reflection=true):
+    // pin learning flags off for deterministic scripted flows.
+    let _ = std::fs::create_dir_all(cwd.join(".vakcoder"));
+    let _ = std::fs::write(
+        cwd.join(".vakcoder/config.toml"),
+        "[memory]\nreflection = false\n",
+    );
+    let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     // Gateway turns run unattended with AutoDeny; give the fixture bash
     // execution so scripted tool flows behave like an interactive session.
@@ -101,7 +108,14 @@ async fn spawn_gateway_bare(
 ) -> (String, std::path::PathBuf, tokio::task::JoinHandle<()>) {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
-    let core = Core::new(cwd.clone()).unwrap();
+    // Hermetic against the developer's global config (e.g. reflection=true):
+    // pin learning flags off for deterministic scripted flows.
+    let _ = std::fs::create_dir_all(cwd.join(".vakcoder"));
+    let _ = std::fs::write(
+        cwd.join(".vakcoder/config.toml"),
+        "[memory]\nreflection = false\n",
+    );
+    let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_provider_instance(provider);

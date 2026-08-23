@@ -80,7 +80,15 @@ async fn headless_tool_turn_survives_without_subscribers() {
     });
 
     let dir = tempfile::tempdir().unwrap();
-    let core = Core::new(dir.path().to_path_buf()).unwrap();
+    let cwd = dir.path().to_path_buf();
+    // Hermetic against the developer's global config (e.g. reflection=true):
+    // pin learning flags off for deterministic scripted flows.
+    let _ = std::fs::create_dir_all(cwd.join(".vakcoder"));
+    let _ = std::fs::write(
+        cwd.join(".vakcoder/config.toml"),
+        "[memory]\nreflection = false\n",
+    );
+    let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_provider_instance(provider);

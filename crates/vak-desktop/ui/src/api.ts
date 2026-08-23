@@ -72,6 +72,38 @@ export function opsAction(
   return req(`/ops/${service}/${action}`, { method: "POST", body: "{}" });
 }
 
+// ---- learning (memory notes + skill proposals) -------------------------------
+
+export interface NoteBlock {
+  ts: string;
+  kind: string;
+  tag: string;
+  session_id: string;
+  text: string;
+}
+
+export interface SkillProposal {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export function listMemory(): Promise<{ notes: NoteBlock[] }> {
+  return req("/memory");
+}
+
+export function listProposals(): Promise<{ proposals: SkillProposal[] }> {
+  return req("/skills/proposals");
+}
+
+export function promoteProposal(id: string): Promise<{ promoted: string }> {
+  return req(`/skills/proposals/${encodeURIComponent(id)}/promote`, { method: "POST", body: "{}" });
+}
+
+export function rejectProposal(id: string): Promise<{ rejected: string }> {
+  return req(`/skills/proposals/${encodeURIComponent(id)}/reject`, { method: "POST", body: "{}" });
+}
+
 // ---- sessions ---------------------------------------------------------------
 
 export function listSessions(): Promise<{ sessions: SessionSummary[] }> {
