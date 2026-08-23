@@ -68,6 +68,17 @@ pub struct FileConfig {
     pub stop_policy: Option<StopPolicySettings>,
     #[serde(default)]
     pub gateway: GatewaySettings,
+    #[serde(default)]
+    pub memory: MemorySettings,
+}
+
+/// Cross-session recall (docs/design/23-memory.md). Read-only and
+/// workspace-scoped, so unlike [gateway] this section is NOT privileged.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct MemorySettings {
+    /// Expose the `session_search` tool to agent runs. Default true.
+    pub search_enabled: Option<bool>,
 }
 
 /// Always-on gateway surfaces (docs/design/22-gateway.md). Privileged:
@@ -189,6 +200,7 @@ pub struct Config {
     pub ui: UiResolved,
     pub stop_policy: StopPolicyResolved,
     pub gateway: GatewayResolved,
+    pub memory: MemoryResolved,
     pub warnings: Vec<String>,
 }
 
@@ -237,6 +249,12 @@ pub struct WebhookResolved {
     pub token_env: Option<String>,
 }
 
+/// Resolved memory policy (docs/design/23-memory.md).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryResolved {
+    pub search_enabled: bool,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -283,6 +301,9 @@ impl Default for Config {
                 enabled: false,
                 approvals: "deny".into(),
                 webhooks: std::collections::BTreeMap::new(),
+            },
+            memory: MemoryResolved {
+                search_enabled: true,
             },
             warnings: Vec::new(),
         }
@@ -505,6 +526,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             "deny".into()
         }
     };
+    cfg.memory.search_enabled = merged.memory.search_enabled.unwrap_or(true);
     for (name, hook) in merged.gateway.outbound.webhooks {
         if hook.url.trim().is_empty() {
             cfg.warnings.push(format!(
@@ -589,6 +611,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "ui",
     "stop_policy",
     "gateway",
+    "memory",
 ];
 const KNOWN_PROFILE_KEYS: &[&str] = &["model", "provider", "permission_mode", "max_turns"];
 const KNOWN_HOOK_KEYS: &[&str] = &["event", "match", "command", "timeout_ms"];
@@ -618,6 +641,7 @@ const KNOWN_THEME_COLORS: &[&str] = &[
 const KNOWN_ACCESSIBILITY_KEYS: &[&str] = &["plain", "reduced_motion", "screen_reader"];
 const KNOWN_STOP_POLICY_KEYS: &[&str] = &["enabled", "marker_gate", "verify_gate", "max_blocks"];
 const KNOWN_GATEWAY_KEYS: &[&str] = &["enabled", "approvals", "outbound"];
+const KNOWN_MEMORY_KEYS: &[&str] = &["search_enabled"];
 const KNOWN_OUTBOUND_KEYS: &[&str] = &["webhooks"];
 const KNOWN_WEBHOOK_KEYS: &[&str] = &["url", "token_env"];
 
@@ -763,6 +787,16 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
             }
         }
     }
+    if let Some(mem) = top.get("memory").and_then(toml::Value::as_table) {
+        for key in mem.keys() {
+            if !KNOWN_MEMORY_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown memory key 'memory.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+    }
     out
 }
 
@@ -878,6 +912,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.gateway.approvals.is_some() {
         base.gateway.approvals = over.gateway.approvals;
+    }
+    if over.memory.search_enabled.is_some() {
+        base.memory.search_enabled = over.memory.search_enabled;
     }
     for (name, hook) in over.gateway.outbound.webhooks {
         base.gateway.outbound.webhooks.insert(name, hook);

@@ -269,8 +269,48 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/providers", get(list_providers))
         .route("/providers/{name}/models", get(discover_models))
+        .route("/search", get(search_sessions))
         .merge(gateway::routes())
         .with_state(state)
+}
+
+#[derive(serde::Deserialize)]
+struct SearchQuery {
+    q: String,
+    #[serde(default)]
+    limit: Option<usize>,
+    /// Session id whose (already-in-context) content should be skipped.
+    #[serde(default)]
+    exclude: Option<String>,
+}
+
+async fn search_sessions(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<SearchQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match tokio::task::spawn_blocking({
+        let home = state.core.sessions_home();
+        let cwd = state.core.cwd().clone();
+        let query = q.q.clone();
+        let limit = q.limit.unwrap_or(vak_session::DEFAULT_LIMIT);
+        let exclude = q.exclude.clone();
+        move || vak_session::search(&home, &cwd, &query, limit, exclude.as_deref())
+    })
+    .await
+    {
+        Ok(Ok(hits)) => Json(serde_json::json!({ "hits": hits })).into_response(),
+        Ok(Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 /// The bearer token lives for the life of the process; embedders (desktop

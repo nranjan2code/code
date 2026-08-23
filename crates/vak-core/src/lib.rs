@@ -5,6 +5,7 @@
 pub mod checkpoints;
 pub mod custom_commands;
 pub mod files;
+pub mod session_search;
 pub mod skills;
 pub mod worktree;
 
@@ -376,6 +377,9 @@ impl Core {
         }
         if !self.inner.config.mcp.servers.is_empty() {
             names.push("mcp".into());
+        }
+        if self.inner.config.memory.search_enabled {
+            names.push("session_search".into());
         }
         names
     }
@@ -766,6 +770,19 @@ impl Core {
                 .collect();
             let manager = Arc::new(vak_mcp::McpManager::new(servers, self.inner.cwd.clone()));
             tools.push(Arc::new(vak_mcp::McpTool::new(manager)));
+        }
+        if self.inner.config.memory.search_enabled {
+            let exclude = session
+                .header()
+                .map(|h| h.session_id.clone())
+                .unwrap_or_default();
+            tools.push(Arc::new(session_search::SessionSearchTool {
+                // The accessor honors the sessions-home override; the raw
+                // field does not.
+                sessions_home: self.sessions_home(),
+                cwd: self.inner.cwd.clone(),
+                exclude_session_id: exclude,
+            }));
         }
         cfg.tools = tools;
         let hooks: Option<std::sync::Arc<Vec<vak_hooks::HookDef>>> =
