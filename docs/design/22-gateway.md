@@ -87,8 +87,23 @@ Unattended surfaces cannot click "approve". Gateway-driven turns run with
 `AutoDeny`: Ask-classified tool calls are denied with the reason fed back to
 the model as a tool error, which it can route around. Interactive surfaces
 (TUI/desktop) keep their existing approval queues untouched — they share the
-session, not the policy. `[gateway] approvals = "forward"` (route gates to a
-designated approver surface) is designed for, not built in this slice.
+session, not the policy.
+
+Since G2, `approvals = "forward"` routes each gate to the configured
+`approver` target through the normal delivery transports. The request is
+announced (and published as an `ApprovalRequested` event for SSE consumers),
+then the turn blocks until one of:
+
+- a reply arrives **from the approver chat only** matching the strict verdict
+  vocabulary (`y/yes/approve/approved/ok/allow` → allow;
+  `n/no/deny/denied/block` → deny) — any other text from that chat falls
+  through to ordinary conversation routing and resolves nothing;
+- the `approval_timeout_secs` window lapses (default 300s, minimum 5s) —
+  deny, and the gate is retired so a late reply resolves nothing;
+- the run is cancelled — deny.
+
+Verdict-shaped chatter from any non-approver chat never touches the gate
+queue; in `deny` mode nothing is announced at all.
 
 ### Cron → delivery targets
 
@@ -117,7 +132,9 @@ The desktop's routines daemon graduates into the platform scheduler:
 ```toml
 [gateway]
 enabled   = true      # default false — remote execution must be opt-in
-approvals = "deny"    # "deny" | reserved: "forward"
+approvals = "deny"    # "deny" | "forward"
+approver  = "telegram:48211"   # required for "forward"; <surface>:<chat>
+approval_timeout_secs = 300    # min 5
 
 [gateway.outbound.webhooks.ci]
 url       = "https://ci.example.com/vakcoder"
@@ -178,8 +195,8 @@ Lessons from OpenClaw's incident history, inverted:
 |---|---|---|
 | **G0 ✅** | HTTP inbound + wait mode, bindings persistence, steering-busy path + continuation, AutoDeny unattended turns, log surface, `TaskDef.deliver_to`, `[gateway]` config, `serve --gateway` | e2e tests: roundtrip, reuse, busy-steering, disabled-gateway 409, cron delivery; fmt/clippy/tests green |
 | **G1 ✅** | Outbound webhook transport (`webhook:<name>`) with fail-closed bearer auth; Telegram bridge client + `vakcoder telegram` subcommand; real-text routine summaries; restart-resilience proof; scheduler-free `gateway_router()` for embedders | offline e2e vs mock Bot API and webhook receiver; missing-credential fail-closed test; bindings survive simulated process restart |
-| G2 | Approval forwarding to an approver surface; media passthrough (images/docs) | ask-gates resolvable from chat; image in → vision tooling |
-| G3 | Remote exec backends behind the Sandbox seam (Docker first) | bash runs containerized; Landlock/Seatbelt parity tests |
+| **G2 ✅** | Approval forwarding: `[gateway] approvals = "forward"` + `approver` target + `approval_timeout_secs`; gates announced via any delivery transport, resolved by strict yes/no replies from the approver chat only; timeout/silence fails closed, late replies resolve nothing. Media passthrough deferred (own slice) | gateway_approvals.rs e2e: forward→yes→tool really runs; unanswered gate times out and a late "yes" resolves nothing; deny mode never announces |
+| **G3 ✅** | Remote exec backends behind the Sandbox seam — Docker implemented in vak-core, see docs/design/25-docker-sandbox.md (same-path bind mount, no-network container, read-only root, caps, fail-closed daemon probe); `[sandbox] backend/image` privileged config | live e2e vs real daemon: exec, mount visibility, network deny, RO enforcement, config-flow naming |
 | G4 | Cross-session memory & recall: FTS index + logged `session_search` tool | recall across restarts auditable in transcript |
 | G5 | Learning loop: post-task skill proposals behind review gate | skill drafted from session, human-approved promotion |
 
@@ -220,3 +237,12 @@ Covered in `crates/vak-server/tests/`:
 10. Telegram bridge end-to-end against a mock Bot API: update routed,
     final text delivered back, offset advances, quiet polls stay quiet
     (`telegram_bridge.rs`).
+11. Forwarded gate: announcement lands on the approver transport, chat
+    `yes` resolves it, the tool really executes, pending count returns to
+    zero (`gateway_approvals.rs::forwarded_gate_resolves_from_approver_chat`).
+12. Unanswered gate times out (5s window); a late `yes` resolves nothing;
+    the run still completes without executing the tool
+    (`unanswered_gate_times_out_and_fails_closed`).
+13. Deny default: no forwarding announcements ever; verdict text from any
+    chat is inert; unattended turn completes via auto-deny
+    (`default_policy_denies_without_forwarding`).

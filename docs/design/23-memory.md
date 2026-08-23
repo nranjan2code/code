@@ -71,6 +71,6 @@ keys still warn per convention.
 
 | Phase | Delivers | Exit criterion |
 |---|---|---|
-| **M0 (this)** | scan+score search in vak-session, `session_search` tool wired into every run, `/search` endpoint, `[memory]` config | relevance unit tests + agent-loop e2e proving the result lands on the ledger; fmt/clippy/tests green |
+| **M0 ✅** | scan+score search in vak-session, `session_search` tool wired into every run, `/search` endpoint, `[memory]` config | relevance unit tests + agent-loop e2e proving the result lands on the ledger; fmt/clippy/tests green |
 | M1 | mtime-cached index for large stores; `/search` in TUI + desktop UI | 10k-entry store searched < 50ms warm |
 | M2 | write path: post-run "remember" hook proposing durable notes into `<home>/memory/*.md`, recalled alongside search | curated notes outrank raw transcripts |

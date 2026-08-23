@@ -11,7 +11,11 @@ not core.
 
 **Status: v0.2.0+ — all roadmap phases implemented and live-tested.**
 See `docs/design/00-roadmap.md` for the phase history and
-`docs/design/15-reliability.md` for the failure-handling matrix.
+`docs/design/15-reliability.md` for the failure-handling matrix. Security work
+must also follow the threat model and priority order in
+`docs/design/24-agent-security.md`. The always-on platform layer follows
+`docs/design/22-gateway.md` (gateway/approvals), `docs/design/23-memory.md`
+(recall), and `docs/design/25-docker-sandbox.md` (execution backends).
 
 ## Non-negotiable invariants
 
@@ -55,6 +59,42 @@ See `docs/design/00-roadmap.md` for the phase history and
    `Core::discover_models` memoises it for 5 minutes. When discovery fails,
    surface the reason; never substitute a static list. Endpoint *hosts* are
    configuration and may have defaults; model *ids* may not.
+10. **Restricted filesystem access is workspace-rooted.** In read-only and
+    workspace-write modes, automatic read/glob/grep access must resolve inside
+    the canonical session workspace; traversal and symlink escapes fail
+    closed. Any exception requires an explicit scoped rule or FullAccess.
+    Never weaken this with string-prefix checks or check only one file tool.
+11. **Permission changes revoke old capability.** A runtime mode change must
+    cancel in-flight main and side runs and reject pending approvals before the
+    new mode is reported. Never let an agent continue with a stale FullAccess
+    or sandbox snapshot.
+12. **Secrets are not ambient tool state.** Bash and MCP subprocesses receive a
+    small operational environment allowlist, not the parent environment.
+    Provider, gateway, and connector credentials require explicit,
+    recipient-scoped injection; never restore blanket environment passthrough.
+13. **FullAccess is an explicit human trust decision.** It is unsandboxed by
+    design and must never be selected automatically after a denial, tool
+    failure, retry, prompt request, or model recommendation. Restricted-mode
+    network denial and approval prompts are independent layers; an approval
+    never silently disables the OS sandbox.
+14. **Model tools cross a broker boundary.** Built-in filesystem and Bash tools
+    execute through the versioned `__tool_worker` protocol in a disposable
+    process group; MCP servers execute as separately sandboxed workers. Raw
+    built-in tool construction is reserved for the worker implementation and
+    deterministic unit fixtures. Task orchestration and session search are
+    narrow broker-owned capabilities: never give a worker the policy engine,
+    approvals, provider credentials, session store, or control-plane handles.
+    A missing worker or unavailable restricted sandbox fails closed. A
+    command-scoped backend such as Docker must be applied by the broker to the
+    validated Bash command; never try to execute a host worker binary inside
+    an image that does not contain the pinned worker artifact.
+15. **Unattended surfaces fail closed.** The gateway ships disabled, cannot be
+    enabled by untrusted project config, and chat-driven turns auto-deny
+    escalations unless an explicitly configured approver surface answers a
+    forwarded gate inside its window — silence, timeout, or missing delivery
+    credential always means no, and a late reply resolves nothing. Never turn
+    a denial into permission, forward gates through ambient state, or let
+    verdict-shaped chatter from non-approver chats resolve anything.
 
 ## Code rules
 
@@ -73,9 +113,13 @@ See `docs/design/00-roadmap.md` for the phase history and
 crates/vak-llm       unified provider API (anthropic / openai-responses /
                      openai-completions / google), SSE, delta+snapshot events,
                      live model discovery (models.rs)
-crates/vak-session   append-only JSONL trees, frozen contract, projection
+crates/vak-session   append-only JSONL trees, frozen contract, projection,
+                     dependency-free cross-session search (docs/design/
+                     23-memory.md)
 crates/vak-tools     read/write/edit/bash/glob/grep behind Tool trait,
-                     resource claims, sandbox backends (Seatbelt)
+                     versioned broker-worker protocol, bounded subprocess
+                     environment, resource claims, sandbox backends
+                     (Seatbelt/Landlock)
 crates/vak-permission rule engine: modes × rules -> Allow/Ask/Deny
 crates/vak-hooks     lifecycle hooks: pre/post-tool-use, stop, session-start
 crates/vak-mcp       MCP stdio client behind a lazy meta-tool
@@ -86,19 +130,24 @@ crates/vak-agent     loop, steering queues, parallel tool execution w/
 crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode
 crates/vak-config    layered TOML config + .env secret loading
-crates/vak-core      SDK facade, system prompt, checkpoints, worktrees
+crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
+                     session_search tool injection, sandbox selection incl.
+                     Docker exec backend (docs/design/25-docker-sandbox.md)
 crates/vak-tui       retained-render terminal UI: contextual keymap +
                      interactive rebind, themes + custom theme packs,
                      vim/emacs composer, subagent attach/steer,
                      custom commands, OSC52 copy, accessibility modes
 crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts) +
                      always-on gateway: chat-surface routing, persisted
-                     bindings, cron delivery-to-surface (docs/design/22-gateway.md)
+                     bindings, cron delivery-to-surface, approval forwarding
+                     to an approver surface, Telegram/webhook transports
+                     (docs/design/22-gateway.md)
 crates/vak-desktop   Tauri 2 desktop orchestrator (sidecar over vak-server;
                      docs/design/20-tauri-desktop.md)
-crates/vakcoder      binary: tui / exec / plan / flow / serve / eval /
-                     checkpoints / config dump / sessions
-docs/design/         architecture decisions — update with behavior changes
+crates/vakcoder      binary: tui / exec / plan / flow / serve [--gateway] /
+                     telegram / eval / checkpoints / config dump / sessions
+docs/design/         architecture decisions — update with behavior changes;
+                     security boundaries and roadmap in 24-agent-security.md
 scripts/             dev utilities (mock servers, PTY/HTTP smoke drivers)
 ```
 
