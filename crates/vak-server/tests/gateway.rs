@@ -398,9 +398,29 @@ async fn busy_message_is_steered_not_dropped() {
             .to_string()
     };
 
-    // While the bash tool sleeps, send a follow-up: it must be queued as
-    // logged steering, never rejected.
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    // Wait until the turn actually owns the ledger (transcript answers
+    // "run in progress" while busy), then send a follow-up: it must be
+    // queued as logged steering, never rejected.
+    let deadline_busy = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        assert!(
+            std::time::Instant::now() < deadline_busy,
+            "never became busy"
+        );
+        if let Ok(res) = client
+            .get(format!("{base}/sessions/{sid}/transcript"))
+            .send()
+            .await
+            && res.status() == reqwest::StatusCode::OK
+        {
+            let t: serde_json::Value = res.json().await.unwrap();
+            let raw = serde_json::to_string(&t).unwrap_or_default();
+            if raw.contains("run in progress") {
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     let res = inbound(
         &client,
         &base,

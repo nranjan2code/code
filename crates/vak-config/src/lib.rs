@@ -89,8 +89,14 @@ pub struct MemorySettings {
 pub struct GatewaySettings {
     pub enabled: Option<bool>,
     /// "deny" (default) auto-denies approval gates on unattended turns.
-    /// "forward" is reserved for a later phase.
+    /// "forward" routes them to the `approver` target for a yes/no reply.
     pub approvals: Option<String>,
+    /// Routing target ("<surface>:<chat>") that answers forwarded approval
+    /// gates. Required when approvals = "forward".
+    pub approver: Option<String>,
+    /// How long a forwarded gate waits for a reply before failing closed
+    /// (default 300, minimum 5).
+    pub approval_timeout_secs: Option<u64>,
     #[serde(default)]
     pub outbound: OutboundSettings,
 }
@@ -240,6 +246,8 @@ pub struct StopPolicyResolved {
 pub struct GatewayResolved {
     pub enabled: bool,
     pub approvals: String,
+    pub approver: Option<String>,
+    pub approval_timeout_secs: u64,
     pub webhooks: std::collections::BTreeMap<String, WebhookResolved>,
 }
 
@@ -300,6 +308,8 @@ impl Default for Config {
             gateway: GatewayResolved {
                 enabled: false,
                 approvals: "deny".into(),
+                approver: None,
+                approval_timeout_secs: 300,
                 webhooks: std::collections::BTreeMap::new(),
             },
             memory: MemoryResolved {
@@ -526,6 +536,33 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             "deny".into()
         }
     };
+    cfg.gateway.approver = merged.gateway.approver.clone();
+    if cfg.gateway.approvals == "forward" {
+        let ok = cfg
+            .gateway
+            .approver
+            .as_deref()
+            .is_some_and(|t| t.contains(':') && !t.trim().is_empty());
+        if !ok {
+            cfg.warnings.push(
+                "gateway.approvals = 'forward' requires gateway.approver = '<surface>:<chat>'; \
+                 falling back to 'deny'"
+                    .into(),
+            );
+            cfg.gateway.approvals = "deny".into();
+            cfg.gateway.approver = None;
+        }
+    }
+    match merged.gateway.approval_timeout_secs {
+        Some(t) if t < 5 => {
+            cfg.warnings.push(format!(
+                "gateway.approval_timeout_secs {t} below minimum; using 5"
+            ));
+            cfg.gateway.approval_timeout_secs = 5;
+        }
+        Some(t) => cfg.gateway.approval_timeout_secs = t,
+        None => {}
+    }
     cfg.memory.search_enabled = merged.memory.search_enabled.unwrap_or(true);
     for (name, hook) in merged.gateway.outbound.webhooks {
         if hook.url.trim().is_empty() {
@@ -640,7 +677,13 @@ const KNOWN_THEME_COLORS: &[&str] = &[
 ];
 const KNOWN_ACCESSIBILITY_KEYS: &[&str] = &["plain", "reduced_motion", "screen_reader"];
 const KNOWN_STOP_POLICY_KEYS: &[&str] = &["enabled", "marker_gate", "verify_gate", "max_blocks"];
-const KNOWN_GATEWAY_KEYS: &[&str] = &["enabled", "approvals", "outbound"];
+const KNOWN_GATEWAY_KEYS: &[&str] = &[
+    "enabled",
+    "approvals",
+    "approver",
+    "approval_timeout_secs",
+    "outbound",
+];
 const KNOWN_MEMORY_KEYS: &[&str] = &["search_enabled"];
 const KNOWN_OUTBOUND_KEYS: &[&str] = &["webhooks"];
 const KNOWN_WEBHOOK_KEYS: &[&str] = &["url", "token_env"];
@@ -912,6 +955,12 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.gateway.approvals.is_some() {
         base.gateway.approvals = over.gateway.approvals;
+    }
+    if over.gateway.approver.is_some() {
+        base.gateway.approver = over.gateway.approver;
+    }
+    if over.gateway.approval_timeout_secs.is_some() {
+        base.gateway.approval_timeout_secs = over.gateway.approval_timeout_secs;
     }
     if over.memory.search_enabled.is_some() {
         base.memory.search_enabled = over.memory.search_enabled;

@@ -41,6 +41,13 @@ fn deliveries_path(home: &std::path::Path) -> PathBuf {
 pub struct GatewayState {
     pub enabled: bool,
     bindings: Mutex<HashMap<String, String>>,
+    /// Resolved approval policy (docs/design/22-gateway.md G2).
+    approvals: String,
+    approver: Option<String>,
+    approval_timeout: Duration,
+    /// Forwarded gates awaiting a yes/no from the approver surface,
+    /// oldest first (uuidv7 keys sort by insertion time).
+    pending_approvals: Mutex<std::collections::BTreeMap<String, oneshot::Sender<bool>>>,
 }
 
 impl GatewayState {
@@ -53,14 +60,80 @@ impl GatewayState {
         {
             bindings = map;
         }
+        let gw = &core.config().gateway;
+        let forward_ok = gw.approvals == "forward" && gw.approver.is_some();
         GatewayState {
-            enabled: force || core.config().gateway.enabled,
+            enabled: force || gw.enabled,
             bindings: Mutex::new(bindings),
+            approvals: if forward_ok {
+                "forward".into()
+            } else {
+                "deny".into()
+            },
+            approver: if forward_ok {
+                gw.approver.clone()
+            } else {
+                None
+            },
+            approval_timeout: Duration::from_secs(gw.approval_timeout_secs),
+            pending_approvals: Mutex::new(std::collections::BTreeMap::new()),
         }
     }
 
     pub(crate) fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
+    }
+
+    /// True when forwarded gates are active.
+    pub(crate) fn forward_mode(&self) -> bool {
+        self.enabled && self.approvals == "forward" && self.approver.is_some()
+    }
+
+    pub(crate) fn approver_target(&self) -> Option<&str> {
+        self.approver.as_deref()
+    }
+
+    pub(crate) fn approval_timeout(&self) -> Duration {
+        self.approval_timeout
+    }
+
+    pub(crate) fn approvals_mode(&self) -> &str {
+        &self.approvals
+    }
+
+    pub(crate) fn pending_approval_count(&self) -> usize {
+        self.pending_approvals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+
+    /// Register a gate and hand back the reply receiver. The sender must be
+    /// stored before the request is announced so an instant reply cannot
+    /// race a missing entry.
+    pub(crate) fn register_gate(&self, id: &str) -> oneshot::Receiver<bool> {
+        let (tx, rx) = oneshot::channel();
+        self.pending_approvals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id.to_string(), tx);
+        rx
+    }
+
+    /// Resolve the oldest outstanding gate. Returns remaining count.
+    pub(crate) fn resolve_oldest_gate(&self, approve: bool) -> Result<usize, ()> {
+        let sender = self
+            .pending_approvals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop_first();
+        match sender {
+            Some((_, tx)) => {
+                let _ = tx.send(approve);
+                Ok(self.pending_approval_count())
+            }
+            None => Err(()),
+        }
     }
 
     fn snapshot(&self) -> Vec<(String, String)> {
@@ -136,6 +209,74 @@ struct InboundBody {
     wait: bool,
 }
 
+// ---- Approval forwarding (G2) ----------------------------------------------
+
+/// Approver for gateway-driven turns. In `deny` mode this behaves like
+/// `AutoDeny`. In `forward` mode the gate is announced on the approver
+/// surface and resolved by a yes/no reply; timeout or silence fails closed.
+struct GatewayApprover {
+    events_tx: tokio::sync::broadcast::Sender<AgentEvent>,
+    state: Arc<GatewayState>,
+    core: Core,
+}
+
+#[async_trait::async_trait]
+impl vak_agent::Approver for GatewayApprover {
+    async fn approve(&self, tool: &str, args_json: &str, reason: &str) -> bool {
+        if !self.state.forward_mode() {
+            return false;
+        }
+        let id = uuid::Uuid::now_v7().to_string();
+        let rx = self.state.register_gate(&id);
+        let _ = self.events_tx.send(AgentEvent::ApprovalRequested {
+            id: id.clone(),
+            tool: tool.to_string(),
+            args_json: args_json.to_string(),
+            reason: reason.to_string(),
+        });
+        let short = &id[..8];
+        let announce = format!(
+            "Approval requested [{short}]\nTool: {tool}\nArgs: {args_json}\nReason: {reason}\nReply 'yes' or 'no' to decide."
+        );
+        if let Err(e) = deliver(
+            &self.core,
+            self.state.approver_target().unwrap_or(""),
+            &announce,
+        )
+        .await
+        {
+            eprintln!("[gateway] approval announcement failed: {e}");
+            self.state.resolve_oldest_gate(false).ok();
+            return false;
+        }
+        match tokio::time::timeout(self.state.approval_timeout(), rx).await {
+            Ok(Ok(v)) => v,
+            Ok(Err(_)) => false, // gate dropped (run cancelled)
+            Err(_) => {
+                // Timed out: remove our own entry so a late reply resolves
+                // nothing.
+                self.state
+                    .pending_approvals
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(&id);
+                eprintln!("[gateway] approval {short} timed out; denied");
+                false
+            }
+        }
+    }
+}
+
+/// "yes"/"no" vocabulary for chat replies. Deliberately small and strict —
+/// casual chatter from the approver chat must not resolve gates.
+fn parse_verdict(text: &str) -> Option<bool> {
+    match text.trim().to_lowercase().as_str() {
+        "y" | "yes" | "approve" | "approved" | "ok" | "allow" => Some(true),
+        "n" | "no" | "deny" | "denied" | "block" => Some(false),
+        _ => None,
+    }
+}
+
 async fn gateway_inbound(
     State(state): State<AppState>,
     Json(body): Json<InboundBody>,
@@ -158,6 +299,30 @@ async fn gateway_inbound(
             .into_response();
     }
     let key = format!("{}:{}", body.surface.trim(), body.chat.trim());
+
+    // Approval replies from the designated approver surface resolve the
+    // oldest forwarded gate instead of becoming conversation input. Any
+    // non-verdict text from that chat falls through to normal routing.
+    if state.gateway.forward_mode() && Some(key.as_str()) == state.gateway.approver_target() {
+        if let Some(verdict) = parse_verdict(&text) {
+            return match state.gateway.resolve_oldest_gate(verdict) {
+                Ok(remaining) => (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "state": "approval_resolved",
+                        "approved": verdict,
+                        "remaining": remaining,
+                    })),
+                )
+                    .into_response(),
+                Err(()) => (
+                    StatusCode::OK,
+                    Json(serde_json::json!({ "state": "no_pending_approvals" })),
+                )
+                    .into_response(),
+            };
+        }
+    }
 
     let handle = match resolve_session(&state, &key).await {
         Ok(h) => h,
@@ -244,6 +409,11 @@ async fn gateway_status(State(state): State<AppState>) -> Json<serde_json::Value
         "enabled": state.gateway.enabled,
         "cwd": state.core.cwd(),
         "bindings": bindings,
+        "approvals": {
+            "mode": state.gateway.approvals_mode(),
+            "approver": state.gateway.approver_target(),
+            "pending": state.gateway.pending_approval_count(),
+        },
     }))
 }
 
@@ -320,11 +490,13 @@ fn start_turn_chain(
     reply: Option<oneshot::Sender<String>>,
 ) {
     let core = state.core.clone();
-    tokio::spawn(execute_turn_chain(core, handle, prompt, reply));
+    let gw = state.gateway.clone();
+    tokio::spawn(execute_turn_chain(core, gw, handle, prompt, reply));
 }
 
 async fn execute_turn_chain(
     core: Core,
+    gw: Arc<GatewayState>,
     handle: Arc<SessionHandle>,
     mut prompt: String,
     mut reply: Option<oneshot::Sender<String>>,
@@ -346,7 +518,17 @@ async fn execute_turn_chain(
             .map(|h| h.session_id.clone())
             .unwrap_or_default();
 
-        let approver: Arc<dyn vak_agent::Approver> = Arc::new(AutoDeny);
+        // Unattended policy: deny by default, forward to the approver
+        // surface when configured (G2).
+        let approver: Arc<dyn vak_agent::Approver> = if gw.forward_mode() {
+            Arc::new(GatewayApprover {
+                events_tx: handle.events_tx.clone(),
+                state: gw.clone(),
+                core: core.clone(),
+            })
+        } else {
+            Arc::new(AutoDeny)
+        };
         let events = crate::mpsc_to_broadcast(handle.events_tx.clone());
         let steering = handle.steering.clone();
         let cancel = handle
