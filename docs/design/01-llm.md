@@ -42,7 +42,7 @@ blocks: `Text | Thinking{signature} | ToolUse{id,name,input} | ToolResult{tool_u
 | openai-completions | `openai.rs` | OpenRouter, Ollama, Groq, Together, vLLM, any `/v1/chat/completions` endpoint |
 | openai-responses | `openai_responses.rs` | OpenAI native (`/v1/responses`, GPT-5.x-class) |
 | google-generative-ai | `google.rs` | Gemini (`streamGenerateContent?alt=sse`) |
-| openai-completions (zen) | `openai.rs` | OpenCode Zen (`opencode.ai/zen/v1`), incl. free models like Ox Alpha Free (`x-preview-f-free`) |
+| openai-completions (zen) | `openai.rs` | OpenCode Zen (`opencode.ai/zen/v1`) |
 
 Registry names: `anthropic`, `openai`, `openai-responses`, `openrouter`,
 `opencode-zen`, `ollama`, `google` (lazy-built, cached). Auth via
@@ -50,6 +50,38 @@ Registry names: `anthropic`, `openai`, `openai-responses`, `openrouter`,
 `GEMINI_API_KEY` / `OPENCODE_API_KEY`; Ollama needs no key. Base-URL
 overrides: `VAKCODER_{ANTHROPIC,OPENAI,OPENROUTER,OLLAMA,GOOGLE,
 OPENCODE_ZEN}_BASE_URL`.
+
+## Model discovery
+
+There is no hardcoded model catalogue. Which models exist is a property of
+the user's key, so `models.rs` asks the provider and
+`Core::discover_models` memoises the answer for 5 minutes (invalidated
+whenever a key is stored or revoked).
+
+| shape | providers | request | response |
+|---|---|---|---|
+| OpenAI listing | `openai`, `openai-responses`, `openrouter`, `opencode-zen`, `ollama` | `GET {base}/models`, bearer | `{ data: [{ id }] }` |
+| Anthropic | `anthropic` | `GET {base}/v1/models`, `x-api-key` + `anthropic-version` | `{ data: [{ id }], has_more, last_id }` |
+| Google | `google` | `GET {base}/models?key=…` | `{ models: [{ name: "models/x" }], nextPageToken }` |
+
+Anthropic (default 20/page) and Google (default 50/page) **paginate** — both
+are followed to exhaustion (`after_id` / `pageToken`, capped at 20 pages) or
+the list silently truncates. Google ids are returned fully qualified and are
+stripped of the `models/` prefix. Ids are sorted and de-duplicated.
+
+Failures surface as themselves: HTTP status maps onto the same `LlmError`
+taxonomy the chat paths use (401/403 → `Auth`, 429 → `RateLimit`, …), so a
+UI can say "this key is invalid" rather than offering models the key cannot
+reach. Discovery never falls back to a static list. Endpoint *hosts* keep
+defaults (`default_base_url`) because those are configuration; model *ids*
+are always live.
+
+Keys are user-supplied and user-revocable. `Core::set_provider_key` writes
+`~/.vakcoder/.env` (0600); `remove_provider_key` strips the entry, clears the
+runtime override and the loaded-dotenv copy, and reports `shadowed_by_env`
+when the variable is *also* exported in the real environment — that copy
+cannot be unset from inside the app, and the provider stays authenticated.
+Both paths drop the cached provider client and the discovered-model cache.
 
 Secrets live in `.env` (project) or `~/.vakcoder/.env` (user) — both are
 gitignored by convention and loaded at startup; real environment variables

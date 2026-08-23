@@ -7,6 +7,7 @@ pub mod custom_commands;
 pub mod skills;
 pub mod worktree;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -23,6 +24,15 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("system-prompt.md");
 
 /// Re-exported so consumers (and tests) can name config types via vak_core.
 pub use vak_config;
+
+/// Outcome of revoking a provider key.
+#[derive(Debug, Clone)]
+pub struct RemovedKey {
+    pub env_var: String,
+    /// True when the variable is still set in the real process environment,
+    /// so the provider stays authenticated despite the stored key going away.
+    pub shadowed_by_env: bool,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum CoreError {
@@ -61,6 +71,9 @@ struct CoreInner {
     trust_project_config: bool,
     extra_allow: std::sync::Mutex<Vec<String>>,
     user_env_override: std::sync::Mutex<Option<PathBuf>>,
+    /// provider -> (fetched_at, model ids). Discovery is a network call;
+    /// pickers re-read it constantly, so results are memoised briefly.
+    models_cache: std::sync::Mutex<HashMap<String, (std::time::Instant, Vec<String>)>>,
 }
 
 /// Learned permission rules live outside the main config so they can be
@@ -125,6 +138,7 @@ impl Core {
                 trust_project_config,
                 extra_allow: std::sync::Mutex::new(extra_allow),
                 user_env_override: std::sync::Mutex::new(None),
+                models_cache: std::sync::Mutex::new(HashMap::new()),
             }),
         })
     }
@@ -366,7 +380,14 @@ impl Core {
     }
 
     fn provider_auth(&self) -> Result<ProviderAuth, CoreError> {
-        let provider = self.effective_provider();
+        self.provider_auth_for(&self.effective_provider())
+    }
+
+    /// Resolve credentials for an arbitrary provider, not just the active
+    /// one — model discovery needs to authenticate against whichever
+    /// provider the user is inspecting.
+    fn provider_auth_for(&self, provider: &str) -> Result<ProviderAuth, CoreError> {
+        let provider = provider.to_string();
         match provider.as_str() {
             "anthropic" => {
                 let api_key = vak_config::get_var("ANTHROPIC_API_KEY").ok_or_else(|| {
@@ -531,30 +552,76 @@ impl Core {
         vak_config::upsert_env_file(&path, env, key)
             .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))?;
         vak_config::set_override(env, key);
+        // A different key reaches a different set of models, and any cached
+        // client still holds the old credential.
+        self.invalidate_models_cache(Some(provider));
+        if let Ok(mut p) = self.inner.provider_instance.lock() {
+            *p = None;
+        }
         Ok(env.to_string())
     }
 
-    /// Curated starting points per provider for picker UIs; always
-    /// advisory — every model field remains free-form.
-    pub fn models_for(provider: &str) -> &'static [&'static str] {
-        match provider {
-            "anthropic" => &[
-                "claude-sonnet-4-5",
-                "claude-haiku-4-5",
-                "claude-opus-4-1",
-                "claude-sonnet-4-0",
-            ],
-            "openai-responses" => &["gpt-5-codex", "gpt-5", "o3"],
-            "openai" => &["gpt-4.1", "gpt-4o", "o3"],
-            "google" => &["gemini-2.5-pro", "gemini-2.5-flash"],
-            "openrouter" => &[
-                "anthropic/claude-sonnet-4.5",
-                "openai/gpt-4.1",
-                "google/gemini-2.5-pro",
-            ],
-            "opencode-zen" => &["x-preview-f-free", "claude-sonnet-4-5"],
-            "ollama" => &["qwen2.5-coder", "llama3.1"],
-            _ => &[],
+    /// Revoke `provider`'s key: strip it from `~/.vakcoder/.env`, drop the
+    /// runtime override and the loaded-dotenv copy, and forget any
+    /// discovered models. A key exported in the real environment cannot be
+    /// unset from here — the caller is told so it can say as much.
+    pub fn remove_provider_key(&self, provider: &str) -> Result<RemovedKey, CoreError> {
+        let env = Self::provider_env_var(provider).ok_or_else(|| {
+            CoreError::InvalidConfig(format!(
+                "unknown provider '{provider}' (or it needs no key)"
+            ))
+        })?;
+        let path = self.user_env_file();
+        vak_config::remove_env_file_key(&path, env)
+            .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))?;
+        vak_config::clear_override(env);
+        vak_config::forget_dotenv_var(env);
+        self.invalidate_models_cache(Some(provider));
+        // Any cached client was built with the old key.
+        if let Ok(mut p) = self.inner.provider_instance.lock() {
+            *p = None;
+        }
+        Ok(RemovedKey {
+            env_var: env.to_string(),
+            // If it still resolves, it comes from the process environment.
+            shadowed_by_env: vak_config::get_var(env).is_some(),
+        })
+    }
+
+    /// Ask `provider` which models its configured key can actually reach.
+    ///
+    /// There is no baked-in catalogue: an out-of-date table silently hides
+    /// models a provider shipped yesterday and offers ones the key cannot
+    /// use. Results are cached briefly because pickers poll this.
+    pub async fn discover_models(&self, provider: &str) -> Result<Vec<String>, CoreError> {
+        const TTL: std::time::Duration = std::time::Duration::from_secs(300);
+        if let Ok(cache) = self.inner.models_cache.lock()
+            && let Some((at, models)) = cache.get(provider)
+            && at.elapsed() < TTL
+        {
+            return Ok(models.clone());
+        }
+        let auth = self.provider_auth_for(provider)?;
+        let models = vak_llm::models::list_models(provider, &auth).await?;
+        if let Ok(mut cache) = self.inner.models_cache.lock() {
+            cache.insert(
+                provider.to_string(),
+                (std::time::Instant::now(), models.clone()),
+            );
+        }
+        Ok(models)
+    }
+
+    /// Drop memoised discovery for `provider` (or all of it) so the next
+    /// read reflects a key that just changed.
+    pub fn invalidate_models_cache(&self, provider: Option<&str>) {
+        if let Ok(mut cache) = self.inner.models_cache.lock() {
+            match provider {
+                Some(p) => {
+                    cache.remove(p);
+                }
+                None => cache.clear(),
+            }
         }
     }
 

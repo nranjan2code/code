@@ -1,4 +1,4 @@
-import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { backend, providers, setupNeeded } from "../store";
@@ -21,6 +21,28 @@ function ConnectModel() {
   // override so a configured provider can be selected and saved directly.
   const configured = () => info()?.configured ?? false;
   const needsKey = () => (info()?.requires_key ?? true) && !configured();
+
+  // Model list comes off the provider's own API using the configured key,
+  // so it reflects what this key can actually reach.
+  const [catalog, setCatalog] = createSignal<string[]>([]);
+  const [catalogNote, setCatalogNote] = createSignal<string | null>(null);
+  createEffect(() => {
+    const name = provider();
+    setCatalog([]);
+    setCatalogNote("discovering models…");
+    void (async () => {
+      try {
+        const r = await api.discoverModels(name);
+        if (name !== provider()) return; // a newer selection won
+        setCatalog(r.models);
+        setCatalogNote(r.models.length ? null : "provider returned no models");
+        if (r.models.length && !r.models.includes(model())) setModel(r.models[0]);
+      } catch (e) {
+        if (name !== provider()) return;
+        setCatalogNote(e instanceof Error ? e.message : String(e));
+      }
+    })();
+  });
 
   const save = async () => {
     setBusy(true);
@@ -56,12 +78,7 @@ function ConnectModel() {
           <span>Provider</span>
           <select
             value={provider()}
-            onChange={(e) => {
-              const next = e.currentTarget.value;
-              setProvider(next);
-              const first = providers()?.models[next]?.[0];
-              if (first && !providers()?.models[next]?.includes(model())) setModel(first);
-            }}
+            onChange={(e) => setProvider(e.currentTarget.value)}
           >
             <For each={providers()?.providers ?? []}>
               {(p) => (
@@ -81,8 +98,11 @@ function ConnectModel() {
             placeholder="provider default"
             onInput={(e) => setModel(e.currentTarget.value)}
           />
+          <Show when={catalogNote()}>
+            <small class="connect-note">{catalogNote()}</small>
+          </Show>
           <datalist id="gate-models">
-            <For each={providers()?.models[provider()] ?? []}>{(m) => <option value={m} />}</For>
+            <For each={catalog()}>{(m) => <option value={m} />}</For>
           </datalist>
         </label>
         <Show when={info()?.requires_key ?? true}>

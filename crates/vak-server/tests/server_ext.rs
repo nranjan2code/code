@@ -1263,11 +1263,11 @@ async fn providers_listing_and_key_storage_roundtrip() {
     let ollama = providers.iter().find(|p| p["name"] == "ollama").unwrap();
     assert_eq!(ollama["requires_key"], false);
     assert_eq!(ollama["configured"], true);
+    // Model lists are discovered per provider, never shipped in this
+    // payload — a static catalogue would drift from what the key reaches.
     assert!(
-        !listed["models"]["opencode-zen"]
-            .as_array()
-            .unwrap()
-            .is_empty()
+        listed.get("models").is_none(),
+        "/providers must not ship a hardcoded model catalogue"
     );
     assert_eq!(listed["current_configured"], false);
 
@@ -1322,6 +1322,68 @@ async fn providers_listing_and_key_storage_roundtrip() {
         "upsert must replace, not duplicate"
     );
     assert!(file.contains("OPENCODE_API_KEY=sk-test-456"));
+
+    // Revoking strips the key, leaves the rest of the file intact, and
+    // flips the provider back to unconfigured.
+    std::fs::write(
+        &user_env,
+        format!(
+            "{}\nUNRELATED_VALUE=keep-me\n",
+            std::fs::read_to_string(&user_env).unwrap().trim_end()
+        ),
+    )
+    .unwrap();
+    let removed: serde_json::Value = client
+        .delete(format!("{base}/config/key"))
+        .json(&serde_json::json!({ "provider": "opencode-zen" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(removed["env_var"], "OPENCODE_API_KEY");
+    assert_eq!(removed["configured"], false);
+    assert_eq!(removed["shadowed_by_env"], false);
+    let file = std::fs::read_to_string(&user_env).unwrap();
+    assert!(!file.contains("OPENCODE_API_KEY"), "key must be gone");
+    assert!(
+        file.contains("UNRELATED_VALUE=keep-me"),
+        "revoking one key must not disturb the rest of the file"
+    );
+    let after_remove: serde_json::Value = client
+        .get(format!("{base}/providers"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let zen = after_remove["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "opencode-zen")
+        .unwrap();
+    assert_eq!(zen["configured"], false);
+
+    // Revoking a provider we do not know is a value, not a panic.
+    let bogus = client
+        .delete(format!("{base}/config/key"))
+        .json(&serde_json::json!({ "provider": "nope" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bogus.status(), 400);
+
+    // Discovery for an unknown provider is a 404, and for a configured-but
+    // -unreachable one it reports the reason rather than a fallback list.
+    let unknown_models = client
+        .get(format!("{base}/providers/nope/models"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown_models.status(), 404);
 
     // Unknown and keyless providers are rejected as values, not panics.
     let unknown = client

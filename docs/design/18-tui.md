@@ -136,14 +136,19 @@ accessibility surfaces live there and in 05-config.md).
 - **Provider picker**: `/provider` searches every registered provider and shows
   whether its credential resolves right now (real env → runtime overrides →
   `.env` files — the same lookup runs use, via `Core::provider_configured`);
-  choosing one selects the shared curated default (`Core::models_for`) where
-  the provider has one.
-- **Key storage**: `/key` opens a status board of every provider's env var and
-  readiness; `/key <provider> SECRET` stores it through the shared Core into
-  `~/.vakcoder/.env` (0600) and it is effective immediately — identical to the
-  desktop gate and `PUT /config/key`.
-- **Model picker**: `/model` searches suggested models while accepting any
-  exact provider model ID typed by the user.
+  choosing one selects that provider's first discovered model.
+- **Key lifecycle**: `/key` opens a status board of every provider's env var
+  and readiness; `/key <provider> SECRET` stores it through the shared Core
+  into `~/.vakcoder/.env` (0600) and it is effective immediately;
+  `/key <provider> --remove` revokes it (also `--revoke` / `--clear`) and
+  warns when the variable is still exported in the real environment, which
+  no app-level action can unset. Identical to the desktop Settings pane and
+  `PUT` / `DELETE /config/key`.
+- **Model picker**: `/model` lists the models the current key actually
+  reaches (`Core::discover_models`, live from the provider — never a
+  hardcoded list) while still accepting any exact model ID typed by the
+  user. Discovery failure degrades to the current model rather than
+  inventing a catalogue.
 - **Settings dashboard**: `/config` and `/settings` show effective agent,
   permission, sandbox, appearance, limit, auth, and file-path state.
 - **Explicit scope**: Enter applies a provider/model choice for the current

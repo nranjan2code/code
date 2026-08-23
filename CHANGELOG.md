@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- **Model catalogues are discovered, not hardcoded.** `Core::models_for` — a
+  static per-provider table — is gone. `vak_llm::models::list_models` asks the
+  provider what the user's key actually reaches (`GET /models`), following
+  pagination for Anthropic (`has_more`/`last_id`, 20/page default) and Google
+  (`nextPageToken`, 50/page default) so long catalogues are not silently
+  truncated; `Core::discover_models` memoises for 5 minutes. Exposed as
+  `GET /providers/:name/models`, consumed by the desktop gate, desktop
+  Settings and the TUI `/model` picker. Discovery failure reports the reason
+  (invalid key, provider down) instead of substituting a stale list — the old
+  table advertised 2 opencode-zen models where the key reaches 64, and offered
+  4 Anthropic models for a key that no longer authenticates.
+- **Provider keys are revocable.** `DELETE /config/key`, a Remove key control
+  in desktop Settings, and `/key <provider> --remove` in the TUI. Revoking
+  strips the entry from `~/.vakcoder/.env`, clears the runtime override and
+  the loaded-dotenv copy, drops the cached provider client and discovered
+  models, and reports `shadowed_by_env` when the variable is also exported in
+  the real environment (which the app cannot unset).
+- **Desktop onboarding fixes.** The project gate could strand on the folder
+  picker: a `Composer` ref was dereferenced before assignment
+  (`ta.selectionStart`), and the throw propagated out of `setBackend` inside
+  `refreshBackend`, leaving providers unset. Also: `backend-ready` was emitted
+  before the webview subscribed, the gate's recovery poll tore down its own
+  timer, `showConnect` captured a non-reactive boolean, and CORS omitted
+  PATCH/DELETE while the router and client both used them.
+- **Desktop UI**: project switcher and run controls (permission mode,
+  transcript density, tokens, context ring) moved from the sidebar footer and
+  the status strip into the composer toolbar; sidebar gutters normalised.
+- **Single instance**: a second launch refocuses the live window instead of
+  starting a rival shell with its own backend.
+
 - **Doc 21 closed out — world-class TUI pass complete.** Interactive
   keymap rebind UI (`/keymap`: ↑↓ select, `r` capture, conflicts surfaced);
   subagent picker + attach/steer (`Alt-S` / `/subagents`): every live child

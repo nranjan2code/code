@@ -21,7 +21,9 @@
 //! - `PUT  /fs/file` {path, content}      → write a file confined to cwd
 //! - `POST /config/mode` {mode}           → switch permission mode at runtime
 //! - `PUT  /config/key` {provider, key}   → store a provider credential (0600)
-//! - `GET  /providers`                    → provider/model picker data (no secrets)
+//! - `DELETE /config/key` {provider}      → revoke a stored credential
+//! - `GET  /providers`                    → provider picker data (no secrets)
+//! - `GET  /providers/:name/models`       → models the stored key can reach
 //! - `GET  /skills`                       → discovered skills (name + description)
 
 use std::collections::HashMap;
@@ -228,8 +230,12 @@ fn router_with_state(state: AppState) -> Router {
         .route("/fs/tree", get(fs_tree))
         .route("/config", get(get_config).patch(patch_config))
         .route("/config/mode", post(set_permission_mode))
-        .route("/config/key", put(put_provider_key))
+        .route(
+            "/config/key",
+            put(put_provider_key).delete(delete_provider_key),
+        )
         .route("/providers", get(list_providers))
+        .route("/providers/{name}/models", get(discover_models))
         .with_state(state)
 }
 
@@ -1040,19 +1046,66 @@ async fn list_providers(State(state): State<AppState>) -> Json<serde_json::Value
             "configured": configured,
         }));
     }
-    let models: serde_json::Map<String, serde_json::Value> = state
-        .core
-        .provider_names()
-        .iter()
-        .map(|n| (n.clone(), serde_json::json!(Core::models_for(n))))
-        .collect();
     Json(serde_json::json!({
         "current": state.core.effective_provider(),
         "current_model": state.core.effective_model(),
         "current_configured": state.core.provider_configured(&state.core.effective_provider()),
         "providers": providers,
-        "models": models,
     }))
+}
+
+#[derive(serde::Deserialize)]
+struct ProviderRef {
+    provider: String,
+}
+
+/// Revoke a provider key. Reports when the variable is still set in the
+/// real environment, since that keeps the provider authenticated and no
+/// app-level action can change it.
+async fn delete_provider_key(
+    State(state): State<AppState>,
+    Json(body): Json<ProviderRef>,
+) -> axum::response::Response {
+    match state.core.remove_provider_key(&body.provider) {
+        Ok(removed) => Json(serde_json::json!({
+            "provider": body.provider,
+            "env_var": removed.env_var,
+            "configured": removed.shadowed_by_env,
+            "shadowed_by_env": removed.shadowed_by_env,
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Live model list for one provider, straight from its API using the key
+/// currently configured for it. Reports the failure reason rather than
+/// substituting a stale hard-coded list.
+async fn discover_models(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> axum::response::Response {
+    if !Core::provider_known(&name) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("unknown provider '{name}'") })),
+        )
+            .into_response();
+    }
+    match state.core.discover_models(&name).await {
+        Ok(models) => {
+            Json(serde_json::json!({ "provider": name, "models": models })).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "provider": name, "error": e.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 #[derive(serde::Deserialize)]

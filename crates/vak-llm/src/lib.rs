@@ -8,6 +8,7 @@
 pub mod anthropic;
 pub mod error;
 pub mod google;
+pub mod models;
 pub mod openai;
 pub mod openai_responses;
 pub mod registry;

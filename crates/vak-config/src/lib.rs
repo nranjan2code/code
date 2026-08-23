@@ -812,10 +812,53 @@ pub fn set_override(key: impl Into<String>, value: impl Into<String>) {
     var_overrides().insert(key.into(), value.into());
 }
 
+/// Drops a runtime override so lookups fall back to the real environment
+/// and .env files again. Used when a key is revoked mid-session.
+pub fn clear_override(key: &str) {
+    var_overrides().remove(key);
+}
+
+/// Forgets a key loaded from a .env file earlier this session. Without
+/// this a revoked key keeps resolving from the in-memory dotenv map.
+pub fn forget_dotenv_var(key: &str) {
+    dotenv_extra().remove(key);
+}
+
 /// `$HOME/.vakcoder/.env` — the user-level secret store shared by every
 /// vakcoder surface.
 pub fn user_env_path() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".vakcoder").join(".env"))
+}
+
+/// Removes every definition of `key` from `path`, preserving the rest of
+/// the file. Missing file or missing key are both a no-op success.
+pub fn remove_env_file_key(path: &std::path::Path, key: &str) -> std::io::Result<()> {
+    let Ok(existing) = std::fs::read_to_string(path) else {
+        return Ok(());
+    };
+    let mut lines: Vec<String> = Vec::new();
+    for line in existing.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            lines.push(line.to_string());
+            continue;
+        }
+        match line.split_once('=') {
+            Some((k, _)) if k.trim() == key => continue,
+            _ => lines.push(line.to_string()),
+        }
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    let tmp = path.with_extension("env.tmp");
+    std::fs::write(&tmp, out)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+    }
+    std::fs::rename(&tmp, path)?;
+    Ok(())
 }
 
 /// Upserts `KEY=VALUE` into `path` (created if missing, 0600 on unix).

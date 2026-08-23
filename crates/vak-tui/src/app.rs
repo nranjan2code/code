@@ -690,7 +690,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                     picker = Some((
                                         PickerKind::Model,
                                         ChoicePicker::new(
-                                            model_choices(&ui.provider, &ui.model),
+                                            model_choices(&core, &ui.provider, &ui.model).await,
                                             true,
                                         ),
                                     ));
@@ -799,9 +799,9 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                     PickerKind::Provider => {
                                         core.set_provider(value.clone());
                                         ui.provider = value.clone();
-                                        if let Some(model) = default_model(&ui.provider) {
-                                            core.set_model(model.to_string());
-                                            ui.model = model.to_string();
+                                        if let Some(model) = default_model(&core, &ui.provider).await {
+                                            core.set_model(model.clone());
+                                            ui.model = model;
                                         }
                                     }
                                     PickerKind::Model => {
@@ -1303,7 +1303,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                             }
                                             Some(Command::Model(None)) => {
                                                 let active = ChoicePicker::new(
-                                                    model_choices(&ui.provider, &ui.model),
+                                                    model_choices(&core, &ui.provider, &ui.model).await,
                                                     true,
                                                 );
                                                 draw_picker(&mut screen, PickerKind::Model, &active);
@@ -1313,9 +1313,9 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                 if core.provider_names().contains(&provider) {
                                                     core.set_provider(provider.clone());
                                                     ui.provider = provider;
-                                                    if let Some(model) = default_model(&ui.provider) {
-                                                        core.set_model(model.to_string());
-                                                        ui.model = model.to_string();
+                                                    if let Some(model) = default_model(&core, &ui.provider).await {
+                                                        core.set_model(model.clone());
+                                                        ui.model = model;
                                                     }
                                                     screen.update_agent_identity(
                                                         &ui.provider,
@@ -1359,7 +1359,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                     title: "provider keys".to_string(),
                                                     rows,
                                                     scroll: 0,
-                                                    footer: "/key <provider> SECRET stores it · Esc close"
+                                                    footer: "/key <provider> SECRET stores · /key <provider> --remove revokes · Esc close"
                                                         .to_string(),
                                                     ..Default::default()
                                                 });
@@ -1377,6 +1377,21 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                             screen.error(
                                                                 "usage: /key <provider> SECRET",
                                                             );
+                                                        }
+                                                    }
+                                                    Some("--remove" | "--revoke" | "--clear") => {
+                                                        match core.remove_provider_key(target) {
+                                                            Ok(removed) if removed.shadowed_by_env => {
+                                                                screen.error(&format!(
+                                                                    "removed the stored key, but {} is still set in your environment — {target} stays authenticated",
+                                                                    removed.env_var,
+                                                                ));
+                                                            }
+                                                            Ok(removed) => screen.accent(&format!(
+                                                                "{target} key removed ({} cleared from ~/.vakcoder/.env)",
+                                                                removed.env_var,
+                                                            )),
+                                                            Err(e) => screen.error(&e.to_string()),
                                                         }
                                                     }
                                                     Some(secret) => match core
@@ -3020,7 +3035,7 @@ fn provider_status(core: &Core, provider: &str) -> String {
     }
 }
 
-fn model_choices(provider: &str, current: &str) -> Vec<ChoiceItem> {
+async fn model_choices(core: &Core, provider: &str, current: &str) -> Vec<ChoiceItem> {
     let hint = |value: &str| match value {
         "claude-sonnet-4-5" => "balanced coding",
         "claude-haiku-4-5" => "fast coding",
@@ -3038,11 +3053,13 @@ fn model_choices(provider: &str, current: &str) -> Vec<ChoiceItem> {
         description: "current model".to_string(),
         active: true,
     }];
-    for value in Core::models_for(provider) {
-        if *value != current {
+    // Ask the provider what this key reaches; on failure the picker still
+    // offers the current model rather than a stale baked-in list.
+    for value in core.discover_models(provider).await.unwrap_or_default() {
+        if value != current {
             choices.push(ChoiceItem {
-                value: (*value).to_string(),
-                description: hint(value).to_string(),
+                description: hint(&value).to_string(),
+                value,
                 active: false,
             });
         }
@@ -3050,8 +3067,8 @@ fn model_choices(provider: &str, current: &str) -> Vec<ChoiceItem> {
     choices
 }
 
-fn default_model(provider: &str) -> Option<&'static str> {
-    Core::models_for(provider).first().copied()
+async fn default_model(core: &Core, provider: &str) -> Option<String> {
+    core.discover_models(provider).await.ok()?.first().cloned()
 }
 
 fn help_modal_rows(core: &Core) -> Vec<String> {

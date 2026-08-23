@@ -99,7 +99,6 @@ export interface ProvidersResponse {
   current_model: string;
   current_configured: boolean;
   providers: ProviderInfo[];
-  models: Record<string, string[]>;
 }
 
 export interface Health {

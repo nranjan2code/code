@@ -135,6 +135,11 @@ export function listProviders(): Promise<import("./types").ProvidersResponse> {
   return req("/providers");
 }
 
+/** Live model list for one provider, discovered from its API. */
+export function discoverModels(provider: string): Promise<{ provider: string; models: string[] }> {
+  return req(`/providers/${encodeURIComponent(provider)}/models`);
+}
+
 export function putProviderKey(
   provider: string,
   key: string,
@@ -142,6 +147,16 @@ export function putProviderKey(
   return req("/config/key", {
     method: "PUT",
     body: JSON.stringify({ provider, key }),
+  });
+}
+
+/** Revoke a provider key stored on this device. */
+export function removeProviderKey(
+  provider: string,
+): Promise<{ provider: string; env_var: string; configured: boolean; shadowed_by_env: boolean }> {
+  return req("/config/key", {
+    method: "DELETE",
+    body: JSON.stringify({ provider }),
   });
 }
 

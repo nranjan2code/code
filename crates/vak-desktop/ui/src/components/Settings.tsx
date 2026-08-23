@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onMount, Show, type JSX } from "solid-js";
 import {
   density,
   openInEditor,
@@ -53,6 +53,10 @@ export default function Settings() {
   const [loading, setLoading] = createSignal(true);
   const [provider, setProvider] = createSignal("");
   const [model, setModel] = createSignal("");
+  // Discovered from the provider's API with the configured key — never a
+  // baked-in list, which goes stale the moment a provider ships a model.
+  const [catalog, setCatalog] = createSignal<string[]>([]);
+  const [catalogNote, setCatalogNote] = createSignal<string | null>(null);
   const [maxTurns, setMaxTurns] = createSignal(40);
   const [saving, setSaving] = createSignal(false);
   const [keyDraft, setKeyDraft] = createSignal<string | null>(null);
@@ -68,6 +72,30 @@ export default function Settings() {
     }
   };
   onMount(() => void loadProviders());
+
+  // Re-run whenever the selected provider changes; a stale response from a
+  // provider the user has since moved off is discarded.
+  createEffect(() => {
+    const name = provider();
+    // Track the configured flag too: adding or revoking a key changes what
+    // this provider can reach, so the catalogue must be re-derived.
+    providers()?.providers.find((p) => p.name === name)?.configured;
+    if (!name) return;
+    setCatalog([]);
+    setCatalogNote("discovering models…");
+    void (async () => {
+      try {
+        const r = await api.discoverModels(name);
+        if (name !== provider()) return;
+        setCatalog(r.models);
+        setCatalogNote(r.models.length ? null : "provider returned no models");
+        if (r.models.length && !r.models.includes(model())) setModel(r.models[0]);
+      } catch (error) {
+        if (name !== provider()) return;
+        setCatalogNote(error instanceof Error ? error.message : String(error));
+      }
+    })();
+  });
 
   const currentProviderInfo = () =>
     providers()?.providers.find((p) => p.name === (provider() || providers()?.current));
@@ -112,10 +140,39 @@ export default function Settings() {
     try {
       const res = await api.putProviderKey(provider() || providers()?.current || "", draft);
       setKeyDraft(null);
+      // A new key can reach a different set of models.
+      try {
+        const fresh = await api.discoverModels(provider() || providers()?.current || "");
+        setCatalog(fresh.models);
+        setCatalogNote(fresh.models.length ? null : "provider returned no models");
+      } catch (e) {
+        setCatalogNote(e instanceof Error ? e.message : String(e));
+      }
       await Promise.all([loadProviders(), loadHealth()]);
       setNotice({ kind: "info", text: `Key stored locally (${res.env_var}).` });
     } catch (error) {
       setNotice({ kind: "error", text: `Could not store key: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setKeyBusy(false);
+    }
+  };
+
+  const removeKey = async () => {
+    const name = provider() || providers()?.current || "";
+    setKeyBusy(true);
+    try {
+      const res = await api.removeProviderKey(name);
+      await Promise.all([loadProviders(), loadHealth()]);
+      // The catalogue is meaningless without a key; re-derive it.
+      setCatalog([]);
+      setCatalogNote(null);
+      setNotice(
+        res.shadowed_by_env
+          ? { kind: "error", text: `Removed the stored key, but ${res.env_var} is still set in your environment, so ${name} stays authenticated.` }
+          : { kind: "info", text: `Key removed (${res.env_var}).` },
+      );
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not remove key: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
       setKeyBusy(false);
     }
@@ -200,18 +257,15 @@ export default function Settings() {
                       const next = event.currentTarget.value;
                       setProvider(next);
                       setKeyDraft(null);
-                      // Carry the model across only when the new provider
-                      // actually offers it; otherwise fall to its default so
-                      // the field never names a model this provider rejects.
-                      const catalog = providers()?.models[next] ?? [];
-                      if (catalog.length && !catalog.includes(model())) setModel(catalog[0]);
+                      // The catalogue effect re-runs off provider() and
+                      // reconciles the model against what the key reaches.
                     }}
                   >
                     <For each={providers()?.providers ?? []}>{(p) => <option value={p.name}>{p.name}{p.configured ? " ✓" : ""}</option>}</For>
                     <Show when={provider() && !providers()?.providers.some((p) => p.name === provider())}><option value={provider()}>{provider()}</option></Show>
                   </select>
                 </Row>
-                <Row title="Model" description="Suggestions are starting points; any identifier the provider accepts works."><input class="settings-input wide" list="settings-models" value={model()} onInput={(event) => setModel(event.currentTarget.value)} /><datalist id="settings-models"><For each={providers()?.models[provider()] ?? []}>{(m) => <option value={m} />}</For></datalist></Row>
+                <Row title="Model" description={catalogNote() ?? `${catalog().length} models available for this key.`}><input class="settings-input wide" list="settings-models" value={model()} onInput={(event) => setModel(event.currentTarget.value)} /><datalist id="settings-models"><For each={catalog()}>{(m) => <option value={m} />}</For></datalist></Row>
                 <Row title="Maximum turns" description="Hard limit for one task before the agent stops."><input class="settings-number" type="number" min="1" max="1000" value={maxTurns()} onInput={(event) => setMaxTurns(Number(event.currentTarget.value))} /></Row>
                 <Row title="Subagents" description="Allow the agent to delegate bounded parallel work."><span class="settings-status good">{config()?.subagents ? "Enabled" : "Disabled in config"}</span></Row>
               </Group>
@@ -231,7 +285,12 @@ export default function Settings() {
                     }
                   >
                     <Show when={currentProviderInfo()?.requires_key} fallback={<span class="settings-status good">Not required</span>}>
-                      <button class="settings-button" onClick={() => setKeyDraft("")}>{currentProviderInfo()?.configured ? "Replace key" : "Add key"}</button>
+                      <span class="key-edit">
+                        <button class="settings-button" onClick={() => setKeyDraft("")}>{currentProviderInfo()?.configured ? "Replace key" : "Add key"}</button>
+                        <Show when={currentProviderInfo()?.configured}>
+                          <button class="settings-button danger" disabled={keyBusy()} onClick={() => void removeKey()}>Remove key</button>
+                        </Show>
+                      </span>
                     </Show>
                   </Show>
                 </Row>

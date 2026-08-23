@@ -43,7 +43,18 @@ See `docs/design/00-roadmap.md` for the phase history and
 8. **Secrets never enter git.** API keys live in `.env` (project) or
    `~/.vakcoder/.env` (user), both gitignored, loaded via
    `vak_config::load_env_file/get_var`. Real environment variables take
-   precedence over `.env`. Never hardcode, echo, or commit keys.
+   precedence over `.env`. Never hardcode, echo, or commit keys. Keys are
+   user-supplied and user-revocable: `Core::set_provider_key` /
+   `remove_provider_key` own the whole lifecycle, and both invalidate the
+   cached provider client and the discovered-model cache.
+9. **Model catalogues are discovered, never hardcoded.** The set of models a
+   provider offers is a property of the user's key, not of our source tree —
+   a baked-in list hides models shipped yesterday and offers ones the key
+   cannot reach. `vak_llm::models::list_models` asks the provider
+   (`GET /models`, paginated where the provider pages) and
+   `Core::discover_models` memoises it for 5 minutes. When discovery fails,
+   surface the reason; never substitute a static list. Endpoint *hosts* are
+   configuration and may have defaults; model *ids* may not.
 
 ## Code rules
 
@@ -60,7 +71,8 @@ See `docs/design/00-roadmap.md` for the phase history and
 
 ```
 crates/vak-llm       unified provider API (anthropic / openai-responses /
-                     openai-completions / google), SSE, delta+snapshot events
+                     openai-completions / google), SSE, delta+snapshot events,
+                     live model discovery (models.rs)
 crates/vak-session   append-only JSONL trees, frozen contract, projection
 crates/vak-tools     read/write/edit/bash/glob/grep behind Tool trait,
                      resource claims, sandbox backends (Seatbelt)

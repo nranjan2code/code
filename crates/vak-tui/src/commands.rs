@@ -15,7 +15,8 @@ pub enum Command {
     Keymap,
     Model(Option<String>),
     Provider(Option<String>),
-    /// `/key [provider [SECRET]]` — inspect or store a provider credential.
+    /// `/key [provider [SECRET|--remove]]` — inspect, store, or revoke a
+    /// provider credential.
     /// Stored via the shared Core into ~/.vakcoder/.env (0600); effective
     /// immediately, no restart.
     Key(Option<String>),
@@ -41,7 +42,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "provider",
         "choose Anthropic, OpenAI, Google, local, or routed",
     ),
-    ("key", "store a provider key: /key provider SECRET"),
+    (
+        "key",
+        "provider keys: /key provider SECRET · /key provider --remove",
+    ),
     ("config", "effective settings, auth, and config paths"),
     ("settings", "open the settings dashboard"),
     (
