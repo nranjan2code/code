@@ -15,6 +15,20 @@ Vakyartha's strongest cross-cutting discipline, worth copying everywhere:
 > Gates act on recorded facts; predictions only rank. Missing data stays
 > unknown — it is never treated as zero/bad/good.
 
+## North star
+
+Every phase here serves one competitive axis: **long-horizon reliability**.
+The evidence is convergent — our own recorded meta-lesson (harness-only
+changes moved Terminal-Bench 2.0 by 10–14pp, `06-research-notes.md`); the
+Horizon Gap survey ("harness engineering, not the underlying model, is
+often the binding constraint"); METR's task-horizon doubling every ~4–7
+months and accelerating; LoopsBench showing the field shifting from
+harness engineering to loop engineering with the best frontier
+configuration resolving just 25% of dependency-DAG tasks; and Anthropic's
+own harness posts (evaluator separation, done-contracts, reset-with-
+handoff). Vakyartha's imports are chosen only where they serve that axis;
+Phase H sources directly from the same public evidence.
+
 ## What we do NOT re-import
 
 | Vakyartha mechanism | Verdict | Reason |
@@ -42,6 +56,8 @@ that overstated certainty. Corrected standing, per phase:
 | D FinOps | high (gap exists today: unattended gateway spend is uncapped) | n/a — gap ships now | confirmed by runaway/vague-spend report |
 | E flows adopt/diff | product bet on replay appetite | a completed run manually rerun/adapted by hand | **fired** — user-attested |
 | F process | hygiene; low risk; compounding | n/a | ongoing |
+| G projection (conditional) | cosmetic until the data layer exists | getting lost during a real flow run; remote flow-control demand | parked behind A/E |
+| H loop engineering | evidence-strongest tier: 2026 public frontier convergence + attested context loss | a frontier harness ships audited completion/goal mode and ours lags; or dogfood proves a mechanism dead weight → strip it | adopted 2026-08-24 |
 
 All four demand triggers were attested on 2026-08-23, which promotes B, C,
 D, E from speculative to demand-backed. Standing rule going forward —
@@ -271,6 +287,59 @@ evidence that authoring canvases rot faster than the data layer beneath
 them. Rich views belong to desktop or external consumers of the snapshot
 API.
 
+## Phase H — Loop engineering (the long-horizon kernel)
+
+Not a vakyartha import: sourced from the same public frontier evidence as
+the North star section, and the answer to "better than any other harness."
+Gap audit confirmed 2026-08-24: no goal mode, no independent auditor, no
+task-state record outside the transcript, no reset-with-handoff, no
+regression obligations. Every mechanism below builds on existing
+strengths — stop gate, append-only ledgers, subagents, run-start
+checkpoints, exit-code-verified evals.
+
+1. **Goal mode** — a durable `goal` ledger entry
+   `{objective, acceptance_criteria[], status}` surviving across turns
+   and sessions. After every turn the loop evaluates goal progress,
+   generalizing the existing stop gate machinery, and emits typed
+   outcomes `execute | blocked | ask | done`; only `done` ends the run.
+   Surfaced in the TUI status row and server events.
+2. **Audited completion (MEA-lite)** — a `done` claim spawns a read-only
+   verifier subagent that judges the workspace delta against the
+   acceptance criteria using run-start checkpoints (before/after already
+   captured). Completion is recorded from the audit receipt, never from
+   self-report. Audit failure returns findings to the executor. The
+   auditor holds read-only tools only — it can never mutate state to make
+   its own report true.
+3. **Regression obligations** — commands/tests proven green during a run
+   become ledger-recorded obligations. The stop gate's verify stage
+   re-runs them before any completion claim; a regression reopens the
+   goal instead of ending the run.
+4. **Reset-with-handoff** — on the still-over-after-compaction fail-closed
+   branch (`17-context.md`), write a structured handoff entry
+   `{objective_state, decisions[], open_items[], obligations[]}` and
+   continue from a fresh segment seeded by it. Complements compaction,
+   never replaces it; append-only safe (invariant 2). Anthropic found
+   resets with structured handoffs beat compaction alone ("context
+   anxiety").
+5. **Done-contracts** — planner nodes carry acceptance criteria up front;
+   flow verify nodes and goal-mode checks consume them. Vakyartha's
+   co-planning idea lands here, now evidence-backed independently of
+   vakyartha (Anthropic's sprint contracts).
+
+Design discipline — **strippable scaffolding**: each mechanism is
+config-gated and excluded from the minimal eval profile (our baseline
+stays minimal per the DeepSeek-Harness lesson). As models improve,
+Anthropic's practice applies: re-examine and delete what stops being
+load-bearing rather than accumulating ceremony.
+
+**Tests**: goal-mode e2e (mock provider): criteria unmet → loop
+continues; met → audited `done`. Auditor cannot write (permission engine
+denies); workspace tampered vs criteria → audit fails and findings reach
+the executor. Obligation regression reopens the goal. Compaction-still-
+over produces a handoff entry + fresh-segment continuation that completes
+the objective. Planner contract validation rejects criterion-less nodes
+while goal mode is active.
+
 ## Parking lot (post-adoption, demand-driven)
 
 - Skill intent-discovery: embed turn intent against skill descriptions,
@@ -284,23 +353,27 @@ API.
 ## Sequencing
 
 Demand status per the Confidence & falsification section: B, C, D, E are
-demand-backed (attested incidents), not speculative; A is their shared
-foundation.
+demand-backed (attested incidents), not speculative; H is evidence-backed
+by the public frontier convergence; A is their shared foundation. Order
+follows the North star — long-horizon reliability first.
 
 | Order | Phase | Depends on | Size |
 |---|---|---|---|
 | 1 | A receipts + ceiling | — | M |
-| 2 | B frozen ladder | A | L |
-| 3a | C context gate | A (events) | M |
-| 3b | D FinOps | A (usage in receipts) | M |
-| 4 | E flows adopt/diff | A | M |
-| 5 (conditional) | G run-graph projection & flow surfaces | A; rides with E | S slices |
+| 2 | C context gate | A (events) | M |
+| 3 | D FinOps | A (usage in receipts) | M |
+| 4 | H loop engineering | A + C (receipts, context discipline) | L |
+| 5 | B frozen ladder | A | L |
+| 6 | E flows adopt/diff | A | M |
+| conditional | G run-graph projection & flow surfaces | A; rides with E | S slices |
 | ongoing | F process | none | S slices |
 
 A first: everything else records into receipts. C and D can proceed in
-parallel after A. B is the largest port; its pure-function core
-(admission set + versioned ordering) should land behind tests before any
-UI/config surface.
+parallel after A; H follows once receipts exist because audits and
+obligations are ledger entries — it is the differentiating phase. B is
+demand-backed resilience plumbing, necessary but not differentiating; its
+pure-function core (admission set + versioned ordering) should land
+behind tests before any UI/config surface.
 
 ## Open questions
 
