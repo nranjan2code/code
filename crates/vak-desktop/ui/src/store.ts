@@ -267,6 +267,18 @@ export function hydrateFromTranscript(id: string, messages: Message[]) {
       }
     }
   }
+  // Nothing here can still be in flight: hydration only runs for a session
+  // that is not currently running, so a tool without a recorded result had
+  // its end event lost rather than being genuinely mid-execution.
+  for (let i = 0; i < next.length; i++) {
+    const it = next[i];
+    if (it.kind === "tool" && !it.done) {
+      next[i] = { ...it, done: true, preview: it.preview ?? "no result recorded" };
+    }
+    if (it.kind === "approval" && it.resolved === null) {
+      next[i] = { ...it, resolved: "gone" };
+    }
+  }
   setItemsBySession(id, next);
 }
 
@@ -430,10 +442,24 @@ export function applyEvent(
     setUsageBySession(id, ev.TurnEnd.usage);
   } else if ("RunFinished" in ev) {
     markRunning(id, false, b);
+    // Close every in-flight item. A finished run cannot still have a tool
+    // executing or an approval pending, so anything left open means its
+    // end event was missed (a dropped stream, a failed re-attach). Leaving
+    // it open strands the card on "running…" for the rest of the session.
     updateList(b, id, (list) =>
       list.map((it) => {
         if (it.kind === "assistant" && it.streaming) return { ...it, streaming: false };
         if (it.kind === "thinking" && !it.done) return { ...it, done: true };
+        if (it.kind === "tool" && !it.done) {
+          return {
+            ...it,
+            done: true,
+            preview: it.preview ?? "no result recorded — the run ended first",
+          };
+        }
+        if (it.kind === "approval" && it.resolved === null) {
+          return { ...it, resolved: "gone" as const };
+        }
         return it;
       }),
     );
