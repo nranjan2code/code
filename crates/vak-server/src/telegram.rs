@@ -176,6 +176,11 @@ impl TelegramBridge {
                     // Converter edge-case guard: resend that chunk as plain
                     // text so a formatting bug degrades to ugly, not lost.
                     if status.as_u16() == 400 {
+                        eprintln!(
+                            "[telegram] HTML rejected ({status}); falling back to plain text — \
+                             chunk head: {}",
+                            &chunk[..chunk.chars().count().min(80)]
+                        );
                         let fallback = serde_json::json!({
                             "chat_id": chat_id,
                             "text": crate::channels::strip_tags(&chunk),

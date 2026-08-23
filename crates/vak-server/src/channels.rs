@@ -253,43 +253,93 @@ fn pair_replace_spaced(s: &str, marker: &str, open: &str, close: &str) -> String
         }
     }
 }
-
-/// Split rendered HTML into Telegram-sized chunks without cutting inside a
-/// tag, preferring paragraph/newline boundaries.
+/// Split rendered HTML into Telegram-sized chunks. Tag-safe in the strong
+/// sense: tags opened in a chunk are closed before it ends and re-opened at
+/// the start of the next chunk, so every chunk parses standalone.
 pub fn split_html_chunks(html: &str, cap: usize) -> Vec<String> {
+    fn scan(html: &str) -> Vec<(usize, usize, bool, String)> {
+        let mut v = Vec::new();
+        let b = html.as_bytes();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == b'<'
+                && let Some(rel) = html[i..].find('>')
+            {
+                let gt = i + rel;
+                if let Some(sp_end) = html[i + 1..gt].find(|c: char| c.is_whitespace() || c == '>')
+                {
+                    let raw = &html[i + 1..i + 1 + sp_end];
+                    let name = raw.trim_start_matches('/').to_string();
+                    v.push((i, gt + 1, html[i + 1..].starts_with('/'), name));
+                    i = gt + 1;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+        v
+    }
+
     if html.chars().count() <= cap {
         return vec![html.to_string()];
     }
-    let mut chunks = Vec::new();
-    let mut rest = html;
-    while rest.chars().count() > cap {
-        let cut_char = rest
-            .char_indices()
-            .nth(cap)
-            .map(|(i, _)| i)
-            .unwrap_or(rest.len());
-        let window = &rest[..cut_char];
-        let boundary = window
-            .rfind("\n\n")
-            .or_else(|| window.rfind('\n'))
-            .or_else(|| window.rfind(' '))
-            .unwrap_or(cut_char);
-        // Never split inside a tag.
-        let boundary = if let Some(lt) = window.rfind('<') {
-            if lt >= boundary.min(cut_char.saturating_sub(1)) && window[lt..].find('>').is_none() {
-                lt
-            } else {
-                boundary
+
+    let tags = scan(html);
+    let mut chunks: Vec<String> = Vec::new();
+    let mut stack: Vec<String> = Vec::new();
+    let mut pos = 0usize;
+    let mut char_count = 0usize;
+    let mut cur = String::new();
+
+    fn flush(cur: &mut String, stack: &mut [String], chunks: &mut Vec<String>) {
+        for t in stack.iter().rev() {
+            cur.push_str(&format!("</{}>", t));
+        }
+        chunks.push(std::mem::take(cur).trim_end().to_string());
+        for t in stack.iter() {
+            cur.push_str(&format!("<{}>", t));
+        }
+    }
+
+    let mut ti = 0usize;
+    while pos < html.len() {
+        let next_tag = tags.get(ti).map(|(s, _, _, _)| *s).unwrap_or(html.len());
+        // Consume text segment up to the next tag, flushing on cap.
+        while pos < next_tag {
+            let ch_len = html[pos..].chars().next().map(char::len_utf8).unwrap_or(1);
+            if char_count + ch_len > cap {
+                flush(&mut cur, &mut stack, &mut chunks);
+                char_count = 0;
             }
-        } else {
-            boundary
-        };
-        chunks.push(rest[..boundary].trim_end().to_string());
-        rest = &rest[boundary..];
+            cur.push_str(&html[pos..pos + ch_len]);
+            pos += ch_len;
+            char_count += ch_len;
+        }
+        if pos >= html.len() {
+            break;
+        }
+        let (_, gt, is_close, name) = &tags[ti];
+        let tok_len = gt - pos;
+        if char_count + tok_len > cap {
+            flush(&mut cur, &mut stack, &mut chunks);
+            char_count = 0;
+        }
+        let gt = *gt;
+        let is_close = *is_close;
+        if is_close && let Some(p) = stack.iter().rposition(|t| *t == *name) {
+            stack.remove(p);
+        } else if !is_close {
+            stack.push(name.clone());
+        }
+        cur.push_str(&html[pos..gt]);
+        pos = gt;
+        char_count += tok_len;
+        ti += 1;
     }
-    if !rest.trim().is_empty() {
-        chunks.push(rest.to_string());
+    for t in stack.iter().rev() {
+        cur.push_str(&format!("</{}>", t));
     }
+    chunks.push(cur.trim().to_string());
     chunks
         .into_iter()
         .filter(|c| !c.trim().is_empty())
