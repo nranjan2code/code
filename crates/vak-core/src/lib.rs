@@ -7,6 +7,7 @@ pub mod custom_commands;
 pub mod files;
 pub mod learning;
 pub mod memory;
+pub mod reflection;
 pub mod sandbox_docker;
 pub mod session_search;
 pub mod skills;

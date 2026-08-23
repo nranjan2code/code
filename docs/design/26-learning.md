@@ -101,5 +101,5 @@ still denies both tools outright.
 | Phase | Delivers | Exit criterion |
 |---|---|---|
 | **L0 (this)** | memory store + parser, search boost, both tools, engine classification, promotion endpoints + CLI, config flags | unit roundtrips incl. hand-edited files; search outranks transcripts; e2e: agent remembers mid-run, a later run recalls it citing memory; promote→discovery loop closes; fmt/clippy/tests green |
-| L1 | reflection nudges (optional post-run summarizer proposing notes), dedup/merge of near-duplicate notes | note count stays bounded on repeated similar tasks |
+| **L1 ✅** | Post-run reflection (`[memory] reflection = true`): auxiliary model call after clean gateway completions proposes ≤2 notes + optional skill draft; Jaccard dedup (≥0.55) against existing MEMORY.md bounds growth; skill drafts land in the same human-gated review queue; detached best-effort — never affects the reply | parser/dedup/e2e tests: near-duplicate second run writes 0 notes; invalid entries don't consume slots |
 | L2 | desktop/TUI review UI for the proposal queue | promote from the app with diff preview |

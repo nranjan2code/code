@@ -621,6 +621,27 @@ async fn execute_turn_chain(
             let _ = tx.send(reply_text.clone());
         }
 
+        // Reflection stage (docs/design/26-learning.md L1): after a clean
+        // completion, optionally propose durable notes/skills. Detached and
+        // best-effort — reflection failures must never touch the reply or
+        // the session.
+        if core.config().memory.reflection && !is_error {
+            let rcore = core.clone();
+            let sid = session_id.clone();
+            tokio::spawn(async move {
+                match reflection_tail(&rcore, &sid).await {
+                    Ok((notes, skill)) => {
+                        if notes > 0 || skill {
+                            eprintln!(
+                                "[gateway] reflection: {notes} note(s) persisted, skill queued: {skill}"
+                            );
+                        }
+                    }
+                    Err(e) => eprintln!("[gateway] reflection skipped: {e}"),
+                }
+            });
+        }
+
         let queued = steering.drain(vak_agent::DrainMode::All);
         if queued.is_empty() {
             return;
@@ -757,4 +778,56 @@ async fn deliver_webhook(core: &Core, name: &str, text: &str) -> Result<(), Stri
         return Err(format!("webhook '{name}' returned {status}"));
     }
     Ok(())
+}
+
+/// Reflection helper for the gateway: pulls the bound session's transcript
+/// tail, runs the auxiliary proposal call through the core's provider, and
+/// applies deduped writes. Returns (notes written, skill queued).
+pub(crate) async fn reflection_tail(
+    core: &Core,
+    session_id: &str,
+) -> Result<(usize, bool), String> {
+    let provider = core
+        .provider()
+        .map_err(|e| format!("reflection provider: {e}"))?;
+    // Read the transcript tail straight from disk: the live ledger may be
+    // owned by the agent at reflection time.
+    let path =
+        vak_session::SessionPath::new_session_file(&core.sessions_home(), core.cwd(), session_id);
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("read session for reflection: {e}"))?;
+    let mut tail = String::new();
+    for line in text.lines() {
+        if let Ok(e) = serde_json::from_str::<serde_json::Value>(line)
+            && e["kind"] == "message"
+        {
+            let role = e["message"]["role"].as_str().unwrap_or("?");
+            let txt = e["message"]["content"]
+                .as_array()
+                .map(|blocks| {
+                    blocks
+                        .iter()
+                        .filter_map(|b| b.get("text").and_then(|v| v.as_str()))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default();
+            tail.push_str(&format!("{role}: {txt}\n"));
+        }
+    }
+
+    let model = core.effective_model();
+    let proposals = vak_core::reflection::propose(
+        provider,
+        &model,
+        &tail,
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await?;
+    if proposals.notes.is_empty() && proposals.skill.is_none() {
+        return Ok((0, false));
+    }
+    let home_dir = core.sessions_home();
+    let cwd = core.cwd().clone();
+    vak_core::reflection::apply(home_dir.as_path(), cwd.as_path(), session_id, &proposals)
 }
