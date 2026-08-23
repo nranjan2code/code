@@ -185,7 +185,8 @@ export default function Composer(props: { cwd: string }) {
 
   const submit = () => {
     const t = text().trim();
-    if (!t || !activeId()) return;
+    // No active task is fine: sendPrompt creates one.
+    if (!t) return;
     setText("");
     setMention(null);
     queueMicrotask(grow);
@@ -288,7 +289,7 @@ export default function Composer(props: { cwd: string }) {
         <textarea
           ref={ta}
           rows={1}
-          placeholder={activeId() ? (isRunning(activeId()) ? "Add direction while vakcoder is working…" : "Ask vakcoder to build, fix, or explain…") : "Start or select a task…"}
+          placeholder={activeId() && isRunning(activeId()) ? "Add direction while vakcoder is working…" : "Ask vakcoder to build, fix, or explain…"}
           value={text()}
           onInput={(event) => { setText(event.currentTarget.value); refreshMention(); grow(); }}
           onKeyUp={(event) => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) refreshMention(); }}
@@ -341,7 +342,7 @@ export default function Composer(props: { cwd: string }) {
             <Show when={isRunning(activeId())}>
               <button class="composer-stop" title="Stop (Esc)" aria-label="Stop running task" onClick={stopRun}><Icon name="stop" size={15} /><span>Stop</span></button>
             </Show>
-            <button class="send-button" title="Send (Enter)" aria-label="Send prompt" disabled={!activeId() || !text().trim()} onClick={submit}>
+            <button class="send-button" title="Send (Enter)" aria-label="Send prompt" disabled={!text().trim()} onClick={submit}>
               <Icon name="send" size={16} />
             </button>
           </div>

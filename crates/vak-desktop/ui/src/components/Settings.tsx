@@ -130,6 +130,13 @@ export default function Settings() {
     return needle ? pages.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(needle)) : pages;
   });
 
+  // True when the form differs from what the backend is actually running.
+  const agentDirty = () => {
+    const c = config();
+    if (!c) return false;
+    return provider() !== c.provider || model() !== c.model || maxTurns() !== c.max_turns;
+  };
+
   const applyAgent = async () => {
     setSaving(true);
     try {
@@ -257,7 +264,7 @@ export default function Settings() {
 
             <Show when={page() === "agent"}>
               <header><h1>Agent</h1><p>Configure the model used when starting new tasks.</p></header>
-              <div class="settings-callout"><Icon name="spark" /><div><strong>Runtime defaults</strong><span>Changes apply immediately to new tasks. Add them to the project config to keep them across restarts.</span></div></div>
+              <div class="settings-callout"><Icon name="spark" /><div><strong>Runtime defaults</strong><span>Applied changes take effect on the next task. Add them to the project config to keep them across restarts.</span></div></div>
               <Group title="Model">
                 <Row title="Provider" description={currentProviderInfo()?.env_var ? `Authenticated via ${currentProviderInfo()?.env_var}` : "The API provider used for new sessions."}>
                   <select
@@ -345,7 +352,15 @@ export default function Settings() {
                   </Show>
                 </Row>
               </Group>
-              <div class="settings-actions"><button class="btn primary" disabled={saving() || !provider().trim() || !model().trim()} onClick={() => void applyAgent()}>{saving() ? "Applying…" : "Apply changes"}</button><button class="settings-button" onClick={() => void openProjectConfig()}>Edit persistent config</button></div>
+              <div class="settings-actions">
+                <button class="btn primary" disabled={saving() || !agentDirty() || !provider().trim() || !model().trim()} onClick={() => void applyAgent()}>{saving() ? "Applying…" : "Apply changes"}</button>
+                <button class="settings-button" onClick={() => void openProjectConfig()}>Edit persistent config</button>
+                {/* Selecting in the dropdowns changes nothing until this is
+                    pressed; without a marker that reads as a silent no-op. */}
+                <Show when={agentDirty()} fallback={<span class="settings-status good">Saved</span>}>
+                  <span class="settings-status warn">Unsaved changes — press Apply</span>
+                </Show>
+              </div>
             </Show>
 
             <Show when={page() === "permissions"}>

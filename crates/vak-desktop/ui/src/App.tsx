@@ -158,8 +158,15 @@ export async function newSession() {
 }
 
 export async function sendPrompt(text: string) {
-  const id = activeId();
-  if (!id || !text.trim()) return;
+  if (!text.trim()) return;
+  // Typing into the empty state is the natural way to start: create the task
+  // rather than silently dropping the prompt because nothing is selected.
+  let id = activeId();
+  if (!id) {
+    await newSession();
+    id = activeId();
+    if (!id) return; // newSession already surfaced why
+  }
   appendUser(id, text);
   try {
     if (isRunning(id)) {

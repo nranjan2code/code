@@ -466,6 +466,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: #4
 .settings-actions { display: flex; align-items: center; gap: 8px; margin-top: -10px; }
 .settings-status { padding: 3px 7px; border-radius: 99px; color: var(--muted); background: var(--surface); font-size: 10.5px; }
 .settings-status.good { color: #9ac1a4; background: rgba(115,169,130,.1); }
+.settings-status.warn { color: #ddb271; background: rgba(212,168,93,.12); }
 .metric { color: var(--text-soft); font-family: var(--mono); font-size: 11px; }
 .permission-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 29px; }
 .permission-options > button { display: grid; grid-template-columns: 38px 1fr 24px; align-items: center; gap: 12px; min-height: 75px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; color: var(--muted); background: var(--surface-raised); text-align: left; }
