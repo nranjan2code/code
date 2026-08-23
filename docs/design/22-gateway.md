@@ -127,6 +127,21 @@ The desktop's routines daemon graduates into the platform scheduler:
     run's answer is still recorded on the task) rather than posting
     unauthenticated.
 
+### Channel formatting
+
+The agent emits GitHub-flavored markdown; delivery converts per surface
+(`crates/vak-server/src/channels.rs`):
+
+| Surface | Flavor |
+|---|---|
+| Telegram | HTML (`parse_mode=HTML`) — headings→bold, links, inline code; fences/tables→monospace `<pre>`; bullets→•; model-emitted HTML escaped first |
+| webhook / log | raw markdown (machines) |
+
+Rules: conversion is injection-safe (escape before translate); long messages
+chunk at paragraph boundaries without cutting tags; a chunk rejected by the
+channel (400) is resent stripped to plain text — degradation is ugly, never
+lost. New channels implement a flavor + adapter; agent code unchanged.
+
 ## Configuration
 
 ```toml

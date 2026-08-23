@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Channel-aware message formatting**: the agent writes GFM markdown once;
+  delivery converts per surface. Telegram replies now render as native HTML
+  (bold headings/links/inline-code, fences and tables as monospace,
+  blockquotes, • bullets) with tag-safe chunking at 4096 chars and an
+  automatic plain-text fallback. Future channels add flavors (Slack mrkdwn,
+  Discord cards) without touching agent code.
 - **Tavily web search via MCP**: stdio servers get `${VAR}` interpolation in
   env values (resolved through the standard secret path — keys stay out of
   config files), a per-server egress flag (`[mcp.servers.X] network =

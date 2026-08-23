@@ -149,8 +149,9 @@ crates/vak-tui       retained-render terminal UI: contextual keymap +
 crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts) +
                      always-on gateway: chat-surface routing, persisted
                      bindings, cron delivery-to-surface, approval forwarding
-                     to an approver surface, Telegram/webhook transports
-                     (docs/design/22-gateway.md)
+                     to an approver surface, Telegram/webhook transports,
+                     per-channel reply formatting (docs/design/22-gateway.md,
+                     docs/design/28-operations.md)
 crates/vak-desktop   Tauri 2 desktop orchestrator (sidecar over vak-server;
                      docs/design/20-tauri-desktop.md)
 crates/vak-ops       service-control layer over launchd/systemd — status,
