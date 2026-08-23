@@ -27,6 +27,7 @@ fn manager() -> Arc<McpManager> {
             command: "python3".into(),
             args: vec![server_script().display().to_string()],
             env: Vec::new(),
+            network: false,
         },
     );
     Arc::new(McpManager::new(servers, std::env::temp_dir()))

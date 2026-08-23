@@ -24,12 +24,20 @@ pub enum McpError {
     Closed,
 }
 
+/// Deserialized from TOML, so defaults live on the config side; this
+/// struct carries the resolved values.
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub command: String,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
+    /// Allow outbound network for this server (e.g. remote-API MCP tools
+    /// like web search). Opt-in per server via privileged config; when
+    /// false the platform sandbox applies as usual.
+    pub network: bool,
 }
+
+use std::path::PathBuf;
 
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, McpError>>>>>;
 
@@ -48,7 +56,10 @@ impl McpClient {
         cwd: &std::path::Path,
         sandbox: Option<&Arc<dyn Sandbox>>,
     ) -> Result<Self, McpError> {
-        let mut cmd = if let Some(sandbox) = sandbox {
+        // A network-egress server is a deliberate trust decision from
+        // privileged config; the OS command wrapper would deny its sockets,
+        // so it spawns directly (env still scrubbed to the explicit set).
+        let mut cmd = if let (Some(sandbox), false) = (sandbox, config.network) {
             let command = std::iter::once(config.command.as_str())
                 .chain(config.args.iter().map(String::as_str))
                 .map(shell_quote)
@@ -70,8 +81,31 @@ impl McpClient {
         for (k, v) in &config.env {
             cmd.env(k, v);
         }
+        // Operational basics every runtime needs (PATH for interpreters,
+        // HOME/TMPDIR for package caches). Secrets never ride along: the
+        // environment was cleared above and recipients are explicit.
+        // Prepend the server executable's own directory to PATH: under
+        // service managers PATH is minimal, and interpreters resolved via
+        // `#!/usr/bin/env` (npx→node) need the same prefix that worked for
+        // the command itself.
+        let mut path_parts: Vec<PathBuf> = Vec::new();
+        if let Some(dir) = std::path::Path::new(&config.command).parent() {
+            path_parts.push(dir.to_path_buf());
+        }
         if let Some(path) = std::env::var_os("PATH") {
-            cmd.env("PATH", path);
+            path_parts.extend(std::env::split_paths(&path).filter(|p| !p.as_os_str().is_empty()));
+        }
+        cmd.env(
+            "PATH",
+            std::env::join_paths(&path_parts).unwrap_or_default(),
+        );
+        for var in ["HOME", "TMPDIR"] {
+            if let Some(v) = std::env::var_os(var) {
+                cmd.env(var, v);
+            }
+        }
+        if std::env::var_os("VAK_MCP_DEBUG").is_some() {
+            cmd.stderr(Stdio::inherit());
         }
         vak_tools::bash::isolate_process_group(&mut cmd);
 

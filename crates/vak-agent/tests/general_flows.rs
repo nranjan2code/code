@@ -456,6 +456,7 @@ async fn mcp_notes_lookup_informs_planning_answer() {
             command: "python3".into(),
             args: vec![script.display().to_string()],
             env: Vec::new(),
+            network: false,
         },
     );
     let manager = Arc::new(McpManager::new(servers, dir_safe_cwd()));

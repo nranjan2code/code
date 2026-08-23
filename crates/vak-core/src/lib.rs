@@ -844,15 +844,30 @@ impl Core {
                 .mcp
                 .servers
                 .iter()
-                .map(|(name, s)| {
-                    (
+                .filter_map(|(name, s)| {
+                    // ${VAR} in env values resolves through the standard
+                    // secret path (runtime override → process env →
+                    // .env files), so keys stay out of config.toml.
+                    // Unresolved references skip the pair rather than
+                    // handing the server a literal "${...}".
+                    // Fail closed: one unresolved reference drops the whole
+                    // server rather than starting it half-configured.
+                    let mut env = Vec::with_capacity(s.env.len());
+                    for (k, v) in &s.env {
+                        match interpolate_env_var(v) {
+                            Some(resolved) => env.push((k.clone(), resolved)),
+                            None => return None,
+                        }
+                    }
+                    Some((
                         name.clone(),
                         vak_mcp::ServerConfig {
                             command: s.command.clone(),
                             args: s.args.clone(),
-                            env: s.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                            env,
+                            network: s.network,
                         },
-                    )
+                    ))
                 })
                 .collect();
             let manager = Arc::new(vak_mcp::McpManager::new_sandboxed(
@@ -1113,4 +1128,29 @@ fn load_permissions_local(cwd: &std::path::Path) -> Vec<String> {
 
 fn self_path() -> std::path::PathBuf {
     std::path::PathBuf::from(".vakcoder/config.toml")
+}
+
+/// Resolve `${NAME}` references in an MCP server env value through
+/// `vak_config::get_var` (override → process env → dotenv). Returns None
+/// when any reference is unresolved so callers can drop the pair instead of
+/// leaking a literal placeholder into a child environment.
+pub fn interpolate_env_var(value: &str) -> Option<String> {
+    if !value.contains("${") {
+        return Some(value.to_string());
+    }
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find("${") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let end = after.find('}')?;
+        let name = &after[..end];
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return None;
+        }
+        out.push_str(&vak_config::get_var(name)?);
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    Some(out)
 }

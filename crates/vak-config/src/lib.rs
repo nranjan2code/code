@@ -192,6 +192,10 @@ pub struct McpServerConfig {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: std::collections::BTreeMap<String, String>,
+    /// Allow outbound network for this MCP server. Privileged (mcp.servers
+    /// is stripped from untrusted projects).
+    #[serde(default)]
+    pub network: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -709,7 +713,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
 ];
 const KNOWN_PROFILE_KEYS: &[&str] = &["model", "provider", "permission_mode", "max_turns"];
 const KNOWN_HOOK_KEYS: &[&str] = &["event", "match", "command", "timeout_ms"];
-const KNOWN_MCP_SERVER_KEYS: &[&str] = &["command", "args", "env"];
+const KNOWN_MCP_SERVER_KEYS: &[&str] = &["command", "args", "env", "network"];
 const KNOWN_UI_KEYS: &[&str] = &[
     "theme",
     "bell",

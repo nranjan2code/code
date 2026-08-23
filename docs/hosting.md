@@ -78,3 +78,5 @@ migration.
 | replies "(aborted)" | pre-0.3.0 bug; upgrade. Also check `~/.vakcoder/logs/gateway.log` |
 | tool calls denied on phone | expected in default deny mode; configure an approver surface or use TUI/desktop for escalations |
 | model errors | `/health` shows effective provider/model; keys live in `~/.vakcoder/.env` |
+| MCP server "spawn failed" / dies at handshake | under service managers PATH is minimal: use the absolute interpreter path (`which npx`) in `[mcp.servers.*].command`; network-client tools also need `network = true` |
+| Tavily/web search denied on phone | add `allow = ["+mcp(tavily/*)"]` to trusted config — scoped to that server |

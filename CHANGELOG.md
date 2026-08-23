@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Tavily web search via MCP**: stdio servers get `${VAR}` interpolation in
+  env values (resolved through the standard secret path — keys stay out of
+  config files), a per-server egress flag (`[mcp.servers.X] network =
+  true`, privileged) for remote-API tools, and operational env (PATH with
+  the server's own dir, HOME/TMPDIR) so npx-based servers run correctly
+  under launchd/systemd.
+
 - **TUI `/services`**: status lines plus start/stop/restart for the gateway
   and Telegram bridge via vak-ops.
 - **Desktop ▸ Settings ▸ Services**: live status dots with
