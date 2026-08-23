@@ -1,8 +1,52 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
-import { density, itemsOf, activeId, openInEditor, type Item } from "../store";
+import { density, itemsOf, activeId, hydratingId, openInEditor, uiPreferences, type Item } from "../store";
 import { approve, sendPrompt, newSession } from "../App";
 import { renderMarkdown } from "../md";
+import Icon from "./Icon";
+
+const starters = [
+  { eyebrow: "Understand", prompt: "Map this codebase and explain the architecture, key flows, and highest-risk areas." },
+  { eyebrow: "Improve", prompt: "Review this project deeply and implement the highest-impact quality improvement." },
+  { eyebrow: "Ship", prompt: "Find the most important unfinished feature, implement it, and verify it end to end." },
+];
+
+function EmptyChat() {
+  const start = async (prompt: string) => {
+    if (!activeId()) await newSession();
+    void sendPrompt(prompt);
+  };
+  return (
+    <div class="chat-empty">
+      <div class="chat-empty-mark"><Icon name="spark" size={24} /></div>
+      <h2>What should we build?</h2>
+      <p>Describe an outcome. vakcoder will inspect the project, make the changes, and verify the result.</p>
+      <Show when={uiPreferences.suggestions}><div class="starter-grid">
+        <For each={starters}>
+          {(starter) => (
+            <button class="prompt-chip" onClick={() => void start(starter.prompt)}>
+              <span>{starter.eyebrow}</span>
+              <strong>{starter.prompt}</strong>
+              <Icon name="chevron" size={14} />
+            </button>
+          )}
+        </For>
+      </div></Show>
+    </div>
+  );
+}
+
+function TranscriptSkeleton() {
+  return (
+    <div class="transcript-skeleton" aria-label="Loading task">
+      <span class="skeleton-line wide" />
+      <span class="skeleton-line medium" />
+      <span class="skeleton-card" />
+      <span class="skeleton-line wide" />
+      <span class="skeleton-line short" />
+    </div>
+  );
+}
 
 function visibleItems(list: Item[]): Item[] {
   const d = density();
@@ -25,7 +69,7 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
   });
   return (
     <div class="tool" classList={{ err: props.item.isError, open: open() }}>
-      <button class="tool-h" onClick={() => setOpen((v) => !v)}>
+      <button class="tool-h" aria-expanded={open()} onClick={() => setOpen((v) => !v)}>
         <span class="tool-dot" />
         <span class="tool-name">{props.item.name}</span>
         <Show when={!props.item.done}>
@@ -34,7 +78,7 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
         <Show when={props.item.isError}>
           <span class="tool-err">error</span>
         </Show>
-        <span class="tool-chev">{open() ? "▾" : "▸"}</span>
+        <span class="tool-chev"><Icon name="chevron" size={14} /></span>
       </button>
       <Show when={open() || density() === "verbose"}>
         <pre class="tool-args">{argsPretty()}</pre>
@@ -61,7 +105,7 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }> }) => (
     >
       <div class="ap-actions">
         <button class="btn primary" onClick={() => void approve(props.item.id, true)}>
-          Allow
+          Allow once
         </button>
         <button class="btn danger" onClick={() => void approve(props.item.id, false)}>
           Deny
@@ -99,17 +143,29 @@ export const Markdown = (props: { text: string; streaming?: boolean }): JSX.Elem
 export default function ChatPane() {
   let scroller!: HTMLDivElement;
   let pinned = true;
+  const [atBottom, setAtBottom] = createSignal(true);
 
   const onScroll = () => {
     pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+    setAtBottom(pinned);
   };
-  const scrollToBottom = () => {
-    if (pinned) scroller.scrollTop = scroller.scrollHeight;
+  const scrollToBottom = (force = false) => {
+    if (pinned || force) {
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior: force ? "smooth" : "auto" });
+      pinned = true;
+      setAtBottom(true);
+    }
   };
 
   createEffect(() => {
     const id = activeId();
     void id;
+    pinned = true;
+    setAtBottom(true);
+    queueMicrotask(() => scrollToBottom(true));
+  });
+
+  createEffect(() => {
     itemsOf(activeId()).length;
     queueMicrotask(scrollToBottom);
   });
@@ -123,39 +179,13 @@ export default function ChatPane() {
   });
 
   return (
-    <div class="chat" ref={scroller} onScroll={onScroll}>
-      <Show
-        when={activeId()}
-        fallback={
-          <div class="chat-empty">
-            <div class="chat-empty-mark">◆</div>
-            <h2>What are we building?</h2>
-            <p>Start a new session (⌘N), pick one from the sidebar, or try:</p>
-            <For
-              each={[
-                "Explain this repo's architecture in one page",
-                "Find and fix the flakiest test",
-                "Add a /doctor style health check to the CLI",
-              ]}
-            >
-              {(s) => (
-                <button
-                  class="prompt-chip"
-                  onClick={async () => {
-                    if (!activeId()) await newSession();
-                    void sendPrompt(s);
-                  }}
-                >
-                  {s}
-                </button>
-              )}
-            </For>
-          </div>
-        }
-      >
-        <For each={visibleItems(itemsOf(activeId()))}>
-          {(it) => (
-            <>
+    <div class="chat-shell">
+      <div class="chat" ref={scroller} onScroll={onScroll}>
+        <Show when={activeId()} fallback={<EmptyChat />}>
+          <Show when={hydratingId() !== activeId()} fallback={<TranscriptSkeleton />}>
+            <Show when={visibleItems(itemsOf(activeId())).length} fallback={<EmptyChat />}>
+              <For each={visibleItems(itemsOf(activeId()))}>
+                {(it) => <>
               {(it.kind === "user" && <div class="msg user"><Markdown text={it.text} /></div>) ||
                 (it.kind === "assistant" && (
                   <div class="msg assistant">
@@ -185,9 +215,16 @@ export default function ChatPane() {
                   </details>
                 )) ||
                 (it.kind === "system" && <div class="sysnote">{it.text}</div>)}
-            </>
-          )}
-        </For>
+                </>}
+              </For>
+            </Show>
+          </Show>
+        </Show>
+      </div>
+      <Show when={!atBottom()}>
+        <button class="scroll-latest" onClick={() => scrollToBottom(true)}>
+          <Icon name="chevron" size={13} /> Latest
+        </button>
       </Show>
     </div>
   );

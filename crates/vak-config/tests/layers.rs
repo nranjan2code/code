@@ -79,6 +79,22 @@ fn ui_layer_overrides_and_unknown_theme_normalizes_to_dark() {
 }
 
 #[test]
+fn designed_ui_themes_are_valid_config_values() {
+    for theme in ["neo", "rich", "teenage", "plain"] {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join(".vakcoder");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            project.join("config.toml"),
+            format!("[ui]\ntheme = \"{theme}\"\n"),
+        )
+        .unwrap();
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.ui.theme, theme);
+    }
+}
+
+#[test]
 fn stop_policy_defaults_on_and_layer_overrides_apply() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = load_with_trust(dir.path(), false).unwrap();

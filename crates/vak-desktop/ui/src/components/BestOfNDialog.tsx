@@ -11,6 +11,7 @@ import {
   setBestOfRuns,
   setDiffTarget,
   setDockTab,
+  setNotice,
 } from "../store";
 import { openEventStream } from "../api";
 import * as api from "../api";
@@ -115,14 +116,14 @@ export default function BestOfNDialog() {
     void api
       .startBestOfN(anchor, prompt().trim(), n())
       .then((res) => setBestOfRuns(res.runs))
-      .catch((e) => alert(`best-of-N failed: ${e instanceof Error ? e.message : String(e)}`))
+      .catch((e) => setNotice({ kind: "error", text: `Comparison failed: ${e instanceof Error ? e.message : String(e)}` }))
       .finally(() => setStarting(false));
   };
 
   return (
     <div class="modal-back" onClick={close}>
-      <div class="modal bo-modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Best of N — same prompt, isolated worktrees</h3>
+      <div class="modal bo-modal" role="dialog" aria-modal="true" aria-labelledby="compare-title" onClick={(e) => e.stopPropagation()}>
+        <h3 id="compare-title">Compare approaches — isolated worktrees</h3>
         <Show
           when={runs()}
           fallback={

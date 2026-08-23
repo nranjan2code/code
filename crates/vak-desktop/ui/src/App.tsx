@@ -25,6 +25,26 @@ import {
   setSideOpen,
   sideOpen,
   bestOfOpen,
+  dockWidth,
+  setDockWidth,
+  setHydratingId,
+  setSidebarOpen,
+  setSidebarWidth,
+  sidebarOpen,
+  sidebarWidth,
+  setNotice,
+  setBestOfOpen,
+  providers,
+  setupNeeded,
+  setProviders,
+  setSetupNeeded,
+  setTasksOpen,
+  tasksOpen,
+  historyOpen,
+  setHistoryOpen,
+  settingsOpen,
+  setSettingsOpen,
+  uiPreferences,
 } from "./store";
 import type { SessionSummary } from "./types";
 import * as api from "./api";
@@ -40,8 +60,14 @@ import SideChatPanel from "./components/SideChatPanel";
 import BestOfNDialog from "./components/BestOfNDialog";
 import PrPanel from "./components/PrPanel";
 import TasksModal from "./components/TasksModal";
+import CheckpointsModal from "./components/CheckpointsModal";
 import PreviewPane from "./components/PreviewPane";
 import ProjectGate from "./components/ProjectGate";
+import WorkspaceHeader from "./components/WorkspaceHeader";
+import Icon, { type IconName } from "./components/Icon";
+import ResizeHandle from "./components/ResizeHandle";
+import Toast from "./components/Toast";
+import Settings from "./components/Settings";
 
 const streams = new Map<string, EventSource>();
 const sideStreams = new Map<string, EventSource>();
@@ -56,14 +82,19 @@ export async function refreshSessions() {
 }
 
 async function hydrate(id: string) {
+  setHydratingId(id);
   try {
     const t = await api.transcript(id);
     if (!isRunning(id)) {
       hydrateFromTranscript(id, t.messages);
       setUsageFor(id, t.usage);
     }
-  } catch {
-    /* run in progress — live stream covers it */
+  } catch (error) {
+    if (!isRunning(id)) {
+      appendSystem(id, `Could not load this task: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  } finally {
+    setHydratingId((current) => (current === id ? null : current));
   }
 }
 
@@ -78,6 +109,7 @@ function openStream(id: string) {
 }
 
 async function notify(title: string, body: string) {
+  if (!uiPreferences.notifications) return;
   try {
     const n = await import("@tauri-apps/plugin-notification");
     let granted = await n.isPermissionGranted();
@@ -98,6 +130,16 @@ function onFinished(id: string, summary: string) {
 
 export async function activate(id: string) {
   setActiveId(id);
+  if (sessions().find((session) => session.session_id === id)?.running) {
+    markRunning(id, true);
+  }
+  // Persisted sessions must be attached server-side before they can accept
+  // runs; for live sessions the server keeps the existing handle (idempotent).
+  try {
+    await api.attachSession(id);
+  } catch (e) {
+    appendSystem(id, `could not resume this task: ${e instanceof Error ? e.message : String(e)}`);
+  }
   openStream(id);
   await hydrate(id);
 }
@@ -109,7 +151,7 @@ export async function newSession() {
     await activate(res.session_id);
     await refreshSessions();
   } catch (e) {
-    console.error(e);
+    setNotice({ kind: "error", text: `Could not create a task: ${e instanceof Error ? e.message : String(e)}` });
   }
 }
 
@@ -190,12 +232,37 @@ function ensureSideStream(id: string) {
   sideStreams.set(id, es);
 }
 
-async function init() {
-  const info = await api.initBackend();
-  setBackend(info);
-  if (info.ready) {
-    await Promise.all([refreshSessions(), loadHealth()]);
+/**
+ * Re-read backend state from the shell and flip the UI when it is ready.
+ * The `backend-ready` event is a fast-path nicety; every caller that cares
+ * about actually transitioning (project gate, project switch) awaits this,
+ * so a missed event can never strand the UI.
+ */
+export async function refreshBackend(): Promise<boolean> {
+  try {
+    const info = await api.initBackend();
+    setBackend(info);
+    if (info.ready) {
+      await loadHealth();
+      try {
+        const p = await api.listProviders();
+        setProviders(p);
+        setSetupNeeded(!p.current_configured);
+      } catch {
+        setProviders(null);
+        setSetupNeeded(false);
+      }
+      await refreshSessions();
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
   }
+}
+
+async function init() {
+  await refreshBackend();
 }
 
 function closeAllStreams() {
@@ -205,6 +272,10 @@ function closeAllStreams() {
 
 export default function App() {
   onMount(() => {
+    const savedSidebar = Number(localStorage.getItem("vakcoder.sidebarWidth"));
+    const savedDock = Number(localStorage.getItem("vakcoder.dockWidth"));
+    if (savedSidebar >= 220 && savedSidebar <= 360) setSidebarWidth(savedSidebar);
+    if (savedDock >= 340 && savedDock <= window.innerWidth * 0.7) setDockWidth(savedDock);
     void init();
     const un1 = listen("backend-ready", () => {
       closeAllStreams();
@@ -212,19 +283,34 @@ export default function App() {
       setActiveId(null);
       void init();
     });
+    const sessionRefresh = window.setInterval(() => void refreshSessions(), 10_000);
 
     const keys = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) {
-        if (e.key === "Escape") stopRun();
+        if (e.key === "Escape") {
+          if (showShortcuts()) setShowShortcuts(false);
+          else if (settingsOpen()) setSettingsOpen(false);
+          else if (bestOfOpen()) setBestOfOpen(false);
+          else if (tasksOpen()) setTasksOpen(false);
+          else if (historyOpen()) setHistoryOpen(false);
+          else if (sideOpen()) setSideOpen(false);
+          else stopRun();
+        }
         return;
       }
       if (e.key === "n" || e.key === "N") {
         e.preventDefault();
         void newSession();
+      } else if (e.key === ",") {
+        e.preventDefault();
+        setSettingsOpen(true);
       } else if (e.key === "/") {
         e.preventDefault();
         setShowShortcuts((v) => !v);
+      } else if (e.key === "h" || e.key === "H") {
+        e.preventDefault();
+        if (activeId()) setHistoryOpen((v) => !v);
       } else if (e.key === ";") {
         e.preventDefault();
         setSideOpen((v: boolean) => {
@@ -237,12 +323,16 @@ export default function App() {
       } else if (e.key === "`") {
         e.preventDefault();
         setDockTab((t) => (t === "terminal" ? null : "terminal"));
+      } else if (e.key === "b" || e.key === "B") {
+        e.preventDefault();
+        setSidebarOpen((value) => !value);
       }
     };
     window.addEventListener("keydown", keys);
     onCleanup(() => {
       window.removeEventListener("keydown", keys);
       un1.then((f) => f());
+      window.clearInterval(sessionRefresh);
       closeAllStreams();
       closeAllSideStreams();
     });
@@ -252,12 +342,29 @@ export default function App() {
     if (backend().ready) void loadHealth();
   });
 
+  createEffect(() => {
+    document.documentElement.dataset.theme = uiPreferences.theme;
+    document.documentElement.dataset.compactSidebar = String(uiPreferences.compactSidebar);
+    document.documentElement.dataset.reduceMotion = String(uiPreferences.reduceMotion);
+    document.documentElement.style.setProperty("--text-scale", String(uiPreferences.textScale / 100));
+    document.documentElement.style.setProperty("--code-scale", String(uiPreferences.codeScale / 100));
+  });
+
   return (
-    <Show when={backend().ready ? backend() : null} fallback={<ProjectGate />}>
+    <Show
+      when={backend().ready && !setupNeeded() ? backend() : null}
+      fallback={<ProjectGate />}
+    >
       {(info) => (
-        <div class="app">
+        <div
+          class="app"
+          classList={{ "sidebar-collapsed": !sidebarOpen() }}
+          style={`--sidebar-width:${sidebarWidth()}px;--dock-width:${dockWidth()}px`}
+        >
           <Sidebar />
+          <Show when={sidebarOpen()}><ResizeHandle side="sidebar" /></Show>
           <div class="main">
+            <WorkspaceHeader />
             <div class="main-stack">
               <ChatPane />
               <Show when={sideOpen()}>
@@ -268,25 +375,35 @@ export default function App() {
           </div>
           <Show when={dockTab()}>
             {(tab) => (
+              <>
+              <ResizeHandle side="dock" />
               <div class="dock" data-dock={tab()}>
                 <div class="dock-tabs">
-                  <For each={["preview", "diff", "terminal", "editor", "pr"] as const}>
-                    {(t) => (
+                  <For each={[
+                    ["preview", "Preview", "preview"],
+                    ["diff", "Changes", "diff"],
+                    ["terminal", "Terminal", "terminal"],
+                    ["editor", "Editor", "code"],
+                    ["pr", "Pull request", "git"],
+                  ] as const}>
+                    {([id, label, icon]) => (
                       <button
                         class="dock-tab"
-                        classList={{ on: tab() === t }}
-                        onClick={() => setDockTab(t)}
+                        classList={{ on: tab() === id }}
+                        onClick={() => setDockTab(id)}
                       >
-                        {t}
+                        <Icon name={icon as IconName} />
+                        <span>{label}</span>
                       </button>
                     )}
                   </For>
                   <button
                     class="dock-close"
                     title="Close pane"
+                    aria-label="Close workspace pane"
                     onClick={() => setDockTab(null)}
                   >
-                    ✕
+                    <Icon name="close" />
                   </button>
                 </div>
                 <Show when={tab() === "diff"}>
@@ -305,6 +422,7 @@ export default function App() {
                   <PreviewPane />
                 </Show>
               </div>
+              </>
             )}
           </Show>
           <StatusBar />
@@ -315,6 +433,11 @@ export default function App() {
             <BestOfNDialog />
           </Show>
           <TasksModal />
+          <Show when={historyOpen()}>
+            <CheckpointsModal />
+          </Show>
+          <Toast />
+          <Show when={settingsOpen()}><Settings /></Show>
         </div>
       )}
     </Show>

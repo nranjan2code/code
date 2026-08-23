@@ -207,6 +207,22 @@ real binary (never a mock protocol) for every new entry type added.
 
 Shipped in `crates/vak-desktop` (+ additive `vak-server` endpoints):
 
+- **Task-centric shell redesign**: a restrained native-dark visual system,
+  task identity and run state in a persistent workspace header, icon-based
+  pane navigation, a two-level session sidebar with project switching, a
+  structured composer, useful active-session empty states, and unified
+  styling for transcript, review, delivery, modal, loading, and error
+  surfaces. The hierarchy keeps chat primary while diff/editor/terminal/
+  preview/PR remain one click away.
+  The shell supports remembered sidebar/review-pane resizing, a keyboard
+  focus mode, scroll-position-safe streaming, explicit transcript loading,
+  non-blocking error toasts, reduced motion, and accessible focus states.
+  Header-only abandoned session drafts remain in the append-only store but
+  are suppressed from the task switcher so accidental new-task clicks do not
+  create permanent sidebar clutter. Session summaries also project live run
+  state, refreshed periodically, so background and scheduled work remains
+  accurate before a transcript stream is attached.
+
 - **Shell**: Tauri 2 window; embedded `secured_router` on an ephemeral
   loopback port with per-process bearer token (deviation from sidecar-first:
   in-process linking keeps one binary and the exact same HTTP+SSE contract;
@@ -292,6 +308,74 @@ E2E proof: app boots, embedded server answers on the ephemeral port,
 `/health` reflects the live Core (provider/model/sandbox/mode), unauthenticated
 `/fs/*`, `/side/*`, `/bestofn`, `/pr`, `/tasks`, `/launch` rejected with 401;
 workspace fmt+clippy(-D warnings)+230 tests green.
+
+## Settings workspace
+
+The desktop includes a native-feeling, searchable settings workspace available
+from either settings icon or `Cmd+,`. General and appearance preferences are
+stored locally and applied live, including theme, text and code scale, task-list
+density, transcript detail, prompt suggestions, notifications, and reduced
+motion. Agent defaults and permission mode update the live Core through the
+authenticated `GET|PATCH /config` endpoint; the endpoint deliberately returns
+only a safe, secret-free configuration projection. Reliability, integration,
+context, and path pages expose the effective runtime configuration without
+pretending read-only values are editable. Persistent project settings open the
+workspace-confined `.vakcoder/config.toml`, creating a minimal starter only when
+the file does not already exist.
+
+## End-to-end hardening + remaining platform capabilities (Aug 2026)
+
+Wiring audit fixes and capability additions, all behind the same HTTP+SSE
+contract (`vak-server/tests/server_ext.rs` covers every one):
+
+- **Resume fix (critical).** `activate()` now attaches the persisted session
+  server-side before opening streams. Previously a task resumed from the
+  sidebar after an app restart answered `POST /run` with 404 — the handle was
+  never re-registered. Attach is idempotent for live sessions.
+- **Secrets actually reach the shell (critical).** The desktop boot now loads
+  `~/.vakcoder/.env` always plus the picked workspace's trusted `.env` — the
+  exact CLI contract — before starting the Core. Previously the shell loaded
+  no env files at all, so CLI users' keys never worked in the app until they
+  happened to export them globally.
+- **Provider/key/model setup is first-class** (shared layer, not desktop-only):
+  - `GET /providers` — registry names, which env var authenticates each,
+    whether credentials resolve right now, curated model suggestions per
+    provider. Never returns secret values.
+  - `PUT /config/key {provider, key}` — upserts into the user-level
+    `~/.vakcoder/.env` (0600, atomic replace, shared by TUI/exec/serve) and
+    registers a runtime override so the very next request uses it — no
+    restart. Keys are accepted once and never echoed back.
+  - Lookup precedence stays: runtime override → real environment → .env
+    files (invariant 8 intact). `openai`/`openrouter` auth now honors `.env`
+    like every other provider (they read raw process env previously).
+  - UI: a "Connect a model" gate step appears when the workspace has no
+    usable credential — provider picker (with ✓ for configured), model field
+    fed by the curated lists (free-form still wins), password input, one
+    save-and-continue. Settings → Agent gains the same controls plus a
+    Replace-key flow.
+- **Time travel** (the D1 checkpoint UI, previously CLI-only): `GET
+  /sessions/{id}/checkpoints` lists turn-start snapshots; `POST …/{seq}/restore`
+  rewinds the workspace (409 while a run is active; observed-at-capture files
+  are rewritten, never removed — ledgers survive; best-of-N children restore
+  into their worktree cwd). UI: ⌘H / header history button opens a modal with
+  two-step confirm per snapshot. Missing snapshot dirs list as empty, not 500.
+- **Archive**: `POST /sessions/{id}/archive {archived}` toggles a sidecar map
+  at `<sessions-home>/archive.json`; ledger files are untouched (invariant 2).
+  `/sessions` gains an `archived` field; sidebar gains an archived filter chip
+  plus hover archive/restore action on each row.
+- **Skills slash palette**: `GET /skills` exposes name+description for
+  project/user skills; typing `/` first in the composer opens a palette that
+  inserts "use the <name> skill" — plain prompt text, so it ships inside the
+  user message and invariant 1 holds without new entry types.
+- **Review changes**: diff pane gains a one-shot high-signal review dispatch
+  (logic/security findings only), sent as a normal logged run.
+- **Mode parsing parity**: `/config/mode` and `PATCH /config` now accept the
+  Debug spellings surfaced by `/health` (`ReadOnly` etc.) in addition to config
+  kebab-case — the status-bar selector used to get a silent 400.
+- **Boot failures are visible**: an auto-boot failure at launch lands in
+  `backend_info.boot_error`, rendered on the project gate (a bundled app has
+  no stderr). The gate also polls backend state as a fallback for the
+  `backend-ready` event, so a missed event can never strand the UI.
 
 ## Steal-list status: COMPLETE (minus agent-driven auto-verify)
 

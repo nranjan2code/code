@@ -37,6 +37,8 @@ pub enum CoreError {
     Rule(#[from] vak_permission::RuleError),
     #[error("blocked by hook: {0}")]
     HookBlocked(String),
+    #[error("invalid configuration: {0}")]
+    InvalidConfig(String),
     #[error("internal: permission engine missing")]
     MissingEngine,
 }
@@ -56,6 +58,7 @@ struct CoreInner {
     breaker: Arc<vak_agent::CircuitBreaker>,
     trust_project_config: bool,
     extra_allow: std::sync::Mutex<Vec<String>>,
+    user_env_override: std::sync::Mutex<Option<PathBuf>>,
 }
 
 /// Learned permission rules live outside the main config so they can be
@@ -118,6 +121,7 @@ impl Core {
                 breaker,
                 trust_project_config,
                 extra_allow: std::sync::Mutex::new(extra_allow),
+                user_env_override: std::sync::Mutex::new(None),
             }),
         })
     }
@@ -154,6 +158,10 @@ impl Core {
             return p.clone();
         }
         self.inner.config.provider.clone()
+    }
+
+    pub fn provider_names(&self) -> Vec<String> {
+        self.inner.registry.names()
     }
 
     pub fn set_max_turns(&self, max_turns: usize) {
@@ -276,9 +284,26 @@ impl Core {
 
     /// SDK seam: relocate session storage (tests, embedded runtimes).
     pub fn set_sessions_home(&self, path: PathBuf) {
-        if let Ok(mut h) = self.inner.sessions_home_override.lock() {
-            *h = Some(path);
+        if let Ok(mut c) = self.inner.sessions_home_override.lock() {
+            *c = Some(path);
         }
+    }
+
+    /// Redirects the user-level secret store (tests, portable installs).
+    pub fn set_user_env_path(&self, path: PathBuf) {
+        if let Ok(mut c) = self.inner.user_env_override.lock() {
+            *c = Some(path);
+        }
+    }
+
+    fn user_env_file(&self) -> PathBuf {
+        self.inner
+            .user_env_override
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .or_else(vak_config::user_env_path)
+            .unwrap_or_else(|| self.sessions_home().join(".env"))
     }
 
     /// SDK seam: inject a provider directly (tests, embedded runtimes).
@@ -375,6 +400,8 @@ impl Core {
                         .or_else(|| Some("https://api.openai.com/v1".into())),
                 })
             }
+            // get_var (not raw env) so user-level and project .env files
+            // authenticate these providers exactly like every other one.
             "openai" | "openrouter" => {
                 let (env, default_base, override_env) = if provider == "openai" {
                     (
@@ -389,14 +416,13 @@ impl Core {
                         "VAKCODER_OPENROUTER_BASE_URL",
                     )
                 };
-                let api_key = std::env::var(env).map_err(|_| CoreError::MissingAuth {
+                let api_key = vak_config::get_var(env).ok_or_else(|| CoreError::MissingAuth {
                     env: env.into(),
                     provider,
                 })?;
                 Ok(ProviderAuth {
                     api_key,
-                    base_url: std::env::var(override_env)
-                        .ok()
+                    base_url: vak_config::get_var(override_env)
                         .or_else(|| Some(default_base.into())),
                 })
             }
@@ -433,6 +459,91 @@ impl Core {
         }
         let auth = self.provider_auth()?;
         Ok(self.inner.registry.get(&self.effective_provider(), &auth)?)
+    }
+
+    /// The env var that authenticates `provider`, or None for keyless
+    /// providers (ollama). Unknown providers yield None as well — callers
+    /// distinguish via `provider_known`.
+    pub fn provider_env_var(provider: &str) -> Option<&'static str> {
+        match provider {
+            "anthropic" => Some("ANTHROPIC_API_KEY"),
+            "google" => Some("GEMINI_API_KEY"),
+            "openai" | "openai-responses" => Some("OPENAI_API_KEY"),
+            "openrouter" => Some("OPENROUTER_API_KEY"),
+            "opencode-zen" => Some("OPENCODE_API_KEY"),
+            _ => None,
+        }
+    }
+
+    pub fn provider_known(provider: &str) -> bool {
+        matches!(
+            provider,
+            "anthropic"
+                | "google"
+                | "openai"
+                | "openai-responses"
+                | "openrouter"
+                | "opencode-zen"
+                | "ollama"
+        )
+    }
+
+    /// True when a run on `provider` would find credentials right now.
+    pub fn provider_configured(&self, provider: &str) -> bool {
+        match provider {
+            "ollama" => true,
+            "google" => {
+                vak_config::get_var("GEMINI_API_KEY").is_some()
+                    || vak_config::get_var("GOOGLE_API_KEY").is_some()
+            }
+            other => vak_config::get_var(Self::provider_env_var(other).unwrap_or("")).is_some(),
+        }
+    }
+
+    /// Persists the key for `provider` into the user-level
+    /// `~/.vakcoder/.env` (0600, shared by every surface) and registers it
+    /// as a runtime override so the next request uses it immediately —
+    /// no restart. Returns the env var that was written. The key itself
+    /// never re-enters any response.
+    pub fn set_provider_key(&self, provider: &str, key: &str) -> Result<String, CoreError> {
+        let key = key.trim();
+        if key.is_empty() {
+            return Err(CoreError::InvalidConfig("empty api key".into()));
+        }
+        let env = Self::provider_env_var(provider).ok_or_else(|| {
+            CoreError::InvalidConfig(format!(
+                "unknown provider '{provider}' (or it needs no key)"
+            ))
+        })?;
+        let path = self.user_env_file();
+        vak_config::upsert_env_file(&path, env, key)
+            .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))?;
+        vak_config::set_override(env, key);
+        Ok(env.to_string())
+    }
+
+    /// Curated starting points per provider for picker UIs; always
+    /// advisory — every model field remains free-form.
+    pub fn models_for(provider: &str) -> &'static [&'static str] {
+        match provider {
+            "anthropic" => &[
+                "claude-sonnet-4-5",
+                "claude-haiku-4-5",
+                "claude-opus-4-1",
+                "claude-sonnet-4-0",
+            ],
+            "openai-responses" => &["gpt-5-codex", "gpt-5", "o3"],
+            "openai" => &["gpt-4.1", "gpt-4o", "o3"],
+            "google" => &["gemini-2.5-pro", "gemini-2.5-flash"],
+            "openrouter" => &[
+                "anthropic/claude-sonnet-4.5",
+                "openai/gpt-4.1",
+                "google/gemini-2.5-pro",
+            ],
+            "opencode-zen" => &["x-preview-f-free", "claude-sonnet-4-5"],
+            "ollama" => &["qwen2.5-coder", "llama3.1"],
+            _ => &[],
+        }
     }
 
     pub async fn start_session(&self) -> Result<SessionLog, CoreError> {

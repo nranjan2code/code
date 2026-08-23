@@ -41,15 +41,63 @@ export const [backend, setBackend] = createSignal<BackendInfo>({ ready: false })
 export const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
 export const [activeId, setActiveId] = createSignal<string | null>(null);
 export const [health, setHealth] = createSignal<Health | null>(null);
+// Provider/model picker state; setupNeeded keeps the project gate up until a
+// usable credential exists for the current provider.
+export const [providers, setProviders] = createSignal<import("./types").ProvidersResponse | null>(null);
+export const [setupNeeded, setSetupNeeded] = createSignal(false);
 export const [density, setDensity] = createSignal<Density>("normal");
-export const [dockTab, setDockTab] = createSignal<"preview" | "diff" | "terminal" | "editor" | "pr" | null>("diff");
+export const [dockTab, setDockTab] = createSignal<"preview" | "diff" | "terminal" | "editor" | "pr" | null>(null);
 export const [showShortcuts, setShowShortcuts] = createSignal(false);
+export const [settingsOpen, setSettingsOpen] = createSignal(false);
+export const [hydratingId, setHydratingId] = createSignal<string | null>(null);
+export const [sidebarOpen, setSidebarOpen] = createSignal(true);
+export const [sidebarWidth, setSidebarWidth] = createSignal(278);
+export const [dockWidth, setDockWidth] = createSignal(520);
+export type Notice = { kind: "error" | "info"; text: string };
+export const [notice, setNotice] = createSignal<Notice | null>(null);
+
+export interface UiPreferences {
+  theme: "warm" | "dark" | "contrast";
+  textScale: number;
+  codeScale: number;
+  compactSidebar: boolean;
+  suggestions: boolean;
+  notifications: boolean;
+  reduceMotion: boolean;
+}
+
+const defaultUiPreferences: UiPreferences = {
+  theme: "warm",
+  textScale: 100,
+  codeScale: 100,
+  compactSidebar: false,
+  suggestions: true,
+  notifications: true,
+  reduceMotion: false,
+};
+
+function loadUiPreferences(): UiPreferences {
+  try {
+    return { ...defaultUiPreferences, ...JSON.parse(localStorage.getItem("vakcoder.uiPreferences") ?? "{}") };
+  } catch {
+    return defaultUiPreferences;
+  }
+}
+
+export const [uiPreferences, setUiPreferences] = createStore<UiPreferences>(loadUiPreferences());
+
+export function updateUiPreference<K extends keyof UiPreferences>(key: K, value: UiPreferences[K]) {
+  setUiPreferences(key, value);
+  localStorage.setItem("vakcoder.uiPreferences", JSON.stringify({ ...uiPreferences, [key]: value }));
+}
 // File-editor pane target; set from anywhere (chat links, diff headers…).
 export const [editorPath, setEditorPath] = createSignal<string | null>(null);
 // `/btw` side chat panel.
 export const [sideOpen, setSideOpen] = createSignal(false);
 // Scheduled-tasks manager modal.
 export const [tasksOpen, setTasksOpen] = createSignal(false);
+// Time-travel (checkpoints) modal.
+export const [historyOpen, setHistoryOpen] = createSignal(false);
 // Diff pane binding: which session's changes are shown (best-of-N override).
 export const [diffTarget, setDiffTarget] = createSignal<string | null>(null);
 

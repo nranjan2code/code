@@ -1,5 +1,5 @@
 import { createMemo, For, Show } from "solid-js";
-import { activeId, density, dockTab, health, setDensity, setDockTab, usageOf } from "../store";
+import { activeId, density, health, setDensity, usageOf } from "../store";
 import { loadHealth } from "../App";
 import * as api from "../api";
 import type { JSX } from "solid-js";
@@ -8,11 +8,11 @@ function Ring(props: { pct: number; label: string }): JSX.Element {
   const r = 9;
   const c = 2 * Math.PI * r;
   const clamped = () => Math.max(0, Math.min(1, props.pct));
-  const color = () => (clamped() > 0.85 ? "#f7768e" : clamped() > 0.6 ? "#e0af68" : "#7aa2f7");
+  const color = () => (clamped() > 0.85 ? "#d86f72" : clamped() > 0.6 ? "#d4a85d" : "#df795f");
   return (
     <div class="ring" title={props.label}>
       <svg width="24" height="24" viewBox="0 0 24 24">
-        <circle cx="12" cy="12" r={r} fill="none" stroke="#2a2b3a" stroke-width="3" />
+        <circle cx="12" cy="12" r={r} fill="none" stroke="#34342f" stroke-width="3" />
         <circle
           cx="12"
           cy="12"
@@ -51,8 +51,8 @@ export default function StatusBar() {
   return (
     <footer class="statusbar">
       <div class="st-left">
-        <span class="st-item st-model" title={`provider: ${h()?.provider}`}>
-          {h()?.model ?? "…"}
+        <span class="st-item st-model" classList={{ offline: !h() }} title={`provider: ${h()?.provider ?? "connecting"}`}>
+          {h()?.model ?? "Connecting…"}
         </span>
         <span class="st-item st-sandbox" title="sandbox backend">{h()?.sandbox}</span>
         <Show when={(h()?.warnings?.length ?? 0) > 0}>
@@ -77,26 +77,10 @@ export default function StatusBar() {
           onChange={(e) => void changeMode(e.currentTarget.value)}
           title="Permission mode — applies to new tool calls immediately"
         >
-          <option value="ReadOnly">read-only</option>
-          <option value="WorkspaceWrite">workspace-write</option>
-          <option value="FullAccess">full-access</option>
+          <option value="ReadOnly">Read only</option>
+          <option value="WorkspaceWrite">Workspace write</option>
+          <option value="FullAccess">Full access</option>
         </select>
-        <button
-          class="chip sm"
-          classList={{ on: dockTab() === "diff" }}
-          title="Toggle diff pane (⌘D)"
-          onClick={() => setDockTab((t) => (t === "diff" ? null : "diff"))}
-        >
-          diff
-        </button>
-        <button
-          class="chip sm"
-          classList={{ on: dockTab() === "terminal" }}
-          title="Toggle terminal (⌃`)"
-          onClick={() => setDockTab((t) => (t === "terminal" ? null : "terminal"))}
-        >
-          ⌵ terminal
-        </button>
         <span class="st-tokens" title={`in ${inTok()} / out ${outTok()}`}>
           ↑{inTok()} ↓{outTok()}
         </span>

@@ -1,0 +1,281 @@
+import { createMemo, createSignal, For, onMount, Show, type JSX } from "solid-js";
+import {
+  density,
+  openInEditor,
+  providers,
+  setDensity,
+  setNotice,
+  setProviders,
+  setSettingsOpen,
+  setSetupNeeded,
+  setShowShortcuts,
+  uiPreferences,
+  updateUiPreference,
+  type Density,
+} from "../store";
+import type { ConfigSnapshot } from "../types";
+import * as api from "../api";
+import { loadHealth } from "../App";
+import Icon, { type IconName } from "./Icon";
+
+type Page = "general" | "appearance" | "agent" | "permissions" | "reliability" | "integrations" | "advanced";
+
+const pages: { id: Page; label: string; icon: IconName; hint: string }[] = [
+  { id: "general", label: "General", icon: "gear", hint: "notifications suggestions" },
+  { id: "appearance", label: "Appearance", icon: "palette", hint: "theme text density motion" },
+  { id: "agent", label: "Agent", icon: "spark", hint: "provider model turns subagents" },
+  { id: "permissions", label: "Permissions", icon: "shield", hint: "access sandbox approvals" },
+  { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker" },
+  { id: "integrations", label: "Integrations", icon: "plug", hint: "mcp hooks skills" },
+  { id: "advanced", label: "Advanced", icon: "tune", hint: "paths context configuration" },
+];
+
+function Switch(props: { checked: boolean; onChange: (next: boolean) => void; label: string }) {
+  return <button class="switch" classList={{ on: props.checked }} role="switch" aria-checked={props.checked} aria-label={props.label} onClick={() => props.onChange(!props.checked)}><span /></button>;
+}
+
+function Row(props: { title: string; description: string; children: JSX.Element; danger?: boolean }) {
+  return <div class="setting-row" classList={{ danger: props.danger }}><div class="setting-copy"><strong>{props.title}</strong><span>{props.description}</span></div><div class="setting-control">{props.children}</div></div>;
+}
+
+function Group(props: { title?: string; children: JSX.Element }) {
+  return <section class="settings-group"><Show when={props.title}><h3>{props.title}</h3></Show><div class="settings-card">{props.children}</div></section>;
+}
+
+function fmt(value: number): string {
+  return value.toLocaleString();
+}
+
+export default function Settings() {
+  const [page, setPage] = createSignal<Page>("general");
+  const [query, setQuery] = createSignal("");
+  const [config, setConfig] = createSignal<ConfigSnapshot | null>(null);
+  const [loading, setLoading] = createSignal(true);
+  const [provider, setProvider] = createSignal("");
+  const [model, setModel] = createSignal("");
+  const [maxTurns, setMaxTurns] = createSignal(40);
+  const [saving, setSaving] = createSignal(false);
+  const [keyDraft, setKeyDraft] = createSignal<string | null>(null);
+  const [keyBusy, setKeyBusy] = createSignal(false);
+
+  const loadProviders = async () => {
+    try {
+      const p = await api.listProviders();
+      setProviders(p);
+      setSetupNeeded(!p.current_configured);
+    } catch {
+      /* keep previous snapshot */
+    }
+  };
+  onMount(() => void loadProviders());
+
+  const currentProviderInfo = () =>
+    providers()?.providers.find((p) => p.name === (provider() || providers()?.current));
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const next = await api.getConfig();
+      setConfig(next);
+      setProvider(next.provider);
+      setModel(next.model);
+      setMaxTurns(next.max_turns);
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not load settings: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setLoading(false);
+    }
+  };
+  onMount(() => void load());
+  const visiblePages = createMemo(() => {
+    const needle = query().trim().toLowerCase();
+    return needle ? pages.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(needle)) : pages;
+  });
+
+  const applyAgent = async () => {
+    setSaving(true);
+    try {
+      await api.patchConfig({ provider: provider(), model: model(), max_turns: maxTurns() });
+      await Promise.all([load(), loadHealth()]);
+      setNotice({ kind: "info", text: "Agent defaults updated for new tasks." });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not update agent settings: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveKey = async () => {
+    const draft = keyDraft()?.trim();
+    if (!draft) return;
+    setKeyBusy(true);
+    try {
+      const res = await api.putProviderKey(provider() || providers()?.current || "", draft);
+      setKeyDraft(null);
+      await Promise.all([loadProviders(), loadHealth()]);
+      setNotice({ kind: "info", text: `Key stored locally (${res.env_var}).` });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not store key: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setKeyBusy(false);
+    }
+  };
+
+  const changePermission = async (mode: ConfigSnapshot["permission_mode"]) => {
+    const wire = mode === "ReadOnly" ? "read-only" : mode === "WorkspaceWrite" ? "workspace-write" : "full-access";
+    try {
+      await api.patchConfig({ permission_mode: wire });
+      setConfig((current) => current ? { ...current, permission_mode: mode } : current);
+      await loadHealth();
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not update permissions: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  };
+
+  const openProjectConfig = async () => {
+    const relative = ".vakcoder/config.toml";
+    try {
+      await api.readFile(relative);
+    } catch {
+      const c = config();
+      await api.writeFile(relative, `provider = "${c?.provider ?? "anthropic"}"\nmodel = "${c?.model ?? "claude-sonnet-4-5"}"\npermission_mode = "workspace-write"\n`);
+    }
+    openInEditor(relative);
+    setSettingsOpen(false);
+  };
+
+  return (
+    <div class="settings-shell" role="dialog" aria-modal="true" aria-label="Settings">
+      <aside class="settings-nav">
+        <button class="settings-back" onClick={() => setSettingsOpen(false)}><Icon name="chevron" /><span>Back to vakcoder</span></button>
+        <div class="settings-search"><Icon name="search" /><input aria-label="Search settings" placeholder="Search settings…" value={query()} onInput={(event) => setQuery(event.currentTarget.value)} /></div>
+        <div class="settings-nav-label">Workspace</div>
+        <nav>
+          <For each={visiblePages()} fallback={<div class="settings-no-results">No matching settings</div>}>
+            {(item) => <button classList={{ active: page() === item.id }} onClick={() => { setPage(item.id); setQuery(""); }}><Icon name={item.icon} /><span>{item.label}</span></button>}
+          </For>
+        </nav>
+        <div class="settings-nav-foot"><div class="settings-app-mark"><Icon name="spark" /></div><div><strong>vakcoder</strong><span>Version 0.2.0</span></div></div>
+      </aside>
+
+      <main class="settings-main">
+        <div class="settings-content">
+          <Show when={!loading()} fallback={<div class="settings-loading"><span /><span /><span /></div>}>
+            <Show when={page() === "general"}>
+              <header><h1>General</h1><p>Choose how vakcoder behaves across projects.</p></header>
+              <Group title="Experience">
+                <Row title="Desktop notifications" description="Notify when the active task finishes while vakcoder is in the background."><Switch label="Desktop notifications" checked={uiPreferences.notifications} onChange={(value) => updateUiPreference("notifications", value)} /></Row>
+                <Row title="Suggested prompts" description="Show useful starting points when a task has no conversation yet."><Switch label="Suggested prompts" checked={uiPreferences.suggestions} onChange={(value) => updateUiPreference("suggestions", value)} /></Row>
+                <Row title="Transcript detail" description="Control how much agent activity appears in conversations."><select value={density()} onChange={(event) => setDensity(event.currentTarget.value as Density)}><option value="summary">Summary</option><option value="normal">Normal</option><option value="verbose">Verbose</option></select></Row>
+                <Row title="Keyboard shortcuts" description="See every shortcut for navigation, tasks, and workspace tools."><button class="settings-button" onClick={() => { setSettingsOpen(false); setShowShortcuts(true); }}>View shortcuts</button></Row>
+              </Group>
+              <Group title="Project">
+                <Row title="Current workspace" description={config()?.paths.cwd ?? ""}><span class="settings-value">Local</span></Row>
+                <Row title="Project configuration" description="Persistent agent and tool settings for this repository."><button class="settings-button" onClick={() => void openProjectConfig()}>Open config</button></Row>
+              </Group>
+            </Show>
+
+            <Show when={page() === "appearance"}>
+              <header><h1>Appearance</h1><p>Make the workspace comfortable for long sessions.</p></header>
+              <Group title="Theme">
+                <div class="theme-grid"><For each={[{ id: "warm", label: "Warm dark" }, { id: "dark", label: "Midnight" }, { id: "contrast", label: "High contrast" }] as const}>{(theme) => <button class="theme-choice" classList={{ active: uiPreferences.theme === theme.id }} onClick={() => updateUiPreference("theme", theme.id)}><span class={`theme-preview ${theme.id}`}><i /><i /><i /></span><strong>{theme.label}</strong><Show when={uiPreferences.theme === theme.id}><Icon name="check" /></Show></button>}</For></div>
+              </Group>
+              <Group title="Layout and text">
+                <Row title="Text size" description="Conversation and interface text."><div class="range-control"><input type="range" min="90" max="120" step="5" value={uiPreferences.textScale} onInput={(event) => updateUiPreference("textScale", Number(event.currentTarget.value))} /><span>{uiPreferences.textScale}%</span></div></Row>
+                <Row title="Code size" description="Code blocks, diffs, editor, and terminal labels."><div class="range-control"><input type="range" min="90" max="125" step="5" value={uiPreferences.codeScale} onInput={(event) => updateUiPreference("codeScale", Number(event.currentTarget.value))} /><span>{uiPreferences.codeScale}%</span></div></Row>
+                <Row title="Compact task list" description="Fit more tasks in the sidebar with tighter rows."><Switch label="Compact task list" checked={uiPreferences.compactSidebar} onChange={(value) => updateUiPreference("compactSidebar", value)} /></Row>
+                <Row title="Reduce motion" description="Disable pulsing, smooth scrolling, and animated transitions."><Switch label="Reduce motion" checked={uiPreferences.reduceMotion} onChange={(value) => updateUiPreference("reduceMotion", value)} /></Row>
+              </Group>
+            </Show>
+
+            <Show when={page() === "agent"}>
+              <header><h1>Agent</h1><p>Configure the model used when starting new tasks.</p></header>
+              <div class="settings-callout"><Icon name="spark" /><div><strong>Runtime defaults</strong><span>Changes apply immediately to new tasks. Add them to the project config to keep them across restarts.</span></div></div>
+              <Group title="Model">
+                <Row title="Provider" description={currentProviderInfo()?.env_var ? `Authenticated via ${currentProviderInfo()?.env_var}` : "The API provider used for new sessions."}>
+                  <select class="settings-input" value={provider()} onChange={(event) => { setProvider(event.currentTarget.value); setKeyDraft(null); }}>
+                    <For each={providers()?.providers ?? []}>{(p) => <option value={p.name}>{p.name}{p.configured ? " ✓" : ""}</option>}</For>
+                    <Show when={provider() && !providers()?.providers.some((p) => p.name === provider())}><option value={provider()}>{provider()}</option></Show>
+                  </select>
+                </Row>
+                <Row title="Model" description="Suggestions are starting points; any identifier the provider accepts works."><input class="settings-input wide" list="settings-models" value={model()} onInput={(event) => setModel(event.currentTarget.value)} /><datalist id="settings-models"><For each={providers()?.models[provider()] ?? []}>{(m) => <option value={m} />}</For></datalist></Row>
+                <Row title="Maximum turns" description="Hard limit for one task before the agent stops."><input class="settings-number" type="number" min="1" max="1000" value={maxTurns()} onInput={(event) => setMaxTurns(Number(event.currentTarget.value))} /></Row>
+                <Row title="Subagents" description="Allow the agent to delegate bounded parallel work."><span class="settings-status good">{config()?.subagents ? "Enabled" : "Disabled in config"}</span></Row>
+              </Group>
+              <Group title="Credentials">
+                <Row
+                  title={currentProviderInfo()?.configured ? "API key saved on this device" : "No API key yet"}
+                  description={currentProviderInfo()?.requires_key ? `Stored in ~/.vakcoder/.env with owner-only permissions. A real environment variable takes precedence.` : `${provider() || providers()?.current || ""} runs locally and needs no key.`}
+                >
+                  <Show
+                    when={keyDraft() === null}
+                    fallback={
+                      <span class="key-edit">
+                        <input type="password" autocomplete="off" spellcheck={false} placeholder="paste API key" value={keyDraft() ?? ""} onInput={(e) => setKeyDraft(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void saveKey()} />
+                        <button class="btn primary sm" disabled={keyBusy() || !keyDraft()?.trim()} onClick={() => void saveKey()}>{keyBusy() ? "Saving…" : "Save"}</button>
+                        <button class="settings-button" onClick={() => setKeyDraft(null)}>Cancel</button>
+                      </span>
+                    }
+                  >
+                    <Show when={currentProviderInfo()?.requires_key} fallback={<span class="settings-status good">Not required</span>}>
+                      <button class="settings-button" onClick={() => setKeyDraft("")}>{currentProviderInfo()?.configured ? "Replace key" : "Add key"}</button>
+                    </Show>
+                  </Show>
+                </Row>
+              </Group>
+              <div class="settings-actions"><button class="btn primary" disabled={saving() || !provider().trim() || !model().trim()} onClick={() => void applyAgent()}>{saving() ? "Applying…" : "Apply changes"}</button><button class="settings-button" onClick={() => void openProjectConfig()}>Edit persistent config</button></div>
+            </Show>
+
+            <Show when={page() === "permissions"}>
+              <header><h1>Permissions</h1><p>Set the trust boundary for tool calls in this workspace.</p></header>
+              <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Read only", text: "Inspect files and search the workspace without making changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Workspace write", text: "Edit files inside this project and ask before sensitive actions.", icon: "code" as IconName }, { id: "FullAccess", title: "Full access", text: "Run unrestricted commands and access files outside the workspace.", icon: "shield" as IconName }] as const}>{(mode) => <button classList={{ active: config()?.permission_mode === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={config()?.permission_mode === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
+              <Group title="Sandbox">
+                <Row title="Workspace boundary" description="File tools are confined to the selected project and symlinks are resolved before access."><span class="settings-status good">Protected</span></Row>
+                <Row title="Permission rules" description="Configure allow, ask, and deny patterns in the project configuration."><button class="settings-button" onClick={() => void openProjectConfig()}>Edit rules</button></Row>
+              </Group>
+            </Show>
+
+            <Show when={page() === "reliability"}>
+              <header><h1>Reliability</h1><p>Understand how vakcoder recovers from provider and task failures.</p></header>
+              <Group title="Request recovery">
+                <Row title="Provider retries" description={`Initial backoff ${fmt(config()?.retry_base_backoff_ms ?? 0)} ms.`}><span class="metric">{config()?.max_retries}</span></Row>
+                <Row title="Request watchdog" description="Maximum time for a single provider step."><span class="metric">{config()?.request_timeout_secs}s</span></Row>
+                <Row title="Run endurance" description={`Backoff starts at ${fmt(config()?.run_retry_base_backoff_ms ?? 0)} ms.`}><span class="metric">{config()?.run_retry_attempts} attempts</span></Row>
+              </Group>
+              <Group title="Circuit breaker">
+                <Row title="Failure threshold" description="Blind failures before new requests fail fast."><span class="metric">{config()?.circuit_breaker_threshold}</span></Row>
+                <Row title="Cooldown" description="Time before a half-close probe is allowed."><span class="metric">{config()?.circuit_breaker_cooldown_secs}s</span></Row>
+                <Row title="Completion guard" description="Blocks premature completion and asks the agent to verify work."><span class="settings-status good">{config()?.stop_policy.enabled ? "Enabled" : "Disabled"}</span></Row>
+              </Group>
+              <button class="settings-button" onClick={() => void openProjectConfig()}>Tune in project config</button>
+            </Show>
+
+            <Show when={page() === "integrations"}>
+              <header><h1>Integrations</h1><p>Extend vakcoder with tools, lifecycle automation, and reusable expertise.</p></header>
+              <div class="integration-grid">
+                <div class="integration-card"><span><Icon name="plug" /></span><strong>MCP servers</strong><p>Connect external tools through the Model Context Protocol.</p><em>{config()?.integrations.mcp_servers.length ?? 0} configured</em><For each={config()?.integrations.mcp_servers}>{(name) => <code>{name}</code>}</For></div>
+                <div class="integration-card"><span><Icon name="tune" /></span><strong>Hooks</strong><p>Run commands before or after agent lifecycle events.</p><em>{config()?.integrations.hooks ?? 0} configured</em></div>
+                <div class="integration-card"><span><Icon name="spark" /></span><strong>Skills</strong><p>Reusable instructions discovered from the project and user home.</p><em>{config()?.integrations.skills.length ?? 0} discovered</em><For each={config()?.integrations.skills.slice(0, 4)}>{(name) => <code>{name}</code>}</For></div>
+              </div>
+              <div class="settings-actions"><button class="btn primary" onClick={() => void openProjectConfig()}>Configure integrations</button></div>
+            </Show>
+
+            <Show when={page() === "advanced"}>
+              <header><h1>Advanced</h1><p>Inspect effective limits, paths, and configuration diagnostics.</p></header>
+              <Group title="Context">
+                <Row title="Context window" description="Maximum model input budget before compaction."><span class="metric">{fmt(config()?.context_window ?? 0)} tokens</span></Row>
+                <Row title="Maximum output" description="Provider output-token ceiling."><span class="metric">{fmt(config()?.max_tokens ?? 0)} tokens</span></Row>
+              </Group>
+              <Group title="Paths">
+                <Row title="Project config" description={config()?.paths.project_config ?? ""}><button class="settings-button" onClick={() => void openProjectConfig()}>Open</button></Row>
+                <Row title="Global config" description={config()?.paths.global_config ?? "Not configured"}><button class="settings-button" onClick={() => void navigator.clipboard.writeText(config()?.paths.global_config ?? "")}>Copy path</button></Row>
+                <Row title="Session store" description={config()?.paths.sessions_home ?? ""}><button class="settings-button" onClick={() => void navigator.clipboard.writeText(config()?.paths.sessions_home ?? "")}>Copy path</button></Row>
+              </Group>
+              <Show when={(config()?.warnings.length ?? 0) > 0}><Group title="Configuration warnings"><For each={config()?.warnings}>{(warning) => <div class="settings-warning">{warning}</div>}</For></Group></Show>
+            </Show>
+          </Show>
+        </div>
+      </main>
+    </div>
+  );
+}

@@ -4988,6 +4988,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+ "vak-config",
  "vak-core",
  "vak-server",
 ]

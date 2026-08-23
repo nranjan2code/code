@@ -6,6 +6,9 @@ import select
 import subprocess
 import sys
 import time
+import fcntl
+import struct
+import termios
 
 BIN = sys.argv[1]
 ENV = {
@@ -17,8 +20,9 @@ ENV = {
 }
 
 master, slave = pty.openpty()
+fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
 proc = subprocess.Popen(
-    [BIN],
+    [BIN, "tui", "--trust"],
     stdin=slave,
     stdout=slave,
     stderr=slave,
@@ -55,10 +59,40 @@ try:
     pump(1.0)
     send("/help\r")
     pump(0.8)
+    send("\x1b")
+    pump(0.4)
+    send("/config\r")
+    pump(0.8)
+    send("\x1b[6~")
+    pump(0.5)
+    send("t")
+    pump(0.7)
+    send("\x1b")
+    pump(0.4)
+    send("/config\r")
+    pump(0.7)
+    send("f")
+    pump(0.7)
+    send("\x1b")
+    pump(0.4)
+    send("/provider\r")
+    pump(0.8)
+    send("\x1b")
+    pump(0.4)
+    send("/theme\r")
+    pump(0.8)
+    send("teenage")
+    pump(0.6)
+    send("\x13")
+    pump(0.8)
+    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 42, 140, 0, 0))
+    pump(0.5)
     send("/cost\r")
     pump(0.8)
     send("hello world\r")
     pump(2.0)
+    send("\x1ba")
+    pump(0.5)
     send("y")
     pump(2.0)
     send("/exit\r")
@@ -89,12 +123,21 @@ clean = clean.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 text = clean.decode("utf-8", "replace")
 checks = {
     "banner version": "0.2.0" in text,
-    "help lists /model": "/model" in text and "<name>" in text,
+    "help lists configuration": "/model" in text and "/provider" in text and "/config" in text,
+    "help modal": "help · commands" in text and "PROMPT INPUT" in text,
+    "settings modal": "settings" in text and "RELIABILITY" in text and "PATHS" in text,
+    "feature explorer": "feature explorer" in text and "AGENT RUNTIME" in text,
+    "provider picker": "choose provider" in text and "ANTHROPIC_API_KEY" in text,
+    "theme picker": "choose theme" in text and "Teenage Engineering-inspired" in text,
+    "theme saved": "saved theme teenage" in text,
+    "composer restored": "Ln 1, Col 1" in text,
+    "alternate screen": "?1049h" in text and "?1049l" in text,
+    "responsive resize": "─" * 120 in text,
     "cost line": "tokens in 0 / out 0" in text,
     "prompt echo": "hello world" in text,
-    "approval card": "needs approval" in text and "echo smoke-ok" in text,
+    "approval card": "approval · bash" in text and "echo smoke-ok" in text,
     "approval answered": "✓ allowed bash" in text,
-    "tool started": "▸ bash" in text,
+    "tool started": "tool bash" in text,
     "tool succeeded": "✓ bash" in text,
     "final answer streamed": "smoke-ok. Task complete." in text,
     "bye": "bye" in text,
@@ -103,4 +146,7 @@ failed = [k for k, ok in checks.items() if not ok]
 for k, ok in checks.items():
     print(f"{'PASS' if ok else 'FAIL'}: {k}")
 print(f"exit code: {code}")
+if failed:
+    print("--- sanitized PTY capture ---")
+    print(text)
 sys.exit(0 if not failed and code == 0 else 1)

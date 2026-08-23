@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { activeId, isRunning, openInEditor } from "../store";
+import { sendPrompt } from "../App";
 import * as api from "../api";
 import type { DiffResponse } from "../types";
 import { parseDiff, parseStatus, type DiffFile } from "../diff";
@@ -66,6 +67,14 @@ export default function DiffPane(props: { sessionId: string | null }) {
     setCommentText("");
   };
 
+  // One-shot high-signal review of the working tree (design doc D3).
+  const reviewChanges = () => {
+    if (isRunning(props.sessionId) || !entries().length) return;
+    void sendPrompt(
+      "Review the current uncommitted changes. Report only logic and security findings with specific file:line references — no style nitpicks. End with a verdict: safe to keep, or what must change first.",
+    );
+  };
+
   const entries = createMemo<Entry[]>(() => {
     if (!data()) return [];
     const changed = status().changed.map((c) => ({
@@ -84,9 +93,21 @@ export default function DiffPane(props: { sessionId: string | null }) {
     <div class="diffpane">
       <div class="dock-head">
         <span>Changes{sentCount() ? ` · ${sentCount()} steered` : ""}</span>
-        <button class="chip sm" onClick={() => void refresh()} disabled={loading()}>
-          {loading() ? "…" : "refresh"}
-        </button>
+        <span class="dock-head-actions">
+          <button class="chip sm" onClick={() => void refresh()} disabled={loading()}>
+            {loading() ? "…" : "refresh"}
+          </button>
+          <Show when={props.sessionId ?? activeId()}>
+            <button
+              class="chip sm"
+              title="Ask vakcoder to review these changes (logic + security)"
+              disabled={isRunning(props.sessionId) || !entries().length}
+              onClick={reviewChanges}
+            >
+              review
+            </button>
+          </Show>
+        </span>
         <Show when={isRunning(props.sessionId)}>
           <span class="hint">click a line → comment → steers the run</span>
         </Show>

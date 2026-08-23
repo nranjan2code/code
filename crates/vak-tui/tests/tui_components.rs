@@ -7,6 +7,7 @@ use vak_tui::commands::{Command, help_text, parse};
 use vak_tui::complete::complete;
 use vak_tui::editor::Editor;
 use vak_tui::keys::{Action, map_key};
+use vak_tui::palette::{ChoiceItem, ChoicePicker, CommandPalette};
 use vak_tui::width::{char_width, str_width};
 
 fn type_str(e: &mut Editor, s: &str) {
@@ -43,6 +44,26 @@ fn editor_home_end_delete() {
     assert_eq!(e.view().0, "bc");
     e.end();
     assert_eq!(e.view().1, 2);
+}
+
+#[test]
+fn editor_home_end_and_kill_are_line_aware() {
+    let mut e = Editor::new();
+    type_str(&mut e, "first\nsecond line\nthird");
+    for _ in 0..8 {
+        e.left();
+    }
+    e.home();
+    assert_eq!(e.line_col(), (1, 0));
+    e.end();
+    assert_eq!(e.line_col(), (1, 11));
+    for _ in 0..5 {
+        e.left();
+    }
+    e.delete_to_line_end();
+    assert_eq!(e.view().0, "first\nsecond\nthird");
+    e.undo();
+    assert_eq!(e.view().0, "first\nsecond line\nthird");
 }
 
 #[test]
@@ -97,10 +118,10 @@ fn editor_multibyte_safety() {
 }
 
 #[test]
-fn ctrl_c_maps_to_cancel_or_clear_in_both_states() {
+fn ctrl_c_interrupts_running_and_clears_idle() {
     assert!(matches!(
         map_key(KeyCode::Char('c'), KeyModifiers::CONTROL, true),
-        Action::CancelOrClear
+        Action::Interrupt
     ));
     assert!(matches!(
         map_key(KeyCode::Char('c'), KeyModifiers::CONTROL, false),
@@ -159,18 +180,59 @@ fn command_parsing() {
     assert!(matches!(parse("/context"), Some(Command::Context)));
     assert!(matches!(parse("/sessions"), Some(Command::Sessions)));
     assert!(matches!(parse("/clear"), Some(Command::Clear)));
+    assert!(matches!(parse("/details"), Some(Command::Details)));
+    assert!(matches!(parse("/keys"), Some(Command::Keys)));
     match parse("/model gpt-5.6-terra") {
-        Some(Command::Model(m)) => assert_eq!(m, "gpt-5.6-terra"),
+        Some(Command::Model(Some(m))) => assert_eq!(m, "gpt-5.6-terra"),
         other => panic!("expected model command, got {other:?}"),
     }
-    assert!(
-        parse("/model").is_none(),
-        "/model without arg is not a command"
-    );
+    assert!(matches!(parse("/model"), Some(Command::Model(None))));
+    assert!(matches!(parse("/provider"), Some(Command::Provider(None))));
+    assert!(matches!(parse("/key"), Some(Command::Key(None))));
+    match parse("/key opencode-zen sk-secret") {
+        Some(Command::Key(Some(arg))) => {
+            let mut parts = arg.splitn(2, char::is_whitespace);
+            assert_eq!(parts.next(), Some("opencode-zen"));
+            assert_eq!(parts.next().map(str::trim), Some("sk-secret"));
+        }
+        other => panic!("expected key command, got {other:?}"),
+    }
+    assert!(matches!(
+        parse("/key anthropic"),
+        Some(Command::Key(Some(_)))
+    ));
+    assert!(matches!(parse("/config"), Some(Command::Config)));
+    assert!(matches!(parse("/features"), Some(Command::Features)));
     assert!(parse("/nope").is_none());
     assert!(parse("plain text").is_none());
     assert!(parse("").is_none());
     assert!(help_text().lines().count() > 3);
+}
+
+#[test]
+fn choice_picker_filters_navigates_and_accepts_custom_model_ids() {
+    let mut picker = ChoicePicker::new(
+        vec![
+            ChoiceItem {
+                value: "alpha".into(),
+                description: "first model".into(),
+                active: true,
+            },
+            ChoiceItem {
+                value: "beta".into(),
+                description: "second model".into(),
+                active: false,
+            },
+        ],
+        true,
+    );
+    picker.down();
+    assert_eq!(picker.value().as_deref(), Some("beta"));
+    for c in "missing/model".chars() {
+        picker.push(c);
+    }
+    assert!(picker.filtered().is_empty());
+    assert_eq!(picker.value().as_deref(), Some("missing/model"));
 }
 
 #[test]
@@ -219,6 +281,108 @@ fn editor_paste_str_with_newlines() {
     assert_eq!(e.view().1, 5);
     assert_eq!(e.line_col(), (2, 0));
     assert!(e.is_multiline());
+}
+
+#[test]
+fn editor_undo_redo_coalesces_typing_and_preserves_cursor() {
+    let mut e = Editor::new();
+    type_str(&mut e, "hello");
+    e.undo();
+    assert_eq!(e.view(), ("", 0));
+    e.redo();
+    assert_eq!(e.view(), ("hello", 5));
+
+    e.left();
+    e.left();
+    e.insert('X');
+    assert_eq!(e.view(), ("helXlo", 4));
+    e.undo();
+    assert_eq!(e.view(), ("hello", 3));
+    e.redo();
+    assert_eq!(e.view(), ("helXlo", 4));
+}
+
+#[test]
+fn editor_new_edit_invalidates_redo() {
+    let mut e = Editor::new();
+    type_str(&mut e, "abc");
+    e.undo();
+    e.insert('x');
+    e.redo();
+    assert_eq!(e.view(), ("x", 1));
+}
+
+#[test]
+fn editor_delete_word_forward_is_unicode_safe_and_undoable() {
+    let mut e = Editor::new();
+    type_str(&mut e, "one  中文 three");
+    e.home();
+    e.word_right();
+    e.delete_word_forward();
+    assert_eq!(e.view(), ("one three", 3));
+    e.undo();
+    assert_eq!(e.view(), ("one  中文 three", 3));
+}
+
+#[test]
+fn modern_editing_keys_map_to_actions() {
+    assert!(matches!(
+        map_key(KeyCode::Char('z'), KeyModifiers::CONTROL, false),
+        Action::Undo
+    ));
+    assert!(matches!(
+        map_key(KeyCode::Char('z'), KeyModifiers::ALT, false),
+        Action::Redo
+    ));
+    assert!(matches!(
+        map_key(KeyCode::Char('d'), KeyModifiers::ALT, false),
+        Action::DeleteWordForward
+    ));
+    assert!(matches!(
+        map_key(KeyCode::Char('t'), KeyModifiers::CONTROL, true),
+        Action::ToggleThinking
+    ));
+    assert!(matches!(
+        map_key(KeyCode::Char('p'), KeyModifiers::CONTROL, false),
+        Action::CommandPalette
+    ));
+    assert!(matches!(
+        map_key(KeyCode::Char('a'), KeyModifiers::CONTROL, false),
+        Action::Home
+    ));
+    assert!(matches!(
+        map_key(KeyCode::Char('e'), KeyModifiers::CONTROL, false),
+        Action::End
+    ));
+    assert!(matches!(
+        map_key(KeyCode::Char('k'), KeyModifiers::CONTROL, false),
+        Action::DeleteToLineEnd
+    ));
+    assert!(matches!(
+        map_key(KeyCode::Char('l'), KeyModifiers::CONTROL, false),
+        Action::ClearViewport
+    ));
+    assert!(matches!(
+        map_key(KeyCode::Char('a'), KeyModifiers::ALT, true),
+        Action::OpenApproval
+    ));
+}
+
+#[test]
+fn command_palette_fuzzy_filters_and_wraps_selection() {
+    let mut palette = CommandPalette::new();
+    palette.push('t');
+    palette.push('r');
+    let items = palette.items();
+    assert_eq!(items[0].name, "transcript");
+    assert!(items.iter().all(|item| item.name.contains('t')));
+
+    palette.up(items.len());
+    assert_eq!(palette.selected(items.len()), items.len() - 1);
+    palette.down(items.len());
+    assert_eq!(palette.selected(items.len()), 0);
+    palette.backspace();
+    assert_eq!(palette.query(), "t");
 }
 
 #[test]

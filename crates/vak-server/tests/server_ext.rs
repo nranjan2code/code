@@ -216,6 +216,7 @@ async fn sessions_list_attach_and_title_roundtrip() {
         .expect("persisted session must be listed");
     assert_eq!(entry["title"], "title probe here");
     assert!(entry["updated_at"].is_string());
+    assert_eq!(entry["running"], false);
 
     let attached = client
         .post(format!("{base}/sessions/{session_id}/attach"))
@@ -234,6 +235,40 @@ async fn sessions_list_attach_and_title_roundtrip() {
         .await
         .unwrap();
     assert_eq!(resumed["count"].as_u64(), Some(2));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sessions_list_hides_abandoned_header_only_drafts() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let core = Core::new(cwd.clone()).unwrap();
+    core.set_sessions_home(cwd.join("home"));
+    let draft = core.start_session().await.unwrap();
+    let draft_id = draft.header().unwrap().session_id.clone();
+    drop(draft);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (app, token) = vak_server::secured_router(core);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let body: serde_json::Value = client_with(&token)
+        .get(format!("http://{addr}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        body["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|session| session["session_id"] != draft_id)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -336,6 +371,43 @@ async fn mode_switch_and_diff_endpoint() {
         .await
         .unwrap();
     assert_eq!(health["permission_mode"], "ReadOnly");
+
+    let config: serde_json::Value = client
+        .get(format!("{base}/config"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(config["permission_mode"], "ReadOnly");
+    assert!(config["paths"]["project_config"].is_string());
+    assert!(config["integrations"]["skills"].is_array());
+
+    let patched = client
+        .patch(format!("{base}/config"))
+        .json(&serde_json::json!({
+            "provider": "google",
+            "model": "gemini-test",
+            "max_turns": 17,
+            "permission_mode": "workspace-write"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(patched.status(), 200);
+    let updated: serde_json::Value = client
+        .get(format!("{base}/config"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(updated["provider"], "google");
+    assert_eq!(updated["model"], "gemini-test");
+    assert_eq!(updated["max_turns"], 17);
+    assert_eq!(updated["permission_mode"], "WorkspaceWrite");
 
     // Tempdir is not a git repo: diff endpoint reports that as a value.
     let diff: serde_json::Value = client
@@ -900,4 +972,370 @@ async fn launch_config_and_process_lifecycle() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn checkpoints_list_and_restore_roundtrip() {
+    let (base, token, cwd, _srv) = spawn_secured(Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::new()),
+    }))
+    .await;
+    let client = client_with(&token);
+    let home = cwd.join("home"); // mirrors spawn_secured's sessions_home
+
+    let created: serde_json::Value = client
+        .post(format!("{base}/sessions"))
+        .body("{}")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = created["session_id"].as_str().unwrap().to_string();
+
+    // Capture a checkpoint directly (the primitive the loop uses at turn
+    // start), then mutate the workspace "like an agent would".
+    std::fs::write(cwd.join("notes.txt"), "original").unwrap();
+    let cp = vak_core::checkpoints::capture(&cwd, &id, 1, "turn 1").unwrap();
+    vak_core::checkpoints::store(&home, &cp).unwrap();
+    std::fs::write(cwd.join("notes.txt"), "mutated by agent").unwrap();
+    std::fs::write(cwd.join("stray.txt"), "extra").unwrap();
+
+    let listed: serde_json::Value = client
+        .get(format!("{base}/sessions/{id}/checkpoints"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let items = listed["checkpoints"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["seq"], 1);
+    assert_eq!(items[0]["label"], "turn 1");
+    // Two files live here: notes.txt plus the session ledger itself,
+    // because this test nests sessions_home inside the workspace.
+    assert_eq!(items[0]["files"], 2);
+
+    let restored: serde_json::Value = client
+        .post(format!("{base}/sessions/{id}/checkpoints/1/restore"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(restored["restored"].as_u64(), Some(2));
+    assert!(
+        restored["deleted"].as_u64().unwrap() >= 1,
+        "the stray file must be removed"
+    );
+    assert_eq!(
+        std::fs::read_to_string(cwd.join("notes.txt")).unwrap(),
+        "original"
+    );
+    assert!(!cwd.join("stray.txt").exists());
+    // Observed-at-capture files are rewritten, never removed: the ledger
+    // must survive the rewind untouched.
+    let ledger = vak_session::SessionPath::sessions_dir(&home, &cwd).join(format!("{id}.jsonl"));
+    assert!(
+        ledger.is_file(),
+        "rewind must never delete the session ledger"
+    );
+
+    let missing = client
+        .post(format!("{base}/sessions/{id}/checkpoints/99/restore"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), 404);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn archive_toggle_is_reflected_in_session_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let core_a = Core::new(cwd.clone()).unwrap();
+    core_a.set_sessions_home(cwd.join("home"));
+    std::mem::forget(dir);
+
+    let mut log = core_a.start_session().await.unwrap();
+    let session_id = log.header().unwrap().session_id.clone();
+    use vak_llm::types::{ContentBlock as CB, Role};
+    log.append_message(vak_session::MessageRecord {
+        message: vak_llm::Message {
+            role: Role::User,
+            content: vec![CB::text("archivable task")],
+        },
+        meta: None,
+    })
+    .unwrap();
+    drop(log);
+
+    let core = Core::new(cwd.clone()).unwrap();
+    core.set_sessions_home(cwd.join("home"));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (app, token) = vak_server::secured_router(core);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let base = format!("http://{addr}");
+    let client = client_with(&token);
+
+    let archived_flag = |body: serde_json::Value| {
+        body["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["session_id"] == session_id.as_str())
+            .expect("session must be listed")["archived"]
+            .as_bool()
+            .unwrap_or(false)
+    };
+
+    let listed: serde_json::Value = client
+        .get(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(!archived_flag(listed));
+
+    let on = client
+        .post(format!("{base}/sessions/{session_id}/archive"))
+        .json(&serde_json::json!({ "archived": true }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(on.status(), 200);
+    let listed: serde_json::Value = client
+        .get(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(archived_flag(listed));
+
+    // The sidecar must persist independently of the running server.
+    let raw = std::fs::read_to_string(cwd.join("home/archive.json")).unwrap();
+    assert!(raw.contains(&session_id));
+
+    let off = client
+        .post(format!("{base}/sessions/{session_id}/archive"))
+        .json(&serde_json::json!({ "archived": false }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(off.status(), 200);
+    let listed: serde_json::Value = client
+        .get(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(!archived_flag(listed));
+
+    let unknown = client
+        .post(format!("{base}/sessions/not-a-session/archive"))
+        .json(&serde_json::json!({ "archived": true }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown.status(), 404);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn skills_listing_and_pascalcase_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let skill_dir = cwd.join(".vakcoder/skills/tdd");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: tdd\ndescription: red green refactor loop\n---\nbody",
+    )
+    .unwrap();
+    std::mem::forget(dir);
+
+    let core = Core::new(cwd.clone()).unwrap();
+    core.set_sessions_home(cwd.join("home"));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (app, token) = vak_server::secured_router(core);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let base = format!("http://{addr}");
+    let client = client_with(&token);
+
+    let skills: serde_json::Value = client
+        .get(format!("{base}/skills"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let names: Vec<&str> = skills["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["tdd"]);
+    assert_eq!(
+        skills["skills"][0]["description"],
+        "red green refactor loop"
+    );
+
+    // The status bar sends the Debug spelling surfaced by /health.
+    for mode in [
+        "ReadOnly",
+        "WorkspaceWrite",
+        "FullAccess",
+        "workspace-write",
+    ] {
+        let res = client
+            .post(format!("{base}/config/mode"))
+            .json(&serde_json::json!({ "mode": mode }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200, "mode {mode} must parse");
+    }
+    let bad = client
+        .post(format!("{base}/config/mode"))
+        .json(&serde_json::json!({ "mode": "yolo" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), 400);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn providers_listing_and_key_storage_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    std::mem::forget(dir);
+
+    let core = Core::new(cwd.clone()).unwrap();
+    core.set_sessions_home(cwd.join("home"));
+    // Hermetic secret store: never touch the developer's real ~/.vakcoder.
+    let user_env = cwd.join("user-home/.vakcoder/.env");
+    core.set_user_env_path(user_env.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (app, token) = vak_server::secured_router(core);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let base = format!("http://{addr}");
+    let client = client_with(&token);
+
+    // Listing: names, env var mapping, configured flags, curated models.
+    let listed: serde_json::Value = client
+        .get(format!("{base}/providers"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listed["current"], "anthropic");
+    let providers = listed["providers"].as_array().unwrap();
+    let anthropic = providers
+        .iter()
+        .find(|p| p["name"] == "anthropic")
+        .expect("anthropic must be listed");
+    assert_eq!(anthropic["env_var"], "ANTHROPIC_API_KEY");
+    assert_eq!(anthropic["requires_key"], true);
+    // Nothing is configured in this hermetic environment.
+    assert_eq!(anthropic["configured"], false);
+    let ollama = providers.iter().find(|p| p["name"] == "ollama").unwrap();
+    assert_eq!(ollama["requires_key"], false);
+    assert_eq!(ollama["configured"], true);
+    assert!(
+        !listed["models"]["opencode-zen"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(listed["current_configured"], false);
+
+    // Saving a key: effective immediately, persisted to the store, never
+    // echoed back.
+    let saved: serde_json::Value = client
+        .put(format!("{base}/config/key"))
+        .json(&serde_json::json!({ "provider": "opencode-zen", "key": "  sk-test-123  " }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(saved["provider"], "opencode-zen");
+    assert_eq!(saved["env_var"], "OPENCODE_API_KEY");
+    assert_eq!(saved["configured"], true);
+    let body_text = serde_json::to_string(&saved).unwrap();
+    assert!(!body_text.contains("sk-test-123"), "key must not echo back");
+
+    let file = std::fs::read_to_string(&user_env).unwrap();
+    assert!(file.contains("OPENCODE_API_KEY=sk-test-123"));
+
+    // The runtime override makes it visible to auth lookups instantly.
+    let after: serde_json::Value = client
+        .get(format!("{base}/providers"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let zen = after["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "opencode-zen")
+        .unwrap();
+    assert_eq!(zen["configured"], true);
+
+    // Re-saving replaces the line instead of appending duplicates.
+    client
+        .put(format!("{base}/config/key"))
+        .json(&serde_json::json!({ "provider": "opencode-zen", "key": "sk-test-456" }))
+        .send()
+        .await
+        .unwrap();
+    let file = std::fs::read_to_string(&user_env).unwrap();
+    assert_eq!(
+        file.matches("OPENCODE_API_KEY=").count(),
+        1,
+        "upsert must replace, not duplicate"
+    );
+    assert!(file.contains("OPENCODE_API_KEY=sk-test-456"));
+
+    // Unknown and keyless providers are rejected as values, not panics.
+    let unknown = client
+        .put(format!("{base}/config/key"))
+        .json(&serde_json::json!({ "provider": "nope", "key": "x" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown.status(), 400);
+    let ollama_key = client
+        .put(format!("{base}/config/key"))
+        .json(&serde_json::json!({ "provider": "ollama", "key": "x" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ollama_key.status(), 400);
 }

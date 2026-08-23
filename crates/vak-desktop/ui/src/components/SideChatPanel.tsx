@@ -2,6 +2,7 @@ import { createEffect, createSignal, For, Show } from "solid-js";
 import { activeId, isRunning, itemsOf, setSideOpen } from "../store";
 import { stopSide, sendSideQuestion } from "../App";
 import { Markdown, ToolCard } from "./ChatPane";
+import Icon from "./Icon";
 
 /** `/btw` — ask with session context; never touches the main thread. */
 export default function SideChatPanel() {
@@ -42,7 +43,7 @@ export default function SideChatPanel() {
         <Show when={running()}>
           <button class="chip sm" onClick={stopSide}>stop</button>
         </Show>
-        <button class="dock-close" title="Close (⌘;)" onClick={() => closePanel()}>✕</button>
+        <button class="dock-close" title="Close (⌘;)" aria-label="Close side chat" onClick={() => closePanel()}><Icon name="close" /></button>
       </div>
       <div class="sidechat-body" ref={scroller}>
         <Show

@@ -34,6 +34,10 @@ struct BackendInfo {
     token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cwd: Option<String>,
+    /// Why the last boot attempt failed, if it did. The webview reads this
+    /// so a silent launch failure never traps the user on the project gate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    boot_error: Option<String>,
 }
 
 fn vak_home() -> PathBuf {
@@ -93,6 +97,7 @@ async fn start_backend_inner(app: &AppHandle, cwd: PathBuf) -> Result<BackendInf
         base_url: Some(format!("http://{addr}")),
         token: Some(token),
         cwd: Some(cwd.to_string_lossy().into_owned()),
+        boot_error: None,
     };
     {
         let state = app.state::<BackendState>();
@@ -118,12 +123,49 @@ async fn start_backend(
 ) -> Result<BackendInfo, String> {
     let path = PathBuf::from(&cwd);
     if !path.is_dir() {
-        return Err(format!("not a directory: {cwd}"));
+        let msg = format!("not a directory: {cwd}");
+        set_boot_error(&state, Some(msg.clone()));
+        return Err(msg);
     }
     stop_current(&state).await;
-    let info = start_backend_inner(&app, path).await?;
-    save_last_project(&cwd);
-    Ok(info)
+    // The freshly picked workspace is trusted; its .env joins the process
+    // env table (real environment variables keep precedence).
+    vak_config::load_env_file(&path.join(".env"));
+    match start_backend_inner(&app, path).await {
+        Ok(info) => {
+            save_last_project(&cwd);
+            set_boot_error(&state, None);
+            Ok(info)
+        }
+        Err(e) => {
+            set_boot_error(&state, Some(e.clone()));
+            Err(e)
+        }
+    }
+}
+
+fn set_boot_error(state: &State<'_, BackendState>, error: Option<String>) {
+    if let Ok(mut guard) = state.0.lock() {
+        if error.is_some() && guard.as_ref().is_some_and(|r| r.info.ready) {
+            return; // a live backend outranks a stale failure note
+        }
+        if let Some(running) = guard.as_mut() {
+            running.info.boot_error = error;
+        } else if let Some(err) = error {
+            // No live backend yet: remember the failure so the gate can
+            // render it instead of spinning forever.
+            *guard = Some(Running {
+                info: BackendInfo {
+                    ready: false,
+                    boot_error: Some(err),
+                    ..BackendInfo::default()
+                },
+                backend: Backend {
+                    shutdown: tokio::sync::watch::channel(true).0,
+                },
+            });
+        }
+    }
 }
 
 async fn stop_current(state: &State<'_, BackendState>) {
@@ -157,10 +199,23 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Some(cwd) = last_project()
-                    && let Err(e) = start_backend_inner(&handle, cwd).await
-                {
-                    eprintln!("backend boot failed: {e}");
+                // Same secret-loading contract as the CLI: user-level
+                // .env always; the picked workspace's own .env too (the
+                // folder was explicitly chosen, so it is trusted).
+                if let Some(home) = std::env::var_os("HOME") {
+                    vak_config::load_env_file(
+                        &std::path::PathBuf::from(home).join(".vakcoder/.env"),
+                    );
+                }
+                if let Some(cwd) = last_project() {
+                    vak_config::load_env_file(&cwd.join(".env"));
+                    if let Err(e) = start_backend_inner(&handle, cwd).await {
+                        eprintln!("backend boot failed: {e}");
+                        // Surface it to the project gate; a bundled app has
+                        // no stderr to show.
+                        let state = handle.state::<BackendState>();
+                        set_boot_error(&state, Some(e));
+                    }
                 }
             });
             Ok(())

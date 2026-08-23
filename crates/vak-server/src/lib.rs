@@ -13,9 +13,16 @@
 //! - `GET  /sessions/:id/events`          → SSE of AgentEvent JSON
 //! - `GET  /sessions/:id/transcript`      → derived messages + usage
 //! - `GET  /sessions/:id/diff`            → git diff + status of the workspace
+//! - `GET  /sessions/:id/checkpoints`     → workspace snapshots (time travel)
+//! - `POST /sessions/:id/checkpoints/:seq/restore` → rewind the workspace
+//! - `POST /sessions/:id/archive` {archived} → toggle sidebar visibility
+//! - `GET  /skills`                       → discovered skills (name + description)
 //! - `GET  /fs/file?path=`                → read a file confined to cwd
 //! - `PUT  /fs/file` {path, content}      → write a file confined to cwd
 //! - `POST /config/mode` {mode}           → switch permission mode at runtime
+//! - `PUT  /config/key` {provider, key}   → store a provider credential (0600)
+//! - `GET  /providers`                    → provider/model picker data (no secrets)
+//! - `GET  /skills`                       → discovered skills (name + description)
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -26,7 +33,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -186,6 +193,13 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/{id}/attach", post(attach_session))
         .route("/sessions/{id}/diff", get(session_diff))
+        .route("/sessions/{id}/checkpoints", get(list_checkpoints))
+        .route(
+            "/sessions/{id}/checkpoints/{seq}/restore",
+            post(restore_checkpoint),
+        )
+        .route("/sessions/{id}/archive", post(set_archived))
+        .route("/skills", get(list_skills))
         .route("/sessions/{id}/pr", get(session_pr))
         .route("/sessions/{id}/pr/merge", post(pr_merge))
         .route("/tasks", get(list_tasks).post(create_task))
@@ -212,7 +226,10 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/discard", post(discard_best_run))
         .route("/fs/file", get(read_file).put(write_file))
         .route("/fs/tree", get(fs_tree))
+        .route("/config", get(get_config).patch(patch_config))
         .route("/config/mode", post(set_permission_mode))
+        .route("/config/key", put(put_provider_key))
+        .route("/providers", get(list_providers))
         .with_state(state)
 }
 
@@ -394,6 +411,7 @@ async fn attach_session(
 /// Sidebar projection over the persisted store: one summary per JSONL file.
 async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value> {
     let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), state.core.cwd());
+    let archive_map = read_archive(&state.core);
     let mut sessions = Vec::new();
     let Ok(read) = std::fs::read_dir(&dir) else {
         return Json(serde_json::json!({ "sessions": sessions }));
@@ -411,12 +429,28 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
             .and_then(|m| m.modified().ok())
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
         let (created_at, title, entries) = summarize_jsonl(&path);
+        // Header-only sessions are abandoned drafts (for example, creating a
+        // task and immediately switching away). Keep the ledger append-only,
+        // but do not let empty drafts accumulate in the task switcher.
+        if entries <= 1 {
+            continue;
+        }
+        let running = state.get(&session_id).is_some_and(|handle| {
+            handle
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none()
+        });
+        let archived = archive_map.get(&session_id).copied().unwrap_or(false);
         sessions.push(serde_json::json!({
             "session_id": session_id,
             "created_at": created_at,
             "updated_at": updated_at,
             "entries": entries,
             "title": title,
+            "running": running,
+            "archived": archived,
         }));
     }
     sessions.sort_by_key(|s| s["updated_at"].as_str().unwrap_or("").to_string());
@@ -451,8 +485,9 @@ fn summarize_jsonl(path: &std::path::Path) -> (Option<String>, Option<String>, u
                                 let text = rec.message.text_content();
                                 let text = text.trim();
                                 if !text.is_empty() {
-                                    let mut snippet: String = text.chars().take(140).collect();
-                                    if text.chars().count() > 140 {
+                                    let first_line = text.lines().next().unwrap_or(text).trim();
+                                    let mut snippet: String = first_line.chars().take(72).collect();
+                                    if first_line.chars().count() > 72 {
                                         snippet.push('…');
                                     }
                                     title = Some(snippet);
@@ -730,6 +765,150 @@ async fn session_diff(
     }))
 }
 
+// ---- checkpoints (time travel) ----------------------------------------------
+
+async fn list_checkpoints(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    // A session with no snapshots yet has no directory; that's an empty
+    // list, not an error.
+    let list = match vak_core::checkpoints::list(&state.core.sessions_home(), &id) {
+        Ok(list) => list,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    };
+    let checkpoints: Vec<serde_json::Value> = list
+        .iter()
+        .map(|cp| {
+            serde_json::json!({
+                "seq": cp.seq,
+                "label": cp.label,
+                "created_at": cp.created_at.to_rfc3339(),
+                "files": cp.files.len(),
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "checkpoints": checkpoints })).into_response()
+}
+
+async fn restore_checkpoint(
+    State(state): State<AppState>,
+    Path((id, seq)): Path<(String, u32)>,
+) -> axum::response::Response {
+    // A live run must never have its workspace mutated underneath it.
+    if let Some(handle) = state.get(&id)
+        && handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_none()
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "a run is active on this session" })),
+        )
+            .into_response();
+    }
+    // Best-of-N children captured inside their worktrees; attached handles
+    // know that cwd. Everything else restores into the workspace root.
+    let cwd = state
+        .get(&id)
+        .map(|h| h.cwd.clone())
+        .unwrap_or_else(|| state.core.cwd().clone());
+    let cp = match vak_core::checkpoints::load(&state.core.sessions_home(), &id, seq) {
+        Ok(cp) => cp,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": format!("checkpoint {seq} not found") })),
+            )
+                .into_response();
+        }
+    };
+    match tokio::task::spawn_blocking(move || vak_core::checkpoints::restore(&cwd, &cp)).await {
+        Ok(Ok((restored, deleted))) => Json(serde_json::json!({
+            "restored": restored,
+            "deleted": deleted,
+            "seq": seq,
+        }))
+        .into_response(),
+        Ok(Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+// ---- archive (sidebar visibility; ledgers stay untouched) --------------------
+
+fn archive_path(core: &Core) -> PathBuf {
+    core.sessions_home().join("archive.json")
+}
+
+fn read_archive(core: &Core) -> HashMap<String, bool> {
+    std::fs::read_to_string(archive_path(core))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn write_archive(core: &Core, map: &HashMap<String, bool>) {
+    if let Some(parent) = archive_path(core).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let tmp = archive_path(core).with_extension("json.tmp");
+    if std::fs::write(&tmp, serde_json::to_string(map).unwrap_or_default()).is_ok() {
+        let _ = std::fs::rename(&tmp, archive_path(core));
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ArchiveBody {
+    archived: bool,
+}
+
+async fn set_archived(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<ArchiveBody>,
+) -> axum::response::Response {
+    let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), state.core.cwd());
+    if !dir.join(format!("{id}.jsonl")).is_file() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "unknown session" })),
+        )
+            .into_response();
+    }
+    let mut map = read_archive(&state.core);
+    map.insert(id, body.archived);
+    write_archive(&state.core, &map);
+    Json(serde_json::json!({ "archived": body.archived })).into_response()
+}
+
+async fn list_skills(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let skills: Vec<serde_json::Value> = state
+        .core
+        .skills()
+        .iter()
+        .map(|s| serde_json::json!({ "name": s.name, "description": s.description }))
+        .collect();
+    Json(serde_json::json!({ "skills": skills }))
+}
+
 #[derive(serde::Deserialize)]
 struct FileQuery {
     path: String,
@@ -818,17 +997,168 @@ struct ModeBody {
     mode: String,
 }
 
+/// Accepts every spelling clients use: config kebab-case (`workspace-write`)
+/// and the Debug format surfaced by `/health` + `/config` (`WorkspaceWrite`).
+fn parse_mode(raw: &str) -> Option<vak_config::PermissionMode> {
+    vak_config::PermissionMode::deserialize_str(raw).or(match raw {
+        "ReadOnly" => Some(vak_config::PermissionMode::ReadOnly),
+        "WorkspaceWrite" => Some(vak_config::PermissionMode::WorkspaceWrite),
+        "FullAccess" => Some(vak_config::PermissionMode::FullAccess),
+        _ => None,
+    })
+}
+
 async fn set_permission_mode(
     State(state): State<AppState>,
     Json(body): Json<ModeBody>,
 ) -> StatusCode {
-    match vak_config::PermissionMode::deserialize_str(&body.mode) {
+    match parse_mode(&body.mode) {
         Some(mode) => {
             state.core.set_permission_mode(mode);
             StatusCode::OK
         }
         None => StatusCode::BAD_REQUEST,
     }
+}
+
+/// Picker data for provider/model UIs. Reports WHICH env var authenticates
+/// each provider and whether it resolves right now — never the value.
+async fn list_providers(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let mut providers = Vec::new();
+    for name in state.core.provider_names() {
+        let requires_key = name != "ollama";
+        let configured = state.core.provider_configured(&name);
+        providers.push(serde_json::json!({
+            "name": name,
+            "env_var": Core::provider_env_var(&name),
+            "requires_key": requires_key,
+            "configured": configured,
+        }));
+    }
+    let models: serde_json::Map<String, serde_json::Value> = state
+        .core
+        .provider_names()
+        .iter()
+        .map(|n| (n.clone(), serde_json::json!(Core::models_for(n))))
+        .collect();
+    Json(serde_json::json!({
+        "current": state.core.effective_provider(),
+        "current_model": state.core.effective_model(),
+        "current_configured": state.core.provider_configured(&state.core.effective_provider()),
+        "providers": providers,
+        "models": models,
+    }))
+}
+
+#[derive(serde::Deserialize)]
+struct ProviderKeyBody {
+    provider: String,
+    key: String,
+}
+
+/// Persists a credential to the user-level secret store and makes it
+/// effective immediately. The key is accepted once and never echoed back.
+async fn put_provider_key(
+    State(state): State<AppState>,
+    Json(body): Json<ProviderKeyBody>,
+) -> axum::response::Response {
+    match state.core.set_provider_key(&body.provider, &body.key) {
+        Ok(env_var) => Json(serde_json::json!({
+            "provider": body.provider,
+            "env_var": env_var,
+            "configured": true,
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let cfg = state.core.config();
+    let project_path = vak_config::project_path(state.core.cwd());
+    Json(serde_json::json!({
+        "provider": state.core.effective_provider(),
+        "model": state.core.effective_model(),
+        "max_tokens": cfg.max_tokens,
+        "max_turns": state.core.effective_max_turns(),
+        "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
+        "subagents": cfg.subagents,
+        "max_retries": cfg.max_retries,
+        "retry_base_backoff_ms": cfg.retry_base_backoff_ms,
+        "request_timeout_secs": cfg.request_timeout_secs,
+        "run_retry_attempts": cfg.run_retry_attempts,
+        "run_retry_base_backoff_ms": cfg.run_retry_base_backoff_ms,
+        "circuit_breaker_threshold": cfg.circuit_breaker_threshold,
+        "circuit_breaker_cooldown_secs": cfg.circuit_breaker_cooldown_secs,
+        "context_window": cfg.context_window,
+        "theme": state.core.effective_theme(),
+        "bell": cfg.ui.bell,
+        "stop_policy": {
+            "enabled": cfg.stop_policy.enabled,
+            "marker_gate": cfg.stop_policy.marker_gate,
+            "verify_gate": cfg.stop_policy.verify_gate,
+            "max_blocks": cfg.stop_policy.max_blocks,
+        },
+        "integrations": {
+            "mcp_servers": cfg.mcp.servers.keys().collect::<Vec<_>>(),
+            "hooks": cfg.hooks.len(),
+            "skills": state.core.skills().iter().map(|skill| skill.name.clone()).collect::<Vec<_>>(),
+        },
+        "paths": {
+            "project_config": project_path,
+            "global_config": vak_config::global_path(),
+            "sessions_home": state.core.sessions_home(),
+            "cwd": state.core.cwd(),
+        },
+        "warnings": cfg.warnings,
+    }))
+}
+
+#[derive(serde::Deserialize, Default)]
+struct ConfigPatch {
+    provider: Option<String>,
+    model: Option<String>,
+    max_turns: Option<usize>,
+    permission_mode: Option<String>,
+    theme: Option<String>,
+}
+
+async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatch>) -> StatusCode {
+    if let Some(provider) = body.provider {
+        if provider.trim().is_empty() {
+            return StatusCode::BAD_REQUEST;
+        }
+        state.core.set_provider(provider.trim().to_string());
+    }
+    if let Some(model) = body.model {
+        if model.trim().is_empty() {
+            return StatusCode::BAD_REQUEST;
+        }
+        state.core.set_model(model.trim().to_string());
+    }
+    if let Some(max_turns) = body.max_turns {
+        if !(1..=1000).contains(&max_turns) {
+            return StatusCode::BAD_REQUEST;
+        }
+        state.core.set_max_turns(max_turns);
+    }
+    if let Some(mode) = body.permission_mode {
+        let Some(mode) = parse_mode(&mode) else {
+            return StatusCode::BAD_REQUEST;
+        };
+        state.core.set_permission_mode(mode);
+    }
+    if let Some(theme) = body.theme {
+        if !matches!(theme.as_str(), "dark" | "light" | "plain") {
+            return StatusCode::BAD_REQUEST;
+        }
+        state.core.set_theme(theme);
+    }
+    StatusCode::OK
 }
 
 #[derive(serde::Deserialize)]

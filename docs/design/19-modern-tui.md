@@ -65,7 +65,7 @@ streams, retry/compaction/stop-hook event surfacing.
 | collapsible tool-output detail | ✅ /details | undocumented | fixed last-6-lines |
 | thinking visibility toggle | ✅ | ✅ | one-line indicator only |
 | markdown conceal toggle | ✅ | n/a | ❌ |
-| theme packs + live preview | ✅ 11+custom | ✅ .tmTheme | 3 flat palettes |
+| theme packs + live preview | ✅ 11+custom | ✅ .tmTheme | ✅ 5 designed palettes + plain, live preview + project persistence |
 | keybind remapping | ✅ full | ✅ contexts | hardcoded keys.rs |
 | vim modal editing | partial | ✅ /vim | ❌ |
 | composer undo/redo | ✅ | ✅ | ❌ |
@@ -114,20 +114,21 @@ catalog exists — history-backed list planned).
   replace the old mislabeled `[queued]` steering preview.
 
 ### Phase B — Input polish
-- **B1 Composer undo/redo** (Ctrl-Z / Alt-Z) with coalesced edit groups.
+- **B1 Composer undo/redo — SHIPPED**: Ctrl-Z / Alt-Z with coalesced edit
+  groups and cursor-preserving snapshots.
 - **B2 Large-paste summary**: >N chars/lines collapses to `[pasted k
   lines — Tab to expand]` placeholder in-editor; full text submitted.
 - **B3 `$EDITOR` handoff**: Ctrl-G empties composer into temp md file,
   blocks on exit, reloads buffer (document Windows `--wait` caveat).
-- **B4 Word-kill forward (Alt-D)**, transpose, Home/End polish to round
-  out readline parity.
+- **B4 Readline editing — PARTIAL**: Alt-D, line-aware Home/End, Ctrl-A/E,
+  Ctrl-K/H/L, and Unicode-safe undo shipped; transpose remains.
 
 ### Phase C — Rendering depth (within scrollback constraints)
-- **C1 Collapsible tool output**: default tail-N preview + `/details`
+- **C1 Collapsible tool output — SHIPPED**: default tail-N preview + `/details`
   toggle raising the cap for subsequent calls (re-printing history stays
   forbidden; collapse applies to new output only).
-- **C2 Thinking display modes**: off / one-line / full blocks, cycled by
-  Ctrl-T; remembered per session.
+- **C2 Thinking display modes — SHIPPED**: off / one-line / full blocks,
+  cycled by Ctrl-T for the active terminal session.
 - **C3 Theme packs**: port tokyonight, gruvbox, catppuccin, nord as
   built-in palette tables; `/theme <name>` previews live on next render;
   keep `plain` as ANSI-safe fallback.
@@ -140,12 +141,13 @@ catalog exists — history-backed list planned).
 - **D2 `/export [path]`**: markdown dump via `derive_messages()`.
 - **D3 Subagent tree view**: indented ◆ tree with per-child cost/status,
   navigable listing replacing the linear-only stream summary.
-- **D4 Command palette**: Ctrl-P fuzzy over COMMANDS + recent sessions.
+- **D4 Command palette — PARTIAL**: Ctrl-P fuzzy command picker with keyboard
+  navigation shipped; recent-session results remain.
 - **D5 `[ui.keybinds]` remap table**: named actions → key strings,
   unknown names warn-not-fatal (config contract).
 
 ### Phase E — Ambient awareness
-- **E1 Staleness heartbeat**: status row shows "last event 12s ago"
+- **E1 Staleness heartbeat — SHIPPED**: status row shows "no events 12s"
   once elapsed > threshold without any event; distinguishes wedged from
   working (rank-7 pain).
 - **E2 Unfocused notification**: OSC9 (supported terminals) / bel fallback

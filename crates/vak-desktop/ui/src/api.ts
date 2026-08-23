@@ -6,6 +6,7 @@ import type {
   Health,
   Message,
   SessionSummary,
+  ConfigSnapshot,
 } from "./types";
 
 let base = "";
@@ -126,8 +127,56 @@ export function setPermissionMode(mode: string): Promise<void> {
   return req("/config/mode", { method: "POST", body: JSON.stringify({ mode }) });
 }
 
+export function getConfig(): Promise<ConfigSnapshot> {
+  return req("/config");
+}
+
+export function listProviders(): Promise<import("./types").ProvidersResponse> {
+  return req("/providers");
+}
+
+export function putProviderKey(
+  provider: string,
+  key: string,
+): Promise<{ provider: string; env_var: string; configured: boolean }> {
+  return req("/config/key", {
+    method: "PUT",
+    body: JSON.stringify({ provider, key }),
+  });
+}
+
+export function patchConfig(patch: { provider?: string; model?: string; max_turns?: number; permission_mode?: string; theme?: string }): Promise<void> {
+  return req("/config", { method: "PATCH", body: JSON.stringify(patch) });
+}
+
 export function readDiff(id: string): Promise<DiffResponse> {
   return req(`/sessions/${id}/diff`);
+}
+
+export function listCheckpoints(id: string): Promise<{
+  checkpoints: { seq: number; label: string; created_at: string; files: number }[];
+}> {
+  return req(`/sessions/${id}/checkpoints`);
+}
+
+export function restoreCheckpoint(
+  id: string,
+  seq: number,
+): Promise<{ restored: number; deleted: number; seq: number }> {
+  return req(`/sessions/${id}/checkpoints/${seq}/restore`, { method: "POST" });
+}
+
+export function setArchived(id: string, archived: boolean): Promise<{ archived: boolean }> {
+  return req(`/sessions/${id}/archive`, {
+    method: "POST",
+    body: JSON.stringify({ archived }),
+  });
+}
+
+export function listSkills(): Promise<{
+  skills: { name: string; description: string }[];
+}> {
+  return req("/skills");
 }
 
 export function readFile(path: string): Promise<{ path: string; content: string }> {

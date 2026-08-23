@@ -3,8 +3,13 @@ import { setShowShortcuts } from "../store";
 const SHORTCUTS: [string, string][] = [
   ["⌘N", "new session"],
   ["⌘D", "toggle diff pane"],
+  ["⌘B", "toggle sidebar"],
+  ["⌘H", "time travel (workspace snapshots)"],
+  ["⌘,", "open settings"],
   ["⌃`", "toggle terminal"],
   ["⌘;", "toggle side chat (ask aside)"],
+  ["@", "mention a file in the composer"],
+  ["/", "pick a skill in the composer"],
   ["⌘/", "this help"],
   ["Esc", "stop the running turn"],
   ["Enter", "send / steer while running"],
@@ -14,8 +19,8 @@ const SHORTCUTS: [string, string][] = [
 export default function ShortcutsModal() {
   return (
     <div class="modal-back" onClick={() => setShowShortcuts(false)}>
-      <div class="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Keyboard shortcuts</h3>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title" onClick={(e) => e.stopPropagation()}>
+        <h3 id="shortcuts-title">Keyboard shortcuts</h3>
         <table>
           <tbody>
             {SHORTCUTS.map(([k, d]) => (

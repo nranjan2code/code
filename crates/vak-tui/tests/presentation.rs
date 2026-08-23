@@ -1,6 +1,7 @@
 use crossterm::style::Color;
 use vak_tui::diffview::unified;
 use vak_tui::markdown::{LineStyler, highlight};
+use vak_tui::render::composer_layout;
 use vak_tui::status::{fmt_elapsed, fmt_tokens, frame};
 use vak_tui::theme::{Theme, names};
 
@@ -35,13 +36,25 @@ fn theme_dark_preset_fields() {
     assert_eq!(dark.code, Color::Magenta);
     assert_eq!(dark.user, Color::White);
     assert_eq!(dark.spinner, Color::Cyan);
+    assert_eq!(dark.panel_bg, Color::AnsiValue(235));
+    assert_eq!(dark.selected_bg, Color::AnsiValue(24));
 }
 
 #[test]
 fn theme_plain_is_all_reset() {
     let p = Theme::from_name("plain");
     let all = [
-        p.accent, p.dim, p.success, p.error, p.warning, p.heading, p.code, p.user, p.spinner,
+        p.accent,
+        p.dim,
+        p.success,
+        p.error,
+        p.warning,
+        p.heading,
+        p.code,
+        p.user,
+        p.spinner,
+        p.panel_bg,
+        p.selected_bg,
     ];
     assert!(all.iter().all(|&c| c == Color::Reset));
 }
@@ -54,7 +67,22 @@ fn theme_light_differs_from_dark_and_unknown_falls_back() {
     assert_ne!(light.dim, dark.dim);
     assert_ne!(light.heading, dark.heading);
     assert_eq!(Theme::from_name("nope"), dark);
-    assert_eq!(names(), &["dark", "light", "plain"]);
+    assert_eq!(
+        names(),
+        &["dark", "light", "neo", "rich", "teenage", "plain"]
+    );
+}
+
+#[test]
+fn designed_themes_have_distinct_surfaces_and_signals() {
+    let neo = Theme::from_name("neo");
+    let rich = Theme::from_name("rich");
+    let teenage = Theme::from_name("teenage");
+    assert_ne!(neo.panel_bg, neo.selected_bg);
+    assert_ne!(rich.accent, neo.accent);
+    assert_eq!(teenage.accent, Color::AnsiValue(208));
+    assert_eq!(teenage.panel_bg, Color::AnsiValue(230));
+    assert_eq!(teenage.heading, Color::Black);
 }
 
 #[test]
@@ -300,6 +328,31 @@ fn strip_ansi_removes_sgr_but_keeps_text() {
     let styled = "\x1b[32m+ added\x1b[39m plain \x1b[1;96mhead\x1b[22m";
     assert_eq!(vak_tui::markdown::strip_ansi(styled), "+ added plain head");
     assert_eq!(vak_tui::markdown::strip_ansi("no escapes"), "no escapes");
+}
+
+#[test]
+fn composer_layout_wraps_content_and_tracks_unicode_cursor() {
+    let layout = composer_layout(20, "task", "ab中文cd efghijkl", 4, "Enter send");
+    let top = layout.lines.first().map(String::as_str).unwrap_or("");
+    let bottom = layout.lines.last().map(String::as_str).unwrap_or("");
+    assert!(top.starts_with("╭─ task ") && top.ends_with('╮'));
+    assert!(bottom.starts_with("╰─ Enter send ") && bottom.ends_with('╯'));
+    assert_eq!(vak_tui::width::str_width(top), 20);
+    assert_eq!(vak_tui::width::str_width(bottom), 20);
+    assert_eq!(layout.cursor_row, 1);
+    assert_eq!(layout.cursor_col, 8);
+    assert!(layout.lines.len() >= 4, "narrow composer wraps content");
+}
+
+#[test]
+fn composer_layout_preserves_explicit_multiline_rows() {
+    let layout = composer_layout(80, "task", "first\nsecond", 6, "footer");
+    assert!(layout.lines[1].starts_with("│ first"));
+    assert!(layout.lines[1].ends_with(" │"));
+    assert!(layout.lines[2].starts_with("│ second"));
+    assert!(layout.lines[2].ends_with(" │"));
+    assert_eq!(layout.cursor_row, 2);
+    assert_eq!(layout.cursor_col, 2);
 }
 
 #[test]

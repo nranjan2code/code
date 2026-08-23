@@ -136,7 +136,7 @@ pub struct Config {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiResolved {
-    /// "dark" | "light" | "plain"; anything else normalizes to "dark".
+    /// Built-in theme name; unknown values normalize to "dark".
     pub theme: String,
     pub bell: bool,
 }
@@ -333,7 +333,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     }
     cfg.ui.theme = merged.ui.theme.clone().unwrap_or_else(|| "dark".into());
     match cfg.ui.theme.as_str() {
-        "dark" | "light" | "plain" => {}
+        "dark" | "light" | "neo" | "rich" | "teenage" | "plain" => {}
         other => {
             cfg.warnings
                 .push(format!("unknown ui.theme '{other}'; using 'dark'"));
@@ -624,9 +624,77 @@ pub fn load_env_file(path: &std::path::Path) {
     }
 }
 
-/// Environment lookup: real env first, then loaded .env files.
+/// Environment lookup: runtime overrides first (values set this session,
+/// e.g. a key the user just saved), then real env, then loaded .env files.
 pub fn get_var(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
+    var_overrides()
+        .get(key)
+        .cloned()
+        .or_else(|| std::env::var(key).ok())
         .or_else(|| dotenv_extra().get(key).cloned())
+}
+
+fn var_overrides() -> std::sync::MutexGuard<'static, ExtraMap> {
+    static OVERRIDES: std::sync::OnceLock<std::sync::Mutex<ExtraMap>> = std::sync::OnceLock::new();
+    OVERRIDES
+        .get_or_init(|| std::sync::Mutex::new(ExtraMap::new()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Registers a value with the highest lookup precedence for THIS process.
+/// Persistence is the caller's job (see `upsert_env_file`); overrides die
+/// with the process, and a real environment variable set after this call
+/// still loses to it until the process restarts.
+pub fn set_override(key: impl Into<String>, value: impl Into<String>) {
+    var_overrides().insert(key.into(), value.into());
+}
+
+/// `$HOME/.vakcoder/.env` — the user-level secret store shared by every
+/// vakcoder surface.
+pub fn user_env_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".vakcoder").join(".env"))
+}
+
+/// Upserts `KEY=VALUE` into `path` (created if missing, 0600 on unix).
+/// Existing lines for KEY are replaced; everything else is preserved.
+pub fn upsert_env_file(path: &std::path::Path, key: &str, value: &str) -> std::io::Result<()> {
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    let mut replaced = false;
+    let mut lines: Vec<String> = Vec::new();
+    for line in existing.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            lines.push(line.to_string());
+            continue;
+        }
+        match line.split_once('=') {
+            Some((k, _)) if k.trim() == key => {
+                if !replaced {
+                    lines.push(format!("{key}={value}"));
+                    replaced = true;
+                }
+                // drop duplicate definitions of the same key
+            }
+            _ => lines.push(line.to_string()),
+        }
+    }
+    if !replaced {
+        lines.push(format!("{key}={value}"));
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("env.tmp");
+    std::fs::write(&tmp, out)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+    }
+    std::fs::rename(&tmp, path)?;
+    Ok(())
 }

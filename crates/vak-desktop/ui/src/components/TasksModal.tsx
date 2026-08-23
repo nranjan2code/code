@@ -74,8 +74,8 @@ export default function TasksModal() {
   return (
     <Show when={tasksOpen()}>
       <div class="modal-back" onClick={() => setTasksOpen(false)}>
-        <div class="modal tasks-modal" onClick={(e) => e.stopPropagation()}>
-          <h3>Scheduled tasks — recurring runs in isolated worktrees</h3>
+        <div class="modal tasks-modal" role="dialog" aria-modal="true" aria-labelledby="tasks-title" onClick={(e) => e.stopPropagation()}>
+          <h3 id="tasks-title">Scheduled tasks — recurring runs in isolated worktrees</h3>
           <Show when={error()}>
             <div class="gate-err">{error()}</div>
           </Show>

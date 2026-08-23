@@ -71,6 +71,35 @@ export interface SessionSummary {
   updated_at?: string | null;
   entries?: number;
   title?: string | null;
+  running?: boolean;
+  archived?: boolean;
+}
+
+export interface CheckpointInfo {
+  seq: number;
+  label: string;
+  created_at: string;
+  files: number;
+}
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+}
+
+export interface ProviderInfo {
+  name: string;
+  env_var?: string | null;
+  requires_key: boolean;
+  configured: boolean;
+}
+
+export interface ProvidersResponse {
+  current: string;
+  current_model: string;
+  current_configured: boolean;
+  providers: ProviderInfo[];
+  models: Record<string, string[]>;
 }
 
 export interface Health {
@@ -89,6 +118,30 @@ export interface BackendInfo {
   base_url?: string;
   token?: string;
   cwd?: string;
+  boot_error?: string;
+}
+
+export interface ConfigSnapshot {
+  provider: string;
+  model: string;
+  max_tokens: number;
+  max_turns: number;
+  permission_mode: "ReadOnly" | "WorkspaceWrite" | "FullAccess";
+  subagents: boolean;
+  max_retries: number;
+  retry_base_backoff_ms: number;
+  request_timeout_secs: number;
+  run_retry_attempts: number;
+  run_retry_base_backoff_ms: number;
+  circuit_breaker_threshold: number;
+  circuit_breaker_cooldown_secs: number;
+  context_window: number;
+  theme: string;
+  bell: boolean;
+  stop_policy: { enabled: boolean; marker_gate: boolean; verify_gate: boolean; max_blocks: number };
+  integrations: { mcp_servers: string[]; hooks: number; skills: string[] };
+  paths: { project_config: string; global_config?: string | null; sessions_home: string; cwd: string };
+  warnings: string[];
 }
 
 export interface DiffResponse {

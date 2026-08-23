@@ -11,6 +11,7 @@ pub mod editor;
 pub mod keys;
 pub mod markdown;
 pub mod mentions;
+pub mod palette;
 pub mod pricing;
 pub mod render;
 pub mod status;

@@ -1,4 +1,18 @@
 const HISTORY_MAX: usize = 500;
+const UNDO_MAX: usize = 200;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditKind {
+    Insert,
+    Backspace,
+    Other,
+}
+
+#[derive(Debug, Clone)]
+struct Snapshot {
+    buf: String,
+    cursor: usize,
+}
 
 #[derive(Debug, Default, Clone)]
 struct Search {
@@ -14,6 +28,9 @@ pub struct Editor {
     history_idx: Option<usize>,
     draft: Option<String>,
     search: Option<Search>,
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
+    last_edit: Option<EditKind>,
 }
 
 impl Editor {
@@ -22,6 +39,7 @@ impl Editor {
     }
 
     pub fn insert(&mut self, c: char) {
+        self.record_before(EditKind::Insert);
         let byte = self.byte_of_char(self.cursor);
         self.buf.insert(byte, c);
         self.cursor += 1;
@@ -32,6 +50,7 @@ impl Editor {
         if self.cursor == 0 {
             return;
         }
+        self.record_before(EditKind::Backspace);
         let byte = self.byte_of_char(self.cursor);
         let prev = self.byte_of_char(self.cursor - 1);
         self.buf.replace_range(prev..byte, "");
@@ -43,29 +62,46 @@ impl Editor {
         if byte >= self.buf.len() {
             return;
         }
+        self.record_before(EditKind::Other);
         let next = self.byte_of_char(self.cursor + 1);
         self.buf.replace_range(byte..next, "");
     }
 
     pub fn left(&mut self) {
+        self.end_edit_group();
         self.cursor = self.cursor.saturating_sub(1);
     }
 
     pub fn right(&mut self) {
+        self.end_edit_group();
         if self.cursor < self.chars().count() {
             self.cursor += 1;
         }
     }
 
     pub fn home(&mut self) {
-        self.cursor = 0;
+        self.end_edit_group();
+        let before = &self.buf[..self.byte_of_char(self.cursor)];
+        self.cursor = before
+            .rfind('\n')
+            .map(|byte| self.buf[..=byte].chars().count())
+            .unwrap_or(0);
     }
 
     pub fn end(&mut self) {
-        self.cursor = self.chars().count();
+        self.end_edit_group();
+        let byte = self.byte_of_char(self.cursor);
+        self.cursor += self.buf[byte..]
+            .find('\n')
+            .map(|end| self.buf[byte..byte + end].chars().count())
+            .unwrap_or_else(|| self.buf[byte..].chars().count());
     }
 
     pub fn clear(&mut self) {
+        if self.buf.is_empty() {
+            return;
+        }
+        self.record_before(EditKind::Other);
         self.buf.clear();
         self.cursor = 0;
         self.history_idx = None;
@@ -74,6 +110,10 @@ impl Editor {
     /// Deletes back to the start of the previous word.
     pub fn delete_word_back(&mut self) {
         let target = self.word_start();
+        if target == self.cursor {
+            return;
+        }
+        self.record_before(EditKind::Other);
         let byte = self.byte_of_char(self.cursor);
         let prev = self.byte_of_char(target);
         self.buf.replace_range(prev..byte, "");
@@ -81,10 +121,12 @@ impl Editor {
     }
 
     pub fn word_left(&mut self) {
+        self.end_edit_group();
         self.cursor = self.word_start();
     }
 
     pub fn word_right(&mut self) {
+        self.end_edit_group();
         let chars: Vec<char> = self.buf.chars().collect();
         let mut i = self.cursor;
         while i < chars.len() && chars[i].is_whitespace() {
@@ -94,6 +136,55 @@ impl Editor {
             i += 1;
         }
         self.cursor = i;
+    }
+
+    pub fn delete_word_forward(&mut self) {
+        let chars: Vec<char> = self.buf.chars().collect();
+        let mut target = self.cursor;
+        while target < chars.len() && chars[target].is_whitespace() {
+            target += 1;
+        }
+        while target < chars.len() && !chars[target].is_whitespace() {
+            target += 1;
+        }
+        if target == self.cursor {
+            return;
+        }
+        self.record_before(EditKind::Other);
+        let start = self.byte_of_char(self.cursor);
+        let end = self.byte_of_char(target);
+        self.buf.replace_range(start..end, "");
+    }
+
+    pub fn delete_to_line_end(&mut self) {
+        let start = self.byte_of_char(self.cursor);
+        let end = self.buf[start..]
+            .find('\n')
+            .map(|offset| start + offset)
+            .unwrap_or(self.buf.len());
+        if start == end {
+            return;
+        }
+        self.record_before(EditKind::Other);
+        self.buf.replace_range(start..end, "");
+    }
+
+    pub fn undo(&mut self) {
+        let Some(previous) = self.undo.pop() else {
+            return;
+        };
+        self.redo.push(self.snapshot());
+        self.restore(previous);
+        self.last_edit = None;
+    }
+
+    pub fn redo(&mut self) {
+        let Some(next) = self.redo.pop() else {
+            return;
+        };
+        self.push_undo(self.snapshot());
+        self.restore(next);
+        self.last_edit = None;
     }
 
     fn word_start(&self) -> usize {
@@ -112,6 +203,9 @@ impl Editor {
         let out = std::mem::take(&mut self.buf);
         self.cursor = 0;
         self.history_idx = None;
+        self.undo.clear();
+        self.redo.clear();
+        self.last_edit = None;
         if !out.trim().is_empty() {
             self.history.push(out.clone());
         }
@@ -119,6 +213,7 @@ impl Editor {
     }
 
     pub fn history_prev(&mut self) {
+        self.end_edit_group();
         if self.history.is_empty() {
             return;
         }
@@ -135,6 +230,7 @@ impl Editor {
     }
 
     pub fn history_next(&mut self) {
+        self.end_edit_group();
         let Some(idx) = self.history_idx else {
             return;
         };
@@ -150,8 +246,14 @@ impl Editor {
     }
 
     pub fn paste_str(&mut self, s: &str) {
+        if s.is_empty() {
+            return;
+        }
+        self.record_before(EditKind::Other);
         for c in s.chars() {
-            self.insert(c);
+            let byte = self.byte_of_char(self.cursor);
+            self.buf.insert(byte, c);
+            self.cursor += 1;
         }
     }
 
@@ -224,6 +326,7 @@ impl Editor {
     pub fn set_text(&mut self, text: &str) {
         self.buf = text.to_string();
         self.cursor = self.buf.chars().count();
+        self.last_edit = None;
     }
     pub fn is_empty(&self) -> bool {
         self.buf.is_empty()
@@ -328,5 +431,38 @@ impl Editor {
             .nth(char_idx)
             .map(|(b, _)| b)
             .unwrap_or(self.buf.len())
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            buf: self.buf.clone(),
+            cursor: self.cursor,
+        }
+    }
+
+    fn restore(&mut self, snapshot: Snapshot) {
+        self.buf = snapshot.buf;
+        self.cursor = snapshot.cursor;
+        self.history_idx = None;
+    }
+
+    fn record_before(&mut self, kind: EditKind) {
+        if self.last_edit != Some(kind) || kind == EditKind::Other {
+            self.push_undo(self.snapshot());
+        }
+        self.redo.clear();
+        self.last_edit = Some(kind);
+        self.history_idx = None;
+    }
+
+    fn push_undo(&mut self, snapshot: Snapshot) {
+        if self.undo.len() == UNDO_MAX {
+            self.undo.remove(0);
+        }
+        self.undo.push(snapshot);
+    }
+
+    fn end_edit_group(&mut self) {
+        self.last_edit = None;
     }
 }

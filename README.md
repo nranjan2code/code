@@ -11,11 +11,11 @@ five hardening/UX phases since (CHANGELOG.md).
 ```sh
 # keys: put them in .env (gitignored) or export directly
 export ANTHROPIC_API_KEY=sk-ant-…        # or OPENAI_API_KEY / OPENCODE_API_KEY / GEMINI_API_KEY / Ollama
-cargo run                                 # interactive TUI
-cargo run -- exec "fix the failing test"  # headless
-cargo run -- config dump                  # effective boot config
-cargo run -- eval                         # deterministic regression suite (coding + non-coding scenarios)
-cargo run -- eval --live --provider opencode-zen --model x-preview-f-free  # live (free model)
+cargo run --bin vakcoder -- tui                                 # interactive TUI
+cargo run --bin vakcoder -- exec "fix the failing test"         # headless
+cargo run --bin vakcoder -- config dump                         # effective boot config
+cargo run --bin vakcoder -- eval                                # deterministic regression suite
+cargo run --bin vakcoder -- eval --live --provider opencode-zen --model x-preview-f-free
 
 # desktop app (first run builds the webview UI)
 cd crates/vak-desktop/ui && npm install && npm run build && cd -
@@ -33,7 +33,7 @@ Offline smoke tests: `scripts/mock_anthropic.py`, `scripts/mock_openai.py`,
 | Sessions | Append-only JSONL trees; frozen execution contract header; context derived only from the log (`model-visible means logged`); branch/fork/compact-as-entry |
 | Tools | read/write/edit/bash/glob/grep behind one trait; atomic edits; process-group kill; bounded outputs |
 | Safety | Rule engine (`allow/ask/deny` × read-only/workspace-write/full-access) gating every call; learned allow rules persisted per-workspace (`[p]` on an approval → scoped rule); OS sandbox per platform — macOS Seatbelt, Linux Landlock (5.13+, fail-closed probe), network denied while sandboxed; built-in stop gate blocks premature/truncated completions (config-gated); denials feed back as error results the model adapts to. On other platforms containment is the permission engine alone (`serve` also requires a per-process bearer token printed at startup) |
-| TUI | Inline stream-based rendering on native scrollback; markdown + syntax-highlighted code; tool cards with live edit diffs; status row (spinner · elapsed · tokens · ctx% · cost); approval queue with diff previews and always-allow; multiline/paste input, Tab completion, Ctrl-R search; /resume + /rewind checkpoints; themes; live subagent streams; slash commands |
+| TUI | Full-screen retained terminal workspace with responsive header/transcript/composer regions and settings/help/features modals; markdown + syntax-highlighted code; tool cards with live edit diffs; status row (spinner · elapsed · tokens · ctx% · cost); approval queue with diff previews and always-allow; multiline/paste input, completion, Ctrl-R search; provider/model pickers; /resume + /rewind checkpoints; live-preview dark, light, neo, rich, Teenage Engineering-inspired, and plain themes; live subagent streams |
 | Extensibility | Skills (progressive disclosure), blocking subagents with lineage-linked child sessions, lifecycle hooks with matcher syntax, MCP client via a lazy meta-tool |
 | Agentic depth | Parallel fan-out gated by resource-claim waves; static flow DAGs (validate-before-run, typed failure policy, resume); dynamic planner with bounded replan (fail-closed) |
 | Server | HTTP+SSE over the same core: sessions, runs, steering, approvals, transcripts, diffs, fs (workspace-confined), side chats, best-of-N, PR status/merge, scheduled tasks, dev-server launch |
