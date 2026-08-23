@@ -15,9 +15,13 @@ pub struct PermissionEngine {
     rules: Vec<Rule>,
 }
 
-const READ_TOOLS: [&str; 5] = ["read", "glob", "grep", "ls", "search"];
+const READ_TOOLS: [&str; 6] = ["read", "glob", "grep", "ls", "search", "session_search"];
 const PATH_SCOPED_READ_TOOLS: [&str; 4] = ["read", "glob", "grep", "ls"];
 const WRITE_TOOLS: [&str; 2] = ["write", "edit"];
+/// Learning-loop journaling into vakcoder's own per-workspace store
+/// (docs/design/26-learning.md): sanctioned under workspace-write, still
+/// denied by read-only's default arm below.
+const LEARNING_TOOLS: [&str; 2] = ["remember", "propose_skill"];
 
 impl PermissionEngine {
     pub fn new(rules: Vec<Rule>) -> Self {
@@ -110,6 +114,9 @@ impl PermissionEngine {
                             reason: "missing path argument".into(),
                         },
                     };
+                }
+                if LEARNING_TOOLS.contains(&tool) {
+                    return Decision::Allow;
                 }
                 if tool == "bash" {
                     return Decision::Ask {

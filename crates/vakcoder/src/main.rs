@@ -102,6 +102,13 @@ enum Command {
         #[command(subcommand)]
         action: CheckpointAction,
     },
+    /// List durable memory notes for this workspace
+    Memory,
+    /// Review proposed skills: list / promote / reject
+    SkillsReview {
+        #[command(subcommand)]
+        action: SkillsReviewAction,
+    },
     /// Bridge a Telegram bot to a running gateway (docs/design/22-gateway.md)
     Telegram {
         /// Gateway base URL, e.g. http://127.0.0.1:8901
@@ -142,6 +149,16 @@ enum ConfigAction {
 }
 
 #[derive(Subcommand)]
+enum SkillsReviewAction {
+    /// List pending proposals
+    List,
+    /// Promote a proposal into user-level skills
+    Promote { id: String },
+    /// Discard a proposal
+    Reject { id: String },
+}
+
+#[derive(Subcommand)]
 enum CheckpointAction {
     /// List checkpoints for the latest session in this project
     List {
@@ -150,6 +167,85 @@ enum CheckpointAction {
     },
     /// Restore a checkpoint into the workspace
     Restore { session: String, seq: u32 },
+}
+
+fn learning_core(cwd: PathBuf) -> Option<Core> {
+    match Core::new(cwd) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            eprintln!("error: {e}");
+            None
+        }
+    }
+}
+
+fn run_memory_list(cwd: PathBuf) -> i32 {
+    let Some(core) = learning_core(cwd) else {
+        return 2;
+    };
+    let notes = vak_core::memory::list_notes(&core.sessions_home(), core.cwd());
+    if notes.is_empty() {
+        println!("no memory notes for this workspace");
+        return 0;
+    }
+    for n in &notes {
+        println!(
+            "{} [{}]{} session={}",
+            n.ts.to_rfc3339(),
+            n.kind,
+            if n.tag.is_empty() {
+                String::new()
+            } else {
+                format!(" tag={}", n.tag)
+            },
+            n.session_id
+        );
+        println!("  {}", n.text.replace('\n', "\n  "));
+    }
+    0
+}
+
+fn run_skills_review(cwd: PathBuf, action: SkillsReviewAction) -> i32 {
+    let Some(core) = learning_core(cwd) else {
+        return 2;
+    };
+    match action {
+        SkillsReviewAction::List => {
+            let proposals = vak_core::learning::list_proposals(&core.sessions_home(), core.cwd());
+            if proposals.is_empty() {
+                println!("no pending skill proposals");
+                return 0;
+            }
+            for p in &proposals {
+                println!("{}  {} — {}", p.id, p.name, p.description);
+            }
+            0
+        }
+        SkillsReviewAction::Promote { id } => {
+            match vak_core::learning::promote(&core.sessions_home(), core.cwd(), &id) {
+                Ok(name) => {
+                    println!("promoted skill '{name}'");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        SkillsReviewAction::Reject { id } => {
+            match vak_core::learning::reject(&core.sessions_home(), core.cwd(), &id) {
+                Ok(()) => {
+                    println!("rejected proposal {id}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+    }
 }
 
 async fn run_checkpoints(cwd: PathBuf, action: CheckpointAction) -> i32 {
@@ -316,6 +412,8 @@ async fn main() {
             run_sessions_list(cwd);
             0
         }
+        Some(Command::Memory) => run_memory_list(cwd),
+        Some(Command::SkillsReview { action }) => run_skills_review(cwd, action),
         Some(Command::Checkpoints { action }) => run_checkpoints(cwd, action).await,
         Some(Command::Telegram { server, token }) => run_telegram(server, token).await,
         Some(Command::Flow { action }) => run_flow(cwd, action).await,

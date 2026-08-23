@@ -5,6 +5,8 @@
 pub mod checkpoints;
 pub mod custom_commands;
 pub mod files;
+pub mod learning;
+pub mod memory;
 pub mod sandbox_docker;
 pub mod session_search;
 pub mod skills;
@@ -419,6 +421,12 @@ impl Core {
         if self.inner.config.memory.search_enabled {
             names.push("session_search".into());
         }
+        if self.inner.config.memory.write_enabled {
+            names.push("remember".into());
+        }
+        if self.inner.config.memory.skill_proposals {
+            names.push("propose_skill".into());
+        }
         names
     }
 
@@ -824,6 +832,26 @@ impl Core {
                 sessions_home: self.sessions_home(),
                 cwd: self.inner.cwd.clone(),
                 exclude_session_id: exclude,
+            }));
+        }
+        // Learning loop (docs/design/26-learning.md): journaling tools are
+        // ordinary model-visible tools; promotion stays human-only.
+        let current_session = session
+            .header()
+            .map(|h| h.session_id.clone())
+            .unwrap_or_default();
+        if self.inner.config.memory.write_enabled {
+            tools.push(Arc::new(learning::RememberTool {
+                sessions_home: self.sessions_home(),
+                cwd: self.inner.cwd.clone(),
+                session_id: current_session.clone(),
+            }));
+        }
+        if self.inner.config.memory.skill_proposals {
+            tools.push(Arc::new(learning::ProposeSkillTool {
+                sessions_home: self.sessions_home(),
+                cwd: self.inner.cwd.clone(),
+                session_id: current_session,
             }));
         }
         cfg.tools = tools;

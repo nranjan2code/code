@@ -73,4 +73,4 @@ keys still warn per convention.
 |---|---|---|
 | **M0 ✅** | scan+score search in vak-session, `session_search` tool wired into every run, `/search` endpoint, `[memory]` config | relevance unit tests + agent-loop e2e proving the result lands on the ledger; fmt/clippy/tests green |
 | M1 | mtime-cached index for large stores; `/search` in TUI + desktop UI | 10k-entry store searched < 50ms warm |
-| M2 | write path: post-run "remember" hook proposing durable notes into `<home>/memory/*.md`, recalled alongside search | curated notes outrank raw transcripts |
+| **M2 ✅** | Write path via model-invoked `remember` tool → `<home>/memory/<hash>/MEMORY.md` (plain markdown, provenance blocks, hand-edit-tolerant parser); recalled by search with outranking bonus; `[memory] write_enabled` flag; `GET /memory` + `vakcoder memory` | curated notes rank above equal transcript hits (`memory_extras_outrank_equal_transcript_hits`); agent remembers mid-run and a later run recalls it citing memory (learning_loop e2e) |

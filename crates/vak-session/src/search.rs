@@ -21,6 +21,9 @@ const SNIPPET_CHARS: usize = 240;
 const SNIPPET_CONTEXT: usize = 60;
 const PHRASE_BONUS: f32 = 3.0;
 const RECENCY_NUDGE: f32 = 0.01;
+/// Curated memory outranks equally-relevant transcript lines
+/// (docs/design/26-learning.md).
+pub const MEMORY_BONUS: f32 = 2.5;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionHit {
@@ -32,12 +35,20 @@ pub struct SessionHit {
     pub snippet: String,
 }
 
+/// A curated document fed into recall alongside raw transcripts — today,
+/// parsed MEMORY.md blocks (docs/design/26-learning.md).
+#[derive(Debug, Clone)]
+pub struct ExternalDoc {
+    /// Stable identifier surfaced in `session_id` of the hit (e.g. the tag).
+    pub id: String,
+    pub text: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SearchError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
-
 /// Search every ledger under `home` for the given workspace `cwd`.
 /// `exclude_session` (usually the current session) never matches — its
 /// content is already in the caller's context.
@@ -48,6 +59,19 @@ pub fn search(
     limit: usize,
     exclude_session: Option<&str>,
 ) -> Result<Vec<SessionHit>, SearchError> {
+    search_extended(sessions_home, cwd, query, limit, exclude_session, &[])
+}
+
+/// Same scan with curated documents (memory blocks) folded into ranking.
+/// Extras carry a bonus so hand-curated knowledge outranks raw history.
+pub fn search_extended(
+    sessions_home: &Path,
+    cwd: &Path,
+    query: &str,
+    limit: usize,
+    exclude_session: Option<&str>,
+    extras: &[ExternalDoc],
+) -> Result<Vec<SessionHit>, SearchError> {
     let terms = tokenize(query);
     let phrase = normalize(query);
     if terms.is_empty() || phrase.is_empty() {
@@ -55,10 +79,26 @@ pub fn search(
     }
     let limit = limit.clamp(1, 50);
 
-    let dir = SessionPath::sessions_dir(sessions_home, cwd);
     let mut hits: Vec<SessionHit> = Vec::new();
+    for doc in extras {
+        let base = score_text(&doc.text, &terms, &phrase);
+        if base <= 0.0 {
+            continue;
+        }
+        hits.push(SessionHit {
+            session_id: doc.id.clone(),
+            entry_id: String::new(),
+            ts: Utc::now(),
+            role: "memory".into(),
+            score: base + MEMORY_BONUS,
+            snippet: snippet_for(&doc.text, &terms),
+        });
+    }
+
+    let dir = SessionPath::sessions_dir(sessions_home, cwd);
     let Ok(read) = std::fs::read_dir(&dir) else {
-        return Ok(Vec::new());
+        finalize(&mut hits, limit);
+        return Ok(hits);
     };
     for file_entry in read.flatten() {
         let path = file_entry.path();
@@ -74,15 +114,19 @@ pub fn search(
         collect_hits(&path, &session_id, &terms, &phrase, &mut hits)?;
     }
 
+    finalize(&mut hits, limit);
+    Ok(hits)
+}
+
+fn finalize(hits: &mut Vec<SessionHit>, limit: usize) {
     // Score = relevance + tiny recency preference; newest wins exact ties.
     let now = Utc::now();
-    for h in &mut hits {
+    for h in hits.iter_mut() {
         let hours = (now - h.ts).num_hours().max(0) as f32;
         h.score += RECENCY_NUDGE / (1.0 + hours);
     }
     hits.sort_by(|a, b| b.score.total_cmp(&a.score).then(b.ts.cmp(&a.ts)));
     hits.truncate(limit);
-    Ok(hits)
 }
 
 fn collect_hits(
@@ -370,6 +414,30 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn memory_extras_outrank_equal_transcript_hits() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let cwd = dir.path().to_path_buf();
+        seed(
+            &home,
+            &cwd,
+            "dddddddd-transcript",
+            &[user_msg(
+                "rollback windows are configured in the deploy pipeline",
+            )],
+        );
+        let extras = vec![ExternalDoc {
+            id: "deploy".into(),
+            text: "decision: rollback windows pause the deploy pipeline".into(),
+        }];
+        let hits = search_extended(&home, &cwd, "deploy rollback", 5, None, &extras).unwrap();
+        assert!(hits.len() >= 2);
+        assert_eq!(hits[0].role, "memory");
+        assert_eq!(hits[0].session_id, "deploy");
+        assert!(hits.iter().skip(1).all(|h| h.role != "memory"));
     }
 
     #[test]

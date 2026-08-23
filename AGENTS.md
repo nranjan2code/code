@@ -136,7 +136,8 @@ crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode
 crates/vak-config    layered TOML config + .env secret loading
 crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
-                     session_search tool injection, sandbox selection incl.
+                     session_search injection, memory/skill-proposal tools
+                     (docs/design/26-learning.md), sandbox selection incl.
                      Docker exec backend (docs/design/25-docker-sandbox.md)
 crates/vak-tui       retained-render terminal UI: contextual keymap +
                      interactive rebind, themes + custom theme packs,

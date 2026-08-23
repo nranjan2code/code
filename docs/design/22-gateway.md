@@ -198,7 +198,7 @@ Lessons from OpenClaw's incident history, inverted:
 | **G2 ✅** | Approval forwarding: `[gateway] approvals = "forward"` + `approver` target + `approval_timeout_secs`; gates announced via any delivery transport, resolved by strict yes/no replies from the approver chat only; timeout/silence fails closed, late replies resolve nothing. Media passthrough deferred (own slice) | gateway_approvals.rs e2e: forward→yes→tool really runs; unanswered gate times out and a late "yes" resolves nothing; deny mode never announces |
 | **G3 ✅** | Remote exec backends behind the Sandbox seam — Docker implemented in vak-core, see docs/design/25-docker-sandbox.md (same-path bind mount, no-network container, read-only root, caps, fail-closed daemon probe); `[sandbox] backend/image` privileged config | live e2e vs real daemon: exec, mount visibility, network deny, RO enforcement, config-flow naming |
 | G4 | Cross-session memory & recall: FTS index + logged `session_search` tool | recall across restarts auditable in transcript |
-| G5 | Learning loop: post-task skill proposals behind review gate | skill drafted from session, human-approved promotion |
+| **G5 ✅** | Learning loop via `propose_skill` → review queue → human promotion to user-level discovery (never automatic); see docs/design/26-learning.md | promote→discovery loop closes in learning_loop e2e; overwrite refusal; HTTP + CLI review paths |
 
 ## Implementation notes (as built)
 

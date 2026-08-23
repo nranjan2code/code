@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use vak_session::{DEFAULT_LIMIT, search as session_search};
+use vak_session::{DEFAULT_LIMIT, ExternalDoc, search_extended};
 
 pub struct SessionSearchTool {
     pub sessions_home: PathBuf,
@@ -64,8 +64,31 @@ impl vak_tools::Tool for SessionSearchTool {
         let cwd = self.cwd.clone();
         let query = query.to_string();
         let exclude = self.exclude_session_id.clone();
+        // Curated memory participates in recall and outranks transcripts
+        // (docs/design/26-learning.md).
+        let notes = crate::memory::list_notes(&home, &cwd);
+        let extras: Vec<ExternalDoc> = notes
+            .iter()
+            .map(|n| ExternalDoc {
+                id: if n.tag.is_empty() {
+                    n.kind.clone()
+                } else {
+                    n.tag.clone()
+                },
+                text: format!(
+                    "[{}{}] {}",
+                    n.kind,
+                    if n.tag.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {}", n.tag)
+                    },
+                    n.text
+                ),
+            })
+            .collect();
         let result = tokio::task::spawn_blocking(move || {
-            session_search(&home, &cwd, &query, limit, Some(&exclude))
+            search_extended(&home, &cwd, &query, limit, Some(&exclude), &extras)
         })
         .await;
 

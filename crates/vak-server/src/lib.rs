@@ -270,8 +270,80 @@ fn router_with_state(state: AppState) -> Router {
         .route("/providers", get(list_providers))
         .route("/providers/{name}/models", get(discover_models))
         .route("/search", get(search_sessions))
+        .route("/memory", get(list_memory))
+        .route("/skills/proposals", get(list_proposals_route))
+        .route("/skills/proposals/{id}/promote", post(promote_proposal))
+        .route("/skills/proposals/{id}/reject", post(reject_proposal))
         .merge(gateway::routes())
         .with_state(state)
+}
+
+async fn list_memory(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let notes = vak_core::memory::list_notes(&state.core.sessions_home(), state.core.cwd());
+    let blocks: Vec<serde_json::Value> = notes
+        .iter()
+        .map(|n| {
+            serde_json::json!({
+                "ts": n.ts.to_rfc3339(),
+                "kind": n.kind,
+                "tag": n.tag,
+                "session_id": n.session_id,
+                "text": n.text,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "notes": blocks }))
+}
+
+fn proposals_payload(core: &Core) -> Vec<serde_json::Value> {
+    vak_core::learning::list_proposals(&core.sessions_home(), core.cwd())
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "id": p.id,
+                "name": p.name,
+                "description": p.description,
+            })
+        })
+        .collect()
+}
+
+async fn list_proposals_route(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "proposals": proposals_payload(&state.core) }))
+}
+
+async fn promote_proposal(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match vak_core::learning::promote(&state.core.sessions_home(), state.core.cwd(), &id) {
+        Ok(name) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "promoted": name })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+async fn reject_proposal(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match vak_core::learning::reject(&state.core.sessions_home(), state.core.cwd(), &id) {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "rejected": id }))).into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
 }
 
 #[derive(serde::Deserialize)]

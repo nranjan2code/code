@@ -81,6 +81,10 @@ pub struct FileConfig {
 pub struct MemorySettings {
     /// Expose the `session_search` tool to agent runs. Default true.
     pub search_enabled: Option<bool>,
+    /// `remember` tool: append durable per-workspace notes. Default true.
+    pub write_enabled: Option<bool>,
+    /// `propose_skill` tool: queue drafts for human promotion. Default true.
+    pub skill_proposals: Option<bool>,
 }
 
 /// Execution backend selection (docs/design/25-docker-sandbox.md).
@@ -282,6 +286,8 @@ pub struct WebhookResolved {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryResolved {
     pub search_enabled: bool,
+    pub write_enabled: bool,
+    pub skill_proposals: bool,
 }
 
 impl Default for Config {
@@ -335,6 +341,8 @@ impl Default for Config {
             },
             memory: MemoryResolved {
                 search_enabled: true,
+                write_enabled: true,
+                skill_proposals: true,
             },
             sandbox: SandboxResolved {
                 backend: "auto".into(),
@@ -593,6 +601,8 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         None => {}
     }
     cfg.memory.search_enabled = merged.memory.search_enabled.unwrap_or(true);
+    cfg.memory.write_enabled = merged.memory.write_enabled.unwrap_or(true);
+    cfg.memory.skill_proposals = merged.memory.skill_proposals.unwrap_or(true);
     cfg.sandbox.backend = match merged.sandbox.backend.as_deref() {
         None => "auto".into(),
         Some(b @ ("auto" | "seatbelt" | "landlock" | "docker")) => b.into(),
@@ -724,7 +734,7 @@ const KNOWN_GATEWAY_KEYS: &[&str] = &[
     "approval_timeout_secs",
     "outbound",
 ];
-const KNOWN_MEMORY_KEYS: &[&str] = &["search_enabled"];
+const KNOWN_MEMORY_KEYS: &[&str] = &["search_enabled", "write_enabled", "skill_proposals"];
 const KNOWN_SANDBOX_KEYS: &[&str] = &["backend", "image"];
 const KNOWN_OUTBOUND_KEYS: &[&str] = &["webhooks"];
 const KNOWN_WEBHOOK_KEYS: &[&str] = &["url", "token_env"];
@@ -1015,6 +1025,12 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.memory.search_enabled.is_some() {
         base.memory.search_enabled = over.memory.search_enabled;
+    }
+    if over.memory.write_enabled.is_some() {
+        base.memory.write_enabled = over.memory.write_enabled;
+    }
+    if over.memory.skill_proposals.is_some() {
+        base.memory.skill_proposals = over.memory.skill_proposals;
     }
     if over.sandbox.backend.is_some() {
         base.sandbox.backend = over.sandbox.backend;

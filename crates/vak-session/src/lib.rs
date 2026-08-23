@@ -10,7 +10,9 @@ pub mod search;
 pub mod types;
 
 pub use log::{SessionLog, SessionPath};
-pub use search::{DEFAULT_LIMIT, SearchError, SessionHit, search};
+pub use search::{
+    DEFAULT_LIMIT, ExternalDoc, MEMORY_BONUS, SearchError, SessionHit, search, search_extended,
+};
 pub use types::{
     CompactionEntry, Entry, EntryPayload, FrozenContract, MessageMeta, MessageRecord, SessionError,
     SessionHeader,
