@@ -170,6 +170,40 @@ struct UiState {
     thinking_mode: ThinkingMode,
     thinking_partial: String,
     expanded_tools: bool,
+    run_state: RunState,
+}
+
+/// Typed run-state truth (doc 21 §4): the status row always names what the
+/// agent is doing. No generic spinner may stand in for a specific state.
+#[derive(Clone, PartialEq, Eq)]
+enum RunState {
+    Thinking,
+    Streaming,
+    Tool {
+        name: String,
+    },
+    Retrying {
+        attempt: u32,
+        delay_ms: u64,
+        reason: String,
+    },
+    Compacting,
+}
+
+impl RunState {
+    fn label(&self) -> String {
+        match self {
+            Self::Thinking => "thinking".to_string(),
+            Self::Streaming => "streaming".to_string(),
+            Self::Tool { name } => format!("tool · {name}"),
+            Self::Retrying {
+                attempt,
+                delay_ms,
+                reason,
+            } => format!("retry {attempt} in {delay_ms}ms — {reason}"),
+            Self::Compacting => "compacting context".to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -186,11 +220,14 @@ enum PickerKind {
     Theme,
 }
 
+#[derive(Default)]
 struct ModalView {
     title: String,
     rows: Vec<String>,
     scroll: usize,
     footer: String,
+    /// Row indices of user prompts, for n/p jumps in the transcript viewer.
+    anchors: Vec<usize>,
 }
 
 impl ThinkingMode {
@@ -281,6 +318,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
         thinking_mode: ThinkingMode::Indicator,
         thinking_partial: String::new(),
         expanded_tools: false,
+        run_state: RunState::Thinking,
     };
     let mut approvals: VecDeque<ApprovalRequest> = VecDeque::new();
     let mut follow_ups: VecDeque<String> = VecDeque::new();
@@ -436,6 +474,28 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                     KeyCode::Char('t' | 'T') if active.title == "settings" => {
                                         modal_action = Some('t');
                                     }
+                                    KeyCode::Char('n' | 'N') if active.title == "transcript" => {
+                                        if let Some(&next) = active
+                                            .anchors
+                                            .iter()
+                                            .find(|&&a| a > active.scroll)
+                                        {
+                                            active.scroll = next.min(max_scroll);
+                                        }
+                                    }
+                                    KeyCode::Char('p' | 'P') if active.title == "transcript" => {
+                                        if let Some(&prev) = active
+                                            .anchors
+                                            .iter()
+                                            .rev()
+                                            .find(|&&a| a < active.scroll)
+                                        {
+                                            active.scroll = prev;
+                                        }
+                                    }
+                                    KeyCode::Char('e' | 'E') if active.title == "transcript" => {
+                                        modal_action = Some('e');
+                                    }
                                     KeyCode::Up => active.scroll = active.scroll.saturating_sub(1),
                                     KeyCode::Down => {
                                         active.scroll = (active.scroll + 1).min(max_scroll);
@@ -482,6 +542,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                         scroll: 0,
                                         footer: "All implemented surfaces · ↑↓ scroll · Esc close"
                                             .to_string(),
+                                        ..Default::default()
                                     });
                                 }
                                 Some('t') => {
@@ -493,6 +554,14 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                         ChoicePicker::new(theme_choices(&current), false),
                                     ));
                                 }
+                                Some('e') => match export_transcript(&session_slot, core.cwd()).await
+                                {
+                                    Ok(path) => screen.accent(&format!(
+                                        "transcript exported → {}",
+                                        path.display()
+                                    )),
+                                    Err(e) => screen.error(&format!("export failed: {e}")),
+                                },
                                 _ => {}
                             }
                             if let Some(active) = modal.as_ref() {
@@ -850,6 +919,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                     rows: help_modal_rows(),
                                                     scroll: 0,
                                                     footer: "↑↓ scroll · /keys shortcuts · Esc close".to_string(),
+                                                    ..Default::default()
                                                 });
                                             }
                                                 Some(Command::Cost) => {
@@ -938,13 +1008,12 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                     )),
                                                 },
                                                 Some(Command::Transcript(arg)) => {
-                                                    show_transcript(
-                                                        &mut screen,
-                                                        &session_slot,
-                                                        arg.as_deref(),
-                                                        &ui_theme,
-                                                    )
-                                                    .await;
+                                                    match transcript_modal(&session_slot, arg.as_deref())
+                                                        .await
+                                                    {
+                                                        Some(m) => modal = Some(m),
+                                                        None => screen.dim("no active session"),
+                                                    }
                                                 }
                                                 Some(Command::Doctor) => {
                                                     run_doctor(&core, &mut screen);
@@ -978,6 +1047,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                             .collect(),
                                                         scroll: 0,
                                                         footer: "↑↓ scroll · Esc close".to_string(),
+                                                        ..Default::default()
                                                     });
                                                 }
                                                 Some(Command::Keymap) => {
@@ -1007,6 +1077,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                         footer:
                                                             "overrides: [ui.keymap] in config · Esc close"
                                                                 .to_string(),
+                                                        ..Default::default()
                                                     });
                                                 }
                                             Some(Command::Model(Some(model))) => {
@@ -1081,6 +1152,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                     scroll: 0,
                                                     footer: "/key <provider> SECRET stores it · Esc close"
                                                         .to_string(),
+                                                    ..Default::default()
                                                 });
                                             }
                                             Some(Command::Key(Some(arg))) => {
@@ -1116,6 +1188,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                     rows: settings_rows(&core, &ui),
                                                     scroll: 0,
                                                     footer: "P provider · M model · T theme · F features · ↑↓ scroll · Esc close".to_string(),
+                                                    ..Default::default()
                                                 });
                                             }
                                             Some(Command::Features) => {
@@ -1124,6 +1197,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                     rows: feature_rows(&core),
                                                     scroll: 0,
                                                     footer: "All implemented surfaces · ↑↓ scroll · Esc close".to_string(),
+                                                    ..Default::default()
                                                 });
                                             }
                                             Some(Command::Clear) => match core.start_session().await {
@@ -1259,6 +1333,10 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                 render_event(&mut screen, &mut ui, &ui_theme, agent_event);
             }
             Some(req) = approval_ev => {
+                if bell_on {
+                    screen.bell();
+                    screen.notify(&format!("vakcoder · approval requested: {}", req.tool));
+                }
                 approvals.push_back(req);
             }
             Some(outcome) = done_ev => {
@@ -1317,6 +1395,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
             let elapsed = run_started.map(|t| t.elapsed().as_secs()).unwrap_or(0);
             let live_status = status_ansi(
                 &ui_theme,
+                &ui.run_state,
                 ui.total_in,
                 ui.total_out,
                 elapsed,
@@ -1401,6 +1480,7 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
         AgentEvent::Stream(StreamEvent::TextDelta { delta, .. }) => {
             flush_thinking(screen, ui, theme);
             ui.thinking_shown = false;
+            ui.run_state = RunState::Streaming;
             feed_text(ui, screen, theme, &delta)
         }
         AgentEvent::Stream(StreamEvent::ThinkingDelta { delta, .. }) => match ui.thinking_mode {
@@ -1420,6 +1500,7 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
             args_json,
         } => {
             flush_md(screen, ui, theme);
+            ui.run_state = RunState::Tool { name: name.clone() };
             ui.tool_args.insert(id, (name.clone(), args_json.clone()));
             screen.clear_input();
             screen.tool_start(&name, &summarize_args(&name, &args_json));
@@ -1431,6 +1512,7 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
             result_preview,
         } => {
             flush_md(screen, ui, theme);
+            ui.run_state = RunState::Streaming;
             let stored = ui.tool_args.remove(&id);
             screen.clear_input();
             screen.tool_line(if is_error { "✗" } else { "✓" }, &name, is_error);
@@ -1470,16 +1552,23 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
             ui.partial.clear();
             ui.thinking_shown = false;
             ui.thinking_partial.clear();
+            ui.run_state = RunState::Thinking;
         }
         AgentEvent::RetryScheduled {
             attempt,
             delay_ms,
             reason,
         } => {
+            ui.run_state = RunState::Retrying {
+                attempt,
+                delay_ms,
+                reason: reason.clone(),
+            };
             screen.clear_input();
             screen.dim(&format!("⟳ retry {attempt} in {delay_ms}ms — {reason}"));
         }
         AgentEvent::ContextCompacting { estimated_tokens } => {
+            ui.run_state = RunState::Compacting;
             screen.clear_input();
             screen.dim(&format!(
                 "📦 compacting context (~{estimated_tokens} tokens)…"
@@ -1490,6 +1579,7 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
             after_tokens,
             summarized_messages,
         } => {
+            ui.run_state = RunState::Streaming;
             screen.clear_input();
             screen.dim(&format!(
                 "📦 context compacted: ~{before_tokens} → ~{after_tokens} tokens ({summarized_messages} messages summarized)"
@@ -1779,6 +1869,7 @@ pub fn trunc_cells(s: &str, max: usize) -> String {
 #[allow(clippy::too_many_arguments)]
 fn status_ansi(
     theme: &Theme,
+    state: &RunState,
     total_in: u64,
     total_out: u64,
     elapsed_secs: u64,
@@ -1792,7 +1883,14 @@ fn status_ansi(
     } else {
         0
     };
-    let spinner = format!("{}{}", theme::fg(theme.spinner), status::frame(tick));
+    let (spinner, spinner_color) = match state {
+        RunState::Retrying { .. } | RunState::Compacting => {
+            (format!("⏳ {}", state.label()), theme.warning)
+        }
+        RunState::Tool { .. } => (format!("⚙ {}", state.label()), theme.accent),
+        RunState::Thinking => (format!("{} thinking", status::frame(tick)), theme.spinner),
+        RunState::Streaming => (status::frame(tick).to_string(), theme.spinner),
+    };
     let mut line = format!(
         "{}{} · ↑{} ↓{} · ctx {}%",
         theme::fg(theme.dim),
@@ -1809,7 +1907,13 @@ fn status_ansi(
             theme::fg(Color::Reset),
         ));
     }
-    format!("{spinner} {line}")
+    format!(
+        "{}{}{} {}",
+        theme::fg(spinner_color),
+        spinner,
+        theme::fg(Color::Reset),
+        line
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2056,62 +2160,131 @@ fn sessions_by_mtime(core: &Core) -> Vec<String> {
         .collect()
 }
 
-/// Compact read-only dump of the active session's message tree.
-async fn show_transcript(
-    screen: &mut Screen,
+/// Compact read-only viewer for the active session's message tree.
+async fn transcript_modal(
     slot: &Arc<Mutex<Option<SessionLog>>>,
     arg: Option<&str>,
-    theme: &Theme,
-) {
+) -> Option<ModalView> {
     let limit = arg.and_then(|a| a.parse::<usize>().ok()).unwrap_or(40);
     let guard = slot.lock().await;
-    let Some(s) = guard.as_ref() else {
-        screen.dim("no active session");
-        return;
-    };
+    let s = guard.as_ref()?;
     let msgs = s.derive_messages();
     let start = msgs.len().saturating_sub(limit);
-    screen.clear_input();
-    screen.dim(&format!(
-        "transcript · showing {} of {} messages",
-        msgs.len() - start,
-        msgs.len()
-    ));
-    for m in &msgs[start..] {
-        let label_role = match m.role {
-            vak_llm::Role::User => ("▸ user", theme.accent),
-            _ => ("◆ assistant", theme.success),
-        };
+    let (mut rows, anchors) = build_transcript_rows(&msgs, start);
+    let scroll = rows.len().saturating_sub(1);
+    rows.insert(
+        0,
+        format!(
+            "transcript · showing {} of {} messages · n/p prompt jumps · e export",
+            msgs.len() - start,
+            msgs.len()
+        ),
+    );
+    Some(ModalView {
+        title: "transcript".to_string(),
+        rows,
+        scroll,
+        footer: "n/p prompt jumps · e export · End latest · Esc close".to_string(),
+        anchors,
+    })
+}
+
+fn build_transcript_rows(
+    msgs: &[vak_llm::types::Message],
+    start: usize,
+) -> (Vec<String>, Vec<usize>) {
+    let mut rows = Vec::new();
+    let mut anchors = Vec::new();
+    for (idx, m) in msgs[start..].iter().enumerate() {
+        let absolute = start + idx;
+        match m.role {
+            vak_llm::Role::User => {
+                anchors.push(rows.len());
+                rows.push(format!("{absolute:>4} ▸ user"));
+            }
+            _ => rows.push(format!("{absolute:>4} ◆ assistant")),
+        }
         for block in &m.content {
             match block {
                 vak_llm::ContentBlock::Text { text } => {
-                    screen.styled(
-                        &format!("{} {}", label_role.0, trunc_cells(text.trim(), 160)),
-                        label_role.1,
-                    );
+                    for line in text.trim().lines().take(6) {
+                        rows.push(format!("     {}", trunc_cells(line.trim_end(), 160)));
+                    }
                 }
                 vak_llm::ContentBlock::Thinking { .. } => {}
                 vak_llm::ContentBlock::ToolUse { name, input, .. } => {
-                    screen.dim(&format!(
-                        "  · tool {name} {}",
-                        trunc_cells(&input.to_string(), 80)
+                    rows.push(format!(
+                        "     · tool {name} {}",
+                        trunc_cells(&input.to_string(), 90)
                     ));
                 }
                 vak_llm::ContentBlock::ToolResult {
                     content, is_error, ..
                 } => {
                     let mark = if *is_error { "✗" } else { "→" };
-                    screen.styled(
-                        &format!(
-                            "  {mark} {}",
-                            trunc_cells(content.replace('\n', " ").trim(), 120)
-                        ),
-                        if *is_error { theme.error } else { theme.dim },
-                    );
+                    rows.push(format!(
+                        "     {mark} {}",
+                        trunc_cells(content.replace('\n', " ").trim(), 130)
+                    ));
                 }
             }
         }
+        rows.push(String::new());
     }
+    (rows, anchors)
+}
+
+/// Writes the full session transcript as Markdown next to the workspace.
+/// Returns the path written.
+async fn export_transcript(
+    slot: &Arc<Mutex<Option<SessionLog>>>,
+    cwd: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let guard = slot.lock().await;
+    let Some(s) = guard.as_ref() else {
+        return Err("no active session".to_string());
+    };
+    let msgs = s.derive_messages();
+    let mut out = String::from("# vakcoder transcript\n\n");
+    for (idx, m) in msgs.iter().enumerate() {
+        let role = match m.role {
+            vak_llm::Role::User => "user",
+            _ => "assistant",
+        };
+        out.push_str(&format!("## {idx} · {role}\n\n"));
+        for block in &m.content {
+            match block {
+                vak_llm::ContentBlock::Text { text } => {
+                    out.push_str(text.trim());
+                    out.push_str("\n\n");
+                }
+                vak_llm::ContentBlock::Thinking { text, .. } => {
+                    out.push_str(&format!("> thinking: {}\n\n", text.trim()));
+                }
+                vak_llm::ContentBlock::ToolUse { name, input, .. } => {
+                    out.push_str(&format!("- tool `{name}` `{input}`\n"));
+                }
+                vak_llm::ContentBlock::ToolResult {
+                    content, is_error, ..
+                } => {
+                    let mark = if *is_error { "✗" } else { "→" };
+                    out.push_str(&format!(
+                        "- {mark} result: {}\n",
+                        content.replace('\n', " ")
+                    ));
+                }
+            }
+        }
+        out.push('\n');
+    }
+    let stem = s
+        .path()
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "session".to_string());
+    let path = cwd.join(format!("vakcoder-transcript-{stem}.md"));
+    std::fs::write(&path, out).map_err(|e| e.to_string())?;
+    Ok(path)
 }
 
 /// `!cmd` runs locally through the production BashTool; output is appended
@@ -2787,5 +2960,93 @@ mod config_edit_tests {
     fn theme_update_creates_ui_table_when_absent() {
         let updated = upsert_table_value("model = \"m\"\n", "ui", "theme", "neo");
         assert_eq!(updated, "model = \"m\"\n\n[ui]\ntheme = \"neo\"\n");
+    }
+}
+
+#[cfg(test)]
+mod transcript_state_tests {
+    use super::*;
+    use vak_llm::types::{ContentBlock, Message};
+
+    #[test]
+    fn run_states_label_the_row() {
+        assert_eq!(RunState::Thinking.label(), "thinking");
+        assert_eq!(RunState::Streaming.label(), "streaming");
+        assert_eq!(
+            RunState::Tool {
+                name: "bash".into()
+            }
+            .label(),
+            "tool · bash"
+        );
+        assert_eq!(
+            RunState::Retrying {
+                attempt: 2,
+                delay_ms: 1500,
+                reason: "rate-limited".into()
+            }
+            .label(),
+            "retry 2 in 1500ms — rate-limited"
+        );
+        assert_eq!(RunState::Compacting.label(), "compacting context");
+    }
+
+    #[test]
+    fn status_row_shows_typed_state_not_bare_spinner() {
+        let theme = Theme::from_name("dark");
+        let retrying = RunState::Retrying {
+            attempt: 1,
+            delay_ms: 500,
+            reason: "overloaded".into(),
+        };
+        for (state, needle) in [
+            (&retrying, "retry 1"),
+            (&RunState::Compacting, "compacting context"),
+            (
+                &RunState::Tool {
+                    name: "edit".into(),
+                },
+                "tool · edit",
+            ),
+            (&RunState::Thinking, "thinking"),
+        ] {
+            let row = status_ansi(&theme, state, 10, 20, 5, 0, 128_000, 0);
+            assert!(
+                crate::markdown::strip_ansi(&row).contains(needle),
+                "'{needle}' missing from: {}",
+                crate::markdown::strip_ansi(&row)
+            );
+        }
+    }
+
+    #[test]
+    fn transcript_rows_mark_user_prompts_as_jump_anchors() {
+        let msgs = vec![
+            Message::user_text("first prompt"),
+            Message::assistant(vec![ContentBlock::text("reply one")]),
+            Message::user_text("second prompt"),
+            Message::assistant(vec![ContentBlock::tool_result("t1", "ok")]),
+        ];
+        let (rows, anchors) = build_transcript_rows(&msgs, 0);
+        assert_eq!(anchors.len(), 2, "one anchor per user message");
+        let plain = rows.join("\n");
+        assert!(plain.contains("0 ▸ user"));
+        assert!(plain.contains("2 ▸ user"));
+        assert!(plain.contains("1 ◆ assistant"));
+        assert!(plain.contains("→ ok"));
+        // Anchor indices point at the user rows within `rows`.
+        assert!(rows[anchors[0]].contains("▸ user"));
+        assert!(rows[anchors[1]].contains("▸ user"));
+    }
+
+    #[test]
+    fn transcript_window_offset_keeps_absolute_indices() {
+        let msgs: Vec<Message> = (0..6)
+            .map(|i| Message::user_text(format!("prompt {i}")))
+            .collect();
+        let (rows, _) = build_transcript_rows(&msgs, 4);
+        let plain = rows.join("\n");
+        assert!(plain.contains("4 ▸ user"), "{plain}");
+        assert!(!plain.contains("3 ▸ user"), "{plain}");
     }
 }

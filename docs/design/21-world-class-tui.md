@@ -206,13 +206,16 @@ transport.
 
 ### P1 — navigation and observability
 
-- Transcript viewer with prompt jumps, search, copy/export, and jump-to-latest.
-- Model, session, theme, permission, and subagent pickers.
-- Background terminal and subagent tree with attach/steer/stop.
-- Tool cards with duration, status, affected resources, bounded preview, and
-  per-tool expand/copy.
-- Visible context/cost/rate-limit meters and typed retry/compaction states.
-- OSC9/bell notifications for approval and completion.
+- ◐ Transcript viewer with prompt jumps (`n`/`p`), Markdown export (`e`),
+  and jump-to-latest (`End`); in-viewer search is open.
+- ✅ Model, session, theme, and provider pickers. Permission picker is the
+  approval flow itself; subagent picker is open.
+- ◐ Background terminal and subagent tree with attach/steer/stop — subagent
+  lifecycle + tool streams render live; attach/steer into a subagent is open.
+- ✅ Tool cards with duration/status marks, error previews, per-tool expand.
+- ✅ Visible context/cost meters and typed run states: thinking / streaming /
+  tool · name / retry N in Xms — reason / compacting, plus stale detection.
+- ✅ OSC9 desktop notification + bell on approval arrival; bell on completion.
 
 ### P2 — personalization and extension
 

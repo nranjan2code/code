@@ -398,6 +398,16 @@ impl Screen {
         self.put("\x07");
     }
 
+    /// OSC9 desktop notification (iTerm2/WezTerm/Kitty-style); harmless in
+    /// terminals that ignore unknown OSC sequences.
+    pub fn notify(&mut self, msg: &str) {
+        let sanitized: String = msg
+            .chars()
+            .map(|c| if c == '\x07' || c == '\x1b' { ' ' } else { c })
+            .collect();
+        self.put(&format!("\x1b]9;{sanitized}\x07"));
+    }
+
     pub fn set_title(&mut self, title: &str) {
         self.put(&format!("\x1b]2;{title}\x07"));
     }
