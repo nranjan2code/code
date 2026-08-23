@@ -333,6 +333,8 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
     let mut approval_focused = false;
     let mut key_capture = false;
     let keymap = Keymap::default().with_overrides(&core.config().ui.keymap);
+    let mut transcript_search: Option<String> = None;
+    let mut transcript_match_idx: usize = 0;
 
     let (buf, cur) = editor.view();
     screen.redraw_composer(&composer_label(&ui), buf, cur, &composer_footer(&editor));
@@ -460,6 +462,61 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                     .unwrap_or(16)
                                     .max(1);
                                 let max_scroll = active.rows.len().saturating_sub(page);
+                                if transcript_search.is_some() {
+                                    let mut cancel = false;
+                                    if let Some(query) = transcript_search.as_mut() {
+                                        match key.code {
+                                            KeyCode::Esc => cancel = true,
+                                            KeyCode::Enter => {
+                                                let matches =
+                                                    find_matches(&active.rows, query);
+                                                if !matches.is_empty() {
+                                                    transcript_match_idx =
+                                                        (transcript_match_idx + 1)
+                                                            % matches.len();
+                                                    active.scroll =
+                                                        matches[transcript_match_idx]
+                                                            .min(max_scroll);
+                                                }
+                                            }
+                                            KeyCode::Backspace => {
+                                                query.pop();
+                                                let matches =
+                                                    find_matches(&active.rows, query);
+                                                transcript_match_idx = 0;
+                                                if let Some(&first) = matches.first() {
+                                                    active.scroll = first.min(max_scroll);
+                                                }
+                                            }
+                                            KeyCode::Char(c)
+                                                if key.modifiers.is_empty()
+                                                    || key.modifiers
+                                                        == crossterm::event::KeyModifiers::SHIFT =>
+                                            {
+                                                query.push(c);
+                                                let matches =
+                                                    find_matches(&active.rows, query);
+                                                transcript_match_idx = 0;
+                                                if let Some(&first) = matches.first() {
+                                                    active.scroll = first.min(max_scroll);
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    if cancel {
+                                        transcript_search = None;
+                                    }
+                                    if let Some(query) = transcript_search.as_ref() {
+                                        let count = find_matches(&active.rows, query).len();
+                                        active.footer = format!(
+                                            "search '{query}' · {count} matches · Enter next · Esc cancel"
+                                        );
+                                    } else {
+                                        active.footer =
+                                            "n/p prompt jumps · / search · e export · End latest · Esc close".to_string();
+                                    }
+                                } else {
                                 match key.code {
                                     KeyCode::Esc | KeyCode::Char('q') => close = true,
                                     KeyCode::Char('p' | 'P') if active.title == "settings" => {
@@ -496,6 +553,14 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                     KeyCode::Char('e' | 'E') if active.title == "transcript" => {
                                         modal_action = Some('e');
                                     }
+                                    KeyCode::Char('/')
+                                        if active.title == "transcript" =>
+                                    {
+                                        transcript_search = Some(String::new());
+                                        transcript_match_idx = 0;
+                                        active.footer =
+                                            "search: type query · Enter next · Esc cancel".to_string();
+                                    }
                                     KeyCode::Up => active.scroll = active.scroll.saturating_sub(1),
                                     KeyCode::Down => {
                                         active.scroll = (active.scroll + 1).min(max_scroll);
@@ -510,9 +575,11 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                     KeyCode::End => active.scroll = max_scroll,
                                     _ => {}
                                 }
+                                }
                             }
                             if close {
                                 modal = None;
+                                transcript_search = None;
                             }
                             match modal_action {
                                 Some('p') => {
@@ -2184,9 +2251,22 @@ async fn transcript_modal(
         title: "transcript".to_string(),
         rows,
         scroll,
-        footer: "n/p prompt jumps · e export · End latest · Esc close".to_string(),
+        footer: "n/p prompt jumps · / search · e export · End latest · Esc close".to_string(),
         anchors,
     })
+}
+
+fn find_matches(rows: &[String], query: &str) -> Vec<usize> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let needle = trimmed.to_lowercase();
+    rows.iter()
+        .enumerate()
+        .filter(|(_, row)| row.to_lowercase().contains(&needle))
+        .map(|(i, _)| i)
+        .collect()
 }
 
 fn build_transcript_rows(
@@ -3048,5 +3128,35 @@ mod transcript_state_tests {
         let plain = rows.join("\n");
         assert!(plain.contains("4 ▸ user"), "{plain}");
         assert!(!plain.contains("3 ▸ user"), "{plain}");
+    }
+}
+
+#[cfg(test)]
+mod transcript_search_tests {
+    use super::find_matches;
+
+    #[test]
+    fn search_is_case_insensitive_and_ordered() {
+        let rows: Vec<String> = vec![
+            "0 ▸ user".into(),
+            "     fix the parser".into(),
+            "1 ◆ assistant".into(),
+            "     Fix The Parser again".into(),
+        ];
+        assert_eq!(find_matches(&rows, "parser"), vec![1, 3]);
+        assert_eq!(find_matches(&rows, "PARSER"), vec![1, 3]);
+    }
+
+    #[test]
+    fn empty_or_blank_queries_match_nothing() {
+        let rows = vec!["anything".to_string()];
+        assert!(find_matches(&rows, "").is_empty());
+        assert!(find_matches(&rows, "   ").is_empty());
+    }
+
+    #[test]
+    fn no_hits_return_empty_vec() {
+        let rows = vec!["alpha".to_string(), "beta".to_string()];
+        assert!(find_matches(&rows, "gamma").is_empty());
     }
 }

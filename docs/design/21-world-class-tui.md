@@ -206,8 +206,9 @@ transport.
 
 ### P1 — navigation and observability
 
-- ◐ Transcript viewer with prompt jumps (`n`/`p`), Markdown export (`e`),
-  and jump-to-latest (`End`); in-viewer search is open.
+- ✅ Transcript viewer: scrollable modal with absolute message indices,
+  `n`/`p` prompt jumps via user-message anchors, incremental `/` search with
+  match cycling, Markdown export (`e`), jump-to-latest (`End`).
 - ✅ Model, session, theme, and provider pickers. Permission picker is the
   approval flow itself; subagent picker is open.
 - ◐ Background terminal and subagent tree with attach/steer/stop — subagent
