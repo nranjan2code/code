@@ -8,6 +8,7 @@ use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{Mutex, oneshot};
+use vak_tools::sandbox::Sandbox;
 
 #[derive(Debug, thiserror::Error)]
 pub enum McpError {
@@ -41,9 +42,27 @@ pub struct McpClient {
 }
 
 impl McpClient {
-    pub async fn connect(server_name: &str, config: &ServerConfig) -> Result<Self, McpError> {
-        let mut cmd = Command::new(&config.command);
-        cmd.args(&config.args)
+    pub async fn connect(
+        server_name: &str,
+        config: &ServerConfig,
+        cwd: &std::path::Path,
+        sandbox: Option<&Arc<dyn Sandbox>>,
+    ) -> Result<Self, McpError> {
+        let mut cmd = if let Some(sandbox) = sandbox {
+            let command = std::iter::once(config.command.as_str())
+                .chain(config.args.iter().map(String::as_str))
+                .map(shell_quote)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut cmd = Command::new("sh");
+            cmd.arg("-c").arg(sandbox.wrap(&command));
+            cmd
+        } else {
+            let mut cmd = Command::new(&config.command);
+            cmd.args(&config.args);
+            cmd
+        };
+        cmd.current_dir(cwd)
             .env_clear()
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -54,6 +73,7 @@ impl McpClient {
         if let Some(path) = std::env::var_os("PATH") {
             cmd.env("PATH", path);
         }
+        vak_tools::bash::isolate_process_group(&mut cmd);
 
         let mut child = cmd.spawn().map_err(|e| McpError::Spawn(e.to_string()))?;
         let stdin = child
@@ -142,7 +162,8 @@ impl McpClient {
     pub async fn shutdown(&self) {
         self.cancel_pending().await;
         let mut child = self.child.lock().await;
-        let _ = child.kill().await;
+        vak_tools::bash::kill_process_group(&child.id());
+        let _ = child.wait().await;
     }
 
     async fn cancel_pending(&self) {
@@ -251,6 +272,20 @@ impl McpClient {
             Ok(text)
         }
     }
+}
+
+fn shell_quote(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('\'');
+    for character in value.chars() {
+        if character == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(character);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 #[derive(Debug, Clone)]

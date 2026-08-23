@@ -155,6 +155,11 @@ pub async fn run_case(case: &EvalCase) -> EvalReport {
     run_case_with_provider(case, provider, "eval-model").await
 }
 
+pub async fn run_case_brokered(case: &EvalCase, worker_exe: std::path::PathBuf) -> EvalReport {
+    let provider = Arc::new(EvalProvider::new(case.script.clone()));
+    run_case_with_provider_brokered(case, provider, "eval-model", worker_exe).await
+}
+
 /// Runs one case against ANY provider — the live-model path. The `script`
 /// field is ignored; the model must genuinely solve the task.
 pub async fn run_case_with_provider(
@@ -162,6 +167,31 @@ pub async fn run_case_with_provider(
     provider: Arc<dyn Provider>,
     model: &str,
 ) -> EvalReport {
+    run_case_with_tools(case, provider, model, vak_tools::default_tools()).await
+}
+
+pub async fn run_case_with_provider_brokered(
+    case: &EvalCase,
+    provider: Arc<dyn Provider>,
+    model: &str,
+    worker_exe: std::path::PathBuf,
+) -> EvalReport {
+    run_case_with_tools(
+        case,
+        provider,
+        model,
+        vak_tools::brokered_default_tools(worker_exe),
+    )
+    .await
+}
+
+async fn run_case_with_tools(
+    case: &EvalCase,
+    provider: Arc<dyn Provider>,
+    model: &str,
+    tools: Vec<Arc<dyn Tool>>,
+) -> EvalReport {
+    let deterministic = provider.name() == "eval-scripted";
     let start = Instant::now();
     let dir = match tempfile::tempdir() {
         Ok(d) => d,
@@ -198,10 +228,7 @@ pub async fn run_case_with_provider(
             provider: "eval-scripted".into(),
             model: model.to_string(),
             system_prompt: "eval".into(),
-            tools: vak_tools::default_tools()
-                .iter()
-                .map(|t| t.name().to_string())
-                .collect(),
+            tools: tools.iter().map(|t| t.name().to_string()).collect(),
             permission_mode: "full-access".into(),
             skills: Vec::new(),
         },
@@ -224,8 +251,12 @@ pub async fn run_case_with_provider(
 
     let mut cfg = AgentConfig::new("eval");
     cfg.model = model.to_string();
-    cfg.tools = vak_tools::default_tools();
+    cfg.tools = tools;
     cfg.max_turns = 12;
+    if deterministic {
+        cfg.max_retries = 0;
+        cfg.run_retry_attempts = 0;
+    }
     cfg.permission = Some(Arc::new(PermissionEngine::default()));
     cfg.mode = Mode::FullAccess;
     cfg.approver = Some(Arc::new(vak_agent::AutoApprove));

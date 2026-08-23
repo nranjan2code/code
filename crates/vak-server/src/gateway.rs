@@ -303,25 +303,26 @@ async fn gateway_inbound(
     // Approval replies from the designated approver surface resolve the
     // oldest forwarded gate instead of becoming conversation input. Any
     // non-verdict text from that chat falls through to normal routing.
-    if state.gateway.forward_mode() && Some(key.as_str()) == state.gateway.approver_target() {
-        if let Some(verdict) = parse_verdict(&text) {
-            return match state.gateway.resolve_oldest_gate(verdict) {
-                Ok(remaining) => (
-                    StatusCode::OK,
-                    Json(serde_json::json!({
-                        "state": "approval_resolved",
-                        "approved": verdict,
-                        "remaining": remaining,
-                    })),
-                )
-                    .into_response(),
-                Err(()) => (
-                    StatusCode::OK,
-                    Json(serde_json::json!({ "state": "no_pending_approvals" })),
-                )
-                    .into_response(),
-            };
-        }
+    if state.gateway.forward_mode()
+        && Some(key.as_str()) == state.gateway.approver_target()
+        && let Some(verdict) = parse_verdict(&text)
+    {
+        return match state.gateway.resolve_oldest_gate(verdict) {
+            Ok(remaining) => (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "state": "approval_resolved",
+                    "approved": verdict,
+                    "remaining": remaining,
+                })),
+            )
+                .into_response(),
+            Err(()) => (
+                StatusCode::OK,
+                Json(serde_json::json!({ "state": "no_pending_approvals" })),
+            )
+                .into_response(),
+        };
     }
 
     let handle = match resolve_session(&state, &key).await {

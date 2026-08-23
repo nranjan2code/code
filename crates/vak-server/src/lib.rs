@@ -771,11 +771,25 @@ async fn cancel_run(State(state): State<AppState>, Path(id): Path<String>) -> St
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .cancel();
+    deny_pending_approvals(&handle);
     let _ = handle.events_tx.send(AgentEvent::RunFinished {
         summary: "cancelled by client".into(),
         is_error: false,
     });
     StatusCode::ACCEPTED
+}
+
+fn deny_pending_approvals(handle: &SessionHandle) {
+    let requests: Vec<ApprovalRequest> = handle
+        .pending
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .drain()
+        .map(|(_, request)| request)
+        .collect();
+    for request in requests {
+        request.respond(false);
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -1269,10 +1283,37 @@ async fn set_permission_mode(
 ) -> StatusCode {
     match parse_mode(&body.mode) {
         Some(mode) => {
-            state.core.set_permission_mode(mode);
+            apply_permission_mode(&state, mode);
             StatusCode::OK
         }
         None => StatusCode::BAD_REQUEST,
+    }
+}
+
+fn apply_permission_mode(state: &AppState, mode: vak_config::PermissionMode) {
+    if state.core.effective_permission_mode() == mode {
+        return;
+    }
+    state.core.set_permission_mode(mode);
+    let handles: Vec<Arc<SessionHandle>> = state
+        .sessions
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .values()
+        .cloned()
+        .collect();
+    for handle in handles {
+        handle
+            .cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cancel();
+        handle
+            .side_cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cancel();
+        deny_pending_approvals(&handle);
     }
 }
 
@@ -1452,7 +1493,7 @@ async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatc
         let Some(mode) = parse_mode(&mode) else {
             return StatusCode::BAD_REQUEST;
         };
-        state.core.set_permission_mode(mode);
+        apply_permission_mode(&state, mode);
     }
     if let Some(theme) = body.theme {
         if !matches!(theme.as_str(), "dark" | "light" | "plain") {

@@ -4,6 +4,7 @@
 //! ToolOutput::error values fed back to the model for self-correction.
 
 pub mod bash;
+pub mod broker;
 pub mod context;
 pub mod edit;
 pub mod glob;
@@ -124,6 +125,26 @@ pub fn read_only_tools() -> Vec<std::sync::Arc<dyn Tool>> {
         std::sync::Arc::new(glob::GlobTool),
         std::sync::Arc::new(grep::GrepTool),
     ]
+}
+
+pub fn brokered_default_tools(worker_exe: std::path::PathBuf) -> Vec<std::sync::Arc<dyn Tool>> {
+    default_tools()
+        .into_iter()
+        .map(|tool| {
+            std::sync::Arc::new(broker::BrokeredTool::new(tool, worker_exe.clone()))
+                as std::sync::Arc<dyn Tool>
+        })
+        .collect()
+}
+
+pub fn brokered_read_only_tools(worker_exe: std::path::PathBuf) -> Vec<std::sync::Arc<dyn Tool>> {
+    read_only_tools()
+        .into_iter()
+        .map(|tool| {
+            std::sync::Arc::new(broker::BrokeredTool::new(tool, worker_exe.clone()))
+                as std::sync::Arc<dyn Tool>
+        })
+        .collect()
 }
 
 pub fn definitions(tools: &[std::sync::Arc<dyn Tool>]) -> Vec<vak_llm::ToolDefinition> {

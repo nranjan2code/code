@@ -60,16 +60,10 @@ impl Tool for BashTool {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        scrub_environment(&mut cmd);
 
-        #[cfg(unix)]
-        #[allow(unsafe_code)]
-        {
-            unsafe {
-                cmd.pre_exec(|| {
-                    libc::setpgid(0, 0);
-                    Ok(())
-                });
-            }
+        if std::env::var_os(crate::broker::WORKER_ENV).is_none() {
+            isolate_process_group(&mut cmd);
         }
 
         let mut child = match cmd.spawn() {
@@ -96,12 +90,12 @@ impl Tool for BashTool {
         let cancelled = ctx.cancel.cancelled();
         tokio::select! {
             _ = timeout => {
-                kill_tree(&child.id());
+                kill_process_group(&child.id());
                 let _ = child.wait().await;
                 return ToolOutput::error(format!("command timed out after {timeout_ms}ms"));
             }
             _ = cancelled => {
-                kill_tree(&child.id());
+                kill_process_group(&child.id());
                 let _ = child.wait().await;
                 return ToolOutput::error("command cancelled");
             }
@@ -140,6 +134,46 @@ impl Tool for BashTool {
     }
 }
 
+pub(crate) fn scrub_environment(cmd: &mut tokio::process::Command) {
+    let allowed = [
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "LANG",
+        "LC_ALL",
+        "TERM",
+        "SHELL",
+        "TMPDIR",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+    ];
+    let inherited: Vec<(String, std::ffi::OsString)> = std::env::vars_os()
+        .filter_map(|(key, value)| {
+            let key = key.into_string().ok()?;
+            if allowed.contains(&key.as_str()) || key.starts_with("LC_") || key.starts_with("XDG_")
+            {
+                Some((key, value))
+            } else {
+                None
+            }
+        })
+        .collect();
+    cmd.env_clear();
+    cmd.envs(inherited);
+}
+
+pub fn isolate_process_group(cmd: &mut tokio::process::Command) {
+    #[cfg(unix)]
+    #[allow(unsafe_code)]
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setpgid(0, 0);
+            Ok(())
+        });
+    }
+}
+
 fn shell_command(command: &str) -> tokio::process::Command {
     #[cfg(unix)]
     {
@@ -155,7 +189,7 @@ fn shell_command(command: &str) -> tokio::process::Command {
     }
 }
 
-fn kill_tree(pid: &Option<u32>) {
+pub fn kill_process_group(pid: &Option<u32>) {
     #[cfg(unix)]
     if let Some(pid) = pid {
         #[allow(unsafe_code)]
@@ -187,4 +221,21 @@ async fn read_capped<R: AsyncReadExt + Unpin>(r: &mut R) -> String {
         }
     }
     String::from_utf8_lossy(&buf).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scrub_environment;
+
+    #[test]
+    fn restricted_environment_drops_unlisted_secrets() {
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.env("VAK_TEST_SECRET", "must-not-survive");
+        scrub_environment(&mut cmd);
+        assert!(
+            cmd.as_std()
+                .get_envs()
+                .all(|(key, _)| key != "VAK_TEST_SECRET")
+        );
+    }
 }

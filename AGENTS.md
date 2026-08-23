@@ -95,6 +95,11 @@ must also follow the threat model and priority order in
     credential always means no, and a late reply resolves nothing. Never turn
     a denial into permission, forward gates through ambient state, or let
     verdict-shaped chatter from non-approver chats resolve anything.
+16. **Every execution path authorizes before dispatch.** Agent turns, task
+    children, static flows, dynamic plans, evals, server runs, and desktop runs
+    must use the same permission decision and brokered registry. A direct flow
+    node or convenience SDK path may not call an effectful tool before
+    evaluating `PermissionEngine` and resolving `Ask` through its approver.
 
 ## Code rules
 

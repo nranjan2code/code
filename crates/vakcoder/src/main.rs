@@ -23,18 +23,6 @@ enum Command {
         #[arg(long)]
         trust: bool,
     },
-    /// Hidden: internal Landlock sandbox runner (Linux)
-    #[command(name = "__sandbox", hide = true)]
-    SandboxRun {
-        /// Read-only mode (deny all writes everywhere)
-        #[arg(long)]
-        ro: bool,
-        /// Paths writable by the command
-        #[arg(long = "rw")]
-        rw: Vec<std::path::PathBuf>,
-        #[arg(last = true)]
-        command: Vec<String>,
-    },
     /// Run one prompt headless and print the result
     Exec {
         prompt: String,
@@ -228,39 +216,6 @@ async fn run_checkpoints(cwd: PathBuf, action: CheckpointAction) -> i32 {
     }
 }
 
-/// Landlock runner: restrict THIS process, then run the command as a child
-/// that inherits the restrictions. Linux only; the TUI/exec wrap() calls it
-/// via self-execution.
-#[cfg(target_os = "linux")]
-fn run_sandbox(ro: bool, rw: &[std::path::PathBuf], command: &[String]) -> i32 {
-    if command.is_empty() {
-        eprintln!("sandbox: no command given");
-        return 125;
-    }
-    if let Err(e) = vak_tools::landlock::apply(rw, ro) {
-        eprintln!("sandbox: {e}");
-        return 126;
-    }
-    match std::process::Command::new("/bin/sh")
-        .arg("-c")
-        .arg(command.join(" "))
-        .status()
-    {
-        Ok(s) => s.code().unwrap_or(1),
-        Err(e) => {
-            eprintln!("sandbox: exec failed: {e}");
-            127
-        }
-    }
-}
-
-/// The sandbox runner is unreachable off-Linux (wrap() is cfg-gated too).
-#[cfg(not(target_os = "linux"))]
-fn run_sandbox(_ro: bool, _rw: &[std::path::PathBuf], _command: &[String]) -> i32 {
-    eprintln!("sandbox: not supported on this platform");
-    126
-}
-
 fn latest_session_id(core: &Core) -> Option<String> {
     let dir = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
     let mut rows: Vec<_> = std::fs::read_dir(&dir)
@@ -280,6 +235,22 @@ fn latest_session_id(core: &Core) -> Option<String> {
 }
 #[tokio::main]
 async fn main() {
+    let internal = std::env::args_os().nth(1);
+    #[cfg(target_os = "linux")]
+    {
+        if internal.as_deref()
+            == Some(std::ffi::OsStr::new(
+                vak_tools::landlock::SANDBOX_SUBCOMMAND,
+            ))
+        {
+            std::process::exit(vak_tools::landlock::runner_main(
+                std::env::args_os().skip(2),
+            ));
+        }
+    }
+    if internal.as_deref() == Some(std::ffi::OsStr::new(vak_tools::broker::WORKER_SUBCOMMAND)) {
+        std::process::exit(vak_tools::broker::worker_main().await);
+    }
     let cli = Cli::parse();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
@@ -299,7 +270,6 @@ async fn main() {
             }
             run_tui(cwd, trusted).await
         }
-        Some(Command::SandboxRun { ro, rw, command }) => run_sandbox(ro, &rw, &command),
         Some(Command::Tui { trust }) => {
             let trusted = resolve_trust(&cwd, trust, true);
             if trusted {
@@ -647,8 +617,8 @@ async fn run_flow_exec(
         provider,
         system_prompt: core.system_prompt(),
         model: core.effective_model(),
-        tools: vak_tools::default_tools(),
-        read_only_tools: vak_tools::read_only_tools(),
+        tools: core.agent_tools(),
+        read_only_tools: core.agent_read_only_tools(),
         max_turns: core.effective_max_turns(),
         permission: Some(std::sync::Arc::new(engine)),
         mode: match core.effective_permission_mode() {
@@ -657,7 +627,7 @@ async fn run_flow_exec(
             vak_config::PermissionMode::FullAccess => vak_permission::Mode::FullAccess,
         },
         approver,
-        sandbox: None,
+        sandbox: core.agent_sandbox(),
         cwd: core.cwd().clone(),
         sessions_home: core.sessions_home().clone(),
         parent_session_id,
@@ -1094,8 +1064,8 @@ async fn run_plan(cwd: PathBuf, task: String, yes: bool, worktree: bool, trusted
         provider,
         system_prompt: core.system_prompt(),
         model: core.effective_model(),
-        tools: vak_tools::default_tools(),
-        read_only_tools: vak_tools::read_only_tools(),
+        tools: core.agent_tools(),
+        read_only_tools: core.agent_read_only_tools(),
         max_turns: core.effective_max_turns(),
         permission: Some(std::sync::Arc::new(engine)),
         mode: match core.effective_permission_mode() {
@@ -1104,7 +1074,7 @@ async fn run_plan(cwd: PathBuf, task: String, yes: bool, worktree: bool, trusted
             vak_config::PermissionMode::FullAccess => vak_permission::Mode::FullAccess,
         },
         approver,
-        sandbox: None,
+        sandbox: core.agent_sandbox(),
         cwd: core.cwd().clone(),
         sessions_home: core.sessions_home().clone(),
         parent_session_id,
@@ -1172,10 +1142,17 @@ async fn run_eval(
     model_flag: Option<String>,
 ) -> i32 {
     let mut reports = Vec::new();
+    let worker_exe = match std::env::current_exe() {
+        Ok(executable) => executable,
+        Err(error) => {
+            eprintln!("error: tool broker unavailable: {error}");
+            return 2;
+        }
+    };
 
     if !live {
         for case in builtin_cases() {
-            let r = vak_eval::run_case(&case).await;
+            let r = vak_eval::run_case_brokered(&case, worker_exe.clone()).await;
             println!(
                 "{:<24} {:>6}  in {:>5} / out {:>4}  {:>5}ms  {}",
                 r.task_id,
@@ -1211,7 +1188,13 @@ async fn run_eval(
         let model = core.effective_model().clone();
         eprintln!("live eval against {} / {model}", core.effective_provider());
         for case in &vak_eval::live_suite() {
-            let r = vak_eval::run_case_with_provider(case, provider.clone(), &model).await;
+            let r = vak_eval::run_case_with_provider_brokered(
+                case,
+                provider.clone(),
+                &model,
+                worker_exe.clone(),
+            )
+            .await;
             println!(
                 "{:<24} {:>6}  in {:>5} / out {:>4}  {:>5}ms  {}",
                 r.task_id,

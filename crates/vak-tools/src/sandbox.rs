@@ -8,9 +8,19 @@ pub enum SandboxMode {
     WorkspaceWrite,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SandboxTarget {
+    WorkerProcess,
+    ToolCommand,
+}
+
 pub trait Sandbox: Send + Sync {
     fn name(&self) -> &str;
     fn wrap(&self, command: &str) -> String;
+
+    fn target(&self) -> SandboxTarget {
+        SandboxTarget::WorkerProcess
+    }
 }
 
 pub fn no_sandbox() -> Option<Arc<dyn Sandbox>> {
@@ -18,21 +28,92 @@ pub fn no_sandbox() -> Option<Arc<dyn Sandbox>> {
 }
 
 #[derive(Debug, Clone)]
+pub struct DenySandbox {
+    reason: String,
+}
+
+impl DenySandbox {
+    pub fn new(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+        }
+    }
+}
+
+impl Sandbox for DenySandbox {
+    fn name(&self) -> &str {
+        "unavailable-deny"
+    }
+
+    fn wrap(&self, _command: &str) -> String {
+        format!(
+            "echo {} >&2; exit 126",
+            shell_quote(&format!("vakcoder sandbox unavailable: {}", self.reason))
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Seatbelt {
     pub mode: SandboxMode,
+    pub read_paths: Vec<PathBuf>,
     pub write_paths: Vec<PathBuf>,
 }
 
 impl Seatbelt {
     pub fn new(mode: SandboxMode, cwd: &Path) -> Self {
-        let write_paths = match mode {
-            SandboxMode::WorkspaceWrite => {
-                let canonical = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
-                vec![canonical]
+        let canonical = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+        let mut read_paths: Vec<PathBuf> = [
+            "/System",
+            "/usr",
+            "/bin",
+            "/sbin",
+            "/Library",
+            "/Applications",
+            "/opt",
+            "/private/etc",
+            "/private/var/db",
+            "/dev",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+        .collect();
+        read_paths.push(canonical.clone());
+        if let Ok(executable) = std::env::current_exe()
+            && let Some(parent) = executable.parent()
+        {
+            read_paths.push(parent.to_path_buf());
+        }
+        if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+            for relative in [
+                ".cargo/bin",
+                ".cargo/git",
+                ".cargo/registry",
+                ".rustup",
+                ".local/bin",
+            ] {
+                let path = home.join(relative);
+                if path.exists() {
+                    read_paths.push(path);
+                }
             }
+        }
+        for path in Self::temp_write_paths() {
+            let path = PathBuf::from(path);
+            if path.exists() && !read_paths.contains(&path) {
+                read_paths.push(path);
+            }
+        }
+        let write_paths = match mode {
+            SandboxMode::WorkspaceWrite => vec![canonical],
             _ => Vec::new(),
         };
-        Seatbelt { mode, write_paths }
+        Seatbelt {
+            mode,
+            read_paths,
+            write_paths,
+        }
     }
 
     /// Extra write allowances that keep real-world tooling working under
@@ -62,7 +143,7 @@ impl Seatbelt {
             SandboxMode::Off => return "(version 1)(allow default)".to_string(),
             SandboxMode::ReadOnly => {
                 p.push_str("(deny default)\n");
-                p.push_str("(allow file-read*)\n");
+                self.append_read_allowances(&mut p);
                 p.push_str("(allow process-exec)\n");
                 p.push_str("(allow process-fork)\n");
                 p.push_str("(allow sysctl-read)\n");
@@ -71,7 +152,7 @@ impl Seatbelt {
             }
             SandboxMode::WorkspaceWrite => {
                 p.push_str("(deny default)\n");
-                p.push_str("(allow file-read*)\n");
+                self.append_read_allowances(&mut p);
                 p.push_str("(allow process-exec)\n");
                 p.push_str("(allow process-fork)\n");
                 p.push_str("(allow sysctl-read)\n");
@@ -98,6 +179,17 @@ impl Seatbelt {
             }
         }
         p
+    }
+
+    fn append_read_allowances(&self, profile: &mut String) {
+        profile.push_str("(allow file-read-metadata)\n");
+        profile.push_str("(allow file-read* (literal \"/\"))\n");
+        for path in &self.read_paths {
+            profile.push_str(&format!(
+                "(allow file-read* (subpath {}))\n",
+                sbpl_quote(&path.display().to_string())
+            ));
+        }
     }
 }
 

@@ -7,19 +7,28 @@ use tokio::sync::Mutex;
 use crate::client::{McpClient, McpError, ServerConfig};
 
 /// Lazily spawns and caches one client per configured server.
-#[derive(Default)]
 pub struct McpManager {
     servers: HashMap<String, ServerConfig>,
     clients: Mutex<HashMap<String, Arc<McpClient>>>,
     cwd: PathBuf,
+    sandbox: Option<Arc<dyn vak_tools::sandbox::Sandbox>>,
 }
 
 impl McpManager {
     pub fn new(servers: HashMap<String, ServerConfig>, cwd: PathBuf) -> Self {
+        Self::new_sandboxed(servers, cwd, None)
+    }
+
+    pub fn new_sandboxed(
+        servers: HashMap<String, ServerConfig>,
+        cwd: PathBuf,
+        sandbox: Option<Arc<dyn vak_tools::sandbox::Sandbox>>,
+    ) -> Self {
         McpManager {
             servers,
             clients: Mutex::new(HashMap::new()),
             cwd,
+            sandbox,
         }
     }
 
@@ -38,7 +47,8 @@ impl McpManager {
             .get(server)
             .ok_or_else(|| McpError::Protocol(format!("unknown mcp server '{server}'")))?;
         let config = Self::resolve(config, &self.cwd);
-        let client = Arc::new(McpClient::connect(server, &config).await?);
+        let client =
+            Arc::new(McpClient::connect(server, &config, &self.cwd, self.sandbox.as_ref()).await?);
         self.clients
             .lock()
             .await

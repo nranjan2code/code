@@ -19,7 +19,7 @@ consumers.
 | GET | `/sessions` | persisted session summaries (sidebar projection) |
 | POST | `/sessions/:id/attach` `{session_id}` | resume a persisted session into memory |
 | GET | `/sessions/:id/diff` | git status + diff of the session workspace |
-| POST | `/config/mode` `{mode}` | switch permission mode at runtime |
+| POST | `/config/mode` `{mode}` | switch mode; a changed value cancels all active main/side runs and denies pending approvals before returning 200 |
 | PUT | `/config/key` `{provider,key}` | store a provider credential in `~/.vakcoder/.env` (0600) |
 | DELETE | `/config/key` `{provider}` | revoke it; `shadowed_by_env` reports a key still exported in the real environment |
 | GET | `/providers` | provider list + which are configured (never key values) |

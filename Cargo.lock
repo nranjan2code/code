@@ -4967,6 +4967,7 @@ dependencies = [
 name = "vak-core"
 version = "0.2.0"
 dependencies = [
+ "async-trait",
  "base64 0.22.1",
  "chrono",
  "globset",
@@ -5008,6 +5009,7 @@ dependencies = [
  "vak-config",
  "vak-core",
  "vak-server",
+ "vak-tools",
 ]
 
 [[package]]
@@ -5192,6 +5194,7 @@ dependencies = [
  "clap",
  "futures",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-util",
  "vak-agent",

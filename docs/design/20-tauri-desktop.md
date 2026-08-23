@@ -316,9 +316,12 @@ from either settings icon or `Cmd+,`. General and appearance preferences are
 stored locally and applied live, including theme, text and code scale, task-list
 density, transcript detail, prompt suggestions, notifications, and reduced
 motion. Agent defaults and permission mode update the live Core through the
-authenticated `GET|PATCH /config` endpoint; the endpoint deliberately returns
-only a safe, secret-free configuration projection. Reliability, integration,
-context, and path pages expose the effective runtime configuration without
+authenticated `GET|PATCH /config` endpoint. Changing the mode revokes active
+main and side runs plus pending approvals so no task retains a stale security
+snapshot; the next run starts under the selected mode. The endpoint
+deliberately returns only a safe, secret-free configuration projection.
+Reliability, integration, context, and path pages expose the effective runtime
+configuration without
 pretending read-only values are editable. Persistent project settings open the
 workspace-confined `.vakcoder/config.toml`, creating a minimal starter only when
 the file does not already exist.

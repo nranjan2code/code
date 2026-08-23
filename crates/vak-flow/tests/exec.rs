@@ -73,6 +73,22 @@ fn text(t: &str) -> AssistantMessage {
 }
 
 fn make_executor(provider: Arc<TaggedScripted>, state_path: std::path::PathBuf) -> Executor {
+    make_executor_with_policy(
+        provider,
+        state_path,
+        Mode::FullAccess,
+        Some(Arc::new(AutoApprove)),
+        std::env::temp_dir(),
+    )
+}
+
+fn make_executor_with_policy(
+    provider: Arc<TaggedScripted>,
+    state_path: std::path::PathBuf,
+    mode: Mode,
+    approver: Option<Arc<dyn vak_agent::Approver>>,
+    cwd: std::path::PathBuf,
+) -> Executor {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
@@ -85,14 +101,57 @@ fn make_executor(provider: Arc<TaggedScripted>, state_path: std::path::PathBuf) 
         read_only_tools: vec![],
         max_turns: 4,
         permission: Some(Arc::new(PermissionEngine::default())),
-        mode: Mode::FullAccess,
-        approver: Some(Arc::new(AutoApprove)),
+        mode,
+        approver,
         sandbox: None,
-        cwd: std::env::temp_dir(),
+        cwd,
         sessions_home: home,
         parent_session_id: "flow-parent".into(),
         state_path,
     })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bash_node_obeys_permission_decision() {
+    let workspace = tempfile::tempdir().unwrap();
+    let toml = r#"
+[flow]
+name = "permission-gate"
+
+[[nodes]]
+id = "blocked"
+type = "bash"
+command = "echo escaped > should-not-exist.txt"
+"#;
+    let flow = vak_flow::parse_flow(toml).unwrap();
+    let provider = Arc::new(TaggedScripted {
+        routes: Mutex::new(HashMap::new()),
+    });
+    let state_path = workspace.path().join("state.json");
+    let mut state = FlowState {
+        run_id: "permission-run".into(),
+        flow_name: "permission-gate".into(),
+        definition_toml: toml.into(),
+        started_at: chrono::Utc::now(),
+        nodes: Default::default(),
+    };
+    let executor = make_executor_with_policy(
+        provider,
+        state_path,
+        Mode::WorkspaceWrite,
+        None,
+        workspace.path().to_path_buf(),
+    );
+
+    let outcome = drain_run(&executor, &flow, &mut state).await;
+    match outcome {
+        FlowOutcome::Failed { node, reason, .. } => {
+            assert_eq!(node, "blocked");
+            assert!(reason.contains("no approver available"), "{reason}");
+        }
+        other => panic!("expected permission failure, got {other:?}"),
+    }
+    assert!(!workspace.path().join("should-not-exist.txt").exists());
 }
 
 async fn drain_run(

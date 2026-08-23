@@ -118,6 +118,54 @@ fn read_only_mode_allows_reads_denies_writes() {
 }
 
 #[test]
+fn restricted_modes_deny_reads_outside_workspace() {
+    let cwd = std::env::temp_dir().join("vak-perm-read-scope");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let outside = cwd.parent().unwrap().join("vak-perm-secret.txt");
+    std::fs::write(&outside, "secret").unwrap();
+    let eng = PermissionEngine::default();
+
+    for mode in [Mode::ReadOnly, Mode::WorkspaceWrite] {
+        for tool in ["read", "glob", "grep"] {
+            let d = eng.evaluate(tool, &json!({"path": outside}), mode, &cwd);
+            assert!(
+                matches!(d, Decision::Deny { .. }),
+                "{tool} escaped in {mode:?}"
+            );
+        }
+    }
+
+    let d = eng.evaluate("read", &json!({"path": outside}), Mode::FullAccess, &cwd);
+    assert_eq!(d, Decision::Allow);
+
+    let _ = std::fs::remove_dir_all(&cwd);
+    let _ = std::fs::remove_file(&outside);
+}
+
+#[test]
+fn restricted_read_scope_resolves_symlinks() {
+    #[cfg(unix)]
+    {
+        let cwd = std::env::temp_dir().join("vak-perm-read-symlink");
+        let outside = std::env::temp_dir().join("vak-perm-read-symlink-secret.txt");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::write(&outside, "secret").unwrap();
+        std::os::unix::fs::symlink(&outside, cwd.join("looks-safe")).unwrap();
+
+        let d = PermissionEngine::default().evaluate(
+            "read",
+            &json!({"path": "looks-safe"}),
+            Mode::WorkspaceWrite,
+            &cwd,
+        );
+        assert!(matches!(d, Decision::Deny { .. }));
+
+        let _ = std::fs::remove_dir_all(&cwd);
+        let _ = std::fs::remove_file(&outside);
+    }
+}
+
+#[test]
 fn workspace_write_scopes_file_tools() {
     let cwd = std::env::temp_dir().join("vak-perm-test");
     std::fs::create_dir_all(&cwd).unwrap();

@@ -10,4 +10,7 @@ pub mod cases;
 pub mod runner;
 
 pub use cases::{builtin_suite, general_suite, live_suite};
-pub use runner::{EvalCase, EvalReport, ScriptedTurn, run_case, run_case_with_provider};
+pub use runner::{
+    EvalCase, EvalReport, ScriptedTurn, run_case, run_case_brokered, run_case_with_provider,
+    run_case_with_provider_brokered,
+};

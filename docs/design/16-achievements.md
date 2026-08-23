@@ -71,7 +71,9 @@ Harness findings (all actioned or noted):
 | Walking skeleton: loop + tools + JSONL sessions + `exec` | offline mock e2e, phase 1 |
 | Inline TUI with live steering + approvals | PTY smoke 8/8 (`scripts/tui_smoke.py`) |
 | Permission engine (rules × modes) wired end-to-end | allowed vs denied calls audited in session JSONL |
-| Seatbelt OS sandbox | blocks `$HOME` escapes at kernel level; allows cwd writes (execution tests) |
+| Seatbelt OS sandbox | explicit OS/workspace/toolchain/temp read roots, workspace-scoped writes, and denied sandboxed network; file-tool reads are separately permission-confined |
+| Brokered tool boundary | built-in production tools cross a bounded worker protocol; MCP servers are isolated workers; flows, plans, subagents, and CLI evals share the same path |
+| Docker command sandbox | opt-in Bash containment with no network, read-only root, bounded tmpfs/resources/PIDs, dropped capabilities, and no-new-privileges |
 | Multi-provider: Anthropic, OpenAI-responses, OpenAI-completions (OpenAI/OpenRouter/Ollama/OpenCode Zen), Gemini | per-family mock-stream suites + binary e2e against mock servers |
 | Skills · subagents · hooks · MCP client | Claude-Code-skill compatible; child-session lineage tests; hook unit+agent tests; fake-MCP roundtrip |
 | Resource-claim wave scheduler | timing-proven: disjoint writers overlap (~0.5s), conflicting writer serialized (~1.0s vs 1.5s serial) |

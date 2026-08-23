@@ -29,3 +29,6 @@ vak-tools = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }

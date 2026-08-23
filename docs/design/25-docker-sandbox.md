@@ -6,14 +6,14 @@ isolation floor than Seatbelt/Landlock alone.
 
 ## Design
 
-The existing sandbox seam (`vak_tools::sandbox::Sandbox` — `name()` +
-`wrap(command)`) is command-string level and consulted by BashTool only.
-A docker backend therefore implements the same trait in **vak-core** (the
-composition layer that already owns backend selection) without touching
-tool internals:
+The sandbox seam declares whether a backend contains the whole worker process
+or one tool command. Seatbelt/Landlock contain the disposable broker worker.
+Docker is command-scoped: the trusted broker places the wrapped Docker command
+into a Bash worker request, so the host worker remains a small protocol adapter
+and the model-controlled shell runs in the container.
 
 ```
-bash tool → Sandbox::wrap(cmd)
+bash request → broker worker protocol → Sandbox::wrap(cmd)
           → "docker run --rm --network none --memory 2g --cpus 2 \
               -v <ws>:<ws>[:ro] [--tmpfs /tmp] -w <ws> <image> sh -c '<cmd>'"
 ```
@@ -27,9 +27,11 @@ Key choices:
 2. **No network** (`--network none`) in restricted modes. Tasks needing the
    internet run under FullAccess, which disables sandboxes entirely — same
    rule as today.
-3. **Hard caps**: memory 2g, cpus 2; throwaway containers (`--rm`).
-4. **ReadOnly mode** mounts the workspace `:ro` and layers a writable
-   `/tmp` tmpfs, so compilers/pipes behave while the tree stays intact.
+3. **Hard caps and privilege reduction**: memory 2g, cpus 2, 256 PIDs, all
+   capabilities dropped, `no-new-privileges`, a read-only root filesystem,
+   bounded tmpfs, and throwaway containers (`--rm`).
+4. **ReadOnly mode** additionally mounts the workspace `:ro`; workspace-write
+   mounts it read-write. Both modes use only the bounded writable `/tmp` tmpfs.
 5. **Fail closed**: an unreachable daemon surfaces as a failed wrapped
    command (never silently falls back to host execution). A cheap cached
    `docker info` probe powers availability checks.
@@ -64,10 +66,11 @@ image   = "alpine:3.20"   # default alpine:3.20
 
 ## Known limits / next steps
 
-- Only bash is containerized (seam limitation); host-side file tools keep
-  permission-engine confinement. A full exec-server model (à la OpenClaw's
-  experimental Codex sandbox-exec path) would move all tools behind one
-  protocol — future work.
+- Built-in file tools run in disposable local workers under canonical
+  workspace permission checks; Docker currently contains Bash, while
+  Seatbelt/Landlock can contain the entire local worker. A future worker image
+  can move the complete protocol server into the container once vakcoder ships
+  a pinned Linux worker artifact for each supported architecture.
 - No `--user` mapping yet: on Linux hosts with plain dockerd, container
   writes are root-owned. macOS/Windows Desktop handle this transparently;
   rootless/docker-userns-remap setups are unaffected.

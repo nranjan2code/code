@@ -296,6 +296,69 @@ async fn approval_flow_resolves_over_http() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mode_change_revokes_run_waiting_for_approval() {
+    let provider = Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::from(vec![tool_call(
+            "t1",
+            "bash",
+            serde_json::json!({"command": "echo must-not-run"}),
+        )])),
+    });
+    let (base, _server) = spawn_server(provider, vak_config::PermissionMode::WorkspaceWrite).await;
+    let client = reqwest::Client::new();
+    let session_id: String = client
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let _events = client
+        .get(format!("{base}/sessions/{session_id}/events"))
+        .send()
+        .await
+        .unwrap();
+    let run = client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({"prompt": "request approval"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(run.status(), 202);
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    let switched = client
+        .post(format!("{base}/config/mode"))
+        .json(&serde_json::json!({"mode": "read-only"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(switched.status(), 200);
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        assert!(std::time::Instant::now() < deadline, "run was not revoked");
+        let transcript: serde_json::Value = client
+            .get(format!("{base}/sessions/{session_id}/transcript"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if transcript.get("error").is_none() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancel_endpoint_stops_a_running_session() {
     // A provider that hangs until cancelled — mirrors a stalled stream.
     struct Hung;

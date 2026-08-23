@@ -16,6 +16,7 @@ pub struct PermissionEngine {
 }
 
 const READ_TOOLS: [&str; 5] = ["read", "glob", "grep", "ls", "search"];
+const PATH_SCOPED_READ_TOOLS: [&str; 4] = ["read", "glob", "grep", "ls"];
 const WRITE_TOOLS: [&str; 2] = ["write", "edit"];
 
 impl PermissionEngine {
@@ -81,7 +82,7 @@ impl PermissionEngine {
             Mode::FullAccess => Decision::Allow,
             Mode::ReadOnly => {
                 if READ_TOOLS.contains(&tool) {
-                    Decision::Allow
+                    scoped_read_decision(tool, args, cwd)
                 } else {
                     Decision::Deny {
                         reason: format!(
@@ -92,7 +93,7 @@ impl PermissionEngine {
             }
             Mode::WorkspaceWrite => {
                 if READ_TOOLS.contains(&tool) {
-                    return Decision::Allow;
+                    return scoped_read_decision(tool, args, cwd);
                 }
                 if WRITE_TOOLS.contains(&tool) {
                     return match args.get("path").and_then(|p| p.as_str()) {
@@ -120,6 +121,26 @@ impl PermissionEngine {
                 }
             }
         }
+    }
+}
+
+fn scoped_read_decision(tool: &str, args: &Value, cwd: &std::path::Path) -> Decision {
+    if !PATH_SCOPED_READ_TOOLS.contains(&tool) {
+        return Decision::Allow;
+    }
+    let path = args.get("path").and_then(|p| p.as_str());
+    if tool == "read" && path.is_none() {
+        return Decision::Deny {
+            reason: "read requires a workspace-scoped path".into(),
+        };
+    }
+    match path {
+        Some(path) if !path_in_workspace(std::path::Path::new(path), cwd) => Decision::Deny {
+            reason: format!(
+                "'{path}' is outside the workspace; use full-access or an explicit scoped rule"
+            ),
+        },
+        _ => Decision::Allow,
     }
 }
 

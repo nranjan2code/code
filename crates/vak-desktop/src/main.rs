@@ -191,6 +191,29 @@ fn backend_info(state: State<'_, BackendState>) -> BackendInfo {
 }
 
 fn main() {
+    let internal = std::env::args_os().nth(1);
+    #[cfg(target_os = "linux")]
+    {
+        if internal.as_deref()
+            == Some(std::ffi::OsStr::new(
+                vak_tools::landlock::SANDBOX_SUBCOMMAND,
+            ))
+        {
+            std::process::exit(vak_tools::landlock::runner_main(
+                std::env::args_os().skip(2),
+            ));
+        }
+    }
+    if internal.as_deref() == Some(std::ffi::OsStr::new(vak_tools::broker::WORKER_SUBCOMMAND)) {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(_) => std::process::exit(125),
+        };
+        std::process::exit(runtime.block_on(vak_tools::broker::worker_main()));
+    }
     tauri::Builder::default()
         // Exactly one instance ever runs: a second launch hands its argv to
         // the live process and refocuses that window instead of starting a

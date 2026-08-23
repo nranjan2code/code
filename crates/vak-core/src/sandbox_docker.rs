@@ -53,16 +53,13 @@ impl DockerSandbox {
             SandboxMode::ReadOnly => ":ro",
             SandboxMode::WorkspaceWrite | SandboxMode::Off => "",
         };
-        let tmpfs = match self.mode {
-            // Read-only root still needs a writable /tmp for compilers and
-            // pipes to behave like a normal shell.
-            SandboxMode::ReadOnly => " --tmpfs /tmp",
-            _ => "",
-        };
+        let mount = shell_quote(&format!("{ws}:{ws}{ro_suffix}"));
+        let workdir = shell_quote(&ws);
+        let image = shell_quote(&self.image);
         format!(
-            "docker run --rm --network none --memory {MEMORY_CAP} --cpus {CPUS_CAP} \
-             -v {ws}:{ws}{ro_suffix}{tmpfs} -w {ws} {image} sh -c {cmd}",
-            image = self.image,
+            "docker run --rm --network none --read-only --tmpfs /tmp:rw,nosuid,size=512m \
+             --memory {MEMORY_CAP} --cpus {CPUS_CAP} --pids-limit 256 --cap-drop ALL \
+             --security-opt no-new-privileges -v {mount} -w {workdir} {image} sh -c {cmd}",
             cmd = shell_quote(command),
         )
     }
@@ -78,6 +75,10 @@ impl vak_tools::sandbox::Sandbox for DockerSandbox {
 
     fn wrap(&self, command: &str) -> String {
         self.wrap_command(command)
+    }
+
+    fn target(&self) -> vak_tools::sandbox::SandboxTarget {
+        vak_tools::sandbox::SandboxTarget::ToolCommand
     }
 }
 
@@ -113,11 +114,13 @@ mod tests {
             Path::new("/tmp/ws"),
         );
         let wrapped = sb.wrap("echo 'hello world' && ls");
-        assert!(wrapped.starts_with("docker run --rm --network none"));
-        assert!(wrapped.contains("-v /tmp/ws:/tmp/ws "));
-        assert!(wrapped.contains("-w /tmp/ws"));
+        assert!(wrapped.starts_with("docker run --rm --network none --read-only"));
+        assert!(wrapped.contains("-v '/tmp/ws:/tmp/ws'"));
+        assert!(wrapped.contains("-w '/tmp/ws'"));
         assert!(wrapped.contains("--memory 2g"));
-        assert!(wrapped.contains("test-image:9"));
+        assert!(wrapped.contains("--pids-limit 256"));
+        assert!(wrapped.contains("--cap-drop ALL"));
+        assert!(wrapped.contains("'test-image:9'"));
         assert!(
             wrapped.ends_with("sh -c 'echo '\\''hello world'\\'' && ls'"),
             "inner command must be single-quoted: {wrapped}"
@@ -128,8 +131,8 @@ mod tests {
     fn readonly_mode_mounts_ro_and_adds_tmp() {
         let sb = DockerSandbox::new(SandboxMode::ReadOnly, None, Path::new("/tmp/ws"));
         let wrapped = sb.wrap("true");
-        assert!(wrapped.contains("/tmp/ws:/tmp/ws:ro"));
-        assert!(wrapped.contains("--tmpfs /tmp"));
+        assert!(wrapped.contains("'/tmp/ws:/tmp/ws:ro'"));
+        assert!(wrapped.contains("--tmpfs /tmp:rw,nosuid,size=512m"));
         assert!(wrapped.contains(DEFAULT_IMAGE));
     }
 }

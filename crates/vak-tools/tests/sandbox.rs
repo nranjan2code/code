@@ -29,7 +29,8 @@ fn seatbelt_read_only_profile_denies_all_writes() {
     let sb = Seatbelt::new(SandboxMode::ReadOnly, dir.path());
     let p = sb.profile();
     assert!(p.contains("(deny default)"));
-    assert!(p.contains("(allow file-read*)"));
+    assert!(p.contains("(allow file-read* (subpath"));
+    assert!(!p.contains("(allow file-read*)\n"));
     assert!(
         !p.contains("file-write*"),
         "read-only must grant no write paths"
@@ -81,7 +82,11 @@ async fn seatbelt_read_only_blocks_file_writes_but_allows_reads() {
     let ctx = ctx_with(dir.path(), SandboxMode::ReadOnly);
 
     let out = run(&ctx, "cat /etc/hostname >/dev/null; echo read-ok").await;
-    assert!(!out.is_error, "reads must work under read-only sandbox");
+    assert!(
+        !out.is_error,
+        "reads must work under read-only sandbox: {}",
+        out.content
+    );
 
     let out = run(&ctx, "echo blocked > ./should-not-exist.txt").await;
     assert!(out.is_error, "writes must be denied");
@@ -98,7 +103,11 @@ async fn seatbelt_workspace_write_allows_inside_cwd() {
     let ctx = ctx_with(dir.path(), SandboxMode::WorkspaceWrite);
 
     let out = run(&ctx, "echo inside > ./inside.txt && cat ./inside.txt").await;
-    assert!(!out.is_error, "in-workspace writes must succeed");
+    assert!(
+        !out.is_error,
+        "in-workspace writes must succeed: {}",
+        out.content
+    );
     assert!(out.content.contains("inside"));
     assert!(dir.path().join("inside.txt").exists());
 }
@@ -112,7 +121,11 @@ async fn seatbelt_workspace_write_blocks_outside_paths() {
     let outside = "$HOME/vak-sb-escape-test.txt";
     let out = run(&ctx, &format!("echo escape > {outside}")).await;
     assert!(out.is_error, "writes outside the workspace must be denied");
-    assert!(out.content.contains("Operation not permitted"));
+    assert!(
+        out.content.contains("Operation not permitted"),
+        "{}",
+        out.content
+    );
     let home = std::env::var("HOME").unwrap_or_default();
     assert!(
         !std::path::Path::new(&home)
@@ -120,4 +133,25 @@ async fn seatbelt_workspace_write_blocks_outside_paths() {
             .exists(),
         "the escape file must not exist"
     );
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn seatbelt_blocks_home_reads_outside_workspace() {
+    let dir = tempdir().unwrap();
+    let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
+    let protected = tempfile::Builder::new()
+        .prefix("vak-seatbelt-read-")
+        .tempdir_in(home)
+        .unwrap();
+    std::fs::write(protected.path().join("secret"), "not-visible").unwrap();
+    let ctx = ctx_with(dir.path(), SandboxMode::WorkspaceWrite);
+
+    let out = run(
+        &ctx,
+        &format!("cat {}", protected.path().join("secret").display()),
+    )
+    .await;
+    assert!(out.is_error);
+    assert!(!out.content.contains("not-visible"));
 }

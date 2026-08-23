@@ -6,9 +6,8 @@ use tokio_util::sync::CancellationToken;
 
 use vak_agent::{Agent, AgentConfig, Approver};
 use vak_llm::Provider;
-use vak_permission::{Mode, PermissionEngine};
+use vak_permission::{Decision, Mode, PermissionEngine};
 use vak_session::{SessionLog, SessionPath};
-use vak_tools::bash::BashTool;
 use vak_tools::sandbox::Sandbox;
 use vak_tools::{Tool, ToolContext};
 
@@ -253,11 +252,16 @@ async fn execute_node(
                 limits: Default::default(),
                 sandbox: deps.sandbox.clone(),
             };
-            let tool = BashTool;
+            let tool = deps
+                .tools
+                .iter()
+                .find(|tool| tool.name() == "bash")
+                .ok_or_else(|| "bash tool unavailable".to_string())?;
             let args = match node.timeout_ms {
                 Some(t) => serde_json::json!({"command": command, "timeout_ms": t}),
                 None => serde_json::json!({"command": command}),
             };
+            authorize_flow_tool("bash", &args, deps).await?;
             let out = tool.execute(&args, &ctx).await;
             if out.is_error {
                 Err(out.content)
@@ -372,5 +376,24 @@ async fn execute_node(
             Ok(report)
         }
         other => Err(format!("unknown node type '{other}'")),
+    }
+}
+
+async fn authorize_flow_tool(
+    tool: &str,
+    args: &serde_json::Value,
+    deps: &ExecutorDeps,
+) -> Result<(), String> {
+    let Some(engine) = &deps.permission else {
+        return Ok(());
+    };
+    match engine.evaluate(tool, args, deps.mode, &deps.cwd) {
+        Decision::Allow => Ok(()),
+        Decision::Deny { reason } => Err(reason),
+        Decision::Ask { reason } => match &deps.approver {
+            Some(approver) if approver.approve(tool, &args.to_string(), &reason).await => Ok(()),
+            Some(_) => Err(format!("denied by user: {reason}")),
+            None => Err(format!("{reason} (no approver available)")),
+        },
     }
 }

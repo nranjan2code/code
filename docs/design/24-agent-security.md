@@ -62,7 +62,8 @@ Primary-source review on 2026-08-23 found recurring failure classes:
 6. Network access is destination- and operation-scoped. "Can browse" must not
    imply arbitrary TCP egress.
 7. Tool-specific checks and the OS boundary cover the same resource. Shell-only
-   sandboxing is insufficient when read/edit/MCP/browser tools run in-process.
+   sandboxing would be insufficient if read/edit/MCP/browser effects bypassed
+   the broker or external-worker boundary.
 8. Every decision, policy generation, resolved target, approval, denial, and
    egress attempt is reconstructable from the append-only session/audit record.
 9. Unsupported enforcement fails closed for security profiles that promise it.
@@ -89,14 +90,14 @@ Primary-source review on 2026-08-23 found recurring failure classes:
   and non-zero worker exits fail closed.
 - The same path is used by normal turns, explore/task subagents, static flows,
   dynamic plans, and CLI evals. Flow Bash no longer bypasses the configured
-  tool registry or sandbox.
+  tool registry, permission decision/approver, or sandbox.
 - MCP servers are external workers with an empty-by-default environment,
   explicit configured variables, process-group teardown, workspace cwd, and
   the same Seatbelt/Landlock policy in restricted modes.
-- Seatbelt denies reads below the user's home directory, then grants the
-  canonical workspace and narrow Rust/tool executable roots. Landlock uses an
-  explicit system/toolchain/workspace/temp read allowlist instead of granting
-  read access to `/`.
+- Seatbelt and Landlock use explicit system/toolchain/workspace/executable/temp
+  read allowlists instead of granting file-content reads across the host.
+  Seatbelt allows global metadata traversal needed to reach approved roots,
+  without granting arbitrary home or mounted-volume contents.
 - `task` and `session_search` remain broker-owned structured capabilities.
   Task only creates governed child agents whose effectful tools are brokered;
   session search only queries the append-only session index. Workers do not
