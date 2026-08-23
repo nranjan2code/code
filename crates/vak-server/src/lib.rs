@@ -35,7 +35,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -201,6 +201,8 @@ fn router_with_state(state: AppState) -> Router {
             post(restore_checkpoint),
         )
         .route("/sessions/{id}/archive", post(set_archived))
+        .route("/sessions/archived", delete(delete_all_archived))
+        .route("/sessions/{id}", delete(delete_session))
         .route("/skills", get(list_skills))
         .route("/sessions/{id}/pr", get(session_pr))
         .route("/sessions/{id}/pr/merge", post(pr_merge))
@@ -394,14 +396,30 @@ async fn attach_session(
     State(state): State<AppState>,
     Json(body): Json<AttachBody>,
 ) -> axum::response::Response {
+    // Already attached? Return before touching the file.
+    //
+    // The live handle owns an exclusive lock on the session JSONL for its
+    // whole lifetime, and the lock is per open-file-description: opening the
+    // same path again from THIS process conflicts with our own handle just
+    // as it would with a stranger's. Re-attaching is routine — the desktop
+    // calls it on every task switch, and mid-run the handle's session is
+    // temporarily owned by the agent — so this must be a no-op, not a
+    // second open.
+    if state.get(&body.session_id).is_some() {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({ "session_id": body.session_id })),
+        )
+            .into_response();
+    }
     match state.core.open_session(&body.session_id).await {
         Ok(session) => {
             let id = session
                 .header()
                 .map(|h| h.session_id.clone())
                 .unwrap_or_else(|| body.session_id.clone());
-            // A run may already be active on this handle (double attach);
-            // keep the live one instead of replacing it.
+            // The header id can differ from the requested one; if that handle
+            // is already live, keep it rather than replacing it.
             if state.get(&id).is_none() {
                 register_handle(&state, id.clone(), session, state.core.cwd().clone());
             }
@@ -423,6 +441,7 @@ async fn attach_session(
 async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value> {
     let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), state.core.cwd());
     let archive_map = read_archive(&state.core);
+    let deleted_map = read_deleted(&state.core);
     let mut sessions = Vec::new();
     let Ok(read) = std::fs::read_dir(&dir) else {
         return Json(serde_json::json!({ "sessions": sessions }));
@@ -435,6 +454,9 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
         let Some(session_id) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
             continue;
         };
+        if deleted_map.get(&session_id).copied().unwrap_or(false) {
+            continue;
+        }
         let updated_at = std::fs::metadata(&path)
             .ok()
             .and_then(|m| m.modified().ok())
@@ -873,11 +895,32 @@ fn archive_path(core: &Core) -> PathBuf {
     core.sessions_home().join("archive.json")
 }
 
+fn deleted_path(core: &Core) -> PathBuf {
+    core.sessions_home().join("deleted.json")
+}
+
 fn read_archive(core: &Core) -> HashMap<String, bool> {
     std::fs::read_to_string(archive_path(core))
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default()
+}
+
+fn read_deleted(core: &Core) -> HashMap<String, bool> {
+    std::fs::read_to_string(deleted_path(core))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn write_deleted(core: &Core, map: &HashMap<String, bool>) {
+    if let Some(parent) = deleted_path(core).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let tmp = deleted_path(core).with_extension("json.tmp");
+    if std::fs::write(&tmp, serde_json::to_string(map).unwrap_or_default()).is_ok() {
+        let _ = std::fs::rename(&tmp, deleted_path(core));
+    }
 }
 
 fn write_archive(core: &Core, map: &HashMap<String, bool>) {
@@ -912,6 +955,43 @@ async fn set_archived(
     map.insert(id, body.archived);
     write_archive(&state.core, &map);
     Json(serde_json::json!({ "archived": body.archived })).into_response()
+}
+
+async fn delete_session(State(state): State<AppState>, Path(id): Path<String>) -> axum::response::Response {
+    let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), state.core.cwd());
+    if !dir.join(format!("{id}.jsonl")).is_file() {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "unknown session" }))).into_response();
+    }
+    if state.get(&id).is_some_and(|handle| handle.session.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_none()) {
+        return (StatusCode::CONFLICT, Json(serde_json::json!({ "error": "cannot delete a running task" }))).into_response();
+    }
+    if !read_archive(&state.core).get(&id).copied().unwrap_or(false) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "only archived tasks can be deleted" }))).into_response();
+    }
+    let mut deleted = read_deleted(&state.core);
+    deleted.insert(id.clone(), true);
+    write_deleted(&state.core, &deleted);
+    Json(serde_json::json!({ "deleted": id })).into_response()
+}
+
+async fn delete_all_archived(State(state): State<AppState>) -> axum::response::Response {
+    let archive = read_archive(&state.core);
+    let running_archived = archive.iter().any(|(id, archived)| {
+        *archived && state.get(id).is_some_and(|handle| handle.session.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_none())
+    });
+    if running_archived {
+        return (StatusCode::CONFLICT, Json(serde_json::json!({ "error": "stop running archived tasks before deleting all" }))).into_response();
+    }
+    let mut deleted = read_deleted(&state.core);
+    let mut count = 0u64;
+    for (id, archived) in archive {
+        if archived && !deleted.get(&id).copied().unwrap_or(false) {
+            deleted.insert(id, true);
+            count += 1;
+        }
+    }
+    write_deleted(&state.core, &deleted);
+    Json(serde_json::json!({ "deleted": count })).into_response()
 }
 
 async fn list_skills(State(state): State<AppState>) -> Json<serde_json::Value> {

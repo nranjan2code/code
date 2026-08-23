@@ -27,6 +27,7 @@ export type IconName =
   | "spark"
   | "stop"
   | "terminal"
+  | "trash"
   | "timer"
   | "tune";
 
@@ -57,6 +58,7 @@ const paths: Record<IconName, () => JSX.Element> = {
   spark: () => <><path d="m12 3 1.4 4.6L18 9l-4.6 1.4L12 15l-1.4-4.6L6 9l4.6-1.4Z" /><path d="m18 15 .7 2.3L21 18l-2.3.7L18 21l-.7-2.3L15 18l2.3-.7Z" /></>,
   stop: () => <rect x="7" y="7" width="10" height="10" rx="2" />,
   terminal: () => <><path d="m5 7 5 5-5 5M12 17h7" /></>,
+  trash: () => <><path d="M4 7h16M10 11v5M14 11v5M6 7l1 13h10l1-13M9 7V4h6v3" /></>,
   timer: () => <><circle cx="12" cy="13" r="8" /><path d="M12 9v4l3 2M9 2h6" /></>,
   tune: () => <><path d="M4 7h10M18 7h2M4 17h2M10 17h10" /><circle cx="16" cy="7" r="2" /><circle cx="8" cy="17" r="2" /></>,
 };

@@ -56,6 +56,26 @@ export const [dockWidth, setDockWidth] = createSignal(520);
 export type Notice = { kind: "error" | "info"; text: string };
 export const [notice, setNotice] = createSignal<Notice | null>(null);
 
+/**
+ * Live retry state per session.
+ *
+ * RetryScheduled is emitted once, before the backoff sleep, and the attempt
+ * itself is silent — so a transcript line saying "retrying in 0.6s" was the
+ * last thing a user ever saw. Holding the state lets the header keep saying
+ * "retrying" until real progress (a delta, a tool call, an end) arrives.
+ */
+export interface RetryState {
+  attempt: number;
+  reason: string;
+}
+const [retryMap, setRetryMap] = createStore<Record<string, RetryState | null>>({});
+export function retryOf(id: string | null): RetryState | null {
+  return id ? (retryMap[id] ?? null) : null;
+}
+function noteRetry(id: string, state: RetryState | null) {
+  setRetryMap(id, state);
+}
+
 export interface UiPreferences {
   theme: "warm" | "dark" | "contrast";
   textScale: number;
@@ -387,6 +407,10 @@ export function applyEvent(
           : it,
     );
   } else if ("RetryScheduled" in ev) {
+    noteRetry(id, {
+      attempt: ev.RetryScheduled.attempt,
+      reason: ev.RetryScheduled.reason,
+    });
     note(
       b,
       id,

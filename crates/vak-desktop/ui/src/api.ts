@@ -188,6 +188,14 @@ export function setArchived(id: string, archived: boolean): Promise<{ archived: 
   });
 }
 
+export function deleteSession(id: string): Promise<{ deleted: string }> {
+  return req(`/sessions/${id}`, { method: "DELETE" });
+}
+
+export function deleteAllArchived(): Promise<{ deleted: number }> {
+  return req("/sessions/archived", { method: "DELETE" });
+}
+
 export function listSkills(): Promise<{
   skills: { name: string; description: string }[];
 }> {
