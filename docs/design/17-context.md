@@ -49,6 +49,12 @@ summarized_messages }` — surfaced in the TUI as a 📦 line.
 - Quality gate metrics (recall/precision scorecard) — our eval suite is the
   equivalent gate for now.
 
+Packet accounting (selected/dropped partition) plus deterministic
+recall/precision/evidence gates are now specced in
+`27-vakyartha-adoption.md` Phase C, promoted from insurance to
+demand-backed by an attested long-horizon context-loss incident
+(2026-08-23). First fixture must come from that incident.
+
 ## Tests
 
 - estimation + budget math + request shape (unit)

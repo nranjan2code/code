@@ -82,6 +82,16 @@ from a dead provider. Shared via Core across all runs of a process:
 Config keys: `circuit_breaker_threshold`,
 `circuit_breaker_cooldown_secs` (`0` cooldown disables opening).
 
+## Future: frozen route ladder
+
+Specced in `27-vakyartha-adoption.md` Phases A–B (demand-backed by an
+attested provider-outage session loss, 2026-08-23). Ordered candidate chain
+frozen INTO the contract at admission; walking it is contract execution,
+never mid-contract switching (invariant below gains that clause when it
+lands). Attempt records become typed receipts with failure domains;
+breaker/endurance classification consumes those types instead of error
+string-matching.
+
 ## Invariants
 
 - Retry never changes the frozen contract: same model, same request body.

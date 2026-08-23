@@ -61,7 +61,7 @@ vakcoder (bin: tui · exec · plan · flow · serve · eval · checkpoints · co
         │     ├── vak-tools     Tool trait · built-ins · sandbox backends
         │     ├── vak-hooks     lifecycle hooks (pre/post-tool-use, stop, …)
         │     └── vak-mcp       MCP stdio client (lazy meta-tool)
-        ├── vak-flow        static flows · dynamic planner · receipts
+        ├── vak-flow        static flows · dynamic planner
         ├── vak-permission  modes × rules → Allow/Ask/Deny
         ├── vak-eval        deterministic eval harness
         ├── vak-server      axum HTTP+SSE wrapper

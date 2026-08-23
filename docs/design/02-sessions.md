@@ -35,7 +35,8 @@ one walk (`chain_to_root`). No special-case machinery per feature.
 
 ## Later
 
-- receipts as first-class entries (unified WorkReceipt stream)
+- receipts as first-class entries (unified WorkReceipt stream) — specced in
+  `27-vakyartha-adoption.md` Phase A
 - subagent sessions linked via `parent_session_id` + spawning tool-call id
 
 ## Diff note — ledger robustness (this change)
