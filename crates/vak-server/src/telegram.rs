@@ -158,19 +158,44 @@ impl TelegramBridge {
     }
 
     async fn send_message(&self, chat_id: i64, text: &str) -> Result<(), String> {
-        // Telegram hard-caps messages at 4096 chars; split on the last safe
-        // newline under the limit rather than failing.
-        for chunk in split_chunks(text, 4000) {
+        // Markdown in, Telegram HTML out; chunks never cut inside a tag.
+        let html = crate::channels::markdown_to_telegram_html(text);
+        for chunk in crate::channels::split_html_chunks(&html, 4000) {
             let url = format!("{}/bot{}/sendMessage", self.api_base, self.bot_token);
-            let resp = http()
-                .post(&url)
-                .json(&serde_json::json!({ "chat_id": chat_id, "text": chunk }))
-                .send()
-                .await
-                .map_err(|e| format!("sendMessage: {e}"))?;
-            let status = resp.status();
-            if !status.is_success() {
-                return Err(format!("sendMessage returned {status}"));
+            let body = serde_json::json!({
+                "chat_id": chat_id,
+                "text": chunk,
+                "parse_mode": "HTML",
+                "link_preview_options": { "is_disabled": true },
+            });
+            let resp = http().post(&url).json(&body).send().await;
+            match resp {
+                Ok(r) if r.status().is_success() => {}
+                Ok(r) => {
+                    let status = r.status();
+                    // Converter edge-case guard: resend that chunk as plain
+                    // text so a formatting bug degrades to ugly, not lost.
+                    if status.as_u16() == 400 {
+                        let fallback = serde_json::json!({
+                            "chat_id": chat_id,
+                            "text": crate::channels::strip_tags(&chunk),
+                        });
+                        let r2 = http().post(&url).json(&fallback).send().await;
+                        match r2 {
+                            Ok(r2) if r2.status().is_success() => continue,
+                            Ok(r2) => {
+                                return Err(format!(
+                                    "sendMessage returned {} (plain retry: {})",
+                                    status,
+                                    r2.status()
+                                ));
+                            }
+                            Err(e) => return Err(format!("sendMessage retry: {e}")),
+                        }
+                    }
+                    return Err(format!("sendMessage returned {status}"));
+                }
+                Err(e) => return Err(format!("sendMessage: {e}")),
             }
         }
         Ok(())
@@ -251,50 +276,5 @@ impl TelegramBridge {
                 }
             }
         }
-    }
-}
-
-fn split_chunks(text: &str, cap: usize) -> Vec<String> {
-    if text.chars().count() <= cap {
-        return vec![text.to_string()];
-    }
-    let mut chunks = Vec::new();
-    let mut rest = text;
-    while rest.chars().count() > cap {
-        let cut = rest
-            .char_indices()
-            .nth(cap)
-            .map(|(i, _)| i)
-            .unwrap_or(rest.len());
-        let slice = &rest[..cut];
-        let boundary = slice.rfind('\n').map(|i| i + 1).unwrap_or(cut);
-        chunks.push(rest[..boundary].trim_end().to_string());
-        rest = &rest[boundary..];
-    }
-    if !rest.trim().is_empty() {
-        chunks.push(rest.to_string());
-    }
-    chunks
-}
-
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-    #[test]
-    fn chunks_respect_cap_and_newlines() {
-        let small = super::split_chunks("hello", 10);
-        assert_eq!(small.len(), 1);
-
-        let long = "word ".repeat(3000);
-        let chunks = super::split_chunks(long.trim(), 4000);
-        assert!(chunks.len() >= 3);
-        assert!(chunks.iter().all(|c| c.chars().count() <= 4000));
-
-        let multiline = format!("{}\n{}", "a".repeat(4500), "tail");
-        let chunks = super::split_chunks(&multiline, 4000);
-        assert_eq!(chunks.len(), 2);
-        // No newline inside the first cap window: hard cut, remainder keeps
-        // the trailing segment.
-        assert!(chunks[1].ends_with("tail"));
     }
 }

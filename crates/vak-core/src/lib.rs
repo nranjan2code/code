@@ -81,6 +81,9 @@ struct CoreInner {
     /// provider -> (fetched_at, model ids). Discovery is a network call;
     /// pickers re-read it constantly, so results are memoised briefly.
     models_cache: std::sync::Mutex<HashMap<String, (std::time::Instant, Vec<String>)>>,
+    /// Cached MCP capability section appended to the system prompt; None
+    /// until a run with servers configured populates it.
+    mcp_inventory: std::sync::Mutex<Option<String>>,
 }
 
 /// Learned permission rules live outside the main config so they can be
@@ -150,6 +153,7 @@ impl Core {
                         .unwrap_or_else(|_| PathBuf::from("__vakcoder_tool_worker_unavailable__")),
                 ),
                 models_cache: std::sync::Mutex::new(HashMap::new()),
+                mcp_inventory: std::sync::Mutex::new(None),
             }),
         })
     }
@@ -419,6 +423,7 @@ impl Core {
         if !self.inner.config.mcp.servers.is_empty() {
             names.push("mcp".into());
         }
+
         if self.inner.config.memory.search_enabled {
             names.push("session_search".into());
         }
@@ -875,6 +880,36 @@ impl Core {
                 self.inner.cwd.clone(),
                 self.build_sandbox(),
             ));
+            // Advertise MCP capabilities in the prompt so the model reaches
+            // for them unprompted (first-turn usability). Inventory is
+            // fetched once per process and cached; failures degrade to a
+            // bare server-name hint.
+            // A cold npx fetch can outlive the budget; an empty snapshot is
+            // NOT cached so the next run retries.
+            let fetched =
+                tokio::time::timeout(std::time::Duration::from_secs(20), manager.inventory())
+                    .await
+                    .unwrap_or_default();
+            let section = mcp_section(&fetched);
+            if !fetched.is_empty() {
+                let mut cache = self
+                    .inner
+                    .mcp_inventory
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if cache.is_none() {
+                    *cache = Some(section.clone());
+                }
+            }
+            let cached = self
+                .inner
+                .mcp_inventory
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            if let Some(sec) = cached {
+                cfg.system_prompt.push_str(&sec);
+            }
             tools.push(Arc::new(vak_mcp::McpTool::new(manager)));
         }
         if self.inner.config.memory.search_enabled {
@@ -1153,4 +1188,60 @@ pub fn interpolate_env_var(value: &str) -> Option<String> {
     }
     out.push_str(rest);
     Some(out)
+}
+
+/// Compact capability section from an MCP inventory snapshot.
+fn mcp_section(inventory: &[(String, Vec<(String, String)>)]) -> String {
+    if inventory.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "\nMCP tool servers available now — use the `mcp` \
+tool (action \"call\", server, tool, arguments). Prefer these over guessing \
+when the task matches:\n",
+    );
+    for (server, tools) in inventory {
+        if tools.is_empty() {
+            out.push_str(&format!("- {server}: (no tools)\n"));
+            continue;
+        }
+        for (name, desc) in tools.iter().take(12) {
+            out.push_str(&format!(
+                "- mcp call server=\"{server}\" tool=\"{name}\" — {}\n",
+                desc.trim_end()
+            ));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod mcp_section_tests {
+    use super::mcp_section;
+
+    #[test]
+    fn section_lists_server_tools_with_call_hint() {
+        let inv = vec![(
+            "tavily".to_string(),
+            vec![
+                ("tavily-search".to_string(), "Web search".to_string()),
+                (
+                    "tavily-extract".to_string(),
+                    "Extract page content".to_string(),
+                ),
+            ],
+        )];
+        let s = mcp_section(&inv);
+        assert!(s.contains("tavily-search"));
+        assert!(s.contains("Web search"));
+        assert!(s.contains("action \"call\""));
+        assert!(s.contains("server=\"tavily\""));
+    }
+
+    #[test]
+    fn empty_inventory_is_silent_but_named_servers_listed() {
+        assert_eq!(mcp_section(&[]), "");
+        let s = mcp_section(&[("x".into(), vec![])]);
+        assert!(s.contains("- x: (no tools)"));
+    }
 }

@@ -28,6 +28,7 @@
 //! - `GET  /gateway/status`           → gateway enabled flag + binding table
 //! - `DELETE /gateway/bindings/:key`  → unbind a surface from its session
 
+mod channels;
 mod gateway;
 pub mod telegram;
 

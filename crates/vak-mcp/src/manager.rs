@@ -77,3 +77,30 @@ impl McpManager {
         }
     }
 }
+
+impl McpManager {
+    /// Connect to every configured server and collect name + one-line tool
+    /// summaries. Failures degrade to a per-server error line — the goal is
+    /// prompt visibility, not perfection. Used by Core to advertise
+    /// capabilities in the system prompt (docs/design/26-learning.md-style
+    /// progressive disclosure, but for tools).
+    pub async fn inventory(&self) -> Vec<(String, Vec<(String, String)>)> {
+        let mut out = Vec::new();
+        for name in self.server_names() {
+            match self.get(&name).await {
+                Ok(client) => match client.list_tools().await {
+                    Ok(tools) => out.push((
+                        name,
+                        tools
+                            .iter()
+                            .map(|t| (t.name.clone(), t.description.chars().take(90).collect()))
+                            .collect(),
+                    )),
+                    Err(e) => out.push((name, vec![("error".into(), e.to_string())])),
+                },
+                Err(e) => out.push((name, vec![("error".into(), e.to_string())])),
+            }
+        }
+        out
+    }
+}
