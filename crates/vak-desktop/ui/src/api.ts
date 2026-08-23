@@ -53,6 +53,25 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return parsed as T;
 }
 
+// ---- ops (background services) ------------------------------------------------
+
+export interface OpsStatusShape {
+  gateway: { state: string };
+  telegram: { state: string };
+  gateway_healthy: boolean;
+}
+
+export function opsStatus(): Promise<OpsStatusShape> {
+  return req("/ops/status");
+}
+
+export function opsAction(
+  service: "gateway" | "telegram",
+  action: "start" | "stop" | "restart" | "install" | "uninstall",
+): Promise<{ ok: boolean; error?: string }> {
+  return req(`/ops/${service}/${action}`, { method: "POST", body: "{}" });
+}
+
 // ---- sessions ---------------------------------------------------------------
 
 export function listSessions(): Promise<{ sessions: SessionSummary[] }> {

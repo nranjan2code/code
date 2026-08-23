@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import {
   density,
   openInEditor,
@@ -22,7 +22,7 @@ import Icon, { type IconName } from "./Icon";
 /** Sentinel option that swaps the model select for a free-text field. */
 const CUSTOM_MODEL = "\u0000custom";
 
-type Page = "general" | "appearance" | "agent" | "permissions" | "reliability" | "integrations" | "advanced" | "archived";
+type Page = "general" | "appearance" | "agent" | "permissions" | "reliability" | "integrations" | "services" | "advanced" | "archived";
 
 const pages: { id: Page; label: string; icon: IconName; hint: string }[] = [
   { id: "general", label: "General", icon: "gear", hint: "notifications suggestions" },
@@ -31,6 +31,7 @@ const pages: { id: Page; label: string; icon: IconName; hint: string }[] = [
   { id: "permissions", label: "Permissions", icon: "shield", hint: "access sandbox approvals" },
   { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker" },
   { id: "integrations", label: "Integrations", icon: "plug", hint: "mcp hooks skills" },
+  { id: "services", label: "Services", icon: "grid", hint: "gateway bridge tray watchdog background" },
   { id: "advanced", label: "Advanced", icon: "tune", hint: "paths context configuration" },
   { id: "archived", label: "Archived tasks", icon: "archive", hint: "restore delete history" },
 ];
@@ -56,6 +57,26 @@ export default function Settings() {
   const [query, setQuery] = createSignal("");
   const [config, setConfig] = createSignal<ConfigSnapshot | null>(null);
   const [loading, setLoading] = createSignal(true);
+  // Background-service states (docs/design/27-operations.md); polled while
+  // the Services page is open.
+  const [ops, setOps] = createSignal<api.OpsStatusShape | null>(null);
+
+  async function refreshOps() {
+    try {
+      setOps(await api.opsStatus());
+    } catch {
+      /* gateway down is itself the state we are displaying */
+    }
+  }
+
+  async function runOp(service: "gateway" | "telegram", action: "start" | "stop" | "restart" | "install" | "uninstall") {
+    try {
+      await api.opsAction(service, action);
+      await refreshOps();
+    } catch (e) {
+      setNotice({ kind: "error", text: e instanceof Error ? e.message : String(e) });
+    }
+  }
   const [provider, setProvider] = createSignal("");
   const [model, setModel] = createSignal("");
   // Discovered from the provider's API with the configured key — never a
@@ -81,6 +102,12 @@ export default function Settings() {
   };
   onMount(() => void loadProviders());
   onMount(() => void refreshSessions());
+  createEffect(() => {
+    if (page() !== "services") return;
+    void refreshOps();
+    const t = setInterval(() => void refreshOps(), 5000);
+    onCleanup(() => clearInterval(t));
+  });
 
   // Re-run whenever the selected provider changes; a stale response from a
   // provider the user has since moved off is discarded.
@@ -442,6 +469,36 @@ export default function Settings() {
                 <Row title="Completion guard" description="Blocks premature completion and asks the agent to verify work."><span class="settings-status good">{config()?.stop_policy.enabled ? "Enabled" : "Disabled"}</span></Row>
               </Group>
               <button class="settings-button" onClick={() => void openProjectConfig()}>Tune in project config</button>
+            </Show>
+
+            <Show when={page() === "services"}>
+              <header><h1>Services</h1><p>Gateway and bridge run in the background — the menu-bar dot and this panel always show the same truth.</p></header>
+              <Group title="Background services">
+                <For each={["gateway", "telegram"] as const}>
+                  {(svc) => (
+                    <Row
+                      title={svc === "gateway" ? "Gateway" : "Telegram bridge"}
+                      description={
+                        svc === "gateway"
+                          ? `Serves sessions, gateway routing and routines on port 8901.${ops()?.gateway_healthy ? "" : " Not answering right now."}`
+                          : "Bridges your Telegram bot to the gateway."
+                      }
+                    >
+                      <span class="settings-status" classList={{ good: ops()?.[svc]?.state === "running", bad: ops()?.[svc]?.state !== "running" }}>
+                        {ops()?.[svc]?.state ?? "?"}
+                      </span>
+                      <button class="settings-button" disabled={ops()?.[svc]?.state !== "running"} onClick={() => void runOp(svc, "stop")}>Stop</button>
+                      <button class="settings-button" disabled={ops()?.[svc]?.state === "running"} onClick={() => void runOp(svc, "start")}>Start</button>
+                      <button class="settings-button" onClick={() => void runOp(svc, "restart")}>Restart</button>
+                    </Row>
+                  )}
+                </For>
+              </Group>
+              <Group title="Maintenance">
+                <Row title="Auto-refresh" description="This panel polls service state every 5 seconds while open."><span class="settings-status good">Live</span></Row>
+                <Row title="Menu-bar controller" description="vakcoder-tray shows a colour-coded dot with the same controls and a crash watchdog."><span class="settings-status good">Available</span></Row>
+                <Row title="Install as services" description="Installs launchd/systemd units so both processes survive reboots (scripts/install_gateway_service.sh --with-tray)."><button class="settings-button" onClick={() => void runOp("gateway", "install")}>Install</button><button class="settings-button" onClick={() => void runOp("gateway", "uninstall")}>Uninstall</button></Row>
+              </Group>
             </Show>
 
             <Show when={page() === "integrations"}>

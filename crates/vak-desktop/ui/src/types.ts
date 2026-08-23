@@ -189,3 +189,13 @@ export interface TaskDef {
   last_wt?: { path: string; branch: string } | null;
   deliver_to?: string | null;
 }
+
+export interface OpsServiceState {
+  state: string;
+}
+
+export interface OpsStatus {
+  gateway: OpsServiceState;
+  telegram: OpsServiceState;
+  gateway_healthy: boolean;
+}
