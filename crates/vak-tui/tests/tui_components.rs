@@ -284,6 +284,106 @@ fn editor_paste_str_with_newlines() {
 }
 
 #[test]
+fn editor_large_paste_stashes_placeholder_and_resolves_on_take() {
+    let mut e = Editor::new();
+    let payload = "x".repeat(vak_tui::editor::STASH_CHAR_LIMIT + 1);
+    e.paste_str(&payload);
+    let (buf, _) = e.view();
+    assert!(
+        buf.contains("[stashed paste #0 · ") && buf.contains("· Ctrl-O expands]"),
+        "placeholder expected, got: {buf}"
+    );
+    assert_eq!(buf.lines().count(), 1);
+    assert!(e.has_stashes());
+    let submitted = e.take();
+    assert_eq!(submitted, payload);
+    assert!(!e.has_stashes());
+}
+
+#[test]
+fn editor_many_lines_paste_stashes_too() {
+    let mut e = Editor::new();
+    let payload = "line\n".repeat(vak_tui::editor::STASH_LINE_LIMIT + 1);
+    e.paste_str(&payload);
+    assert!(e.has_stashes());
+    assert_eq!(e.view().0.lines().count(), 1);
+    assert_eq!(e.take(), payload);
+}
+
+#[test]
+fn editor_expand_stash_at_cursor_restores_exact_payload() {
+    let mut e = Editor::new();
+    type_str(&mut e, "before ");
+    let payload = format!("{}\n", "中".repeat(40)).repeat(vak_tui::editor::STASH_LINE_LIMIT + 2);
+    e.paste_str(&payload);
+    type_str(&mut e, " after");
+    // Cursor sits after the placeholder; move onto the placeholder line.
+    for _ in 0.." after".chars().count() {
+        e.left();
+    }
+    let msg = e.expand_stash_at_cursor();
+    assert!(msg.is_some());
+    // The stash renders its placeholder on its own line, so the separating
+    // newline remains once expanded.
+    assert_eq!(e.view().0, format!("before \n{payload} after"));
+    assert!(!e.has_stashes());
+}
+
+#[test]
+fn editor_expand_without_stash_is_a_no_op() {
+    let mut e = Editor::new();
+    type_str(&mut e, "plain text");
+    e.home();
+    assert!(e.expand_stash_at_cursor().is_none());
+    assert_eq!(e.view().0, "plain text");
+}
+
+#[test]
+fn editor_two_stashes_resolve_in_order() {
+    let mut e = Editor::new();
+    let first = "a".repeat(vak_tui::editor::STASH_CHAR_LIMIT + 7);
+    let second = "b".repeat(vak_tui::editor::STASH_CHAR_LIMIT + 11);
+    e.paste_str(&first);
+    e.paste_str("\nmid\n");
+    // Second stash lands on a fresh line; expand nothing, resolve both.
+    e.paste_str(&second);
+    assert_eq!(e.stash_count(), 2);
+    let submitted = e.take();
+    assert_eq!(submitted, format!("{first}\nmid\n{second}"));
+}
+
+#[test]
+fn editor_draft_roundtrip_consumes_the_file() {
+    let dir = std::env::temp_dir().join(format!("vak-tui-draft-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("composer_draft.txt");
+    let mut e = Editor::new();
+    type_str(&mut e, "unsent draft 中文");
+    assert!(e.save_draft(&path));
+
+    let mut fresh = Editor::new();
+    assert!(fresh.recover_draft(&path));
+    assert_eq!(fresh.view().0, "unsent draft 中文");
+    assert!(!path.exists(), "draft file must be consumed");
+
+    assert!(!fresh.recover_draft(&path));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn editor_empty_draft_file_does_not_restore() {
+    let dir = std::env::temp_dir().join(format!("vak-tui-draft-empty-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("composer_draft.txt");
+    std::fs::write(&path, "   \n").unwrap();
+    let mut e = Editor::new();
+    assert!(!e.recover_draft(&path));
+    assert_eq!(e.view().0, "");
+    assert!(!path.exists());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn editor_undo_redo_coalesces_typing_and_preserves_cursor() {
     let mut e = Editor::new();
     type_str(&mut e, "hello");

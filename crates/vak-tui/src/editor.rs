@@ -1,6 +1,29 @@
 const HISTORY_MAX: usize = 500;
 const UNDO_MAX: usize = 200;
 
+/// Pastes above either threshold collapse into a one-line placeholder chip so
+/// a megabyte-scale paste never triggers proportional synchronous layout.
+/// The payload is held verbatim and substituted back at submit time, so the
+/// ledger still receives the exact submitted input.
+pub const STASH_CHAR_LIMIT: usize = 4_000;
+pub const STASH_LINE_LIMIT: usize = 60;
+
+#[derive(Debug, Clone)]
+struct Stash {
+    label: String,
+    text: String,
+}
+
+fn human_bytes(n: usize) -> String {
+    if n >= 1_048_576 {
+        format!("{:.1} MB", n as f64 / 1_048_576.0)
+    } else if n >= 1024 {
+        format!("{:.1} KB", n as f64 / 1024.0)
+    } else {
+        format!("{n} B")
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EditKind {
     Insert,
@@ -31,6 +54,8 @@ pub struct Editor {
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
     last_edit: Option<EditKind>,
+    stashes: Vec<Stash>,
+    next_stash: usize,
 }
 
 impl Editor {
@@ -200,12 +225,14 @@ impl Editor {
     }
 
     pub fn take(&mut self) -> String {
+        self.resolve_stashes();
         let out = std::mem::take(&mut self.buf);
         self.cursor = 0;
         self.history_idx = None;
         self.undo.clear();
         self.redo.clear();
         self.last_edit = None;
+        self.stashes.clear();
         if !out.trim().is_empty() {
             self.history.push(out.clone());
         }
@@ -249,12 +276,112 @@ impl Editor {
         if s.is_empty() {
             return;
         }
+        let lines = s.lines().count().max(1);
+        if s.chars().count() > STASH_CHAR_LIMIT || lines > STASH_LINE_LIMIT {
+            self.stash_large(s);
+            return;
+        }
         self.record_before(EditKind::Other);
         for c in s.chars() {
             let byte = self.byte_of_char(self.cursor);
             self.buf.insert(byte, c);
             self.cursor += 1;
         }
+    }
+
+    fn stash_large(&mut self, s: &str) {
+        self.record_before(EditKind::Other);
+        let n = self.next_stash;
+        self.next_stash += 1;
+        let size = human_bytes(s.len());
+        let label = format!(
+            "[stashed paste #{} · {} · {} lines · Ctrl-O expands]",
+            n,
+            size,
+            s.lines().count().max(1)
+        );
+        self.stashes.push(Stash {
+            label,
+            text: s.to_string(),
+        });
+        self.insert_last_label();
+    }
+
+    fn insert_last_label(&mut self) {
+        let Some(stash) = self.stashes.last() else {
+            return;
+        };
+        let label = stash.label.clone();
+        let needs_nl = !self.buf.is_empty()
+            && !self.text_before().ends_with('\n')
+            && !self.text_after().starts_with('\n');
+        if needs_nl {
+            self.insert('\n');
+        }
+        for c in label.chars() {
+            self.insert(c);
+        }
+    }
+
+    /// Expands the stashed paste whose placeholder contains the cursor.
+    /// Returns a short status message describing what happened.
+    pub fn expand_stash_at_cursor(&mut self) -> Option<String> {
+        let cur_byte = self.byte_of_char(self.cursor);
+        let mut target: Option<(usize, usize, usize)> = None;
+        for (idx, stash) in self.stashes.iter().enumerate() {
+            let Some(start) = self.buf.find(stash.label.as_str()) else {
+                continue;
+            };
+            let end = start + stash.label.len();
+            if start <= cur_byte && cur_byte <= end {
+                target = Some((idx, start, end));
+                break;
+            }
+        }
+        let (idx, start, end) = target?;
+        let payload = self.stashes.remove(idx).text;
+        let char_pos = self.buf[..start].chars().count();
+        self.record_before(EditKind::Other);
+        self.buf.replace_range(start..end, "");
+        self.cursor = char_pos;
+        for c in payload.chars() {
+            self.insert_raw(c);
+            self.cursor += 1;
+        }
+        Some(format!("expanded paste · {} B", payload.len()))
+    }
+
+    pub fn has_stashes(&self) -> bool {
+        !self.stashes.is_empty()
+    }
+
+    pub fn stash_count(&self) -> usize {
+        self.stashes.len()
+    }
+
+    /// Replaces every remaining placeholder with its verbatim payload.
+    /// Called before submission so the ledger receives the exact input.
+    pub fn resolve_stashes(&mut self) {
+        while !self.stashes.is_empty() {
+            let label = self.stashes[0].label.clone();
+            let Some(byte) = self.buf.find(label.as_str()) else {
+                self.stashes.remove(0);
+                continue;
+            };
+            let payload = self.stashes.remove(0).text;
+            let char_pos = self.buf[..byte].chars().count();
+            self.buf.replace_range(byte..byte + label.len(), "");
+            self.cursor = char_pos;
+            for c in payload.chars() {
+                self.insert_raw(c);
+                self.cursor += 1;
+            }
+        }
+    }
+
+    fn insert_raw(&mut self, c: char) {
+        let byte = self.byte_of_char(self.cursor);
+        self.buf.insert(byte, c);
     }
 
     pub fn line_col(&self) -> (usize, usize) {
@@ -277,6 +404,27 @@ impl Editor {
 
     pub fn is_multiline(&self) -> bool {
         self.buf.contains('\n')
+    }
+
+    /// Persists the current buffer as a crash-safe draft. Written before an
+    /// external editor launches; consumed by [`Editor::recover_draft`] on a
+    /// later start if the process dies mid-edit.
+    pub fn save_draft(&self, path: &std::path::Path) -> bool {
+        std::fs::write(path, self.buf.as_bytes()).is_ok()
+    }
+
+    /// Restores a previously staged draft, consuming the file. Returns
+    /// whether a non-empty draft was restored.
+    pub fn recover_draft(&mut self, path: &std::path::Path) -> bool {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return false;
+        };
+        let _ = std::fs::remove_file(path);
+        if text.trim().is_empty() {
+            return false;
+        }
+        self.set_text(&text);
+        true
     }
 
     pub fn load_history(&mut self, path: &std::path::Path) {

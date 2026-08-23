@@ -211,15 +211,20 @@ impl ThinkingMode {
 }
 
 pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
-    let _raw = RawMode::enable();
+    let mut raw: Option<RawMode> = Some(RawMode::enable());
     let ui_theme_name = core.effective_theme();
     let bell_on = core.config().ui.bell;
     let context_window = core.config().context_window;
     let mut ui_theme = Theme::from_name(&ui_theme_name);
     let mut screen = Screen::new(ui_theme);
     screen.clear_viewport();
-    let hist_path = core.sessions_home().join("input_history.txt");
+    let sessions_home = core.sessions_home();
+    let hist_path = sessions_home.join("input_history.txt");
+    let draft_path = sessions_home.join("composer_draft.txt");
     let mut editor = Editor::new();
+    if editor.recover_draft(&draft_path) {
+        screen.dim("[recovered an unsent draft from a previous session · Enter sends it]");
+    }
     editor.load_history(&hist_path);
 
     let steering: Arc<SteeringQueues> = Arc::new(SteeringQueues::new());
@@ -256,7 +261,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
         &session_path,
     );
 
-    let mut reader = EventStream::new();
+    let mut reader: Option<EventStream> = Some(EventStream::new());
     let mut running: Option<mpsc::Receiver<AgentEvent>> = None;
     let mut run_done: Option<mpsc::Receiver<TurnOutcome>> = None;
     let mut pending = String::new();
@@ -293,7 +298,12 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
 
     loop {
         let running_now = running.is_some();
-        let input_ev = reader.next();
+        let input_ev = async {
+            match reader.as_mut() {
+                Some(r) => r.next().await,
+                None => std::future::pending().await,
+            }
+        };
         let agent_ev = async {
             match running.as_mut() {
                 Some(rx) => rx.recv().await,
@@ -761,6 +771,26 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                             Action::OpenApproval => {
                                 if !approvals.is_empty() {
                                     approval_focused = true;
+                                }
+                            }
+                            Action::ExpandStash => {
+                                if !is_running
+                                    && let Some(msg) = editor.expand_stash_at_cursor()
+                                {
+                                    screen.dim(&msg);
+                                }
+                            }
+                            Action::ExternalEditor => {
+                                if !is_running && approvals.is_empty() {
+                                    open_external_editor(
+                                        &mut editor,
+                                        &mut raw,
+                                        &mut reader,
+                                        &mut screen,
+                                        &draft_path,
+                                    );
+                                } else if is_running {
+                                    screen.dim("external editor unavailable while a run is active");
                                 }
                             }
                             Action::ClearLine => {
@@ -1271,6 +1301,50 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
     editor.save_history(&hist_path);
     screen.dim("bye");
     0
+}
+
+/// Hands the current draft to `$VISUAL`/`$EDITOR` (fallback `vi`).
+///
+/// The draft is staged on disk before launch, so a crash mid-edit still
+/// recovers the text on the next start. The tty event reader is dropped and
+/// raw mode suspended for the duration so the child owns the terminal.
+fn open_external_editor(
+    editor: &mut Editor,
+    raw: &mut Option<RawMode>,
+    reader: &mut Option<EventStream>,
+    screen: &mut Screen,
+    draft_path: &std::path::Path,
+) {
+    if !editor.save_draft(draft_path) {
+        screen.error("could not stage draft — external editor skipped");
+        return;
+    }
+    let cmd = ["VISUAL", "EDITOR"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
+        .unwrap_or_else(|| "vi".to_string());
+    reader.take();
+    drop(raw.take());
+    let result = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("{cmd} \"$0\""))
+        .arg(draft_path)
+        .status();
+    *raw = Some(RawMode::enable());
+    *reader = Some(EventStream::new());
+    screen.resize();
+    match result {
+        Ok(status) if status.success() => match std::fs::read_to_string(draft_path) {
+            Ok(text) => {
+                let _ = std::fs::remove_file(draft_path);
+                editor.set_text(&text);
+                screen.dim("draft loaded from external editor");
+            }
+            Err(e) => screen.error(&format!("could not read edited draft: {e}")),
+        },
+        Ok(_) => screen.dim("editor exited with an error — draft kept for recovery"),
+        Err(e) => screen.error(&format!("could not launch {cmd}: {e}")),
+    }
 }
 
 fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentEvent) {
@@ -2124,11 +2198,18 @@ fn composer_label(ui: &UiState) -> String {
 
 fn composer_footer(editor: &Editor) -> String {
     let (line, column) = editor.line_col();
-    format!(
+    let mut footer = format!(
         "Ln {}, Col {} · Enter send · Alt-Enter newline · Ctrl-P commands",
         line + 1,
         column + 1
-    )
+    );
+    if editor.has_stashes() {
+        footer.push_str(&format!(
+            " · {} stashed paste(s), exact on submit",
+            editor.stash_count()
+        ));
+    }
+    footer
 }
 
 fn draw_picker(screen: &mut Screen, kind: PickerKind, picker: &ChoicePicker) {
@@ -2247,6 +2328,8 @@ fn help_modal_rows() -> Vec<String> {
         "Enter             steer the active agent".to_string(),
         "Tab               queue the next turn".to_string(),
         "Alt-A             review pending approval".to_string(),
+        "Ctrl-O            expand a stashed large paste at the cursor".to_string(),
+        "Ctrl-G            edit the composer draft in $EDITOR".to_string(),
         "Ctrl-C            interrupt and preserve partial output".to_string(),
     ]);
     rows

@@ -100,6 +100,8 @@ pub fn keys_text() -> &'static str {
   Ctrl-K         delete to end of line\n\
   Alt-B / Alt-F  move by word\n\
   Ctrl-U         clear composer\n\
+  Ctrl-O         expand a stashed large paste\n\
+  Ctrl-G         edit the draft in $EDITOR\n\
   Ctrl-L         clear terminal viewport\n\
   Alt-A          review a pending approval\n\
   Ctrl-C         interrupt run / clear composer\n\
