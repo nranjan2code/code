@@ -270,12 +270,89 @@ fn router_with_state(state: AppState) -> Router {
         .route("/providers", get(list_providers))
         .route("/providers/{name}/models", get(discover_models))
         .route("/search", get(search_sessions))
+        .route("/ops/status", get(ops_status))
+        .route("/ops/{service}/{action}", post(ops_action))
         .route("/memory", get(list_memory))
         .route("/skills/proposals", get(list_proposals_route))
         .route("/skills/proposals/{id}/promote", post(promote_proposal))
         .route("/skills/proposals/{id}/reject", post(reject_proposal))
         .merge(gateway::routes())
         .with_state(state)
+}
+
+/// Service-control plane over vak-ops: lets TUI/desktop/tray agree on the
+/// same truth (docs/design/27-operations.md).
+fn ops_payload(cfg: &vak_ops::OpsConfig) -> serde_json::Value {
+    let st = |svc| vak_ops::status(svc, cfg);
+    serde_json::json!({
+        "gateway": { "state": st(vak_ops::Service::Gateway).to_string() },
+        "telegram": { "state": st(vak_ops::Service::Telegram).to_string() },
+        "gateway_healthy": vak_ops::health_ok(cfg),
+    })
+}
+
+async fn ops_status(State(_state): State<AppState>) -> Json<serde_json::Value> {
+    let cfg = vak_ops::OpsConfig::detect();
+    Json(ops_payload(&cfg))
+}
+
+#[derive(serde::Deserialize)]
+struct OpsActionQuery {
+    #[serde(default)]
+    port: Option<u16>,
+}
+
+async fn ops_action(
+    Path((service, action)): Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<OpsActionQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let svc = match service.as_str() {
+        "gateway" => Some(vak_ops::Service::Gateway),
+        "telegram" => Some(vak_ops::Service::Telegram),
+        _ => None,
+    };
+    let Some(svc) = svc else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": format!("unknown service '{service}'") })),
+        )
+            .into_response();
+    };
+    let mut cfg = vak_ops::OpsConfig::detect();
+    if let Some(port) = q.port {
+        cfg.port = port;
+    }
+    let result = match action.as_str() {
+        "start" => {
+            vak_ops::start(svc, &cfg);
+            serde_json::json!({ "ok": true, "action": "start" })
+        }
+        "stop" => {
+            vak_ops::stop(svc, &cfg);
+            serde_json::json!({ "ok": true, "action": "stop" })
+        }
+        "restart" => {
+            vak_ops::restart(svc, &cfg);
+            serde_json::json!({ "ok": true, "action": "restart" })
+        }
+        "install" => match vak_ops::install(svc, &cfg) {
+            Ok(()) => serde_json::json!({ "ok": true, "action": "install" }),
+            Err(e) => serde_json::json!({ "ok": false, "error": e }),
+        },
+        "uninstall" => match vak_ops::uninstall(svc, &cfg) {
+            Ok(()) => serde_json::json!({ "ok": true, "action": "uninstall" }),
+            Err(e) => serde_json::json!({ "ok": false, "error": e }),
+        },
+        other => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("unknown action '{other}'") })),
+            )
+                .into_response();
+        }
+    };
+    (StatusCode::OK, Json(result)).into_response()
 }
 
 async fn list_memory(State(state): State<AppState>) -> Json<serde_json::Value> {

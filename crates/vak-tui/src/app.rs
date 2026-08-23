@@ -1259,6 +1259,9 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                 Some(Command::Doctor) => {
                                                     run_doctor(&core, &mut screen);
                                                 }
+                                                Some(Command::Services(arg)) => {
+                                                    run_services(arg, &mut screen);
+                                                }
                                                 Some(Command::Details) => {
                                                     ui.expanded_tools = !ui.expanded_tools;
                                                     let state = if ui.expanded_tools {
@@ -2746,6 +2749,58 @@ async fn run_shell_passthrough(
 
 /// Health check rendered as a checklist: auth, sandbox, storage, config
 /// warnings, extension surface.
+/// `/services` — background service status and control via vak-ops
+/// (docs/design/27-operations.md).
+fn run_services(arg: Option<(String, String)>, screen: &mut Screen) {
+    let cfg = vak_ops::OpsConfig::detect();
+
+    if let Some((action, svc_name)) = arg {
+        let svc = match svc_name.as_str() {
+            "gateway" => vak_ops::Service::Gateway,
+            _ => vak_ops::Service::Telegram,
+        };
+        match action.as_str() {
+            "start" | "stop" | "restart" => {
+                let ok = match action.as_str() {
+                    "start" => vak_ops::start(svc, &cfg),
+                    "stop" => vak_ops::stop(svc, &cfg),
+                    _ => {
+                        vak_ops::restart(svc, &cfg);
+                        true
+                    }
+                };
+                if ok {
+                    screen.accent(&format!("services: {action} {svc_name} — done"));
+                } else {
+                    screen.error(&format!(
+                        "services: {action} {svc_name} failed (is it installed? see /services)"
+                    ));
+                }
+            }
+            _ => {
+                screen.error("usage: /services [start|stop|restart] [gateway|telegram]");
+                return;
+            }
+        }
+    }
+
+    screen.accent("services:");
+    for (name, svc) in [
+        ("gateway", vak_ops::Service::Gateway),
+        ("telegram", vak_ops::Service::Telegram),
+    ] {
+        let st = vak_ops::status(svc, &cfg);
+        let healthy = name != "gateway" || vak_ops::health_ok(&cfg);
+        let extra = if name == "gateway" && st == vak_ops::State::Running && !healthy {
+            " · not answering"
+        } else {
+            ""
+        };
+        screen.line(&format!("  {name:<8} {st}{extra}"));
+    }
+    screen.dim("  /services start|stop|restart gateway|telegram");
+}
+
 fn run_doctor(core: &Core, screen: &mut Screen) {
     screen.clear_input();
     screen.accent("doctor:");

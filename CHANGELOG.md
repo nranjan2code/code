@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.3.0 — 2026-08-23 · platform release
+
+The always-on platform phase (docs/design/22-gateway.md through 27):
+one headless core, many surfaces, durable services.
+
+- **Gateway**: `POST /gateway/inbound` (+wait long-poll) routes chat
+  surfaces to persistent sessions; bindings survive restarts; busy turns
+  queue as logged steering; unattended approvals fail closed by default or
+  forward to an approver surface (`approvals = "forward"`, timeout-deny).
+- **Transports**: Telegram bridge (`vakcoder telegram`) and outbound
+  webhook targets with fail-closed bearer auth; cron routines push real
+  final answers to any surface (`TaskDef.deliver_to`).
+- **Media passthrough**: images from chat reach vision models as native
+  content blocks (Anthropic/OpenAI/Google/Responses wire shapes); Telegram
+  photos auto-download.
+- **Memory & recall**: `session_search` tool + `/search` endpoint rank
+  curated MEMORY.md notes above transcripts; `remember` persists decisions
+  with provenance.
+- **Learning loop**: `propose_skill` queues drafts for human promotion via
+  HTTP/CLI into user-level skill discovery — never automatic.
+- **Docker exec backend**: `[sandbox] backend = "docker"` runs bash in a
+  no-network container with the workspace bind-mounted at its real path.
+- **Security pass**: broker-worker tool execution, bounded subprocess
+  environments, workspace-rooted restricted reads, permission-change
+  revocation, threat model in docs/design/24-agent-security.md.
+- **Operations**: `scripts/install_gateway_service.sh` installs
+  launchd/systemd services; `vakcoder-tray` menu-bar controller with live
+  indicators and a watchdog that auto-restarts crashed services;
+  `VAKCODER_GATEWAY_TOKEN` pins auth across restarts; hosting guide in
+  docs/hosting.md.
+- **Reliability fix found in production**: OpenAI-compatible endpoints that
+  close tool-call turns without canonical finish reasons no longer strand
+  dangling tool calls, and subscriber-less runs are never self-cancelled.
+
 ## Unreleased
 
 - **Model catalogues are discovered, not hardcoded.** `Core::models_for` — a

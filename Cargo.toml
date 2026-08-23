@@ -21,13 +21,14 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/vakcoder/vakcoder"
 
 [workspace.dependencies]
 vak-llm = { path = "crates/vak-llm" }
+vak-ops = { path = "crates/vak-ops" }
 vak-server = { path = "crates/vak-server" }
 vak-session = { path = "crates/vak-session" }
 vak-tools = { path = "crates/vak-tools" }

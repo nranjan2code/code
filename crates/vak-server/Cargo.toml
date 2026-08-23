@@ -20,6 +20,7 @@ vak-config = { workspace = true }
 vak-core = { workspace = true }
 vak-llm = { workspace = true }
 futures = { workspace = true }
+vak-ops = { path = "../vak-ops" }
 vak-session = { workspace = true }
 tower-http = { workspace = true }
 chrono = { workspace = true }

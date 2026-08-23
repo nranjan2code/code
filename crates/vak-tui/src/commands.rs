@@ -14,6 +14,9 @@ pub enum Command {
     /// than dumping bytes into the terminal.
     View(Option<String>),
     Doctor,
+    /// `/services [start|stop|restart] [gateway|telegram]` — background
+    /// service control over vak-ops.
+    Services(Option<(String, String)>),
     Details,
     Keys(Option<String>),
     Keymap,
@@ -65,6 +68,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("transcript", "[n] dump recent messages of this session"),
     ("view", "<path> read a workspace file · /cat is an alias"),
     ("doctor", "health check: auth, sandbox, config, extensions"),
+    (
+        "services",
+        "[action svc] gateway & bridge control · bare = status",
+    ),
     ("details", "toggle expanded tool result previews"),
     ("keys", "shortcut map · /keys raw captures literal keys"),
     ("keymap", "view bindings · r rebinds interactively"),
@@ -95,6 +102,7 @@ pub fn parse(input: &str) -> Option<Command> {
         "transcript" => Some(Command::Transcript(arg_opt)),
         "view" | "cat" => Some(Command::View(arg_opt)),
         "doctor" if arg.is_empty() => Some(Command::Doctor),
+        "services" => Some(Command::Services(services_arg(&arg))),
         "details" if arg.is_empty() => Some(Command::Details),
         "keys" => Some(Command::Keys(arg_opt)),
         "keymap" if arg.is_empty() => Some(Command::Keymap),
@@ -226,4 +234,29 @@ impl A11yFeature {
             Self::Reader => "screen reader",
         }
     }
+}
+
+/// Parse `/services` argument: `action service` in either order, both
+/// optional. Returns (action, service) with action defaulting to "status".
+pub fn services_arg(arg: &str) -> Option<(String, String)> {
+    let arg = arg.trim();
+    if arg.is_empty() {
+        return None;
+    }
+    let actions = ["start", "stop", "restart"];
+    let services = ["gateway", "telegram", "bridge"];
+    let mut action = None;
+    let mut svc = None;
+    for tok in arg.split_whitespace() {
+        let t = tok.to_lowercase();
+        if actions.contains(&t.as_str()) {
+            action = Some(t);
+        } else if services.contains(&t.as_str()) {
+            svc = Some(if t == "bridge" { "telegram".into() } else { t });
+        }
+    }
+    Some((
+        action.unwrap_or_else(|| "status".into()),
+        svc.unwrap_or_else(|| "gateway".into()),
+    ))
 }
