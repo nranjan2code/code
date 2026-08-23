@@ -230,10 +230,49 @@ From vakyartha's engineering practice, adapted:
 4. **CI checks doc citations**: referenced `crates/…` paths in design
    docs must resolve; stale citations fail CI.
 
+## Phase G (conditional) — Run-graph projection & flow surfaces
+
+Landscape evidence (2026-08): flows-as-first-class-artifacts are winning —
+n8n Agents ships define-once reuse across chat/schedules/workflow nodes,
+and a dashboard ecosystem consumes coding agents' own transcripts
+externally (plan strips, mermaid viewers, subagent trees). Generative-UI
+agents independently validate the model-authors-semantics /
+renderer-owns-presentation split (scope 4 below ≈ vakyartha's AnswerDraft).
+Counter-evidence bounds the ambition: OpenAI deprecated Agent Builder — its
+flagship visual canvas — eight months after launch (shutdown 2026-11-30),
+migrating users to code-first SDKs. Conclusion: projection-as-data is the
+durable layer; canvas-as-core is an anti-goal.
+
+Scope, each gated on its trigger:
+
+1. **Run-graph snapshot as data** — typed
+   `{layers: [{node_id, status, started_at, duration_ms, error}]}`
+   projected from existing flow-run ledgers + planner attempt audits;
+   emitted as an SSE event during runs and served at
+   `GET /flows/{run}/graph`. Follows invariant 4 (delta + snapshot);
+   zero rendering opinions. *Trigger*: getting lost in a real flow run.
+2. **TUI affordances** — one line per active layer
+   (`L2/4 ▶ research-a · ✔ fetch · ✘ parse · skipped 2`) plus a
+   completion/resume summary; planner prints its validated shape with the
+   same layer printer before executing. Rides along with (1); reuses
+   `flow check`'s printer.
+3. **Flow surfaces beyond CLI** — server endpoints + desktop controls for
+   flows, making our SSE consumable by our own UIs and third-party
+   dashboards alike. *Trigger*: remote/desktop flow-control demand.
+4. **Typed tool outputs → rendered tables/metrics** —
+   `ToolOutput{content: String}` gains an optional typed payload;
+   TUI/desktop render tables/metrics/charts natively. Model authors
+   semantics, deterministic renderer owns presentation. *Trigger*:
+   repeated structured-output demand.
+
+Anti-goals: no interactive node canvas in core/TUI, no animation, no SVG
+timelines in a terminal — Agent Builder's deprecation is the cited
+evidence that authoring canvases rot faster than the data layer beneath
+them. Rich views belong to desktop or external consumers of the snapshot
+API.
+
 ## Parking lot (post-adoption, demand-driven)
 
-- Typed tool outputs (`ToolOutput{content: String}` → typed payload enum)
-  enabling native tables/metrics rendering in TUI/desktop.
 - Skill intent-discovery: embed turn intent against skill descriptions,
   promote above threshold, fall closed to name-match; usage telemetry
   (data already logged via FrozenContract skills list); graduation ladder
@@ -255,6 +294,7 @@ foundation.
 | 3a | C context gate | A (events) | M |
 | 3b | D FinOps | A (usage in receipts) | M |
 | 4 | E flows adopt/diff | A | M |
+| 5 (conditional) | G run-graph projection & flow surfaces | A; rides with E | S slices |
 | ongoing | F process | none | S slices |
 
 A first: everything else records into receipts. C and D can proceed in
