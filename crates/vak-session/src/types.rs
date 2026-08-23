@@ -55,6 +55,21 @@ pub struct CompactionEntry {
     pub summary: String,
     pub first_kept_entry_id: String,
     pub tokens_before: u64,
+    /// Packet accounting (doc 27 Phase C): which visible message entries
+    /// stayed verbatim vs became summary material. `None` for entries
+    /// written before accounting existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partition: Option<ContextPartition>,
+}
+
+/// The compaction-time packet partition: every message entry visible in
+/// the current projection appears exactly once — verbatim (`selected`) or
+/// summarized away (`dropped`). Prior compaction pseudo-entries appear in
+/// neither list; they were settled by earlier compactions.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContextPartition {
+    pub selected_entry_ids: Vec<String>,
+    pub dropped_entry_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,4 +123,6 @@ pub struct CompactionPlan {
     /// Id of the FIRST KEPT projected entry — the new compaction's
     /// first_kept_entry_id anchor.
     pub first_kept_entry_id: String,
+    /// Where each visible message entry lands (doc 27 Phase C).
+    pub partition: ContextPartition,
 }

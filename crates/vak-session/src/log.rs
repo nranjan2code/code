@@ -168,6 +168,7 @@ impl SessionLog {
                 summary,
                 first_kept_entry_id,
                 tokens_before,
+                partition: None,
             }),
         ))
     }
@@ -223,29 +224,64 @@ impl SessionLog {
     }
 
     fn derive_keyed(&self) -> Vec<(String, Message)> {
-        let mut out: Vec<(String, Message)> = Vec::new();
+        self.derive_keyed_tagged()
+            .into_iter()
+            .map(|(id, m, _)| (id, m))
+            .collect()
+    }
+
+    /// Like `derive_keyed`, additionally flagging compaction-summary
+    /// pseudo-entries so packet accounting can exclude them from both
+    /// sides of a partition (they were settled by earlier compactions).
+    fn derive_keyed_tagged(&self) -> Vec<(String, Message, bool)> {
+        let mut out: Vec<(String, Message, bool)> = Vec::new();
         for entry in self.chain_to_root() {
             match &entry.payload {
                 EntryPayload::Message(record) => {
-                    out.push((entry.id.clone(), record.message.clone()));
+                    out.push((entry.id.clone(), record.message.clone(), false));
                 }
                 EntryPayload::Compaction(c) => {
                     let keep_from = out
                         .iter()
-                        .position(|(id, _)| id == &c.first_kept_entry_id)
+                        .position(|(id, _, _)| id == &c.first_kept_entry_id)
                         .unwrap_or(out.len());
                     out.drain(..keep_from);
                     let summary_msg = Message::user_text(format!(
                         "<context_summary>\n{}\n</context_summary>",
                         c.summary
                     ));
-                    out.insert(0, (entry.id.clone(), summary_msg));
+                    out.insert(0, (entry.id.clone(), summary_msg, true));
                 }
                 // Receipts are audit, not model-visible input.
                 EntryPayload::Header(_) | EntryPayload::Receipt(_) => {}
             }
         }
         out
+    }
+
+    /// Packet accounting for a planned boundary: message entries before
+    /// `first_kept_entry_id` in the current projection become `dropped`,
+    /// the rest stay `selected`.
+    fn partition_at_boundary(
+        tagged: &[(String, Message, bool)],
+        boundary: usize,
+    ) -> crate::types::ContextPartition {
+        let mut selected = Vec::new();
+        let mut dropped = Vec::new();
+        for (i, (id, _, is_summary)) in tagged.iter().enumerate() {
+            if *is_summary {
+                continue;
+            }
+            if i < boundary {
+                dropped.push(id.clone());
+            } else {
+                selected.push(id.clone());
+            }
+        }
+        crate::types::ContextPartition {
+            selected_entry_ids: selected,
+            dropped_entry_ids: dropped,
+        }
     }
 
     pub fn derive_messages(&self) -> Vec<Message> {
@@ -259,27 +295,31 @@ impl SessionLog {
     /// tool_use / user tool_result pair — it advances past result-bearing
     /// user messages so the kept region always starts API-valid.
     pub fn plan_compaction(&self, keep_recent: usize) -> Option<CompactionPlan> {
-        let keyed = self.derive_keyed();
-        if keyed.len() <= keep_recent {
+        let tagged = self.derive_keyed_tagged();
+        if tagged.len() <= keep_recent {
             return None;
         }
-        let mut boundary = keyed.len() - keep_recent;
+        let mut boundary = tagged.len() - keep_recent;
         let has_tool_result = |m: &Message| {
             m.content
                 .iter()
                 .any(|b| matches!(b, vak_llm::ContentBlock::ToolResult { .. }))
         };
-        while boundary < keyed.len() && has_tool_result(&keyed[boundary].1) {
+        while boundary < tagged.len() && has_tool_result(&tagged[boundary].1) {
             boundary += 1;
         }
         if boundary == 0 {
             return None;
         }
         Some(CompactionPlan {
-            older: keyed[..boundary].iter().map(|(_, m)| m.clone()).collect(),
+            older: tagged[..boundary]
+                .iter()
+                .map(|(_, m, _)| m.clone())
+                .collect(),
             // Anchor = FIRST KEPT entry: the walker drains everything
             // strictly before this id and inserts the summary at index 0.
-            first_kept_entry_id: keyed[boundary].0.clone(),
+            first_kept_entry_id: tagged[boundary].0.clone(),
+            partition: Self::partition_at_boundary(&tagged, boundary),
         })
     }
 
@@ -298,6 +338,7 @@ impl SessionLog {
                 summary,
                 first_kept_entry_id: plan.first_kept_entry_id.clone(),
                 tokens_before,
+                partition: Some(plan.partition.clone()),
             }),
         ))?;
         Ok(())

@@ -68,6 +68,10 @@ pub enum AgentEvent {
         before_tokens: u64,
         after_tokens: u64,
         summarized_messages: usize,
+        /// Packet accounting (doc 27 Phase C): how many visible message
+        /// entries stayed verbatim vs became summary material.
+        selected_messages: usize,
+        dropped_messages: usize,
     },
     StreamOpened,
     ApprovalRequested {
@@ -473,6 +477,8 @@ impl Agent {
                             before_tokens: tokens_before,
                             after_tokens: est,
                             summarized_messages: plan.older.len(),
+                            selected_messages: plan.partition.selected_entry_ids.len(),
+                            dropped_messages: plan.partition.dropped_entry_ids.len(),
                         })
                         .await;
                     if est > self.config.context_policy.input_budget() {

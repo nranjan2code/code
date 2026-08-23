@@ -1953,11 +1953,13 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
             before_tokens,
             after_tokens,
             summarized_messages,
+            selected_messages,
+            dropped_messages,
         } => {
             ui.run_state = RunState::Streaming;
             screen.clear_input();
             screen.dim(&format!(
-                "📦 context compacted: ~{before_tokens} → ~{after_tokens} tokens ({summarized_messages} messages summarized)"
+                "📦 context compacted: ~{before_tokens} → ~{after_tokens} tokens ({summarized_messages} summarized · {selected_messages} kept verbatim · {dropped_messages} dropped)"
             ));
         }
         AgentEvent::StopHookContinuation { reason } => {

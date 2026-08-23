@@ -1262,6 +1262,20 @@ async fn run_eval(
             );
             reports.push(r);
         }
+        // Deterministic context-quality gate (doc 27 Phase C) — no model
+        // calls; packet-accounting properties over real compaction.
+        let card = match vak_eval::run_context_scorecard() {
+            Ok(card) => card,
+            Err(e) => {
+                eprintln!("context scorecard harness error: {e}");
+                return 1;
+            }
+        };
+        println!("{card}");
+        if !card.passed() {
+            eprintln!("context scorecard FAILED");
+            return 1;
+        }
     } else {
         let core = match Core::new(std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))) {
             Ok(c) => c,
