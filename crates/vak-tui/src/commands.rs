@@ -9,6 +9,10 @@ pub enum Command {
     Rewind(Option<String>),
     Theme(Option<String>),
     Transcript(Option<String>),
+    /// `/view <path>` — read a workspace file in a modal. Text is shown with
+    /// line numbers; images and binaries report their kind and size rather
+    /// than dumping bytes into the terminal.
+    View(Option<String>),
     Doctor,
     Details,
     Keys(Option<String>),
@@ -59,6 +63,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("rewind", "[seq] restore a workspace checkpoint"),
     ("theme", "choose a theme · previews live"),
     ("transcript", "[n] dump recent messages of this session"),
+    ("view", "<path> read a workspace file · /cat is an alias"),
     ("doctor", "health check: auth, sandbox, config, extensions"),
     ("details", "toggle expanded tool result previews"),
     ("keys", "shortcut map · /keys raw captures literal keys"),
@@ -88,6 +93,7 @@ pub fn parse(input: &str) -> Option<Command> {
         "rewind" => Some(Command::Rewind(arg_opt)),
         "theme" => Some(Command::Theme(arg_opt)),
         "transcript" => Some(Command::Transcript(arg_opt)),
+        "view" | "cat" => Some(Command::View(arg_opt)),
         "doctor" if arg.is_empty() => Some(Command::Doctor),
         "details" if arg.is_empty() => Some(Command::Details),
         "keys" => Some(Command::Keys(arg_opt)),

@@ -296,7 +296,8 @@ export async function openFileSmart(path: string) {
   }
   try {
     const d = await api.readDiff(id);
-    setDockTab(diffCoversPath(`${d.diff}\n${d.staged_diff}`, path) ? "diff" : "editor");
+    const diff = `${d.diff ?? ""}\n${d.staged_diff ?? ""}`;
+    setDockTab(diffCoversPath(diff, path) ? "diff" : "editor");
   } catch {
     setDockTab("editor");
   }

@@ -3,6 +3,7 @@ import type { JSX } from "solid-js";
 import { density, itemsOf, activeId, hydratingId, openInEditor, uiPreferences, type Item } from "../store";
 import { approve, sendPrompt, newSession, openFileSmart } from "../App";
 import { renderMarkdown } from "../md";
+import { highlight, languageForFence } from "../highlight";
 import Icon from "./Icon";
 
 const starters = [
@@ -149,12 +150,36 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }> }) => (
   </div>
 );
 
+/**
+ * Replace each fenced block's plain text with highlighted markup in place,
+ * leaving the header and copy button (which holds the raw text) untouched.
+ */
+async function colorizeCodeBlocks(root: HTMLElement) {
+  const blocks = Array.from(root.querySelectorAll<HTMLElement>(".cb"));
+  for (const cb of blocks) {
+    if (cb.dataset.hl === "1") continue;
+    const code = cb.querySelector("pre > code");
+    if (!code) continue;
+    const lang = languageForFence(cb.querySelector(".cb-h span")?.textContent ?? "");
+    if (!lang) continue;
+    const out = await highlight(code.textContent ?? "", lang);
+    if (!out) continue;
+    const pre = cb.querySelector("pre");
+    if (!pre) continue;
+    pre.outerHTML = out;
+    cb.dataset.hl = "1";
+  }
+}
+
 export const Markdown = (props: { text: string; streaming?: boolean }): JSX.Element => {
   let el!: HTMLDivElement;
   createEffect(() => {
     el.innerHTML = renderMarkdown(props.text);
     if (props.streaming) el.classList.add("streaming");
     else el.classList.remove("streaming");
+    // Colour fenced code once the text has settled. Re-tokenising on every
+    // streaming delta would burn CPU on output that is about to change.
+    if (!props.streaming) void colorizeCodeBlocks(el);
   });
   // delegate copy buttons + file-path links
   const onClick = (e: MouseEvent) => {

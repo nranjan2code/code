@@ -144,10 +144,12 @@ export interface ConfigSnapshot {
 }
 
 export interface DiffResponse {
-  root: string;
-  diff: string;
-  staged_diff: string;
-  status: string;
+  // Absent on the error payload (e.g. the workspace is not a git repo), so
+  // these are optional: the server returns { error } alone in that case.
+  root?: string;
+  diff?: string;
+  staged_diff?: string;
+  status?: string;
   error?: string;
 }
 

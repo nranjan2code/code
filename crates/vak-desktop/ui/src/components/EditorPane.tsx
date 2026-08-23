@@ -1,9 +1,17 @@
-import { createEffect, createMemo, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, Match, Show, Switch } from "solid-js";
 import { editorPath } from "../store";
 import * as api from "../api";
+import CodeEditor from "./CodeEditor";
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function EditorPane() {
   const [path, setPath] = createSignal<string | null>(null);
+  const [file, setFile] = createSignal<api.FileResponse | null>(null);
   const [content, setContent] = createSignal("");
   const [savedContent, setSavedContent] = createSignal("");
   const [loading, setLoading] = createSignal(false);
@@ -24,8 +32,10 @@ export default function EditorPane() {
       .then((res) => {
         if (cancelled) return;
         setPath(p);
-        setContent(res.content);
-        setSavedContent(res.content);
+        setFile(res);
+        // Only text has content; an image or binary is shown, never edited.
+        setContent(res.content ?? "");
+        setSavedContent(res.content ?? "");
       })
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
       .finally(() => !cancelled && setLoading(false));
@@ -89,25 +99,44 @@ export default function EditorPane() {
             </>
           )}
         </Show>
-        <button
-          class="chip sm"
-          onClick={() => void save()}
-          disabled={!path() || !dirty() || saving()}
-          title="Save (⌘S)"
-        >
-          {saving() ? "…" : "save"}
-        </button>
+        <Show when={file() && !file()!.editable}>
+          <span class="badge">{file()!.kind} · {formatBytes(file()!.bytes)}</span>
+        </Show>
+        <Show when={!file() || file()!.editable}>
+          <button
+            class="chip sm"
+            onClick={() => void save()}
+            disabled={!path() || !dirty() || saving()}
+            title="Save (⌘S)"
+          >
+            {saving() ? "…" : "save"}
+          </button>
+        </Show>
       </div>
       <Show when={!error()} fallback={<div class="dock-empty">{error()}</div>}>
         <Show when={path()} fallback={<div class="dock-empty">Open a file from chat or the diff pane.</div>}>
-          <textarea
-            ref={ta}
-            class="ep-text"
-            spellcheck={false}
-            value={content()}
-            onInput={(e) => setContent(e.currentTarget.value)}
-            onKeyDown={onKeyDown}
-          />
+          <Switch>
+            <Match when={file()?.kind === "image"}>
+              <div class="ep-image">
+                <img src={file()!.data_url} alt={path() ?? "image"} />
+              </div>
+            </Match>
+            <Match when={file()?.kind === "binary"}>
+              <div class="dock-empty">
+                Binary file — {formatBytes(file()!.bytes)}. Not shown, and not editable
+                here so it cannot be corrupted.
+              </div>
+            </Match>
+            <Match when={true}>
+              <CodeEditor
+                path={path()!}
+                value={content()}
+                onInput={setContent}
+                onKeyDown={onKeyDown}
+                ref={(el) => (ta = el)}
+              />
+            </Match>
+          </Switch>
         </Show>
       </Show>
     </div>

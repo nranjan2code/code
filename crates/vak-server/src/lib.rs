@@ -974,14 +974,37 @@ async fn read_file(
         return (StatusCode::FORBIDDEN, "path outside workspace").into_response();
     };
     match tokio::fs::read(&path).await {
-        Ok(bytes) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
+        Ok(bytes) => {
+            // Never hand back lossily-decoded bytes: the editor can save what
+            // it was given, and a lossy round trip would destroy the file.
+            // Binary is reported as binary; images ride back as base64 so the
+            // UI can render them.
+            let kind = vak_core::files::classify(&path, &bytes);
+            let mut body = serde_json::json!({
                 "path": q.path,
-                "content": String::from_utf8_lossy(&bytes),
-            })),
-        )
-            .into_response(),
+                "kind": kind.as_str(),
+                "bytes": bytes.len(),
+            });
+            match kind {
+                vak_core::files::FileKind::Text => {
+                    body["content"] = serde_json::json!(String::from_utf8_lossy(&bytes));
+                    body["editable"] = serde_json::json!(true);
+                }
+                vak_core::files::FileKind::Image => {
+                    use base64::Engine;
+                    body["data_url"] = serde_json::json!(format!(
+                        "data:{};base64,{}",
+                        vak_core::files::mime_for(&path),
+                        base64::engine::general_purpose::STANDARD.encode(&bytes)
+                    ));
+                    body["editable"] = serde_json::json!(false);
+                }
+                vak_core::files::FileKind::Binary => {
+                    body["editable"] = serde_json::json!(false);
+                }
+            }
+            (StatusCode::OK, Json(body)).into_response()
+        }
         Err(_) => (StatusCode::NOT_FOUND, "file not found").into_response(),
     }
 }
@@ -996,6 +1019,13 @@ async fn write_file(State(state): State<AppState>, Json(body): Json<WriteBody>) 
     let Some(path) = confined_path(state.core.cwd(), &body.path) else {
         return StatusCode::FORBIDDEN;
     };
+    // Refuse to overwrite a file this endpoint could never have rendered
+    // faithfully: saving text over an image or binary destroys it.
+    if let Ok(existing) = tokio::fs::read(&path).await
+        && !vak_core::files::classify(&path, &existing).editable()
+    {
+        return StatusCode::UNSUPPORTED_MEDIA_TYPE;
+    }
     if let Some(parent) = path.parent()
         && tokio::fs::create_dir_all(parent).await.is_err()
     {

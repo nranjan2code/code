@@ -1247,6 +1247,15 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                         None => screen.dim("no active session"),
                                                     }
                                                 }
+                                                Some(Command::View(arg)) => {
+                                                    match arg.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+                                                        None => screen.error("usage: /view <path>"),
+                                                        Some(rel) => match view_file_modal(&core, rel) {
+                                                            Ok(m) => modal = Some(m),
+                                                            Err(e) => screen.error(&e),
+                                                        },
+                                                    }
+                                                }
                                                 Some(Command::Doctor) => {
                                                     run_doctor(&core, &mut screen);
                                                 }
@@ -3070,6 +3079,74 @@ async fn model_choices(core: &Core, provider: &str, current: &str) -> Vec<Choice
 async fn default_model(core: &Core, provider: &str) -> Option<String> {
     core.discover_models(provider).await.ok()?.first().cloned()
 }
+
+/// `/view <path>` — read a workspace file into a modal.
+///
+/// Mirrors what the desktop editor does: text is shown with line numbers,
+/// while images and binaries report their kind and size instead of spraying
+/// bytes at the terminal. Paths are confined to the workspace.
+fn view_file_modal(core: &Core, rel: &str) -> Result<ModalView, String> {
+    let cwd = core.cwd();
+    let joined = if std::path::Path::new(rel).is_absolute() {
+        std::path::PathBuf::from(rel)
+    } else {
+        cwd.join(rel)
+    };
+    let path = joined
+        .canonicalize()
+        .map_err(|_| format!("no such file: {rel}"))?;
+    let root = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
+    if !path.starts_with(&root) {
+        return Err(format!("path outside the workspace: {rel}"));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("{rel}: {e}"))?;
+    let kind = vak_core::files::classify(&path, &bytes);
+    let size = vak_core::files::format_bytes(bytes.len() as u64);
+    let name = path
+        .strip_prefix(&root)
+        .unwrap_or(&path)
+        .to_string_lossy()
+        .into_owned();
+
+    let rows: Vec<String> = match kind {
+        vak_core::files::FileKind::Text => {
+            let text = String::from_utf8_lossy(&bytes);
+            let total = text.lines().count();
+            let width = total.to_string().len().max(2);
+            text.lines()
+                .take(MAX_VIEW_LINES)
+                .enumerate()
+                .map(|(i, line)| format!("{:>width$} │ {}", i + 1, line, width = width))
+                .chain(
+                    (total > MAX_VIEW_LINES)
+                        .then(|| format!("… {} more lines", total - MAX_VIEW_LINES)),
+                )
+                .collect()
+        }
+        vak_core::files::FileKind::Image => vec![
+            format!("image · {size}"),
+            String::new(),
+            "Terminals cannot render this; open it in the desktop app".to_string(),
+        ],
+        vak_core::files::FileKind::Binary => vec![
+            format!("binary · {size}"),
+            String::new(),
+            "Not shown: these bytes are not text.".to_string(),
+        ],
+    };
+
+    Ok(ModalView {
+        title: format!("{name} · {} · {size}", kind.as_str()),
+        rows,
+        scroll: 0,
+        footer: "↑↓ scroll · Esc close".to_string(),
+        ..Default::default()
+    })
+}
+
+/// Cap on lines rendered by `/view`; the modal scrolls, but building a
+/// million rows for a huge file would stall the redraw.
+const MAX_VIEW_LINES: usize = 5000;
 
 fn help_modal_rows(core: &Core) -> Vec<String> {
     let mut rows = vec!["COMMANDS".to_string(), "".to_string()];

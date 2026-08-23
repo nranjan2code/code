@@ -4,6 +4,7 @@
 
 pub mod checkpoints;
 pub mod custom_commands;
+pub mod files;
 pub mod skills;
 pub mod worktree;
 

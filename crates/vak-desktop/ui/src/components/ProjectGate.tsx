@@ -216,7 +216,7 @@ export default function ProjectGate() {
   return (
     <div class="gate">
       <div class="gate-card">
-        <div class="gate-mark"><Icon name="spark" size={28} /></div>
+        <div class="gate-mark"><img src="/vakcoder-icon.png" alt="" /></div>
         <Show when={showPicker()} fallback={<ConnectModel />}>
           <h1>vakcoder</h1>
           <p class="gate-lead">Your code, your machine, your agent.</p>

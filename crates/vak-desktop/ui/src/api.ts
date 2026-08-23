@@ -194,7 +194,19 @@ export function listSkills(): Promise<{
   return req("/skills");
 }
 
-export function readFile(path: string): Promise<{ path: string; content: string }> {
+export interface FileResponse {
+  path: string;
+  /** "text" | "image" | "binary" — decides how the file can be shown. */
+  kind: "text" | "image" | "binary";
+  bytes: number;
+  editable: boolean;
+  /** Text only. */
+  content?: string;
+  /** Images only: a self-contained data: URL. */
+  data_url?: string;
+}
+
+export function readFile(path: string): Promise<FileResponse> {
   return req(`/fs/file?path=${encodeURIComponent(path)}`);
 }
 

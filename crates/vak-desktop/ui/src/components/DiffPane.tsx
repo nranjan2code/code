@@ -22,11 +22,13 @@ export default function DiffPane(props: { sessionId: string | null }) {
   const [commentText, setCommentText] = createSignal("");
   const [sentCount, setSentCount] = createSignal(0);
 
+  // The server answers a non-git workspace with { error } and no diff
+  // fields, so every read here has to tolerate their absence.
   const files = createMemo<DiffFile[]>(() =>
-    data() ? parseDiff(data()!.diff + data()!.staged_diff) : [],
+    parseDiff(`${data()?.diff ?? ""}${data()?.staged_diff ?? ""}`),
   );
   const status = createMemo(() =>
-    data() ? parseStatus(data()!.status) : { untracked: [] as string[], changed: [] as string[] },
+    parseStatus(data()?.status ?? ""),
   );
 
   const refresh = async () => {
@@ -38,7 +40,13 @@ export default function DiffPane(props: { sessionId: string | null }) {
     setLoading(true);
     setError(null);
     try {
-      setData(await api.readDiff(id));
+      const res = await api.readDiff(id);
+      if (res.error) {
+        setData(null);
+        setError(res.error);
+      } else {
+        setData(res);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

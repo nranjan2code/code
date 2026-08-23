@@ -14,6 +14,7 @@
     "@tauri-apps/plugin-notification": "^2",
     "@xterm/addon-fit": "^0.10",
     "@xterm/xterm": "^5",
+    "shiki": "^4.4.3",
     "solid-js": "^1"
   },
   "devDependencies": {

@@ -229,7 +229,7 @@ export default function Settings() {
             {(item) => <button classList={{ active: page() === item.id }} onClick={() => { setPage(item.id); setQuery(""); }}><Icon name={item.icon} /><span>{item.label}</span></button>}
           </For>
         </nav>
-        <div class="settings-nav-foot"><div class="settings-app-mark"><Icon name="spark" /></div><div><strong>vakcoder</strong><span>Version 0.2.0</span></div></div>
+        <div class="settings-nav-foot"><div class="settings-app-mark"><img src="/vakcoder-icon.png" alt="" /></div><div><strong>vakcoder</strong><span>Version 0.2.0</span></div></div>
       </aside>
 
       <main class="settings-main">
