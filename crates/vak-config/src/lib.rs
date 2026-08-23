@@ -1,6 +1,10 @@
 //! vak-config: layered configuration. Defaults < global file < project file
 //! < environment. Unknown keys are ignored with a warning, never fatal.
 
+pub mod finops;
+
+pub use finops::{estimate_cost_usd, resolve_usd_per_mtok, usd_per_mtok_heuristic};
+
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -72,6 +76,8 @@ pub struct FileConfig {
     pub memory: MemorySettings,
     #[serde(default)]
     pub sandbox: SandboxSettings,
+    #[serde(default)]
+    pub finops: FinopsSettings,
 }
 
 /// Cross-session recall (docs/design/23-memory.md). Read-only and
@@ -179,6 +185,24 @@ pub struct StopPolicySettings {
     pub max_blocks: Option<u32>,
 }
 
+/// Spend admission (docs/design/27 Phase D). Absent prices are UNKNOWN:
+/// unpriced models bypass USD math rather than guessing at zero.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct FinopsSettings {
+    pub max_run_usd: Option<f64>,
+    pub max_day_usd: Option<f64>,
+    /// Exact model id → (input USD/MTok, output USD/MTok). Overrides the
+    /// built-in heuristic table; estimates stay labeled as estimates.
+    pub price_overrides: std::collections::BTreeMap<String, PriceEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct PriceEntry {
+    pub input: f64,
+    pub output: f64,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct McpConfig {
     #[serde(default)]
@@ -234,7 +258,16 @@ pub struct Config {
     pub gateway: GatewayResolved,
     pub memory: MemoryResolved,
     pub sandbox: SandboxResolved,
+    pub finops: FinopsResolved,
     pub warnings: Vec<String>,
+}
+
+/// Resolved spend-admission policy (docs/design/27 Phase D).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FinopsResolved {
+    pub max_run_usd: Option<f64>,
+    pub max_day_usd: Option<f64>,
+    pub price_overrides: std::collections::BTreeMap<String, PriceEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -341,6 +374,7 @@ impl Default for Config {
                 verify_gate: true,
                 max_blocks: 2,
             },
+            finops: FinopsResolved::default(),
             gateway: GatewayResolved {
                 enabled: false,
                 approvals: "deny".into(),
@@ -573,6 +607,12 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         max_blocks: sp.max_blocks.unwrap_or(2),
     };
 
+    cfg.finops = FinopsResolved {
+        max_run_usd: merged.finops.max_run_usd,
+        max_day_usd: merged.finops.max_day_usd,
+        price_overrides: merged.finops.price_overrides.clone(),
+    };
+
     cfg.gateway.enabled = merged.gateway.enabled.unwrap_or(false);
     cfg.gateway.approvals = match merged.gateway.approvals.as_deref() {
         Some("deny") | None => "deny".into(),
@@ -710,7 +750,9 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "gateway",
     "memory",
     "sandbox",
+    "finops",
 ];
+const KNOWN_FINOPS_KEYS: &[&str] = &["max_run_usd", "max_day_usd", "price_overrides"];
 const KNOWN_PROFILE_KEYS: &[&str] = &["model", "provider", "permission_mode", "max_turns"];
 const KNOWN_HOOK_KEYS: &[&str] = &["event", "match", "command", "timeout_ms"];
 const KNOWN_MCP_SERVER_KEYS: &[&str] = &["command", "args", "env", "network"];
@@ -858,6 +900,16 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
             if !KNOWN_STOP_POLICY_KEYS.contains(&key.as_str()) {
                 out.push(format!(
                     "{}: unknown stop_policy key 'stop_policy.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+    }
+    if let Some(fo) = top.get("finops").and_then(toml::Value::as_table) {
+        for key in fo.keys() {
+            if !KNOWN_FINOPS_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown finops key 'finops.{key}' (ignored)",
                     path.display()
                 ));
             }
@@ -1056,6 +1108,15 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.sandbox.image.is_some() {
         base.sandbox.image = over.sandbox.image;
+    }
+    if over.finops.max_run_usd.is_some() {
+        base.finops.max_run_usd = over.finops.max_run_usd;
+    }
+    if over.finops.max_day_usd.is_some() {
+        base.finops.max_day_usd = over.finops.max_day_usd;
+    }
+    for (k, v) in over.finops.price_overrides {
+        base.finops.price_overrides.insert(k, v);
     }
     for (name, hook) in over.gateway.outbound.webhooks {
         base.gateway.outbound.webhooks.insert(name, hook);

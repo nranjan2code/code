@@ -188,6 +188,12 @@ catches seeded regressions (drop-a-required-turn fixture fails).
 
 ## Phase D — FinOps (spend is a safety property)
 
+Status: **landed** with two honest deviations — (1) the one-time
+cap-raise exists on `CoreSpendGate::raise_once()` but has no UI surface
+yet (the Ask currently resolves approve/deny only); (2) unit lanes for
+non-token media costs are reserved, not tracked — unpriced models record
+`usd: null` (UNKNOWN), never fake zero.
+
 Unattended gateway surfaces currently spend with no cap. Budget admission
 is therefore security work, aligned with `24-agent-security.md`.
 

@@ -5,6 +5,7 @@
 pub mod checkpoints;
 pub mod custom_commands;
 pub mod files;
+pub mod finops;
 pub mod learning;
 pub mod memory;
 pub mod reflection;
@@ -803,6 +804,15 @@ impl Core {
         };
         cfg.circuit_breaker = Some(self.inner.breaker.clone());
         cfg.approver = approver.clone();
+        // Pre-dispatch budget admission (docs/design/27 Phase D): active
+        // whenever any finops knob is configured.
+        let f = &self.inner.config.finops;
+        if f.max_run_usd.is_some() || f.max_day_usd.is_some() || !f.price_overrides.is_empty() {
+            cfg.spend_gate = Some(Arc::new(finops::CoreSpendGate::new(
+                &self.inner.sessions_home,
+                f,
+            )));
+        }
         cfg.mode = match self.effective_permission_mode() {
             vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
             vak_config::PermissionMode::WorkspaceWrite => vak_permission::Mode::WorkspaceWrite,

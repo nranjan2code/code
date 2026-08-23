@@ -6,11 +6,13 @@
 
 pub mod circuit;
 pub mod context;
+pub mod spend;
 pub mod steering;
 pub mod stop_policy;
 pub mod task;
 
 pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
+pub use spend::{SpendCheck, SpendGate};
 pub use stop_policy::{BlockReason, StopPolicy};
 pub use task::{ActiveSubagent, SubagentHandle, SubagentRegistry, TaskDeps, TaskTool};
 
@@ -153,6 +155,9 @@ pub struct AgentConfig {
     pub context_policy: context::ContextPolicy,
     /// Built-in premature-completion gate. None disables entirely.
     pub stop_policy: Option<StopPolicy>,
+    /// Pre-dispatch budget admission (docs/design/27 Phase D). None
+    /// disables spend gating entirely.
+    pub spend_gate: Option<Arc<dyn SpendGate>>,
 }
 
 impl AgentConfig {
@@ -177,6 +182,7 @@ impl AgentConfig {
             dispatch_ceiling: (3 + 1) * (6 + 1),
             context_policy: Default::default(),
             stop_policy: Some(StopPolicy::default()),
+            spend_gate: None,
         }
     }
 }
@@ -413,11 +419,18 @@ impl Agent {
                         .await
                     {
                         Ok(m) => {
-                            let _ = self
-                                .session
-                                .lock()
-                                .await
-                                .append_receipt(ledger.take_receipt());
+                            let sid = {
+                                let mut session = self.session.lock().await;
+                                let sid = session
+                                    .header()
+                                    .map(|h| h.session_id.clone())
+                                    .unwrap_or_default();
+                                let _ = session.append_receipt(ledger.take_receipt());
+                                sid
+                            };
+                            if let Some(gate) = &self.config.spend_gate {
+                                gate.record_settled(&m.model, &sid, &m.usage);
+                            }
                             m
                         }
                         Err(LlmError::Aborted { .. }) => {
@@ -608,9 +621,17 @@ impl Agent {
             };
 
             let usage = response.usage.clone();
-            {
+            let settled_session_id = {
                 let mut session = self.session.lock().await;
+                let sid = session
+                    .header()
+                    .map(|h| h.session_id.clone())
+                    .unwrap_or_default();
                 let _ = session.append_receipt(ledger.take_receipt());
+                sid
+            };
+            if let Some(gate) = &self.config.spend_gate {
+                gate.record_settled(&response.model, &settled_session_id, &usage);
             }
             self.append_assistant(&response).await;
             let _ = events.send(AgentEvent::TurnEnd { usage }).await;
@@ -803,6 +824,51 @@ impl Agent {
         loop {
             if cancel.is_cancelled() {
                 return Err(LlmError::Aborted { partial: None });
+            }
+            // Budget admission precedes every paid dispatch (Phase D). A
+            // denial becomes one bounded budget Ask; refusal — or no
+            // approver, which is the unattended case — fails the step
+            // permanently (never retried, never breaker-tripping).
+            if let Some(gate) = &self.config.spend_gate {
+                let session_id = self
+                    .session
+                    .lock()
+                    .await
+                    .header()
+                    .map(|h| h.session_id.clone())
+                    .unwrap_or_default();
+                let est_input = context::estimate_tokens(
+                    &request.messages,
+                    request.system.as_deref(),
+                    &request.tools,
+                );
+                let check = SpendCheck {
+                    model: &request.model,
+                    session_id: &session_id,
+                    est_input_tokens: est_input,
+                    planned_output_tokens: self.config.context_policy.max_output,
+                };
+                if let Err(reason) = gate.authorize(&check).await {
+                    let approved = match &self.config.approver {
+                        Some(a) => {
+                            a.approve(
+                                "finops-budget",
+                                &args_preview(&serde_json::json!({
+                                    "model": request.model,
+                                    "reason": reason,
+                                })),
+                                &reason,
+                            )
+                            .await
+                        }
+                        None => false,
+                    };
+                    if !approved {
+                        return Err(LlmError::InvalidRequest(format!(
+                            "budget admission denied: {reason}"
+                        )));
+                    }
+                }
             }
             // Ceiling check happens before every paid dispatch; exhaustion
             // surfaces as a plain error that the endurance loop treats as

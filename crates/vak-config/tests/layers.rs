@@ -212,3 +212,39 @@ fn stop_policy_defaults_on_and_layer_overrides_apply() {
     let cfg = load_with_trust(dir.path(), true).unwrap();
     assert!(!cfg.stop_policy.enabled);
 }
+
+#[test]
+fn finops_caps_and_overrides_layer_with_unknown_key_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = load_with_trust(dir.path(), false).unwrap();
+    assert!(cfg.finops.max_run_usd.is_none());
+    assert!(cfg.finops.price_overrides.is_empty());
+
+    let project = dir.path().join(".vakcoder");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("config.toml"),
+        "[finops]\nmax_run_usd = 5.0\nmax_day_usd = 20.0\nbogus = 1\n\n[finops.price_overrides.custom-model]\ninput = 1.25\noutput = 6.0\n",
+    )
+    .unwrap();
+    let cfg = load_with_trust(dir.path(), true).unwrap();
+    assert_eq!(cfg.finops.max_run_usd, Some(5.0));
+    assert_eq!(cfg.finops.max_day_usd, Some(20.0));
+    let entry = cfg
+        .finops
+        .price_overrides
+        .get("custom-model")
+        .expect("override");
+    assert_eq!((entry.input, entry.output), (1.25, 6.0));
+    assert!(
+        cfg.warnings.iter().any(|w| w.contains("finops.bogus")),
+        "unknown finops key must warn: {:?}",
+        cfg.warnings
+    );
+
+    // Pricing resolution honors the override over the heuristic table.
+    assert_eq!(
+        vak_config::resolve_usd_per_mtok("custom-model", &cfg.finops.price_overrides),
+        Some((1.25, 6.0))
+    );
+}
