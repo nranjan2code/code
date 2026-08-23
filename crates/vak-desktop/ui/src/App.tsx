@@ -1,5 +1,7 @@
 import { createEffect, onCleanup, onMount, Show, For } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   activeId,
   appendSystem,
@@ -268,6 +270,23 @@ export async function refreshBackend(): Promise<boolean> {
 
 async function init() {
   await refreshBackend();
+}
+
+/** Pick a different project folder and reboot the backend against it. */
+export async function switchProject() {
+  try {
+    const dir = await open({ directory: true, multiple: false, title: "Open a project" });
+    if (typeof dir === "string") {
+      await invoke("start_backend", { cwd: dir });
+      // Do not rely on the backend-ready event alone.
+      await refreshBackend();
+    }
+  } catch (error) {
+    setNotice({
+      kind: "error",
+      text: `Could not open that project: ${error instanceof Error ? error.message : String(error)}`,
+    });
+  }
 }
 
 function closeAllStreams() {

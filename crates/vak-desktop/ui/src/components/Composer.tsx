@@ -1,9 +1,37 @@
-import { createEffect, createSignal, For, Show } from "solid-js";
-import { activeId, isRunning, itemsOf } from "../store";
-import { sendPrompt, stopRun } from "../App";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import type { JSX } from "solid-js";
+import { activeId, density, health, isRunning, itemsOf, setDensity, usageOf } from "../store";
+import type { Density } from "../store";
+import { loadHealth, sendPrompt, stopRun, switchProject } from "../App";
 import * as api from "../api";
 import type { SkillInfo } from "../types";
 import Icon from "./Icon";
+
+/** Context-window gauge; sits with the run controls in the composer. */
+function Ring(props: { pct: number; label: string }): JSX.Element {
+  const r = 9;
+  const c = 2 * Math.PI * r;
+  const clamped = () => Math.max(0, Math.min(1, props.pct));
+  const color = () => (clamped() > 0.85 ? "#d86f72" : clamped() > 0.6 ? "#d4a85d" : "#df795f");
+  return (
+    <div class="ring" title={props.label}>
+      <svg width="24" height="24" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r={r} fill="none" stroke="#34342f" stroke-width="3" />
+        <circle
+          cx="12"
+          cy="12"
+          r={r}
+          fill="none"
+          stroke={color()}
+          stroke-width="3"
+          stroke-linecap="round"
+          stroke-dasharray={`${clamped() * c} ${c}`}
+          transform="rotate(-90 12 12)"
+        />
+      </svg>
+    </div>
+  );
+}
 
 interface Mention {
   start: number; // index of '@'
@@ -34,6 +62,23 @@ export default function Composer(props: { cwd: string }) {
   const [skills, setSkills] = createSignal<SkillInfo[]>([]);
   const [skillPicked, setSkillPicked] = createSignal(0);
   let ta!: HTMLTextAreaElement;
+
+  const usage = createMemo(() => usageOf(activeId()));
+  const ctxPct = createMemo(() => {
+    const w = health()?.context_window ?? 0;
+    return w > 0 ? (usage().input_tokens ?? 0) / w : 0;
+  });
+  const inTok = createMemo(() => (usage().input_tokens ?? 0).toLocaleString());
+  const outTok = createMemo(() => (usage().output_tokens ?? 0).toLocaleString());
+
+  const changeMode = async (mode: string) => {
+    try {
+      await api.setPermissionMode(mode);
+      await loadHealth();
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   // project file cache for @mentions (refresh when cwd changes)
   createEffect(() => {
@@ -251,12 +296,48 @@ export default function Composer(props: { cwd: string }) {
           onKeyDown={onKeyDown}
         />
         <div class="composer-toolbar">
-          <button class="composer-context" title="Add file context (@)" onClick={beginMention}>
-            <Icon name="folder" size={14} />
-            <span>{props.cwd.split("/").pop()}</span>
-            <span class="composer-hint">@ to add files</span>
-          </button>
+          <div class="composer-lead">
+            <button
+              class="composer-project"
+              title={`${props.cwd} — click to switch project`}
+              onClick={() => void switchProject()}
+            >
+              <Icon name="folder" size={14} />
+              <span>{props.cwd.split("/").pop()}</span>
+              <Icon name="chevron" size={12} />
+            </button>
+            <select
+              class="composer-mode"
+              value={health()?.permission_mode ?? ""}
+              onChange={(e) => void changeMode(e.currentTarget.value)}
+              title="Permission mode — applies to new tool calls immediately"
+            >
+              <option value="ReadOnly">Read only</option>
+              <option value="WorkspaceWrite">Workspace write</option>
+              <option value="FullAccess">Full access</option>
+            </select>
+            <button class="composer-context" title="Add file context (@)" onClick={beginMention}>
+              <span class="composer-hint">@ to add files</span>
+            </button>
+          </div>
           <div class="composer-actions">
+            <select
+              class="composer-density"
+              value={density()}
+              onChange={(e) => setDensity(e.currentTarget.value as Density)}
+              title="Transcript detail"
+            >
+              <option value="summary">summary</option>
+              <option value="normal">normal</option>
+              <option value="verbose">verbose</option>
+            </select>
+            <span class="composer-tokens" title={`in ${inTok()} / out ${outTok()}`}>
+              ↑{inTok()} ↓{outTok()}
+            </span>
+            <Ring
+              pct={ctxPct()}
+              label={`context: ${(ctxPct() * 100).toFixed(0)}% of ${((health()?.context_window ?? 0) / 1000).toFixed(0)}k`}
+            />
             <Show when={isRunning(activeId())}>
               <button class="composer-stop" title="Stop (Esc)" aria-label="Stop running task" onClick={stopRun}><Icon name="stop" size={15} /><span>Stop</span></button>
             </Show>

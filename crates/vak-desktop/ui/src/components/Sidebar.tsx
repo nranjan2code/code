@@ -63,20 +63,6 @@ export default function Sidebar() {
     }
   };
 
-  const projectName = () => backend().cwd?.split("/").filter(Boolean).pop() || "Project";
-  const switchProject = async () => {
-    try {
-      const dir = await open({ directory: true, multiple: false, title: "Open a project" });
-      if (typeof dir === "string") {
-        await invoke("start_backend", { cwd: dir });
-        // Do not rely on the backend-ready event alone.
-        await refreshBackend();
-      }
-    } catch (error) {
-      setNotice({ kind: "error", text: `Could not open that project: ${error instanceof Error ? error.message : String(error)}` });
-    }
-  };
-
   return (
     <aside class="sidebar">
       <div class="sb-head">
@@ -169,11 +155,6 @@ export default function Sidebar() {
 
       <div class="sidebar-footer">
         <button class="sidebar-settings" onClick={() => setSettingsOpen(true)}><Icon name="gear" /><span>Settings</span><kbd>⌘,</kbd></button>
-        <button class="project-switcher" title={backend().cwd} onClick={() => void switchProject()}>
-          <span class="project-icon"><Icon name="folder" /></span>
-          <span class="project-copy"><strong>{projectName()}</strong><small>Local workspace</small></span>
-          <Icon name="chevron" size={14} />
-        </button>
       </div>
     </aside>
   );

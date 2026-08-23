@@ -136,18 +136,18 @@ code, pre, kbd { font-family: var(--mono); }
   display: flex; flex-direction: column; min-width: 0;
   background: var(--sidebar); border-right: 1px solid var(--border-soft);
 }
-.sb-head { height: 58px; display: flex; align-items: center; justify-content: space-between; padding: 9px 13px 5px 16px; }
+.sb-head { height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 6px 16px; }
 .sb-head-actions { display: flex; align-items: center; gap: 1px; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; letter-spacing: -.01em; color: var(--text); }
 .brand-mark { display: grid; place-items: center; width: 25px; height: 25px; color: var(--accent-bright); background: var(--accent-wash); border-radius: 8px; }
-.sb-primary-actions { padding: 8px 10px 10px; }
+.sb-primary-actions { padding: 2px 8px 10px; }
 .sb-new { width: 100%; justify-content: flex-start; height: 37px; padding-inline: 11px; box-shadow: inset 0 1px rgba(255,255,255,.12); }
 .sb-new span:nth-child(2) { flex: 1; text-align: left; }
 .sb-new kbd { color: rgba(32, 23, 19, .65); border: 0; background: none; font-size: 10.5px; }
 .sb-action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding-top: 7px; }
 .sb-action { display: flex; align-items: center; gap: 7px; padding: 7px 9px; color: var(--muted); border-radius: 8px; text-align: left; }
 .sb-action:hover:not(:disabled) { color: var(--text-soft); background: var(--surface-hover); }
-.sb-search-wrap { position: relative; display: flex; align-items: center; margin: 2px 10px 12px; }
+.sb-search-wrap { position: relative; display: flex; align-items: center; margin: 0 8px 12px; }
 .sb-search-wrap > .icon { position: absolute; left: 10px; color: var(--faint); pointer-events: none; }
 .sb-search {
   width: 100%; height: 33px; padding: 5px 10px 5px 32px; outline: none;
@@ -156,13 +156,13 @@ code, pre, kbd { font-family: var(--mono); }
 }
 .sb-search::placeholder { color: var(--faint); }
 .sb-search:focus { border-color: #4b4b44; background: #2c2c28; }
-.sb-section-row { display: flex; align-items: center; justify-content: space-between; padding: 0 12px 6px 15px; }
+.sb-section-row { display: flex; align-items: center; justify-content: space-between; padding: 0 10px 6px 16px; }
 .sb-section-title { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
 .sb-filters { display: flex; gap: 2px; }
 .filter-button { min-height: 21px; border-color: transparent; padding: 1px 6px; font-size: 10.5px; text-transform: capitalize; }
 .filter-button.on { border-color: var(--border); }
-.sb-list { flex: 1; overflow-y: auto; min-height: 0; padding: 0 7px 12px; }
-.sb-empty { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 42px 20px 0; text-align: center; color: var(--muted); }
+.sb-list { flex: 1; display: flex; flex-direction: column; overflow-y: auto; min-height: 0; padding: 0 8px 12px; }
+.sb-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; margin: auto 0; padding: 24px 20px; text-align: center; color: var(--muted); }
 .sb-empty > .icon { color: var(--faint); }
 .sb-empty small { color: var(--faint); line-height: 1.45; max-width: 190px; }
 .sb-item {
@@ -179,14 +179,8 @@ code, pre, kbd { font-family: var(--mono); }
 .sb-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 540; }
 .sb-item-meta { display: flex; align-items: center; gap: 5px; color: var(--faint); font-size: 10.5px; margin-top: 2px; }
 .sb-time { flex: none; padding-top: 2px; color: var(--faint); font-size: 10.5px; }
-.project-switcher { display: flex; align-items: center; gap: 9px; margin: 0 8px 8px; padding: 8px; border-top: 1px solid var(--border-soft); border-radius: 8px; color: var(--muted); text-align: left; }
-.project-switcher:hover { background: var(--surface-hover); color: var(--text-soft); }
-.project-icon { display: grid; place-items: center; width: 29px; height: 29px; border-radius: 8px; background: var(--surface-active); color: var(--text-soft); }
-.project-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.project-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 12px; font-weight: 600; }
-.project-copy small { color: var(--faint); font-size: 10.5px; }
-.sidebar-footer { padding-top: 4px; border-top: 1px solid var(--border-soft); }
-.sidebar-settings { display: flex; align-items: center; gap: 9px; width: calc(100% - 16px); min-height: 34px; margin: 0 8px 2px; padding: 6px 9px; border-radius: 8px; color: var(--muted); text-align: left; }
+.sidebar-footer { padding: 6px 0; border-top: 1px solid var(--border-soft); }
+.sidebar-settings { display: flex; align-items: center; gap: 9px; width: calc(100% - 16px); min-height: 34px; margin: 0 8px; padding: 6px 8px; border-radius: 8px; color: var(--muted); text-align: left; }
 .sidebar-settings:hover { color: var(--text); background: var(--surface-hover); }
 .sidebar-settings span { flex: 1; }
 .sidebar-settings kbd { color: var(--faint); background: transparent; border: 0; }
@@ -291,10 +285,23 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .composer-box textarea { display: block; width: 100%; min-height: 48px; max-height: 220px; resize: none; outline: none; border: 0; padding: 13px 14px 6px; color: var(--text); background: transparent; line-height: 1.5; }
 .composer-box textarea::placeholder { color: var(--faint); }
 .composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 37px; padding: 3px 7px 6px 11px; }
-.composer-context { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 5px; margin-left: -5px; border-radius: 6px; color: var(--muted); font-size: 10.5px; }
+.composer-lead { display: flex; align-items: center; gap: 2px; min-width: 0; margin-left: -5px; }
+/* Project switcher lives here rather than the sidebar: the composer is where
+   the working directory is actually acted on. */
+.composer-project { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 6px; border-radius: 6px; color: var(--muted); font-size: 10.5px; }
+.composer-project:hover { color: var(--text-soft); background: var(--surface-hover); }
+.composer-project > span { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.composer-context { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 5px; border-radius: 6px; color: var(--muted); font-size: 10.5px; }
 .composer-context:hover { color: var(--text-soft); background: var(--surface-hover); }
-.composer-context > span:first-of-type { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-hint { padding-left: 7px; border-left: 1px solid var(--border); color: var(--faint); }
+/* Run controls live with the input, not in a detached status strip. */
+.composer-mode, .composer-density {
+  height: 23px; outline: none; border: 1px solid transparent; border-radius: 6px;
+  padding: 1px 4px; color: var(--muted); background: transparent; font-size: 10.5px;
+}
+.composer-mode:hover, .composer-density:hover { color: var(--text-soft); background: var(--surface-hover); }
+.composer-mode:focus, .composer-density:focus { border-color: var(--border); background: var(--surface-raised); }
+.composer-tokens { color: var(--faint); font-family: var(--mono); font-size: 9.5px; white-space: nowrap; }
 .composer-actions { display: flex; align-items: center; gap: 6px; }
 .composer-stop { display: inline-flex; align-items: center; gap: 5px; min-height: 27px; padding: 3px 8px; border-radius: 7px; color: #df8d90; background: rgba(216,111,114,.08); font-size: 11px; }
 .composer-stop:hover { background: rgba(216,111,114,.14); }
@@ -370,11 +377,6 @@ body.is-resizing iframe { pointer-events: none; }
 .st-model.offline { color: var(--yellow); }
 .st-sandbox { padding-left: 9px; border-left: 1px solid var(--border); }
 .st-item.warn { color: var(--yellow); }
-.st-tokens { color: var(--muted); font-family: var(--mono); font-size: 9.5px; }
-.st-mode { height: 22px; outline: none; border: 1px solid var(--border); border-radius: 6px; padding: 1px 5px; color: var(--muted); background: var(--surface-raised); font-size: 10px; }
-.density { display: flex; gap: 1px; }
-.density .chip { border-color: transparent; }
-.density .chip.on { border-color: var(--border); }
 .ring { display: flex; align-items: center; }
 
 /* Modals */
