@@ -1,6 +1,8 @@
 # 21 — World-class agent terminal
 
-Status: research synthesis and implementation specification, August 2026.
+Status: fully implemented — P0, P1, and P2 are all shipped (see the ✅
+markers below). Originally a research synthesis and implementation
+specification, August 2026.
 
 ## Objective
 
@@ -192,7 +194,10 @@ transport.
 - ✅ Contextual keymap engine with conflict detection: `vak_tui::keymap` is
   the dispatch truth behind `map_key`, scoped Composer / Running / Both,
   `[ui.keymap]` config overrides (project over user), `/keymap` viewer
-  listing bindings + conflicts. Interactive rebind UI is open.
+  listing bindings + conflicts. Interactive rebind UI: up/down selects a
+  binding row, `r` captures the next keypress as the new binding
+  (`Keymap::rebind_named` displaces same-scope occupants, preserves the
+  action's context, and surfaces any resulting conflicts inline).
 - ✅ Large-paste placeholder (>4k chars or >60 lines) with Ctrl-O expand at
   cursor, byte/line count, verbatim payload resolution at submit so the
   ledger receives exact bytes.
@@ -210,23 +215,47 @@ transport.
   `n`/`p` prompt jumps via user-message anchors, incremental `/` search with
   match cycling, Markdown export (`e`), jump-to-latest (`End`).
 - ✅ Model, session, theme, and provider pickers. Permission picker is the
-  approval flow itself; subagent picker is open.
-- ◐ Background terminal and subagent tree with attach/steer/stop — subagent
-  lifecycle + tool streams render live; attach/steer into a subagent is open.
+  approval flow itself; subagent picker lists live children from the shared
+  registry (`Alt-S` or `/subagents`) and stays usable mid-run.
+- ✅ Subagent attach/steer: every task child registers its steering queues
+  and cancel token in `vak_agent::SubagentRegistry` for the lifetime of the
+  tool call. Attaching retargets the composer — Enter steers the child,
+  Tab queues a follow-up into it, Ctrl-C stops only that child, Esc
+  detaches back to the main run.
 - ✅ Tool cards with duration/status marks, error previews, per-tool expand.
 - ✅ Visible context/cost meters and typed run states: thinking / streaming /
   tool · name / retry N in Xms — reason / compacting, plus stale detection.
 - ✅ OSC9 desktop notification + bell on approval arrival; bell on completion.
 
-### P2 — personalization and extension
+### P2 — personalization and extension ✅
 
-- Built-in truecolor theme packs plus custom theme files and live preview.
-- Emacs and Vim composer modes.
-- Custom commands, project command namespaces, and plugin-contributed palette
-  actions.
-- Optional OSC52 copy, never automatic clipboard mutation.
-- Accessible plain mode, reduced-motion mode, and screen-reader transcript
-  mode.
+- ✅ Built-in truecolor theme packs (`midnight`, `synthwave`, `forest` join
+  the ANSI packs) plus custom theme files defined as `[ui.themes.<name>]`
+  tables in config (`#rgb`/`#rrggbb` hex or named colors over the dark
+  base); the theme picker previews customs live exactly like built-ins.
+- ✅ Emacs and Vim composer modes (`[ui] composer`, `/composer [emacs|vim]`,
+  `/vim`/`/emacs` shorthands): normal-mode motions h/l/j/k/0/^/$/w/b/e/G/gg,
+  x/D/C, operator+motion d/c/y with dd/cc/yy linewise forms, p/P paste from
+  a yank register, u/Ctrl-R undo-redo, i/a/I/A/o/O insert entries; Esc
+  returns to normal; unmapped keys fall through so Enter still submits and
+  Ctrl-C still interrupts. Mode tag renders in the composer footer.
+- ✅ Custom commands, project command namespaces, and plugin-contributed
+  palette actions: markdown prompt templates discovered from
+  `.vakcoder/commands/*.md` (project), `<home>/commands/*.md` (user), and
+  `.vakcoder/plugins/<plugin>/commands/*.md` (labeled `plugin:<name>`),
+  with project > plugin > user precedence. `$ARGUMENTS` substitutes the
+  invocation args (appended when the template has no placeholder). They
+  appear in slash completion, the palette, `/help`, and expand into real
+  prompts through the normal submit path.
+- ✅ Optional OSC52 copy, never automatic clipboard mutation: gated by
+  `[ui] osc52 = true`; only explicit `Alt-Y` or `/copy` sends the last
+  response to the terminal clipboard.
+- ✅ Accessible plain mode, reduced-motion mode, and screen-reader transcript
+  mode (`[ui.accessibility] plain / reduced_motion / screen_reader`,
+  runtime-toggled via `/a11y <feature> [on|off]`): plain/screen-reader strip
+  imposed colors and fold box-drawing plus decorative glyphs to ASCII
+  (`render::fold_glyphs`) in both committed history and transient panels;
+  reduced motion replaces animated spinner frames with a static glyph.
 
 ## Acceptance criteria
 

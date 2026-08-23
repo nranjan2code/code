@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use tempfile::tempdir;
 
-use vak_agent::{Agent, AgentConfig, TaskDeps, TaskTool, TurnOutcome};
+use vak_agent::{Agent, AgentConfig, SubagentRegistry, TaskDeps, TaskTool, TurnOutcome};
 use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
@@ -132,6 +132,7 @@ async fn subagent_roundtrip_with_shared_scripted_provider() {
         sessions_home: home.clone(),
         parent_session_id: parent_id.clone(),
         events: None,
+        registry: Some(Arc::new(SubagentRegistry::new())),
     }))];
     cfg.permission = Some(Arc::new(
         PermissionEngine::from_rule_strings(&["+task".to_string()]).unwrap(),

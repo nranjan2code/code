@@ -1,7 +1,12 @@
 pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+/// Spinner frame; reduced-motion builds render a static glyph.
 pub fn frame(tick: usize) -> &'static str {
     SPINNER[tick % SPINNER.len()]
+}
+
+pub fn frame_motion(tick: usize, animated: bool) -> &'static str {
+    if animated { frame(tick) } else { "·" }
 }
 
 pub fn fmt_elapsed(secs: u64) -> String {

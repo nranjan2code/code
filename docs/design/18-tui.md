@@ -3,6 +3,9 @@
 Status: implemented post-v0.1.0. Rendering now uses a dependency-light,
 alternate-screen retained workspace: fixed identity header, resize-aware
 transcript viewport, bottom composer, and full-height modal surfaces.
+Superseded in parts by 19-modern-tui.md and 21-world-class-tui.md (the
+current theme list, composer modes, keymap rebind, subagent attach, and
+accessibility surfaces live there and in 05-config.md).
 
 ## Upstream enablers (vak-agent / vak-core / vak-config / vak-server)
 

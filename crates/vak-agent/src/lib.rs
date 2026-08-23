@@ -12,7 +12,7 @@ pub mod task;
 
 pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
 pub use stop_policy::{BlockReason, StopPolicy};
-pub use task::{TaskDeps, TaskTool};
+pub use task::{ActiveSubagent, SubagentHandle, SubagentRegistry, TaskDeps, TaskTool};
 
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -76,6 +76,26 @@ pub struct UiSettings {
     /// Keymap overrides: `"Ctrl-P" = "command-palette"` or
     /// `"running|Tab" = "queue"`.
     pub keymap: std::collections::BTreeMap<String, String>,
+    /// `"emacs"` (default) or `"vim"`.
+    pub composer: Option<String>,
+    /// Opt-in OSC52 clipboard copy. Never automatic: an explicit user
+    /// action (Alt-Y / `/copy`) is required even when enabled.
+    pub osc52: Option<bool>,
+    #[serde(default)]
+    pub accessibility: Option<AccessibilitySettings>,
+    /// Custom theme definitions: `[ui.themes.<name>]` with color keys
+    /// (`accent`, `dim`, ...) mapped to `#rrggbb` or named colors. Held as
+    /// raw TOML values so a stray non-string entry warns instead of making
+    /// the whole config unparseable.
+    #[serde(default)]
+    pub themes: std::collections::BTreeMap<String, std::collections::BTreeMap<String, toml::Value>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct AccessibilitySettings {
+    pub plain: Option<bool>,
+    pub reduced_motion: Option<bool>,
+    pub screen_reader: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -139,11 +159,24 @@ pub struct Config {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiResolved {
-    /// Built-in theme name; unknown values normalize to "dark".
+    /// Built-in theme name, or any name defined in `ui.themes`; unknown
+    /// values normalize to "dark".
     pub theme: String,
     pub bell: bool,
     /// Keymap overrides merged project-over-user.
     pub keymap: std::collections::BTreeMap<String, String>,
+    pub composer: String,
+    pub osc52: bool,
+    pub accessibility: AccessibilityResolved,
+    /// Custom theme definitions passed through to the UI layer.
+    pub themes: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessibilityResolved {
+    pub plain: bool,
+    pub reduced_motion: bool,
+    pub screen_reader: bool,
 }
 
 /// Built-in premature-completion gate. On by default; conservative.
@@ -182,6 +215,14 @@ impl Default for Config {
                 theme: "dark".into(),
                 bell: true,
                 keymap: std::collections::BTreeMap::new(),
+                composer: "emacs".into(),
+                osc52: false,
+                accessibility: AccessibilityResolved {
+                    plain: false,
+                    reduced_motion: false,
+                    screen_reader: false,
+                },
+                themes: std::collections::BTreeMap::new(),
             },
             stop_policy: StopPolicyResolved {
                 enabled: true,
@@ -338,16 +379,54 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         cfg.mcp.servers.insert(name, srv);
     }
     cfg.ui.theme = merged.ui.theme.clone().unwrap_or_else(|| "dark".into());
-    match cfg.ui.theme.as_str() {
-        "dark" | "light" | "neo" | "rich" | "teenage" | "plain" => {}
-        other => {
-            cfg.warnings
-                .push(format!("unknown ui.theme '{other}'; using 'dark'"));
-            cfg.ui.theme = "dark".into();
-        }
+    let builtin = matches!(
+        cfg.ui.theme.as_str(),
+        "dark"
+            | "light"
+            | "neo"
+            | "rich"
+            | "teenage"
+            | "plain"
+            | "midnight"
+            | "synthwave"
+            | "forest"
+    );
+    if !builtin && !merged.ui.themes.contains_key(&cfg.ui.theme) {
+        cfg.warnings
+            .push(format!("unknown ui.theme '{}'; using 'dark'", cfg.ui.theme));
+        cfg.ui.theme = "dark".into();
     }
     cfg.ui.bell = merged.ui.bell.unwrap_or(true);
     cfg.ui.keymap = merged.ui.keymap;
+    for (name, colors) in merged.ui.themes {
+        let entry = cfg.ui.themes.entry(name.clone()).or_default();
+        for (key, value) in colors {
+            match value.as_str() {
+                Some(v) => {
+                    entry.insert(key, v.to_string());
+                }
+                None => cfg.warnings.push(format!(
+                    "ui.themes.{name}.{key} must be a string color (ignored)"
+                )),
+            }
+        }
+    }
+    cfg.ui.composer = match merged.ui.composer.as_deref() {
+        Some("vim") => "vim".into(),
+        Some("emacs") | None => "emacs".into(),
+        Some(other) => {
+            cfg.warnings
+                .push(format!("unknown ui.composer '{other}'; using 'emacs'"));
+            "emacs".into()
+        }
+    };
+    cfg.ui.osc52 = merged.ui.osc52.unwrap_or(false);
+    let acc = merged.ui.accessibility.unwrap_or_default();
+    cfg.ui.accessibility = AccessibilityResolved {
+        plain: acc.plain.unwrap_or(false),
+        reduced_motion: acc.reduced_motion.unwrap_or(false),
+        screen_reader: acc.screen_reader.unwrap_or(false),
+    };
 
     let sp = merged.stop_policy.unwrap_or_default();
     cfg.stop_policy = StopPolicyResolved {
@@ -421,7 +500,29 @@ const KNOWN_TOP_KEYS: &[&str] = &[
 const KNOWN_PROFILE_KEYS: &[&str] = &["model", "provider", "permission_mode", "max_turns"];
 const KNOWN_HOOK_KEYS: &[&str] = &["event", "match", "command", "timeout_ms"];
 const KNOWN_MCP_SERVER_KEYS: &[&str] = &["command", "args", "env"];
-const KNOWN_UI_KEYS: &[&str] = &["theme", "bell", "keymap"];
+const KNOWN_UI_KEYS: &[&str] = &[
+    "theme",
+    "bell",
+    "keymap",
+    "composer",
+    "osc52",
+    "accessibility",
+    "themes",
+];
+const KNOWN_THEME_COLORS: &[&str] = &[
+    "accent",
+    "dim",
+    "success",
+    "error",
+    "warning",
+    "heading",
+    "code",
+    "user",
+    "spinner",
+    "panel_bg",
+    "selected_bg",
+];
+const KNOWN_ACCESSIBILITY_KEYS: &[&str] = &["plain", "reduced_motion", "screen_reader"];
 const KNOWN_STOP_POLICY_KEYS: &[&str] = &["enabled", "marker_gate", "verify_gate", "max_blocks"];
 
 /// A typo'd key must be visible, not silently dead: diff the raw TOML
@@ -495,6 +596,30 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
                     "{}: unknown ui key 'ui.{key}' (ignored)",
                     path.display()
                 ));
+            }
+        }
+        if let Some(acc) = ui.get("accessibility").and_then(toml::Value::as_table) {
+            for key in acc.keys() {
+                if !KNOWN_ACCESSIBILITY_KEYS.contains(&key.as_str()) {
+                    out.push(format!(
+                        "{}: unknown ui.accessibility key 'ui.accessibility.{key}' (ignored)",
+                        path.display()
+                    ));
+                }
+            }
+        }
+        if let Some(themes) = ui.get("themes").and_then(toml::Value::as_table) {
+            for (name, t) in themes {
+                if let Some(t) = t.as_table() {
+                    for key in t.keys() {
+                        if !KNOWN_THEME_COLORS.contains(&key.as_str()) {
+                            out.push(format!(
+                                "{}: unknown theme color 'ui.themes.{name}.{key}' (ignored)",
+                                path.display()
+                            ));
+                        }
+                    }
+                }
             }
         }
     }
@@ -587,6 +712,33 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     for (k, v) in &over.ui.keymap {
         base.ui.keymap.insert(k.clone(), v.clone());
+    }
+    if over.ui.composer.is_some() {
+        base.ui.composer = over.ui.composer;
+    }
+    if over.ui.osc52.is_some() {
+        base.ui.osc52 = over.ui.osc52;
+    }
+    if let Some(acc) = over.ui.accessibility {
+        let entry = base
+            .ui
+            .accessibility
+            .get_or_insert_with(AccessibilitySettings::default);
+        if acc.plain.is_some() {
+            entry.plain = acc.plain;
+        }
+        if acc.reduced_motion.is_some() {
+            entry.reduced_motion = acc.reduced_motion;
+        }
+        if acc.screen_reader.is_some() {
+            entry.screen_reader = acc.screen_reader;
+        }
+    }
+    for (name, colors) in &over.ui.themes {
+        let entry = base.ui.themes.entry(name.clone()).or_default();
+        for (k, v) in colors {
+            entry.insert(k.clone(), v.clone());
+        }
     }
     if let Some(sp) = over.stop_policy {
         base.stop_policy = Some(sp);

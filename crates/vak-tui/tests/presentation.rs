@@ -69,7 +69,17 @@ fn theme_light_differs_from_dark_and_unknown_falls_back() {
     assert_eq!(Theme::from_name("nope"), dark);
     assert_eq!(
         names(),
-        &["dark", "light", "neo", "rich", "teenage", "plain"]
+        &[
+            "dark",
+            "light",
+            "neo",
+            "rich",
+            "teenage",
+            "plain",
+            "midnight",
+            "synthwave",
+            "forest"
+        ]
     );
 }
 

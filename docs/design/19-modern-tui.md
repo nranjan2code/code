@@ -1,5 +1,10 @@
 # 19 — Modern TUI: competitive analysis & roadmap
 
+Status: implemented post-v0.1.0; extended to completion by
+21-world-class-tui.md (P0–P2 all shipped: keymap rebind, subagent
+attach/steer, theme packs + custom themes, composer modes, custom commands,
+OSC52, accessibility modes).
+
 Goal: bring vak-tui to parity with the best agent CLIs (OpenCode, Codex CLI,
 Claude Code) and beyond, grounded in documented user pain rather than
 feature envy. Sources: official docs/keybind references for OpenCode +

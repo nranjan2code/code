@@ -12,6 +12,11 @@ pub struct Screen {
     history: Vec<String>,
     transient: Option<TransientState>,
     last_transient: Option<String>,
+    /// Accessibility: ASCII glyphs, no imposed colors (doc 21 §P2).
+    plain: bool,
+    /// Accessibility: linear text only — strips styling and decorative
+    /// glyphs so screen readers announce clean sentences.
+    reader: bool,
 }
 
 #[derive(Clone)]
@@ -38,7 +43,24 @@ impl Screen {
             history: Vec::new(),
             transient: None,
             last_transient: None,
+            plain: false,
+            reader: false,
         }
+    }
+
+    pub fn set_accessibility(&mut self, plain: bool, reader: bool) {
+        self.plain = plain;
+        self.reader = reader;
+        self.last_transient = None;
+        self.render_workspace();
+    }
+
+    pub fn accessibility(&self) -> (bool, bool) {
+        (self.plain, self.reader)
+    }
+
+    pub fn accessible(&self) -> bool {
+        self.plain || self.reader
     }
 
     pub fn set_theme(&mut self, theme: Theme) {
@@ -173,13 +195,26 @@ impl Screen {
 
     fn push_history(&mut self, text: String) {
         for line in terminal_newlines(&text).split("\r\n") {
-            self.history.push(line.to_string());
+            let line = if self.accessible() {
+                fold_glyphs(line)
+            } else {
+                line.to_string()
+            };
+            self.history.push(line);
         }
         const HISTORY_LIMIT: usize = 4_000;
         if self.history.len() > HISTORY_LIMIT {
             self.history.drain(..self.history.len() - HISTORY_LIMIT);
         }
         self.render_transcript();
+    }
+
+    /// Copies text to the system clipboard via OSC52. Only ever called from
+    /// explicit user actions — clipboard mutation is never automatic.
+    pub fn osc52_copy(&mut self, text: &str) {
+        use base64::Engine as _;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+        self.put(&format!("\x1b]52;c;{encoded}\x07"));
     }
 
     pub fn redraw_composer(&mut self, label: &str, buf: &str, cursor: usize, footer: &str) {
@@ -281,7 +316,14 @@ impl Screen {
         self.render_transcript();
     }
 
-    pub fn redraw_modal(&mut self, title: &str, rows: &[String], scroll: usize, footer: &str) {
+    pub fn redraw_modal(
+        &mut self,
+        title: &str,
+        rows: &[String],
+        scroll: usize,
+        footer: &str,
+        selected: Option<usize>,
+    ) {
         let height = self.rows().saturating_sub(self.header_rows()).max(3);
         let body_height = height.saturating_sub(2);
         let width = panel_width(self.cols());
@@ -289,7 +331,11 @@ impl Screen {
         let scroll = scroll.min(max_scroll);
         let mut lines = Vec::with_capacity(height);
         lines.push(top_border(title, width));
-        for row in rows.iter().skip(scroll).take(body_height) {
+        let mut selected_row = None;
+        for (offset, row) in rows.iter().skip(scroll).take(body_height).enumerate() {
+            if selected == Some(scroll + offset) {
+                selected_row = Some(lines.len());
+            }
             lines.push(panel_row(row, width));
         }
         while lines.len() < height - 1 {
@@ -306,7 +352,7 @@ impl Screen {
             footer.to_string()
         };
         lines.push(bottom_border(&position, width));
-        self.redraw_transient(&lines, None, height - 1, 1);
+        self.redraw_transient(&lines, selected_row, height - 1, 1);
     }
 
     pub fn redraw_running(
@@ -413,16 +459,24 @@ impl Screen {
     }
 
     fn surface_lines(&self, lines: &[String], selected_row: Option<usize>) -> String {
+        let accessible = self.accessible();
         let mut rendered = Vec::with_capacity(lines.len());
         for (index, line) in lines.iter().enumerate() {
-            let (fg, bg) = if selected_row == Some(index) {
+            let (fg, bg) = if selected_row == Some(index) && !accessible {
                 (self.theme.heading, self.theme.selected_bg)
-            } else if index == 0 {
+            } else if index == 0 && !accessible {
                 (self.theme.accent, self.theme.panel_bg)
-            } else if index + 1 == lines.len() {
+            } else if index + 1 == lines.len() && !accessible {
                 (self.theme.dim, self.theme.panel_bg)
-            } else {
+            } else if !accessible {
                 (self.theme.heading, self.theme.panel_bg)
+            } else {
+                (Color::Reset, Color::Reset)
+            };
+            let line = if accessible {
+                fold_glyphs(line)
+            } else {
+                line.clone()
             };
             rendered.push(format!(
                 "{}{}{}{}{}",
@@ -539,6 +593,50 @@ fn terminal_newlines(s: &str) -> String {
         .replace('\n', "\r\n")
 }
 
+/// Accessible rendering: box drawing and decorative marks become ASCII so
+/// screen readers announce words instead of geometry, and plain terminals
+/// never show tofu boxes.
+pub fn fold_glyphs(s: &str) -> String {
+    let pairs = [
+        ('╭', "+"),
+        ('╰', "+"),
+        ('╮', "+"),
+        ('╯', "+"),
+        ('├', "+"),
+        ('┤', "+"),
+        ('└', "+"),
+        ('┘', "+"),
+        ('┌', "+"),
+        ('┐', "+"),
+        ('─', "-"),
+        ('│', "|"),
+    ];
+    let mut replaced = s.to_string();
+    for (from, to) in pairs {
+        replaced = replaced.replace(from, to);
+    }
+    replaced = replaced.replace("📦 ", "").replace("⏳ ", "");
+    replaced = replaced.replace(['⏳', '📦'], "");
+    let mut out = String::with_capacity(replaced.len());
+    for c in replaced.chars() {
+        match c {
+            '✓' => out.push('+'),
+            '✗' => out.push('x'),
+            '◆' | '●' => out.push('*'),
+            '▸' | '›' => out.push('>'),
+            '◇' => out.push('*'),
+            '⚙' => out.push('#'),
+            '⟳' => out.push('~'),
+            '…' => out.push_str("..."),
+            '·' => out.push('.'),
+            '↑' => out.push('^'),
+            '↓' => out.push('v'),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 fn wrap_ansi(s: &str, max_width: usize) -> Vec<String> {
     let max_width = max_width.max(1);
     let mut rows = vec![String::new()];
@@ -582,7 +680,7 @@ fn wrap_ansi(s: &str, max_width: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{terminal_newlines, wrap_ansi};
+    use super::{fold_glyphs, terminal_newlines, wrap_ansi};
 
     #[test]
     fn committed_multiline_text_returns_to_column_zero() {
@@ -598,6 +696,23 @@ mod tests {
             wrap_ansi("\x1b[31mabcdef\x1b[39m", 3),
             vec!["\x1b[31mabc", "def\x1b[39m"]
         );
+    }
+
+    #[test]
+    fn glyph_folding_produces_screen_reader_safe_ascii() {
+        assert_eq!(
+            fold_glyphs("╭─ approval · edit ─╮"),
+            "+- approval . edit -+"
+        );
+        assert_eq!(fold_glyphs("│ ✓ done ✗ failed"), "| + done x failed");
+        assert_eq!(
+            fold_glyphs("◆ subagent ▸ user ⚙ tool ⟳ retry"),
+            "* subagent > user # tool ~ retry"
+        );
+        assert_eq!(fold_glyphs("📦 compacting context"), "compacting context");
+        assert_eq!(fold_glyphs("a…b ↑↓"), "a...b ^v");
+        // Regular text is untouched.
+        assert_eq!(fold_glyphs("plain words 123"), "plain words 123");
     }
 }
 

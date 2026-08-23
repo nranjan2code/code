@@ -1,7 +1,7 @@
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { backend, providers } from "../store";
+import { backend, providers, setupNeeded } from "../store";
 import { refreshBackend } from "../App";
 import * as api from "../api";
 import type { BackendInfo } from "../types";
@@ -144,14 +144,15 @@ export default function ProjectGate() {
     }
   };
 
+  // Show ConnectModel when providers exist but aren't configured (setupNeeded),
+  // or when providers aren't loaded yet. Otherwise show the project picker.
+  const showConnect = setupNeeded() || !providers();
+
   return (
     <div class="gate">
       <div class="gate-card">
         <div class="gate-mark"><Icon name="spark" size={28} /></div>
-        <Show
-          when={!backend().ready || !providers()}
-          fallback={<ConnectModel />}
-        >
+        <Show when={showConnect} fallback={<ConnectModel />}>
           <h1>vakcoder</h1>
           <p class="gate-lead">Your code, your machine, your agent.</p>
           <div class="gate-features">

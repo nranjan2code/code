@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- **Doc 21 closed out — world-class TUI pass complete.** Interactive
+  keymap rebind UI (`/keymap`: ↑↓ select, `r` capture, conflicts surfaced);
+  subagent picker + attach/steer (`Alt-S` / `/subagents`): every live child
+  registers its steering queues and cancel token in a shared
+  `SubagentRegistry`, so Enter steers the child, Tab queues its follow-up,
+  Ctrl-C stops only it, Esc detaches.
+- **Personalization**: three truecolor theme packs (midnight, synthwave,
+  forest) plus custom themes via `[ui.themes.<name>]` (hex or named colors
+  over the dark base), all previewed live in the theme picker; Emacs/Vim
+  composer modes (`[ui] composer`, `/composer [emacs|vim]`, `/vim`,
+  `/emacs`) with normal-mode motions, operator+motion edits, yank/paste
+  register, and undo/redo.
+- **Custom slash commands**: markdown prompt templates from
+  `.vakcoder/commands/*.md` (project), `.vakcoder/plugins/*/commands/*.md`
+  (plugin-contributed palette actions), and user `commands/*.md`;
+  `$ARGUMENTS` substitution; project > plugin > user precedence; wired into
+  completion, the Ctrl-P palette, and `/help`.
+- **Opt-in OSC52 clipboard copy** (`[ui] osc52 = true`, then `Alt-Y` or
+  `/copy` copies the last response) — never automatic.
+- **Accessibility modes** (`[ui.accessibility]`, runtime `/a11y
+  plain|motion|reader on|off`): plain/screen-reader strip imposed colors and
+  fold box-drawing/decorative glyphs to ASCII in committed history and
+  transient panels; reduced motion renders a static spinner glyph.
+
 - **Stop gate** (built-in premature-completion policy, on by default):
   blocks completions that look truncated (trailing plan marker, non-heading
   colon line, unclosed code fence) or that skip verification the prompt

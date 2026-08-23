@@ -24,7 +24,11 @@ anthropic_base_url, allow/ask/deny, subagents, hooks.*, mcp.servers.*,
 max_retries, retry_base_backoff_ms, request_timeout_secs,
 circuit_breaker_threshold, circuit_breaker_cooldown_secs, context_window
 (min 16384; smaller values warn and fall back to the default),
-ui.theme, ui.bell, stop_policy.enabled/marker_gate/verify_gate/max_blocks.
+ui.theme, ui.bell, ui.keymap.*, ui.composer ("emacs"|"vim"), ui.osc52,
+ui.accessibility.plain/reduced_motion/screen_reader, ui.themes.<name>.<color>
+(#rgb/#rrggbb hex or named colors over the dark base; theme = any custom
+name resolves without warning), stop_policy.enabled/marker_gate/
+verify_gate/max_blocks.
 
 ## Later
 
@@ -44,3 +48,13 @@ only loaded when trusted (it can inject `VAKCODER_*_BASE_URL`). Restrictive
 keys (`deny`, `ask`) still apply from untrusted projects. Unknown config
 keys are diffed against the schema and surfaced as warnings — a typo'd key
 is visible, never silently dead.
+
+## Diff note — interface keys (doc 21 close-out)
+
+New `[ui]` surfaces, all cosmetic-tier: unknown values warn and fall back
+(`composer` → emacs; `theme` → dark unless defined under `[ui.themes]`),
+never fatal. `ui.themes` color tables deserialize through raw TOML so a
+non-string entry warns instead of failing the whole config. `osc52`
+defaults false — clipboard mutation stays opt-in even though every use is
+an explicit Alt-Y / `/copy`. Accessibility flags render-only; they never
+alter protocol behavior or session content.

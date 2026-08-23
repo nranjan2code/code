@@ -89,6 +89,8 @@ fn default_entries() -> Vec<(Ctx, KeySpec, Action)> {
             Action::ClearViewport,
         ),
         (Ctx::Both, spec(K::Char('a'), M::ALT), Action::OpenApproval),
+        (Ctx::Both, spec(K::Char('s'), M::ALT), Action::Subagents),
+        (Ctx::Both, spec(K::Char('y'), M::ALT), Action::CopyResponse),
         (
             Ctx::Both,
             spec(K::Char('n'), M::CONTROL),
@@ -185,6 +187,32 @@ impl Keymap {
         });
     }
 
+    /// Interactive rebind: moves every binding of the named action to
+    /// `key_spec` while preserving its original context, displacing any
+    /// other action already bound there (same scope). Returns false when
+    /// no action carries that name (or it is not rebindable, e.g. insert).
+    pub fn rebind_named(&mut self, action_name: &str, key_spec: KeySpec) -> bool {
+        let Some(action) = Action::parse(action_name) else {
+            return false;
+        };
+        let Some(ctx) = self
+            .entries
+            .iter()
+            .find(|e| e.action == action)
+            .map(|e| e.ctx)
+        else {
+            return false;
+        };
+        self.entries
+            .retain(|e| e.action != action && !(e.ctx == ctx && e.spec == key_spec));
+        self.entries.push(Entry {
+            ctx,
+            spec: key_spec,
+            action,
+        });
+        true
+    }
+
     /// Applies `[ui.keymap]` overrides: `"Ctrl-P" = "command-palette"` or
     /// `"running|Tab" = "queue"`. Unparseable rows are skipped — unknown
     /// config keys never break startup.
@@ -273,6 +301,12 @@ fn label(s: KeySpec) -> String {
         other => out.push_str(&format!("{other:?}")),
     }
     out
+}
+
+/// Public alias for the binding label renderer, used by the interactive
+/// rebind flow in `app`.
+pub fn keymap_label(spec: KeySpec) -> String {
+    label(spec)
 }
 
 /// Parses `"Ctrl-P"`, `"Alt-Enter"`, `"composer|Ctrl-U"`, `"x"`.
@@ -442,5 +476,56 @@ mod tests {
             applied.action_for(false, KeyCode::Char('x'), M::CONTROL),
             Action::Ignore
         );
+    }
+
+    #[test]
+    fn rebind_named_moves_all_bindings_and_preserves_context() {
+        let mut km = Keymap::default();
+        // Composer-scoped action keeps its scope after a rebind.
+        assert!(km.rebind_named("external-editor", spec(KeyCode::F(4), M::NONE),));
+        assert_eq!(
+            km.action_for(false, KeyCode::F(4), M::NONE),
+            Action::ExternalEditor
+        );
+        assert_eq!(
+            km.action_for(false, KeyCode::Char('g'), M::CONTROL),
+            Action::Ignore
+        );
+
+        // Both-scoped action stays both-scoped; old key is freed.
+        assert!(km.rebind_named("command-palette", spec(KeyCode::Char('z'), M::CONTROL)));
+        assert_eq!(
+            km.action_for(false, KeyCode::Char('z'), M::CONTROL),
+            Action::CommandPalette
+        );
+        // The displaced Ctrl-P now falls through: modified keys never
+        // become plain inserts.
+        assert_eq!(
+            km.action_for(false, KeyCode::Char('p'), M::CONTROL),
+            Action::Ignore
+        );
+
+        // Unknown or non-rebindable names fail without mutating.
+        let before = km.clone();
+        assert!(!km.rebind_named("insert", spec(KeyCode::F(9), M::NONE)));
+        assert!(!km.rebind_named("no-such-action", spec(KeyCode::F(9), M::NONE)));
+        assert_eq!(km.entries.len(), before.entries.len());
+    }
+
+    #[test]
+    fn copy_and_subagent_actions_are_bound_and_named() {
+        let km = Keymap::default();
+        assert_eq!(
+            km.action_for(false, KeyCode::Char('y'), M::ALT),
+            Action::CopyResponse
+        );
+        assert_eq!(
+            km.action_for(true, KeyCode::Char('s'), M::ALT),
+            Action::Subagents
+        );
+        assert_eq!(Action::CopyResponse.name(), "copy-response");
+        assert_eq!(Action::parse("copy-response"), Some(Action::CopyResponse));
+        assert_eq!(Action::Subagents.name(), "subagents");
+        assert!(km.conflicts().is_empty());
     }
 }

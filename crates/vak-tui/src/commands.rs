@@ -22,6 +22,14 @@ pub enum Command {
     Config,
     Features,
     Clear,
+    /// `/composer [emacs|vim]` — switch or inspect composer keymap mode.
+    Composer(Option<String>),
+    /// `/subagents` — live subagent attach picker.
+    Subagents,
+    /// `/a11y [plain|motion|reader [on|off]]` — accessibility toggles.
+    A11y(Option<String>),
+    /// `/copy` — explicit OSC52 copy of the last response (gated by config).
+    Copy,
 }
 
 /// (name, description) — drives help text, completion, and parsing.
@@ -45,12 +53,16 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("sessions", "list recorded sessions"),
     ("resume", "[n|id] continue a past session"),
     ("rewind", "[seq] restore a workspace checkpoint"),
-    ("theme", "choose dark, light, neo, rich, Teenage, or plain"),
+    ("theme", "choose a theme · previews live"),
     ("transcript", "[n] dump recent messages of this session"),
     ("doctor", "health check: auth, sandbox, config, extensions"),
     ("details", "toggle expanded tool result previews"),
     ("keys", "shortcut map · /keys raw captures literal keys"),
-    ("keymap", "view key bindings and conflicts"),
+    ("keymap", "view bindings · r rebinds interactively"),
+    ("composer", "[emacs|vim] modal editing mode"),
+    ("subagents", "attach to a running subagent"),
+    ("a11y", "accessibility: plain, motion, reader toggles"),
+    ("copy", "copy last response via OSC52 if enabled"),
     ("clear", "start a fresh session"),
     ("exit", "quit"),
 ];
@@ -82,6 +94,17 @@ pub fn parse(input: &str) -> Option<Command> {
         "config" | "settings" if arg.is_empty() => Some(Command::Config),
         "features" if arg.is_empty() => Some(Command::Features),
         "clear" | "new" if arg.is_empty() => Some(Command::Clear),
+        "composer" | "vim" | "emacs" => {
+            let arg = match name {
+                "vim" => Some("vim".to_string()),
+                "emacs" => Some("emacs".to_string()),
+                _ => arg_opt,
+            };
+            Some(Command::Composer(arg))
+        }
+        "subagents" if arg.is_empty() => Some(Command::Subagents),
+        "a11y" | "accessibility" => Some(Command::A11y(arg_opt)),
+        "copy" if arg.is_empty() => Some(Command::Copy),
         _ => None,
     }
 }
@@ -102,6 +125,8 @@ pub fn keys_text() -> &'static str {
   Ctrl-E / End   end of current line\n\
   Ctrl-K         delete to end of line\n\
   Alt-B / Alt-F  move by word\n\
+  Alt-S          attach to a running subagent\n\
+  Alt-Y          copy the last response (OSC52, if enabled)\n\
   Ctrl-U         clear composer\n\
   Ctrl-O         expand a stashed large paste\n\
   Ctrl-G         edit the draft in $EDITOR\n\
@@ -110,6 +135,7 @@ pub fn keys_text() -> &'static str {
   Ctrl-C         interrupt run / clear composer\n\
   Esc            remove newest follow-up, then stop\n\
   Ctrl-D         exit\n\
+  /vim · /emacs  modal composer editing (hjkl x dd yy p i A …)\n\
 \nPrompt syntax\n\
   @path          attach file contents\n\
   !command       run local shell and share output\n\
@@ -135,6 +161,7 @@ pub fn help_text() -> String {
     out.push_str("\n  !cmd runs a local shell command and shares its output");
     out.push_str("\n  while running: Enter steers · Tab queues · Esc stops/cancels queue item");
     out.push_str("\n  Ctrl-Z undo · Alt-Z redo · Alt-D delete word · Ctrl-T thinking mode");
+    out.push_str("\n  /vim switches to modal editing; Alt-S attaches to subagents");
     out
 }
 
@@ -143,4 +170,50 @@ pub fn help_rows() -> Vec<String> {
         .iter()
         .map(|(name, description)| format!("/{name:<12} {description}"))
         .collect()
+}
+
+/// Parses `/a11y [feature [on|off]]`. Returns the feature and the requested
+/// state (None = toggle).
+pub fn parse_a11y(arg: Option<&str>) -> Result<(A11yFeature, Option<bool>), String> {
+    let Some(arg) = arg.map(str::trim).filter(|a| !a.is_empty()) else {
+        return Err("usage: /a11y <plain|motion|reader> [on|off]".to_string());
+    };
+    let mut parts = arg.split_whitespace();
+    let feature = match parts.next() {
+        Some("plain") => A11yFeature::Plain,
+        Some("motion") | Some("reduced-motion") | Some("reduced_motion") => A11yFeature::Motion,
+        Some("reader") | Some("screen-reader") | Some("screen_reader") => A11yFeature::Reader,
+        Some(other) => {
+            return Err(format!(
+                "unknown accessibility feature '{other}' — plain, motion, reader"
+            ));
+        }
+        None => unreachable!(),
+    };
+    let state = match parts.next() {
+        None | Some("") => None,
+        Some("on" | "true" | "yes") => Some(true),
+        Some("off" | "false" | "no") => Some(false),
+        Some(other) => {
+            return Err(format!("state must be on/off, got '{other}'"));
+        }
+    };
+    Ok((feature, state))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum A11yFeature {
+    Plain,
+    Motion,
+    Reader,
+}
+
+impl A11yFeature {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Plain => "plain",
+            Self::Motion => "reduced motion",
+            Self::Reader => "screen reader",
+        }
+    }
 }

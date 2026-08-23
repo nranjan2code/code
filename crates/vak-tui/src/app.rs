@@ -23,12 +23,12 @@ use vak_tools::Tool;
 use crate::commands::{self, Command};
 use crate::complete;
 use crate::diffview;
-use crate::editor::Editor;
-use crate::keymap::Keymap;
+use crate::editor::{ComposerMode, Editor, VimState};
+use crate::keymap::{KeySpec, Keymap};
 use crate::keys::Action;
 use crate::markdown::LineStyler;
 use crate::mentions;
-use crate::palette::{ChoiceItem, ChoicePicker, CommandPalette};
+use crate::palette::{ChoiceItem, ChoicePicker, CommandPalette, PaletteItem};
 use crate::render::Screen;
 use crate::status;
 use crate::theme::{self, Theme};
@@ -36,6 +36,9 @@ use crate::theme::{self, Theme};
 pub struct UiConfig {
     pub cwd: PathBuf,
 }
+
+/// Custom theme definitions from `[ui.themes]`, keyed by name.
+type CustomThemes = std::collections::BTreeMap<String, theme::ThemeColors>;
 
 pub struct ApprovalRequest {
     tool: String,
@@ -171,6 +174,10 @@ struct UiState {
     thinking_partial: String,
     expanded_tools: bool,
     run_state: RunState,
+    /// Final assistant text of the current/last turn, for Alt-Y /copy.
+    last_response: String,
+    /// When attached to a subagent, its label drives composer identity.
+    attached_label: Option<String>,
 }
 
 /// Typed run-state truth (doc 21 §4): the status row always names what the
@@ -218,6 +225,7 @@ enum PickerKind {
     Provider,
     Model,
     Theme,
+    Subagents,
 }
 
 #[derive(Default)]
@@ -228,6 +236,8 @@ struct ModalView {
     footer: String,
     /// Row indices of user prompts, for n/p jumps in the transcript viewer.
     anchors: Vec<usize>,
+    /// Highlighted row, for interactive modals (keymap rebind).
+    selected: Option<usize>,
 }
 
 impl ThinkingMode {
@@ -253,13 +263,22 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
     let ui_theme_name = core.effective_theme();
     let bell_on = core.config().ui.bell;
     let context_window = core.config().context_window;
-    let mut ui_theme = Theme::from_name(&ui_theme_name);
+    let custom_themes: CustomThemes = core.config().ui.themes.clone();
+    let mut ui_theme = theme::resolve(&ui_theme_name, &custom_themes);
     let mut screen = Screen::new(ui_theme);
     screen.clear_viewport();
+    let acc = &core.config().ui.accessibility;
+    let mut a11y_motion = acc.reduced_motion;
+    let mut a11y_plain = acc.plain;
+    let mut a11y_reader = acc.screen_reader;
+    screen.set_accessibility(a11y_plain, a11y_reader);
     let sessions_home = core.sessions_home();
     let hist_path = sessions_home.join("input_history.txt");
     let draft_path = sessions_home.join("composer_draft.txt");
     let mut editor = Editor::new();
+    if core.config().ui.composer == "vim" {
+        editor.set_mode(ComposerMode::Vim);
+    }
     if editor.recover_draft(&draft_path) {
         screen.dim("[recovered an unsent draft from a previous session · Enter sends it]");
     }
@@ -319,6 +338,8 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
         thinking_partial: String::new(),
         expanded_tools: false,
         run_state: RunState::Thinking,
+        last_response: String::new(),
+        attached_label: None,
     };
     let mut approvals: VecDeque<ApprovalRequest> = VecDeque::new();
     let mut follow_ups: VecDeque<String> = VecDeque::new();
@@ -332,9 +353,16 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
     let mut palette_from_slash = false;
     let mut approval_focused = false;
     let mut key_capture = false;
-    let keymap = Keymap::default().with_overrides(&core.config().ui.keymap);
+    let mut keymap = Keymap::default().with_overrides(&core.config().ui.keymap);
     let mut transcript_search: Option<String> = None;
     let mut transcript_match_idx: usize = 0;
+    // (child id, label) while attached to a running subagent.
+    let mut attached: Option<(String, String)> = None;
+    // Keymap modal: selectable row index and the action bound on each row.
+    let mut keymap_select: Option<usize> = None;
+    let mut keymap_meta: Vec<(usize, &'static str)> = Vec::new();
+    // Pending interactive rebind: next captured key becomes the binding.
+    let mut rebind_action: Option<&'static str> = None;
 
     let (buf, cur) = editor.view();
     screen.redraw_composer(&composer_label(&ui), buf, cur, &composer_footer(&editor));
@@ -452,6 +480,47 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                             approval_focused = false;
                             continue;
                         }
+                        // Interactive rebind capture: the next key becomes
+                        // the binding for the selected action.
+                        if let Some(action) = rebind_action.take() {
+                            match key.code {
+                                KeyCode::Esc => screen.dim("rebind cancelled"),
+                                _ => {
+                                    let spec = KeySpec {
+                                        code: key.code,
+                                        mods: key.modifiers,
+                                    };
+                                    if keymap.rebind_named(action, spec) {
+                                        let conflicts = keymap.conflicts();
+                                        let note = conflicts
+                                            .iter()
+                                            .find(|(k, _)| k == &crate::keymap::keymap_label(spec))
+                                            .map(|(_, d)| d.clone())
+                                            .unwrap_or_default();
+                                        screen.accent(&format!(
+                                            "✓ {} → {}{}",
+                                            action,
+                                            crate::keymap::keymap_label(spec),
+                                            if note.is_empty() {
+                                                String::new()
+                                            } else {
+                                                format!(" · !! {note}")
+                                            }
+                                        ));
+                                        if modal.as_ref().is_some_and(|m| m.title == "keymap · bindings") {
+                                            let (m, meta) =
+                                                build_keymap_modal(&keymap, keymap_select);
+                                            keymap_meta = meta;
+                                            modal = Some(m);
+                                        }
+                                    } else {
+                                        screen
+                                            .dim("that action cannot be rebound");
+                                    }
+                                }
+                            }
+                            continue;
+                        }
                         let is_running = running.is_some();
                         if modal.is_some() && !is_running {
                             let mut close = false;
@@ -519,6 +588,30 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                 } else {
                                 match key.code {
                                     KeyCode::Esc | KeyCode::Char('q') => close = true,
+                                    KeyCode::Up if active.title == "keymap · bindings" => {
+                                        keymap_select = step_select(
+                                            keymap_select, &keymap_meta, false,
+                                        );
+                                        active.selected = keymap_select;
+                                    }
+                                    KeyCode::Down if active.title == "keymap · bindings" => {
+                                        keymap_select =
+                                            step_select(keymap_select, &keymap_meta, true);
+                                        active.selected = keymap_select;
+                                    }
+                                    KeyCode::Char('r' | 'R') | KeyCode::Enter
+                                        if active.title == "keymap · bindings" =>
+                                    {
+                                        if let Some(&(_, action)) = keymap_select
+                                            .and_then(|sel| keymap_meta.get(sel))
+                                            .or_else(|| keymap_meta.first())
+                                        {
+                                            rebind_action = Some(action);
+                                            active.footer = format!(
+                                                "press the new key for '{action}' · Esc cancels"
+                                            );
+                                        }
+                                    }
                                     KeyCode::Char('p' | 'P') if active.title == "settings" => {
                                         modal_action = Some('p');
                                     }
@@ -618,7 +711,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                     theme_preview_origin = Some(current.clone());
                                     picker = Some((
                                         PickerKind::Theme,
-                                        ChoicePicker::new(theme_choices(&current), false),
+                                        ChoicePicker::new(theme_choices(&current, &custom_themes), false),
                                     ));
                                 }
                                 Some('e') => match export_transcript(&session_slot, core.cwd()).await
@@ -637,6 +730,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                     &active.rows,
                                     active.scroll,
                                     &active.footer,
+                                    active.selected,
                                 );
                             } else if let Some((kind, active)) = picker.as_ref() {
                                 draw_picker(&mut screen, *kind, active);
@@ -651,7 +745,11 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                             }
                             continue;
                         }
-                        if picker.is_some() && !is_running {
+                        // The subagent picker stays live during runs: attach
+                        // is exactly for steering a run in flight.
+                        let picker_usable = picker.is_some()
+                            && (!is_running || matches!(picker, Some((PickerKind::Subagents, _))));
+                        if picker_usable {
                             let mut choice = None;
                             let mut close = false;
                             let mut preview = None;
@@ -667,9 +765,10 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                     KeyCode::Char('s')
                                         if key.modifiers.contains(
                                             crossterm::event::KeyModifiers::CONTROL,
-                                        ) => {
-                                            choice = active.value().map(|value| (*kind, value, true));
-                                        }
+                                        ) && *kind != PickerKind::Subagents =>
+                                    {
+                                        choice = active.value().map(|value| (*kind, value, true));
+                                    }
                                     KeyCode::Char(c)
                                         if key.modifiers.is_empty()
                                             || key.modifiers
@@ -687,12 +786,12 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                 picker = None;
                                 if let Some(origin) = theme_preview_origin.take() {
                                     core.set_theme(origin.clone());
-                                    ui_theme = Theme::from_name(&origin);
+                                    ui_theme = theme::resolve(&origin, &custom_themes);
                                     screen.set_theme(ui_theme);
                                 }
                             } else if let Some(name) = preview {
                                 core.set_theme(name.clone());
-                                ui_theme = Theme::from_name(&name);
+                                ui_theme = theme::resolve(&name, &custom_themes);
                                 screen.set_theme(ui_theme);
                             }
                             if let Some((kind, value, persist)) = choice {
@@ -711,25 +810,48 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                     }
                                     PickerKind::Theme => {
                                         core.set_theme(value.clone());
-                                        ui_theme = Theme::from_name(&value);
+                                        ui_theme = theme::resolve(&value, &custom_themes);
                                         screen.set_theme(ui_theme);
                                         theme_preview_origin = None;
                                     }
+                                    PickerKind::Subagents => {
+                                        if let Some(sub) =
+                                            core.subagents().active().into_iter().find(|a| a.id == value)
+                                        {
+                                            attached = Some((sub.id.clone(), sub.label.clone()));
+                                            ui.attached_label = Some(sub.label.clone());
+                                            screen.accent(&format!(
+                                                "\u{25c6} attached to {} · Enter steers it · Esc detaches · Ctrl-C stops it",
+                                                sub.label
+                                            ));
+                                        } else {
+                                            screen.dim("that subagent already finished");
+                                        }
+                                    }
                                 }
-                                if kind != PickerKind::Theme {
+                                if !matches!(kind, PickerKind::Theme | PickerKind::Subagents) {
                                     screen.update_agent_identity(&ui.provider, &ui.model);
+                                }
+                                if kind == PickerKind::Subagents {
+                                    picker = None;
+                                    continue;
                                 }
                                 picker = None;
                                 screen.clear_input();
                                 if persist {
                                     let saved = match kind {
-                                        PickerKind::Theme => persist_theme_config(&core, &value),
-                                        PickerKind::Provider | PickerKind::Model => {
-                                            persist_agent_config(&core, &ui.provider, &ui.model)
+                                        PickerKind::Theme => {
+                                            Some(persist_theme_config(&core, &value))
                                         }
+                                        PickerKind::Provider | PickerKind::Model => Some(
+                                            persist_agent_config(&core, &ui.provider, &ui.model),
+                                        ),
+                                        // The subagent attach flow continues
+                                        // before any persist path.
+                                        PickerKind::Subagents => None,
                                     };
                                     match saved {
-                                        Ok(path) => screen.success(&format!(
+                                        Some(Ok(path)) => screen.success(&format!(
                                             "✓ saved {} → {}",
                                             if kind == PickerKind::Theme {
                                                 format!("theme {value}")
@@ -738,7 +860,10 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                             },
                                             path.display()
                                         )),
-                                        Err(e) => screen.error(&format!("could not save config: {e}")),
+                                        Some(Err(e)) => {
+                                            screen.error(&format!("could not save config: {e}"))
+                                        }
+                                        None => {}
                                     }
                                 } else if kind == PickerKind::Theme {
                                     screen.accent(&format!("theme → {value} for this session"));
@@ -863,12 +988,30 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                             }
                             continue;
                         }
+                        // Vim modal editing intercepts keys in normal mode
+                        // and Esc-in-insert; everything else falls through.
+                        if !is_running && editor.mode() == ComposerMode::Vim {
+                            let consumed = if editor.vim_state() == VimState::Insert {
+                                if key.code == KeyCode::Esc && key.modifiers.is_empty() {
+                                    editor.enter_normal();
+                                    true
+                                } else {
+                                    false
+                                }
+                            } else {
+                                editor.vim_normal_key(key.code, key.modifiers)
+                            };
+                            if consumed {
+                                continue;
+                            }
+                        }
                         match keymap.action_for(is_running, key.code, key.modifiers) {
                             Action::Insert(c) => {
                                 if is_running {
                                     pending.push(c);
                                 } else if c == '/' && editor.is_empty() {
-                                    palette = Some(CommandPalette::new());
+                                    palette =
+                                        Some(CommandPalette::new(palette_extras(&core)));
                                     palette_from_slash = true;
                                 } else {
                                     editor.insert(c);
@@ -909,7 +1052,8 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                             }
                             Action::CommandPalette => {
                                 if !is_running {
-                                    palette = Some(CommandPalette::new());
+                                    palette =
+                                        Some(CommandPalette::new(palette_extras(&core)));
                                     palette_from_slash = false;
                                 }
                             }
@@ -921,6 +1065,10 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                     approval_focused = true;
                                 }
                             }
+                            Action::Subagents => open_subagent_picker(
+                                &core, &mut screen, &mut picker,
+                            ),
+                            Action::CopyResponse => copy_last_response(&core, &mut screen, &ui),
                             Action::ExpandStash => {
                                 if !is_running
                                     && let Some(msg) = editor.expand_stash_at_cursor()
@@ -966,9 +1114,24 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                 if is_running {
                                     let text = std::mem::take(&mut pending);
                                     if !text.trim().is_empty() {
-                                        steering.push_steering(text);
-                                        screen.clear_input();
-                                        screen.dim("[steering queued]");
+                                        if let Some((id, label)) = attached.clone() {
+                                            if core.subagents().steer(&id, &text) {
+                                                screen.clear_input();
+                                                screen.dim(&format!("[steered {label}]"));
+                                            } else {
+                                                attached = None;
+                                                ui.attached_label = None;
+                                                steering.push_steering(text);
+                                                screen.clear_input();
+                                                screen.dim(
+                                                    "[subagent ended — steered the main run]",
+                                                );
+                                            }
+                                        } else {
+                                            steering.push_steering(text);
+                                            screen.clear_input();
+                                            screen.dim("[steering queued]");
+                                        }
                                     }
                                 } else {
                                     let text = editor.take();
@@ -983,7 +1146,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                             Some(Command::Help) => {
                                                 modal = Some(ModalView {
                                                     title: "help · commands".to_string(),
-                                                    rows: help_modal_rows(),
+                                                    rows: help_modal_rows(&core),
                                                     scroll: 0,
                                                     footer: "↑↓ scroll · /keys shortcuts · Esc close".to_string(),
                                                     ..Default::default()
@@ -1050,7 +1213,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                         let current = core.effective_theme();
                                                         theme_preview_origin = Some(current.clone());
                                                         let active = ChoicePicker::new(
-                                                            theme_choices(&current),
+                                                            theme_choices(&current, &custom_themes),
                                                             false,
                                                         );
                                                         draw_picker(
@@ -1061,17 +1224,19 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                         picker = Some((PickerKind::Theme, active));
                                                     }
                                                     Some(name)
-                                                        if crate::theme::names()
-                                                            .contains(&name.as_str()) =>
+                                                        if theme::builtin(name.as_str())
+                                                            || custom_themes.contains_key(&name) =>
                                                     {
                                                         core.set_theme(name.clone());
-                                                        ui_theme = Theme::from_name(&name);
+                                                        ui_theme =
+                                                            theme::resolve(&name, &custom_themes);
                                                         screen.set_theme(ui_theme);
                                                         screen.accent(&format!("theme → {name}"));
                                                     }
                                                     Some(other) => screen.dim(&format!(
                                                         "unknown theme '{other}' — {}",
-                                                        crate::theme::names().join(", "),
+                                                        crate::theme::all_names(&custom_themes)
+                                                            .join(", "),
                                                     )),
                                                 },
                                                 Some(Command::Transcript(arg)) => {
@@ -1118,34 +1283,11 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                     });
                                                 }
                                                 Some(Command::Keymap) => {
-                                                    let mut rows: Vec<String> = Vec::new();
-                                                    let mut last_ctx = "";
-                                                    for (ctx, key, action) in keymap.rows() {
-                                                        if ctx != last_ctx {
-                                                            rows.push(format!("── {ctx}"));
-                                                            last_ctx = ctx;
-                                                        }
-                                                        rows.push(format!(
-                                                            "{key:<16} {action}"
-                                                        ));
-                                                    }
-                                                    let conflicts = keymap.conflicts();
-                                                    if !conflicts.is_empty() {
-                                                        rows.push(String::new());
-                                                        rows.push("!! conflicts".to_string());
-                                                        for (key, detail) in &conflicts {
-                                                            rows.push(format!("{key:<16} {detail}"));
-                                                        }
-                                                    }
-                                                    modal = Some(ModalView {
-                                                        title: "keymap · bindings".to_string(),
-                                                        rows,
-                                                        scroll: 0,
-                                                        footer:
-                                                            "overrides: [ui.keymap] in config · Esc close"
-                                                                .to_string(),
-                                                        ..Default::default()
-                                                    });
+                                                    keymap_select = None;
+                                                    let (m, meta) =
+                                                        build_keymap_modal(&keymap, keymap_select);
+                                                    keymap_meta = meta;
+                                                    modal = Some(m);
                                                 }
                                             Some(Command::Model(Some(model))) => {
                                                 core.set_model(model.clone());
@@ -1267,6 +1409,64 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                     ..Default::default()
                                                 });
                                             }
+                                            Some(Command::Composer(arg)) => match arg.as_deref() {
+                                                Some("vim") | Some("Vim") => {
+                                                    editor.set_mode(ComposerMode::Vim);
+                                                    screen.accent(
+                                                        "composer → vim · Esc normal · i/a/o insert",
+                                                    );
+                                                }
+                                                Some("emacs") | Some("Emacs") => {
+                                                    editor.set_mode(ComposerMode::Emacs);
+                                                    screen.accent("composer → emacs");
+                                                }
+                                                Some(other) => screen.dim(&format!(
+                                                    "unknown composer mode '{other}' — emacs, vim"
+                                                )),
+                                                None => {
+                                                    editor.set_mode(match editor.mode() {
+                                                        ComposerMode::Emacs => ComposerMode::Vim,
+                                                        ComposerMode::Vim => ComposerMode::Emacs,
+                                                    });
+                                                    screen.accent(&format!(
+                                                        "composer → {}",
+                                                        match editor.mode() {
+                                                            ComposerMode::Vim => "vim",
+                                                            ComposerMode::Emacs => "emacs",
+                                                        }
+                                                    ));
+                                                }
+                                            },
+                                            Some(Command::Subagents) => open_subagent_picker(
+                                                &core, &mut screen, &mut picker,
+                                            ),
+                                            Some(Command::A11y(arg)) => {
+                                                match commands::parse_a11y(arg.as_deref()) {
+                                                    Ok((feature, state)) => {
+                                                        let current = match feature {
+                                                            commands::A11yFeature::Plain => a11y_plain,
+                                                            commands::A11yFeature::Motion => a11y_motion,
+                                                            commands::A11yFeature::Reader => a11y_reader,
+                                                        };
+                                                        let target = state.unwrap_or(!current);
+                                                        match feature {
+                                                            commands::A11yFeature::Plain => a11y_plain = target,
+                                                            commands::A11yFeature::Motion => a11y_motion = target,
+                                                            commands::A11yFeature::Reader => a11y_reader = target,
+                                                        }
+                                                        screen.set_accessibility(a11y_plain, a11y_reader);
+                                                        screen.accent(&format!(
+                                                            "{} {} — /a11y plain|motion|reader on|off",
+                                                            feature.name(),
+                                                            if target { "on" } else { "off" },
+                                                        ));
+                                                    }
+                                                    Err(msg) => screen.dim(&msg),
+                                                }
+                                            }
+                                            Some(Command::Copy) => {
+                                                copy_last_response(&core, &mut screen, &ui)
+                                            }
                                             Some(Command::Clear) => match core.start_session().await {
                                                 Ok(s) => {
                                                     *session_slot.lock().await = Some(s);
@@ -1274,7 +1474,49 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                 }
                                                 Err(e) => screen.dim(&format!("error: {e}")),
                                             },
-                                            None => screen.dim("unknown command — /help"),
+                                            None => {
+                                                let customs = core.custom_commands();
+                                                let mut parts = text
+                                                    .trim_start_matches('/')
+                                                    .splitn(2, char::is_whitespace);
+                                                let name = parts.next().unwrap_or("").trim();
+                                                let args =
+                                                    parts.next().unwrap_or("").trim();
+                                                match customs.iter().find(|c| c.name == name) {
+                                                    Some(custom) => {
+                                                        let prompt =
+                                                            vak_core::custom_commands::expand(
+                                                                &custom.template,
+                                                                args,
+                                                            );
+                                                        let expanded =
+                                                            mentions::expand(&prompt, core.cwd());
+                                                        for miss in &expanded.missing {
+                                                            screen.error(&format!(
+                                                                "no such file: {miss}"
+                                                            ));
+                                                        }
+                                                        screen.user_message(&text, false);
+                                                        match ctx.spawn(&expanded.prompt).await {
+                                                            Some((ev_rx, done_rx)) => {
+                                                                running = Some(ev_rx);
+                                                                run_done = Some(done_rx);
+                                                                run_started = Some(Instant::now());
+                                                                ui.styler = LineStyler::new();
+                                                                ui.partial.clear();
+                                                                last_agent_event = Instant::now();
+                                                            }
+                                                            None => screen.dim(
+                                                                "provider unavailable — check auth/config",
+                                                            ),
+                                                        }
+                                                        continue;
+                                                    }
+                                                    None => {
+                                                        screen.dim("unknown command — /help")
+                                                    }
+                                                }
+                                            }
                                         }
                                         if let Some(active) = modal.as_ref() {
                                             screen.redraw_modal(
@@ -1282,6 +1524,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                 &active.rows,
                                                 active.scroll,
                                                 &active.footer,
+                                                active.selected,
                                             );
                                         } else if picker.is_none() {
                                             let (buf, cur) = editor.view();
@@ -1341,24 +1584,53 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                 if is_running {
                                     let text = std::mem::take(&mut pending);
                                     if !text.trim().is_empty() {
-                                        follow_ups.push_back(text);
-                                        screen.clear_input();
-                                        screen.dim(&format!(
-                                            "[queued for next turn · {} waiting]",
-                                            follow_ups.len()
-                                        ));
+                                        if let Some((id, label)) = attached.clone() {
+                                            if core.subagents().queue_follow_up(&id, &text) {
+                                                screen.clear_input();
+                                                screen.dim(&format!(
+                                                    "[queued into {label} · runs after its current turn]"
+                                                ));
+                                            } else {
+                                                follow_ups.push_back(text);
+                                                screen.clear_input();
+                                                screen.dim(&format!(
+                                                    "[subagent ended · queued for main run · {} waiting]",
+                                                    follow_ups.len()
+                                                ));
+                                            }
+                                        } else {
+                                            follow_ups.push_back(text);
+                                            screen.clear_input();
+                                            screen.dim(&format!(
+                                                "[queued for next turn · {} waiting]",
+                                                follow_ups.len()
+                                            ));
+                                        }
                                     }
                                 }
                             }
                             Action::Interrupt => {
                                 if is_running {
-                                    cancel.lock().await.cancel();
-                                    screen.clear_input();
-                                    screen.dim("[cancelling…]");
+                                    if let Some((id, label)) = attached.clone()
+                                        && core.subagents().stop(&id)
+                                    {
+                                        screen.clear_input();
+                                        screen.dim(&format!("[stopping subagent {label}]"));
+                                    } else {
+                                        cancel.lock().await.cancel();
+                                        screen.clear_input();
+                                        screen.dim("[cancelling…]");
+                                    }
                                 }
                             }
                             Action::CancelOrClear => {
-                                if is_running {
+                                if let Some((_, label)) = attached.take() {
+                                    ui.attached_label = None;
+                                    screen.clear_input();
+                                    screen.dim(&format!(
+                                        "[detached from {label}]"
+                                    ));
+                                } else if is_running {
                                     if let Some(_popped) = follow_ups.pop_back() {
                                         screen.clear_input();
                                         screen.dim(&format!(
@@ -1469,10 +1741,17 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                 tick_count,
                 context_window,
                 last_agent_event.elapsed().as_secs(),
+                !a11y_motion,
             );
             screen.redraw_running(&live_status, &pending, follow_ups.len(), approvals.len());
         } else if let Some(active) = modal.as_ref() {
-            screen.redraw_modal(&active.title, &active.rows, active.scroll, &active.footer);
+            screen.redraw_modal(
+                &active.title,
+                &active.rows,
+                active.scroll,
+                &active.footer,
+                active.selected,
+            );
         } else if let Some((kind, active)) = picker.as_ref() {
             draw_picker(&mut screen, *kind, active);
         } else if let Some(active) = palette.as_ref() {
@@ -1548,6 +1827,7 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
             flush_thinking(screen, ui, theme);
             ui.thinking_shown = false;
             ui.run_state = RunState::Streaming;
+            ui.last_response.push_str(&delta);
             feed_text(ui, screen, theme, &delta)
         }
         AgentEvent::Stream(StreamEvent::ThinkingDelta { delta, .. }) => match ui.thinking_mode {
@@ -1617,6 +1897,7 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
         AgentEvent::TurnStart { .. } => {
             ui.styler = LineStyler::new();
             ui.partial.clear();
+            ui.last_response.clear();
             ui.thinking_shown = false;
             ui.thinking_partial.clear();
             ui.run_state = RunState::Thinking;
@@ -1759,6 +2040,7 @@ fn flush_md(screen: &mut Screen, ui: &mut UiState, theme: &Theme) {
         return;
     }
     let rest = std::mem::take(&mut ui.partial);
+    ui.last_response.push_str(&rest);
     let styled = ui.styler.line(&rest, theme);
     screen.clear_input();
     screen.md_line(&styled);
@@ -1943,6 +2225,7 @@ fn status_ansi(
     tick: usize,
     window: u64,
     idle_secs: u64,
+    animated: bool,
 ) -> String {
     let total = total_in + total_out;
     let pct = if window > 0 {
@@ -1951,12 +2234,23 @@ fn status_ansi(
         0
     };
     let (spinner, spinner_color) = match state {
-        RunState::Retrying { .. } | RunState::Compacting => {
-            (format!("⏳ {}", state.label()), theme.warning)
-        }
+        RunState::Retrying { .. } | RunState::Compacting => (
+            if animated {
+                format!("⏳ {}", state.label())
+            } else {
+                state.label()
+            },
+            theme.warning,
+        ),
         RunState::Tool { .. } => (format!("⚙ {}", state.label()), theme.accent),
-        RunState::Thinking => (format!("{} thinking", status::frame(tick)), theme.spinner),
-        RunState::Streaming => (status::frame(tick).to_string(), theme.spinner),
+        RunState::Thinking => (
+            format!("{} thinking", status::frame_motion(tick, animated)),
+            theme.spinner,
+        ),
+        RunState::Streaming => (
+            status::frame_motion(tick, animated).to_string(),
+            theme.spinner,
+        ),
     };
     let mut line = format!(
         "{}{} · ↑{} ↓{} · ctx {}%",
@@ -2253,6 +2547,7 @@ async fn transcript_modal(
         scroll,
         footer: "n/p prompt jumps · / search · e export · End latest · Esc close".to_string(),
         anchors,
+        ..Default::default()
     })
 }
 
@@ -2495,16 +2790,30 @@ fn report(screen: &mut Screen, label: &str, result: &Result<String, String>, fai
 }
 
 fn composer_label(ui: &UiState) -> String {
-    format!("task · {}/{}", ui.provider, ui.model)
+    match &ui.attached_label {
+        Some(label) => {
+            let provider_model = format!("{}/{}", ui.provider, ui.model);
+            format!("subagent · {} · {provider_model}", trunc_cells(label, 24))
+        }
+        None => format!("task · {}/{}", ui.provider, ui.model),
+    }
 }
 
 fn composer_footer(editor: &Editor) -> String {
     let (line, column) = editor.line_col();
+    let mode_tag = match (editor.mode(), editor.vim_state()) {
+        (ComposerMode::Vim, VimState::Insert) => "[-- INSERT --] ",
+        (ComposerMode::Vim, VimState::Normal) => "[NORMAL] ",
+        (ComposerMode::Emacs, _) => "",
+    };
     let mut footer = format!(
-        "Ln {}, Col {} · Enter send · Alt-Enter newline · Ctrl-P commands",
+        "{mode_tag}Ln {}, Col {} · Enter send · Alt-Enter newline · Ctrl-P commands",
         line + 1,
         column + 1
     );
+    if editor.mode() == ComposerMode::Vim {
+        footer.push_str(" · /composer emacs exits modal");
+    }
     if editor.has_stashes() {
         footer.push_str(&format!(
             " · {} stashed paste(s), exact on submit",
@@ -2519,7 +2828,8 @@ fn draw_picker(screen: &mut Screen, kind: PickerKind, picker: &ChoicePicker) {
     let (title, allow_custom) = match kind {
         PickerKind::Provider => ("choose provider", false),
         PickerKind::Model => ("choose model · type any exact model ID", true),
-        PickerKind::Theme => ("choose theme · ↑↓ previews live", false),
+        PickerKind::Theme => ("choose theme · up/down previews live", false),
+        PickerKind::Subagents => ("attach to a running subagent", false),
     };
     screen.redraw_picker(
         title,
@@ -2530,8 +2840,121 @@ fn draw_picker(screen: &mut Screen, kind: PickerKind, picker: &ChoicePicker) {
     );
 }
 
-fn theme_choices(current: &str) -> Vec<ChoiceItem> {
-    [
+/// Builds the interactive keymap modal plus the selectable-row metadata:
+/// each entry maps a row index to the action name bound there.
+fn build_keymap_modal(
+    keymap: &Keymap,
+    selected: Option<usize>,
+) -> (ModalView, Vec<(usize, &'static str)>) {
+    let mut rows: Vec<String> = Vec::new();
+    let mut meta: Vec<(usize, &'static str)> = Vec::new();
+    let mut last_ctx = "";
+    for (ctx, key, action) in keymap.rows() {
+        if ctx != last_ctx {
+            rows.push(format!("-- {ctx}"));
+            last_ctx = ctx;
+        }
+        meta.push((rows.len(), Box::leak(action.to_string().into_boxed_str())));
+        rows.push(format!("{key:<16} {action}"));
+    }
+    let conflicts = keymap.conflicts();
+    if !conflicts.is_empty() {
+        rows.push(String::new());
+        rows.push("!! conflicts".to_string());
+        for (key, detail) in &conflicts {
+            rows.push(format!("{key:<16} {detail}"));
+        }
+    }
+    (
+        ModalView {
+            title: "keymap · bindings".to_string(),
+            rows,
+            scroll: 0,
+            footer: "up/down select · r rebinds the highlighted row · Esc close".to_string(),
+            selected,
+            ..Default::default()
+        },
+        meta,
+    )
+}
+
+/// Moves the modal selection through selectable rows.
+fn step_select(
+    current: Option<usize>,
+    meta: &[(usize, &'static str)],
+    forward: bool,
+) -> Option<usize> {
+    if meta.is_empty() {
+        return None;
+    }
+    let pos = current
+        .and_then(|sel| meta.iter().position(|(row, _)| *row == sel))
+        .unwrap_or(0);
+    let next = if forward {
+        (pos + 1) % meta.len()
+    } else {
+        (pos + meta.len() - 1) % meta.len()
+    };
+    Some(meta[next].0)
+}
+
+/// Custom/plugin commands surfaced as palette actions alongside built-ins.
+fn palette_extras(core: &Core) -> Vec<PaletteItem> {
+    core.custom_commands()
+        .into_iter()
+        .map(|c| PaletteItem {
+            name: c.name,
+            description: format!("{} ({})", trunc_cells(&c.description, 40), c.source),
+        })
+        .collect()
+}
+
+/// Opens the live-subagent attach picker; empty registry gets a hint line.
+fn open_subagent_picker(
+    core: &Core,
+    screen: &mut Screen,
+    picker: &mut Option<(PickerKind, ChoicePicker)>,
+) {
+    let active = core.subagents().active();
+    if active.is_empty() {
+        screen.dim("no running subagents — spawn one with the task tool");
+        return;
+    }
+    let choices = active
+        .iter()
+        .map(|a| ChoiceItem {
+            value: a.id.clone(),
+            description: format!(
+                "{} · running {}s",
+                trunc_cells(&a.label, 44),
+                a.elapsed_secs
+            ),
+            active: false,
+        })
+        .collect();
+    let active_picker = ChoicePicker::new(choices, false);
+    draw_picker(screen, PickerKind::Subagents, &active_picker);
+    *picker = Some((PickerKind::Subagents, active_picker));
+}
+
+/// Explicit OSC52 clipboard copy of the last response. Gated by
+/// `[ui] osc52 = true`: the clipboard is never touched implicitly.
+fn copy_last_response(core: &Core, screen: &mut Screen, ui: &UiState) {
+    if !core.config().ui.osc52 {
+        screen.dim("OSC52 is off — set [ui] osc52 = true in config, then Alt-Y or /copy");
+        return;
+    }
+    let text = ui.last_response.trim_end();
+    if text.is_empty() {
+        screen.dim("nothing to copy yet");
+        return;
+    }
+    screen.osc52_copy(text);
+    screen.success(&format!("copied {} bytes via OSC52", text.len()));
+}
+
+fn theme_choices(current: &str, custom: &CustomThemes) -> Vec<ChoiceItem> {
+    let mut items: Vec<ChoiceItem> = [
         ("dark", "balanced charcoal · calm cyan signals"),
         ("light", "paper-bright · crisp blue contrast"),
         ("neo", "electric cyan and magenta · high energy"),
@@ -2541,6 +2964,9 @@ fn theme_choices(current: &str) -> Vec<ChoiceItem> {
             "Teenage Engineering-inspired · cream, ink, and orange",
         ),
         ("plain", "terminal defaults · no imposed color palette"),
+        ("midnight", "truecolor deep blue · soft moonlight accents"),
+        ("synthwave", "truecolor neon pink/cyan over violet dusk"),
+        ("forest", "truecolor moss greens on pine ground"),
     ]
     .into_iter()
     .map(|(value, description)| ChoiceItem {
@@ -2548,7 +2974,21 @@ fn theme_choices(current: &str) -> Vec<ChoiceItem> {
         description: description.to_string(),
         active: value == current,
     })
-    .collect()
+    .collect();
+    for name in custom.keys() {
+        if items.iter().any(|i| &i.value == name) {
+            continue;
+        }
+        items.push(ChoiceItem {
+            value: name.clone(),
+            description: format!(
+                "custom [ui.themes]{}",
+                if *name == current { " · current" } else { "" }
+            ),
+            active: *name == current,
+        });
+    }
+    items
 }
 
 fn provider_choices(core: &Core, current: &str) -> Vec<ChoiceItem> {
@@ -2614,9 +3054,26 @@ fn default_model(provider: &str) -> Option<&'static str> {
     Core::models_for(provider).first().copied()
 }
 
-fn help_modal_rows() -> Vec<String> {
+fn help_modal_rows(core: &Core) -> Vec<String> {
     let mut rows = vec!["COMMANDS".to_string(), "".to_string()];
     rows.extend(commands::help_rows());
+    let customs = core.custom_commands();
+    if !customs.is_empty() {
+        rows.push("".to_string());
+        rows.push("CUSTOM COMMANDS".to_string());
+        for c in &customs {
+            rows.push(format!(
+                "/{:<14} {} ({})",
+                c.name,
+                if c.description.is_empty() {
+                    "(no description)"
+                } else {
+                    c.description.as_str()
+                },
+                c.source
+            ));
+        }
+    }
     rows.extend([
         "".to_string(),
         "PROMPT INPUT".to_string(),
@@ -2627,8 +3084,10 @@ fn help_modal_rows() -> Vec<String> {
         "Ctrl-P            search every command".to_string(),
         "".to_string(),
         "DURING A RUN".to_string(),
-        "Enter             steer the active agent".to_string(),
+        "Enter             steer the active agent (or attached subagent)".to_string(),
         "Tab               queue the next turn".to_string(),
+        "Alt-S             attach to a running subagent".to_string(),
+        "Alt-Y             copy last response via OSC52 when enabled".to_string(),
         "Alt-A             review pending approval".to_string(),
         "Ctrl-O            expand a stashed large paste at the cursor".to_string(),
         "Ctrl-G            edit the composer draft in $EDITOR".to_string(),
@@ -2717,6 +3176,33 @@ fn settings_rows(core: &Core, ui: &UiState) -> Vec<String> {
             "Theme / bell          {} / {}",
             core.effective_theme(),
             if core.config().ui.bell { "on" } else { "off" }
+        ),
+        format!("Composer mode         {}", core.config().ui.composer),
+        format!(
+            "OSC52 clipboard       {}",
+            if core.config().ui.osc52 {
+                "opt-in (Alt-Y)"
+            } else {
+                "off"
+            }
+        ),
+        format!(
+            "Accessibility          {}{}{}",
+            if core.config().ui.accessibility.plain {
+                "plain "
+            } else {
+                ""
+            },
+            if core.config().ui.accessibility.reduced_motion {
+                "reduced-motion "
+            } else {
+                ""
+            },
+            if core.config().ui.accessibility.screen_reader {
+                "screen-reader"
+            } else {
+                ""
+            },
         ),
         "".to_string(),
         "EXTENSIONS".to_string(),
@@ -2841,6 +3327,7 @@ fn feature_rows(core: &Core) -> Vec<String> {
         "/sessions · /resume · /rewind · /transcript".to_string(),
         "/provider · /model · /settings · /doctor".to_string(),
         "/cost · /context · /details · /theme · /keys".to_string(),
+        "/subagents attach-steer · /composer vim · /a11y · /copy OSC52".to_string(),
         "@file attachments · !shell · Ctrl-P palette · Ctrl-R history".to_string(),
     ]
 }
@@ -2970,7 +3457,14 @@ fn toml_escape(value: &str) -> String {
 
 fn handle_complete(editor: &mut Editor, core: &Core, screen: &mut Screen) {
     let buf = editor.view().0.to_string();
-    let suggestions = complete::complete(&buf, commands::COMMANDS, core.cwd());
+    let customs = core.custom_commands();
+    let mut all: Vec<(&str, &str)> = commands::COMMANDS.to_vec();
+    all.extend(
+        customs
+            .iter()
+            .map(|c| (c.name.as_str(), c.description.as_str())),
+    );
+    let suggestions = complete::complete(&buf, &all, core.cwd());
     if suggestions.is_empty() {
         return;
     }
@@ -3090,7 +3584,14 @@ mod transcript_state_tests {
             ),
             (&RunState::Thinking, "thinking"),
         ] {
-            let row = status_ansi(&theme, state, 10, 20, 5, 0, 128_000, 0);
+            let row = status_ansi(&theme, state, 10, 20, 5, 0, 128_000, 0, true);
+            let still_plain = crate::markdown::strip_ansi(&status_ansi(
+                &theme, state, 10, 20, 5, 0, 128_000, 0, false,
+            ));
+            assert!(
+                !still_plain.contains('\u{280b}') && !still_plain.contains('\u{23f3}'),
+                "reduced motion drops animated glyphs: {still_plain}"
+            );
             assert!(
                 crate::markdown::strip_ansi(&row).contains(needle),
                 "'{needle}' missing from: {}",

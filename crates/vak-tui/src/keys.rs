@@ -33,6 +33,8 @@ impl Action {
             Action::Queue => "queue",
             Action::Interrupt => "interrupt",
             Action::CancelOrClear => "cancel-or-clear",
+            Action::CopyResponse => "copy-response",
+            Action::Subagents => "subagents",
             Action::Exit => "exit",
             Action::Ignore => "ignore",
         }
@@ -69,6 +71,8 @@ impl Action {
             "queue" => Action::Queue,
             "interrupt" => Action::Interrupt,
             "cancel-or-clear" => Action::CancelOrClear,
+            "copy-response" => Action::CopyResponse,
+            "subagents" => Action::Subagents,
             "exit" => Action::Exit,
             "ignore" => Action::Ignore,
             _ => return None,
@@ -137,6 +141,8 @@ pub enum Action {
     Queue,
     Interrupt,
     CancelOrClear,
+    CopyResponse,
+    Subagents,
     Exit,
     Ignore,
 }

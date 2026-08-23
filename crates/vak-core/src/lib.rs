@@ -3,6 +3,7 @@
 //! thin consumers of this crate.
 
 pub mod checkpoints;
+pub mod custom_commands;
 pub mod skills;
 pub mod worktree;
 
@@ -56,6 +57,7 @@ struct CoreInner {
     provider_instance: std::sync::Mutex<Option<Arc<dyn Provider>>>,
     sessions_home_override: std::sync::Mutex<Option<PathBuf>>,
     breaker: Arc<vak_agent::CircuitBreaker>,
+    subagents: Arc<vak_agent::SubagentRegistry>,
     trust_project_config: bool,
     extra_allow: std::sync::Mutex<Vec<String>>,
     user_env_override: std::sync::Mutex<Option<PathBuf>>,
@@ -119,6 +121,7 @@ impl Core {
                 provider_instance: std::sync::Mutex::new(None),
                 sessions_home_override: std::sync::Mutex::new(None),
                 breaker,
+                subagents: Arc::new(vak_agent::SubagentRegistry::new()),
                 trust_project_config,
                 extra_allow: std::sync::Mutex::new(extra_allow),
                 user_env_override: std::sync::Mutex::new(None),
@@ -337,6 +340,15 @@ impl Core {
 
     pub fn skills(&self) -> Vec<skills::Skill> {
         skills::discover(&self.inner.cwd, &self.inner.sessions_home)
+    }
+
+    /// Live subagents spawned by this Core's runs, for attach/steer UIs.
+    pub fn subagents(&self) -> Arc<vak_agent::SubagentRegistry> {
+        self.inner.subagents.clone()
+    }
+
+    pub fn custom_commands(&self) -> Vec<custom_commands::CustomCommand> {
+        custom_commands::discover(&self.inner.cwd, &self.inner.sessions_home)
     }
 
     pub fn tool_names(&self) -> Vec<String> {
@@ -663,6 +675,7 @@ impl Core {
                 sessions_home: self.inner.sessions_home.clone(),
                 parent_session_id: parent_id,
                 events: Some(events.clone()),
+                registry: Some(self.inner.subagents.clone()),
             })));
         }
         if !self.inner.config.mcp.servers.is_empty() {

@@ -98,7 +98,15 @@ fn ui_layer_overrides_and_unknown_theme_normalizes_to_dark() {
 
 #[test]
 fn designed_ui_themes_are_valid_config_values() {
-    for theme in ["neo", "rich", "teenage", "plain"] {
+    for theme in [
+        "neo",
+        "rich",
+        "teenage",
+        "plain",
+        "midnight",
+        "synthwave",
+        "forest",
+    ] {
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path().join(".vakcoder");
         std::fs::create_dir_all(&project).unwrap();
@@ -110,6 +118,67 @@ fn designed_ui_themes_are_valid_config_values() {
         let cfg = load_with_trust(dir.path(), true).unwrap();
         assert_eq!(cfg.ui.theme, theme);
     }
+}
+
+#[test]
+fn custom_theme_names_resolve_without_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join(".vakcoder");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("config.toml"),
+        "[ui]\ntheme = \"sunset\"\n[ui.themes.sunset]\naccent = \"#ff5500\"\ndim = \"grey\"\nbogus = 1\n",
+    )
+    .unwrap();
+    let cfg = load_with_trust(dir.path(), true).unwrap();
+    assert_eq!(cfg.ui.theme, "sunset");
+    assert_eq!(
+        cfg.ui.themes.get("sunset").and_then(|t| t.get("accent")),
+        Some(&"#ff5500".to_string())
+    );
+    assert!(
+        cfg.warnings
+            .iter()
+            .any(|w| w.contains("themes.sunset.bogus")),
+        "unknown theme color must warn: {:?}",
+        cfg.warnings
+    );
+}
+
+#[test]
+fn composer_osc52_and_accessibility_layers_apply() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join(".vakcoder");
+    std::fs::create_dir_all(&project).unwrap();
+
+    let cfg = load_with_trust(dir.path(), true).unwrap();
+    assert_eq!(cfg.ui.composer, "emacs");
+    assert!(!cfg.ui.osc52);
+    assert!(!cfg.ui.accessibility.plain);
+
+    std::fs::write(
+        project.join("config.toml"),
+        "[ui]\ncomposer = \"vim\"\nosc52 = true\n[ui.accessibility]\nplain = true\nreduced_motion = true\nbogus = 1\n",
+    )
+    .unwrap();
+    let cfg = load_with_trust(dir.path(), true).unwrap();
+    assert_eq!(cfg.ui.composer, "vim");
+    assert!(cfg.ui.osc52);
+    assert!(cfg.ui.accessibility.plain);
+    assert!(cfg.ui.accessibility.reduced_motion);
+    assert!(!cfg.ui.accessibility.screen_reader);
+    assert!(
+        cfg.warnings
+            .iter()
+            .any(|w| w.contains("accessibility.bogus")),
+        "unknown accessibility key must warn: {:?}",
+        cfg.warnings
+    );
+
+    std::fs::write(project.join("config.toml"), "[ui]\ncomposer = \"dvorak\"\n").unwrap();
+    let cfg = load_with_trust(dir.path(), true).unwrap();
+    assert_eq!(cfg.ui.composer, "emacs");
+    assert!(cfg.warnings.iter().any(|w| w.contains("ui.composer")));
 }
 
 #[test]

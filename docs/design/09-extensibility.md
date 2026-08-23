@@ -1,4 +1,4 @@
-# 09 — Extensibility (skills · subagents · hooks · MCP)
+# 09 — Extensibility (skills · subagents · hooks · MCP · custom commands)
 
 ## Skills (shipped)
 
@@ -9,7 +9,7 @@ path line enters the system prompt; the model reads the file with `read`
 when relevant — progressive disclosure, Claude Code-skill compatible.
 Discovered skills are recorded in the frozen contract.
 
-## Subagents (shipped, blocking + parallel fan-out)
+## Subagents (shipped, blocking + parallel fan-out + attach/steer)
 
 The `task` tool delegates a self-contained prompt to a child agent:
 - child session JSONL linked via `parent_session_id`; greppable lineage
@@ -18,6 +18,17 @@ The `task` tool delegates a self-contained prompt to a child agent:
 - final text returns as the tool result; abort/failure/turn-limit become
   typed error results
 - config: `subagents = false` disables
+
+### Live registry (attach/steer/stop)
+
+While a child runs it registers its steering queues and cancel token in a
+per-Core `SubagentRegistry` (`vak_agent`), keyed by the unique child
+session id. UIs enumerate live children, push steering/follow-up text into
+a specific child, or cancel just that child. The TUI surfaces this as
+`Alt-S` / `/subagents`: attaching retargets the composer (Enter steers the
+child, Tab queues its follow-up, Ctrl-C stops only it, Esc detaches).
+Registration is removed when the tool call returns, so a finished child can
+never be steered.
 
 ### Resource-claim scheduling
 
@@ -88,3 +99,26 @@ Design choices:
   npx/uvx-style launchers.
 - v1 limits: no sampling/roots/elicitation; server-initiated requests are
   ignored; 60s request timeout.
+
+## Custom commands (shipped)
+
+Markdown prompt templates invoked as slash commands, discovered from three
+namespaces with project > plugin > user precedence on name collision:
+
+| Namespace | Location | Label |
+|---|---|---|
+| Project | `.vakcoder/commands/<name>.md` | `project` |
+| Plugin | `.vakcoder/plugins/<plugin>/commands/<name>.md` | `plugin:<name>` |
+| User | `<home>/commands/<name>.md` | `user` |
+
+- File stem is the command name (ascii alnum, `-`, `_` only); names must be
+  unique after precedence dedup.
+- Optional frontmatter `description:`; falls back to the first non-empty
+  markdown line. The body is the prompt template.
+- `$ARGUMENTS` substitutes the invocation args; when the template has no
+  placeholder and args are present they are appended (`Arguments: …`) so
+  the payload is never silently dropped.
+- Expanded prompts flow through the normal submit path (mention expansion,
+  checkpointing, ledger entry — model-visible means logged).
+- Surfaced everywhere commands are: slash completion, the Ctrl-P palette
+  (plugin-contributed palette actions), and `/help`.

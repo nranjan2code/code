@@ -1,13 +1,15 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaletteItem {
-    pub name: &'static str,
-    pub description: &'static str,
+    pub name: String,
+    pub description: String,
 }
 
 #[derive(Debug, Default)]
 pub struct CommandPalette {
     query: String,
     selected: usize,
+    /// Custom/plugin-contributed actions merged with built-in commands.
+    extras: Vec<PaletteItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,8 +95,11 @@ impl ChoicePicker {
 }
 
 impl CommandPalette {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(extras: Vec<PaletteItem>) -> Self {
+        Self {
+            extras,
+            ..Self::default()
+        }
     }
 
     pub fn query(&self) -> &str {
@@ -131,11 +136,21 @@ impl CommandPalette {
         let mut ranked: Vec<(usize, PaletteItem)> = crate::commands::COMMANDS
             .iter()
             .filter_map(|(name, description)| {
-                fuzzy_score(name, &self.query)
-                    .map(|score| (score, PaletteItem { name, description }))
+                fuzzy_score(name, &self.query).map(|score| {
+                    (
+                        score,
+                        PaletteItem {
+                            name: (*name).to_string(),
+                            description: (*description).to_string(),
+                        },
+                    )
+                })
             })
+            .chain(self.extras.iter().filter_map(|item| {
+                fuzzy_score(&item.name, &self.query).map(|score| (score + 1, item.clone()))
+            }))
             .collect();
-        ranked.sort_by_key(|(score, item)| (*score, item.name));
+        ranked.sort_by_key(|(score, item)| (*score, item.name.clone()));
         ranked.into_iter().map(|(_, item)| item).take(8).collect()
     }
 }
@@ -157,4 +172,57 @@ fn fuzzy_score(candidate: &str, query: &str) -> Option<usize> {
         offset += found + needle.len_utf8();
     }
     Some(score + 100)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    fn extras() -> Vec<PaletteItem> {
+        vec![PaletteItem {
+            name: "review".to_string(),
+            description: "project review command".to_string(),
+        }]
+    }
+
+    #[test]
+    fn extras_merge_with_builtins_and_fuzzy_filter() {
+        let mut p = CommandPalette::new(extras());
+        for c in "hel".chars() {
+            p.push(c);
+        }
+        let names: Vec<String> = p.items().iter().map(|i| i.name.clone()).collect();
+        assert_eq!(names.first().map(String::as_str), Some("help"));
+
+        p.backspace();
+        p.backspace();
+        p.backspace();
+        for c in "rev".chars() {
+            p.push(c);
+        }
+        let items = p.items();
+        assert!(
+            items.iter().any(|i| i.name == "review"),
+            "custom command surfaces in the palette: {items:?}"
+        );
+        for _ in 0..3 {
+            p.backspace();
+        }
+        p.push('z');
+        p.push('z');
+        assert!(p.items().is_empty());
+    }
+
+    #[test]
+    fn builtin_commands_rank_ahead_of_equal_extras() {
+        let mut p = CommandPalette::new(extras());
+        // "review" fuzzy-matches "review" exactly; a builtin prefix match on
+        // the same query would outrank it.
+        for c in "resume".chars() {
+            p.push(c);
+        }
+        let names: Vec<String> = p.items().iter().map(|i| i.name.clone()).collect();
+        assert_eq!(names.first().map(String::as_str), Some("resume"));
+    }
 }

@@ -1,13 +1,16 @@
 //! Blocking subagent delegation. A task spawns a child agent with its own
 //! JSONL session (linked via parent_session_id), a narrowed tool set that
 //! excludes the task tool itself (depth-1 by construction), and returns the
-//! child's final text as this tool's output.
+//! child's final text as this tool's output. Live children register in a
+//! shared [`SubagentRegistry`] so UIs can list, steer, and stop them.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 use vak_llm::Provider;
 use vak_permission::{Mode, PermissionEngine};
 use vak_session::types::{FrozenContract, SessionHeader};
@@ -15,7 +18,7 @@ use vak_session::{SessionLog, SessionPath};
 use vak_tools::sandbox::Sandbox;
 use vak_tools::{Tool, ToolContext, ToolOutput};
 
-use crate::{Agent, AgentConfig, Approver};
+use crate::{Agent, AgentConfig, Approver, SteeringQueues};
 
 pub struct TaskDeps {
     pub provider: Arc<dyn Provider>,
@@ -35,10 +38,112 @@ pub struct TaskDeps {
     pub parent_session_id: String,
     /// Parent-loop event channel so subagent lifecycles surface in the UI.
     pub events: Option<tokio::sync::mpsc::Sender<crate::AgentEvent>>,
+    /// Shared registry of live children. None disables attach/steer (the
+    /// child still runs normally).
+    pub registry: Option<Arc<SubagentRegistry>>,
 }
 
 pub struct TaskTool {
     deps: Arc<TaskDeps>,
+}
+
+/// A live child agent: its steering queues and cancellation token, so an
+/// attached UI can push steering or stop it while the parent's task tool
+/// call is still blocking.
+#[derive(Debug)]
+pub struct SubagentHandle {
+    pub label: String,
+    pub started_at: std::time::Instant,
+    pub steering: Arc<SteeringQueues>,
+    pub cancel: CancellationToken,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveSubagent {
+    pub id: String,
+    pub label: String,
+    pub elapsed_secs: u64,
+}
+
+/// Registry of currently-running subagents, keyed by unique child session
+/// id. Interior-mutable: the UI holds a shared reference across runs.
+#[derive(Debug, Default)]
+pub struct SubagentRegistry {
+    inner: Mutex<BTreeMap<String, SubagentHandle>>,
+}
+
+impl SubagentRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn register(&self, id: String, handle: SubagentHandle) {
+        if let Ok(mut map) = self.inner.lock() {
+            map.insert(id, handle);
+        }
+    }
+
+    fn unregister(&self, id: &str) {
+        if let Ok(mut map) = self.inner.lock() {
+            map.remove(id);
+        }
+    }
+
+    pub fn active(&self) -> Vec<ActiveSubagent> {
+        let Ok(map) = self.inner.lock() else {
+            return Vec::new();
+        };
+        map.iter()
+            .map(|(id, h)| ActiveSubagent {
+                id: id.clone(),
+                label: h.label.clone(),
+                elapsed_secs: h.started_at.elapsed().as_secs(),
+            })
+            .collect()
+    }
+
+    /// Queues steering text for the child. Returns false when no such
+    /// child is live.
+    pub fn steer(&self, id: &str, text: &str) -> bool {
+        let Ok(map) = self.inner.lock() else {
+            return false;
+        };
+        match map.get(id) {
+            Some(h) => {
+                h.steering.push_steering(text.to_string());
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Queues a follow-up turn for the child (runs after its natural stop).
+    pub fn queue_follow_up(&self, id: &str, text: &str) -> bool {
+        let Ok(map) = self.inner.lock() else {
+            return false;
+        };
+        match map.get(id) {
+            Some(h) => {
+                h.steering.push_follow_up(text.to_string());
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Cancels the child. Returns false when no such child is live.
+    pub fn stop(&self, id: &str) -> bool {
+        let Ok(map) = self.inner.lock() else {
+            return false;
+        };
+        match map.get(id) {
+            Some(h) => {
+                h.cancel.cancel();
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 impl TaskTool {
@@ -178,13 +283,24 @@ impl TaskTool {
         cfg.sandbox = self.deps.sandbox.clone();
 
         let mut agent = Agent::new(self.deps.provider.clone(), log, cfg);
-        let steering = Default::default();
+        let steering = Arc::new(SteeringQueues::new());
         let cancel = ctx.cancel.child_token();
         let label = args
             .get("label")
             .and_then(|l| l.as_str())
             .map(String::from)
             .unwrap_or_else(|| prompt.chars().take(48).collect());
+        if let Some(registry) = &self.deps.registry {
+            registry.register(
+                session_id.clone(),
+                SubagentHandle {
+                    label: label.clone(),
+                    started_at: std::time::Instant::now(),
+                    steering: steering.clone(),
+                    cancel: cancel.clone(),
+                },
+            );
+        }
         let (ev_tx, mut ev_rx) = tokio::sync::mpsc::channel::<crate::AgentEvent>(256);
         // Always drain the child stream (a full channel would deadlock the
         // child loop); tool calls are additionally forwarded to the parent
@@ -239,6 +355,9 @@ impl TaskTool {
                 .await;
         }
         let _ = pump.await;
+        if let Some(registry) = &self.deps.registry {
+            registry.unregister(&session_id);
+        }
 
         match outcome {
             crate::TurnOutcome::Completed { response } => {
@@ -262,5 +381,45 @@ impl TaskTool {
                 "subagent '{session_id}' hit its turn limit before finishing"
             )),
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod registry_tests {
+    use super::*;
+
+    #[test]
+    fn register_steer_stop_lifecycle() {
+        let reg = SubagentRegistry::new();
+        assert!(reg.active().is_empty());
+        assert!(!reg.steer("child-1", "go"));
+        assert!(!reg.stop("child-1"));
+
+        let cancel = CancellationToken::new();
+        reg.register(
+            "child-1".into(),
+            SubagentHandle {
+                label: "explore".into(),
+                started_at: std::time::Instant::now(),
+                steering: Arc::new(SteeringQueues::new()),
+                cancel: cancel.clone(),
+            },
+        );
+        assert!(reg.steer("child-1", "look left"));
+        assert!(reg.queue_follow_up("child-1", "then right"));
+        let active = reg.active();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, "child-1");
+        assert_eq!(active[0].label, "explore");
+
+        // The queued items landed in the child's queues.
+        assert!(!cancel.is_cancelled());
+        assert!(reg.stop("child-1"));
+        assert!(cancel.is_cancelled());
+
+        reg.unregister("child-1");
+        assert!(reg.active().is_empty());
+        assert!(!reg.steer("child-1", "gone"));
     }
 }

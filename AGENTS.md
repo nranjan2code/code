@@ -70,12 +70,15 @@ crates/vak-mcp       MCP stdio client behind a lazy meta-tool
 crates/vak-agent     loop, steering queues, parallel tool execution w/
                      resource-claim waves, retries + watchdog + circuit
                      breaker + stop gate (premature-completion guard),
-                     subagents (task tool)
+                     subagents (task tool) + live SubagentRegistry
 crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode
 crates/vak-config    layered TOML config + .env secret loading
 crates/vak-core      SDK facade, system prompt, checkpoints, worktrees
-crates/vak-tui       inline stream-based terminal UI
+crates/vak-tui       retained-render terminal UI: contextual keymap +
+                     interactive rebind, themes + custom theme packs,
+                     vim/emacs composer, subagent attach/steer,
+                     custom commands, OSC52 copy, accessibility modes
 crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts)
 crates/vak-desktop   Tauri 2 desktop orchestrator (sidecar over vak-server;
                      docs/design/20-tauri-desktop.md)

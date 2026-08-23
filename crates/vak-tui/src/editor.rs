@@ -1,5 +1,29 @@
+use crossterm::event::{KeyCode, KeyModifiers};
+
 const HISTORY_MAX: usize = 500;
 const UNDO_MAX: usize = 200;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ComposerMode {
+    #[default]
+    Emacs,
+    Vim,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VimState {
+    #[default]
+    Normal,
+    Insert,
+}
+
+/// A yanked (copied) region awaiting `p`/`P`. Linewise text carries its
+/// trailing newline implicitly.
+#[derive(Debug, Clone)]
+struct Yank {
+    text: String,
+    linewise: bool,
+}
 
 /// Pastes above either threshold collapse into a one-line placeholder chip so
 /// a megabyte-scale paste never triggers proportional synchronous layout.
@@ -56,6 +80,11 @@ pub struct Editor {
     last_edit: Option<EditKind>,
     stashes: Vec<Stash>,
     next_stash: usize,
+    mode: ComposerMode,
+    vim_state: VimState,
+    /// Pending Vim operator (`d`/`c`/`y`/`g`) awaiting a motion.
+    op: Option<char>,
+    yank: Option<Yank>,
 }
 
 impl Editor {
@@ -612,5 +641,645 @@ impl Editor {
 
     fn end_edit_group(&mut self) {
         self.last_edit = None;
+    }
+
+    pub fn mode(&self) -> ComposerMode {
+        self.mode
+    }
+
+    pub fn set_mode(&mut self, mode: ComposerMode) {
+        if self.mode != mode {
+            self.mode = mode;
+            self.vim_state = VimState::Normal;
+            self.op = None;
+        }
+    }
+
+    pub fn vim_state(&self) -> VimState {
+        self.vim_state
+    }
+
+    pub fn enter_normal(&mut self) {
+        self.vim_state = VimState::Normal;
+        self.op = None;
+        // Vim semantics: leaving insert steps back one char when possible.
+        if self.cursor > 0 {
+            self.cursor -= 1;
+        }
+    }
+
+    fn enter_insert(&mut self) {
+        self.vim_state = VimState::Insert;
+        self.op = None;
+        self.end_edit_group();
+    }
+
+    /// Vim normal-mode key handling. Consumes modal keys and returns true;
+    /// unmapped keys (Enter, Ctrl-*, arrows…) return false so they fall
+    /// through to the regular keymap.
+    pub fn vim_normal_key(&mut self, code: KeyCode, mods: KeyModifiers) -> bool {
+        if self.mode != ComposerMode::Vim {
+            return false;
+        }
+        if code == KeyCode::Char('r') && mods == KeyModifiers::CONTROL {
+            if self.vim_state == VimState::Normal {
+                self.redo();
+            }
+            return true;
+        }
+        if code == KeyCode::Esc && mods.is_empty() {
+            // Insert exit or pending-op cancel; self-contained so the app
+            // layer's interception stays optional.
+            if self.vim_state == VimState::Insert {
+                self.enter_normal();
+            } else {
+                self.op = None;
+            }
+            return true;
+        }
+        if self.vim_state != VimState::Normal {
+            return false;
+        }
+        if !mods.is_empty() && mods != KeyModifiers::SHIFT {
+            return false;
+        }
+        let Some(c) = (match code {
+            KeyCode::Char(c) => Some(c),
+            _ => None,
+        }) else {
+            return false;
+        };
+        // Operator + motion composition (d/c/y/g with a pending first key).
+        if let Some(op) = self.op {
+            self.op = None;
+            return self.apply_op(op, c);
+        }
+        match c {
+            'h' => {
+                self.end_edit_group();
+                let ls = self.line_start_char();
+                self.cursor = self.cursor.saturating_sub(1).max(ls);
+                true
+            }
+            'l' => {
+                self.end_edit_group();
+                let (_, le) = self.current_line_bounds();
+                self.cursor = (self.cursor + 1).min(le);
+                true
+            }
+            'j' => {
+                self.next_line();
+                true
+            }
+            'k' => {
+                self.prev_line();
+                true
+            }
+            '0' => {
+                self.home();
+                true
+            }
+            '^' | '_' => {
+                self.home_line_start();
+                true
+            }
+            '$' => {
+                self.end();
+                true
+            }
+            'G' => {
+                self.cursor = self.chars().count();
+                true
+            }
+            'g' => {
+                self.op = Some('g');
+                true
+            }
+            'w' => {
+                self.end_edit_group();
+                self.cursor = self.scan_word_forward();
+                true
+            }
+            'b' => {
+                self.word_left();
+                true
+            }
+            'e' => {
+                self.word_end();
+                true
+            }
+            'x' => {
+                if self.byte_of_char(self.cursor) < self.buf.len() {
+                    self.record_before(EditKind::Other);
+                    self.delete();
+                }
+                true
+            }
+            'D' => {
+                self.record_before(EditKind::Other);
+                let text = self.line_tail();
+                self.yank = Some(Yank {
+                    text,
+                    linewise: false,
+                });
+                self.delete_to_line_end();
+                true
+            }
+            'C' => {
+                self.record_before(EditKind::Other);
+                let text = self.line_tail();
+                self.yank = Some(Yank {
+                    text,
+                    linewise: false,
+                });
+                self.delete_to_line_end();
+                self.enter_insert();
+                true
+            }
+            'd' => {
+                self.op = Some('d');
+                true
+            }
+            'c' => {
+                self.op = Some('c');
+                true
+            }
+            'y' => {
+                self.op = Some('y');
+                true
+            }
+            'p' => {
+                self.paste_yank(false);
+                true
+            }
+            'P' => {
+                self.paste_yank(true);
+                true
+            }
+            'u' => {
+                self.undo();
+                true
+            }
+            'i' => {
+                self.enter_insert();
+                true
+            }
+            'a' => {
+                if self.cursor < self.chars().count() {
+                    self.cursor += 1;
+                }
+                self.enter_insert();
+                true
+            }
+            'I' => {
+                self.home_line_start();
+                self.enter_insert();
+                true
+            }
+            'A' => {
+                self.end();
+                self.enter_insert();
+                true
+            }
+            'o' => {
+                self.end();
+                self.record_before(EditKind::Other);
+                self.insert('\n');
+                self.enter_insert();
+                true
+            }
+            'O' => {
+                self.home();
+                self.record_before(EditKind::Other);
+                self.insert('\n');
+                self.left();
+                self.enter_insert();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn apply_op(&mut self, op: char, motion: char) -> bool {
+        // Doubled operator = whole-line scope (dd/cc/yy).
+        if motion == op && matches!(op, 'd' | 'c' | 'y') {
+            return self.op_linewise(op);
+        }
+        if op == 'g' {
+            if motion == 'g' {
+                self.cursor = 0;
+                return true;
+            }
+            return false;
+        }
+        let target = match motion {
+            'w' => self.scan_word_forward(),
+            'e' => self.scan_word_end().saturating_sub(0).max(self.cursor),
+            'b' => self.word_start(),
+            '$' => self.line_end_char(),
+            'h' => self.cursor.saturating_sub(1),
+            'l' => (self.cursor + 1).min(self.chars().count()),
+            '0' => self.line_start_char(),
+            '^' => self.line_first_non_blank(),
+            'G' => self.chars().count(),
+            'g' => 0,
+            _ => return false,
+        };
+        let (start, end) = if target >= self.cursor {
+            (self.cursor, target)
+        } else {
+            (target, self.cursor)
+        };
+        match op {
+            'd' => {
+                let text = self.slice_chars(start, end);
+                self.record_before(EditKind::Other);
+                self.replace_range_chars(start, end, "");
+                self.yank = Some(Yank {
+                    text,
+                    linewise: false,
+                });
+                self.cursor = start.min(self.chars().count());
+                true
+            }
+            'c' => {
+                let text = self.slice_chars(start, end);
+                self.record_before(EditKind::Other);
+                self.replace_range_chars(start, end, "");
+                self.yank = Some(Yank {
+                    text,
+                    linewise: false,
+                });
+                self.cursor = start;
+                self.enter_insert();
+                true
+            }
+            'y' => {
+                self.yank = Some(Yank {
+                    text: self.slice_chars(start, end),
+                    linewise: false,
+                });
+                self.cursor = start;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn op_linewise(&mut self, op: char) -> bool {
+        let (ls_char, le_char) = self.current_line_bounds();
+        let line_text = self.slice_chars(ls_char, le_char);
+        let total = self.chars().count();
+        let (start, end) = if le_char < total {
+            // Not the last line: swallow the trailing newline.
+            (ls_char, le_char + 1)
+        } else if ls_char > 0 {
+            // Last line with no newline of its own: swallow the
+            // preceding one instead so the join stays clean.
+            (ls_char - 1, le_char)
+        } else {
+            (ls_char, le_char)
+        };
+        match op {
+            'd' | 'c' => {
+                self.record_before(EditKind::Other);
+                if op == 'd' {
+                    self.replace_range_chars(start, end, "");
+                    self.cursor = start.min(self.chars().count());
+                } else {
+                    // Change clears the content but keeps the line.
+                    self.replace_range_chars(ls_char, le_char, "");
+                    self.cursor = ls_char;
+                }
+                self.yank = Some(Yank {
+                    text: format!("{line_text}\n"),
+                    linewise: true,
+                });
+                if op == 'c' {
+                    self.enter_insert();
+                }
+                true
+            }
+            'y' => {
+                self.yank = Some(Yank {
+                    text: format!("{line_text}\n"),
+                    linewise: true,
+                });
+                self.cursor = ls_char;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn paste_yank(&mut self, before: bool) {
+        let Some(y) = self.yank.clone() else {
+            return;
+        };
+        self.record_before(EditKind::Other);
+        if y.linewise {
+            if before {
+                let ls = self.line_start_char();
+                self.insert_at_char(ls, &y.text);
+                self.cursor = ls;
+            } else {
+                let le = self.line_end_char();
+                if self.byte_of_char(le) < self.buf.len() {
+                    let at = le + 1;
+                    self.insert_at_char(at, &y.text);
+                    self.cursor = at;
+                } else {
+                    let at = self.chars().count();
+                    let payload = format!("\n{}", y.text.trim_end_matches('\n'));
+                    self.insert_at_char(at, &payload);
+                    self.cursor = at;
+                }
+            }
+        } else {
+            let at = if before || self.cursor == self.chars().count() {
+                self.cursor
+            } else {
+                self.cursor + 1
+            };
+            self.insert_at_char(at, &y.text);
+            self.cursor = at;
+        }
+    }
+
+    fn insert_at_char(&mut self, char_idx: usize, text: &str) {
+        let byte = self.byte_of_char(char_idx.min(self.chars().count()));
+        self.buf.insert_str(byte, text);
+    }
+
+    fn slice_chars(&self, start: usize, end: usize) -> String {
+        self.buf[self.byte_of_char(start)..self.byte_of_char(end)].to_string()
+    }
+
+    fn replace_range_chars(&mut self, start: usize, end: usize, replacement: &str) {
+        let s = self.byte_of_char(start);
+        let e = self.byte_of_char(end);
+        self.buf.replace_range(s..e, replacement);
+    }
+
+    fn current_line_bounds(&self) -> (usize, usize) {
+        let cur = self.byte_of_char(self.cursor);
+        let ls = self.buf[..cur].rfind('\n').map(|b| b + 1).unwrap_or(0);
+        let le_off = self.buf[cur..]
+            .find('\n')
+            .map(|o| cur + o)
+            .unwrap_or(self.buf.len());
+        (
+            self.buf[..ls].chars().count(),
+            self.buf[..le_off].chars().count(),
+        )
+    }
+
+    fn line_start_char(&self) -> usize {
+        self.current_line_bounds().0
+    }
+
+    fn line_end_char(&self) -> usize {
+        self.current_line_bounds().1
+    }
+
+    fn line_first_non_blank(&self) -> usize {
+        let (ls, le) = self.current_line_bounds();
+        let line = &self.buf[self.byte_of_char(ls)..self.byte_of_char(le)];
+        ls + line.chars().take_while(|c| c.is_whitespace()).count()
+    }
+
+    fn home_line_start(&mut self) {
+        self.cursor = self.line_first_non_blank();
+    }
+
+    fn line_tail(&self) -> String {
+        let (_, le) = self.current_line_bounds();
+        self.slice_chars(self.cursor, le)
+    }
+
+    fn scan_word_forward(&self) -> usize {
+        let chars: Vec<char> = self.buf.chars().collect();
+        let mut i = self.cursor;
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+        while i < chars.len() && !chars[i].is_whitespace() {
+            i += 1;
+        }
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+        i
+    }
+
+    fn scan_word_end(&self) -> usize {
+        let chars: Vec<char> = self.buf.chars().collect();
+        let mut i = self.cursor;
+        while i + 1 < chars.len() && !chars[i].is_whitespace() {
+            i += 1;
+        }
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+        while i + 1 < chars.len() && !chars[i + 1].is_whitespace() {
+            i += 1;
+        }
+        i
+    }
+
+    fn word_end(&mut self) {
+        self.end_edit_group();
+        self.cursor = self.scan_word_end();
+    }
+
+    fn next_line(&mut self) {
+        self.end_edit_group();
+        let col = self.cursor.saturating_sub(self.line_start_char());
+        let (_, le) = self.current_line_bounds();
+        if le >= self.chars().count() {
+            return;
+        }
+        let next_start = le + 1;
+        let next_len = self.buf[self.byte_of_char(next_start)..]
+            .find('\n')
+            .map(|o| {
+                self.buf[self.byte_of_char(next_start)..next_start + o]
+                    .chars()
+                    .count()
+            })
+            .unwrap_or_else(|| self.buf[self.byte_of_char(next_start)..].chars().count());
+        self.cursor = next_start + col.min(next_len);
+    }
+
+    fn prev_line(&mut self) {
+        self.end_edit_group();
+        let ls = self.line_start_char();
+        if ls == 0 {
+            return;
+        }
+        let col = self.cursor - ls;
+        let prev_ls = self.buf[..self.byte_of_char(ls) - 1]
+            .rfind('\n')
+            .map(|b| b + 1)
+            .unwrap_or(0);
+        let prev_len = self.buf[prev_ls..self.byte_of_char(ls) - 1].chars().count();
+        self.cursor = prev_ls + col.min(prev_len);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod vim_tests {
+    use super::*;
+
+    fn vim_editor(text: &str) -> Editor {
+        let mut e = Editor::new();
+        e.set_mode(ComposerMode::Vim);
+        e.set_text(text);
+        // A fresh modal buffer starts with the cursor at home.
+        e.vim_normal_key(KeyCode::Char('g'), KeyModifiers::NONE);
+        e.vim_normal_key(KeyCode::Char('g'), KeyModifiers::NONE);
+        e
+    }
+
+    fn type_insert(e: &mut Editor, s: &str) {
+        for c in s.chars() {
+            e.insert(c);
+        }
+    }
+
+    #[test]
+    fn emacs_is_default_and_vim_starts_in_normal() {
+        let mut e = Editor::new();
+        assert_eq!(e.mode(), ComposerMode::Emacs);
+        e.set_mode(ComposerMode::Vim);
+        assert_eq!(e.vim_state(), VimState::Normal);
+        // 'h' is motion in normal mode, not insert.
+        assert!(e.vim_normal_key(KeyCode::Char('h'), KeyModifiers::NONE));
+        assert_eq!(e.view().0, "");
+        // Switching back restores plain typing.
+        e.set_mode(ComposerMode::Emacs);
+        e.insert('h');
+        assert_eq!(e.view().0, "h");
+    }
+
+    #[test]
+    fn normal_motions_move_the_cursor() {
+        let mut e = vim_editor("hello world\nsecond");
+        for _ in 0..20 {
+            e.vim_normal_key(KeyCode::Char('l'), KeyModifiers::NONE);
+        }
+        let (buf, cur) = e.view();
+        assert_eq!(&buf[..cur], "hello world");
+        e.vim_normal_key(KeyCode::Char('^'), KeyModifiers::NONE);
+        assert_eq!(e.view().1, 0);
+        e.vim_normal_key(KeyCode::Char('w'), KeyModifiers::NONE);
+        assert_eq!(e.view().1, 6);
+        e.vim_normal_key(KeyCode::Char('$'), KeyModifiers::NONE);
+        assert_eq!(e.view().1, 11);
+        e.vim_normal_key(KeyCode::Char('G'), KeyModifiers::NONE);
+        let total = e.view().0.chars().count();
+        assert_eq!(e.view().1, total);
+        e.vim_normal_key(KeyCode::Char('g'), KeyModifiers::NONE);
+        assert!(e.vim_normal_key(KeyCode::Char('g'), KeyModifiers::NONE));
+        assert_eq!(e.view().1, 0);
+        // j/k navigate lines preserving column ('second' starts at 12).
+        e.vim_normal_key(KeyCode::Char('j'), KeyModifiers::NONE);
+        assert_eq!(e.view().1, 12, "j lands at column 0 of 'second'");
+        for _ in 0..4 {
+            e.vim_normal_key(KeyCode::Char('l'), KeyModifiers::NONE);
+        }
+        e.vim_normal_key(KeyCode::Char('k'), KeyModifiers::NONE);
+        assert_eq!(e.view().1, 4, "k restores column 4 on 'hello world'");
+    }
+
+    #[test]
+    fn x_dd_dw_delete_with_yank_paste() {
+        let mut e = vim_editor("alpha beta gamma");
+        assert!(e.vim_normal_key(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert_eq!(e.view().0, "lpha beta gamma");
+
+        e.set_text("one two\nthree");
+        e.vim_normal_key(KeyCode::Char('g'), KeyModifiers::NONE);
+        e.vim_normal_key(KeyCode::Char('g'), KeyModifiers::NONE);
+        assert!(e.vim_normal_key(KeyCode::Char('d'), KeyModifiers::NONE));
+        assert!(e.vim_normal_key(KeyCode::Char('d'), KeyModifiers::NONE));
+        assert_eq!(e.view().0, "three");
+
+        // p pastes the linewise yank below.
+        assert!(e.vim_normal_key(KeyCode::Char('p'), KeyModifiers::NONE));
+        assert_eq!(e.view().0, "three\none two");
+
+        e.set_text("kill this keep");
+        e.vim_normal_key(KeyCode::Char('g'), KeyModifiers::NONE);
+        e.vim_normal_key(KeyCode::Char('g'), KeyModifiers::NONE);
+        assert!(e.vim_normal_key(KeyCode::Char('d'), KeyModifiers::NONE));
+        assert!(e.vim_normal_key(KeyCode::Char('w'), KeyModifiers::NONE));
+        assert_eq!(e.view().0, "this keep");
+        assert!(e.vim_normal_key(KeyCode::Char('P'), KeyModifiers::NONE));
+        assert_eq!(e.view().0, "kill this keep");
+    }
+
+    #[test]
+    fn cc_yanks_line_and_enters_insert() {
+        let mut e = vim_editor("replace me\nkeep");
+        assert!(e.vim_normal_key(KeyCode::Char('c'), KeyModifiers::NONE));
+        assert!(e.vim_normal_key(KeyCode::Char('c'), KeyModifiers::NONE));
+        assert_eq!(e.vim_state(), VimState::Insert);
+        type_insert(&mut e, "new line");
+        assert_eq!(e.view().0, "new line\nkeep");
+        // Esc returns to normal and steps back one char.
+        e.vim_normal_key(KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(e.vim_state(), VimState::Normal);
+        assert_eq!(e.view().1, "new line".chars().count() - 1);
+    }
+
+    #[test]
+    fn insert_entry_points_and_open_lines() {
+        let mut e = vim_editor("abc");
+        assert!(e.vim_normal_key(KeyCode::Char('A'), KeyModifiers::NONE));
+        assert_eq!(e.vim_state(), VimState::Insert);
+        type_insert(&mut e, "-tail");
+        assert_eq!(e.view().0, "abc-tail");
+
+        let mut e2 = vim_editor("first\nlast");
+        assert!(e2.vim_normal_key(KeyCode::Char('$'), KeyModifiers::NONE));
+        assert!(e2.vim_normal_key(KeyCode::Char('o'), KeyModifiers::NONE));
+        type_insert(&mut e2, "middle");
+        assert_eq!(e2.view().0, "first\nmiddle\nlast");
+
+        let mut e3 = vim_editor("first");
+        assert!(e3.vim_normal_key(KeyCode::Char('O'), KeyModifiers::NONE));
+        type_insert(&mut e3, "zeroth");
+        assert_eq!(e3.view().0, "zeroth\nfirst");
+    }
+
+    #[test]
+    fn unmapped_keys_fall_through_to_keymap() {
+        let mut e = vim_editor("");
+        assert!(!e.vim_normal_key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!e.vim_normal_key(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(!e.vim_normal_key(KeyCode::Up, KeyModifiers::NONE));
+        // Emacs mode never consumes.
+        let mut em = Editor::new();
+        em.set_text("x");
+        assert!(!em.vim_normal_key(KeyCode::Char('x'), KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn u_undoes_and_dollar_d_deletes_to_line_end() {
+        // D at end-of-line is a no-op.
+        let mut e = vim_editor("keep cut");
+        e.vim_normal_key(KeyCode::Char('$'), KeyModifiers::NONE);
+        e.vim_normal_key(KeyCode::Char('D'), KeyModifiers::NONE);
+        assert_eq!(e.view().0, "keep cut");
+        e.vim_normal_key(KeyCode::Char('u'), KeyModifiers::NONE);
+        assert_eq!(e.view().0, "keep cut");
+        // Mid-line D trims the tail. Vim's w skips the trailing space, so
+        // the space survives — same as real vim.
+        let mut e2 = vim_editor("head tail");
+        e2.vim_normal_key(KeyCode::Char('w'), KeyModifiers::NONE);
+        e2.vim_normal_key(KeyCode::Char('D'), KeyModifiers::NONE);
+        assert_eq!(e2.view().0, "head ");
     }
 }

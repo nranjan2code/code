@@ -490,7 +490,7 @@ fn modern_editing_keys_map_to_actions() {
 
 #[test]
 fn command_palette_fuzzy_filters_and_wraps_selection() {
-    let mut palette = CommandPalette::new();
+    let mut palette = CommandPalette::new(Vec::new());
     palette.push('t');
     palette.push('r');
     let items = palette.items();
