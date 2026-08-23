@@ -1,24 +1,22 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
 import {
   activeId,
-  backend,
   isRunning,
   sessions,
-  setBestOfOpen,
   setShowShortcuts,
   setSidebarOpen,
   setNotice,
   setSettingsOpen,
   setTasksOpen,
 } from "../store";
-import { activate, newSession, refreshBackend, refreshSessions } from "../App";
+import { activate, newSession, refreshSessions } from "../App";
 import * as api from "../api";
 import type { SessionSummary } from "../types";
 import Icon from "./Icon";
 
 type Filter = "all" | "active" | "idle" | "archived";
+
+type WorkspaceGroup = { cwd: string; name: string; sessions: SessionSummary[] };
 
 function timeLabel(iso?: string | null): string {
   if (!iso) return "";
@@ -54,6 +52,21 @@ export default function Sidebar() {
     return list;
   });
 
+  const groups = createMemo<WorkspaceGroup[]>(() => {
+    const grouped = new Map<string, SessionSummary[]>();
+    for (const session of visible()) {
+      const cwd = session.cwd || "";
+      const items = grouped.get(cwd) ?? [];
+      items.push(session);
+      grouped.set(cwd, items);
+    }
+    return Array.from(grouped, ([cwd, items]) => ({
+      cwd,
+      name: cwd.split(/[\\/]/).filter(Boolean).pop() || "Current workspace",
+      sessions: items,
+    }));
+  });
+
   const toggleArchive = async (session: SessionSummary, next: boolean) => {
     try {
       await api.setArchived(session.session_id, next);
@@ -66,9 +79,9 @@ export default function Sidebar() {
   return (
     <aside class="sidebar">
       <div class="sb-head">
-        <div class="brand" aria-label="vakcoder">
+        <div class="brand" aria-label="VakCoder">
           <span class="brand-mark"><Icon name="spark" size={17} /></span>
-          <span>vakcoder</span>
+          <span>VakCoder</span>
         </div>
         <div class="sb-head-actions">
           <button class="icon-button subtle has-tooltip" data-tooltip="Shortcuts" aria-label="Keyboard shortcuts" onClick={() => setShowShortcuts(true)}><span class="shortcut-glyph">⌘</span></button>
@@ -82,16 +95,6 @@ export default function Sidebar() {
           <span>New task</span>
           <kbd>⌘N</kbd>
         </button>
-        <div class="sb-action-grid">
-          <button class="sb-action" onClick={() => setTasksOpen(true)}>
-            <Icon name="timer" />
-            <span>Automations</span>
-          </button>
-          <button class="sb-action" disabled={!activeId()} onClick={() => setBestOfOpen(true)}>
-            <Icon name="layers" />
-            <span>Compare</span>
-          </button>
-        </div>
       </div>
 
       <div class="sb-search-wrap">
@@ -107,9 +110,9 @@ export default function Sidebar() {
       </div>
 
       <div class="sb-section-row">
-        <span class="sb-section-title">Tasks</span>
+        <span class="sb-section-title">Workspaces</span>
         <div class="sb-filters" aria-label="Filter tasks">
-          <For each={["all", "active", "idle", "archived"] as Filter[]}>
+          <For each={["all", "active", "archived"] as Filter[]}>
             {(item) => (
               <button class="filter-button" classList={{ on: filter() === item }} onClick={() => setFilter(item)}>
                 {item}
@@ -120,40 +123,43 @@ export default function Sidebar() {
       </div>
 
       <div class="sb-list">
-        <Show when={visible().length} fallback={<div class="sb-empty"><Icon name="chat" size={20} /><span>{filter() === "archived" ? "Nothing archived" : "No tasks here yet"}</span><small>{filter() === "archived" ? "Archived tasks stay in the ledger and can be restored anytime." : "Start with a clear outcome and vakcoder will handle the work."}</small></div>}>
-          <For each={visible()}>
-            {(session: SessionSummary) => (
-              <button class="sb-item" classList={{ active: activeId() === session.session_id }} onClick={() => void activate(session.session_id)}>
-                <span class="session-icon"><Icon name="chat" size={14} /></span>
-                <span class="sb-item-copy">
-                  <span class="sb-title">{session.title || "Untitled task"}</span>
-                  <span class="sb-item-meta">
-                    <Show
-                      when={!session.archived}
-                      fallback={<span>archived</span>}
-                    >
-                      <span class="dot" classList={{ run: session.running || isRunning(session.session_id) }} />
-                      {session.running || isRunning(session.session_id) ? "Working" : `${session.entries ?? 0} events`}
-                    </Show>
-                  </span>
-                </span>
-                <span
-                  role="button"
-                  class={`sb-archive has-tooltip`}
-                  data-tooltip={session.archived ? "Restore task" : "Archive task"}
-                  aria-label={session.archived ? "Restore task" : "Archive task"}
-                  onClick={(e) => { e.stopPropagation(); void toggleArchive(session, !session.archived); }}
-                >
-                  <Icon name={session.archived ? "restore" : "archive"} size={13} />
-                </span>
-                <span class="sb-time">{timeLabel(session.updated_at)}</span>
-              </button>
+        <Show when={visible().length} fallback={<div class="sb-empty"><Icon name="folder" size={20} /><span>{filter() === "archived" ? "Nothing archived" : "No tasks here yet"}</span><small>{filter() === "archived" ? "Archived tasks stay in the ledger and can be restored anytime." : "Start with a clear outcome and VakCoder will handle the work."}</small></div>}>
+          <For each={groups()}>
+            {(group) => (
+              <section class="workspace-group">
+                <div class="workspace-group-head" title={group.cwd}>
+                  <Icon name="folder" size={14} />
+                  <span>{group.name}</span>
+                  <small>{group.sessions.length}</small>
+                </div>
+                <For each={group.sessions}>
+                  {(session: SessionSummary) => (
+                    <button class="sb-item" classList={{ active: activeId() === session.session_id }} onClick={() => void activate(session.session_id)}>
+                      <span class="session-icon"><Icon name="chat" size={14} /></span>
+                      <span class="sb-item-copy">
+                        <span class="sb-title">{session.title || "Untitled task"}</span>
+                        <span class="sb-item-meta">
+                          <Show when={!session.archived} fallback={<span>archived</span>}>
+                            <span class="dot" classList={{ run: session.running || isRunning(session.session_id) }} />
+                            {session.running || isRunning(session.session_id) ? "Working" : `${session.entries ?? 0} events`}
+                          </Show>
+                        </span>
+                      </span>
+                      <span role="button" class="sb-archive has-tooltip" data-tooltip={session.archived ? "Restore task" : "Archive task"} aria-label={session.archived ? "Restore task" : "Archive task"} onClick={(e) => { e.stopPropagation(); void toggleArchive(session, !session.archived); }}>
+                        <Icon name={session.archived ? "restore" : "archive"} size={13} />
+                      </span>
+                      <span class="sb-time">{timeLabel(session.updated_at)}</span>
+                    </button>
+                  )}
+                </For>
+              </section>
             )}
           </For>
         </Show>
       </div>
 
       <div class="sidebar-footer">
+        <button class="sidebar-settings" onClick={() => setTasksOpen(true)}><Icon name="timer" /><span>Automations</span></button>
         <button class="sidebar-settings" onClick={() => setSettingsOpen(true)}><Icon name="gear" /><span>Settings</span><kbd>⌘,</kbd></button>
       </div>
     </aside>

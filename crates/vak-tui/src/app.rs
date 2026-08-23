@@ -310,7 +310,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
         cancel: cancel.clone(),
     };
 
-    screen.set_title(&format!("vakcoder · {}", core.effective_model()));
+    screen.set_title(&format!("VakCoder · {}", core.effective_model()));
     screen.banner(
         vak_core::APP_VERSION,
         &core.effective_provider(),
@@ -1698,7 +1698,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
             Some(req) = approval_ev => {
                 if bell_on {
                     screen.bell();
-                    screen.notify(&format!("vakcoder · approval requested: {}", req.tool));
+                    screen.notify(&format!("VakCoder · approval requested: {}", req.tool));
                 }
                 approvals.push_back(req);
             }
@@ -2644,7 +2644,7 @@ async fn export_transcript(
         return Err("no active session".to_string());
     };
     let msgs = s.derive_messages();
-    let mut out = String::from("# vakcoder transcript\n\n");
+    let mut out = String::from("# VakCoder transcript\n\n");
     for (idx, m) in msgs.iter().enumerate() {
         let role = match m.role {
             vak_llm::Role::User => "user",

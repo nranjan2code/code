@@ -574,7 +574,7 @@ impl Screen {
         };
         let width = panel_width(self.cols());
         let lines = vec![
-            top_border(&format!("◆ vakcoder {}", header.version), width),
+            top_border(&format!("◆ VakCoder {}", header.version), width),
             panel_row(&format!("provider {}", header.provider), width),
             panel_row(&format!("model    {}", header.model), width),
             panel_row(&format!("session  {}", header.session), width),

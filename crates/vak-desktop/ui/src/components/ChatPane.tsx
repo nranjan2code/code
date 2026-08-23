@@ -21,7 +21,7 @@ function EmptyChat() {
     <div class="chat-empty">
       <div class="chat-empty-mark"><Icon name="spark" size={24} /></div>
       <h2>What should we build?</h2>
-      <p>Describe an outcome. vakcoder will inspect the project, make the changes, and verify the result.</p>
+      <p>Describe an outcome. VakCoder will inspect the project, make the changes, and verify the result.</p>
       <Show when={uiPreferences.suggestions}><div class="starter-grid">
         <For each={starters}>
           {(starter) => (

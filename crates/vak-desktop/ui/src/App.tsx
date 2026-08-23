@@ -127,7 +127,7 @@ function onFinished(id: string, summary: string) {
   void refreshSessions();
   if (document.hidden && id === activeId()) {
     const s = sessions().find((x) => x.session_id === id);
-    void notify("vakcoder run finished", `${s?.title ?? "Session"} — ${summary}`);
+    void notify("VakCoder run finished", `${s?.title ?? "Session"} — ${summary}`);
   }
 }
 

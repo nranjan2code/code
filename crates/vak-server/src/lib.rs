@@ -294,7 +294,7 @@ pub async fn serve(core: Core, addr: std::net::SocketAddr) -> std::io::Result<()
     // bearer token; /health stays open.
     let (app, token) = secured_router(core);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    eprintln!("vakcoder server listening on http://{addr}");
+    eprintln!("VakCoder server listening on http://{addr}");
     eprintln!("auth token: {token}");
     eprintln!("clients must send 'Authorization: Bearer {token}' (or ?token=)");
     axum::serve(listener, app)
@@ -461,7 +461,7 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
             .ok()
             .and_then(|m| m.modified().ok())
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
-        let (created_at, title, entries) = summarize_jsonl(&path);
+        let (created_at, title, entries, cwd) = summarize_jsonl(&path);
         // Header-only sessions are abandoned drafts (for example, creating a
         // task and immediately switching away). Keep the ledger append-only,
         // but do not let empty drafts accumulate in the task switcher.
@@ -478,6 +478,7 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
         let archived = archive_map.get(&session_id).copied().unwrap_or(false);
         sessions.push(serde_json::json!({
             "session_id": session_id,
+            "cwd": cwd.unwrap_or_else(|| state.core.cwd().to_string_lossy().into_owned()),
             "created_at": created_at,
             "updated_at": updated_at,
             "entries": entries,
@@ -492,14 +493,17 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
 }
 
 /// Bounded scan: header line for created_at + first user message as title.
-fn summarize_jsonl(path: &std::path::Path) -> (Option<String>, Option<String>, u64) {
+fn summarize_jsonl(
+    path: &std::path::Path,
+) -> (Option<String>, Option<String>, u64, Option<String>) {
     use std::io::BufRead;
     let Ok(file) = std::fs::File::open(path) else {
-        return (None, None, 0);
+        return (None, None, 0, None);
     };
     let mut reader = std::io::BufReader::new(file);
     let mut created_at = None;
     let mut title = None;
+    let mut cwd = None;
     let mut entries = 0u64;
     let mut line = String::new();
     loop {
@@ -512,6 +516,7 @@ fn summarize_jsonl(path: &std::path::Path) -> (Option<String>, Option<String>, u
                     match entry.payload {
                         vak_session::EntryPayload::Header(h) => {
                             created_at = Some(h.created_at.to_rfc3339());
+                            cwd = Some(h.cwd.to_string_lossy().into_owned());
                         }
                         vak_session::EntryPayload::Message(rec) => {
                             if title.is_none() && rec.message.role == vak_llm::Role::User {
@@ -537,7 +542,7 @@ fn summarize_jsonl(path: &std::path::Path) -> (Option<String>, Option<String>, u
             Err(_) => break,
         }
     }
-    (created_at, title, entries)
+    (created_at, title, entries, cwd)
 }
 
 #[derive(serde::Deserialize)]

@@ -67,6 +67,7 @@ export type AgentEvent =
 
 export interface SessionSummary {
   session_id: string;
+  cwd?: string;
   created_at?: string | null;
   updated_at?: string | null;
   entries?: number;

@@ -22,6 +22,15 @@ cd crates/vak-desktop/ui && npm install && npm run build && cd -
 cargo run -p vak-desktop
 ```
 
+For a clean macOS release build, bundle, and user-level install:
+
+```bash
+./build-install.sh
+```
+
+Use `./build-install.sh --no-clean` for a faster incremental build or
+`./build-install.sh --no-install` to create bundles without installing the app.
+
 Offline smoke tests: `scripts/mock_anthropic.py`, `scripts/mock_openai.py`,
 `scripts/tui_smoke.py`, `scripts/server_smoke.py`.
 

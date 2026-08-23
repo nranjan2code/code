@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "vakcoder",
+  "productName": "VakCoder",
   "version": "0.2.0",
   "identifier": "dev.vakcoder.desktop",
   "build": {
@@ -9,7 +9,7 @@
   "app": {
     "windows": [
       {
-        "title": "vakcoder",
+        "title": "VakCoder",
         "width": 1440,
         "height": 900,
         "minWidth": 940,
