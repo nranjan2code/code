@@ -8,6 +8,7 @@ pub mod commands;
 pub mod complete;
 pub mod diffview;
 pub mod editor;
+pub mod keymap;
 pub mod keys;
 pub mod markdown;
 pub mod mentions;

@@ -24,7 +24,8 @@ use crate::commands::{self, Command};
 use crate::complete;
 use crate::diffview;
 use crate::editor::Editor;
-use crate::keys::{Action, map_key};
+use crate::keymap::Keymap;
+use crate::keys::Action;
 use crate::markdown::LineStyler;
 use crate::mentions;
 use crate::palette::{ChoiceItem, ChoicePicker, CommandPalette};
@@ -292,6 +293,8 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
     let mut modal: Option<ModalView> = None;
     let mut palette_from_slash = false;
     let mut approval_focused = false;
+    let mut key_capture = false;
+    let keymap = Keymap::default().with_overrides(&core.config().ui.keymap);
 
     let (buf, cur) = editor.view();
     screen.redraw_composer(&composer_label(&ui), buf, cur, &composer_footer(&editor));
@@ -328,6 +331,15 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                 match maybe_event {
                     Some(Ok(Event::Key(key))) => {
                         if key.kind != crossterm::event::KeyEventKind::Press {
+                            continue;
+                        }
+                        if key_capture {
+                            if matches!(key.code, KeyCode::Esc) {
+                                key_capture = false;
+                                screen.dim("literal-key capture off");
+                            } else {
+                                screen.line(&crate::keys::describe(key.code, key.modifiers));
+                            }
                             continue;
                         }
                         if approval_focused
@@ -715,7 +727,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                             }
                             continue;
                         }
-                        match map_key(key.code, key.modifiers, is_running) {
+                        match keymap.action_for(is_running, key.code, key.modifiers) {
                             Action::Insert(c) => {
                                 if is_running {
                                     pending.push(c);
@@ -948,7 +960,15 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                         "tool output → {state}"
                                                     ));
                                                 }
-                                                Some(Command::Keys) => {
+                                                Some(Command::Keys(Some(arg)))
+                                                    if arg == "raw" || arg == "capture" =>
+                                                {
+                                                    key_capture = true;
+                                                    screen.dim(
+                                                        "literal-key capture on · press any keys · Esc exits",
+                                                    );
+                                                }
+                                                Some(Command::Keys(_)) => {
                                                     modal = Some(ModalView {
                                                         title: "keyboard shortcuts".to_string(),
                                                         rows: commands::keys_text()
@@ -958,6 +978,35 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                             .collect(),
                                                         scroll: 0,
                                                         footer: "↑↓ scroll · Esc close".to_string(),
+                                                    });
+                                                }
+                                                Some(Command::Keymap) => {
+                                                    let mut rows: Vec<String> = Vec::new();
+                                                    let mut last_ctx = "";
+                                                    for (ctx, key, action) in keymap.rows() {
+                                                        if ctx != last_ctx {
+                                                            rows.push(format!("── {ctx}"));
+                                                            last_ctx = ctx;
+                                                        }
+                                                        rows.push(format!(
+                                                            "{key:<16} {action}"
+                                                        ));
+                                                    }
+                                                    let conflicts = keymap.conflicts();
+                                                    if !conflicts.is_empty() {
+                                                        rows.push(String::new());
+                                                        rows.push("!! conflicts".to_string());
+                                                        for (key, detail) in &conflicts {
+                                                            rows.push(format!("{key:<16} {detail}"));
+                                                        }
+                                                    }
+                                                    modal = Some(ModalView {
+                                                        title: "keymap · bindings".to_string(),
+                                                        rows,
+                                                        scroll: 0,
+                                                        footer:
+                                                            "overrides: [ui.keymap] in config · Esc close"
+                                                                .to_string(),
                                                     });
                                                 }
                                             Some(Command::Model(Some(model))) => {

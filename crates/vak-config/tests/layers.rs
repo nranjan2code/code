@@ -47,6 +47,24 @@ fn ui_defaults_apply_when_section_absent() {
     let cfg = load_with_trust(dir.path(), true).unwrap();
     assert_eq!(cfg.ui.theme, "dark");
     assert!(cfg.ui.bell);
+    assert!(cfg.ui.keymap.is_empty());
+}
+
+#[test]
+fn ui_keymap_overrides_merge_project_over_user() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join(".vakcoder");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("config.toml"),
+        "[ui.keymap]\n\"Ctrl-P\" = \"exit\"\n",
+    )
+    .unwrap();
+    let cfg = load_with_trust(dir.path(), true).unwrap();
+    assert_eq!(
+        cfg.ui.keymap.get("Ctrl-P").map(String::as_str),
+        Some("exit")
+    );
 }
 
 #[test]

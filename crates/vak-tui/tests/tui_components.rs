@@ -6,7 +6,7 @@ use std::path::Path;
 use vak_tui::commands::{Command, help_text, parse};
 use vak_tui::complete::complete;
 use vak_tui::editor::Editor;
-use vak_tui::keys::{Action, map_key};
+use vak_tui::keys::{Action, describe, map_key};
 use vak_tui::palette::{ChoiceItem, ChoicePicker, CommandPalette};
 use vak_tui::width::{char_width, str_width};
 
@@ -181,7 +181,12 @@ fn command_parsing() {
     assert!(matches!(parse("/sessions"), Some(Command::Sessions)));
     assert!(matches!(parse("/clear"), Some(Command::Clear)));
     assert!(matches!(parse("/details"), Some(Command::Details)));
-    assert!(matches!(parse("/keys"), Some(Command::Keys)));
+    assert!(matches!(parse("/keys"), Some(Command::Keys(None))));
+    assert!(matches!(
+        parse("/keys raw"),
+        Some(Command::Keys(Some(arg))) if arg == "raw"
+    ));
+    assert!(matches!(parse("/keymap"), Some(Command::Keymap)));
     match parse("/model gpt-5.6-terra") {
         Some(Command::Model(Some(m))) => assert_eq!(m, "gpt-5.6-terra"),
         other => panic!("expected model command, got {other:?}"),
@@ -381,6 +386,21 @@ fn editor_empty_draft_file_does_not_restore() {
     assert_eq!(e.view().0, "");
     assert!(!path.exists());
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn key_describe_renders_literals() {
+    assert_eq!(describe(KeyCode::Char('x'), KeyModifiers::empty()), "x");
+    assert_eq!(
+        describe(KeyCode::Char('a'), KeyModifiers::CONTROL),
+        "Ctrl-Char 'a'"
+    );
+    assert_eq!(describe(KeyCode::Enter, KeyModifiers::ALT), "Alt-Enter");
+    assert_eq!(
+        describe(KeyCode::Char('A'), KeyModifiers::SHIFT),
+        "Char 'A'"
+    );
+    assert_eq!(describe(KeyCode::F(3), KeyModifiers::NONE), "F3");
 }
 
 #[test]

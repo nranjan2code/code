@@ -186,16 +186,23 @@ transport.
 
 ### P0 — trust and daily speed
 
-- Closed adaptive visual surfaces and clean launch.
-- `/` opens command suggestions immediately; `@` opens ranked path/skill
+- ✅ Closed adaptive visual surfaces and clean launch.
+- ✅ `/` opens command suggestions immediately; `@` opens ranked path/skill
   suggestions immediately.
-- Contextual keymap engine and `/keymap` editor with conflict detection.
-- Large-paste placeholder with Ctrl-O expand, byte/line count, and zero-copy
-  submission.
-- Ctrl-G external editor with crash-safe draft recovery.
-- Approval arrival never steals focus; pending approvals are explicit.
-- Resize-safe transient redraw and render-rate budget.
-- Terminal capability diagnostics and literal-key capture.
+- ✅ Contextual keymap engine with conflict detection: `vak_tui::keymap` is
+  the dispatch truth behind `map_key`, scoped Composer / Running / Both,
+  `[ui.keymap]` config overrides (project over user), `/keymap` viewer
+  listing bindings + conflicts. Interactive rebind UI is open.
+- ✅ Large-paste placeholder (>4k chars or >60 lines) with Ctrl-O expand at
+  cursor, byte/line count, verbatim payload resolution at submit so the
+  ledger receives exact bytes.
+- ✅ Ctrl-G external editor (`$VISUAL`/`$EDITOR`, fallback `vi`) with
+  crash-safe draft staging in the sessions home; recovered on next start.
+- ✅ Approval arrival never steals focus; pending approvals are explicit
+  chips reviewed via Alt-A.
+- ✅ Resize-safe transient redraw; identical transient state skips writes.
+- ✅ Terminal capability diagnostics (`/doctor`) and literal-key capture
+  (`/keys raw`).
 
 ### P1 — navigation and observability
 

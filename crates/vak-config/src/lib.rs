@@ -73,6 +73,9 @@ pub struct FileConfig {
 pub struct UiSettings {
     pub theme: Option<String>,
     pub bell: Option<bool>,
+    /// Keymap overrides: `"Ctrl-P" = "command-palette"` or
+    /// `"running|Tab" = "queue"`.
+    pub keymap: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -139,6 +142,8 @@ pub struct UiResolved {
     /// Built-in theme name; unknown values normalize to "dark".
     pub theme: String,
     pub bell: bool,
+    /// Keymap overrides merged project-over-user.
+    pub keymap: std::collections::BTreeMap<String, String>,
 }
 
 /// Built-in premature-completion gate. On by default; conservative.
@@ -176,6 +181,7 @@ impl Default for Config {
             ui: UiResolved {
                 theme: "dark".into(),
                 bell: true,
+                keymap: std::collections::BTreeMap::new(),
             },
             stop_policy: StopPolicyResolved {
                 enabled: true,
@@ -341,6 +347,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         }
     }
     cfg.ui.bell = merged.ui.bell.unwrap_or(true);
+    cfg.ui.keymap = merged.ui.keymap;
 
     let sp = merged.stop_policy.unwrap_or_default();
     cfg.stop_policy = StopPolicyResolved {
@@ -414,7 +421,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
 const KNOWN_PROFILE_KEYS: &[&str] = &["model", "provider", "permission_mode", "max_turns"];
 const KNOWN_HOOK_KEYS: &[&str] = &["event", "match", "command", "timeout_ms"];
 const KNOWN_MCP_SERVER_KEYS: &[&str] = &["command", "args", "env"];
-const KNOWN_UI_KEYS: &[&str] = &["theme", "bell"];
+const KNOWN_UI_KEYS: &[&str] = &["theme", "bell", "keymap"];
 const KNOWN_STOP_POLICY_KEYS: &[&str] = &["enabled", "marker_gate", "verify_gate", "max_blocks"];
 
 /// A typo'd key must be visible, not silently dead: diff the raw TOML
@@ -577,6 +584,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.ui.bell.is_some() {
         base.ui.bell = over.ui.bell;
+    }
+    for (k, v) in &over.ui.keymap {
+        base.ui.keymap.insert(k.clone(), v.clone());
     }
     if let Some(sp) = over.stop_policy {
         base.stop_policy = Some(sp);
