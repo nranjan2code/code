@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { backend, providers, setupNeeded } from "../store";
@@ -110,10 +110,22 @@ export default function ProjectGate() {
   // Belt and braces: while the gate is up, poll the shell for backend state.
   // The backend-ready event normally flips this view instantly; the poll
   // guarantees the transition even if that event is missed.
-  createEffect(() => {
-    if (backend().ready) return;
-    const t = setInterval(() => void refreshBackend(), 1500);
-    onCleanup(() => clearInterval(t));
+  //
+  // This deliberately lives in onMount, not createEffect: the poll writes
+  // backend(), so a tracking scope that also reads it would tear down and
+  // rebuild the timer on every tick instead of polling steadily.
+  onMount(() => {
+    let stop = false;
+    const tick = async () => {
+      if (stop || backend().ready) return;
+      await refreshBackend();
+    };
+    const t = setInterval(() => void tick(), 800);
+    void tick();
+    onCleanup(() => {
+      stop = true;
+      clearInterval(t);
+    });
   });
 
   const readBootError = async () => {

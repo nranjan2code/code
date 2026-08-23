@@ -277,13 +277,16 @@ export default function App() {
     const savedDock = Number(localStorage.getItem("vakcoder.dockWidth"));
     if (savedSidebar >= 220 && savedSidebar <= 360) setSidebarWidth(savedSidebar);
     if (savedDock >= 340 && savedDock <= window.innerWidth * 0.7) setDockWidth(savedDock);
-    void init();
+    // Register the listener before the first probe: the shell boots the
+    // backend during setup() and emits `backend-ready` within milliseconds,
+    // so subscribing after init() loses the event to the race.
     const un1 = listen("backend-ready", () => {
       closeAllStreams();
       closeAllSideStreams();
       setActiveId(null);
       void init();
     });
+    void init();
     const sessionRefresh = window.setInterval(() => void refreshSessions(), 10_000);
 
     const keys = (e: KeyboardEvent) => {
