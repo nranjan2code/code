@@ -126,6 +126,12 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::Receipt(receipt)))
     }
 
+    /// Appends a goal-lifecycle entry (audit; never model-visible).
+    pub fn append_goal(&mut self, goal: crate::types::GoalEntry) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(parent, EntryPayload::Goal(goal)))
+    }
+
     /// Receipt entries along the active path, root→leaf — forensic view
     /// for surfaces that render dispatch history.
     pub fn receipts(&self) -> Vec<&vak_llm::WorkReceipt> {
@@ -169,6 +175,27 @@ impl SessionLog {
                 first_kept_entry_id,
                 tokens_before,
                 partition: None,
+                reset_all: false,
+            }),
+        ))
+    }
+
+    /// Reset-with-handoff (doc 27 Phase H): the projection becomes ONLY
+    /// this summary. Append-only; the full history stays on disk.
+    pub fn append_handoff_reset(
+        &mut self,
+        summary: String,
+        tokens_before: u64,
+    ) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(
+            parent,
+            EntryPayload::Compaction(crate::types::CompactionEntry {
+                summary,
+                first_kept_entry_id: String::new(),
+                tokens_before,
+                partition: None,
+                reset_all: true,
             }),
         ))
     }
@@ -241,19 +268,24 @@ impl SessionLog {
                     out.push((entry.id.clone(), record.message.clone(), false));
                 }
                 EntryPayload::Compaction(c) => {
-                    let keep_from = out
-                        .iter()
-                        .position(|(id, _, _)| id == &c.first_kept_entry_id)
-                        .unwrap_or(out.len());
-                    out.drain(..keep_from);
+                    if c.reset_all {
+                        // Reset-with-handoff: everything becomes the summary.
+                        out.drain(..);
+                    } else {
+                        let keep_from = out
+                            .iter()
+                            .position(|(id, _, _)| id == &c.first_kept_entry_id)
+                            .unwrap_or(out.len());
+                        out.drain(..keep_from);
+                    }
                     let summary_msg = Message::user_text(format!(
                         "<context_summary>\n{}\n</context_summary>",
                         c.summary
                     ));
                     out.insert(0, (entry.id.clone(), summary_msg, true));
                 }
-                // Receipts are audit, not model-visible input.
-                EntryPayload::Header(_) | EntryPayload::Receipt(_) => {}
+                // Receipts and goal entries are audit, not model-visible input.
+                EntryPayload::Header(_) | EntryPayload::Receipt(_) | EntryPayload::Goal(_) => {}
             }
         }
         out
@@ -339,6 +371,7 @@ impl SessionLog {
                 first_kept_entry_id: plan.first_kept_entry_id.clone(),
                 tokens_before,
                 partition: Some(plan.partition.clone()),
+                reset_all: false,
             }),
         ))?;
         Ok(())

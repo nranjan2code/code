@@ -222,6 +222,11 @@ async fn still_over_after_compaction_fails_closed() {
     cfg.context_policy.context_window = 1_000;
     cfg.context_policy.max_output = 100;
     cfg.context_policy.keep_recent = 2;
+    // Phase H adds a one-shot reset-with-handoff rescue on this path; this
+    // test pins the underlying fail-closed contract with the rescue off
+    // (the rescue has its own e2e in goal_mode.rs).
+    cfg.handoff_reset = false;
+    cfg.run_retry_attempts = 0;
     let mut agent = Agent::new(provider, log, cfg);
 
     let outcome = agent

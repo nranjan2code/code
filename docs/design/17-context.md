@@ -27,7 +27,11 @@ Before every model step:
    dense structured summary (task/state/files/decisions/errors/open items,
    ≤400 words), and write it as a **compaction entry** via
    `SessionLog::compact_tail`.
-3. Re-estimate. Still over the *full* input budget ⇒ **fail closed** with a
+3. Re-estimate. Still over the *full* input budget ⇒ **reset-with-handoff
+   rescue** (doc 27 Phase H, once per run, `[goal] handoff_reset`): the
+   model writes a structured shift-change summary and the projection
+   becomes ONLY that summary (`reset_all` compaction entry). If the rescue
+   is disabled or its write fails ⇒ **fail closed** with a
    typed error (no silent truncation, no provider switch).
 
 The compaction entry is ledger data like any other: append-only, audited,

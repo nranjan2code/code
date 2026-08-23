@@ -14,6 +14,8 @@ pub enum WorkPurpose {
     Execute,
     /// The compaction summarizer call.
     Summarize,
+    /// Completion-audit judge call (Phase H).
+    Verify,
 }
 
 /// Why a dispatch was made. `Retry` covers same-candidate transient

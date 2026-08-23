@@ -78,6 +78,8 @@ pub struct FileConfig {
     pub sandbox: SandboxSettings,
     #[serde(default)]
     pub finops: FinopsSettings,
+    #[serde(default)]
+    pub goal: GoalSettings,
 }
 
 /// Cross-session recall (docs/design/23-memory.md). Read-only and
@@ -189,6 +191,13 @@ pub struct StopPolicySettings {
 /// unpriced models bypass USD math rather than guessing at zero.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
+pub struct GoalSettings {
+    pub handoff_reset: Option<bool>,
+    pub max_audit_blocks: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
 pub struct FinopsSettings {
     pub max_run_usd: Option<f64>,
     pub max_day_usd: Option<f64>,
@@ -259,7 +268,17 @@ pub struct Config {
     pub memory: MemoryResolved,
     pub sandbox: SandboxResolved,
     pub finops: FinopsResolved,
+    pub goal: GoalResolved,
     pub warnings: Vec<String>,
+}
+
+/// Resolved goal-mode policy (docs/design/27 Phase H).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoalResolved {
+    /// Reset-with-handoff rescue on still-over contexts.
+    pub handoff_reset: bool,
+    /// Audit blocks per goal before degrading to Unverified.
+    pub max_audit_blocks: u32,
 }
 
 /// Resolved spend-admission policy (docs/design/27 Phase D).
@@ -375,6 +394,10 @@ impl Default for Config {
                 max_blocks: 2,
             },
             finops: FinopsResolved::default(),
+            goal: GoalResolved {
+                handoff_reset: true,
+                max_audit_blocks: 2,
+            },
             gateway: GatewayResolved {
                 enabled: false,
                 approvals: "deny".into(),
@@ -613,6 +636,11 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         price_overrides: merged.finops.price_overrides.clone(),
     };
 
+    cfg.goal = GoalResolved {
+        handoff_reset: merged.goal.handoff_reset.unwrap_or(true),
+        max_audit_blocks: merged.goal.max_audit_blocks.unwrap_or(2),
+    };
+
     cfg.gateway.enabled = merged.gateway.enabled.unwrap_or(false);
     cfg.gateway.approvals = match merged.gateway.approvals.as_deref() {
         Some("deny") | None => "deny".into(),
@@ -753,6 +781,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "finops",
 ];
 const KNOWN_FINOPS_KEYS: &[&str] = &["max_run_usd", "max_day_usd", "price_overrides"];
+const KNOWN_GOAL_KEYS: &[&str] = &["handoff_reset", "max_audit_blocks"];
 const KNOWN_PROFILE_KEYS: &[&str] = &["model", "provider", "permission_mode", "max_turns"];
 const KNOWN_HOOK_KEYS: &[&str] = &["event", "match", "command", "timeout_ms"];
 const KNOWN_MCP_SERVER_KEYS: &[&str] = &["command", "args", "env", "network"];
@@ -900,6 +929,16 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
             if !KNOWN_STOP_POLICY_KEYS.contains(&key.as_str()) {
                 out.push(format!(
                     "{}: unknown stop_policy key 'stop_policy.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+    }
+    if let Some(gl) = top.get("goal").and_then(toml::Value::as_table) {
+        for key in gl.keys() {
+            if !KNOWN_GOAL_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown goal key 'goal.{key}' (ignored)",
                     path.display()
                 ));
             }
@@ -1117,6 +1156,12 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     for (k, v) in over.finops.price_overrides {
         base.finops.price_overrides.insert(k, v);
+    }
+    if over.goal.handoff_reset.is_some() {
+        base.goal.handoff_reset = over.goal.handoff_reset;
+    }
+    if over.goal.max_audit_blocks.is_some() {
+        base.goal.max_audit_blocks = over.goal.max_audit_blocks;
     }
     for (name, hook) in over.gateway.outbound.webhooks {
         base.gateway.outbound.webhooks.insert(name, hook);

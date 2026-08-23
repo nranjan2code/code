@@ -734,7 +734,7 @@ impl Core {
         events: tokio::sync::mpsc::Sender<AgentEvent>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
         self.run_turn_inner(
-            session, prompt, cancel, approver, permission, steering, events,
+            session, prompt, cancel, approver, permission, steering, events, None,
         )
         .await
     }
@@ -758,6 +758,35 @@ impl Core {
             permission,
             steering,
             events,
+            None,
+        )
+        .await
+    }
+
+    /// Goal-mode turn (docs/design/27 Phase H): the run may only end when
+    /// the objective's acceptance criteria pass an independent audit.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_goal_turn_with(
+        &self,
+        session: SessionLog,
+        prompt: &str,
+        objective: &str,
+        criteria: Vec<String>,
+        cancel: CancellationToken,
+        approver: Option<std::sync::Arc<dyn vak_agent::Approver>>,
+        permission: Option<std::sync::Arc<vak_permission::PermissionEngine>>,
+        steering: Option<std::sync::Arc<vak_agent::SteeringQueues>>,
+        events: tokio::sync::mpsc::Sender<AgentEvent>,
+    ) -> Result<(TurnOutcome, SessionLog), CoreError> {
+        self.run_turn_inner(
+            session,
+            vak_llm::Message::user_text(prompt),
+            cancel,
+            approver,
+            permission,
+            steering,
+            events,
+            Some((objective.to_string(), criteria)),
         )
         .await
     }
@@ -772,6 +801,7 @@ impl Core {
         permission: Option<std::sync::Arc<vak_permission::PermissionEngine>>,
         steering: Option<std::sync::Arc<vak_agent::SteeringQueues>>,
         events: tokio::sync::mpsc::Sender<AgentEvent>,
+        goal: Option<(String, Vec<String>)>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
         let provider = self.provider()?;
         let mut cfg = AgentConfig::new(self.system_prompt());
@@ -803,6 +833,8 @@ impl Core {
             None
         };
         cfg.circuit_breaker = Some(self.inner.breaker.clone());
+        cfg.handoff_reset = self.inner.config.goal.handoff_reset;
+        cfg.max_audit_blocks = self.inner.config.goal.max_audit_blocks;
         cfg.approver = approver.clone();
         // Pre-dispatch budget admission (docs/design/27 Phase D): active
         // whenever any finops knob is configured.
@@ -1005,6 +1037,9 @@ impl Core {
             None => std::sync::Arc::new(vak_agent::SteeringQueues::new()),
         };
         let mut agent = Agent::new(provider, session, cfg);
+        if let Some((objective, criteria)) = goal {
+            agent.set_goal(objective, criteria);
+        }
         let outcome = agent.run_message(prompt, &steering, cancel, events).await;
         let session = agent.into_session().await;
         Ok((outcome, session))

@@ -20,8 +20,9 @@ must also follow the threat model and priority order in
 `docs/design/28-operations.md` with docs/hosting.md for running the stack
 as durable services, and `docs/design/27-vakyartha-adoption.md` for the
 long-horizon program (work receipts + dispatch ceiling ✅, context packet
-accounting + deterministic gate ✅, FinOps budget admission ✅; loop
-engineering, frozen-ladder routing, runs→flows replay pending).
+accounting + deterministic gate ✅, FinOps budget admission ✅,
+loop-engineering kernel ✅; frozen-ladder routing, runs→flows replay,
+run-graph projection pending).
 
 ## Non-negotiable invariants
 
@@ -140,8 +141,10 @@ crates/vak-mcp       MCP stdio client behind a lazy meta-tool
 crates/vak-agent     loop, steering queues, parallel tool execution w/
                      resource-claim waves, retries + watchdog + circuit
                      breaker + stop gate (premature-completion guard),
-                     spend-gate seam (docs/design/27 Phase D), subagents
-                     (task tool) + live SubagentRegistry
+                     spend-gate seam (docs/design/27 Phase D), goal mode +
+                     audited completion + regression obligations + handoff
+                     reset (docs/design/27 Phase H), subagents (task tool) +
+                     live SubagentRegistry
 crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode +
                      context-quality scorecard (docs/design/27 Phase C)

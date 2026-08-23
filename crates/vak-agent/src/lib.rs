@@ -6,12 +6,14 @@
 
 pub mod circuit;
 pub mod context;
+pub mod goal;
 pub mod spend;
 pub mod steering;
 pub mod stop_policy;
 pub mod task;
 
 pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
+pub use goal::GoalState;
 pub use spend::{SpendCheck, SpendGate};
 pub use stop_policy::{BlockReason, StopPolicy};
 pub use task::{ActiveSubagent, SubagentHandle, SubagentRegistry, TaskDeps, TaskTool};
@@ -74,6 +76,11 @@ pub enum AgentEvent {
         /// entries stayed verbatim vs became summary material.
         selected_messages: usize,
         dropped_messages: usize,
+    },
+    /// Reset-with-handoff fired (Phase H): the whole projection was
+    /// replaced by a structured handoff summary.
+    HandoffReset {
+        before_tokens: u64,
     },
     StreamOpened,
     ApprovalRequested {
@@ -158,6 +165,10 @@ pub struct AgentConfig {
     /// Pre-dispatch budget admission (docs/design/27 Phase D). None
     /// disables spend gating entirely.
     pub spend_gate: Option<Arc<dyn SpendGate>>,
+    /// Reset-with-handoff rescue on still-over contexts (Phase H).
+    pub handoff_reset: bool,
+    /// Audit blocks per goal before degrading to Unverified.
+    pub max_audit_blocks: u32,
 }
 
 impl AgentConfig {
@@ -183,6 +194,8 @@ impl AgentConfig {
             context_policy: Default::default(),
             stop_policy: Some(StopPolicy::default()),
             spend_gate: None,
+            handoff_reset: true,
+            max_audit_blocks: 2,
         }
     }
 }
@@ -274,6 +287,13 @@ pub struct Agent {
     pub config: AgentConfig,
     /// Identical-call detector for the doom-loop guard, reset per run.
     run_call_counts: std::sync::Mutex<HashMap<String, u32>>,
+    /// Active goal (Phase H): set via `set_goal`, consumed by the audit
+    /// gate on completion claims.
+    active_goal: Option<goal::GoalState>,
+    /// Bash commands proven green this run — re-run before any done claim.
+    obligations: Vec<String>,
+    /// The reset-with-handoff rescue fires at most once per run.
+    handoff_used: bool,
 }
 
 impl Agent {
@@ -283,7 +303,20 @@ impl Agent {
             session: Mutex::new(session),
             config,
             run_call_counts: std::sync::Mutex::new(HashMap::new()),
+            active_goal: None,
+            obligations: Vec::new(),
+            handoff_used: false,
         }
+    }
+
+    /// Arms goal mode for the next run: durable objective + acceptance
+    /// criteria; completion becomes audited, never self-reported.
+    pub fn set_goal(&mut self, objective: impl Into<String>, criteria: Vec<String>) {
+        self.active_goal = Some(goal::GoalState {
+            objective: objective.into(),
+            criteria,
+            audits_left: self.config.max_audit_blocks,
+        });
     }
 
     pub async fn run(
@@ -307,6 +340,25 @@ impl Agent {
         events: mpsc::Sender<AgentEvent>,
     ) -> TurnOutcome {
         let prompt_owned = prompt.text_content();
+        let mut bash_calls_this_run: u32 = 0;
+        self.obligations.clear();
+        self.handoff_used = false;
+        self.run_call_counts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        if self.active_goal.is_some() {
+            // Goal lifecycle opens the run (audit-only entry).
+            let mut session = self.session.lock().await;
+            if let Some(g) = &self.active_goal {
+                let _ = session.append_goal(vak_session::types::GoalEntry {
+                    goal_id: format!("goal-{}", chrono::Utc::now().timestamp_millis()),
+                    objective: g.objective.clone(),
+                    criteria: g.criteria.clone(),
+                    status: vak_session::types::GoalStatus::Active,
+                });
+            }
+        }
         if let Err(e) = self
             .session
             .lock()
@@ -321,7 +373,6 @@ impl Agent {
         }
 
         let mut turn = 0usize;
-        let mut bash_calls_this_run: u32 = 0;
         self.run_call_counts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -373,7 +424,7 @@ impl Agent {
             enum CompactionNeed {
                 None,
                 Plan(vak_session::types::CompactionPlan, u64),
-                TooShortToCompact,
+                TooShortToCompact(u64),
             }
             let need = {
                 let session = self.session.lock().await;
@@ -387,12 +438,41 @@ impl Agent {
                 } else {
                     match session.plan_compaction(policy.keep_recent) {
                         Some(plan) => CompactionNeed::Plan(plan, est),
-                        None => CompactionNeed::TooShortToCompact,
+                        None => CompactionNeed::TooShortToCompact(est),
                     }
                 }
             };
             match need {
-                CompactionNeed::TooShortToCompact => {
+                CompactionNeed::TooShortToCompact(est_tokens) => {
+                    // Reset-with-handoff rescue (Phase H): one structured
+                    // summary replaces the entire projection.
+                    if !self.handoff_used && self.config.handoff_reset {
+                        self.handoff_used = true;
+                        if let Ok(handoff) = self
+                            .write_handoff(est_tokens, &prompt_owned, &cancel, &events)
+                            .await
+                        {
+                            let mut session = self.session.lock().await;
+                            match session.append_handoff_reset(handoff, est_tokens) {
+                                Ok(_) => {
+                                    let _ = events
+                                        .send(AgentEvent::HandoffReset {
+                                            before_tokens: est_tokens,
+                                        })
+                                        .await;
+                                    drop(session);
+                                    continue;
+                                }
+                                Err(e) => {
+                                    return TurnOutcome::Failed {
+                                        error: LlmError::Network(format!(
+                                            "context over budget and handoff write failed: {e}"
+                                        )),
+                                    };
+                                }
+                            }
+                        }
+                    }
                     return TurnOutcome::Failed {
                         error: LlmError::Network(
                             "context over budget but too short to compact".into(),
@@ -495,6 +575,32 @@ impl Agent {
                         })
                         .await;
                     if est > self.config.context_policy.input_budget() {
+                        // Reset-with-handoff rescue (Phase H), once per run.
+                        if !self.handoff_used && self.config.handoff_reset {
+                            self.handoff_used = true;
+                            if let Ok(handoff) = self
+                                .write_handoff(est, &prompt_owned, &cancel, &events)
+                                .await
+                            {
+                                let mut session = self.session.lock().await;
+                                match session.append_handoff_reset(handoff, est) {
+                                    Ok(_) => {
+                                        let _ = events
+                                            .send(AgentEvent::HandoffReset { before_tokens: est })
+                                            .await;
+                                        drop(session);
+                                        continue;
+                                    }
+                                    Err(e) => {
+                                        return TurnOutcome::Failed {
+                                            error: LlmError::Network(format!(
+                                                "context still over budget and handoff write failed: {e}"
+                                            )),
+                                        };
+                                    }
+                                }
+                            }
+                        }
                         return TurnOutcome::Failed {
                             error: LlmError::Network(format!(
                                 "context still over budget after compaction (~{est} > {} tokens)",
@@ -694,6 +800,12 @@ impl Agent {
                     turn += 1;
                     continue;
                 }
+                if let Some(rejection) = self.goal_gate(&response, &cancel, &events).await
+                    && self.guard_continue(rejection, &events, turn).await
+                {
+                    turn += 1;
+                    continue;
+                }
                 return TurnOutcome::Completed { response };
             }
 
@@ -712,11 +824,37 @@ impl Agent {
                     turn += 1;
                     continue;
                 }
+                if let Some(rejection) = self.goal_gate(&response, &cancel, &events).await
+                    && self.guard_continue(rejection, &events, turn).await
+                {
+                    turn += 1;
+                    continue;
+                }
                 return TurnOutcome::Completed { response };
             }
 
             bash_calls_this_run += calls.iter().filter(|c| c.name == "bash").count() as u32;
+            // Regression obligations (Phase H): commands proven GREEN this
+            // run must stay green before any completion claim.
+            let bash_pairs: Vec<(String, String)> = calls
+                .iter()
+                .filter(|c| c.name == "bash")
+                .filter_map(|c| {
+                    c.input
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .map(|cmd| (c.id.clone(), cmd.to_string()))
+                })
+                .collect();
             let results = self.execute_batch(calls, &cancel, &events).await;
+            for (id, out) in &results {
+                if matches!(out, ToolRunOutput::Ok(_))
+                    && let Some((_, cmd)) = bash_pairs.iter().find(|(bid, _)| bid == id)
+                    && !self.obligations.iter().any(|o| o == cmd)
+                {
+                    self.obligations.push(cmd.clone());
+                }
+            }
             let blocks = results
                 .into_iter()
                 .map(|(id, out)| match out {
@@ -743,6 +881,274 @@ impl Agent {
 
             turn += 1;
         }
+    }
+
+    /// Goal audit gate (Phase H): runs when the model claims completion.
+    /// Some(reason) rejects the claim and continues the run; None lets it
+    /// end. Completion is recorded from audit, never self-report — and the
+    /// audit budget is capped so this can never trap a run.
+    async fn goal_gate(
+        &mut self,
+        _response: &AssistantMessage,
+        cancel: &CancellationToken,
+        events: &mpsc::Sender<AgentEvent>,
+    ) -> Option<String> {
+        let goal_active = self.active_goal.is_some();
+        if !goal_active {
+            return None;
+        }
+
+        let mut findings = String::new();
+
+        // 1) Regression obligations: everything proven green must stay so.
+        for cmd in self.obligations.clone() {
+            if cancel.is_cancelled() {
+                return None;
+            }
+            match self.run_audit_command(&cmd, cancel).await {
+                Ok(()) => {}
+                Err(err) => {
+                    findings.push_str(&format!(
+                        "REGRESSION: previously-green command failed now:\n  $ {cmd}\n  {err}\n"
+                    ));
+                }
+            }
+        }
+
+        let criteria = self
+            .active_goal
+            .as_ref()
+            .map(|g| g.criteria.clone())
+            .unwrap_or_default();
+
+        // 2) Deterministic shell criteria.
+        let mut judged_criteria: Vec<String> = Vec::new();
+        for criterion in &criteria {
+            if goal::is_shell_criterion(criterion) {
+                let cmd = goal::shell_command(criterion);
+                match self.run_audit_command(cmd, cancel).await {
+                    Ok(()) => {}
+                    Err(err) => {
+                        findings.push_str(&format!("CRITERION FAILED: {criterion}\n  {err}\n"));
+                    }
+                }
+                judged_criteria.push(criterion.clone());
+            }
+        }
+
+        // 3) Judge call for remaining free-text criteria — only worth a
+        // model dispatch when deterministic checks already passed.
+        let text_criteria: Vec<String> = criteria
+            .iter()
+            .filter(|c| !goal::is_shell_criterion(c))
+            .cloned()
+            .collect();
+        if !text_criteria.is_empty() && findings.is_empty() {
+            match self.run_judge(&text_criteria, cancel, events).await {
+                Ok(verdicts) => {
+                    for v in verdicts {
+                        if v.verdict != "pass" {
+                            findings.push_str(&format!(
+                                "JUDGE {}: evidence: {}\n",
+                                v.verdict.to_uppercase(),
+                                v.evidence
+                            ));
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Fail closed: an unavailable auditor cannot confirm done.
+                    findings.push_str(&format!("AUDIT UNAVAILABLE: {e}\n"));
+                }
+            }
+        }
+
+        if findings.is_empty() {
+            let mut session = self.session.lock().await;
+            let goal_snapshot = self.active_goal.clone();
+            let sid = session
+                .header()
+                .map(|h| h.session_id.clone())
+                .unwrap_or_default();
+            if let Some(g) = goal_snapshot.as_ref() {
+                let _ = session.append_goal(vak_session::types::GoalEntry {
+                    goal_id: format!("goal-{sid}"),
+                    objective: g.objective.clone(),
+                    criteria: g.criteria.clone(),
+                    status: vak_session::types::GoalStatus::Done { audited: true },
+                });
+            }
+            drop(session);
+            self.active_goal = None;
+            return None;
+        }
+
+        let audits_left = self
+            .active_goal
+            .as_mut()
+            .map(|g| {
+                g.audits_left = g.audits_left.saturating_sub(1);
+                g.audits_left
+            })
+            .unwrap_or(0);
+        if audits_left > 0 {
+            Some(format!(
+                "[goal-audit] not verified yet:\n{findings}\nAddress these and finish again."
+            ))
+        } else {
+            // Budget exhausted: degrade to Unverified rather than trapping.
+            let mut session = self.session.lock().await;
+            let goal_snapshot = self.active_goal.clone();
+            let sid = session
+                .header()
+                .map(|h| h.session_id.clone())
+                .unwrap_or_default();
+            if let Some(g) = goal_snapshot.as_ref() {
+                let _ = session.append_goal(vak_session::types::GoalEntry {
+                    goal_id: format!("goal-{sid}"),
+                    objective: g.objective.clone(),
+                    criteria: g.criteria.clone(),
+                    status: vak_session::types::GoalStatus::Unverified {
+                        reason: truncate_chars(&findings, 800),
+                    },
+                });
+            }
+            drop(session);
+            self.active_goal = None;
+            None
+        }
+    }
+
+    /// Runs one brokered bash command for auditing; Err = failure text.
+    async fn run_audit_command(&self, cmd: &str, cancel: &CancellationToken) -> Result<(), String> {
+        let tool = self
+            .config
+            .tools
+            .iter()
+            .find(|t| t.name() == "bash")
+            .ok_or_else(|| "no bash tool available for verification".to_string())?;
+        let cwd = self
+            .session
+            .lock()
+            .await
+            .header()
+            .map(|h| h.contract_cwd())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+        let ctx = vak_tools::ToolContext {
+            cwd,
+            cancel: cancel.child_token(),
+            limits: Default::default(),
+            sandbox: self.config.sandbox.clone(),
+        };
+        let input = serde_json::json!({ "command": cmd });
+        let out = match tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            tool.execute(&input, &ctx),
+        )
+        .await
+        {
+            Ok(o) => o,
+            Err(_) => return Err("timed out after 120s".to_string()),
+        };
+        if out.is_error {
+            let tail: String = out.content.chars().rev().take(400).collect::<String>();
+            Err(tail.chars().rev().collect())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// One skeptical judge dispatch over the transcript digest.
+    async fn run_judge(
+        &mut self,
+        text_criteria: &[String],
+        cancel: &CancellationToken,
+        events: &mpsc::Sender<AgentEvent>,
+    ) -> Result<Vec<goal::CriterionVerdict>, String> {
+        let model = {
+            let session = self.session.lock().await;
+            session
+                .header()
+                .map(|h| h.contract.model.clone())
+                .unwrap_or_else(|| self.config.model.clone())
+        };
+        let digest = {
+            let session = self.session.lock().await;
+            let msgs = session.derive_messages();
+            goal::transcript_digest(&msgs, 24_000)
+        };
+        let objective = self
+            .active_goal
+            .as_ref()
+            .map(|g| g.objective.clone())
+            .unwrap_or_default();
+        let req = goal::audit_request(
+            &model,
+            goal::audit_prompt(&objective, text_criteria, &digest),
+        );
+        let mut ledger = StepLedger::new(
+            WorkPurpose::Verify,
+            &model,
+            self.config.dispatch_ceiling.min(4),
+        );
+        let reply = self
+            .complete_with_reliability(&req, cancel, events, false, &mut ledger)
+            .await
+            .map_err(|e| e.to_string())?;
+        let _ = self
+            .session
+            .lock()
+            .await
+            .append_receipt(ledger.take_receipt());
+        goal::parse_verdicts(&reply.text_content())
+    }
+
+    /// Reset-with-handoff rescue: one structured summary replaces the whole
+    /// projection; returns the handoff markdown.
+    async fn write_handoff(
+        &self,
+        est_tokens: u64,
+        original_prompt: &str,
+        cancel: &CancellationToken,
+        events: &mpsc::Sender<AgentEvent>,
+    ) -> Result<String, LlmError> {
+        let model = {
+            let session = self.session.lock().await;
+            session
+                .header()
+                .map(|h| h.contract.model.clone())
+                .unwrap_or_else(|| self.config.model.clone())
+        };
+        let digest = {
+            let session = self.session.lock().await;
+            let msgs = session.derive_messages();
+            goal::transcript_digest(&msgs, 20_000)
+        };
+        let objective_line = if self.active_goal.is_some() || !original_prompt.is_empty() {
+            format!("Original task: {original_prompt}\n\n")
+        } else {
+            String::new()
+        };
+        let req = goal::handoff_request(&model, format!("{objective_line}{digest}"));
+        let mut ledger = StepLedger::new(
+            WorkPurpose::Summarize,
+            &model,
+            self.config.dispatch_ceiling.min(3),
+        );
+        let _ = events
+            .send(AgentEvent::ContextCompacting {
+                estimated_tokens: est_tokens,
+            })
+            .await;
+        let reply = self
+            .complete_with_reliability(&req, cancel, events, false, &mut ledger)
+            .await?;
+        let _ = self
+            .session
+            .lock()
+            .await
+            .append_receipt(ledger.take_receipt());
+        Ok(reply.text_content())
     }
 
     /// Internal premature-completion gate. Returns a continuation reason

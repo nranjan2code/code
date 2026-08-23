@@ -60,6 +60,11 @@ pub struct CompactionEntry {
     /// written before accounting existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partition: Option<ContextPartition>,
+    /// Full-context reset (doc 27 Phase H): when true, the projection
+    /// replaces EVERYTHING with this summary — the reset-with-handoff
+    /// rescue. Default false; older ledgers parse unchanged.
+    #[serde(default)]
+    pub reset_all: bool,
 }
 
 /// The compaction-time packet partition: every message entry visible in
@@ -72,6 +77,32 @@ pub struct ContextPartition {
     pub dropped_entry_ids: Vec<String>,
 }
 
+/// A durable objective with acceptance criteria (docs/design/27 Phase H).
+/// Status transitions append new entries — the ledger never rewrites.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GoalEntry {
+    pub goal_id: String,
+    pub objective: String,
+    pub criteria: Vec<String>,
+    pub status: GoalStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalStatus {
+    Active,
+    /// Completed AND independently audited (deterministic checks and/or
+    /// judge) — never self-reported alone.
+    Done {
+        audited: bool,
+    },
+    /// Audit budget exhausted without verification; run proceeds so it
+    /// can never trap the model.
+    Unverified {
+        reason: String,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EntryPayload {
@@ -81,6 +112,8 @@ pub enum EntryPayload {
     /// Audit record for one unit of provider work (doc 27 Phase A).
     /// Never model-visible: `derive_messages` skips it.
     Receipt(vak_llm::WorkReceipt),
+    /// Goal lifecycle (doc 27 Phase H). Never model-visible.
+    Goal(GoalEntry),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

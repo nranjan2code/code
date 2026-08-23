@@ -44,6 +44,14 @@ enum Command {
         /// Resume an existing session instead of starting a new one
         #[arg(long)]
         session: Option<String>,
+        /// Durable objective for goal mode (docs/design/27 Phase H):
+        /// completion is audited against --criteria, never self-reported.
+        #[arg(long)]
+        goal: Option<String>,
+        /// Acceptance criteria, comma-separated. Prefix `verify:` to run a
+        /// criterion as a shell command; others are judged from evidence.
+        #[arg(long, value_delimiter = ',')]
+        criteria: Vec<String>,
         /// Trust this workspace's project config and .env
         #[arg(long)]
         trust: bool,
@@ -383,6 +391,8 @@ async fn main() {
             permission_mode,
             worktree,
             session,
+            goal,
+            criteria,
             trust,
         }) => {
             let trusted = resolve_trust(&cwd, trust, false);
@@ -400,6 +410,8 @@ async fn main() {
                 permission_mode,
                 worktree,
                 session,
+                goal,
+                criteria,
                 trusted,
             )
             .await
@@ -819,6 +831,8 @@ async fn run_exec(
     permission_mode: Option<String>,
     worktree: bool,
     resume_session: Option<String>,
+    goal: Option<String>,
+    criteria: Vec<String>,
     trusted: bool,
 ) -> i32 {
     let mut effective_cwd = cwd.clone();
@@ -901,8 +915,26 @@ async fn run_exec(
     });
 
     let runner = tokio::spawn(async move {
-        core.run_turn_with(session, &prompt, cancel, approver, None, None, tx)
-            .await
+        let fut = async {
+            if let Some(objective) = goal.as_deref() {
+                core.run_goal_turn_with(
+                    session,
+                    &prompt,
+                    objective,
+                    criteria.clone(),
+                    cancel,
+                    approver,
+                    None,
+                    None,
+                    tx,
+                )
+                .await
+            } else {
+                core.run_turn_with(session, &prompt, cancel, approver, None, None, tx)
+                    .await
+            }
+        };
+        fut.await
     });
 
     let mut total_in: u64 = 0;

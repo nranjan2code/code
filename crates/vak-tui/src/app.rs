@@ -2014,6 +2014,11 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
                 ));
             }
         }
+        AgentEvent::HandoffReset { before_tokens } => {
+            screen.dim(&format!(
+                "✋ context reset — structured handoff written (~{before_tokens} → fresh segment)"
+            ));
+        }
         AgentEvent::StreamOpened
         | AgentEvent::ApprovalRequested { .. }
         | AgentEvent::RunFinished { .. } => {}

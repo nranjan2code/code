@@ -789,6 +789,7 @@ fn summarize_jsonl(
                         }
                         vak_session::EntryPayload::Compaction(_) => {}
                         vak_session::EntryPayload::Receipt(_) => {}
+                        vak_session::EntryPayload::Goal(_) => {}
                     }
                 }
                 if title.is_some() && entries > 400 {
