@@ -193,7 +193,20 @@ export default function Settings() {
               <div class="settings-callout"><Icon name="spark" /><div><strong>Runtime defaults</strong><span>Changes apply immediately to new tasks. Add them to the project config to keep them across restarts.</span></div></div>
               <Group title="Model">
                 <Row title="Provider" description={currentProviderInfo()?.env_var ? `Authenticated via ${currentProviderInfo()?.env_var}` : "The API provider used for new sessions."}>
-                  <select class="settings-input" value={provider()} onChange={(event) => { setProvider(event.currentTarget.value); setKeyDraft(null); }}>
+                  <select
+                    class="settings-input"
+                    value={provider()}
+                    onChange={(event) => {
+                      const next = event.currentTarget.value;
+                      setProvider(next);
+                      setKeyDraft(null);
+                      // Carry the model across only when the new provider
+                      // actually offers it; otherwise fall to its default so
+                      // the field never names a model this provider rejects.
+                      const catalog = providers()?.models[next] ?? [];
+                      if (catalog.length && !catalog.includes(model())) setModel(catalog[0]);
+                    }}
+                  >
                     <For each={providers()?.providers ?? []}>{(p) => <option value={p.name}>{p.name}{p.configured ? " ✓" : ""}</option>}</For>
                     <Show when={provider() && !providers()?.providers.some((p) => p.name === provider())}><option value={provider()}>{provider()}</option></Show>
                   </select>
