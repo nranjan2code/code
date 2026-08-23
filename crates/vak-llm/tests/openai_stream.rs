@@ -302,3 +302,106 @@ async fn error_url(status: u16, json: &str) -> String {
     );
     spawn_server(owned.into_bytes()).await
 }
+
+// Some OpenAI-compatible endpoints (observed on opencode-zen's free tier)
+// close tool-call turns with a finish_reason outside the canonical set —
+// e.g. plain "stop". The accumulated tool_use blocks are ground truth: the
+// loop must see StopReason::ToolUse or a dangling call kills the run.
+const FIXTURE_TOOL_STREAM_BAD_FINISH: &str = "\
+data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\
+\n\
+data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"glob\",\"arguments\":\"{\\\"pattern\\\":\\\"**/*.md\\\"}\"}}]},\"finish_reason\":null}]}\n\
+\n\
+data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\
+\n\
+data: [DONE]\n\
+\n";
+
+#[tokio::test]
+async fn nonstandard_finish_reason_with_tool_use_still_yields_tooluse() {
+    let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
+        api_key: "k".into(),
+        base_url: mock_url(FIXTURE_TOOL_STREAM_BAD_FINISH).await,
+    })
+    .unwrap();
+
+    let mut req = ChatRequest::new("m");
+    req.messages = vec![Message::user_text("list markdown files")];
+
+    let mut es = provider
+        .stream(req, CancellationToken::new())
+        .await
+        .unwrap();
+    let mut end = None;
+    while let Some(ev) = futures::StreamExt::next(&mut es).await {
+        if let StreamEvent::End { message } = ev {
+            end = Some(message);
+        }
+    }
+    let msg = end.expect("stream must terminate with End");
+    assert_eq!(msg.stop_reason, StopReason::ToolUse);
+    assert!(
+        msg.content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::ToolUse { name, .. } if name == "glob")),
+        "tool_use block preserved"
+    );
+}
+
+// Same endpoint family, worse: body ends right after the tool-call deltas
+// with NO finish_reason and NO [DONE]. The clean-close path must also
+// promote accumulated tool_use to StopReason::ToolUse.
+const FIXTURE_TOOL_STREAM_EOF_NO_FINISH: &str = "\
+data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\
+\n\
+data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_2\",\"type\":\"function\",\"function\":{\"name\":\"glob\",\"arguments\":\"{\\\"pattern\\\":\\\"*\\\"}\"}}]},\"finish_reason\":null}]}\n\
+\n";
+
+#[tokio::test]
+async fn clean_close_after_tool_calls_yields_tooluse() {
+    let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
+        api_key: "k".into(),
+        base_url: mock_url(FIXTURE_TOOL_STREAM_EOF_NO_FINISH).await,
+    })
+    .unwrap();
+
+    let mut req = ChatRequest::new("m");
+    req.messages = vec![Message::user_text("list files")];
+
+    let es = provider
+        .stream(req, CancellationToken::new())
+        .await
+        .unwrap();
+    // EOF-close delivers the message through the stream's terminal.
+    let msg = es.result().await.expect("clean close must complete");
+    assert_eq!(msg.stop_reason, StopReason::ToolUse);
+}
+
+// The live culprit (opencode-zen free tier): reasoning deltas, one
+// tool_calls delta, then bare `data: [DONE]` — no finish_reason frame ever.
+const FIXTURE_DONE_WITHOUT_FINISH: &str = "\
+data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"thinking\"},\"finish_reason\":null}]}\n\
+\n\
+data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_3\",\"type\":\"function\",\"function\":{\"name\":\"glob\",\"arguments\":\"{\\\"pattern\\\":\\\"*\\\"}\"}}]},\"finish_reason\":null}]}\n\
+\n\
+data: [DONE]\n\
+\n";
+
+#[tokio::test]
+async fn done_without_finish_reason_still_yields_tooluse() {
+    let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
+        api_key: "k".into(),
+        base_url: mock_url(FIXTURE_DONE_WITHOUT_FINISH).await,
+    })
+    .unwrap();
+
+    let mut req = ChatRequest::new("m");
+    req.messages = vec![Message::user_text("list files")];
+
+    let es = provider
+        .stream(req, CancellationToken::new())
+        .await
+        .unwrap();
+    let msg = es.result().await.expect("[DONE] close must complete");
+    assert_eq!(msg.stop_reason, StopReason::ToolUse);
+}

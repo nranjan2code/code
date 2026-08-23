@@ -1233,6 +1233,9 @@ async fn providers_listing_and_key_storage_roundtrip() {
     // Hermetic secret store: never touch the developer's real ~/.vakcoder.
     let user_env = cwd.join("user-home/.vakcoder/.env");
     core.set_user_env_path(user_env.clone());
+    // Pin the current provider so the assertion reflects THIS fixture, not
+    // whatever default the developer's global config selects.
+    core.set_provider("anthropic".to_string());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

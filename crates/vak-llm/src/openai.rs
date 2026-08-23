@@ -237,11 +237,36 @@ impl Accumulator {
             return Ok(None);
         };
 
+        #[allow(clippy::dbg_macro)]
+        if std::env::var_os("VAK_LLM_DEBUG").is_some() {
+            eprintln!(
+                "[vak-llm] frame finish={:?} delta_keys={:?} content_len={}",
+                choice.get("finish_reason"),
+                choice.get("delta").map(|d| d
+                    .as_object()
+                    .map(|o| o.keys().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default()),
+                self.message.content.len()
+            );
+        }
         if let Some(finish) = choice.get("finish_reason").and_then(|f| f.as_str()) {
-            self.message.stop_reason = match finish {
-                "tool_calls" | "function_call" => StopReason::ToolUse,
-                "length" => StopReason::MaxTokens,
-                _ => StopReason::EndTurn,
+            // Accumulated tool_use blocks are ground truth: some compat
+            // endpoints close tool-call turns with finish reasons outside
+            // the canonical set (e.g. plain "stop"). Trusting the label
+            // would strand a dangling tool_use and kill the run.
+            let has_tool_use = self
+                .message
+                .content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
+            self.message.stop_reason = if has_tool_use {
+                StopReason::ToolUse
+            } else {
+                match finish {
+                    "tool_calls" | "function_call" => StopReason::ToolUse,
+                    "length" => StopReason::MaxTokens,
+                    _ => StopReason::EndTurn,
+                }
             };
             self.saw_end = true;
             return Ok(Some(StreamEvent::End {
@@ -384,6 +409,18 @@ impl Provider for OpenAiCompletionsProvider {
                                 while let Some(frame) = decoder.next_frame() {
                                     let data = frame.data.trim();
                                     if data == "[DONE]" {
+                                        // Content is ground truth here as
+                                        // everywhere else: endpoints that
+                                        // skip finish_reason entirely (seen
+                                        // on opencode-zen) still owe the loop
+                                        // a ToolUse signal when tool calls
+                                        // were streamed.
+                                        let has_tool_use = acc.message.content.iter().any(
+                                            |b| matches!(b, ContentBlock::ToolUse { .. }),
+                                        );
+                                        if has_tool_use {
+                                            acc.message.stop_reason = StopReason::ToolUse;
+                                        }
                                         sink.close_message(acc.message.clone()).await;
                                         return;
                                     }
@@ -408,6 +445,16 @@ impl Provider for OpenAiCompletionsProvider {
                                 // content is de facto completion (same as the
                                 // [DONE] branch); empty content fails closed.
                                 if acc.saw_end || !acc.message.content.is_empty() {
+                                    // Content is ground truth here too: a
+                                    // stream ending right after tool-call
+                                    // deltas must surface ToolUse, or the
+                                    // dangling call aborts the run.
+                                    let has_tool_use = acc.message.content.iter().any(
+                                        |b| matches!(b, ContentBlock::ToolUse { .. }),
+                                    );
+                                    if has_tool_use {
+                                        acc.message.stop_reason = StopReason::ToolUse;
+                                    }
                                     sink.close_message(acc.message.clone()).await;
                                 } else {
                                     sink.close_error(LlmError::Parse(

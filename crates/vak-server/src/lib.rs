@@ -735,10 +735,13 @@ pub(crate) fn mpsc_to_broadcast(tx: broadcast::Sender<AgentEvent>) -> mpsc::Send
     tokio::spawn(async move {
         // Forward into the BROADCAST channel (sync send). Forwarding into
         // tx_in would feed the channel back into itself.
+        //
+        // Headless consumers (gateway turns, cron routines) legitimately run
+        // with zero broadcast subscribers; send errors must NEVER tear the
+        // pump down — the agent treats a dropped mpsc receiver as a lost
+        // consumer and cancels the run mid-flight.
         while let Some(ev) = rx.recv().await {
-            if tx.send(ev).is_err() {
-                break;
-            }
+            let _ = tx.send(ev);
         }
     });
     tx_in
