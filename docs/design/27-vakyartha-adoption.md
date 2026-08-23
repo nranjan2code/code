@@ -69,6 +69,11 @@ phase, that phase reverts to deferred.
 
 ## Phase A — Work receipts + dispatch ceiling
 
+Status: **landed** — `vak_llm::work` types, `StepLedger` threaded through
+the reliability helper, `receipt` session entries (projection-neutral),
+ceiling default `(max_retries+1) × (run_retry_attempts+1)`; see roadmap
+row for the gate evidence.
+
 Every provider call becomes an auditable typed event. Today attempts are
 implicit (retry counters, breaker state machine); after this they are
 ledger entries.
@@ -165,6 +170,10 @@ corruption degrades to empty-with-warning (never misranks); single-model
 config produces the exact legacy behavior (ladder length 1).
 
 ## Phase C — Context packet accounting + deterministic gate
+
+Status: **landed** — partitions on plans/entries (serde-back-compat),
+counts on `ContextCompacted`, `run_context_scorecard()` printed by every
+offline eval.
 
 Retires the deferred bullets in `17-context.md` ("Deliberately not built").
 

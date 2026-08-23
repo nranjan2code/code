@@ -9,16 +9,19 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v0.2.0+ — all roadmap phases implemented and live-tested.**
+**Status: v0.3.0+ — all roadmap phases implemented and live-tested.**
 See `docs/design/00-roadmap.md` for the phase history and
 `docs/design/15-reliability.md` for the failure-handling matrix. Security work
 must also follow the threat model and priority order in
 `docs/design/24-agent-security.md`. The always-on platform layer follows
 `docs/design/22-gateway.md` (gateway/approvals), `docs/design/23-memory.md`
 (recall), `docs/design/25-docker-sandbox.md` (execution backends),
-`docs/design/26-learning.md` (learning loop), and
+`docs/design/26-learning.md` (learning loop),
 `docs/design/28-operations.md` with docs/hosting.md for running the stack
-as durable services.
+as durable services, and `docs/design/27-vakyartha-adoption.md` for the
+long-horizon program (work receipts + dispatch ceiling ✅, context packet
+accounting + deterministic gate ✅, FinOps budget admission ✅; loop
+engineering, frozen-ladder routing, runs→flows replay pending).
 
 ## Non-negotiable invariants
 
@@ -120,8 +123,11 @@ as durable services.
 ```
 crates/vak-llm       unified provider API (anthropic / openai-responses /
                      openai-completions / google), SSE, delta+snapshot events,
-                     live model discovery (models.rs)
+                     live model discovery (models.rs), work receipts +
+                     dispatch ceiling (work.rs, docs/design/27 Phase A)
 crates/vak-session   append-only JSONL trees, frozen contract, projection,
+                     receipt entries (audit-only, projection-neutral),
+                     compaction packet partitions (docs/design/27 Phase C),
                      dependency-free cross-session search (docs/design/
                      23-memory.md)
 crates/vak-tools     read/write/edit/bash/glob/grep behind Tool trait,
@@ -134,14 +140,19 @@ crates/vak-mcp       MCP stdio client behind a lazy meta-tool
 crates/vak-agent     loop, steering queues, parallel tool execution w/
                      resource-claim waves, retries + watchdog + circuit
                      breaker + stop gate (premature-completion guard),
-                     subagents (task tool) + live SubagentRegistry
+                     spend-gate seam (docs/design/27 Phase D), subagents
+                     (task tool) + live SubagentRegistry
 crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
-crates/vak-eval      deterministic eval suite + live-model mode
-crates/vak-config    layered TOML config + .env secret loading
+crates/vak-eval      deterministic eval suite + live-model mode +
+                     context-quality scorecard (docs/design/27 Phase C)
+crates/vak-config    layered TOML config + .env secret loading + [finops]
+                     caps/pricing (docs/design/27 Phase D)
 crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      session_search injection, memory/skill-proposal tools
                      (docs/design/26-learning.md), sandbox selection incl.
-                     Docker exec backend (docs/design/25-docker-sandbox.md)
+                     Docker exec backend (docs/design/25-docker-sandbox.md),
+                     cost ledger + budget admission gate
+                     (docs/design/27 Phase D)
 crates/vak-tui       retained-render terminal UI: contextual keymap +
                      interactive rebind, themes + custom theme packs,
                      vim/emacs composer, subagent attach/steer,
