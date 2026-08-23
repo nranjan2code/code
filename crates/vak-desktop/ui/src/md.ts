@@ -45,6 +45,76 @@ export function renderMarkdown(src: string): string {
   return html;
 }
 
+
+// ---- GitHub-flavoured tables ------------------------------------------------
+//
+// A table is a row, a divider, then rows. The divider is what distinguishes it
+// from prose that happens to contain a pipe, so it is required.
+
+type Align = "left" | "center" | "right";
+
+function isTableRow(line: string): boolean {
+  return line.includes("|") && line.trim() !== "";
+}
+
+function isTableDivider(line: string): boolean {
+  const t = line.trim();
+  if (!t.includes("-") || !t.includes("|")) return false;
+  return /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?$/.test(t);
+}
+
+/** Split a row on unescaped pipes, dropping the optional outer delimiters. */
+function splitRow(line: string): string[] {
+  let t = line.trim();
+  if (t.startsWith("|")) t = t.slice(1);
+  if (t.endsWith("|") && !t.endsWith("\\|")) t = t.slice(0, -1);
+  const cells: string[] = [];
+  let cur = "";
+  for (let i = 0; i < t.length; i++) {
+    if (t[i] === "\\" && t[i + 1] === "|") {
+      cur += "|";
+      i++;
+    } else if (t[i] === "|") {
+      cells.push(cur.trim());
+      cur = "";
+    } else {
+      cur += t[i];
+    }
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+
+function parseAlignments(divider: string): Align[] {
+  return splitRow(divider).map((c) => {
+    const left = c.startsWith(":");
+    const right = c.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    return "left";
+  });
+}
+
+function renderTable(header: string[], aligns: Align[], body: string[][]): string {
+  const cols = header.length;
+  const cell = (text: string, idx: number, tag: "th" | "td") => {
+    const a = aligns[idx] ?? "left";
+    const style = a === "left" ? "" : ` style="text-align:${a}"`;
+    return `<${tag}${style}>${inline(text)}</${tag}>`;
+  };
+  const head = `<thead><tr>${header.map((c, i) => cell(c, i, "th")).join("")}</tr></thead>`;
+  const rows = body
+    .map((r) => {
+      // Ragged rows are common in hand-written markdown; pad or trim to the
+      // header width so the table never renders lopsided.
+      const cells = r.slice(0, cols);
+      while (cells.length < cols) cells.push("");
+      return `<tr>${cells.map((c, i) => cell(c, i, "td")).join("")}</tr>`;
+    })
+    .join("");
+  return `<div class="md-tablewrap"><table class="md-table">${head}<tbody>${rows}</tbody></table></div>`;
+}
+
 function block(text: string): string {
   const lines = text.split("\n");
   const out: string[] = [];
@@ -57,8 +127,25 @@ function block(text: string): string {
     }
   };
 
-  for (const raw of lines) {
+  // Indexed rather than for-of: tables need to look ahead at the separator
+  // row before deciding the current line starts a table at all.
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
     const line = raw.trimEnd();
+    if (isTableRow(line) && i + 1 < lines.length && isTableDivider(lines[i + 1])) {
+      closeList();
+      const aligns = parseAlignments(lines[i + 1]);
+      const header = splitRow(line);
+      const body: string[][] = [];
+      let j = i + 2;
+      while (j < lines.length && isTableRow(lines[j])) {
+        body.push(splitRow(lines[j]));
+        j++;
+      }
+      out.push(renderTable(header, aligns, body));
+      i = j - 1;
+      continue;
+    }
     const h = /^(#{1,4})\s+(.*)$/.exec(line);
     if (h) {
       closeList();

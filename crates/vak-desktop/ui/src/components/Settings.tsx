@@ -11,17 +11,18 @@ import {
   setShowShortcuts,
   uiPreferences,
   updateUiPreference,
+  sessions,
   type Density,
 } from "../store";
 import type { ConfigSnapshot } from "../types";
 import * as api from "../api";
-import { loadHealth } from "../App";
+import { loadHealth, refreshSessions } from "../App";
 import Icon, { type IconName } from "./Icon";
 
 /** Sentinel option that swaps the model select for a free-text field. */
 const CUSTOM_MODEL = "\u0000custom";
 
-type Page = "general" | "appearance" | "agent" | "permissions" | "reliability" | "integrations" | "advanced";
+type Page = "general" | "appearance" | "agent" | "permissions" | "reliability" | "integrations" | "advanced" | "archived";
 
 const pages: { id: Page; label: string; icon: IconName; hint: string }[] = [
   { id: "general", label: "General", icon: "gear", hint: "notifications suggestions" },
@@ -31,6 +32,7 @@ const pages: { id: Page; label: string; icon: IconName; hint: string }[] = [
   { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker" },
   { id: "integrations", label: "Integrations", icon: "plug", hint: "mcp hooks skills" },
   { id: "advanced", label: "Advanced", icon: "tune", hint: "paths context configuration" },
+  { id: "archived", label: "Archived tasks", icon: "archive", hint: "restore delete history" },
 ];
 
 function Switch(props: { checked: boolean; onChange: (next: boolean) => void; label: string }) {
@@ -78,6 +80,7 @@ export default function Settings() {
     }
   };
   onMount(() => void loadProviders());
+  onMount(() => void refreshSessions());
 
   // Re-run whenever the selected provider changes; a stale response from a
   // provider the user has since moved off is discarded.
@@ -129,6 +132,40 @@ export default function Settings() {
     const needle = query().trim().toLowerCase();
     return needle ? pages.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(needle)) : pages;
   });
+  const archivedSessions = createMemo(() => sessions().filter((session) => session.archived));
+
+  const restoreTask = async (id: string) => {
+    try {
+      await api.setArchived(id, false);
+      await refreshSessions();
+      setNotice({ kind: "info", text: "Task restored to the sidebar." });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not restore that task: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  };
+
+  const deleteTask = async (id: string) => {
+    const task = archivedSessions().find((session) => session.session_id === id);
+    if (!window.confirm(`Delete “${task?.title || "Untitled task"}”? This cannot be undone in vakcoder.`)) return;
+    try {
+      await api.deleteSession(id);
+      await refreshSessions();
+      setNotice({ kind: "info", text: "Task deleted from history." });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not delete that task: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  };
+
+  const deleteAllArchived = async () => {
+    if (!archivedSessions().length || !window.confirm(`Delete all ${archivedSessions().length} archived tasks? This cannot be undone in vakcoder.`)) return;
+    try {
+      const result = await api.deleteAllArchived();
+      await refreshSessions();
+      setNotice({ kind: "info", text: `${result.deleted} archived task${result.deleted === 1 ? "" : "s"} deleted.` });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not delete archived tasks: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  };
 
   // True when the form differs from what the backend is actually running.
   const agentDirty = () => {
@@ -247,6 +284,16 @@ export default function Settings() {
                 <Row title="Current workspace" description={config()?.paths.cwd ?? ""}><span class="settings-value">Local</span></Row>
                 <Row title="Project configuration" description="Persistent agent and tool settings for this repository."><button class="settings-button" onClick={() => void openProjectConfig()}>Open config</button></Row>
               </Group>
+            </Show>
+
+            <Show when={page() === "archived"}>
+              <header class="archived-header"><div><h1>Archived tasks</h1><p>Hidden from the sidebar until you restore them.</p></div><button class="settings-button danger" disabled={!archivedSessions().length} onClick={() => void deleteAllArchived()}><Icon name="trash" size={14} /> Delete all</button></header>
+              <div class="settings-callout"><Icon name="archive" /><div><strong>Archive is reversible</strong><span>Restore a task any time. Deleting removes it from vakcoder’s task history; the append-only session ledger remains untouched on disk.</span></div></div>
+              <Show when={archivedSessions().length} fallback={<div class="archived-empty"><Icon name="archive" size={24} /><strong>No archived tasks</strong><span>Tasks you archive from the sidebar will appear here.</span></div>}>
+                <section class="archived-list" aria-label="Archived tasks">
+                  <For each={archivedSessions()}>{(session) => <div class="archived-item"><span class="archived-item-icon"><Icon name="chat" size={15} /></span><span class="archived-item-copy"><strong>{session.title || "Untitled task"}</strong><span>{session.updated_at ? new Date(session.updated_at).toLocaleString() : ""} · {session.entries ?? 0} events</span></span><button class="settings-button" onClick={() => void restoreTask(session.session_id)}><Icon name="restore" size={13} /> Restore</button><button class="icon-button subtle danger has-tooltip" data-tooltip="Delete task" aria-label={`Delete ${session.title || "untitled task"}`} onClick={() => void deleteTask(session.session_id)}><Icon name="trash" size={14} /></button></div>}</For>
+                </section>
+              </Show>
             </Show>
 
             <Show when={page() === "appearance"}>

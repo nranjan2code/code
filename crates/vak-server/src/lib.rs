@@ -957,16 +957,37 @@ async fn set_archived(
     Json(serde_json::json!({ "archived": body.archived })).into_response()
 }
 
-async fn delete_session(State(state): State<AppState>, Path(id): Path<String>) -> axum::response::Response {
+async fn delete_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
     let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), state.core.cwd());
     if !dir.join(format!("{id}.jsonl")).is_file() {
-        return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "unknown session" }))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "unknown session" })),
+        )
+            .into_response();
     }
-    if state.get(&id).is_some_and(|handle| handle.session.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_none()) {
-        return (StatusCode::CONFLICT, Json(serde_json::json!({ "error": "cannot delete a running task" }))).into_response();
+    if state.get(&id).is_some_and(|handle| {
+        handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_none()
+    }) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "cannot delete a running task" })),
+        )
+            .into_response();
     }
     if !read_archive(&state.core).get(&id).copied().unwrap_or(false) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "only archived tasks can be deleted" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "only archived tasks can be deleted" })),
+        )
+            .into_response();
     }
     let mut deleted = read_deleted(&state.core);
     deleted.insert(id.clone(), true);
@@ -977,10 +998,21 @@ async fn delete_session(State(state): State<AppState>, Path(id): Path<String>) -
 async fn delete_all_archived(State(state): State<AppState>) -> axum::response::Response {
     let archive = read_archive(&state.core);
     let running_archived = archive.iter().any(|(id, archived)| {
-        *archived && state.get(id).is_some_and(|handle| handle.session.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_none())
+        *archived
+            && state.get(id).is_some_and(|handle| {
+                handle
+                    .session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .is_none()
+            })
     });
     if running_archived {
-        return (StatusCode::CONFLICT, Json(serde_json::json!({ "error": "stop running archived tasks before deleting all" }))).into_response();
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "stop running archived tasks before deleting all" })),
+        )
+            .into_response();
     }
     let mut deleted = read_deleted(&state.core);
     let mut count = 0u64;
