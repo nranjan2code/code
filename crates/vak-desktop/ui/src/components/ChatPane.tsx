@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { density, itemsOf, activeId, hydratingId, openInEditor, uiPreferences, type Item } from "../store";
-import { approve, sendPrompt, newSession } from "../App";
+import { approve, sendPrompt, newSession, openFileSmart } from "../App";
 import { renderMarkdown } from "../md";
 import Icon from "./Icon";
 
@@ -60,18 +60,40 @@ function visibleItems(list: Item[]): Item[] {
 
 export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
   const [open, setOpen] = createSignal(false);
-  const argsPretty = createMemo(() => {
+  const args = createMemo<Record<string, unknown> | null>(() => {
     try {
-      return JSON.stringify(JSON.parse(props.item.argsJson), null, 2);
+      const v = JSON.parse(props.item.argsJson);
+      return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
     } catch {
-      return props.item.argsJson;
+      return null;
     }
   });
+  const argsPretty = createMemo(() => {
+    const a = args();
+    return a ? JSON.stringify(a, null, 2) : props.item.argsJson;
+  });
+
+  /** The file this call acts on, when it names one. */
+  const filePath = createMemo(() => {
+    const p = args()?.path ?? args()?.file_path;
+    return typeof p === "string" && p ? p : null;
+  });
+  const shortPath = () => {
+    const p = filePath();
+    if (!p) return null;
+    // Workspace-relative reads better than an absolute path in a card.
+    const parts = p.split("/").filter(Boolean);
+    return parts.length > 2 ? parts.slice(-2).join("/") : p;
+  };
+
   return (
     <div class="tool" classList={{ err: props.item.isError, open: open() }}>
       <button class="tool-h" aria-expanded={open()} onClick={() => setOpen((v) => !v)}>
         <span class="tool-dot" />
         <span class="tool-name">{props.item.name}</span>
+        <Show when={shortPath()}>
+          <span class="tool-path">{shortPath()}</span>
+        </Show>
         <Show when={!props.item.done}>
           <span class="tool-run">running…</span>
         </Show>
@@ -80,6 +102,18 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
         </Show>
         <span class="tool-chev"><Icon name="chevron" size={14} /></span>
       </button>
+      <Show when={filePath()}>
+        {(path) => (
+          <div class="tool-actions">
+            {/* One action, routed for you: a changed file opens as a diff,
+                a new one opens in the editor. Inline dumps do not scale
+                past the first file. */}
+            <button class="tool-open" onClick={() => void openFileSmart(path())} title={path()}>
+              <Icon name="code" size={12} /> View file
+            </button>
+          </div>
+        )}
+      </Show>
       <Show when={open() || density() === "verbose"}>
         <pre class="tool-args">{argsPretty()}</pre>
       </Show>

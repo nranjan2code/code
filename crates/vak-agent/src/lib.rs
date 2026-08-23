@@ -95,6 +95,10 @@ pub enum AgentEvent {
     },
     RunFinished {
         summary: String,
+        /// Whether the run ended badly. Consumers must not have to sniff
+        /// `summary` for a "failed:" prefix to know something broke —
+        /// errors are values (see SubagentFinished above).
+        is_error: bool,
     },
 }
 

@@ -16,6 +16,7 @@ import {
   setActiveId,
   setBackend,
   setDockTab,
+  setEditorPath,
   setHealth,
   setShowShortcuts,
   setSessions,
@@ -277,6 +278,36 @@ export async function refreshBackend(): Promise<boolean> {
 
 async function init() {
   await refreshBackend();
+}
+
+/**
+ * Open a file the agent touched in whichever right-hand pane actually shows
+ * something useful: a modified file has a diff worth reading (Changes), a
+ * newly created one does not (Editor). Routing this automatically is the
+ * point — the panel has five tabs and the user should not have to guess
+ * which one currently holds their file.
+ */
+export async function openFileSmart(path: string) {
+  setEditorPath(path);
+  const id = diffTarget() ?? activeId();
+  if (!id) {
+    setDockTab("editor");
+    return;
+  }
+  try {
+    const d = await api.readDiff(id);
+    setDockTab(diffCoversPath(`${d.diff}\n${d.staged_diff}`, path) ? "diff" : "editor");
+  } catch {
+    setDockTab("editor");
+  }
+}
+
+/** True when a unified diff contains a hunk header for `path`. */
+function diffCoversPath(diff: string, path: string): boolean {
+  const rel = path.replace(/^.*?\/(?=[^/]+$)/, "");
+  return diff
+    .split("\n")
+    .some((l) => (l.startsWith("+++ ") || l.startsWith("--- ")) && (l.includes(path) || l.endsWith(rel)));
 }
 
 /** Pick a different project folder and reboot the backend against it. */

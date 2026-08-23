@@ -248,6 +248,12 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .cb-h { display: flex; justify-content: space-between; align-items: center; min-height: 30px; padding: 4px 10px; border-bottom: 1px solid var(--border-soft); color: var(--faint); background: var(--surface); font-size: 10.5px; }
 .cb-copy:hover { color: var(--text-soft); }
 .cb pre { margin: 0; padding: 12px 14px; overflow-x: auto; color: #d7d3cb; font-size: 11.5px; line-height: 1.6; }
+/* File-shaped tool calls name their file and can show it inline: a card that
+   only says "wrote 902 bytes" hides the thing the user wants to see. */
+.tool-path { color: var(--muted); font-family: var(--mono); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.tool-actions { display: flex; gap: 6px; padding: 0 10px 8px; }
+.tool-open { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); font-size: 10.5px; }
+.tool-open:hover { color: var(--text); background: var(--surface-hover); border-color: #4a4a43; }
 .cb pre, .tool-args, .tool-prev, .ep-text, .hunkwrap, .prev-logs { font-size: calc(11px * var(--code-scale, 1)); }
 .caret { display: inline-block; width: 2px; height: 15px; margin-left: 2px; background: var(--accent); vertical-align: text-bottom; animation: pulse .9s infinite; }
 .thinking { margin-bottom: 12px; padding: 1px 0; color: var(--muted); }

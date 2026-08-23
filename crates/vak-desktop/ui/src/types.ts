@@ -63,7 +63,7 @@ export type AgentEvent =
   | { SubagentToolCall: { label: string; name: string; is_error: boolean } }
   | { SubagentUsage: { label: string; input_tokens: number; output_tokens: number } }
   | { SubagentFinished: { label: string; is_error: boolean; elapsed_ms: number } }
-  | { RunFinished: { summary: string } };
+  | { RunFinished: { summary: string; is_error: boolean } };
 
 export interface SessionSummary {
   session_id: string;

@@ -413,6 +413,13 @@ export function applyEvent(
         return it;
       }),
     );
+    // A failed run must say so in the transcript. Previously the reason
+    // lived only in the summary handed to onFinish, which surfaced it only
+    // as a background notification — so a visible window showed nothing at
+    // all when a run died.
+    if (ev.RunFinished.is_error) {
+      note(b, id, ev.RunFinished.summary);
+    }
     opts.onFinish?.(ev.RunFinished.summary);
   }
 }

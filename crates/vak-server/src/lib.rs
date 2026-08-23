@@ -602,17 +602,20 @@ async fn run_prompt(
                     .session
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session_log);
-                let summary = match &o {
-                    vak_agent::TurnOutcome::Completed { .. } => "completed".to_string(),
-                    vak_agent::TurnOutcome::Aborted { .. } => "aborted".to_string(),
-                    vak_agent::TurnOutcome::Failed { error } => format!("failed: {error}"),
-                    vak_agent::TurnOutcome::MaxTurnsReached => "max_turns".to_string(),
+                let (summary, is_error) = match &o {
+                    vak_agent::TurnOutcome::Completed { .. } => ("completed".to_string(), false),
+                    vak_agent::TurnOutcome::Aborted { .. } => ("aborted".to_string(), false),
+                    vak_agent::TurnOutcome::Failed { error } => (format!("failed: {error}"), true),
+                    vak_agent::TurnOutcome::MaxTurnsReached => ("max_turns".to_string(), true),
                 };
-                let _ = handle.events_tx.send(AgentEvent::RunFinished { summary });
+                let _ = handle
+                    .events_tx
+                    .send(AgentEvent::RunFinished { summary, is_error });
             }
             Err(e) => {
                 let _ = handle.events_tx.send(AgentEvent::RunFinished {
                     summary: format!("error: {e}"),
+                    is_error: true,
                 });
             }
         }
@@ -650,6 +653,7 @@ async fn cancel_run(State(state): State<AppState>, Path(id): Path<String>) -> St
         .cancel();
     let _ = handle.events_tx.send(AgentEvent::RunFinished {
         summary: "cancelled by client".into(),
+        is_error: false,
     });
     StatusCode::ACCEPTED
 }
@@ -1368,11 +1372,11 @@ async fn side_chat(
                 events,
             )
             .await;
-        let summary = match &outcome {
-            Ok((vak_agent::TurnOutcome::Completed { .. }, _)) => "completed".to_string(),
-            Ok((vak_agent::TurnOutcome::Aborted { .. }, _)) => "aborted".to_string(),
-            Ok((_, _)) => "ended".to_string(),
-            Err(e) => format!("error: {e}"),
+        let (summary, is_error) = match &outcome {
+            Ok((vak_agent::TurnOutcome::Completed { .. }, _)) => ("completed".to_string(), false),
+            Ok((vak_agent::TurnOutcome::Aborted { .. }, _)) => ("aborted".to_string(), false),
+            Ok((_, _)) => ("ended".to_string(), false),
+            Err(e) => (format!("error: {e}"), true),
         };
         if let Ok((_, mut restored)) = outcome {
             // Rewind the branch pointer to the main line: the side entries
@@ -1386,7 +1390,7 @@ async fn side_chat(
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
         }
-        let _ = side_tx.send(AgentEvent::RunFinished { summary });
+        let _ = side_tx.send(AgentEvent::RunFinished { summary, is_error });
     });
 
     StatusCode::ACCEPTED
@@ -1431,6 +1435,7 @@ async fn side_cancel_run(State(state): State<AppState>, Path(id): Path<String>) 
         .cancel();
     let _ = handle.side_events_tx.send(AgentEvent::RunFinished {
         summary: "cancelled by client".into(),
+        is_error: false,
     });
     StatusCode::ACCEPTED
 }
@@ -1604,11 +1609,13 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str) {
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
                 let _ = h2.events_tx.send(AgentEvent::RunFinished {
                     summary: "completed".into(),
+                    is_error: false,
                 });
             }
             Err(e) => {
                 let _ = h2.events_tx.send(AgentEvent::RunFinished {
                     summary: format!("error: {e}"),
+                    is_error: true,
                 });
             }
         }
@@ -2093,7 +2100,7 @@ async fn fire_task(state: &AppState, provider: &Arc<dyn Provider>, id: &str) -> 
             use tokio_stream::wrappers::BroadcastStream;
             let mut stream = BroadcastStream::new(rx);
             while let Some(Ok(ev)) = stream.next().await {
-                if let AgentEvent::RunFinished { summary } = ev {
+                if let AgentEvent::RunFinished { summary, .. } = ev {
                     if let Some(t) = st
                         .tasks
                         .lock()
