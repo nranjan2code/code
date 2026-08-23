@@ -63,6 +63,9 @@ pub enum EntryPayload {
     Header(SessionHeader),
     Message(MessageRecord),
     Compaction(CompactionEntry),
+    /// Audit record for one unit of provider work (doc 27 Phase A).
+    /// Never model-visible: `derive_messages` skips it.
+    Receipt(vak_llm::WorkReceipt),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

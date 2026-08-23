@@ -6,7 +6,7 @@ One JSONL file per session at
 `$VAKCODER_HOME/sessions/<cwd-hash>/<session-id>.jsonl`. Every line:
 
 ```json
-{"id":"…","parent_id":"…|null","ts":"…","kind":"header|message|compaction", …}
+{"id":"…","parent_id":"…|null","ts":"…","kind":"header|message|compaction|receipt", …}
 ```
 
 - `header` — the **frozen execution contract**: app version, provider, model,
@@ -14,6 +14,9 @@ One JSONL file per session at
   and replays explain every decision from this snapshot, never current state.
 - `message` — neutral `Message` + optional meta (model, stop_reason, usage).
 - `compaction` — `{summary, first_kept_entry_id, tokens_before}`.
+- `receipt` — one work unit's provider dispatches (`WorkReceipt`:
+  purpose, winning attempt, per-attempt reason/domain/settlement/usage).
+  Audit only — `derive_messages()` skips it (doc 27 Phase A).
 
 ## Invariants
 
@@ -35,8 +38,6 @@ one walk (`chain_to_root`). No special-case machinery per feature.
 
 ## Later
 
-- receipts as first-class entries (unified WorkReceipt stream) — specced in
-  `27-vakyartha-adoption.md` Phase A
 - subagent sessions linked via `parent_session_id` + spawning tool-call id
 
 ## Diff note — ledger robustness (this change)

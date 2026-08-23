@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 use vak_llm::{
     AssistantMessage, ChatRequest, ContentBlock, LlmError, Message, Provider, Role, StopReason,
     StreamEvent, Usage,
+    work::{AttemptReason, FailureDomain, Settlement, StepLedger, WorkPurpose},
 };
 use vak_permission::{Decision, Mode, PermissionEngine};
 use vak_session::{MessageMeta, MessageRecord, SessionLog};
@@ -138,6 +139,12 @@ pub struct AgentConfig {
     pub run_retry_attempts: u32,
     /// Exponential backoff base for run-level endurance, capped at 30s.
     pub run_retry_base_backoff_ms: u64,
+    /// Hard cap on provider dispatches for one unit of work (doc 27 Phase
+    /// A). Exhaustion fails closed before another paid call goes out. The
+    /// single-ladder default codifies today's worst case:
+    /// `(max_retries + 1) * (run_retry_attempts + 1)`; the frozen ladder
+    /// (Phase B) tightens this to `ladder + repair allowance`.
+    pub dispatch_ceiling: u32,
     /// Long-horizon context policy (window, reserve, compaction trigger).
     pub context_policy: context::ContextPolicy,
     /// Built-in premature-completion gate. None disables entirely.
@@ -163,6 +170,7 @@ impl AgentConfig {
             circuit_breaker: None,
             run_retry_attempts: 6,
             run_retry_base_backoff_ms: 2_000,
+            dispatch_ceiling: (3 + 1) * (6 + 1),
             context_policy: Default::default(),
             stop_policy: Some(StopPolicy::default()),
         }
@@ -391,15 +399,37 @@ impl Agent {
 
                     // Network call runs with no session lock held.
                     let req = context::compaction_request(&model, &transcript);
+                    let mut ledger = StepLedger::new(
+                        WorkPurpose::Summarize,
+                        &model,
+                        self.config.dispatch_ceiling,
+                    );
                     let summary_msg = match self
-                        .complete_with_reliability(&req, &cancel, &events, false)
+                        .complete_with_reliability(&req, &cancel, &events, false, &mut ledger)
                         .await
                     {
-                        Ok(LlmAbortOr::Message(m)) => m,
-                        Ok(LlmAbortOr::Aborted) => {
+                        Ok(m) => {
+                            let _ = self
+                                .session
+                                .lock()
+                                .await
+                                .append_receipt(ledger.take_receipt());
+                            m
+                        }
+                        Err(LlmError::Aborted { .. }) => {
+                            let _ = self
+                                .session
+                                .lock()
+                                .await
+                                .append_receipt(ledger.take_receipt());
                             return TurnOutcome::Aborted { partial: None };
                         }
                         Err(e) => {
+                            let _ = self
+                                .session
+                                .lock()
+                                .await
+                                .append_receipt(ledger.take_receipt());
                             return TurnOutcome::Failed {
                                 error: LlmError::Network(format!("compaction call failed: {e}")),
                             };
@@ -457,6 +487,14 @@ impl Agent {
                 CompactionNeed::None => {}
             }
 
+            // One model step = connect + stream + collect, wrapped with the
+            // full reliability machinery (watchdog, retries+backoff,
+            // circuit breaker, dispatch ceiling). Every dispatch is recorded
+            // into the work receipt, which lands in the ledger on every
+            // exit path. User aborts and partial-output aborts are never
+            // retried; they propagate for caller handling.
+            let mut ledger =
+                StepLedger::new(WorkPurpose::Execute, &model, self.config.dispatch_ceiling);
             let base_request = {
                 let session = self.session.lock().await;
                 ChatRequest {
@@ -470,30 +508,43 @@ impl Agent {
             };
             let request = base_request.clone();
 
-            // One model step = connect + stream + collect, wrapped with the
-            // full reliability machinery (watchdog, retries+backoff,
-            // circuit breaker). User aborts and partial-output aborts are
-            // never retried; they propagate for caller handling.
             let response = {
                 // Run-level endurance: a sustained fault window (rate-limit
                 // burst, slow/hung upstream, truncating proxy) can outlast
                 // one step's retry budget. The ledger has not been touched,
-                // so re-attempting the whole turn is exact. Aborts and
-                // permanent errors still fail/abort immediately.
+                // so re-attempting the whole turn is exact. Aborts, permanent
+                // errors, and ceiling exhaustion still fail/abort immediately.
                 let mut run_attempt: u32 = 0;
                 let mut backoff_ms = self.config.run_retry_base_backoff_ms.max(1);
                 loop {
                     match self
-                        .complete_with_reliability(&request, &cancel, &events, true)
+                        .complete_with_reliability(&request, &cancel, &events, true, &mut ledger)
                         .await
                     {
-                        Ok(LlmAbortOr::Message(r)) => break r,
-                        Ok(LlmAbortOr::Aborted) => unreachable!("helper maps aborts to Err"),
+                        Ok(r) => break r,
                         Err(LlmError::Aborted { partial }) => {
+                            let _ = self
+                                .session
+                                .lock()
+                                .await
+                                .append_receipt(ledger.take_receipt());
                             if let Some(p) = &partial {
                                 self.append_assistant(p).await;
                             }
                             return TurnOutcome::Aborted { partial };
+                        }
+                        Err(e) if ledger.budget.remaining() == 0 => {
+                            let _ = self
+                                .session
+                                .lock()
+                                .await
+                                .append_receipt(ledger.take_receipt());
+                            return TurnOutcome::Failed {
+                                error: LlmError::Network(format!(
+                                    "dispatch ceiling of {} exhausted for this step; last error: {e}",
+                                    self.config.dispatch_ceiling
+                                )),
+                            };
                         }
                         Err(e)
                             if run_attempt < self.config.run_retry_attempts
@@ -531,14 +582,30 @@ impl Agent {
                                 backoff_ms = backoff_ms.saturating_mul(2);
                                 continue;
                             }
+                            let _ = self
+                                .session
+                                .lock()
+                                .await
+                                .append_receipt(ledger.take_receipt());
                             return TurnOutcome::Aborted { partial: None };
                         }
-                        Err(e) => return TurnOutcome::Failed { error: e },
+                        Err(e) => {
+                            let _ = self
+                                .session
+                                .lock()
+                                .await
+                                .append_receipt(ledger.take_receipt());
+                            return TurnOutcome::Failed { error: e };
+                        }
                     }
                 }
             };
 
             let usage = response.usage.clone();
+            {
+                let mut session = self.session.lock().await;
+                let _ = session.append_receipt(ledger.take_receipt());
+            }
             self.append_assistant(&response).await;
             let _ = events.send(AgentEvent::TurnEnd { usage }).await;
 
@@ -710,7 +777,8 @@ impl Agent {
     }
 
     /// One provider completion with watchdog, retry/backoff (honoring
-    /// Retry-After), and circuit breaker. When `forward` is true, stream
+    /// Retry-After), circuit breaker, dispatch-ceiling enforcement, and
+    /// per-attempt receipt recording. When `forward` is true, stream
     /// deltas are forwarded to `events`; otherwise they are drained.
     async fn complete_with_reliability(
         &self,
@@ -718,7 +786,8 @@ impl Agent {
         cancel: &CancellationToken,
         events: &mpsc::Sender<AgentEvent>,
         forward: bool,
-    ) -> Result<LlmAbortOr, LlmError> {
+        ledger: &mut StepLedger,
+    ) -> Result<AssistantMessage, LlmError> {
         if let Some(breaker) = &self.config.circuit_breaker {
             breaker
                 .check()
@@ -729,6 +798,19 @@ impl Agent {
             if cancel.is_cancelled() {
                 return Err(LlmError::Aborted { partial: None });
             }
+            // Ceiling check happens before every paid dispatch; exhaustion
+            // surfaces as a plain error that the endurance loop treats as
+            // fail-closed (never transient).
+            if let Err(c) = ledger.budget.consume() {
+                return Err(LlmError::Network(c.to_string()));
+            }
+            let reason = if attempt == 0 {
+                AttemptReason::Initial
+            } else {
+                AttemptReason::Retry
+            };
+            let started = std::time::Instant::now();
+
             let step = async {
                 let mut stream = self
                     .provider
@@ -742,58 +824,91 @@ impl Agent {
                 stream.result().await
             };
 
+            let mut domain_override: Option<FailureDomain> = None;
             let outcome = match self.config.request_timeout {
                 Some(t) => match tokio::time::timeout(t, step).await {
                     Ok(r) => r,
-                    Err(_) => Err(LlmError::Network(format!(
-                        "model step exceeded deadline of {}s",
-                        t.as_secs()
-                    ))),
+                    Err(_) => {
+                        domain_override = Some(FailureDomain::Deadline);
+                        Err(LlmError::Network(format!(
+                            "model step exceeded deadline of {}s",
+                            t.as_secs()
+                        )))
+                    }
                 },
                 None => step.await,
             };
+            let elapsed_ms = started.elapsed().as_millis() as u64;
 
             match outcome {
                 Ok(r) => {
                     if let Some(breaker) = &self.config.circuit_breaker {
                         breaker.record_success();
                     }
-                    return Ok(LlmAbortOr::Message(r));
-                }
-                Err(e @ LlmError::Aborted { .. }) => return Err(e),
-                Err(e) if e.is_retryable() && attempt < self.config.max_retries => {
-                    if trips_breaker(&e)
-                        && let Some(breaker) = &self.config.circuit_breaker
-                    {
-                        breaker.record_failure();
-                    }
-                    attempt += 1;
-                    let delay = backoff_delay(
-                        attempt,
-                        e.retry_after_secs(),
-                        self.config.retry_base_backoff_ms,
+                    ledger.receipt.record(
+                        reason,
+                        FailureDomain::Unknown,
+                        Settlement::Ok,
+                        elapsed_ms,
+                        Some(r.usage.clone()),
+                        None,
                     );
-                    let _ = events
-                        .send(AgentEvent::RetryScheduled {
-                            attempt,
-                            delay_ms: delay.as_millis() as u64,
-                            reason: e.to_string(),
-                        })
-                        .await;
-                    tokio::select! {
-                        _ = cancel.cancelled() => {
-                            return Err(LlmError::Aborted { partial: None });
-                        }
-                        _ = tokio::time::sleep(delay) => {}
-                    }
+                    return Ok(r);
+                }
+                Err(e @ LlmError::Aborted { .. }) => {
+                    ledger.receipt.record(
+                        reason,
+                        FailureDomain::Unknown,
+                        Settlement::Cancelled,
+                        elapsed_ms,
+                        None,
+                        None,
+                    );
+                    return Err(e);
                 }
                 Err(e) => {
-                    if trips_breaker(&e)
-                        && let Some(breaker) = &self.config.circuit_breaker
-                    {
-                        breaker.record_failure();
+                    let (domain, settlement) = vak_llm::work::classify_error(&e);
+                    ledger.receipt.record(
+                        reason,
+                        domain_override.unwrap_or(domain),
+                        settlement,
+                        elapsed_ms,
+                        None,
+                        Some(e.to_string()),
+                    );
+                    if e.is_retryable() && attempt < self.config.max_retries {
+                        if trips_breaker(&e)
+                            && let Some(breaker) = &self.config.circuit_breaker
+                        {
+                            breaker.record_failure();
+                        }
+                        attempt += 1;
+                        let delay = backoff_delay(
+                            attempt,
+                            e.retry_after_secs(),
+                            self.config.retry_base_backoff_ms,
+                        );
+                        let _ = events
+                            .send(AgentEvent::RetryScheduled {
+                                attempt,
+                                delay_ms: delay.as_millis() as u64,
+                                reason: e.to_string(),
+                            })
+                            .await;
+                        tokio::select! {
+                            _ = cancel.cancelled() => {
+                                return Err(LlmError::Aborted { partial: None });
+                            }
+                            _ = tokio::time::sleep(delay) => {}
+                        }
+                    } else {
+                        if trips_breaker(&e)
+                            && let Some(breaker) = &self.config.circuit_breaker
+                        {
+                            breaker.record_failure();
+                        }
+                        return Err(e);
                     }
-                    return Err(e);
                 }
             }
         }
@@ -1119,12 +1234,6 @@ fn extract_tool_calls(response: &AssistantMessage) -> Vec<PendingToolCall> {
             _ => None,
         })
         .collect()
-}
-
-enum LlmAbortOr {
-    Message(vak_llm::AssistantMessage),
-    #[allow(dead_code)]
-    Aborted,
 }
 
 fn backoff_delay(attempt: u32, retry_after_secs: Option<u64>, base_ms: u64) -> std::time::Duration {

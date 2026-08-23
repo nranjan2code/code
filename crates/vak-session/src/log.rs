@@ -120,6 +120,24 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::Message(record)))
     }
 
+    /// Appends a work receipt (audit entry; never model-visible).
+    pub fn append_receipt(&mut self, receipt: vak_llm::WorkReceipt) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(parent, EntryPayload::Receipt(receipt)))
+    }
+
+    /// Receipt entries along the active path, root→leaf — forensic view
+    /// for surfaces that render dispatch history.
+    pub fn receipts(&self) -> Vec<&vak_llm::WorkReceipt> {
+        self.chain_to_root()
+            .into_iter()
+            .filter_map(|e| match &e.payload {
+                EntryPayload::Receipt(r) => Some(r),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn branch_at(&mut self, entry_id: &str) -> Result<(), SessionError> {
         if !self.by_id.contains_key(entry_id) {
             return Err(SessionError::Corrupt {
@@ -223,7 +241,8 @@ impl SessionLog {
                     ));
                     out.insert(0, (entry.id.clone(), summary_msg));
                 }
-                EntryPayload::Header(_) => {}
+                // Receipts are audit, not model-visible input.
+                EntryPayload::Header(_) | EntryPayload::Receipt(_) => {}
             }
         }
         out

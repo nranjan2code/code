@@ -97,11 +97,23 @@ pub struct WorkReceipt {    // success path
 pub struct WorkFailureReceipt { request, attempts, typed_reason }
 ```
 
-**Dispatch ceiling**: shared per-step budget = `ladder.len() + repair_allowance`
-(default 4). Exhaustion is a typed `attempt-limit` error; nothing below may
-dispatch past it. The breaker/endurance machinery consumes
-`FailureDomain`s instead of string-matching errors (blind domains trip the
-breaker as today; informed transience keeps feeding endurance only).
+**Dispatch ceiling**: shared per-step budget enforced before every paid
+dispatch; exhaustion is typed and fail-closed (never retried through,
+never breaker-tripping). Single-ladder default codifies today's exact
+worst case, `(max_retries + 1) * (run_retry_attempts + 1)` (=28 at
+defaults), so Phase A changes zero resilience behavior while making the
+cap explicit and configurable; the frozen ladder (Phase B) tightens the
+formula to `ladder.len() + repair_allowance` once multi-candidate routes
+exist. The breaker/endurance machinery consumes `FailureDomain`s instead
+of string-matching errors (blind domains trip the breaker as today;
+informed transience keeps feeding endurance only).
+
+**Attempt vocabulary**: `initial | retry | endurance-retry` ship now;
+`route-fallback | schema-repair | last-resort` arrive with Phase B's
+ladder walk. Attempts are one row per actual provider dispatch — never
+scheduling bookkeeping. Settlements follow the epistemics rule: pre-
+dispatch rejections are `failed`; transport/mid-stream failures that may
+have consumed compute are `unknown`; user aborts are `cancelled`.
 
 **Ledger** (invariant 1): new session entry kind `"receipt"` written once
 per completed step (success or failure). `derive_messages()` ignores

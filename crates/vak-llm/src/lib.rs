@@ -15,12 +15,17 @@ pub mod registry;
 pub mod sse;
 pub mod stream;
 pub mod types;
+pub mod work;
 
 pub use error::LlmError;
 pub use registry::{ProviderAuth, ProviderRegistry};
 pub use stream::{EventSink, EventStream, StreamEvent};
 pub use types::{
     AssistantMessage, ChatRequest, ContentBlock, Message, Role, StopReason, ToolDefinition, Usage,
+};
+pub use work::{
+    AttemptReason, DispatchAttempt, DispatchBudget, DispatchCeiling, FailureDomain, Settlement,
+    StepLedger, WorkPurpose, WorkReceipt,
 };
 
 use tokio_util::sync::CancellationToken;
