@@ -445,6 +445,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: #4
 .settings-search input { width: 100%; height: 36px; outline: 0; border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px 6px 34px; color: var(--text); background: var(--surface-raised); }
 .settings-search input:focus { border-color: #585850; }
 .settings-nav-label { padding: 0 12px 6px; color: var(--faint); font-size: 10.5px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase; }
+.settings-nav-label.archived-nav-label { margin-top: 20px; }
 .settings-nav nav { display: flex; flex-direction: column; gap: 2px; }
 .settings-nav nav button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 7px 11px; border-radius: 8px; color: var(--muted); text-align: left; }
 .settings-nav nav button:hover { color: var(--text-soft); background: var(--surface-hover); }

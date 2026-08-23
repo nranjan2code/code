@@ -130,7 +130,11 @@ export default function Settings() {
   onMount(() => void load());
   const visiblePages = createMemo(() => {
     const needle = query().trim().toLowerCase();
-    return needle ? pages.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(needle)) : pages;
+    return (needle ? pages.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(needle)) : pages).filter((item) => item.id !== "archived");
+  });
+  const showArchivedPage = createMemo(() => {
+    const needle = query().trim().toLowerCase();
+    return !needle || "archived tasks restore delete history".includes(needle);
   });
   const archivedSessions = createMemo(() => sessions().filter((session) => session.archived));
 
@@ -266,6 +270,12 @@ export default function Settings() {
             {(item) => <button classList={{ active: page() === item.id }} onClick={() => { setPage(item.id); setQuery(""); }}><Icon name={item.icon} /><span>{item.label}</span></button>}
           </For>
         </nav>
+        <Show when={showArchivedPage()}>
+          <div class="settings-nav-label archived-nav-label">Archived</div>
+          <nav>
+            <button classList={{ active: page() === "archived" }} onClick={() => { setPage("archived"); setQuery(""); }}><Icon name="archive" /><span>Archived tasks</span></button>
+          </nav>
+        </Show>
         <div class="settings-nav-foot"><div class="settings-app-mark"><img src="/vakcoder-icon.png" alt="" /></div><div><strong>vakcoder</strong><span>Version 0.2.0</span></div></div>
       </aside>
 
