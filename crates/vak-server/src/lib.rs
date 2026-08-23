@@ -713,6 +713,21 @@ fn summarize_jsonl(
 #[derive(serde::Deserialize)]
 struct RunBody {
     prompt: String,
+    /// Optional base64 images appended to the prompt as vision content
+    /// (docs/design/22-gateway.md media passthrough).
+    #[serde(default)]
+    attachments: Vec<RunAttachment>,
+}
+
+#[derive(serde::Deserialize)]
+struct RunAttachment {
+    #[serde(default = "default_image_mime")]
+    mime: String,
+    data: String,
+}
+
+fn default_image_mime() -> String {
+    "image/png".into()
 }
 
 pub(crate) fn mpsc_to_broadcast(tx: broadcast::Sender<AgentEvent>) -> mpsc::Sender<AgentEvent> {
@@ -769,18 +784,51 @@ async fn run_prompt(
         .clone();
     let core = state.core.clone();
 
+    let prompt_message = if body.attachments.is_empty() {
+        None
+    } else {
+        let mut blocks = vec![vak_llm::ContentBlock::text(body.prompt.clone())];
+        for a in &body.attachments {
+            if a.data.trim().is_empty() {
+                continue;
+            }
+            blocks.push(vak_llm::ContentBlock::image_base64(
+                a.mime.clone(),
+                a.data.trim().to_string(),
+            ));
+        }
+        Some(vak_llm::Message {
+            role: vak_llm::Role::User,
+            content: blocks,
+        })
+    };
     tokio::spawn(async move {
-        let outcome = core
-            .run_turn_with(
-                taken,
-                &body.prompt,
-                cancel,
-                Some(approver),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await;
+        let outcome = match prompt_message {
+            Some(msg) => {
+                core.run_turn_with_message(
+                    taken,
+                    msg,
+                    cancel,
+                    Some(approver),
+                    None,
+                    Some(steering.clone()),
+                    events,
+                )
+                .await
+            }
+            None => {
+                core.run_turn_with(
+                    taken,
+                    &body.prompt,
+                    cancel,
+                    Some(approver),
+                    None,
+                    Some(steering.clone()),
+                    events,
+                )
+                .await
+            }
+        };
         // Reset the token so the next run on this session is not born
         // already-cancelled.
         *handle

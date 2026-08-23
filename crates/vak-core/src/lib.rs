@@ -716,10 +716,50 @@ impl Core {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub async fn run_turn_with_message(
+        &self,
+        session: SessionLog,
+        prompt: vak_llm::Message,
+        cancel: CancellationToken,
+        approver: Option<std::sync::Arc<dyn vak_agent::Approver>>,
+        permission: Option<std::sync::Arc<vak_permission::PermissionEngine>>,
+        steering: Option<std::sync::Arc<vak_agent::SteeringQueues>>,
+        events: tokio::sync::mpsc::Sender<AgentEvent>,
+    ) -> Result<(TurnOutcome, SessionLog), CoreError> {
+        self.run_turn_inner(
+            session, prompt, cancel, approver, permission, steering, events,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_turn_with(
         &self,
         session: SessionLog,
         prompt: &str,
+        cancel: CancellationToken,
+        approver: Option<std::sync::Arc<dyn vak_agent::Approver>>,
+        permission: Option<std::sync::Arc<vak_permission::PermissionEngine>>,
+        steering: Option<std::sync::Arc<vak_agent::SteeringQueues>>,
+        events: tokio::sync::mpsc::Sender<AgentEvent>,
+    ) -> Result<(TurnOutcome, SessionLog), CoreError> {
+        self.run_turn_inner(
+            session,
+            vak_llm::Message::user_text(prompt),
+            cancel,
+            approver,
+            permission,
+            steering,
+            events,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_turn_inner(
+        &self,
+        session: SessionLog,
+        prompt: vak_llm::Message,
         cancel: CancellationToken,
         approver: Option<std::sync::Arc<dyn vak_agent::Approver>>,
         permission: Option<std::sync::Arc<vak_permission::PermissionEngine>>,
@@ -893,7 +933,7 @@ impl Core {
                 &self.inner.cwd,
                 &h.session_id,
                 seq,
-                &format!("turn: {prompt}"),
+                &format!("turn: {}", prompt.text_content()),
             ) {
                 let _ = checkpoints::store(&self.sessions_home(), &cp);
             }
@@ -904,7 +944,7 @@ impl Core {
             None => std::sync::Arc::new(vak_agent::SteeringQueues::new()),
         };
         let mut agent = Agent::new(provider, session, cfg);
-        let outcome = agent.run(prompt, &steering, cancel, events).await;
+        let outcome = agent.run_message(prompt, &steering, cancel, events).await;
         let session = agent.into_session().await;
         Ok((outcome, session))
     }

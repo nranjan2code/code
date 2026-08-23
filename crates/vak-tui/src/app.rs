@@ -2626,6 +2626,9 @@ fn build_transcript_rows(
                         trunc_cells(content.replace('\n', " ").trim(), 130)
                     ));
                 }
+                vak_llm::ContentBlock::Image { source } => {
+                    rows.push(format!("     ▣ image ({})", source.media_type));
+                }
             }
         }
         rows.push(String::new());
@@ -2671,6 +2674,9 @@ async fn export_transcript(
                         "- {mark} result: {}\n",
                         content.replace('\n', " ")
                     ));
+                }
+                vak_llm::ContentBlock::Image { source } => {
+                    out.push_str(&format!("- image ({})\n", source.media_type));
                 }
             }
         }

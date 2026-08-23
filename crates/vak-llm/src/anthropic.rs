@@ -92,6 +92,11 @@ fn validate_message(m: &Message) -> Result<(), LlmError> {
                     "tool_use blocks must appear in assistant messages".into(),
                 ));
             }
+            (Role::Assistant, ContentBlock::Image { .. }) => {
+                return Err(LlmError::InvalidRequest(
+                    "image blocks must appear in user messages".into(),
+                ));
+            }
             _ => {}
         }
     }

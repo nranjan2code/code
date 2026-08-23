@@ -275,12 +275,26 @@ impl Agent {
         cancel: CancellationToken,
         events: mpsc::Sender<AgentEvent>,
     ) -> TurnOutcome {
+        self.run_message(Message::user_text(prompt), steering, cancel, events)
+            .await
+    }
+
+    /// Run with a prebuilt prompt `Message` — the seam for multimodal
+    /// (image) input; the ledger stores exactly what the model sees.
+    pub async fn run_message(
+        &mut self,
+        prompt: Message,
+        steering: &SteeringQueues,
+        cancel: CancellationToken,
+        events: mpsc::Sender<AgentEvent>,
+    ) -> TurnOutcome {
+        let prompt_owned = prompt.text_content();
         if let Err(e) = self
             .session
             .lock()
             .await
             .append_message(MessageRecord {
-                message: Message::user_text(prompt),
+                message: prompt,
                 meta: None,
             })
             .map_err(|e| LlmError::Network(format!("session write failed: {e}")))
@@ -289,7 +303,6 @@ impl Agent {
         }
 
         let mut turn = 0usize;
-        let prompt_owned = prompt.to_string();
         let mut bash_calls_this_run: u32 = 0;
         self.run_call_counts
             .lock()

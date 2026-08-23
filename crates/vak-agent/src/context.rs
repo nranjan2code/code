@@ -67,6 +67,8 @@ pub fn estimate_tokens(
                             .unwrap_or(0)
                 }
                 ContentBlock::ToolResult { content, .. } => content.len() as u64,
+                // Base64 payload size counts against the request budget.
+                ContentBlock::Image { source } => source.data.len() as u64,
             };
         }
     }

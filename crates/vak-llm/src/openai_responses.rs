@@ -76,6 +76,7 @@ fn append_input_item(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> 
         Role::User => {
             let mut text = String::new();
             let mut outputs: Vec<(String, String)> = Vec::new();
+            let mut images: Vec<&crate::types::ImageSource> = Vec::new();
             for b in &m.content {
                 match b {
                     ContentBlock::Text { text: t } => {
@@ -84,6 +85,7 @@ fn append_input_item(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> 
                         }
                         text.push_str(t);
                     }
+                    ContentBlock::Image { source } => images.push(source),
                     ContentBlock::ToolResult {
                         tool_use_id,
                         content,
@@ -104,10 +106,20 @@ fn append_input_item(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> 
                     "output": output,
                 }));
             }
-            if !text.is_empty() {
+            if !text.is_empty() || !images.is_empty() {
+                let mut content: Vec<Value> = Vec::new();
+                if !text.is_empty() {
+                    content.push(serde_json::json!({"type": "input_text", "text": text}));
+                }
+                for img in images {
+                    content.push(serde_json::json!({
+                        "type": "input_image",
+                        "image_url": format!("data:{};base64,{}", img.media_type, img.data),
+                    }));
+                }
                 out.push(serde_json::json!({
                     "role": "user",
-                    "content": [{"type": "input_text", "text": text}],
+                    "content": content,
                 }));
             }
         }
@@ -134,7 +146,9 @@ fn append_input_item(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> 
                                 .map_err(|e| LlmError::Parse(e.to_string()))?,
                         }));
                     }
-                    ContentBlock::Thinking { .. } | ContentBlock::ToolResult { .. } => {}
+                    ContentBlock::Thinking { .. }
+                    | ContentBlock::ToolResult { .. }
+                    | ContentBlock::Image { .. } => {}
                 }
             }
             if !text.is_empty() {

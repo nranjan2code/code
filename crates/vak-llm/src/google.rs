@@ -51,6 +51,7 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
             Role::User => {
                 let mut parts: Vec<Value> = Vec::new();
                 let mut text = String::new();
+                let mut images: Vec<&crate::types::ImageSource> = Vec::new();
                 for b in &m.content {
                     match b {
                         ContentBlock::Text { text: t } => {
@@ -59,6 +60,7 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
                             }
                             text.push_str(t);
                         }
+                        ContentBlock::Image { source } => images.push(source),
                         ContentBlock::ToolResult {
                             tool_use_id,
                             content,
@@ -85,6 +87,11 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
                 }
                 if !text.is_empty() {
                     parts.push(serde_json::json!({"text": text}));
+                }
+                for img in images {
+                    parts.push(serde_json::json!({
+                        "inline_data": {"mime_type": img.media_type, "data": img.data}
+                    }));
                 }
                 if !parts.is_empty() {
                     contents.push(serde_json::json!({"role": "user", "parts": parts}));
@@ -113,7 +120,9 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
                                 serde_json::json!({"functionCall": {"name": name, "args": input}}),
                             );
                         }
-                        ContentBlock::Thinking { .. } | ContentBlock::ToolResult { .. } => {}
+                        ContentBlock::Thinking { .. }
+                        | ContentBlock::ToolResult { .. }
+                        | ContentBlock::Image { .. } => {}
                     }
                 }
                 if !text.is_empty() {

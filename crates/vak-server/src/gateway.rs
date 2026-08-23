@@ -207,6 +207,43 @@ struct InboundBody {
     text: String,
     #[serde(default)]
     wait: bool,
+    /// Base64 images appended to the prompt as vision content.
+    #[serde(default)]
+    attachments: Vec<InboundAttachment>,
+}
+
+#[derive(serde::Deserialize)]
+struct InboundAttachment {
+    /// MIME type; defaults to image/png for Telegram-style senders.
+    #[serde(default = "default_image_mime")]
+    mime: String,
+    data: String,
+}
+
+fn default_image_mime() -> String {
+    "image/png".into()
+}
+
+/// Compose the prompt message: text plus any vision blocks. The ledger
+/// stores exactly what the model will see (invariant 1).
+fn compose_prompt(text: &str, attachments: &[InboundAttachment]) -> vak_llm::Message {
+    let mut blocks = Vec::new();
+    if !text.is_empty() {
+        blocks.push(vak_llm::ContentBlock::text(text));
+    }
+    for a in attachments {
+        if a.data.trim().is_empty() {
+            continue;
+        }
+        blocks.push(vak_llm::ContentBlock::image_base64(
+            a.mime.clone(),
+            a.data.trim().to_string(),
+        ));
+    }
+    vak_llm::Message {
+        role: vak_llm::Role::User,
+        content: blocks,
+    }
 }
 
 // ---- Approval forwarding (G2) ----------------------------------------------
@@ -291,7 +328,11 @@ async fn gateway_inbound(
             .into_response();
     }
     let text = body.text.trim().to_string();
-    if body.surface.trim().is_empty() || body.chat.trim().is_empty() || text.is_empty() {
+    let has_image = body.attachments.iter().any(|a| !a.data.trim().is_empty());
+    if body.surface.trim().is_empty()
+        || body.chat.trim().is_empty()
+        || (text.is_empty() && !has_image)
+    {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "surface, chat and text are required"})),
@@ -365,7 +406,8 @@ async fn gateway_inbound(
 
     let (reply_tx, reply_rx) = oneshot::channel::<String>();
     let want_reply = body.wait;
-    start_turn_chain(&state, handle, text, want_reply.then_some(reply_tx));
+    let prompt = compose_prompt(&text, &body.attachments);
+    start_turn_chain(&state, handle, prompt, want_reply.then_some(reply_tx));
 
     if !want_reply {
         return (
@@ -487,7 +529,7 @@ async fn resolve_session(state: &AppState, key: &str) -> Result<Arc<SessionHandl
 fn start_turn_chain(
     state: &AppState,
     handle: Arc<SessionHandle>,
-    prompt: String,
+    prompt: vak_llm::Message,
     reply: Option<oneshot::Sender<String>>,
 ) {
     let core = state.core.clone();
@@ -499,7 +541,7 @@ async fn execute_turn_chain(
     core: Core,
     gw: Arc<GatewayState>,
     handle: Arc<SessionHandle>,
-    mut prompt: String,
+    mut prompt: vak_llm::Message,
     mut reply: Option<oneshot::Sender<String>>,
 ) {
     loop {
@@ -510,8 +552,9 @@ async fn execute_turn_chain(
             .take();
         let Some(taken) = taken else {
             // Lost the race with another writer mid-chain; hand our prompt
-            // to the winner as steering instead of dropping it.
-            handle.steering.push_steering(prompt);
+            // to the winner as steering instead of dropping it (text-only:
+            // attachments were already persisted on the first attempt).
+            handle.steering.push_steering(prompt.text_content());
             return;
         };
         let session_id = taken
@@ -539,9 +582,9 @@ async fn execute_turn_chain(
             .clone();
 
         let outcome = core
-            .run_turn_with(
+            .run_turn_with_message(
                 taken,
-                &prompt,
+                prompt.clone(),
                 cancel,
                 Some(approver),
                 None,
@@ -582,7 +625,7 @@ async fn execute_turn_chain(
         if queued.is_empty() {
             return;
         }
-        prompt = queued.join("\n\n");
+        prompt = vak_llm::Message::user_text(queued.join("\n\n"));
     }
 }
 

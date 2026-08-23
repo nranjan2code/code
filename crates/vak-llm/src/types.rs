@@ -30,11 +30,34 @@ pub enum ContentBlock {
         #[serde(default)]
         is_error: bool,
     },
+    /// Base64 image in Anthropic's native wire shape — the serde
+    /// passthrough in anthropic.rs sends it verbatim. User messages only.
+    Image {
+        source: ImageSource,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageSource {
+    pub r#type: String,
+    pub media_type: String,
+    pub data: String,
 }
 
 impl ContentBlock {
     pub fn text(s: impl Into<String>) -> Self {
         ContentBlock::Text { text: s.into() }
+    }
+
+    /// Base64-encoded image block (vision input).
+    pub fn image_base64(media_type: impl Into<String>, data: impl Into<String>) -> Self {
+        ContentBlock::Image {
+            source: ImageSource {
+                r#type: "base64".into(),
+                media_type: media_type.into(),
+                data: data.into(),
+            },
+        }
     }
 
     pub fn tool_result(tool_use_id: impl Into<String>, content: impl Into<String>) -> Self {

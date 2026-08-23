@@ -73,19 +73,36 @@ async fn spawn_mock_telegram() -> (String, Arc<Mutex<Vec<serde_json::Value>>>, A
                 let mut left = ul.lock().unwrap();
                 if *left > 0 {
                     *left -= 1;
+                    // First scripted update is a PHOTO message.
                     return axum::Json(serde_json::json!({
                         "ok": true,
                         "result": [{
                             "update_id": 777,
                             "message": {
                                 "chat": {"id": 4242},
-                                "text": "hello bot"
+                                "photo": [
+                                    {"file_id": "small", "width": 90, "height": 90},
+                                    {"file_id": "large", "width": 640, "height": 640}
+                                ]
                             }
                         }]
                     }));
                 }
                 axum::Json(serde_json::json!({ "ok": true, "result": [] }))
             }),
+        )
+        .route(
+            "/botbottok/getFile",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "ok": true,
+                    "result": {"file_path": "photos/img.jpg"}
+                }))
+            }),
+        )
+        .route(
+            "/file/botbottok/photos/img.jpg",
+            axum::routing::get(|| async { [0x89u8, b'P', b'N', b'G'].to_vec() }),
         )
         .route(
             "/botbottok/sendMessage",

@@ -73,10 +73,17 @@ fn append_message(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> {
     match m.role {
         Role::User => {
             let mut text_parts: Vec<&str> = Vec::new();
+            let mut image_parts: Vec<String> = Vec::new();
             let mut tool_results: Vec<&ContentBlock> = Vec::new();
             for b in &m.content {
                 match b {
                     ContentBlock::Text { text } => text_parts.push(text),
+                    ContentBlock::Image { source } => {
+                        // Data URLs are the transport-agnostic form for the
+                        // chat-completions API.
+                        image_parts
+                            .push(format!("data:{};base64,{}", source.media_type, source.data));
+                    }
                     ContentBlock::ToolResult { .. } => tool_results.push(b),
                     ContentBlock::ToolUse { .. } => {
                         return Err(LlmError::InvalidRequest(
@@ -101,10 +108,25 @@ fn append_message(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> {
                     "content": content,
                 }));
             }
-            if !text_parts.is_empty() {
+            if !image_parts.is_empty() || !text_parts.is_empty() {
+                let content = if image_parts.is_empty() {
+                    serde_json::json!(text_parts.join("\n"))
+                } else {
+                    let mut parts: Vec<Value> = text_parts
+                        .iter()
+                        .map(|t| serde_json::json!({"type": "text", "text": t}))
+                        .collect();
+                    for url in &image_parts {
+                        parts.push(serde_json::json!({
+                            "type": "image_url",
+                            "image_url": {"url": url}
+                        }));
+                    }
+                    serde_json::json!(parts)
+                };
                 out.push(serde_json::json!({
                     "role": "user",
-                    "content": text_parts.join("\n"),
+                    "content": content,
                 }));
             }
         }
@@ -130,7 +152,9 @@ fn append_message(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> {
                             },
                         }));
                     }
-                    ContentBlock::Thinking { .. } | ContentBlock::ToolResult { .. } => {}
+                    ContentBlock::Thinking { .. }
+                    | ContentBlock::ToolResult { .. }
+                    | ContentBlock::Image { .. } => {}
                 }
             }
             let mut msg = serde_json::json!({"role": "assistant"});

@@ -84,8 +84,8 @@ pub fn parse_blocks(raw: &str) -> Vec<NoteBlock> {
     let mut body = String::new();
 
     let flush = |header: &mut Option<(DateTime<Utc>, String, String, String)>,
-                     body: &mut String,
-                     out: &mut Vec<NoteBlock>| {
+                 body: &mut String,
+                 out: &mut Vec<NoteBlock>| {
         if let Some((ts, kind, tag, sid)) = header.take() {
             let text = body.trim().to_string();
             if !text.is_empty() {

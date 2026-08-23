@@ -22,6 +22,8 @@ struct TelegramUpdate {
     update_id: i64,
     chat_id: i64,
     text: String,
+    /// Largest-photo file id when the message carries an image.
+    photo_file_id: Option<String>,
 }
 
 fn http() -> reqwest::Client {
@@ -43,10 +45,19 @@ impl TelegramBridge {
         let updates = self.get_updates(offset).await?;
         let mut next = offset;
         for u in updates {
-            if u.text.trim().is_empty() {
+            if u.text.trim().is_empty() && u.photo_file_id.is_none() {
                 continue;
             }
-            let reply = self.process(u.chat_id, &u.text).await;
+            let mut attachments = Vec::new();
+            if let Some(file_id) = &u.photo_file_id {
+                match self.fetch_photo_base64(file_id).await {
+                    Ok((mime, data)) => attachments.push(serde_json::json!({
+                        "mime": mime, "data": data
+                    })),
+                    Err(e) => eprintln!("[telegram] photo download failed: {e}"),
+                }
+            }
+            let reply = self.process(u.chat_id, &u.text, &attachments).await;
             // Deliver whatever we got — an error notice beats silence, but a
             // failed send must not lose our offset progress either way.
             if let Err(e) = self.send_message(u.chat_id, &reply).await {
@@ -58,7 +69,8 @@ impl TelegramBridge {
     }
 
     /// One message through the gateway contract; wait for the final text.
-    async fn process(&self, chat_id: i64, text: &str) -> String {
+    /// `attachments` are base64 image payloads posted alongside the text.
+    async fn process(&self, chat_id: i64, text: &str, attachments: &[serde_json::Value]) -> String {
         let res = http()
             .post(format!("{}/gateway/inbound", self.gateway_url))
             .bearer_auth(&self.gateway_token)
@@ -68,6 +80,7 @@ impl TelegramBridge {
                 "text": text,
                 "wait": true,
                 "sender": "telegram",
+                "attachments": attachments,
             }))
             .send()
             .await;
@@ -114,23 +127,30 @@ impl TelegramBridge {
                 let Some(update_id) = item["update_id"].as_i64() else {
                     continue;
                 };
-                // Only plain text messages are routed in v1; edits, callbacks
-                // and media advance the offset so they are never replayed.
+                // Text and photo messages are routed; edits, callbacks and
+                // other media advance the offset so they are never replayed.
                 let msg = &item["message"];
                 let chat_id = msg["chat"]["id"].as_i64();
                 let text = msg["text"].as_str().map(String::from);
-                if let (Some(chat_id), Some(text)) = (chat_id, text) {
-                    out.push(TelegramUpdate {
+                let photo_file_id = msg["photo"]
+                    .as_array()
+                    .and_then(|sizes| sizes.last())
+                    .and_then(|largest| largest["file_id"].as_str())
+                    .map(String::from);
+                let routable = chat_id.is_some() && (text.is_some() || photo_file_id.is_some());
+                match (chat_id, routable) {
+                    (Some(chat_id), true) => out.push(TelegramUpdate {
                         update_id,
                         chat_id,
-                        text,
-                    });
-                } else {
-                    out.push(TelegramUpdate {
+                        text: text.unwrap_or_default(),
+                        photo_file_id,
+                    }),
+                    _ => out.push(TelegramUpdate {
                         update_id,
                         chat_id: 0,
                         text: String::new(),
-                    });
+                        photo_file_id: None,
+                    }),
                 }
             }
         }
@@ -154,6 +174,60 @@ impl TelegramBridge {
             }
         }
         Ok(())
+    }
+
+    /// getFile → two-step download of the largest photo variant, returned
+    /// as (mime, base64). Telegram serves files at
+    /// `{api_base}/file/bot{token}/{path}` with a 1 MiB bot-API cap — well
+    /// inside vision budgets after downscale on the sender side.
+    async fn fetch_photo_base64(&self, file_id: &str) -> Result<(String, String), String> {
+        #[derive(serde::Deserialize)]
+        struct FileResp {
+            ok: bool,
+            result: FileMeta,
+        }
+        #[derive(serde::Deserialize)]
+        struct FileMeta {
+            file_path: Option<String>,
+        }
+        let meta: FileResp = http()
+            .get(format!("{}/bot{}/getFile", self.api_base, self.bot_token))
+            .query(&[("file_id", file_id)])
+            .send()
+            .await
+            .map_err(|e| format!("getFile: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("getFile body: {e}"))?;
+        if !meta.ok {
+            return Err("getFile not ok".into());
+        }
+        let path = meta.result.file_path.ok_or("getFile missing file_path")?;
+        let mime = if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+            "image/jpeg"
+        } else if path.ends_with(".webp") {
+            "image/webp"
+        } else {
+            "image/png"
+        };
+        let bytes = http()
+            .get(format!(
+                "{}/file/bot{}/{}",
+                self.api_base, self.bot_token, path
+            ))
+            .send()
+            .await
+            .map_err(|e| format!("download: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("download status: {e}"))?
+            .bytes()
+            .await
+            .map_err(|e| format!("download body: {e}"))?;
+        use base64::Engine as _;
+        Ok((
+            mime.to_string(),
+            base64::engine::general_purpose::STANDARD.encode(bytes),
+        ))
     }
 
     /// Run until the process is killed. Transient poll/send failures back
