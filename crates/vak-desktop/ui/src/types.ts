@@ -187,4 +187,5 @@ export interface TaskDef {
   last_session_id?: string | null;
   last_summary?: string | null;
   last_wt?: { path: string; branch: string } | null;
+  deliver_to?: string | null;
 }

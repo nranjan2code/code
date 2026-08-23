@@ -23,8 +23,13 @@
 //! - `PUT  /config/key` {provider, key}   → store a provider credential (0600)
 //! - `DELETE /config/key` {provider}      → revoke a stored credential
 //! - `GET  /providers`                    → provider picker data (no secrets)
-//! - `GET  /providers/:name/models`       → models the stored key can reach
-//! - `GET  /skills`                       → discovered skills (name + description)
+//! - `GET  /providers/:name/models`   → models the stored key can reach
+//! - `POST /gateway/inbound`          → surface message routed to its bound session (22-gateway)
+//! - `GET  /gateway/status`           → gateway enabled flag + binding table
+//! - `DELETE /gateway/bindings/:key`  → unbind a surface from its session
+
+mod gateway;
+pub mod telegram;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -45,26 +50,26 @@ use vak_core::Core;
 use vak_llm::Provider;
 use vak_session::SessionLog;
 
-struct SessionHandle {
+pub(crate) struct SessionHandle {
     /// Workspace this session's tools/diffs operate in (main cwd, or a
     /// best-of-N worktree).
-    cwd: PathBuf,
-    session: Arc<Mutex<Option<SessionLog>>>,
-    steering: Arc<SteeringQueues>,
+    pub(crate) cwd: PathBuf,
+    pub(crate) session: Arc<Mutex<Option<SessionLog>>>,
+    pub(crate) steering: Arc<SteeringQueues>,
     /// Cancel for the CURRENT run only; replaced with a fresh token when a
     /// run ends so one `/cancel` doesn't poison every later run.
-    cancel: Arc<std::sync::Mutex<CancellationToken>>,
-    events_tx: broadcast::Sender<AgentEvent>,
+    pub(crate) cancel: Arc<std::sync::Mutex<CancellationToken>>,
+    pub(crate) events_tx: broadcast::Sender<AgentEvent>,
     /// Pending approval gates scoped to THIS session — a client holding
     /// session A can never resolve session B's approvals.
-    pending: Arc<Mutex<HashMap<String, ApprovalRequest>>>,
+    pub(crate) pending: Arc<Mutex<HashMap<String, ApprovalRequest>>>,
     /// Notified when an SSE consumer attaches, so runs don't start (and
     /// finish) before anyone is listening.
-    subscribed: Arc<tokio::sync::Notify>,
+    pub(crate) subscribed: Arc<tokio::sync::Notify>,
     /// Side-chat stream + cancel: branched turns that read the session
     /// context but never land on the main chain.
-    side_events_tx: broadcast::Sender<AgentEvent>,
-    side_cancel: Arc<std::sync::Mutex<CancellationToken>>,
+    pub(crate) side_events_tx: broadcast::Sender<AgentEvent>,
+    pub(crate) side_cancel: Arc<std::sync::Mutex<CancellationToken>>,
 }
 
 #[derive(Clone)]
@@ -77,6 +82,8 @@ pub struct AppState {
     tasks: Arc<Mutex<HashMap<String, TaskDef>>>,
     /// Managed dev servers (preview pane), keyed by session::name.
     procs: Arc<Mutex<HashMap<String, ManagedProc>>>,
+    /// Gateway surface bindings + enable gate (docs/design/22-gateway.md).
+    pub(crate) gateway: Arc<gateway::GatewayState>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -94,6 +101,10 @@ pub struct TaskDef {
     pub last_summary: Option<String>,
     /// Latest run's worktree, kept for diff review until replaced.
     pub last_wt: Option<WtMeta>,
+    /// Gateway routing target ("surface:chat") that receives the run
+    /// summary when it finishes. None keeps delivery in-server only.
+    #[serde(default)]
+    pub deliver_to: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -115,12 +126,22 @@ pub struct BestRunMeta {
 
 impl AppState {
     pub fn new(core: Core) -> Self {
+        let gateway = Arc::new(gateway::GatewayState::load(&core, false));
         AppState {
             core,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             best_runs: Arc::new(Mutex::new(HashMap::new())),
             tasks: Arc::new(Mutex::new(HashMap::new())),
             procs: Arc::new(Mutex::new(HashMap::new())),
+            gateway,
+        }
+    }
+
+    /// Force-enable the gateway (`serve --gateway`) before the state is
+    /// shared; the config gate alone governs every other entry point.
+    pub fn enable_gateway(&mut self) {
+        if let Some(gw) = Arc::get_mut(&mut self.gateway) {
+            gw.set_enabled(true);
         }
     }
 
@@ -189,6 +210,16 @@ pub fn router(core: Core) -> Router {
     router_with_state(AppState::new(core))
 }
 
+/// Unauthenticated router with the gateway force-enabled and no background
+/// scheduler. For embedders that run their own supervision loop and need
+/// clean teardown: dropping this router releases every session lock,
+/// whereas `secured_router`'s scheduler pins handles until process exit.
+pub fn gateway_router(core: Core) -> Router {
+    let mut state = AppState::new(core);
+    state.enable_gateway();
+    router_with_state(state)
+}
+
 fn router_with_state(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -238,6 +269,7 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/providers", get(list_providers))
         .route("/providers/{name}/models", get(discover_models))
+        .merge(gateway::routes())
         .with_state(state)
 }
 
@@ -245,6 +277,11 @@ fn router_with_state(state: AppState) -> Router {
 /// shell, tests) need it to hand to their webview, so build the secured
 /// stack here instead of inside `serve()`.
 pub fn secured_router(core: Core) -> (Router, String) {
+    secured_router_with(core, false)
+}
+
+/// Same stack with a CLI-level gateway override (`serve --gateway`).
+pub fn secured_router_with(core: Core, force_gateway: bool) -> (Router, String) {
     let token = format!("vk_{}", uuid::Uuid::now_v7());
     // Webview origins: tauri://localhost (macOS/Linux), https://tauri.localhost
     // (Windows), plus vite dev servers.
@@ -275,7 +312,10 @@ pub fn secured_router(core: Core) -> (Router, String) {
             axum::http::header::AUTHORIZATION,
             axum::http::header::CONTENT_TYPE,
         ]);
-    let state = AppState::new(core);
+    let mut state = AppState::new(core);
+    if force_gateway {
+        state.enable_gateway();
+    }
     let app = router_with_state(state.clone())
         .layer(axum::middleware::from_fn_with_state(
             token.clone(),
@@ -288,15 +328,28 @@ pub fn secured_router(core: Core) -> (Router, String) {
 }
 
 pub async fn serve(core: Core, addr: std::net::SocketAddr) -> std::io::Result<()> {
+    serve_with(core, addr, false).await
+}
+
+/// `force_gateway` mirrors `serve --gateway`: enable routing regardless of
+/// the (untrusted-stripped) project config.
+pub async fn serve_with(
+    core: Core,
+    addr: std::net::SocketAddr,
+    force_gateway: bool,
+) -> std::io::Result<()> {
     // Local-only does not mean safe-by-default: any local process could
     // reach an unauthenticated agent and drive arbitrary tool execution
     // plus self-approval. Every serve() instance gets a per-process
     // bearer token; /health stays open.
-    let (app, token) = secured_router(core);
+    let (app, token) = secured_router_with(core, force_gateway);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     eprintln!("VakCoder server listening on http://{addr}");
     eprintln!("auth token: {token}");
     eprintln!("clients must send 'Authorization: Bearer {token}' (or ?token=)");
+    if force_gateway {
+        eprintln!("gateway: ENABLED (--gateway overrides config)");
+    }
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
@@ -346,7 +399,7 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn register_handle(
+pub(crate) fn register_handle(
     state: &AppState,
     id: String,
     session: SessionLog,
@@ -550,7 +603,7 @@ struct RunBody {
     prompt: String,
 }
 
-fn mpsc_to_broadcast(tx: broadcast::Sender<AgentEvent>) -> mpsc::Sender<AgentEvent> {
+pub(crate) fn mpsc_to_broadcast(tx: broadcast::Sender<AgentEvent>) -> mpsc::Sender<AgentEvent> {
     let (tx_in, mut rx) = mpsc::channel::<AgentEvent>(512);
     tokio::spawn(async move {
         // Forward into the BROADCAST channel (sync send). Forwarding into
@@ -2003,6 +2056,27 @@ async fn pr_merge(
 
 // ---- Scheduled tasks (local routines) --------------------------------------
 
+/// Final assistant text of a session's active chain, if any. Used to give
+/// routine runs a real answer instead of a status word.
+fn last_assistant_text(handle: &SessionHandle) -> Option<String> {
+    let guard = handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let log = guard.as_ref()?;
+    let text = log
+        .derive_messages()
+        .into_iter()
+        .rev()
+        .find(|m| m.role == vak_llm::Role::Assistant)
+        .map(|m| m.text_content())?;
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
 fn tasks_file(core: &Core) -> PathBuf {
     core.sessions_home().join("tasks.json")
 }
@@ -2055,6 +2129,8 @@ struct TaskCreateBody {
     name: String,
     prompt: String,
     interval_secs: u64,
+    #[serde(default)]
+    deliver_to: Option<String>,
 }
 
 async fn create_task(
@@ -2066,6 +2142,15 @@ async fn create_task(
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "interval must be >= 60s" })),
+        )
+            .into_response();
+    }
+    if body.deliver_to.as_deref().is_some_and(|t| !t.contains(':')) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "deliver_to must be '<surface>:<chat>', e.g. 'log:ops'"
+            })),
         )
             .into_response();
     }
@@ -2081,6 +2166,7 @@ async fn create_task(
         last_session_id: None,
         last_summary: None,
         last_wt: None,
+        deliver_to: body.deliver_to,
     };
     state
         .tasks
@@ -2097,6 +2183,7 @@ struct TaskPatchBody {
     name: Option<String>,
     prompt: Option<String>,
     interval_secs: Option<u64>,
+    deliver_to: Option<Option<String>>,
 }
 
 async fn patch_task(
@@ -2104,6 +2191,11 @@ async fn patch_task(
     Path(id): Path<String>,
     Json(body): Json<TaskPatchBody>,
 ) -> StatusCode {
+    if let Some(Some(t)) = &body.deliver_to
+        && !t.contains(':')
+    {
+        return StatusCode::BAD_REQUEST;
+    }
     let updated = {
         let mut map = state
             .tasks
@@ -2124,6 +2216,9 @@ async fn patch_task(
                     && v >= 60
                 {
                     t.interval_secs = v;
+                }
+                if let Some(v) = body.deliver_to {
+                    t.deliver_to = v;
                 }
                 t.clone()
             }
@@ -2237,10 +2332,16 @@ async fn fire_task(state: &AppState, provider: &Arc<dyn Provider>, id: &str) -> 
     drop(map);
     save_tasks(state);
 
-    // Watcher: record the run's summary on the task when it finishes.
+    // Watcher: record the run's final assistant text on the task when it
+    // finishes, and push it out through the gateway when a deliver target
+    // is set. The event's `summary` is a status word; the transcript holds
+    // the actual answer a phone user should receive.
     if let Some(h) = state.get(&child_id) {
         let st = state.clone();
         let tid = id.to_string();
+        let child_handle = h.clone();
+        let task_name = snapshot.name.clone();
+        let deliver_to = snapshot.deliver_to.clone();
         let rx = h.events_tx.subscribe();
         tokio::spawn(async move {
             use tokio_stream::StreamExt;
@@ -2248,15 +2349,27 @@ async fn fire_task(state: &AppState, provider: &Arc<dyn Provider>, id: &str) -> 
             let mut stream = BroadcastStream::new(rx);
             while let Some(Ok(ev)) = stream.next().await {
                 if let AgentEvent::RunFinished { summary, .. } = ev {
+                    let text =
+                        last_assistant_text(&child_handle).unwrap_or_else(|| summary.clone());
                     if let Some(t) = st
                         .tasks
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .get_mut(&tid)
                     {
-                        t.last_summary = Some(summary);
+                        t.last_summary = Some(text.clone());
                     }
                     save_tasks(&st);
+                    if let Some(target) = &deliver_to {
+                        // Delivery failure must not lose the recorded summary;
+                        // it only means this transport could not be reached.
+                        let _ = gateway::deliver(
+                            &st.core,
+                            target,
+                            &format!("routine '{task_name}' finished:\n{text}"),
+                        )
+                        .await;
+                    }
                     break;
                 }
             }

@@ -66,6 +66,40 @@ pub struct FileConfig {
     pub mcp: McpConfig,
     pub ui: UiSettings,
     pub stop_policy: Option<StopPolicySettings>,
+    #[serde(default)]
+    pub gateway: GatewaySettings,
+}
+
+/// Always-on gateway surfaces (docs/design/22-gateway.md). Privileged:
+/// stripped from untrusted project config because enabling it allows
+/// remote execution.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct GatewaySettings {
+    pub enabled: Option<bool>,
+    /// "deny" (default) auto-denies approval gates on unattended turns.
+    /// "forward" is reserved for a later phase.
+    pub approvals: Option<String>,
+    #[serde(default)]
+    pub outbound: OutboundSettings,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct OutboundSettings {
+    /// Named webhook delivery targets: `[gateway.outbound.webhooks.<name>]`.
+    /// Target strings use `webhook:<name>`.
+    pub webhooks: std::collections::BTreeMap<String, WebhookTarget>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WebhookTarget {
+    pub url: String,
+    /// Name of an env var holding a bearer token attached to each
+    /// delivery. The value is resolved at delivery time and never stored
+    /// in config; a configured-but-missing token fails the delivery
+    /// closed instead of posting unauthenticated.
+    pub token_env: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -154,6 +188,7 @@ pub struct Config {
     pub mcp: McpConfig,
     pub ui: UiResolved,
     pub stop_policy: StopPolicyResolved,
+    pub gateway: GatewayResolved,
     pub warnings: Vec<String>,
 }
 
@@ -186,6 +221,20 @@ pub struct StopPolicyResolved {
     pub marker_gate: bool,
     pub verify_gate: bool,
     pub max_blocks: u32,
+}
+
+/// Resolved gateway policy (docs/design/22-gateway.md).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayResolved {
+    pub enabled: bool,
+    pub approvals: String,
+    pub webhooks: std::collections::BTreeMap<String, WebhookResolved>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebhookResolved {
+    pub url: String,
+    pub token_env: Option<String>,
 }
 
 impl Default for Config {
@@ -230,6 +279,11 @@ impl Default for Config {
                 verify_gate: true,
                 max_blocks: 2,
             },
+            gateway: GatewayResolved {
+                enabled: false,
+                approvals: "deny".into(),
+                webhooks: std::collections::BTreeMap::new(),
+            },
             warnings: Vec::new(),
         }
     }
@@ -268,7 +322,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
 /// Keys a PROJECT-level config may not set when its workspace has not been
 /// marked trusted: they grant execution or redirect credentials.
 const PRIVILEGED_KEYS_NOTICE: &str =
-    "permission_mode, allow, hooks, anthropic_base_url, mcp.servers";
+    "permission_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway";
 
 pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
     let mut warnings = Vec::new();
@@ -296,6 +350,11 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             fc.allow.clear();
             fc.hooks.clear();
             fc.mcp.servers.clear();
+            if fc.gateway.enabled.is_some() || !fc.gateway.outbound.webhooks.is_empty() {
+                // Outbound webhook URLs are exfil targets just like base-url
+                // redirection: the whole section is privileged.
+                fc.gateway = GatewaySettings::default();
+            }
             warnings.push(format!(
                 "project .vakcoder/config.toml is not trusted for this workspace; \
                  ignored privileged keys ({PRIVILEGED_KEYS_NOTICE}). \
@@ -436,6 +495,39 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         max_blocks: sp.max_blocks.unwrap_or(2),
     };
 
+    cfg.gateway.enabled = merged.gateway.enabled.unwrap_or(false);
+    cfg.gateway.approvals = match merged.gateway.approvals.as_deref() {
+        Some("deny") | None => "deny".into(),
+        Some("forward") => "forward".into(),
+        Some(other) => {
+            cfg.warnings
+                .push(format!("unknown gateway.approvals '{other}'; using 'deny'"));
+            "deny".into()
+        }
+    };
+    for (name, hook) in merged.gateway.outbound.webhooks {
+        if hook.url.trim().is_empty() {
+            cfg.warnings.push(format!(
+                "gateway.outbound.webhooks.{name}.url is empty; ignored"
+            ));
+            continue;
+        }
+        if let Some(env_name) = &hook.token_env
+            && env_name.trim().is_empty()
+        {
+            cfg.warnings.push(format!(
+                "gateway.outbound.webhooks.{name}.token_env is empty; delivery will fail closed"
+            ));
+        }
+        cfg.gateway.webhooks.insert(
+            name,
+            WebhookResolved {
+                url: hook.url,
+                token_env: hook.token_env,
+            },
+        );
+    }
+
     if let Some(name) = &merged.profile {
         if let Some(profile) = merged.profiles.get(name) {
             if let Some(model) = &profile.model {
@@ -496,6 +588,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "mcp",
     "ui",
     "stop_policy",
+    "gateway",
 ];
 const KNOWN_PROFILE_KEYS: &[&str] = &["model", "provider", "permission_mode", "max_turns"];
 const KNOWN_HOOK_KEYS: &[&str] = &["event", "match", "command", "timeout_ms"];
@@ -524,6 +617,9 @@ const KNOWN_THEME_COLORS: &[&str] = &[
 ];
 const KNOWN_ACCESSIBILITY_KEYS: &[&str] = &["plain", "reduced_motion", "screen_reader"];
 const KNOWN_STOP_POLICY_KEYS: &[&str] = &["enabled", "marker_gate", "verify_gate", "max_blocks"];
+const KNOWN_GATEWAY_KEYS: &[&str] = &["enabled", "approvals", "outbound"];
+const KNOWN_OUTBOUND_KEYS: &[&str] = &["webhooks"];
+const KNOWN_WEBHOOK_KEYS: &[&str] = &["url", "token_env"];
 
 /// A typo'd key must be visible, not silently dead: diff the raw TOML
 /// against the known schema and surface every unrecognized key.
@@ -630,6 +726,40 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
                     "{}: unknown stop_policy key 'stop_policy.{key}' (ignored)",
                     path.display()
                 ));
+            }
+        }
+    }
+    if let Some(gw) = top.get("gateway").and_then(toml::Value::as_table) {
+        for key in gw.keys() {
+            if !KNOWN_GATEWAY_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown gateway key 'gateway.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+        if let Some(ob) = gw.get("outbound").and_then(toml::Value::as_table) {
+            for key in ob.keys() {
+                if !KNOWN_OUTBOUND_KEYS.contains(&key.as_str()) {
+                    out.push(format!(
+                        "{}: unknown gateway.outbound key 'gateway.outbound.{key}' (ignored)",
+                        path.display()
+                    ));
+                }
+            }
+            if let Some(hooks) = ob.get("webhooks").and_then(toml::Value::as_table) {
+                for (name, t) in hooks {
+                    if let Some(t) = t.as_table() {
+                        for key in t.keys() {
+                            if !KNOWN_WEBHOOK_KEYS.contains(&key.as_str()) {
+                                out.push(format!(
+                                    "{}: unknown webhook key 'gateway.outbound.webhooks.{name}.{key}' (ignored)",
+                                    path.display()
+                                ));
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -742,6 +872,15 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if let Some(sp) = over.stop_policy {
         base.stop_policy = Some(sp);
+    }
+    if over.gateway.enabled.is_some() {
+        base.gateway.enabled = over.gateway.enabled;
+    }
+    if over.gateway.approvals.is_some() {
+        base.gateway.approvals = over.gateway.approvals;
+    }
+    for (name, hook) in over.gateway.outbound.webhooks {
+        base.gateway.outbound.webhooks.insert(name, hook);
     }
     for (k, v) in over.profiles {
         base.profiles.insert(k, v);

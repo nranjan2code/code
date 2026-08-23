@@ -809,7 +809,9 @@ async fn scheduled_tasks_crud_runnow_and_worktree_churn() {
         if let Some(cid) = t0["last_session_id"].as_str() {
             child_id = cid.to_string();
             let _ = &child_id;
-            if t0["last_summary"] == "completed" {
+            // The watcher records the run's real final answer, not a
+            // status word (docs/design/22-gateway.md).
+            if t0["last_summary"] == "task ran" {
                 break;
             }
         }
@@ -838,7 +840,7 @@ async fn scheduled_tasks_crud_runnow_and_worktree_churn() {
             .await
             .unwrap();
         if t["tasks"][0]["last_session_id"].as_str() != Some(child_id.as_str())
-            && t["tasks"][0]["last_summary"] == "completed"
+            && t["tasks"][0]["last_summary"] == "task ran again"
         {
             break;
         }

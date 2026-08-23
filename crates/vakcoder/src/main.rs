@@ -101,6 +101,10 @@ enum Command {
     Serve {
         #[arg(long, default_value_t = 8901)]
         port: u16,
+        /// Enable gateway surface routing regardless of config
+        /// (docs/design/22-gateway.md)
+        #[arg(long)]
+        gateway: bool,
         /// Trust this workspace's project config and .env
         #[arg(long)]
         trust: bool,
@@ -109,6 +113,15 @@ enum Command {
     Checkpoints {
         #[command(subcommand)]
         action: CheckpointAction,
+    },
+    /// Bridge a Telegram bot to a running gateway (docs/design/22-gateway.md)
+    Telegram {
+        /// Gateway base URL, e.g. http://127.0.0.1:8901
+        #[arg(long)]
+        server: String,
+        /// Gateway bearer token
+        #[arg(long)]
+        token: String,
     },
 }
 
@@ -334,6 +347,7 @@ async fn main() {
             0
         }
         Some(Command::Checkpoints { action }) => run_checkpoints(cwd, action).await,
+        Some(Command::Telegram { server, token }) => run_telegram(server, token).await,
         Some(Command::Flow { action }) => run_flow(cwd, action).await,
         Some(Command::Plan {
             task,
@@ -353,12 +367,16 @@ async fn main() {
             provider,
             model,
         }) => run_eval(report, live, provider, model).await,
-        Some(Command::Serve { port, trust }) => {
+        Some(Command::Serve {
+            port,
+            gateway,
+            trust,
+        }) => {
             let trusted = resolve_trust(&cwd, trust, false);
             if trusted {
                 vak_config::load_env_file(std::path::Path::new(".env"));
             }
-            run_serve(cwd, port, trusted).await
+            run_serve(cwd, port, gateway, trusted).await
         }
     };
     std::process::exit(code);
@@ -1238,7 +1256,7 @@ async fn run_eval(
     if passed == total { 0 } else { 1 }
 }
 
-async fn run_serve(cwd: PathBuf, port: u16, trusted: bool) -> i32 {
+async fn run_serve(cwd: PathBuf, port: u16, gateway: bool, trusted: bool) -> i32 {
     let core = match Core::new_with_trust(cwd, trusted) {
         Ok(c) => c,
         Err(e) => {
@@ -1248,11 +1266,38 @@ async fn run_serve(cwd: PathBuf, port: u16, trusted: bool) -> i32 {
     };
     print_config_warnings(&core);
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-    match vak_server::serve(core, addr).await {
+    match vak_server::serve_with(core, addr, gateway).await {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("error: {e}");
             2
+        }
+    }
+}
+
+async fn run_telegram(server: String, token: String) -> i32 {
+    // .env-aware lookup so the bot token never has to be exported by hand.
+    let Some(bot_token) = vak_config::get_var("TELEGRAM_BOT_TOKEN") else {
+        eprintln!("error: TELEGRAM_BOT_TOKEN is not set (put it in .env or ~/.vakcoder/.env)");
+        return 2;
+    };
+    let api_base = vak_config::get_var("TELEGRAM_API_BASE")
+        .unwrap_or_else(|| "https://api.telegram.org".to_string());
+    let bridge = vak_server::telegram::TelegramBridge {
+        api_base,
+        bot_token,
+        gateway_url: server.trim_end_matches('/').to_string(),
+        gateway_token: token,
+    };
+    println!(
+        "telegram bridge: {} -> {}",
+        bridge.api_base, bridge.gateway_url
+    );
+    match bridge.run().await {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("error: {e}");
+            1
         }
     }
 }

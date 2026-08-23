@@ -91,7 +91,9 @@ crates/vak-tui       retained-render terminal UI: contextual keymap +
                      interactive rebind, themes + custom theme packs,
                      vim/emacs composer, subagent attach/steer,
                      custom commands, OSC52 copy, accessibility modes
-crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts)
+crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts) +
+                     always-on gateway: chat-surface routing, persisted
+                     bindings, cron delivery-to-surface (docs/design/22-gateway.md)
 crates/vak-desktop   Tauri 2 desktop orchestrator (sidecar over vak-server;
                      docs/design/20-tauri-desktop.md)
 crates/vakcoder      binary: tui / exec / plan / flow / serve / eval /
