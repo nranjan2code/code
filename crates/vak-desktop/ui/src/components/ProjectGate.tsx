@@ -8,6 +8,9 @@ import type { BackendInfo } from "../types";
 import Icon from "./Icon";
 
 /** Second gate step: pick provider + model and store a key (this machine only). */
+/** Sentinel option that swaps the model select for a free-text field. */
+const CUSTOM_MODEL = "\u0000custom";
+
 function ConnectModel() {
   const [provider, setProvider] = createSignal(providers()?.current ?? "anthropic");
   const [model, setModel] = createSignal(providers()?.current_model ?? "");
@@ -26,6 +29,7 @@ function ConnectModel() {
   // so it reflects what this key can actually reach.
   const [catalog, setCatalog] = createSignal<string[]>([]);
   const [catalogNote, setCatalogNote] = createSignal<string | null>(null);
+  const [customModel, setCustomModel] = createSignal(false);
   createEffect(() => {
     const name = provider();
     setCatalog([]);
@@ -92,30 +96,47 @@ function ConnectModel() {
         </label>
         <label class="connect-field">
           <span>Model</span>
-          <input
-            list="gate-models"
-            value={model()}
-            placeholder="provider default"
-            onInput={(e) => setModel(e.currentTarget.value)}
-          />
+          <Show
+            when={!customModel()}
+            fallback={
+              <input
+                value={model()}
+                placeholder="exact model id"
+                onInput={(e) => setModel(e.currentTarget.value)}
+              />
+            }
+          >
+            <select
+              value={model()}
+              onChange={(e) => {
+                const next = e.currentTarget.value;
+                if (next === CUSTOM_MODEL) setCustomModel(true);
+                else setModel(next);
+              }}
+            >
+              <Show when={model() && !catalog().includes(model())}>
+                <option value={model()}>{model()}</option>
+              </Show>
+              <For each={catalog()}>{(m) => <option value={m}>{m}</option>}</For>
+              <option value={CUSTOM_MODEL}>Enter a model id…</option>
+            </select>
+          </Show>
           <Show when={catalogNote()}>
             <small class="connect-note">{catalogNote()}</small>
           </Show>
-          <datalist id="gate-models">
-            <For each={catalog()}>{(m) => <option value={m} />}</For>
-          </datalist>
         </label>
         <Show when={info()?.requires_key ?? true}>
           <label class="connect-field">
             <span>
-              {info()?.env_var}
-              {configured() ? " — already set on this device" : ""}
+              {provider()} — {info()?.env_var}
+              {configured() ? " (already set on this device)" : ""}
             </span>
             <input
               type="password"
               autocomplete="off"
               spellcheck={false}
-              placeholder={configured() ? "leave blank to keep current key" : "paste API key"}
+              aria-label={`${info()?.env_var ?? "API key"} for ${provider()}`}
+              placeholder={configured() ? "leave blank to keep current key" : `paste ${info()?.env_var ?? "API key"}`}
               value={key()}
               onInput={(e) => setKey(e.currentTarget.value)}
               onKeyDown={(e) => e.key === "Enter" && void save()}

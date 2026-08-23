@@ -18,6 +18,9 @@ import * as api from "../api";
 import { loadHealth } from "../App";
 import Icon, { type IconName } from "./Icon";
 
+/** Sentinel option that swaps the model select for a free-text field. */
+const CUSTOM_MODEL = "\u0000custom";
+
 type Page = "general" | "appearance" | "agent" | "permissions" | "reliability" | "integrations" | "advanced";
 
 const pages: { id: Page; label: string; icon: IconName; hint: string }[] = [
@@ -57,6 +60,9 @@ export default function Settings() {
   // baked-in list, which goes stale the moment a provider ships a model.
   const [catalog, setCatalog] = createSignal<string[]>([]);
   const [catalogNote, setCatalogNote] = createSignal<string | null>(null);
+  // Any identifier the provider accepts is valid, so the list never becomes a
+  // cage: this switches the control to free text.
+  const [customModel, setCustomModel] = createSignal(false);
   const [maxTurns, setMaxTurns] = createSignal(40);
   const [saving, setSaving] = createSignal(false);
   const [keyDraft, setKeyDraft] = createSignal<string | null>(null);
@@ -96,6 +102,10 @@ export default function Settings() {
       }
     })();
   });
+
+  // The provider the credential controls act on — the selected one, or the
+  // active one before any selection has been made.
+  const keyProvider = () => provider() || providers()?.current || "";
 
   const currentProviderInfo = () =>
     providers()?.providers.find((p) => p.name === (provider() || providers()?.current));
@@ -265,20 +275,60 @@ export default function Settings() {
                     <Show when={provider() && !providers()?.providers.some((p) => p.name === provider())}><option value={provider()}>{provider()}</option></Show>
                   </select>
                 </Row>
-                <Row title="Model" description={catalogNote() ?? `${catalog().length} models available for this key.`}><input class="settings-input wide" list="settings-models" value={model()} onInput={(event) => setModel(event.currentTarget.value)} /><datalist id="settings-models"><For each={catalog()}>{(m) => <option value={m} />}</For></datalist></Row>
+                <Row
+                  title="Model"
+                  description={catalogNote() ?? `${catalog().length} models available for this key.`}
+                >
+                  <Show
+                    when={!customModel()}
+                    fallback={
+                      <span class="key-edit">
+                        <input
+                          class="settings-input wide"
+                          placeholder="exact model id"
+                          value={model()}
+                          onInput={(event) => setModel(event.currentTarget.value)}
+                        />
+                        <button class="settings-button" onClick={() => setCustomModel(false)}>Choose from list</button>
+                      </span>
+                    }
+                  >
+                    <select
+                      class="settings-input wide"
+                      value={model()}
+                      onChange={(event) => {
+                        const next = event.currentTarget.value;
+                        if (next === CUSTOM_MODEL) setCustomModel(true);
+                        else setModel(next);
+                      }}
+                    >
+                      {/* The configured model may predate this key or be a
+                          bare id the provider accepts but does not list. */}
+                      <Show when={model() && !catalog().includes(model())}>
+                        <option value={model()}>{model()}</option>
+                      </Show>
+                      <For each={catalog()}>{(m) => <option value={m}>{m}</option>}</For>
+                      <option value={CUSTOM_MODEL}>Enter a model id…</option>
+                    </select>
+                  </Show>
+                </Row>
                 <Row title="Maximum turns" description="Hard limit for one task before the agent stops."><input class="settings-number" type="number" min="1" max="1000" value={maxTurns()} onInput={(event) => setMaxTurns(Number(event.currentTarget.value))} /></Row>
                 <Row title="Subagents" description="Allow the agent to delegate bounded parallel work."><span class="settings-status good">{config()?.subagents ? "Enabled" : "Disabled in config"}</span></Row>
               </Group>
               <Group title="Credentials">
                 <Row
-                  title={currentProviderInfo()?.configured ? "API key saved on this device" : "No API key yet"}
-                  description={currentProviderInfo()?.requires_key ? `Stored in ~/.vakcoder/.env with owner-only permissions. A real environment variable takes precedence.` : `${provider() || providers()?.current || ""} runs locally and needs no key.`}
+                  title={`${keyProvider()} — ${currentProviderInfo()?.env_var ?? "no key needed"}`}
+                  description={
+                    currentProviderInfo()?.requires_key
+                      ? `${currentProviderInfo()?.configured ? "Saved on this device" : "Not set yet"} · stored in ~/.vakcoder/.env with owner-only permissions. A real environment variable takes precedence.`
+                      : `${keyProvider()} runs locally and needs no key.`
+                  }
                 >
                   <Show
                     when={keyDraft() === null}
                     fallback={
                       <span class="key-edit">
-                        <input type="password" autocomplete="off" spellcheck={false} placeholder="paste API key" value={keyDraft() ?? ""} onInput={(e) => setKeyDraft(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void saveKey()} />
+                        <input type="password" autocomplete="off" spellcheck={false} placeholder={`paste ${currentProviderInfo()?.env_var ?? "API key"}`} aria-label={`${currentProviderInfo()?.env_var ?? "API key"} for ${keyProvider()}`} value={keyDraft() ?? ""} onInput={(e) => setKeyDraft(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void saveKey()} />
                         <button class="btn primary sm" disabled={keyBusy() || !keyDraft()?.trim()} onClick={() => void saveKey()}>{keyBusy() ? "Saving…" : "Save"}</button>
                         <button class="settings-button" onClick={() => setKeyDraft(null)}>Cancel</button>
                       </span>
