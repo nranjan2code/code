@@ -2750,7 +2750,7 @@ async fn run_shell_passthrough(
 /// Health check rendered as a checklist: auth, sandbox, storage, config
 /// warnings, extension surface.
 /// `/services` — background service status and control via vak-ops
-/// (docs/design/27-operations.md).
+/// (docs/design/28-operations.md).
 fn run_services(arg: Option<(String, String)>, screen: &mut Screen) {
     let cfg = vak_ops::OpsConfig::detect();
 

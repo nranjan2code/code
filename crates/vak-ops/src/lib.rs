@@ -7,7 +7,7 @@
 //! let st = vak_ops::status(Service::Gateway, &OpsConfig::detect());
 //! ```
 //!
-//! Design rules (docs/design/27-operations.md):
+//! Design rules (docs/design/28-operations.md):
 //! - No daemon of its own: it shells out to the platform manager, which is
 //!   already keeping the services alive.
 //! - Every command is idempotent from the user's point of view — start on a

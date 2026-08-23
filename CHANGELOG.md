@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- **TUI `/services`**: status lines plus start/stop/restart for the gateway
+  and Telegram bridge via vak-ops.
+- **Desktop ▸ Settings ▸ Services**: live status dots with
+  Stop/Start/Restart per service and Install/Uninstall for the pair; polls
+  every 5 s while open.
+- **Desktop ▸ Settings ▸ Learning** (L2): skill-proposal queue with
+  Promote/Reject and a recent-notes viewer with provenance.
+- **L1 reflection loop**: opt-in `[memory] reflection = true` runs an
+  auxiliary call after clean completions proposing ≤2 notes (+ optional
+  skill draft), deduped by Jaccard against existing notes; drafts always
+  land in the human review queue.
+- Gateway-path test fixtures are hermetic against the developer's global
+  config so personal defaults (reflection etc.) never leak into CI.
+
 ## 0.3.0 — 2026-08-23 · platform release
 
 The always-on platform phase (docs/design/22-gateway.md through 27):

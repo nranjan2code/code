@@ -281,7 +281,7 @@ fn router_with_state(state: AppState) -> Router {
 }
 
 /// Service-control plane over vak-ops: lets TUI/desktop/tray agree on the
-/// same truth (docs/design/27-operations.md).
+/// same truth (docs/design/28-operations.md).
 fn ops_payload(cfg: &vak_ops::OpsConfig) -> serde_json::Value {
     let st = |svc| vak_ops::status(svc, cfg);
     serde_json::json!({

@@ -6,7 +6,7 @@
 //! are not installed as services at all. The menu starts/stops/restarts,
 //! installs/uninstalls, opens logs, and toggles a watchdog that restarts a
 //! crashed service automatically and posts a system notification when it
-//! does. See docs/design/27-operations.md.
+//! does. See docs/design/28-operations.md.
 
 // GUI bootstrap: every setup call here is infallible in practice, and a
 // controller that cannot start should be loud about it.

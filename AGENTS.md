@@ -15,7 +15,10 @@ See `docs/design/00-roadmap.md` for the phase history and
 must also follow the threat model and priority order in
 `docs/design/24-agent-security.md`. The always-on platform layer follows
 `docs/design/22-gateway.md` (gateway/approvals), `docs/design/23-memory.md`
-(recall), and `docs/design/25-docker-sandbox.md` (execution backends).
+(recall), `docs/design/25-docker-sandbox.md` (execution backends),
+`docs/design/26-learning.md` (learning loop), and
+`docs/design/28-operations.md` with docs/hosting.md for running the stack
+as durable services.
 
 ## Non-negotiable invariants
 
@@ -150,6 +153,12 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts) +
                      (docs/design/22-gateway.md)
 crates/vak-desktop   Tauri 2 desktop orchestrator (sidecar over vak-server;
                      docs/design/20-tauri-desktop.md)
+crates/vak-ops       service-control layer over launchd/systemd — status,
+                     start/stop/restart, install/uninstall shared by tray,
+                     TUI and desktop (docs/design/28-operations.md)
+crates/vak-tray      menu-bar controller: colour-coded service dot,
+                     start/stop/restart/install/uninstall, logs, watchdog
+                     with auto-restart + notifications
 crates/vakcoder      binary: tui / exec / plan / flow / serve [--gateway] /
                      telegram / eval / checkpoints / config dump / sessions
 docs/design/         architecture decisions — update with behavior changes;
