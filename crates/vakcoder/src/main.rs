@@ -122,9 +122,10 @@ enum Command {
         /// Gateway base URL, e.g. http://127.0.0.1:8901
         #[arg(long)]
         server: String,
-        /// Gateway bearer token
+        /// Gateway bearer token (overrides VAKCODER_GATEWAY_TOKEN; the
+        /// env var is the normal path so secrets never appear in `ps`)
         #[arg(long)]
-        token: String,
+        token: Option<String>,
     },
 }
 
@@ -1418,7 +1419,18 @@ async fn run_serve(cwd: PathBuf, port: u16, gateway: bool, trusted: bool) -> i32
     }
 }
 
-async fn run_telegram(server: String, token: String) -> i32 {
+async fn run_telegram(server: String, token_flag: Option<String>) -> i32 {
+    // Env-first so the gateway token stays out of `ps`/plist arguments.
+    let token = match token_flag {
+        Some(t) => t,
+        None => vak_config::get_var("VAKCODER_GATEWAY_TOKEN").unwrap_or_else(|| {
+            eprintln!("error: gateway token missing — set VAKCODER_GATEWAY_TOKEN in ~/.vakcoder/.env or pass --token");
+            String::new()
+        }),
+    };
+    if token.is_empty() {
+        return 2;
+    }
     // .env-aware lookup so the bot token never has to be exported by hand.
     let Some(bot_token) = vak_config::get_var("TELEGRAM_BOT_TOKEN") else {
         eprintln!("error: TELEGRAM_BOT_TOKEN is not set (put it in .env or ~/.vakcoder/.env)");

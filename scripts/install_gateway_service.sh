@@ -88,11 +88,11 @@ PLIST
   "Label": "com.vakcoder.telegram",
   "ProgramArguments": [
     "$BIN_DIR/vakcoder", "telegram",
-    "--server", "http://127.0.0.1:${PORT:-8901}",
-    "--token", "$GWTOKEN"
+    "--server", "http://127.0.0.1:${PORT:-8901}"
   ],
   "EnvironmentVariables": {
     "HOME": "$HOME",
+    "VAKCODER_GATEWAY_TOKEN": "$GWTOKEN",
     "TELEGRAM_BOT_TOKEN": "$TELEGRAM_ENV"
   },
   "RunAtLoad": true,
@@ -165,7 +165,9 @@ Requires=vakcoder-gateway.service
 
 [Service]
 ExecStartPre=/bin/sh -c 'until curl -sf http://127.0.0.1:${PORT:-8901}/health >/dev/null; do sleep 1; done'
-ExecStart=$BIN_DIR/vakcoder telegram --server http://127.0.0.1:${PORT:-8901} --token ${VAKCODER_GATEWAY_TOKEN}
+ExecStart=$BIN_DIR/vakcoder telegram --server http://127.0.0.1:${PORT:-8901}
+# Gateway token comes from EnvironmentFile (never argv: `ps` visibility).
+Environment=VAKCODER_GATEWAY_TOKEN=${VAKCODER_GATEWAY_TOKEN}
 EnvironmentFile=$ENV_FILE
 Restart=always
 RestartSec=3
