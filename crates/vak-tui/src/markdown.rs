@@ -211,7 +211,6 @@ impl LineStyler {
     }
 }
 
-
 /// Pipe-table row: dim the delimiters, keep cell text readable. The
 /// `|---|:--:|` separator renders as a thin rule so tables read as
 /// tables without cross-line layout state.
@@ -223,20 +222,22 @@ fn table_line(body: &str, theme: &Theme) -> String {
         !t.is_empty() && t.chars().all(|ch| ch == '-')
     });
     if is_separator {
-        let rule: String = std::iter::repeat("─".repeat(4)).take(cells.len()).collect::<Vec<_>>().join("┼");
+        let rule: String = std::iter::repeat_n("─".repeat(4), cells.len())
+            .collect::<Vec<_>>()
+            .join("┼");
         return span(&format!("  ┌{rule}┐"), theme.dim);
     }
     let mut out = String::from("  ");
     out.push_str(&fg(theme.dim));
     out.push('│');
-    out.push_str(&RESET_FG.to_string());
+    out.push_str(RESET_FG);
     for c in cells {
         out.push(' ');
         out.push_str(&inline(c.trim(), theme));
         out.push(' ');
         out.push_str(&fg(theme.dim));
         out.push('│');
-        out.push_str(&RESET_FG.to_string());
+        out.push_str(RESET_FG);
     }
     out
 }
