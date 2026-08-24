@@ -1,4 +1,3 @@
-
 /// Run a node's done-contract: every entry executes as brokered bash and
 /// must exit 0. First failure rejects the node with the failing check.
 async fn verify_accept(
@@ -26,7 +25,10 @@ async fn verify_accept(
         authorize_flow_tool("bash", &args, deps).await?;
         let out = tool.execute(&args, &ctx).await;
         if out.is_error {
-            return Err(format!("done-contract failed: `{command}`\n{}", out.content));
+            return Err(format!(
+                "done-contract failed: `{command}`\n{}",
+                out.content
+            ));
         }
         let _ = cancel.child_token();
     }
@@ -176,8 +178,7 @@ impl Executor {
                     .collect();
                 join.spawn(async move {
                     let id = node.id.clone();
-                        let mut res =
-                        execute_node(&node, &dep_outputs, &deps, &cancel, &events).await;
+                    let mut res = execute_node(&node, &dep_outputs, &deps, &cancel, &events).await;
                     if res.is_ok() && !node.accept.is_empty() {
                         let _ = events
                             .send(format!(
