@@ -296,7 +296,7 @@ export function hydrateFromTranscript(id: string, messages: Message[]) {
   for (let i = 0; i < next.length; i++) {
     const it = next[i];
     if (it.kind === "tool" && !it.done) {
-      next[i] = { ...it, done: true, preview: it.preview ?? "no result recorded" };
+      next[i] = { ...it, done: true, preview: it.preview ?? null };
     }
     if (it.kind === "approval" && it.resolved === null) {
       next[i] = { ...it, resolved: "gone" };
@@ -487,7 +487,7 @@ export function applyEvent(
           return {
             ...it,
             done: true,
-            preview: it.preview ?? "no result recorded — the run ended first",
+            preview: it.preview ?? null,
           };
         }
         if (it.kind === "approval" && it.resolved === null) {

@@ -296,14 +296,21 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .tool-h, .subagent summary { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 6px 10px; color: var(--muted); text-align: left; font-size: 11.5px; }
 .tool-h:hover { color: var(--text-soft); }
 .tool-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--yellow); }
-.tool:not(.err):has(.tool-prev) .tool-dot { background: var(--green); }
+.tool.done .tool-dot { background: var(--green); }
 .tool.err .tool-dot { background: var(--red); }
 .tool-name { color: var(--text-soft); font-family: var(--mono); font-size: 11px; font-weight: 550; }
-.tool-run { color: var(--yellow); animation: pulse 1.4s infinite; }
+.tool-state { color: var(--muted); font-size: 10px; margin-left: auto; }
+.tool.running .tool-state { color: var(--yellow); }
+.tool.err .tool-state { color: #df8e90; }
+.tool-summary { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-err { color: var(--red); }
 .tool-chev { margin-left: auto; color: var(--faint); transition: transform 120ms ease; }
 .tool.open .tool-chev { transform: rotate(90deg); }
-.tool-args, .tool-prev { margin: 0; max-height: 240px; padding: 9px 12px; overflow: auto; border-top: 1px solid var(--border-soft); color: var(--muted); white-space: pre-wrap; font-size: 10.5px; line-height: 1.55; }
+.tool-result { padding: 9px 12px; border-top: 1px solid var(--border-soft); color: var(--muted); font-size: 11px; line-height: 1.5; }
+.tool-result.err { color: #df8e90; }
+.tool-details { border-top: 1px solid var(--border-soft); }
+.tool-details summary { padding: 7px 12px; color: var(--muted); cursor: pointer; font-size: 10px; }
+.tool-args, .tool-prev { margin: 0; max-height: 240px; padding: 9px 12px; overflow: auto; color: var(--muted); white-space: pre-wrap; font-size: 10.5px; line-height: 1.55; }
 .tool-prev.err { color: #df8e90; }
 .subagent { padding: 0; }
 .subagent pre { margin: 0; padding: 9px 12px; border-top: 1px solid var(--border-soft); color: var(--muted); font-size: 10.5px; }

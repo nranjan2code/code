@@ -93,22 +93,38 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
     bash: "Run command",
     grep: "Search files",
     glob: "Find files",
+    mcp: "Use connected tool",
   } as Record<string, string>)[props.item.name] ?? props.item.name.replaceAll("_", " ");
+  const summary = createMemo(() => {
+    const a = args();
+    if (!a) return null;
+    if (props.item.name === "mcp") {
+      const server = typeof a.server === "string" ? a.server : "connected service";
+      const tool = typeof a.tool === "string" ? a.tool : "tool";
+      return `${server} · ${tool}`;
+    }
+    if (props.item.name === "bash" && typeof a.command === "string") {
+      return a.command.replace(/\s+/g, " ").trim().slice(0, 120);
+    }
+    return null;
+  });
+  const status = () => props.item.isError ? "Failed" : props.item.done ? "Completed" : "Running";
+  const result = () => {
+    const value = props.item.preview?.trim();
+    if (value) return value.slice(0, density() === "verbose" ? 4000 : 800);
+    return props.item.done ? "No output returned." : "Waiting for a result…";
+  };
 
   return (
-    <div class="tool" classList={{ err: props.item.isError, open: open() }}>
+    <div class="tool" classList={{ err: props.item.isError, open: open(), running: !props.item.done, done: props.item.done }}>
       <button class="tool-h" aria-expanded={open()} onClick={() => setOpen((v) => !v)}>
         <span class="tool-dot" />
         <span class="tool-name">{toolLabel()}</span>
+        <Show when={summary()}>{(value) => <span class="tool-summary">{value()}</span>}</Show>
         <Show when={shortPath()}>
           <span class="tool-path">{shortPath()}</span>
         </Show>
-        <Show when={!props.item.done}>
-          <span class="tool-run">running…</span>
-        </Show>
-        <Show when={props.item.isError}>
-          <span class="tool-err">error</span>
-        </Show>
+        <span class="tool-state">{status()}</span>
         <span class="tool-chev"><Icon name="chevron" size={14} /></span>
       </button>
       <Show when={filePath()}>
@@ -123,14 +139,11 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
           </div>
         )}
       </Show>
-      <Show when={open() || density() === "verbose"}>
+      <div class="tool-result" classList={{ err: props.item.isError }}>{result()}</div>
+      <details class="tool-details" open={open() || density() === "verbose"}>
+        <summary>View request details</summary>
         <pre class="tool-args">{argsPretty()}</pre>
-      </Show>
-      <Show when={(props.item.preview || density() === "verbose") && props.item.done}>
-        <pre class="tool-prev" classList={{ err: props.item.isError }}>
-          {(props.item.preview ?? "").slice(0, density() === "verbose" ? 4000 : 800)}
-        </pre>
-      </Show>
+      </details>
     </div>
   );
 };

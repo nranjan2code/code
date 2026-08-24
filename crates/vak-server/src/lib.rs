@@ -2049,56 +2049,152 @@ struct HookInput {
     enabled: bool,
 }
 
-fn default_hook_enabled() -> bool { true }
+fn default_hook_enabled() -> bool {
+    true
+}
 
 #[derive(serde::Deserialize)]
-struct HooksPutBody { hooks: Vec<HookInput> }
+struct HooksPutBody {
+    hooks: Vec<HookInput>,
+}
 
 async fn get_hooks(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let hooks = state.core.config().hooks.iter().map(|h| serde_json::json!({
-        "event": h.event,
-        "matcher": h.matcher,
-        "command": h.command,
-        "timeout_ms": h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS),
-        "enabled": true,
-    })).collect::<Vec<_>>();
+    let hooks = state
+        .core
+        .config()
+        .hooks
+        .iter()
+        .map(|h| {
+            serde_json::json!({
+                "event": h.event,
+                "matcher": h.matcher,
+                "command": h.command,
+                "timeout_ms": h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS),
+                "enabled": true,
+            })
+        })
+        .collect::<Vec<_>>();
     Json(serde_json::json!({ "hooks": hooks }))
 }
 
-async fn put_hooks(State(state): State<AppState>, Json(body): Json<HooksPutBody>) -> axum::response::Response {
+async fn put_hooks(
+    State(state): State<AppState>,
+    Json(body): Json<HooksPutBody>,
+) -> axum::response::Response {
     use axum::response::IntoResponse;
     for hook in &body.hooks {
-        if !matches!(hook.event.as_str(), "session_start" | "session-start" | "pre_tool_use" | "pre-tool-use" | "post_tool_use" | "post-tool-use" | "stop") {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("unknown hook event '{}'", hook.event) }))).into_response();
+        if !matches!(
+            hook.event.as_str(),
+            "session_start"
+                | "session-start"
+                | "pre_tool_use"
+                | "pre-tool-use"
+                | "post_tool_use"
+                | "post-tool-use"
+                | "stop"
+        ) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(
+                    serde_json::json!({ "error": format!("unknown hook event '{}'", hook.event) }),
+                ),
+            )
+                .into_response();
         }
         if hook.enabled && hook.command.trim().is_empty() {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "enabled hooks need a command" }))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "enabled hooks need a command" })),
+            )
+                .into_response();
         }
         if hook.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS) == 0 {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "hook timeout must be greater than zero" }))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "hook timeout must be greater than zero" })),
+            )
+                .into_response();
         }
     }
     let path = state.core.cwd().join(".vakcoder/config.toml");
-    let mut root: toml::Value = if path.exists() { match std::fs::read_to_string(&path).ok().and_then(|raw| toml::from_str(&raw).ok()) { Some(v) => v, None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "project config is invalid" }))).into_response() } } else { toml::Value::Table(toml::map::Map::new()) };
-    let values = body.hooks.iter().filter(|h| h.enabled).map(|h| {
-        let mut t = toml::map::Map::new();
-        t.insert("event".into(), toml::Value::String(h.event.clone()));
-        t.insert("command".into(), toml::Value::String(h.command.trim().into()));
-        if let Some(m) = h.matcher.as_ref().filter(|m| !m.trim().is_empty()) { t.insert("match".into(), toml::Value::String(m.clone())); }
-        t.insert("timeout_ms".into(), toml::Value::Integer(h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS) as i64));
-        toml::Value::Table(t)
-    }).collect::<Vec<_>>();
-    let Some(table) = root.as_table_mut() else { return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "config root is not a table" }))).into_response(); };
+    let mut root: toml::Value = if path.exists() {
+        match std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| toml::from_str(&raw).ok())
+        {
+            Some(v) => v,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": "project config is invalid" })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let values = body
+        .hooks
+        .iter()
+        .filter(|h| h.enabled)
+        .map(|h| {
+            let mut t = toml::map::Map::new();
+            t.insert("event".into(), toml::Value::String(h.event.clone()));
+            t.insert(
+                "command".into(),
+                toml::Value::String(h.command.trim().into()),
+            );
+            if let Some(m) = h.matcher.as_ref().filter(|m| !m.trim().is_empty()) {
+                t.insert("match".into(), toml::Value::String(m.clone()));
+            }
+            t.insert(
+                "timeout_ms".into(),
+                toml::Value::Integer(h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS) as i64),
+            );
+            toml::Value::Table(t)
+        })
+        .collect::<Vec<_>>();
+    let Some(table) = root.as_table_mut() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "config root is not a table" })),
+        )
+            .into_response();
+    };
     table.insert("hooks".into(), toml::Value::Array(values));
-    let out = match toml::to_string_pretty(&root) { Ok(v) => v, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("serialize config: {e}") }))).into_response() };
-    if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
-    if let Err(e) = std::fs::write(&path, out) { return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("write config: {e}") }))).into_response(); }
-    state.core.set_hooks(body.hooks.iter().filter(|h| h.enabled).map(|h| vak_config::HookConfig {
-        event: h.event.clone(),
-        matcher: h.matcher.clone().filter(|m| !m.trim().is_empty()),
-        command: h.command.trim().to_string(),
-        timeout_ms: Some(h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS)),
-    }).collect());
+    let out = match toml::to_string_pretty(&root) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("serialize config: {e}") })),
+            )
+                .into_response();
+        }
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(e) = std::fs::write(&path, out) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("write config: {e}") })),
+        )
+            .into_response();
+    }
+    state.core.set_hooks(
+        body.hooks
+            .iter()
+            .filter(|h| h.enabled)
+            .map(|h| vak_config::HookConfig {
+                event: h.event.clone(),
+                matcher: h.matcher.clone().filter(|m| !m.trim().is_empty()),
+                command: h.command.trim().to_string(),
+                timeout_ms: Some(h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS)),
+            })
+            .collect(),
+    );
     (StatusCode::OK, Json(serde_json::json!({ "saved": true, "count": body.hooks.iter().filter(|h| h.enabled).count() }))).into_response()
 }
 

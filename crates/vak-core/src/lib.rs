@@ -1260,8 +1260,9 @@ impl Core {
             }));
         }
         cfg.tools = tools;
-        let hooks: Option<std::sync::Arc<Vec<vak_hooks::HookDef>>> =
-            Some(std::sync::Arc::new(build_hooks_from(&self.effective_hooks())?));
+        let hooks: Option<std::sync::Arc<Vec<vak_hooks::HookDef>>> = Some(std::sync::Arc::new(
+            build_hooks_from(&self.effective_hooks())?,
+        ));
         cfg.hooks = hooks.clone();
 
         // session-start hooks fire once per run, before any tool or
@@ -1598,7 +1599,9 @@ pub fn build_hooks(config: &vak_config::Config) -> Result<Vec<vak_hooks::HookDef
     build_hooks_from(&config.hooks)
 }
 
-fn build_hooks_from(config_hooks: &[vak_config::HookConfig]) -> Result<Vec<vak_hooks::HookDef>, CoreError> {
+fn build_hooks_from(
+    config_hooks: &[vak_config::HookConfig],
+) -> Result<Vec<vak_hooks::HookDef>, CoreError> {
     let mut out = Vec::with_capacity(config_hooks.len());
     for h in config_hooks {
         let event = match h.event.as_str() {
