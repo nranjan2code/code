@@ -142,14 +142,15 @@ crates/vak-tools     read/write/edit/bash/glob/grep behind Tool trait,
 crates/vak-permission rule engine: modes × rules -> Allow/Ask/Deny
 crates/vak-hooks     lifecycle hooks: pre/post-tool-use, stop, session-start
 crates/vak-mcp       MCP stdio client behind a lazy meta-tool
-crates/vak-agent     loop, steering queues, parallel tool execution w/
+crates/vak-agent     loop, steering queues (full user messages: text +
+                     image blocks), parallel tool execution w/
                      resource-claim waves, retries + watchdog + circuit
                      breaker + stop gate (premature-completion guard),
                      spend-gate seam (docs/design/27 Phase D), frozen-ladder
                      leg walk (docs/design/27 Phase B), goal mode + audited
                      completion + regression obligations + handoff reset
-                     (docs/design/27 Phase H), subagents (task tool) + live
-                     SubagentRegistry
+                     (docs/design/27 Phase H), subagents (task tool) +
+                     parent-scoped SubagentRegistry
 crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode +
                      context-quality scorecard (docs/design/27 Phase C)
@@ -158,21 +159,29 @@ crates/vak-config    layered TOML config + .env secret loading + [finops]
 crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      session_search injection, memory/skill-proposal tools
                      (docs/design/26-learning.md), sandbox selection incl.
-                     Docker exec backend (docs/design/25-docker-sandbox.md),
+                     Docker exec backend + runtime backend override
+                     (docs/design/25-docker-sandbox.md), manual compaction
+                     (compact_session_now), runtime MCP table hot-apply,
                      cost ledger + budget admission gate
                      (docs/design/27 Phase D)
 crates/vak-tui       retained-render terminal UI: contextual keymap +
                      interactive rebind, themes + custom theme packs,
                      vim/emacs composer, subagent attach/steer,
-                     custom commands, OSC52 copy, accessibility modes
-crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts) +
-                     always-on gateway: chat-surface routing, persisted
-                     bindings, cron delivery-to-surface, approval forwarding
-                     to an approver surface, Telegram/webhook transports,
-                     per-channel reply formatting (docs/design/22-gateway.md,
-                     docs/design/28-operations.md)
-crates/vak-desktop   Tauri 2 desktop orchestrator (sidecar over vak-server;
-                     docs/design/20-tauri-desktop.md)
+                     custom commands, OSC52 copy, accessibility modes,
+                     /mode /compact /budget /memory /proposals /mcp
+                     /sandbox + live breaker/ladder/spend introspection
+crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
+                     subagent steer-stop/MCP management) + always-on
+                     gateway: chat-surface routing, persisted bindings,
+                     cron delivery-to-surface, approval forwarding with
+                     addressed-gate resolution, Telegram/webhook transports
+                     w/ retry, per-channel reply formatting
+                     (docs/design/22-gateway.md, docs/design/28-operations.md)
+crates/vak-desktop   Tauri 2 desktop app over an embedded secured_router —
+                     SolidJS SPA: sessions, approvals, diff review,
+                     subagents tab, MCP manager, image attachments,
+                     best-of-N, tasks, side chats
+                     (docs/design/20-tauri-desktop.md)
 crates/vak-ops       service-control layer over launchd/systemd — status,
                      start/stop/restart, install/uninstall shared by tray,
                      TUI and desktop (docs/design/28-operations.md)

@@ -404,9 +404,9 @@ impl Agent {
 
             {
                 let mut session = self.session.lock().await;
-                for text in steering.drain(DrainMode::OneAtATime) {
+                for message in steering.drain(DrainMode::OneAtATime) {
                     let _ = session.append_message(MessageRecord {
-                        message: Message::user_text(text),
+                        message,
                         meta: None,
                     });
                 }

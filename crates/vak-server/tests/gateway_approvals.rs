@@ -326,6 +326,103 @@ async fn unanswered_gate_times_out_and_fails_closed() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn addressed_yes_resolves_only_that_gate_and_reports_it() {
+    let gw = spawn_with_config(
+        Arc::new(Scripted {
+            responses: Mutex::new(VecDeque::from(vec![
+                tool_call(
+                    "t1",
+                    "bash",
+                    serde_json::json!({"command": "echo addressed-run"}),
+                ),
+                text("done after addressed yes"),
+            ])),
+        }),
+        &config("approvals = \"forward\"\napprover = \"log:ops\"\n"),
+    )
+    .await;
+    let client = client_with(&gw.token);
+
+    let res = inbound(&client, &gw.base, "webhook", "ci", "run it", false).await;
+    assert_eq!(res.status(), 202);
+    assert!(
+        wait_for_delivery(&gw.home, "Approval requested", 15).await,
+        "gate announced"
+    );
+    let raw = std::fs::read_to_string(deliveries(&gw.home)).unwrap();
+    let start = raw.find('[').unwrap() + 1;
+    let short = raw[start..start + 8].to_string();
+
+    // A verdict addressed to a nonexistent gate must leave the live gate
+    // untouched.
+    let res = inbound(&client, &gw.base, "log", "ops", "yes 00000000", false).await;
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(body["state"], "no_pending_approvals");
+    let status: serde_json::Value = client
+        .get(format!("{}/gateway/status", gw.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        status["approvals"]["pending"], 1,
+        "live gate survives a mis-addressed yes"
+    );
+
+    // Addressing the real gate resolves exactly it, and the reply says so.
+    let res = inbound(
+        &client,
+        &gw.base,
+        "log",
+        "ops",
+        &format!("yes {short}"),
+        false,
+    )
+    .await;
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(body["state"], "approval_resolved");
+    assert_eq!(body["approved"], true);
+    assert!(
+        body["gate"].as_str().unwrap().starts_with(&short),
+        "resolved gate id reported: {body}"
+    );
+    assert_eq!(body["remaining"], 0);
+    assert!(
+        body["session_id"].as_str().is_some_and(|s| !s.is_empty()),
+        "session attribution present"
+    );
+
+    // The tool then really runs.
+    let sid = body["session_id"].as_str().unwrap().to_string();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let mut transcript = String::new();
+    while std::time::Instant::now() < deadline {
+        if let Ok(res) = client
+            .get(format!("{}/sessions/{sid}/transcript", gw.base))
+            .send()
+            .await
+            && res.status() == reqwest::StatusCode::OK
+        {
+            let t: serde_json::Value = res.json().await.unwrap();
+            if t.get("error").is_none()
+                && let Ok(raw) = serde_json::to_string(&t)
+                && raw.contains("addressed-run")
+            {
+                transcript = raw;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    assert!(
+        transcript.contains("addressed-run"),
+        "bash ran: {transcript}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn default_policy_denies_without_forwarding() {
     let gw = spawn_with_config(
         Arc::new(Scripted {

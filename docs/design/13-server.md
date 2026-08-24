@@ -38,6 +38,13 @@ consumers.
 | GET | `/sessions/:id/launch` | dev-server configs (`.vakcoder/launch.toml` + npm autodetect) |
 | POST | `/sessions/:id/launch/start\|stop` `{name}` | manage a dev server process |
 | GET | `/sessions/:id/launch/logs?name=` | ring-buffered output tail |
+| GET | `/sessions/:id/subagents` | live children spawned by this session (parent-scoped) |
+| POST | `/sessions/:id/subagents/:child/steer` `{text}` | queue steering for one child; 404 unless the child belongs to `:id` |
+| POST | `/sessions/:id/subagents/:child/stop` | cancel one child; same parent-scope check |
+| GET/PUT | `/config/mcp` | read the effective MCP table / replace it: validates, persists `[mcp.servers]` to the project config without destroying other keys, hot-applies into the running Core |
+| POST | `/sessions/:id/run` attachments | base64 image blocks ride the prompt as native vision content |
+| POST | `/sessions/:id/steering` `{text,attachments?}` | queued input keeps image blocks — never degraded to bare text |
+| GET | `/memory`, `/skills/proposals` (+ promote/reject) | durable memory notes and the learned-skill review queue |
 
 ## Semantics
 

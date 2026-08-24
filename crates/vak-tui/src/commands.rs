@@ -41,6 +41,22 @@ pub enum Command {
     /// `/goal <objective> [-- c1; c2]` — arm audited goal mode for the
     /// next prompt (docs/design/27 Phase H). Bare `/goal` shows status.
     Goal(Option<String>),
+    /// `/mode [read-only|workspace-write|full-access]` — runtime permission
+    /// switch. In-flight runs are cancelled and pending approvals denied
+    /// before the new mode is reported (invariant 11).
+    Mode(Option<String>),
+    /// `/compact` — summarize older turns into a compaction entry now.
+    Compact,
+    /// `/budget` — estimated spend today/trailing window vs configured caps.
+    Budget,
+    /// `/memory [text]` — list durable notes, or store one.
+    Memory(Option<String>),
+    /// `/proposals [promote|reject <id>]` — review learned skill proposals.
+    Proposals(Option<String>),
+    /// `/mcp` — configured MCP servers and discovered tools.
+    Mcp,
+    /// `/sandbox [os|docker|default]` — bash execution backend for this session.
+    Sandbox(Option<String>),
 }
 
 /// (name, description) — drives help text, completion, and parsing.
@@ -87,6 +103,22 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("a11y", "accessibility: plain, motion, reader toggles"),
     ("copy", "copy last response via OSC52 if enabled"),
     ("clear", "start a fresh session"),
+    (
+        "mode",
+        "[read-only|workspace-write|full-access] switch permission mode",
+    ),
+    ("compact", "summarize older turns now to free context"),
+    ("budget", "estimated spend vs configured caps"),
+    ("memory", "[note] durable notes · /memory <text> saves one"),
+    (
+        "proposals",
+        "[promote|reject <id>] review learned-skill proposals",
+    ),
+    ("mcp", "configured MCP servers and their tools"),
+    (
+        "sandbox",
+        "[os|docker|default] bash execution backend · bare = status",
+    ),
     ("exit", "quit"),
 ];
 
@@ -137,6 +169,13 @@ pub fn parse(input: &str) -> Option<Command> {
         "subagents" if arg.is_empty() => Some(Command::Subagents),
         "a11y" | "accessibility" => Some(Command::A11y(arg_opt)),
         "copy" if arg.is_empty() => Some(Command::Copy),
+        "mode" | "permissions" => Some(Command::Mode(arg_opt)),
+        "compact" if arg.is_empty() => Some(Command::Compact),
+        "budget" | "spend" if arg.is_empty() => Some(Command::Budget),
+        "memory" => Some(Command::Memory(arg_opt)),
+        "proposals" | "skills-review" => Some(Command::Proposals(arg_opt)),
+        "mcp" if arg.is_empty() => Some(Command::Mcp),
+        "sandbox" => Some(Command::Sandbox(arg_opt)),
         _ => None,
     }
 }

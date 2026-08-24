@@ -73,6 +73,69 @@ export default function Settings() {
   const [notes, setNotes] = createSignal<api.NoteBlock[]>([]);
   const [proposals, setProposals] = createSignal<api.SkillProposal[]>([]);
 
+  // MCP manager state: loaded when the integrations page opens; edits are
+  // local until Save pushes the whole table.
+  const [mcpServers, setMcpServers] = createSignal<Record<string, api.McpServerDef> | null>(null);
+  const [mcpDirty, setMcpDirty] = createSignal(false);
+  const [mcpSaving, setMcpSaving] = createSignal(false);
+
+  async function refreshMcp() {
+    try {
+      const res = await api.getMcpServers();
+      setMcpServers(res.servers ?? {});
+      setMcpDirty(false);
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not load MCP servers: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+
+  async function saveMcp() {
+    const servers = mcpServers() ?? {};
+    setMcpSaving(true);
+    try {
+      await api.putMcpServers(servers);
+      setMcpDirty(false);
+      setNotice({ kind: "info", text: `Saved ${Object.keys(servers).length} MCP server(s) — applied to new turns` });
+    } catch (e) {
+      setNotice({ kind: "error", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setMcpSaving(false);
+    }
+  }
+
+  function updateServer(name: string, patch: Partial<api.McpServerDef>) {
+    setMcpServers((cur) => ({ ...cur, [name]: { ...(cur?.[name] ?? { command: "", args: [], env: {}, network: false }), ...patch } }));
+    setMcpDirty(true);
+  }
+
+  function addServer() {
+    let n = "new-server";
+    let i = 2;
+    while (mcpServers()?.[n]) n = `new-server-${i++}`;
+    setMcpServers((cur) => ({ ...(cur ?? {}), [n]: { command: "", args: [], env: {}, network: false } }));
+    setMcpDirty(true);
+  }
+
+  function renameServer(oldName: string, nextName: string) {
+    if (!nextName.trim() || nextName === oldName) return;
+    setMcpServers((cur) => {
+      const entries = Object.entries(cur ?? {});
+      const replaced = entries.map(([k, v]) => (k === oldName ? [nextName, v] as [string, api.McpServerDef] : [k, v] as [string, api.McpServerDef]));
+      return Object.fromEntries(replaced);
+    });
+    setMcpDirty(true);
+  }
+
+  function removeServer(name: string) {
+    setMcpServers((cur) => {
+      const next = { ...(cur ?? {}) };
+      delete next[name];
+      return next;
+    });
+    setMcpDirty(true);
+  }
+
+
   async function refreshLearning() {
     try {
       setNotes((await api.listMemory()).notes);
@@ -144,6 +207,10 @@ export default function Settings() {
     void refreshLearning();
     const t = setInterval(() => void refreshLearning(), 8000);
     onCleanup(() => clearInterval(t));
+  });
+  createEffect(() => {
+    if (page() !== "integrations") return;
+    void refreshMcp();
   });
 
   // Re-run whenever the selected provider changes; a stale response from a
@@ -585,12 +652,65 @@ export default function Settings() {
 
             <Show when={page() === "integrations"}>
               <header><h1>Integrations</h1><p>Extend VakCoder with tools, lifecycle automation, and reusable expertise.</p></header>
+              <Group title="MCP servers">
+                <Show
+                  when={mcpServers()}
+                  fallback={<Row title="Loading…" description="Reading the effective MCP table."><span /></Row>}
+                >
+                  <div class="mcp-editor">
+                    <For each={Object.entries(mcpServers() ?? {})}>
+                      {([name, def]) => (
+                        <div class="mcp-row" data-name={name}>
+                          <div class="mcp-fields">
+                            <input
+                              class="mcp-name"
+                              value={name}
+                              aria-label="Server name"
+                              onChange={(e) => renameServer(name, e.currentTarget.value.trim())}
+                            />
+                            <input
+                              class="mcp-command"
+                              placeholder="/path/to/command"
+                              value={def.command}
+                              aria-label="Command"
+                              onInput={(e) => updateServer(name, { command: e.currentTarget.value })}
+                            />
+                            <input
+                              class="mcp-args"
+                              placeholder="args (space separated)"
+                              value={def.args.join(" ")}
+                              aria-label="Arguments"
+                              onInput={(e) => updateServer(name, { args: e.currentTarget.value.split(" ").filter(Boolean) })}
+                            />
+                          </div>
+                          <div class="mcp-controls">
+                            <label class="mcp-network" title="Allow outbound network for this server">
+                              <Switch checked={def.network} label={`Network for ${name}`} onChange={(v) => updateServer(name, { network: v })} />
+                              network
+                            </label>
+                            <button class="settings-button danger" aria-label={`Remove ${name}`} onClick={() => removeServer(name)}>
+                              <Icon name="trash" /> Remove
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                    <div class="settings-actions">
+                      <button class="btn" onClick={addServer}><Icon name="add" /> Add server</button>
+                      <button class="btn primary" disabled={!mcpDirty() || mcpSaving()} onClick={() => void saveMcp()}>
+                        {mcpSaving() ? "Saving…" : "Save & apply"}
+                      </button>
+                      <Show when={mcpDirty()}><span class="mcp-dirty">unsaved changes</span></Show>
+                    </div>
+                    <p class="settings-hint">Servers start sandboxed; “network” allows outbound connections. Env values may reference $SECRETS via $&#123;&#125;. Applies to new turns immediately and persists to .vakcoder/config.toml.</p>
+                  </div>
+                </Show>
+              </Group>
               <div class="integration-grid">
-                <div class="integration-card"><span><Icon name="plug" /></span><strong>MCP servers</strong><p>Connect external tools through the Model Context Protocol.</p><em>{config()?.integrations.mcp_servers.length ?? 0} configured</em><For each={config()?.integrations.mcp_servers}>{(name) => <code>{name}</code>}</For></div>
                 <div class="integration-card"><span><Icon name="tune" /></span><strong>Hooks</strong><p>Run commands before or after agent lifecycle events.</p><em>{config()?.integrations.hooks ?? 0} configured</em></div>
                 <div class="integration-card"><span><Icon name="spark" /></span><strong>Skills</strong><p>Reusable instructions discovered from the project and user home.</p><em>{config()?.integrations.skills.length ?? 0} discovered</em><For each={config()?.integrations.skills.slice(0, 4)}>{(name) => <code>{name}</code>}</For></div>
               </div>
-              <div class="settings-actions"><button class="btn primary" onClick={() => void openProjectConfig()}>Configure integrations</button></div>
+              <div class="settings-actions"><button class="btn primary" onClick={() => void openProjectConfig()}>Configure hooks in config.toml</button></div>
             </Show>
 
             <Show when={page() === "advanced"}>

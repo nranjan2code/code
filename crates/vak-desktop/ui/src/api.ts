@@ -138,11 +138,44 @@ export function runPrompt(
   id: string,
   prompt: string,
   goal?: { objective: string; criteria: string[] },
+  attachments?: { mime: string; data: string }[],
 ): Promise<void> {
   return req(`/sessions/${id}/run`, {
     method: "POST",
-    body: JSON.stringify({ prompt, goal: goal?.objective, criteria: goal?.criteria }),
+    body: JSON.stringify({
+      prompt,
+      goal: goal?.objective,
+      criteria: goal?.criteria,
+      attachments: attachments ?? [],
+    }),
   });
+}
+
+// ---- subagents (attach / steer / stop) ---------------------------------------
+
+export interface ActiveSubagent {
+  id: string;
+  label: string;
+  elapsed_secs: number;
+  parent_session_id: string;
+}
+
+export function listSubagents(id: string): Promise<{ subagents: ActiveSubagent[] }> {
+  return req(`/sessions/${id}/subagents`);
+}
+
+export function steerSubagent(id: string, child: string, text: string): Promise<void> {
+  return req(`/sessions/${id}/subagents/${encodeURIComponent(child)}/steer`, {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+}
+
+export function stopSubagent(
+  id: string,
+  child: string,
+): Promise<void> {
+  return req(`/sessions/${id}/subagents/${encodeURIComponent(child)}/stop`, { method: "POST" });
 }
 
 /// Dispatch forensics (docs/design/27 Phase A): per-dispatch receipts.
@@ -150,10 +183,10 @@ export function receipts(id: string): Promise<unknown[]> {
   return req(`/sessions/${id}/receipts`);
 }
 
-export function steer(id: string, text: string): Promise<void> {
+export function steer(id: string, text: string, attachments?: { mime: string; data: string }[]): Promise<void> {
   return req(`/sessions/${id}/steering`, {
     method: "POST",
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, attachments: attachments ?? [] }),
   });
 }
 
@@ -227,6 +260,24 @@ export function removeProviderKey(
 
 export function patchConfig(patch: { provider?: string; model?: string; max_turns?: number; permission_mode?: string; theme?: string }): Promise<void> {
   return req("/config", { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+// ---- MCP server management ----------------------------------------------------
+
+export interface McpServerDef {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  network: boolean;
+}
+
+export function getMcpServers(): Promise<{ servers: Record<string, McpServerDef> }> {
+  return req("/config/mcp");
+}
+
+/** Replaces the whole running table and persists the project config. */
+export function putMcpServers(servers: Record<string, McpServerDef>): Promise<{ saved: boolean; count: number }> {
+  return req("/config/mcp", { method: "PUT", body: JSON.stringify({ servers }) });
 }
 
 export function readDiff(id: string): Promise<DiffResponse> {

@@ -22,7 +22,7 @@ use axum::response::IntoResponse;
 use axum::{Json, Router};
 use tokio::sync::oneshot;
 
-use vak_agent::{AgentEvent, AutoDeny};
+use vak_agent::{AgentEvent, AutoDeny, SteeringQueues};
 use vak_core::Core;
 
 use crate::{AppState, SessionHandle};
@@ -47,7 +47,20 @@ pub struct GatewayState {
     approval_timeout: Duration,
     /// Forwarded gates awaiting a yes/no from the approver surface,
     /// oldest first (uuidv7 keys sort by insertion time).
-    pending_approvals: Mutex<std::collections::BTreeMap<String, oneshot::Sender<bool>>>,
+    pending_approvals: Mutex<std::collections::BTreeMap<String, PendingGate>>,
+}
+
+struct PendingGate {
+    session_id: String,
+    tx: oneshot::Sender<bool>,
+}
+
+/// What a resolved gate was, so a bare yes/no is never silent about which
+/// session's tool run it just decided.
+pub(crate) struct ResolvedGate {
+    pub id: String,
+    pub session_id: String,
+    pub remaining: usize,
 }
 
 impl GatewayState {
@@ -108,32 +121,51 @@ impl GatewayState {
             .len()
     }
 
-    /// Register a gate and hand back the reply receiver. The sender must be
-    /// stored before the request is announced so an instant reply cannot
-    /// race a missing entry.
-    pub(crate) fn register_gate(&self, id: &str) -> oneshot::Receiver<bool> {
+    /// Register a gate for `session_id` and hand back the reply receiver.
+    /// The sender must be stored before the request is announced so an
+    /// instant reply cannot race a missing entry.
+    pub(crate) fn register_gate(&self, id: &str, session_id: &str) -> oneshot::Receiver<bool> {
         let (tx, rx) = oneshot::channel();
         self.pending_approvals
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(id.to_string(), tx);
+            .insert(
+                id.to_string(),
+                PendingGate {
+                    session_id: session_id.to_string(),
+                    tx,
+                },
+            );
         rx
     }
 
-    /// Resolve the oldest outstanding gate. Returns remaining count.
-    pub(crate) fn resolve_oldest_gate(&self, approve: bool) -> Result<usize, ()> {
-        let sender = self
+    /// Resolve a gate. With an id prefix, only that exact gate resolves —
+    /// a reply meant for one session can never approve another's tool run.
+    /// Without one, the globally oldest gate resolves and is reported so
+    /// the approver surface can see what their bare yes/no did.
+    pub(crate) fn resolve_gate(
+        &self,
+        approve: bool,
+        id_prefix: Option<&str>,
+    ) -> Result<ResolvedGate, ()> {
+        let mut map = self
             .pending_approvals
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .pop_first();
-        match sender {
-            Some((_, tx)) => {
-                let _ = tx.send(approve);
-                Ok(self.pending_approval_count())
-            }
-            None => Err(()),
-        }
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let key = match id_prefix {
+            Some(prefix) => match map.keys().find(|k| k.starts_with(prefix)).cloned() {
+                Some(k) => k,
+                None => return Err(()),
+            },
+            None => map.keys().next().cloned().ok_or(())?,
+        };
+        let (_, gate) = map.remove_entry(&key).ok_or(())?;
+        let _ = gate.tx.send(approve);
+        Ok(ResolvedGate {
+            id: key,
+            session_id: gate.session_id,
+            remaining: map.len(),
+        })
     }
 
     fn snapshot(&self) -> Vec<(String, String)> {
@@ -201,9 +233,11 @@ pub fn routes() -> Router<AppState> {
 struct InboundBody {
     surface: String,
     chat: String,
-    // `sender` is accepted on the wire for adapter compatibility (group
-    // routing lands with G1) but deliberately untyped here until then;
-    // serde ignores unknown fields.
+    /// Who sent this, when the adapter knows (a Telegram @user, a webhook
+    /// identity). Typed since G1 groundwork: it is recorded on deliveries
+    /// and attributed on queued turns instead of being silently dropped.
+    #[serde(default)]
+    sender: Option<String>,
     text: String,
     #[serde(default)]
     wait: bool,
@@ -255,6 +289,7 @@ struct GatewayApprover {
     events_tx: tokio::sync::broadcast::Sender<AgentEvent>,
     state: Arc<GatewayState>,
     core: Core,
+    session_id: String,
 }
 
 #[async_trait::async_trait]
@@ -264,7 +299,7 @@ impl vak_agent::Approver for GatewayApprover {
             return false;
         }
         let id = uuid::Uuid::now_v7().to_string();
-        let rx = self.state.register_gate(&id);
+        let rx = self.state.register_gate(&id, &self.session_id);
         let _ = self.events_tx.send(AgentEvent::ApprovalRequested {
             id: id.clone(),
             tool: tool.to_string(),
@@ -283,7 +318,7 @@ impl vak_agent::Approver for GatewayApprover {
         .await
         {
             eprintln!("[gateway] approval announcement failed: {e}");
-            self.state.resolve_oldest_gate(false).ok();
+            let _ = self.state.resolve_gate(false, Some(&id));
             return false;
         }
         match tokio::time::timeout(self.state.approval_timeout(), rx).await {
@@ -304,14 +339,31 @@ impl vak_agent::Approver for GatewayApprover {
     }
 }
 
-/// "yes"/"no" vocabulary for chat replies. Deliberately small and strict —
-/// casual chatter from the approver chat must not resolve gates.
-fn parse_verdict(text: &str) -> Option<bool> {
-    match text.trim().to_lowercase().as_str() {
-        "y" | "yes" | "approve" | "approved" | "ok" | "allow" => Some(true),
-        "n" | "no" | "deny" | "denied" | "block" => Some(false),
+/// "yes"/"no" vocabulary for chat replies, optionally addressed to one
+/// gate: "yes ab12cd34". Deliberately small and strict — casual chatter
+/// from the approver chat must not resolve gates. Returns the verdict and
+/// the gate-id prefix when one was supplied.
+fn parse_verdict(text: &str) -> Option<(bool, Option<String>)> {
+    let mut tokens = text.split_whitespace();
+    let head = tokens.next()?.to_lowercase();
+    let verdict = match head.as_str() {
+        "y" | "yes" | "approve" | "approved" | "ok" | "allow" => true,
+        "n" | "no" | "deny" | "denied" | "block" => false,
+        _ => return None,
+    };
+    // Extra prose after a bare verdict is ignored; exactly one short token
+    // is treated as a gate id.
+    let id = match tokens.next() {
+        Some(t)
+            if tokens.next().is_none()
+                && t.len() >= 4
+                && t.chars().all(|c| c.is_ascii_alphanumeric()) =>
+        {
+            Some(t.to_lowercase())
+        }
         _ => None,
-    }
+    };
+    Some((verdict, id))
 }
 
 async fn gateway_inbound(
@@ -342,19 +394,22 @@ async fn gateway_inbound(
     let key = format!("{}:{}", body.surface.trim(), body.chat.trim());
 
     // Approval replies from the designated approver surface resolve the
-    // oldest forwarded gate instead of becoming conversation input. Any
-    // non-verdict text from that chat falls through to normal routing.
+    // addressed gate (or the oldest one) instead of becoming conversation
+    // input. Any non-verdict text from that chat falls through to normal
+    // routing.
     if state.gateway.forward_mode()
         && Some(key.as_str()) == state.gateway.approver_target()
-        && let Some(verdict) = parse_verdict(&text)
+        && let Some((verdict, gate_id)) = parse_verdict(&text)
     {
-        return match state.gateway.resolve_oldest_gate(verdict) {
-            Ok(remaining) => (
+        return match state.gateway.resolve_gate(verdict, gate_id.as_deref()) {
+            Ok(resolved) => (
                 StatusCode::OK,
                 Json(serde_json::json!({
                     "state": "approval_resolved",
                     "approved": verdict,
-                    "remaining": remaining,
+                    "gate": resolved.id,
+                    "session_id": resolved.session_id,
+                    "remaining": resolved.remaining,
                 })),
             )
                 .into_response(),
@@ -379,13 +434,21 @@ async fn gateway_inbound(
 
     // Busy? Queue as logged steering input; the running loop consumes it
     // between model steps, and any leftovers run as a continuation turn.
+    // The full composed message (text + images) is queued so nothing the
+    // sender supplied is degraded to bare text.
     let busy = handle
         .session
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .is_none();
     if busy {
-        handle.steering.push_steering(text);
+        let attributed = match body.sender.as_deref().map(str::trim) {
+            Some(who) if !who.is_empty() => format!("[from {who}] {text}"),
+            _ => text.clone(),
+        };
+        handle
+            .steering
+            .push_steering_message(compose_prompt(&attributed, &body.attachments));
         return (
             StatusCode::ACCEPTED,
             Json(serde_json::json!({
@@ -551,10 +614,10 @@ async fn execute_turn_chain(
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
         let Some(taken) = taken else {
-            // Lost the race with another writer mid-chain; hand our prompt
-            // to the winner as steering instead of dropping it (text-only:
-            // attachments were already persisted on the first attempt).
-            handle.steering.push_steering(prompt.text_content());
+            // Lost the race with another writer mid-chain; hand our full
+            // prompt (text + images) to the winner as steering instead of
+            // dropping it.
+            handle.steering.push_steering_message(prompt.clone());
             return;
         };
         let session_id = taken
@@ -569,6 +632,7 @@ async fn execute_turn_chain(
                 events_tx: handle.events_tx.clone(),
                 state: gw.clone(),
                 core: core.clone(),
+                session_id: session_id.clone(),
             })
         } else {
             Arc::new(AutoDeny)
@@ -643,10 +707,10 @@ async fn execute_turn_chain(
         }
 
         let queued = steering.drain(vak_agent::DrainMode::All);
-        if queued.is_empty() {
-            return;
+        match SteeringQueues::merge_prompt(queued) {
+            None => return,
+            Some(merged) => prompt = merged,
         }
-        prompt = vak_llm::Message::user_text(queued.join("\n\n"));
     }
 }
 
@@ -752,32 +816,65 @@ fn deliver_log(core: &Core, target: &str, text: &str) -> Result<(), String> {
     writeln!(f, "{line}").map_err(|e| format!("append deliveries log: {e}"))
 }
 
+/// Transient webhook failures retry with bounded exponential backoff.
+/// 4xx (except 429) are the receiver's permanent answer and return at once;
+/// network errors, timeouts, 429 and 5xx are retried.
+const WEBHOOK_ATTEMPTS: u32 = 3;
+
+fn webhook_retryable(status: Option<u16>) -> bool {
+    match status {
+        None => true,
+        Some(429) => true,
+        Some(c) => c >= 500,
+    }
+}
+
 async fn deliver_webhook(core: &Core, name: &str, text: &str) -> Result<(), String> {
     let hook = core.config().gateway.webhooks.get(name).ok_or_else(|| {
         let known: Vec<&String> = core.config().gateway.webhooks.keys().collect();
         format!("unknown webhook '{name}'; configured: {known:?}")
     })?;
-    let mut req = http_client().post(&hook.url).json(&serde_json::json!({
+    // Fail closed: a configured credential that is missing must not turn
+    // into an unauthenticated post of agent output.
+    let token = match &hook.token_env {
+        Some(env_name) => Some(
+            vak_config::get_var(env_name)
+                .ok_or_else(|| format!("webhook '{name}' token_env '{env_name}' is not set"))?,
+        ),
+        None => None,
+    };
+    let payload = serde_json::json!({
         "target": format!("webhook:{name}"),
         "text": text,
         "ts": chrono::Utc::now().to_rfc3339(),
-    }));
-    // Fail closed: a configured credential that is missing must not turn
-    // into an unauthenticated post of agent output.
-    if let Some(env_name) = &hook.token_env {
-        let token = vak_config::get_var(env_name)
-            .ok_or_else(|| format!("webhook '{name}' token_env '{env_name}' is not set"))?;
-        req = req.bearer_auth(token);
+    });
+
+    let mut last_error = String::new();
+    for attempt in 0..WEBHOOK_ATTEMPTS {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(400u64 << (attempt - 1))).await;
+        }
+        let mut req = http_client().post(&hook.url).json(&payload);
+        if let Some(token) = &token {
+            req = req.bearer_auth(token);
+        }
+        match req.send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_success() {
+                    return Ok(());
+                }
+                last_error = format!("webhook '{name}' returned {status}");
+                if !webhook_retryable(Some(status.as_u16())) {
+                    return Err(last_error);
+                }
+            }
+            Err(e) => {
+                last_error = format!("webhook '{name}' post failed: {e}");
+            }
+        }
     }
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("webhook '{name}' post failed: {e}"))?;
-    let status = resp.status();
-    if !status.is_success() {
-        return Err(format!("webhook '{name}' returned {status}"));
-    }
-    Ok(())
+    Err(last_error)
 }
 
 /// Reflection helper for the gateway: pulls the bound session's transcript
@@ -830,4 +927,52 @@ pub(crate) async fn reflection_tail(
     let home_dir = core.sessions_home();
     let cwd = core.cwd().clone();
     vak_core::reflection::apply(home_dir.as_path(), cwd.as_path(), session_id, &proposals)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bare_verdicts_have_no_gate_id() {
+        assert_eq!(parse_verdict("yes"), Some((true, None)));
+        assert_eq!(parse_verdict("  NO "), Some((false, None)));
+        assert_eq!(parse_verdict("approve"), Some((true, None)));
+    }
+
+    #[test]
+    fn addressed_verdict_extracts_single_short_token() {
+        assert_eq!(
+            parse_verdict("yes ab12cd34"),
+            Some((true, Some("ab12cd34".into())))
+        );
+        assert_eq!(
+            parse_verdict("no deadbeef"),
+            Some((false, Some("deadbeef".into())))
+        );
+    }
+
+    #[test]
+    fn prose_after_verdict_is_never_an_id() {
+        assert_eq!(parse_verdict("yes please do it now"), Some((true, None)));
+        assert_eq!(parse_verdict("no way"), Some((false, None)));
+    }
+
+    #[test]
+    fn chatter_is_not_a_verdict() {
+        assert_eq!(parse_verdict("sure thing"), None);
+        assert_eq!(parse_verdict(""), None);
+        assert_eq!(parse_verdict("approved!"), None);
+    }
+
+    #[test]
+    fn webhook_retry_matrix() {
+        assert!(webhook_retryable(None), "network error retries");
+        assert!(webhook_retryable(Some(429)));
+        assert!(webhook_retryable(Some(503)));
+        assert!(!webhook_retryable(Some(401)), "auth is permanent");
+        assert!(!webhook_retryable(Some(404)));
+        assert!(!webhook_retryable(Some(200)));
+    }
 }

@@ -253,6 +253,13 @@ Shipped in `crates/vak-desktop` (+ additive `vak-server` endpoints):
   `GET|PUT /fs/file` (symlink-resolved confinement to cwd),
   `GET /fs/tree` (bounded listing, vendored dirs skipped),
   `POST /config/mode`, `/health` gains `context_window`+`cwd`.
+  Later additions: subagent control plane (`GET /sessions/{id}/subagents`,
+  `POST /sessions/{id}/subagents/{child}/steer|stop`, parent-scoped so one
+  session can never touch another's child), MCP server management
+  (`GET|PUT /config/mcp` — PUT validates, persists the project config's
+  `[mcp.servers]` table without destroying other keys, and hot-applies into
+  the running Core via `Core::set_mcp_servers`; tested in mcp_endpoints.rs),
+  and image attachments on both `/run` and `/steering`.
 - **D2 completion**: dock tab bar (diff/terminal/editor), file-editor pane
   (open-from-chat links + diff headers, ⌘S save, disk-conflict warn via
   refetch-compare), @file mention autocomplete in the composer (backed by
@@ -260,6 +267,15 @@ Shipped in `crates/vak-desktop` (+ additive `vak-server` endpoints):
   the user message — invariant 1 holds without a new entry type),
   per-session PTY lifecycle fix (terminals keyed by session id), diff pane
   auto-refresh on run finish.
+
+- **Subagents dock tab** ("Subagents"): live list of the session's running
+  children polled from the control-plane endpoints, with per-child steering
+  input and stop. Children already stream lifecycle/tool events into the
+  session SSE; this closes the attach/steer gap that previously existed only
+  in the TUI. Attachments: the composer accepts images via button, paste, or
+  drag-drop; they ride `/run` and mid-run steering as base64 vision blocks,
+  never degraded to bare text. Goal-armed runs refuse image attachments with
+  an inline composer error (server-side rule surfaced client-side).
 
 - **Side chats as branches** (`/btw`, ⌘;): server runs the Q as a sibling
   branch off the current main tail (`branch_at` + append + restore), streams
@@ -397,6 +413,13 @@ the model. That needs a headless-browser dependency decision
 (chromiumoxide + system Chrome vs bundled WebView probe) — tracked as future
 work; until then the agent verifies via bash (`curl`), and the human verifies
 visually in the preview pane.
+
+Aug 2026 additions closing the last interactive gaps: the **subagent dock
+tab** (attach/steer parity with the TUI, over parent-scoped server endpoints),
+a **graphical MCP manager** in Settings → Integrations (add/edit/remove
+servers, network toggle, persisted to project config + hot-applied), and
+**composer image attachments** (button/paste/drag-drop, riding `/run` and
+`/steering` as native vision blocks).
 
 Next up (in steal-list order): browser preview/auto-verify — the last major
 item. Everything else from the Claude/Codex/Cursor steal-lists that fits our

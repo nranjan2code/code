@@ -71,6 +71,7 @@ import PrPanel from "./components/PrPanel";
 import TasksModal from "./components/TasksModal";
 import CheckpointsModal from "./components/CheckpointsModal";
 import PreviewPane from "./components/PreviewPane";
+import SubagentsPanel from "./components/SubagentsPanel";
 import ProjectGate from "./components/ProjectGate";
 import WorkspaceHeader from "./components/WorkspaceHeader";
 import Icon, { type IconName } from "./components/Icon";
@@ -169,8 +170,9 @@ export async function newSession() {
 export async function sendPrompt(
   text: string,
   goal?: { objective: string; criteria: string[] },
+  attachments?: { mime: string; data: string }[],
 ) {
-  if (!text.trim()) return;
+  if (!text.trim() && !(attachments && attachments.length)) return;
   // Typing into the empty state is the natural way to start: create the task
   // rather than silently dropping the prompt because nothing is selected.
   let id = activeId();
@@ -212,11 +214,11 @@ export async function sendPrompt(
   appendUser(id, text);
   try {
     if (isRunning(id)) {
-      await api.steer(id, text);
+      await api.steer(id, text, attachments);
     } else {
       markRunning(id, true);
       try {
-        await api.runPrompt(id, text, goal ?? thisGoal ?? undefined);
+        await api.runPrompt(id, text, goal ?? thisGoal ?? undefined, attachments);
       } catch (e) {
         markRunning(id, false);
         throw e;
@@ -521,6 +523,7 @@ export default function App() {
                     ["terminal", "Terminal", "terminal"],
                     ["editor", "Editor", "code"],
                     ["pr", "Pull request", "git"],
+                    ["agents", "Subagents", "grid"],
                   ] as const}>
                     {([id, label, icon]) => (
                       <button
@@ -556,6 +559,9 @@ export default function App() {
                 </Show>
                 <Show when={tab() === "preview"}>
                   <PreviewPane />
+                </Show>
+                <Show when={tab() === "agents"}>
+                  <SubagentsPanel sessionId={activeId()} />
                 </Show>
               </div>
               </>

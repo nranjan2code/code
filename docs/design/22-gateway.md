@@ -118,13 +118,25 @@ then the turn blocks until one of:
 - a reply arrives **from the approver chat only** matching the strict verdict
   vocabulary (`y/yes/approve/approved/ok/allow` → allow;
   `n/no/deny/denied/block` → deny) — any other text from that chat falls
-  through to ordinary conversation routing and resolves nothing;
+  through to ordinary conversation routing and resolves nothing. A reply may
+  address one gate explicitly (`yes ab12cd34`, the short id from the
+  announcement); an addressed verdict resolves **only** that gate — a yes
+  meant for one session can never approve another session's tool run. A bare
+  verdict resolves the oldest outstanding gate, and the resolution response
+  reports which gate and session it decided;
 - the `approval_timeout_secs` window lapses (default 300s, minimum 5s) —
   deny, and the gate is retired so a late reply resolves nothing;
 - the run is cancelled — deny.
 
 Verdict-shaped chatter from any non-approver chat never touches the gate
 queue; in `deny` mode nothing is announced at all.
+
+Webhook deliveries retry transient failures (network errors, 429, 5xx) up to
+three attempts with bounded exponential backoff; permanent 4xx answers return
+immediately. Inbound messages carry an optional typed `sender`; when a busy
+session queues the message as steering, the sender is attributed on the
+queued turn and image attachments ride along undegraded (steering entries are
+full user messages, not flattened text).
 
 ### Cron → delivery targets
 

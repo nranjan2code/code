@@ -62,6 +62,51 @@ pub enum CoreError {
     MissingEngine,
 }
 
+/// Stats reported by a successful manual compaction.
+#[derive(Debug, Clone, Copy)]
+pub struct CompactReport {
+    pub before_tokens: u64,
+    pub after_tokens: u64,
+    pub summarized_messages: usize,
+}
+
+/// Result envelope for manual compaction: the caller keeps ownership of the
+/// session either way; `report` is `Some` exactly when `error` is `None`.
+#[derive(Debug, Clone)]
+pub struct CompactOutcome {
+    pub report: Option<CompactReport>,
+    pub error: Option<String>,
+}
+
+impl CompactOutcome {
+    fn failed(error: String) -> Self {
+        CompactOutcome {
+            report: None,
+            error: Some(error),
+        }
+    }
+}
+
+impl Core {
+    /// Today's estimated spend (local midnight window), USD 0.0 when the
+    /// ledger is absent or unpriced rows dominate — absent is zero here
+    /// because the ledger itself is the source being displayed.
+    pub fn spend_day_usd(&self) -> f64 {
+        vak_core_ledger(self).day_total_usd(chrono::Utc::now())
+    }
+
+    /// Estimated spend over the trailing `days`, USD.
+    pub fn spend_trailing_usd(&self, days: u64) -> f64 {
+        vak_core_ledger(self).total_usd_since(
+            chrono::Utc::now() - chrono::Duration::hours(days.saturating_mul(24) as i64),
+        )
+    }
+}
+
+fn vak_core_ledger(core: &Core) -> finops::FinOpsLedger {
+    finops::FinOpsLedger::new(&core.inner.sessions_home)
+}
+
 struct CoreInner {
     config: vak_config::Config,
     cwd: PathBuf,
@@ -72,6 +117,7 @@ struct CoreInner {
     max_turns_override: std::sync::Mutex<Option<usize>>,
     mode_override: std::sync::Mutex<Option<vak_config::PermissionMode>>,
     theme_override: std::sync::Mutex<Option<String>>,
+    sandbox_backend_override: std::sync::Mutex<Option<String>>,
     provider_instance: std::sync::Mutex<Option<Arc<dyn Provider>>>,
     sessions_home_override: std::sync::Mutex<Option<PathBuf>>,
     breaker: Arc<vak_agent::CircuitBreaker>,
@@ -86,6 +132,8 @@ struct CoreInner {
     /// Cached MCP capability section appended to the system prompt; None
     /// until a run with servers configured populates it.
     mcp_inventory: std::sync::Mutex<Option<String>>,
+    /// Runtime MCP table override (desktop/TUI management surface).
+    mcp_override: std::sync::Mutex<Option<vak_config::McpConfig>>,
 }
 
 /// Learned permission rules live outside the main config so they can be
@@ -142,6 +190,7 @@ impl Core {
                 provider_override: std::sync::Mutex::new(None),
                 max_turns_override: std::sync::Mutex::new(None),
                 mode_override: std::sync::Mutex::new(None),
+                sandbox_backend_override: std::sync::Mutex::new(None),
                 theme_override: std::sync::Mutex::new(None),
                 provider_instance: std::sync::Mutex::new(None),
                 sessions_home_override: std::sync::Mutex::new(None),
@@ -156,6 +205,7 @@ impl Core {
                 ),
                 models_cache: std::sync::Mutex::new(HashMap::new()),
                 mcp_inventory: std::sync::Mutex::new(None),
+                mcp_override: std::sync::Mutex::new(None),
             }),
         })
     }
@@ -249,6 +299,48 @@ impl Core {
         if let Ok(mut c) = self.inner.mode_override.lock() {
             *c = Some(mode);
         }
+    }
+
+    /// Runtime sandbox-backend selection ("os", "docker", or config default
+    /// via None). Session-scoped like every other override; never persisted.
+    pub fn set_sandbox_backend(&self, backend: Option<String>) {
+        if let Ok(mut c) = self.inner.sandbox_backend_override.lock() {
+            *c = backend;
+        }
+    }
+
+    pub fn effective_sandbox_backend(&self) -> String {
+        if let Ok(c) = self.inner.sandbox_backend_override.lock()
+            && let Some(b) = c.as_ref()
+        {
+            return b.clone();
+        }
+        self.inner.config.sandbox.backend.clone()
+    }
+
+    pub fn breaker(&self) -> Arc<vak_agent::CircuitBreaker> {
+        self.inner.breaker.clone()
+    }
+
+    /// Runtime MCP server table replacement (trusted surfaces only). Takes
+    /// effect on the next turn; the cached capability section is dropped so
+    /// the next run re-discovers the new inventory.
+    pub fn set_mcp_servers(&self, config: vak_config::McpConfig) {
+        if let Ok(mut c) = self.inner.mcp_override.lock() {
+            *c = Some(config);
+        }
+        if let Ok(mut inv) = self.inner.mcp_inventory.lock() {
+            *inv = None;
+        }
+    }
+
+    pub fn effective_mcp(&self) -> vak_config::McpConfig {
+        if let Ok(c) = self.inner.mcp_override.lock()
+            && let Some(cfg) = c.as_ref()
+        {
+            return cfg.clone();
+        }
+        self.inner.config.mcp.clone()
     }
 
     pub fn set_theme(&self, theme: String) {
@@ -422,7 +514,7 @@ impl Core {
         if self.inner.config.subagents {
             names.push("task".into());
         }
-        if !self.inner.config.mcp.servers.is_empty() {
+        if !self.effective_mcp().servers.is_empty() {
             names.push("mcp".into());
         }
 
@@ -963,11 +1055,9 @@ impl Core {
                 registry: Some(self.inner.subagents.clone()),
             })));
         }
-        if !self.inner.config.mcp.servers.is_empty() {
-            let servers = self
-                .inner
-                .config
-                .mcp
+        let mcp_cfg = self.effective_mcp();
+        if !mcp_cfg.servers.is_empty() {
+            let servers = mcp_cfg
                 .servers
                 .iter()
                 .filter_map(|(name, s)| {
@@ -1147,13 +1237,126 @@ impl Core {
             .unwrap_or(0)
     }
 
+    /// User-invoked compaction (`/compact`): summarize older turns into a
+    /// compaction entry now, regardless of the automatic trigger threshold.
+    /// Append-only; a receipt entry audits the summarizer dispatch. The
+    /// session always returns; failures land in `CompactOutcome.error`.
+    pub async fn compact_session_now(
+        &self,
+        mut session: SessionLog,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> (SessionLog, CompactOutcome) {
+        let policy = vak_agent::context::ContextPolicy {
+            context_window: self.inner.config.context_window,
+            max_output: u64::from(self.inner.config.max_tokens),
+            ..Default::default()
+        };
+        let system = self.system_prompt();
+        let tool_defs = vak_tools::definitions(&self.agent_tools());
+        let before = vak_agent::context::estimate_tokens(
+            &session.derive_messages(),
+            Some(&system),
+            &tool_defs,
+        );
+        let Some(plan) = session.plan_compaction(policy.keep_recent) else {
+            return (
+                session,
+                CompactOutcome {
+                    report: None,
+                    error: None,
+                },
+            );
+        };
+        let provider = match self.provider() {
+            Ok(p) => p,
+            Err(e) => return (session, CompactOutcome::failed(e.to_string())),
+        };
+        let model = self.effective_model();
+        let summarized = plan.older.len();
+        let transcript = vak_agent::context::render_transcript(&plan.older);
+        let req = vak_agent::context::compaction_request(&model, &transcript);
+
+        let started = std::time::Instant::now();
+        let mut receipt = vak_llm::WorkReceipt::new(vak_llm::WorkPurpose::Summarize, &model);
+        let summary = match provider.stream(req, cancel).await {
+            Ok(stream) => match stream.result().await {
+                Ok(msg) => {
+                    receipt.record(
+                        vak_llm::AttemptReason::Initial,
+                        vak_llm::FailureDomain::Unknown,
+                        vak_llm::Settlement::Ok,
+                        started.elapsed().as_millis() as u64,
+                        Some(msg.usage.clone()),
+                        None,
+                    );
+                    msg.text_content()
+                }
+                Err(e) => {
+                    receipt.record(
+                        vak_llm::AttemptReason::Initial,
+                        vak_llm::FailureDomain::Unknown,
+                        vak_llm::Settlement::Failed,
+                        started.elapsed().as_millis() as u64,
+                        None,
+                        Some(e.to_string()),
+                    );
+                    let _ = session.append_receipt(receipt);
+                    return (session, CompactOutcome::failed(e.to_string()));
+                }
+            },
+            Err(e) => {
+                receipt.record(
+                    vak_llm::AttemptReason::Initial,
+                    vak_llm::FailureDomain::Unknown,
+                    vak_llm::Settlement::Cancelled,
+                    started.elapsed().as_millis() as u64,
+                    None,
+                    Some(e.to_string()),
+                );
+                let _ = session.append_receipt(receipt);
+                return (session, CompactOutcome::failed(e.to_string()));
+            }
+        };
+        if summary.trim().is_empty() {
+            let _ = session.append_receipt(receipt);
+            return (
+                session,
+                CompactOutcome::failed("compaction produced an empty summary".into()),
+            );
+        }
+        if let Err(e) = session.apply_compaction(&plan, summary, before) {
+            return (
+                session,
+                CompactOutcome::failed(format!("compaction write failed: {e}")),
+            );
+        }
+        let _ = session.append_receipt(receipt);
+        let after = vak_agent::context::estimate_tokens(
+            &session.derive_messages(),
+            Some(&system),
+            &tool_defs,
+        );
+        (
+            session,
+            CompactOutcome {
+                report: Some(CompactReport {
+                    before_tokens: before,
+                    after_tokens: after,
+                    summarized_messages: summarized,
+                }),
+                error: None,
+            },
+        )
+    }
+
     fn build_sandbox(&self) -> Option<std::sync::Arc<dyn vak_tools::sandbox::Sandbox>> {
         let mode = match self.effective_permission_mode() {
             vak_config::PermissionMode::ReadOnly => SandboxMode::ReadOnly,
             vak_config::PermissionMode::WorkspaceWrite => SandboxMode::WorkspaceWrite,
             vak_config::PermissionMode::FullAccess => return None,
         };
-        let backend = self.inner.config.sandbox.backend.as_str();
+        let backend = self.effective_sandbox_backend();
+        let backend = backend.as_str();
         if backend == "docker" {
             // Fail closed at call time if the daemon is unreachable:
             // BashTool surfaces the wrapped command's error verbatim, and

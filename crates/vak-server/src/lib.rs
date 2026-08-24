@@ -255,6 +255,12 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/run", post(run_prompt))
         .route("/sessions/{id}/steering", post(send_steering))
         .route("/sessions/{id}/cancel", post(cancel_run))
+        .route("/sessions/{id}/subagents", get(list_subagents))
+        .route(
+            "/sessions/{id}/subagents/{child}/steer",
+            post(steer_subagent),
+        )
+        .route("/sessions/{id}/subagents/{child}/stop", post(stop_subagent))
         .route("/sessions/{id}/approvals/{req_id}", post(answer_approval))
         .route("/sessions/{id}/events", get(events_sse))
         .route("/sessions/{id}/transcript", get(transcript))
@@ -268,6 +274,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/fs/tree", get(fs_tree))
         .route("/config", get(get_config).patch(patch_config))
         .route("/config/mode", post(set_permission_mode))
+        .route("/config/mcp", get(get_mcp_servers).put(put_mcp_servers))
         .route(
             "/config/key",
             put(put_provider_key).delete(delete_provider_key),
@@ -999,6 +1006,10 @@ async fn run_prompt(
 #[derive(serde::Deserialize)]
 struct SteeringBody {
     text: String,
+    /// Optional base64 images appended to the steered prompt, mirroring
+    /// /run so queued input is never degraded to bare text.
+    #[serde(default)]
+    attachments: Vec<RunAttachment>,
 }
 
 async fn send_steering(
@@ -1009,7 +1020,26 @@ async fn send_steering(
     let Some(handle) = state.get(&id) else {
         return StatusCode::NOT_FOUND;
     };
-    handle.steering.push_steering(body.text);
+    let usable: Vec<&RunAttachment> = body
+        .attachments
+        .iter()
+        .filter(|a| !a.data.trim().is_empty())
+        .collect();
+    if usable.is_empty() {
+        handle.steering.push_steering(body.text);
+    } else {
+        let mut blocks = vec![vak_llm::ContentBlock::text(body.text.clone())];
+        for a in usable {
+            blocks.push(vak_llm::ContentBlock::image_base64(
+                a.mime.clone(),
+                a.data.trim().to_string(),
+            ));
+        }
+        handle.steering.push_steering_message(vak_llm::Message {
+            role: vak_llm::Role::User,
+            content: blocks,
+        });
+    }
     StatusCode::ACCEPTED
 }
 
@@ -1040,6 +1070,55 @@ fn deny_pending_approvals(handle: &SessionHandle) {
         .collect();
     for request in requests {
         request.respond(false);
+    }
+}
+
+// ---- Subagent control plane -------------------------------------------------
+//
+// Children already stream lifecycle/tool events into the parent session's
+// SSE channel; these endpoints add the missing half: listing, steering, and
+// stopping from a remote surface. Scope-checked against the parent so one
+// session can never touch another's child.
+
+async fn list_subagents(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Json<serde_json::Value> {
+    let children = state.core.subagents().active_for(&id);
+    Json(serde_json::json!({ "subagents": children }))
+}
+
+#[derive(serde::Deserialize)]
+struct SubagentSteerBody {
+    text: String,
+}
+
+async fn steer_subagent(
+    State(state): State<AppState>,
+    Path((id, child)): Path<(String, String)>,
+    Json(body): Json<SubagentSteerBody>,
+) -> StatusCode {
+    if state.core.subagents().parent_of(&child).as_deref() != Some(id.as_str()) {
+        return StatusCode::NOT_FOUND;
+    }
+    if state.core.subagents().steer(&child, &body.text) {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::CONFLICT
+    }
+}
+
+async fn stop_subagent(
+    State(state): State<AppState>,
+    Path((id, child)): Path<(String, String)>,
+) -> StatusCode {
+    if state.core.subagents().parent_of(&child).as_deref() != Some(id.as_str()) {
+        return StatusCode::NOT_FOUND;
+    }
+    if state.core.subagents().stop(&child) {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::CONFLICT
     }
 }
 
@@ -1835,6 +1914,152 @@ async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatc
         state.core.set_theme(theme);
     }
     StatusCode::OK
+}
+
+// ---- MCP server management --------------------------------------------------
+//
+// The desktop Settings page edits the MCP table here: GET reads the
+// effective table; PUT validates, persists to the project config.toml
+// ([mcp.servers]) and hot-applies into the running Core so the next turn
+// picks it up without a backend restart. mcp.servers is a privileged key:
+// this endpoint is only reachable through the bearer-token router of a
+// locally trusted surface.
+
+async fn get_mcp_servers(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let mcp = state.core.effective_mcp();
+    Json(serde_json::json!({ "servers": mcp.servers }))
+}
+
+#[derive(serde::Deserialize, Clone)]
+struct McpServerInput {
+    command: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    env: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    network: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct McpPutBody {
+    servers: std::collections::BTreeMap<String, McpServerInput>,
+}
+
+fn valid_server_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+fn persist_mcp_to_project_config(
+    cwd: &std::path::Path,
+    servers: &std::collections::BTreeMap<String, McpServerInput>,
+) -> Result<std::path::PathBuf, String> {
+    let path = cwd.join(".vakcoder/config.toml");
+    let mut root: toml::Value = if path.exists() {
+        let raw =
+            std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        // A config we cannot parse is never silently replaced.
+        toml::from_str(&raw).map_err(|e| format!("parse {}: {e}", path.display()))?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let mut servers_table = toml::map::Map::new();
+    for (name, s) in servers {
+        let mut entry = toml::map::Map::new();
+        entry.insert("command".into(), toml::Value::String(s.command.clone()));
+        entry.insert(
+            "args".into(),
+            toml::Value::Array(s.args.iter().cloned().map(toml::Value::String).collect()),
+        );
+        if !s.env.is_empty() {
+            entry.insert(
+                "env".into(),
+                toml::Value::Table(
+                    s.env
+                        .iter()
+                        .map(|(k, v)| (k.clone(), toml::Value::String(v.clone())))
+                        .collect(),
+                ),
+            );
+        }
+        if s.network {
+            entry.insert("network".into(), toml::Value::Boolean(true));
+        }
+        servers_table.insert(name.clone(), toml::Value::Table(entry));
+    }
+    let mut mcp_table = toml::map::Map::new();
+    mcp_table.insert("servers".into(), toml::Value::Table(servers_table));
+    root.as_table_mut()
+        .ok_or("config root is not a table")?
+        .insert("mcp".into(), toml::Value::Table(mcp_table));
+    let out = toml::to_string_pretty(&root).map_err(|e| format!("serialize config: {e}"))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+    }
+    std::fs::write(&path, out).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+async fn put_mcp_servers(
+    State(state): State<AppState>,
+    Json(body): Json<McpPutBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    for name in body.servers.keys() {
+        if !valid_server_name(name) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("invalid server name '{name}'") })),
+            )
+                .into_response();
+        }
+    }
+    for (name, s) in &body.servers {
+        if s.command.trim().is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("server '{name}' needs a command") })),
+            )
+                .into_response();
+        }
+    }
+    match persist_mcp_to_project_config(state.core.cwd(), &body.servers) {
+        Ok(_) => {}
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            )
+                .into_response();
+        }
+    }
+    let cfg = vak_config::McpConfig {
+        servers: body
+            .servers
+            .iter()
+            .map(|(name, s)| {
+                (
+                    name.clone(),
+                    vak_config::McpServerConfig {
+                        command: s.command.trim().to_string(),
+                        args: s.args.clone(),
+                        env: s.env.clone(),
+                        network: s.network,
+                    },
+                )
+            })
+            .collect(),
+    };
+    state.core.set_mcp_servers(cfg);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "saved": true, "count": body.servers.len() })),
+    )
+        .into_response()
 }
 
 #[derive(serde::Deserialize)]

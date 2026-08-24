@@ -178,3 +178,42 @@ accessibility surfaces live there and in 05-config.md).
   checkpoint, reliability, tool, skill, hook, MCP, flow, eval, server, desktop,
   and TUI entry points instead of leaving them discoverable only in source or
   CLI help.
+
+## Slice 8 — full system surface (Aug 2026)
+
+The TUI now reaches every operator-relevant core capability; nothing is
+display-only anymore.
+
+- **`/mode [read-only|workspace-write|full-access]`** — runtime permission
+  switching. Honors invariant 11: pending approvals are denied, session-allow
+  grants are cleared, an attached subagent is stopped, and an in-flight run is
+  cancelled *before* the new mode is reported — when a run is active the
+  switch is deferred and applied the moment the run actually stops, before any
+  queued follow-up fires.
+- **`/compact`** — manual compaction via `Core::compact_session_now`: plans
+  the partition, runs the summarizer through the provider with a `Summarize`
+  work receipt appended to the ledger, applies the compaction entry
+  (append-only), and reports before/after token estimates. The session always
+  returns to the composer even on failure (`CompactOutcome`); refused while a
+  run is active.
+- **`/budget`** — FinOps view: today's and trailing-7d estimated spend from
+  the cost ledger vs configured `[finops]` run/day caps and price overrides.
+- **`/memory [note]`** — lists this workspace's durable memory notes
+  (newest first) or appends one directly; same store the `remember` tool and
+  the server's `GET /memory` read.
+- **`/proposals [promote|reject <id>]`** — review queue for learned skill
+  proposals: bare lists pending proposals, promote installs to user-level
+  discovery, reject discards. Closes the last human-unreachable part of the
+  learning loop (docs/design/26).
+- **`/mcp`** — configured MCP servers (command/args) plus discovered
+  meta-tools.
+- **`/sandbox [os|docker|default]`** — runtime bash-backend selection via
+  `Core::set_sandbox_backend`; docker selection probes daemon availability
+  first but still fails closed at call time per docs/design/25. Bare shows
+  effective backend/name/image.
+- **Reliability visibility** — `/doctor` and `/config` now show live circuit-
+  breaker state (closed / open + cooldown remaining), today's spend against
+  the day cap, and the frozen route ladder committed at admission.
+- **`!cmd` parity** — shell passthrough executes through the brokered bash
+  tool (`__tool_worker`) under the active mode's sandbox instead of raw
+  in-process execution; output still lands in the ledger as user context.

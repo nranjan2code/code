@@ -446,3 +446,50 @@ async fn cancel_endpoint_stops_a_running_session() {
         .unwrap();
     assert!(saw, "RunFinished(cancelled) must be observed after /cancel");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn subagent_endpoints_scope_and_wire() {
+    let (base, _server) = spawn_server(
+        Arc::new(Scripted {
+            responses: Mutex::new(VecDeque::from(vec![text("no children")])),
+        }),
+        vak_config::PermissionMode::WorkspaceWrite,
+    )
+    .await;
+
+    // Mint a session.
+    let res = reqwest::Client::new()
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let sid: serde_json::Value = res.json().await.unwrap();
+    let sid = sid["session_id"].as_str().unwrap().to_string();
+
+    // No live children.
+    let res = reqwest::Client::new()
+        .get(format!("{base}/sessions/{sid}/subagents"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(body["subagents"], serde_json::json!([]));
+
+    // Steering/stopping a child this session does not own is 404 — never a
+    // cross-session capability leak, and never a silent no-op.
+    let client = reqwest::Client::new();
+    for path in [
+        format!("/sessions/{sid}/subagents/child-nope/steer"),
+        format!("/sessions/{sid}/subagents/child-nope/stop"),
+    ] {
+        let res = client
+            .post(format!("{base}{path}"))
+            .json(&serde_json::json!({"text": "hi"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 404, "{path}");
+    }
+}

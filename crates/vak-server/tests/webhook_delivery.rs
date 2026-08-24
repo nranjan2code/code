@@ -53,10 +53,14 @@ fn text(t: &str) -> AssistantMessage {
 
 type Captured = Arc<Mutex<Vec<(Option<String>, serde_json::Value)>>>;
 
-/// Records (authorization header, body) for every POST.
-async fn spawn_receiver() -> (String, Captured) {
+/// Records (authorization header, body) for every POST. With `fail_first`,
+/// the first `n` requests answer 503 before succeeding — exercising the
+/// delivery retry/backoff path.
+async fn spawn_receiver_failing(fail_first: u32) -> (String, Captured, Arc<Mutex<u32>>) {
     let captured: Captured = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::new(Mutex::new(0u32));
     let cap = captured.clone();
+    let count = seen.clone();
     let app = axum::Router::new().route(
         "/hook",
         axum::routing::post(
@@ -67,7 +71,13 @@ async fn spawn_receiver() -> (String, Captured) {
                     .and_then(|v| v.to_str().ok())
                     .map(String::from);
                 cap.lock().unwrap().push((auth, body));
-                "ok"
+                let mut n = count.lock().unwrap();
+                *n += 1;
+                if *n <= fail_first {
+                    axum::http::StatusCode::BAD_GATEWAY
+                } else {
+                    axum::http::StatusCode::OK
+                }
             },
         ),
     );
@@ -76,7 +86,12 @@ async fn spawn_receiver() -> (String, Captured) {
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (format!("http://{addr}"), captured)
+    (format!("http://{addr}"), captured, seen)
+}
+
+async fn spawn_receiver() -> (String, Captured) {
+    let (base, captured, _seen) = spawn_receiver_failing(0).await;
+    (base, captured)
 }
 
 fn git_seed(cwd: &std::path::Path) {
@@ -256,4 +271,69 @@ async fn webhook_missing_token_fails_closed() {
         captured.lock().unwrap().is_empty(),
         "missing credential must fail closed: nothing posted"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn webhook_retries_transient_5xx_and_succeeds() {
+    // One 503, then success: delivery must survive the blip.
+    let (rx_base, captured, seen) = spawn_receiver_failing(1).await;
+    let toml = format!(
+        "[gateway]\nenabled = true\n[gateway.outbound.webhooks.ci]\nurl = \"{rx_base}/hook\"\n"
+    );
+    let gw = spawn_with_config(
+        Arc::new(Scripted {
+            responses: Mutex::new(VecDeque::from(vec![text("retry built ok")])),
+        }),
+        &toml,
+    )
+    .await;
+    run_nightly(&gw).await;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "delivery never landed despite retries"
+        );
+        let n = *seen.lock().unwrap();
+        if n >= 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    {
+        let cap = captured.lock().unwrap();
+        // This receiver records EVERY post including the one that answered
+        // 503, so two captures = attempt(503) + retry(200). Exactly one
+        // retry happened and it carried the same payload.
+        assert_eq!(cap.len(), 2, "one failed attempt then one successful retry");
+        assert_eq!(cap[0].1, cap[1].1, "retry reuses the identical payload");
+    }
+
+    // A permanently failing receiver (all attempts 5xx) reports failure
+    // instead of hanging or pretending success.
+    let (rx_base2, _captured2, seen2) = spawn_receiver_failing(u32::MAX).await;
+    let toml2 = format!(
+        "[gateway]\nenabled = true\n[gateway.outbound.webhooks.ci]\nurl = \"{rx_base2}/hook\"\n"
+    );
+    let gw2 = spawn_with_config(
+        Arc::new(Scripted {
+            responses: Mutex::new(VecDeque::from(vec![text("never delivered")])),
+        }),
+        &toml2,
+    )
+    .await;
+    run_nightly(&gw2).await;
+    let deadline2 = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        assert!(
+            std::time::Instant::now() < deadline2,
+            "webhook exhausted retries without giving up"
+        );
+        if *seen2.lock().unwrap() >= 3 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    }
 }

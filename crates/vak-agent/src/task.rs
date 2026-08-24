@@ -56,13 +56,17 @@ pub struct SubagentHandle {
     pub started_at: std::time::Instant,
     pub steering: Arc<SteeringQueues>,
     pub cancel: CancellationToken,
+    /// Session that spawned this child; routes registry lookups to the
+    /// owning surface's endpoint scope.
+    pub parent_session_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ActiveSubagent {
     pub id: String,
     pub label: String,
     pub elapsed_secs: u64,
+    pub parent_session_id: String,
 }
 
 /// Registry of currently-running subagents, keyed by unique child session
@@ -98,8 +102,31 @@ impl SubagentRegistry {
                 id: id.clone(),
                 label: h.label.clone(),
                 elapsed_secs: h.started_at.elapsed().as_secs(),
+                parent_session_id: h.parent_session_id.clone(),
             })
             .collect()
+    }
+
+    /// Live children spawned by `parent`, oldest first.
+    pub fn active_for(&self, parent: &str) -> Vec<ActiveSubagent> {
+        let Ok(map) = self.inner.lock() else {
+            return Vec::new();
+        };
+        map.iter()
+            .filter(|(_, h)| h.parent_session_id == parent)
+            .map(|(id, h)| ActiveSubagent {
+                id: id.clone(),
+                label: h.label.clone(),
+                elapsed_secs: h.started_at.elapsed().as_secs(),
+                parent_session_id: h.parent_session_id.clone(),
+            })
+            .collect()
+    }
+
+    /// Owning session of a live child, for endpoint-scope checks.
+    pub fn parent_of(&self, id: &str) -> Option<String> {
+        let map = self.inner.lock().ok()?;
+        map.get(id).map(|h| h.parent_session_id.clone())
     }
 
     /// Queues steering text for the child. Returns false when no such
@@ -206,15 +233,7 @@ impl Tool for TaskTool {
     }
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
-        let __t0 = std::time::Instant::now();
-        eprintln!(
-            "[task:start] thread={:?} t={:?}",
-            std::thread::current().id(),
-            __t0
-        );
-        let out = self.execute_inner(args, ctx).await;
-        eprintln!("[task:end] elapsed {:?}", __t0.elapsed());
-        out
+        self.execute_inner(args, ctx).await
     }
 }
 
@@ -299,6 +318,7 @@ impl TaskTool {
                     started_at: std::time::Instant::now(),
                     steering: steering.clone(),
                     cancel: cancel.clone(),
+                    parent_session_id: self.deps.parent_session_id.clone(),
                 },
             );
         }
@@ -405,6 +425,7 @@ mod registry_tests {
                 started_at: std::time::Instant::now(),
                 steering: Arc::new(SteeringQueues::new()),
                 cancel: cancel.clone(),
+                parent_session_id: "parent-a".into(),
             },
         );
         assert!(reg.steer("child-1", "look left"));
@@ -422,5 +443,33 @@ mod registry_tests {
         reg.unregister("child-1");
         assert!(reg.active().is_empty());
         assert!(!reg.steer("child-1", "gone"));
+    }
+
+    #[test]
+    fn scope_checks_route_children_to_their_own_parent() {
+        let reg = SubagentRegistry::new();
+        for (id, parent) in [("c1", "pA"), ("c2", "pB")] {
+            reg.register(
+                id.into(),
+                SubagentHandle {
+                    label: id.into(),
+                    started_at: std::time::Instant::now(),
+                    steering: Arc::new(SteeringQueues::new()),
+                    cancel: CancellationToken::new(),
+                    parent_session_id: parent.into(),
+                },
+            );
+        }
+        assert_eq!(
+            reg.parent_of("c1").as_deref(),
+            Some("pA"),
+            "ownership is recorded"
+        );
+        assert_eq!(reg.parent_of("missing"), None);
+        let a = reg.active_for("pA");
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].id, "c1");
+        assert_eq!(reg.active_for("pB")[0].id, "c2");
+        assert!(reg.active_for("pC").is_empty());
     }
 }

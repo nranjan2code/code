@@ -7,7 +7,7 @@ pub use finops::{estimate_cost_usd, resolve_usd_per_mtok, usd_per_mtok_heuristic
 
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -218,7 +218,7 @@ pub struct McpConfig {
     pub servers: std::collections::BTreeMap<String, McpServerConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
     pub command: String,
     #[serde(default)]

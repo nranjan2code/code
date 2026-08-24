@@ -15,10 +15,10 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use vak_agent::{AgentEvent, Approver, SteeringQueues, TurnOutcome};
+use vak_config::PermissionMode;
 use vak_core::Core;
 use vak_llm::stream::StreamEvent;
 use vak_session::SessionLog;
-use vak_tools::Tool;
 
 use crate::commands::{self, Command};
 use crate::complete;
@@ -416,6 +416,9 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
     let mut keymap_meta: Vec<(usize, &'static str)> = Vec::new();
     // Pending interactive rebind: next captured key becomes the binding.
     let mut rebind_action: Option<&'static str> = None;
+    // Mode switch requested while a run was in flight; applied when the run
+    // actually stops so the new mode is never reported early (invariant 11).
+    let mut deferred_mode: Option<vak_config::PermissionMode> = None;
 
     let (buf, cur) = editor.view();
     screen.redraw_composer(&composer_label(&ui), buf, cur, &composer_footer(&editor));
@@ -1174,7 +1177,6 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                 }
                             }
                             Action::Submit => {
-                                                                { let (b,_) = editor.view(); eprintln!("SUBMIT buf={b:?} running={is_running} pal={}", palette.is_some()); }
                                 if is_running {
                                     let text = std::mem::take(&mut pending);
                                     if !text.trim().is_empty() {
@@ -1358,10 +1360,368 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                     }
                                                 }
                                                 Some(Command::Doctor) => {
-                                                    run_doctor(&core, &mut screen);
+                                                    let session = session_slot.lock().await.take();
+                                                    run_doctor(&core, session.as_ref(), &mut screen);
+                                                    if let Some(s) = session {
+                                                        *session_slot.lock().await = Some(s);
+                                                    }
                                                 }
                                                 Some(Command::Services(arg)) => {
                                                     run_services(arg, &mut screen);
+                                                }
+                                                Some(Command::Mode(arg)) => {
+                                                    match arg
+                                                        .as_deref()
+                                                        .map(str::trim)
+                                                        .filter(|a| !a.is_empty())
+                                                    {
+                                                        None => {
+                                                            modal = Some(ModalView {
+                                                                title: "permission mode".to_string(),
+                                                                rows: mode_modal_rows(&core),
+                                                                scroll: 0,
+                                                                footer: "/mode <mode> switches · switching cancels in-flight runs · Esc close"
+                                                                    .to_string(),
+                                                                ..Default::default()
+                                                            });
+                                                        }
+                                                        Some(raw) => {
+                                                            match PermissionMode::deserialize_str(raw) {
+                                                                None => screen.error(&format!(
+                                                                    "unknown mode '{raw}' — read-only, workspace-write, full-access"
+                                                                )),
+                                                                Some(mode)
+                                                                    if mode == core.effective_permission_mode() =>
+                                                                {
+                                                                    screen.dim(&format!(
+                                                                        "already in {}",
+                                                                        mode_label(mode)
+                                                                    ));
+                                                                }
+                                                                Some(mode) => {
+                                                                    // Invariant 11: pending
+                                                                    // approvals die and in-flight
+                                                                    // runs stop before the new
+                                                                    // mode is reported.
+                                                                    while let Some(req) =
+                                                                        approvals.pop_front()
+                                                                    {
+                                                                        let _ = req.respond.send(false);
+                                                                    }
+                                                                    allowed.lock().await.clear();
+                                                                    if let Some((id, label)) =
+                                                                        attached.take()
+                                                                    {
+                                                                        ui.attached_label = None;
+                                                                        let _ = core.subagents().stop(&id);
+                                                                        screen.dim(&format!(
+                                                                            "[stopped subagent {label}]"
+                                                                        ));
+                                                                    }
+                                                                    if running_now {
+                                                                        cancel.lock().await.cancel();
+                                                                        deferred_mode = Some(mode);
+                                                                        screen.accent(
+                                                                            "cancelling in-flight run — mode applies when it stops",
+                                                                        );
+                                                                    } else {
+                                                                        core.set_permission_mode(mode);
+                                                                        screen.accent(&format!(
+                                                                            "mode → {}",
+                                                                            mode_label(mode)
+                                                                        ));
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                Some(Command::Compact) => {
+                                                    if running_now {
+                                                        screen.error(
+                                                            "cannot compact while a run is active — Esc to cancel first",
+                                                        );
+                                                    } else {
+                                                        let taken = session_slot.lock().await.take();
+                                                        match taken {
+                                                            None => screen.dim("no active session"),
+                                                            Some(session) => {
+                                                                if core.provider().is_err() {
+                                                                    *session_slot.lock().await = Some(session);
+                                                                    screen.error("provider unavailable — nothing compacted");
+                                                                } else {
+                                                                    screen.dim("compacting…");
+                                                                    let (session, outcome) = core
+                                                                        .compact_session_now(
+                                                                            session,
+                                                                            CancellationToken::new(),
+                                                                        )
+                                                                        .await;
+                                                                    *session_slot.lock().await = Some(session);
+                                                                    match (outcome.report, outcome.error) {
+                                                                        (Some(rep), _) => screen.success(&format!(
+                                                                            "compacted: ~{} → ~{} tokens ({} messages summarized)",
+                                                                            status::fmt_tokens(rep.before_tokens),
+                                                                            status::fmt_tokens(rep.after_tokens),
+                                                                            rep.summarized_messages,
+                                                                        )),
+                                                                        (None, Some(e)) => {
+                                                                            screen.error(&format!("compaction failed: {e}"))
+                                                                        }
+                                                                        (None, None) => screen.dim(
+                                                                            "nothing to compact — no older message prefix",
+                                                                        ),
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                Some(Command::Budget) => {
+                                                    let f = &core.config().finops;
+                                                    let day = core.spend_day_usd();
+                                                    let week = core.spend_trailing_usd(7);
+                                                    let mut rows = vec![format!(
+                                                        "today        ~${:.2}",
+                                                        day
+                                                    )];
+                                                    rows.push(format!("trailing 7d  ~${week:.2}"));
+                                                    rows.push(String::new());
+                                                    rows.push(format!(
+                                                        "run cap   {}",
+                                                        f.max_run_usd
+                                                            .map(|c| format!("${c:.2} per run"))
+                                                            .unwrap_or_else(|| "unset".into())
+                                                    ));
+                                                    rows.push(format!(
+                                                        "day cap   {}",
+                                                        f.max_day_usd
+                                                            .map(|c| format!("${c:.2} per day"))
+                                                            .unwrap_or_else(|| "unset".into())
+                                                    ));
+                                                    if !f.price_overrides.is_empty() {
+                                                        rows.push(format!(
+                                                            "{} custom price override(s)",
+                                                            f.price_overrides.len()
+                                                        ));
+                                                    }
+                                                    modal = Some(ModalView {
+                                                        title: "budget · finops".to_string(),
+                                                        rows,
+                                                        scroll: 0,
+                                                        footer: "caps live under [finops] in config.toml · estimates only · Esc close"
+                                                            .to_string(),
+                                                        ..Default::default()
+                                                    });
+                                                }
+                                                Some(Command::Memory(arg)) => {
+                                                    let home = core.sessions_home();
+                                                    let cwd = core.cwd().clone();
+                                                    match arg.as_deref().map(str::trim) {
+                                                        None | Some("") => {
+                                                            let notes = vak_core::memory::list_notes(&home, &cwd);
+                                                            let rows: Vec<String> = if notes.is_empty() {
+                                                                vec![
+                                                                    "no notes for this workspace yet".into(),
+                                                                    "the model saves via its remember tool; /memory <text> saves one directly".into(),
+                                                                ]
+                                                            } else {
+                                                                notes
+                                                                    .iter()
+                                                                    .rev()
+                                                                    .map(|n| {
+                                                                        format!(
+                                                                            "[{}] {} · {}",
+                                                                            n.kind,
+                                                                            n.tag,
+                                                                            n.text.replace('\n', " ")
+                                                                        )
+                                                                    })
+                                                                    .collect()
+                                                            };
+                                                            modal = Some(ModalView {
+                                                                title: format!(
+                                                                    "memory · {} note(s)",
+                                                                    notes.len()
+                                                                ),
+                                                                rows,
+                                                                scroll: 0,
+                                                                footer: "/memory <text> appends a note · Esc close".to_string(),
+                                                                ..Default::default()
+                                                            });
+                                                        }
+                                                        Some(text) => {
+                                                            let session_id = session_slot
+                                                                .lock()
+                                                                .await
+                                                                .as_ref()
+                                                                .and_then(|s| s.header())
+                                                                .map(|h| h.session_id.clone())
+                                                                .unwrap_or_else(|| "manual".into());
+                                                            match vak_core::memory::append_note(
+                                                                &home,
+                                                                &cwd,
+                                                                "note",
+                                                                "",
+                                                                &session_id,
+                                                                text,
+                                                            ) {
+                                                                Ok(_) => {
+                                                                    screen.success("note saved to durable memory")
+                                                                }
+                                                                Err(e) => screen.error(&format!("save failed: {e}")),
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                Some(Command::Proposals(arg)) => {
+                                                    let home = core.sessions_home();
+                                                    let cwd = core.cwd().clone();
+                                                    let parsed = arg.as_deref().and_then(|a| {
+                                                        let mut it = a.split_whitespace();
+                                                        let action = it.next()?;
+                                                        let id = it.next()?.trim();
+                                                        Some((action.to_lowercase(), id.to_string()))
+                                                    });
+                                                    match parsed {
+                                                        Some((action, id))
+                                                            if action == "promote" || action == "accept" =>
+                                                        {
+                                                            match vak_core::learning::promote(&home, &cwd, &id) {
+                                                                Ok(name) => screen.success(&format!(
+                                                                    "skill '{name}' promoted to ~/.vakcoder/skills"
+                                                                )),
+                                                                Err(e) => screen.error(&e),
+                                                            }
+                                                        }
+                                                        Some((action, id))
+                                                            if action == "reject" || action == "deny" =>
+                                                        {
+                                                            match vak_core::learning::reject(&home, &cwd, &id) {
+                                                                Ok(()) => screen.accent(&format!("proposal {id} rejected")),
+                                                                Err(e) => screen.error(&e),
+                                                            }
+                                                        }
+                                                        Some((action, _)) => screen.error(&format!(
+                                                            "unknown proposals action '{action}' — promote <id>, reject <id>"
+                                                        )),
+                                                        None => {
+                                                            let props = vak_core::learning::list_proposals(&home, &cwd);
+                                                            let rows: Vec<String> = if props.is_empty() {
+                                                                vec![
+                                                                    "no pending skill proposals".into(),
+                                                                    "the model proposes skills after repeated successful patterns; review them here".into(),
+                                                                ]
+                                                            } else {
+                                                                props
+                                                                    .iter()
+                                                                    .flat_map(|p| {
+                                                                        [
+                                                                            format!("/{}", p.id),
+                                                                            format!("  {}", p.name),
+                                                                            format!("  {}", p.description),
+                                                                            String::new(),
+                                                                        ]
+                                                                    })
+                                                                    .collect()
+                                                            };
+                                                            modal = Some(ModalView {
+                                                                title: format!(
+                                                                    "skill proposals · {} pending",
+                                                                    props.len()
+                                                                ),
+                                                                rows,
+                                                                scroll: 0,
+                                                                footer: "/proposals promote <id> installs · /proposals reject <id> discards · Esc close"
+                                                                    .to_string(),
+                                                                ..Default::default()
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                                Some(Command::Mcp) => {
+                                                    let mut rows: Vec<String> = Vec::new();
+                                                    let servers = &core.config().mcp.servers;
+                                                    if servers.is_empty() {
+                                                        rows.push("no MCP servers configured".into());
+                                                        rows.push("add [mcp.servers.<name>] blocks to config.toml".into());
+                                                    }
+                                                    for (name, def) in servers {
+                                                        rows.push(name.clone());
+                                                        rows.push(format!("  cmd  {} {}", def.command, def.args.join(" ")));
+                                                    }
+                                                    let mcp_tools: Vec<String> = core
+                                                        .tool_names()
+                                                        .into_iter()
+                                                        .filter(|n| n.starts_with("mcp("))
+                                                        .collect();
+                                                    if !mcp_tools.is_empty() {
+                                                        rows.push(String::new());
+                                                        rows.push(format!(
+                                                            "{} discovered meta-tool(s):",
+                                                            mcp_tools.len()
+                                                        ));
+                                                        for t in mcp_tools {
+                                                            rows.push(format!("  {t}"));
+                                                        }
+                                                    }
+                                                    modal = Some(ModalView {
+                                                        title: "mcp servers".to_string(),
+                                                        rows,
+                                                        scroll: 0,
+                                                        footer: "servers execute as sandboxed workers · Esc close".to_string(),
+                                                        ..Default::default()
+                                                    });
+                                                }
+                                                Some(Command::Sandbox(arg)) => {
+                                                    match arg
+                                                        .as_deref()
+                                                        .map(str::trim)
+                                                        .filter(|a| !a.is_empty())
+                                                    {
+                                                        None => {
+                                                            modal = Some(ModalView {
+                                                                title: "execution sandbox".to_string(),
+                                                                rows: sandbox_rows(&core),
+                                                                scroll: 0,
+                                                                footer: "/sandbox os|docker|default switches for this session · full-access needs none · Esc close"
+                                                                    .to_string(),
+                                                                ..Default::default()
+                                                            });
+                                                        }
+                                                        Some(raw) => match raw.to_lowercase().as_str() {
+                                                            "default" | "config" | "reset" => {
+                                                                core.set_sandbox_backend(None);
+                                                                screen.accent(&format!(
+                                                                    "sandbox backend → config default ({})",
+                                                                    core.effective_sandbox_name()
+                                                                ));
+                                                            }
+                                                            "os" | "landlock" | "seatbelt" => {
+                                                                core.set_sandbox_backend(Some("os".into()));
+                                                                screen.accent(&format!(
+                                                                    "sandbox backend → OS-native ({})",
+                                                                    core.effective_sandbox_name()
+                                                                ));
+                                                            }
+                                                            "docker" => {
+                                                                if !vak_core::sandbox_docker::DockerSandbox::available() {
+                                                                    screen.error(
+                                                                        "docker daemon unreachable — commands would fail closed at call time; start docker or keep 'os'",
+                                                                    );
+                                                                } else {
+                                                                    core.set_sandbox_backend(Some("docker".into()));
+                                                                    screen.accent(&format!(
+                                                                        "sandbox backend → docker ({})",
+                                                                        core.effective_sandbox_name()
+                                                                    ));
+                                                                }
+                                                            }
+                                                            other => screen.error(&format!(
+                                                                "unknown sandbox '{other}' — os, docker, default"
+                                                            )),
+                                                        },
+                                                    }
                                                 }
                                                 Some(Command::Details) => {
                                                     ui.expanded_tools = !ui.expanded_tools;
@@ -1566,7 +1926,6 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                 }
                                             },
                                             Some(Command::Goal(arg)) => {
-                                                eprintln!("GOAL-CMD arg={arg:?}");
                                                 match arg {
                                                     None => {
                                                         let armed = pending_goal
@@ -1888,6 +2247,12 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                 );
                 run_started = None;
                 screen.line("");
+                // A deferred /mode applies now that the run has actually
+                // stopped — before any queued follow-up fires under it.
+                if let Some(mode) = deferred_mode.take() {
+                    core.set_permission_mode(mode);
+                    screen.success(&format!("mode → {} (in-flight run stopped)", mode_label(mode)));
+                }
                 // Follow-up queue drains only after a non-aborted run: a
                 // cancelled run must not silently fire what the user queued.
                 if !aborted
@@ -2878,13 +3243,21 @@ async fn run_shell_passthrough(
         screen.dim("usage: !<shell command>");
         return;
     }
+    // Brokered + sandboxed like every other bash execution (invariant 14):
+    // the command crosses the __tool_worker protocol and lands under the
+    // active permission mode's OS/docker sandbox instead of running raw
+    // and unsandboxed in-process.
+    let Some(tool) = core.agent_tools().into_iter().find(|t| t.name() == "bash") else {
+        screen.error("bash tool unavailable");
+        return;
+    };
     let ctx = vak_tools::ToolContext {
         cwd: core.cwd().clone(),
         cancel: CancellationToken::new(),
         limits: Default::default(),
-        sandbox: None,
+        sandbox: core.agent_sandbox(),
     };
-    let out = vak_tools::bash::BashTool
+    let out = tool
         .execute(&serde_json::json!({"command": cmd}), &ctx)
         .await;
     screen.clear_input();
@@ -2970,7 +3343,7 @@ fn run_services(arg: Option<(String, String)>, screen: &mut Screen) {
     screen.dim("  /services start|stop|restart gateway|telegram");
 }
 
-fn run_doctor(core: &Core, screen: &mut Screen) {
+fn run_doctor(core: &Core, session: Option<&SessionLog>, screen: &mut Screen) {
     screen.clear_input();
     screen.accent("doctor:");
     let mut failures = 0usize;
@@ -3026,6 +3399,39 @@ fn run_doctor(core: &Core, screen: &mut Screen) {
         core.config().mcp.servers.len(),
         if core.config().subagents { "on" } else { "off" },
     ));
+    let breaker_line = match core.breaker().check() {
+        Ok(()) => "closed (provider healthy)".to_string(),
+        Err(open) => format!(
+            "OPEN — cooling down {}s after {} failure(s)",
+            open.remaining_secs, open.failures
+        ),
+    };
+    screen.dim(&format!("  · circuit breaker: {breaker_line}"));
+    screen.dim(&format!(
+        "  · finops: today ~${:.2}{}",
+        core.spend_day_usd(),
+        core.config()
+            .finops
+            .max_day_usd
+            .map(|c| format!(" of ${c:.2} day cap"))
+            .unwrap_or_default(),
+    ));
+    if let Some(header) = session.and_then(|s| s.header()) {
+        let legs = &header.contract.route_ladder;
+        let ladder = legs
+            .iter()
+            .map(|leg| format!("{}/{}", leg.provider, leg.model))
+            .collect::<Vec<_>>()
+            .join(" → ");
+        screen.dim(&format!(
+            "  · route ladder (frozen at admission): {}",
+            if ladder.is_empty() {
+                header.contract.model.clone()
+            } else {
+                ladder
+            }
+        ));
+    }
     if failures == 0 {
         screen.success("all checks passed");
     } else {
@@ -3041,6 +3447,59 @@ fn report(screen: &mut Screen, label: &str, result: &Result<String, String>, fai
             *failures += 1;
         }
     }
+}
+
+fn mode_label(mode: PermissionMode) -> &'static str {
+    match mode {
+        PermissionMode::ReadOnly => "read-only",
+        PermissionMode::WorkspaceWrite => "workspace-write",
+        PermissionMode::FullAccess => "full-access",
+    }
+}
+
+fn mode_modal_rows(core: &Core) -> Vec<String> {
+    vec![
+        format!(
+            "current      {}",
+            mode_label(core.effective_permission_mode())
+        ),
+        String::new(),
+        "read-only         every write, edit, and bash exec asks".to_string(),
+        "workspace-write   workspace edits allowed; outside writes ask".to_string(),
+        "full-access       unsandboxed · explicit human trust decision".to_string(),
+        String::new(),
+        "/mode <mode> switches immediately when idle".to_string(),
+        "switching mid-run cancels the run and denies pending approvals first".to_string(),
+    ]
+}
+
+fn sandbox_rows(core: &Core) -> Vec<String> {
+    let docker = if vak_core::sandbox_docker::DockerSandbox::available() {
+        "available"
+    } else {
+        "unreachable"
+    };
+    let image = core
+        .config()
+        .sandbox
+        .image
+        .clone()
+        .unwrap_or_else(|| "default".into());
+    vec![
+        format!("effective     {}", core.effective_sandbox_name()),
+        format!(
+            "backend       {} (config default: {})",
+            core.effective_sandbox_backend(),
+            core.config().sandbox.backend
+        ),
+        format!("docker        {docker} · image {image}"),
+        String::new(),
+        "os            platform-native (Seatbelt on macOS, Landlock on Linux)".to_string(),
+        "docker        commands run inside the configured image".to_string(),
+        "default       follow config.toml [sandbox]".to_string(),
+        String::new(),
+        "full-access runs without any sandbox by design".to_string(),
+    ]
 }
 
 fn composer_label(ui: &UiState) -> String {
@@ -3455,6 +3914,11 @@ fn settings_rows(core: &Core, ui: &UiState) -> Vec<String> {
         ),
         format!("Sandbox               {}", core.effective_sandbox_name()),
         format!(
+            "Sandbox backend       {} (default {})",
+            core.effective_sandbox_backend(),
+            core.config().sandbox.backend
+        ),
+        format!(
             "Allow / ask / deny    {} / {} / {} rules",
             core.config().allow.len(),
             core.config().ask.len(),
@@ -3484,6 +3948,13 @@ fn settings_rows(core: &Core, ui: &UiState) -> Vec<String> {
             "Circuit breaker       {} failures · {}s cooldown",
             core.config().circuit_breaker_threshold,
             core.config().circuit_breaker_cooldown_secs
+        ),
+        format!(
+            "Breaker state         {}",
+            match core.breaker().check() {
+                Ok(()) => "closed".to_string(),
+                Err(open) => format!("open · {}s remaining", open.remaining_secs),
+            }
         ),
         format!(
             "Completion guard      {} · max {} continuations",

@@ -438,7 +438,13 @@ async fn busy_message_is_steered_not_dropped() {
     let res = inbound(
         &client,
         &base,
-        serde_json::json!({"surface":"webhook","chat":"ci","text":"second msg"}),
+        serde_json::json!({
+            "surface": "webhook",
+            "chat": "ci",
+            "sender": "@alice",
+            "text": "second msg",
+            "attachments": [{"mime": "image/png", "data": "TUVPT1c="}],
+        }),
     )
     .await;
     assert_eq!(res.status(), 202);
@@ -447,6 +453,8 @@ async fn busy_message_is_steered_not_dropped() {
 
     // Eventually every message is visible on the chain and the run ends:
     // user, assistant(tool), user(result), user(steered), assistant(final).
+    // The queued message keeps its image blocks AND its sender attribution
+    // — busy queueing must never degrade the payload to bare text.
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     let mut raw = String::new();
     while std::time::Instant::now() < deadline {
@@ -468,8 +476,12 @@ async fn busy_message_is_steered_not_dropped() {
     }
     assert!(raw.contains("first msg"), "prompt missing: {raw}");
     assert!(
-        raw.contains("second msg"),
-        "steered message must be logged: {raw}"
+        raw.contains("[from @alice] second msg"),
+        "sender attributed on queued turn: {raw}"
+    );
+    assert!(
+        raw.contains("TUVPT1c="),
+        "image attachment survives busy queueing: {raw}"
     );
     assert!(raw.contains("done two"), "run must complete after steering");
 }
