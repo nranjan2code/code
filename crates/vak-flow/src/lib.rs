@@ -3,6 +3,7 @@
 //! explicit required/optional policy; completed nodes can be skipped on
 //! resume.
 
+pub mod adopt;
 pub mod exec;
 pub mod parse;
 pub mod planner;

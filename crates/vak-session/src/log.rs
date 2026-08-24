@@ -132,6 +132,45 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::Goal(goal)))
     }
 
+    /// Distinct bash commands that ran GREEN on the active chain, in
+    /// first-run order (doc 27 Phase E adoption substrate). A command is
+    /// settled when its tool_result is not an error.
+    pub fn settled_bash_commands(&self) -> Vec<String> {
+        use std::collections::HashMap;
+        // id -> is_error for tool results
+        let mut results: HashMap<String, bool> = HashMap::new();
+        for e in self.chain_to_root() {
+            if let EntryPayload::Message(r) = &e.payload {
+                for b in &r.message.content {
+                    if let vak_llm::ContentBlock::ToolResult {
+                        tool_use_id: id,
+                        is_error,
+                        ..
+                    } = b
+                    {
+                        results.insert(id.clone(), *is_error);
+                    }
+                }
+            }
+        }
+        let mut out: Vec<String> = Vec::new();
+        for e in self.chain_to_root() {
+            if let EntryPayload::Message(r) = &e.payload {
+                for b in &r.message.content {
+                    if let vak_llm::ContentBlock::ToolUse { name, input, id } = b
+                        && name == "bash"
+                        && !results.get(id).copied().unwrap_or(true)
+                        && let Some(cmd) = input.get("command").and_then(|v| v.as_str())
+                        && !out.iter().any(|o| o == cmd)
+                    {
+                        out.push(cmd.to_string());
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Receipt entries along the active path, root→leaf — forensic view
     /// for surfaces that render dispatch history.
     pub fn receipts(&self) -> Vec<&vak_llm::WorkReceipt> {

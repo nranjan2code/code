@@ -133,6 +133,26 @@ enum Command {
 enum FlowAction {
     /// List discovered flows
     List,
+    /// Convert proven work into a flow file (doc 27 Phase E):
+    /// --from accepts a flow-run/plan ledger JSON path or a session id.
+    Adopt {
+        /// Ledger JSON path, or a session id whose green bash commands
+        /// become a chained bash flow.
+        from: String,
+        /// Name for the adopted flow (written to .vakcoder/flows/)
+        #[arg(long)]
+        name: String,
+        /// Overwrite an existing flow file of the same name
+        #[arg(long)]
+        force: bool,
+    },
+    /// Deterministic run-vs-run diff over two ledger JSONs (no model)
+    Diff {
+        /// Path to first run/plan ledger JSON
+        a: std::path::PathBuf,
+        /// Path to second run/plan ledger JSON
+        b: std::path::PathBuf,
+    },
     /// Validate a flow without running it
     Check { name: String },
     /// Run a flow (optionally resuming a previous run)
@@ -140,6 +160,9 @@ enum FlowAction {
         name: String,
         #[arg(long)]
         resume: bool,
+        /// Acknowledge live-file drift and resume the frozen snapshot
+        #[arg(long)]
+        accept_drift: bool,
         #[arg(long)]
         yes: bool,
         #[arg(long)]
@@ -581,6 +604,84 @@ async fn run_flow(cwd: PathBuf, action: FlowAction) -> i32 {
             }
             0
         }
+        FlowAction::Adopt { from, name, force } => {
+            let flows_dir = cwd.join(".vakcoder/flows");
+            let out_path = flows_dir.join(format!("{name}.toml"));
+            if out_path.exists() && !force {
+                eprintln!(
+                    "error: {} exists (use --force to overwrite)",
+                    out_path.display()
+                );
+                return 2;
+            }
+            let adopted = if std::path::Path::new(&from).is_file() {
+                // Ledger JSON path.
+                let body = std::fs::read_to_string(&from).unwrap_or_default();
+                vak_flow::adopt::from_flow_state(&body, &name, &from)
+            } else {
+                // Session id: extract settled bash commands.
+                let core = match Core::new(cwd.clone()) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        return 2;
+                    }
+                };
+                let path = vak_session::SessionPath::new_session_file(
+                    &core.sessions_home(),
+                    core.cwd(),
+                    &from,
+                );
+                let Ok(log) = vak_session::SessionLog::open(path) else {
+                    eprintln!("error: session '{from}' not found in this workspace");
+                    return 2;
+                };
+                let cmds = log.settled_bash_commands();
+                vak_flow::adopt::from_green_commands(
+                    &name,
+                    &format!("adopted from session {from}"),
+                    &cmds,
+                )
+            };
+            match adopted {
+                Ok(a) => {
+                    if std::fs::create_dir_all(&flows_dir).is_err() {
+                        eprintln!("error: cannot create {}", flows_dir.display());
+                        return 2;
+                    }
+                    if let Err(e) = std::fs::write(&out_path, a.toml) {
+                        eprintln!("error: write failed: {e}");
+                        return 2;
+                    }
+                    println!("✓ adopted → {}", out_path.display());
+                    for w in a.warnings {
+                        println!("  warning: {w}");
+                    }
+                    println!("  next: vakcoder flow check {name} && vakcoder flow run {name}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: adopt failed: {e}");
+                    1
+                }
+            }
+        }
+        FlowAction::Diff { a, b } => {
+            let (ra, rb) = (
+                std::fs::read_to_string(&a).unwrap_or_default(),
+                std::fs::read_to_string(&b).unwrap_or_default(),
+            );
+            match vak_flow::adopt::diff_flow_states(&ra, &rb) {
+                Ok(report) => {
+                    print!("{report}");
+                    if report.contains("identical") { 0 } else { 1 }
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    2
+                }
+            }
+        }
         FlowAction::Check { name } => {
             let Some((_, path)) = discover_flows(&cwd).into_iter().find(|(n, _)| *n == name) else {
                 eprintln!("error: flow '{name}' not found");
@@ -613,21 +714,34 @@ async fn run_flow(cwd: PathBuf, action: FlowAction) -> i32 {
             yes,
             provider,
             model,
+            accept_drift,
             trust,
         } => {
             let trusted = resolve_trust(&cwd, trust, false);
             if trusted {
                 vak_config::load_env_file(std::path::Path::new(".env"));
             }
-            run_flow_exec(cwd, name, resume, yes, provider, model, trusted).await
+            run_flow_exec(
+                cwd,
+                name,
+                resume,
+                accept_drift,
+                yes,
+                provider,
+                model,
+                trusted,
+            )
+            .await
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_flow_exec(
     cwd: PathBuf,
     name: String,
     resume: bool,
+    accept_drift: bool,
     yes: bool,
     provider_flag: Option<String>,
     model_flag: Option<String>,
@@ -721,6 +835,30 @@ async fn run_flow_exec(
         );
         runs_dir.join(format!("{run_id}.json"))
     };
+
+    // Recovery audit (docs/design/27 Phase E): classify the snapshot vs
+    // the live flow file BEFORE touching anything. Drift fails closed
+    // unless explicitly accepted; the frozen snapshot always wins.
+    if resume {
+        let snapshot_body = std::fs::read_to_string(&state_path).unwrap_or_default();
+        match vak_flow::adopt::recovery_audit(&snapshot_body, Some(&toml_str)) {
+            Ok((snapshot, action)) => match action {
+                "resume" => println!("[recovery-audit] snapshot={snapshot} action=resume"),
+                "repair" if !accept_drift => {
+                    eprintln!(
+                        "[recovery-audit] snapshot={snapshot} — live flow file drifted from the frozen definition\n  \
+                         resume executes the FROZEN copy; pass --accept-drift to acknowledge."
+                    );
+                    return 2;
+                }
+                _ => println!("[recovery-audit] snapshot={snapshot} action={action}"),
+            },
+            Err(e) => {
+                eprintln!("error: cannot read run ledger for audit: {e}");
+                return 2;
+            }
+        }
+    }
 
     let mut state = load_state(&state_path, &name, &toml_str);
 

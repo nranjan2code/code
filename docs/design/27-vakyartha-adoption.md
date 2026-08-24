@@ -235,6 +235,14 @@ error + receipt; day-window math across restarts; unattended auto-deny.
 
 ## Phase E — Runs → reusable flows (replay)
 
+Status: **core landed** — `flow adopt` from plan/flow-run ledgers
+(frozen TOML reused verbatim, provenance header) and from sessions
+(green-bash chain + merge tail), `flow diff <A> <B>` deterministic
+node-status/output comparison, and `--resume` recovery audit
+(`frozen→resume / drifted→fail-closed unless --accept-drift /
+missing→rebuild`). Deferred pieces of the original spec: subgraph reuse,
+approval-resume choreography.
+
 Convert proven work into governed reruns. Substrate already exists:
 flow-run state ledgers freeze definition TOML, planner attempts are
 audited, best-of-N proves keep=merge promotion.
