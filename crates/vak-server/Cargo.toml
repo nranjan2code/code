@@ -23,6 +23,7 @@ futures = { workspace = true }
 vak-ops = { path = "../vak-ops" }
 vak-session = { workspace = true }
 vak-flow = { workspace = true }
+vak-hooks = { workspace = true }
 tower-http = { workspace = true }
 chrono = { workspace = true }
 walkdir = { workspace = true }

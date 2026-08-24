@@ -134,6 +134,8 @@ struct CoreInner {
     mcp_inventory: std::sync::Mutex<Option<String>>,
     /// Runtime MCP table override (desktop/TUI management surface).
     mcp_override: std::sync::Mutex<Option<vak_config::McpConfig>>,
+    /// Runtime hook override (desktop/TUI management surface).
+    hooks_override: std::sync::Mutex<Option<Vec<vak_config::HookConfig>>>,
     /// Session-scoped domain-weighted doubt per (provider, model) leg
     /// (Phase R). Fed from work receipts at run end; read at ladder
     /// admission.
@@ -210,6 +212,7 @@ impl Core {
                 models_cache: std::sync::Mutex::new(HashMap::new()),
                 mcp_inventory: std::sync::Mutex::new(None),
                 mcp_override: std::sync::Mutex::new(None),
+                hooks_override: std::sync::Mutex::new(None),
                 beliefs: Arc::new(routing::BeliefState::new()),
             }),
         })
@@ -352,6 +355,23 @@ impl Core {
             return cfg.clone();
         }
         self.inner.config.mcp.clone()
+    }
+
+    /// Replace lifecycle hooks for subsequent turns without restarting the
+    /// desktop/server process. Persistence is owned by the server surface.
+    pub fn set_hooks(&self, hooks: Vec<vak_config::HookConfig>) {
+        if let Ok(mut current) = self.inner.hooks_override.lock() {
+            *current = Some(hooks);
+        }
+    }
+
+    pub fn effective_hooks(&self) -> Vec<vak_config::HookConfig> {
+        if let Ok(current) = self.inner.hooks_override.lock()
+            && let Some(hooks) = current.as_ref()
+        {
+            return hooks.clone();
+        }
+        self.inner.config.hooks.clone()
     }
 
     pub fn set_theme(&self, theme: String) {
@@ -1241,7 +1261,7 @@ impl Core {
         }
         cfg.tools = tools;
         let hooks: Option<std::sync::Arc<Vec<vak_hooks::HookDef>>> =
-            Some(std::sync::Arc::new(build_hooks(&self.inner.config)?));
+            Some(std::sync::Arc::new(build_hooks_from(&self.effective_hooks())?));
         cfg.hooks = hooks.clone();
 
         // session-start hooks fire once per run, before any tool or
@@ -1575,8 +1595,12 @@ fn uuid_like() -> String {
 }
 
 pub fn build_hooks(config: &vak_config::Config) -> Result<Vec<vak_hooks::HookDef>, CoreError> {
-    let mut out = Vec::with_capacity(config.hooks.len());
-    for h in &config.hooks {
+    build_hooks_from(&config.hooks)
+}
+
+fn build_hooks_from(config_hooks: &[vak_config::HookConfig]) -> Result<Vec<vak_hooks::HookDef>, CoreError> {
+    let mut out = Vec::with_capacity(config_hooks.len());
+    for h in config_hooks {
         let event = match h.event.as_str() {
             "session-start" | "session_start" | "start" => vak_hooks::HookEvent::SessionStart,
             "pre-tool-use" | "pre_tool_use" => vak_hooks::HookEvent::PreToolUse,

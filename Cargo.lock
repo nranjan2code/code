@@ -5809,6 +5809,7 @@ dependencies = [
  "vak-config",
  "vak-core",
  "vak-flow",
+ "vak-hooks",
  "vak-llm",
  "vak-ops",
  "vak-session",

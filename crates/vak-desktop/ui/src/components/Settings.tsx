@@ -18,6 +18,7 @@ import type { ConfigSnapshot } from "../types";
 import * as api from "../api";
 import { loadHealth, refreshSessions } from "../App";
 import Icon, { type IconName } from "./Icon";
+import OperationsPanel from "./OperationsPanel";
 
 /** Sentinel option that swaps the model select for a free-text field. */
 const CUSTOM_MODEL = "\u0000custom";
@@ -78,6 +79,11 @@ export default function Settings() {
   const [mcpServers, setMcpServers] = createSignal<Record<string, api.McpServerDef> | null>(null);
   const [mcpDirty, setMcpDirty] = createSignal(false);
   const [mcpSaving, setMcpSaving] = createSignal(false);
+  const [skills, setSkills] = createSignal<api.DiscoveredSkill[]>([]);
+  const [hooks, setHooks] = createSignal<api.HookConfig[]>([]);
+  const [hooksDirty, setHooksDirty] = createSignal(false);
+  const [hooksSaving, setHooksSaving] = createSignal(false);
+  const [capabilityTab, setCapabilityTab] = createSignal<"mcp" | "skills" | "hooks">("mcp");
 
   async function refreshMcp() {
     try {
@@ -87,6 +93,45 @@ export default function Settings() {
     } catch (e) {
       setNotice({ kind: "error", text: `Could not load MCP servers: ${e instanceof Error ? e.message : String(e)}` });
     }
+  }
+
+  async function refreshCapabilities() {
+    try {
+      const [skillResult, hookResult] = await Promise.all([api.listSkills(), api.getHooks()]);
+      setSkills(skillResult.skills ?? []);
+      setHooks(hookResult.hooks ?? []);
+      setHooksDirty(false);
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not load capabilities: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+
+  async function saveHooks() {
+    setHooksSaving(true);
+    try {
+      await api.putHooks(hooks());
+      setHooksDirty(false);
+      setNotice({ kind: "info", text: `Saved ${hooks().length} hook${hooks().length === 1 ? "" : "s"} — active for new turns` });
+    } catch (e) {
+      setNotice({ kind: "error", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setHooksSaving(false);
+    }
+  }
+
+  function updateHook(index: number, patch: Partial<api.HookConfig>) {
+    setHooks((current) => current.map((hook, i) => i === index ? { ...hook, ...patch } : hook));
+    setHooksDirty(true);
+  }
+
+  function addHook() {
+    setHooks((current) => [...current, { event: "pre_tool_use", matcher: "", command: "", timeout_ms: 10000, enabled: true }]);
+    setHooksDirty(true);
+  }
+
+  function removeHook(index: number) {
+    setHooks((current) => current.filter((_, i) => i !== index));
+    setHooksDirty(true);
   }
 
   async function saveMcp() {
@@ -211,6 +256,7 @@ export default function Settings() {
   createEffect(() => {
     if (page() !== "integrations") return;
     void refreshMcp();
+    void refreshCapabilities();
   });
 
   // Re-run whenever the selected provider changes; a stale response from a
@@ -588,33 +634,7 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "services"}>
-              <header><h1>Services</h1><p>Gateway and bridge run in the background — the menu-bar dot and this panel always show the same truth.</p></header>
-              <Group title="Background services">
-                <For each={["gateway", "telegram"] as const}>
-                  {(svc) => (
-                    <Row
-                      title={svc === "gateway" ? "Gateway" : "Telegram bridge"}
-                      description={
-                        svc === "gateway"
-                          ? `Serves sessions, gateway routing and routines on port 8901.${ops()?.gateway_healthy ? "" : " Not answering right now."}`
-                          : "Bridges your Telegram bot to the gateway."
-                      }
-                    >
-                      <span class="settings-status" classList={{ good: ops()?.[svc]?.state === "running", bad: ops()?.[svc]?.state !== "running" }}>
-                        {ops()?.[svc]?.state ?? "?"}
-                      </span>
-                      <button class="settings-button" disabled={ops()?.[svc]?.state !== "running"} onClick={() => void runOp(svc, "stop")}>Stop</button>
-                      <button class="settings-button" disabled={ops()?.[svc]?.state === "running"} onClick={() => void runOp(svc, "start")}>Start</button>
-                      <button class="settings-button" onClick={() => void runOp(svc, "restart")}>Restart</button>
-                    </Row>
-                  )}
-                </For>
-              </Group>
-              <Group title="Maintenance">
-                <Row title="Auto-refresh" description="This panel polls service state every 5 seconds while open."><span class="settings-status good">Live</span></Row>
-                <Row title="Menu-bar controller" description="vakcoder-tray shows a colour-coded dot with the same controls and a crash watchdog."><span class="settings-status good">Available</span></Row>
-                <Row title="Install as services" description="Installs launchd/systemd units so both processes survive reboots (scripts/install_gateway_service.sh --with-tray)."><button class="settings-button" onClick={() => void runOp("gateway", "install")}>Install</button><button class="settings-button" onClick={() => void runOp("gateway", "uninstall")}>Uninstall</button></Row>
-              </Group>
+              <OperationsPanel onNotice={(text) => setNotice({ kind: "error", text })} />
             </Show>
 
             <Show when={page() === "learning"}>
@@ -663,66 +683,34 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "integrations"}>
-              <header><h1>Integrations</h1><p>Extend VakCoder with tools, lifecycle automation, and reusable expertise.</p></header>
-              <Group title="MCP servers">
-                <Show
-                  when={mcpServers()}
-                  fallback={<Row title="Loading…" description="Reading the effective MCP table."><span /></Row>}
-                >
+              <header><h1>Capabilities</h1><p>Connect tools, automate lifecycle events, and manage the instructions available to your agent.</p></header>
+              <nav class="capability-tabs" aria-label="Capability types">
+                <button classList={{ active: capabilityTab() === "mcp" }} onClick={() => setCapabilityTab("mcp")}><Icon name="plug" /><span>MCP servers</span><em>{Object.keys(mcpServers() ?? {}).length}</em></button>
+                <button classList={{ active: capabilityTab() === "skills" }} onClick={() => setCapabilityTab("skills")}><Icon name="spark" /><span>Skills</span><em>{skills().length}</em></button>
+                <button classList={{ active: capabilityTab() === "hooks" }} onClick={() => setCapabilityTab("hooks")}><Icon name="tune" /><span>Hooks</span><em>{hooks().length}</em></button>
+              </nav>
+              <Show when={capabilityTab() === "mcp"}>
+                <Group title="Tool servers"><Show when={mcpServers()} fallback={<Row title="Loading servers…" description="Reading the effective MCP configuration."><span /></Row>}>
                   <div class="mcp-editor">
-                    <For each={Object.entries(mcpServers() ?? {})}>
-                      {([name, def]) => (
-                        <div class="mcp-row" data-name={name}>
-                          <div class="mcp-fields">
-                            <input
-                              class="mcp-name"
-                              value={name}
-                              aria-label="Server name"
-                              onChange={(e) => renameServer(name, e.currentTarget.value.trim())}
-                            />
-                            <input
-                              class="mcp-command"
-                              placeholder="/path/to/command"
-                              value={def.command}
-                              aria-label="Command"
-                              onInput={(e) => updateServer(name, { command: e.currentTarget.value })}
-                            />
-                            <input
-                              class="mcp-args"
-                              placeholder="args (space separated)"
-                              value={def.args.join(" ")}
-                              aria-label="Arguments"
-                              onInput={(e) => updateServer(name, { args: e.currentTarget.value.split(" ").filter(Boolean) })}
-                            />
-                          </div>
-                          <div class="mcp-controls">
-                            <label class="mcp-network" title="Allow outbound network for this server">
-                              <Switch checked={def.network} label={`Network for ${name}`} onChange={(v) => updateServer(name, { network: v })} />
-                              network
-                            </label>
-                            <button class="settings-button danger" aria-label={`Remove ${name}`} onClick={() => removeServer(name)}>
-                              <Icon name="trash" /> Remove
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </For>
-                    <div class="settings-actions">
-                      <button class="btn" onClick={addServer}><Icon name="add" /> Add server</button>
-                      <button class="btn primary" disabled={!mcpDirty() || mcpSaving()} onClick={() => void saveMcp()}>
-                        {mcpSaving() ? "Saving…" : "Save & apply"}
-                      </button>
-                      <Show when={mcpDirty()}><span class="mcp-dirty">unsaved changes</span></Show>
-                    </div>
-                    <p class="settings-hint">Servers start sandboxed; “network” allows outbound connections. Env values may reference $SECRETS via $&#123;&#125;. Applies to new turns immediately and persists to .vakcoder/config.toml.</p>
+                    <Show when={Object.keys(mcpServers() ?? {}).length > 0} fallback={<div class="capability-empty"><Icon name="plug" /><strong>No MCP servers connected</strong><span>Add a local server to give the agent tools such as search, browser, or data access.</span></div>}>
+                      <For each={Object.entries(mcpServers() ?? {})}>{([name, def]) => <div class="mcp-row">
+                        <div class="mcp-row-head"><div><strong>{name}</strong><span class="capability-state ready">Configured</span></div><button class="settings-button danger" onClick={() => removeServer(name)}><Icon name="trash" /> Remove</button></div>
+                        <div class="mcp-fields"><label>Server name<input value={name} aria-label="Server name" onChange={(e) => renameServer(name, e.currentTarget.value.trim())} /></label><label>Command<input placeholder="/path/to/command" value={def.command} aria-label="Command" onInput={(e) => updateServer(name, { command: e.currentTarget.value })} /></label><label>Arguments<input placeholder="Space-separated arguments" value={def.args.join(" ")} aria-label="Arguments" onInput={(e) => updateServer(name, { args: e.currentTarget.value.split(" ").filter(Boolean) })} /></label></div>
+                        <div class="mcp-controls"><label class="mcp-network"><Switch checked={def.network} label={`Allow network for ${name}`} onChange={(v) => updateServer(name, { network: v })} /><span>Allow outbound network</span></label><button class="settings-button" onClick={() => setNotice({ kind: "info", text: "MCP health checks run when the server is first used in a task." })}>Check on next use</button></div>
+                      </div>}</For>
+                    </Show>
+                    <div class="settings-actions"><button class="btn" onClick={addServer}><Icon name="add" /> Add server</button><button class="btn primary" disabled={!mcpDirty() || mcpSaving()} onClick={() => void saveMcp()}>{mcpSaving() ? "Saving…" : "Save & apply"}</button><Show when={mcpDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
+                    <p class="settings-hint">Servers run in a sandbox. Network access is off unless you explicitly enable it. Secrets are referenced by name and never shown here.</p>
                   </div>
-                </Show>
-              </Group>
-              <div class="integration-grid">
-                <div class="integration-card"><span><Icon name="tune" /></span><strong>Hooks</strong><p>Run commands before or after agent lifecycle events.</p><em>{config()?.integrations.hooks ?? 0} configured</em></div>
-                <div class="integration-card"><span><Icon name="spark" /></span><strong>Skills</strong><p>Reusable instructions discovered from the project and user home.</p><em>{config()?.integrations.skills.length ?? 0} discovered</em><For each={config()?.integrations.skills.slice(0, 4)}>{(name) => <code>{name}</code>}</For></div>
-              </div>
-              <div class="settings-actions"><button class="btn primary" onClick={() => void openProjectConfig()}>Configure hooks in config.toml</button></div>
+                </Show></Group>
+              </Show>
+              <Show when={capabilityTab() === "skills"}>
+                <Group title={`Discovered skills (${skills().length})`}><Show when={skills().length > 0} fallback={<div class="capability-empty"><Icon name="spark" /><strong>No skills discovered</strong><span>Add a SKILL.md under the project or your VakCoder home directory, then reload this page.</span></div>}><div class="capability-list"><For each={skills()}>{(skill) => <details class="capability-item"><summary><span><strong>{skill.name}</strong><small>{skill.scope ?? "Project or user"}</small></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show><button class="settings-button" onClick={() => setNotice({ kind: "info", text: `${skill.name} is available from the task composer.` })}>Use in a task</button></div></details>}</For></div></Show></Group>
+                <Group title={`Pending proposals (${proposals().length})`}><Show when={proposals().length > 0} fallback={<Row title="No proposals waiting" description="The agent can suggest reusable skills; they stay inactive until you review them."><span class="settings-status good">Clear</span></Row>}><For each={proposals()}>{(proposal) => <div class="setting-row"><div class="setting-copy"><strong>{proposal.name}</strong><span>{proposal.description}</span></div><div class="setting-control"><button class="settings-button" onClick={() => void promote(proposal.id)}>Review & promote</button><button class="settings-button danger" onClick={() => void reject(proposal.id)}>Reject</button></div></div>}</For></Show></Group>
+              </Show>
+              <Show when={capabilityTab() === "hooks"}>
+                <Group title="Lifecycle automation"><div class="settings-callout"><Icon name="shield" /><div><strong>Hooks run commands at controlled lifecycle points.</strong><span>Keep commands short and review every change. A disabled hook never runs.</span></div></div><Show when={hooks().length > 0} fallback={<div class="capability-empty"><Icon name="tune" /><strong>No hooks configured</strong><span>Add a hook to run a safe, repeatable action at session or tool lifecycle events.</span></div>}><div class="hook-editor"><For each={hooks()}>{(hook, index) => <div class="hook-row"><div class="hook-row-head"><span class="capability-state" classList={{ ready: hook.enabled !== false, muted: hook.enabled === false }}>{hook.enabled === false ? "Disabled" : "Enabled"}</span><Switch checked={hook.enabled !== false} label={`Enable hook ${index() + 1}`} onChange={(v) => updateHook(index(), { enabled: v })} /><button class="settings-button danger" onClick={() => removeHook(index())}><Icon name="trash" /></button></div><label>Lifecycle event<select value={hook.event} onChange={(e) => updateHook(index(), { event: e.currentTarget.value })}><option value="session_start">Session start</option><option value="pre_tool_use">Before a tool runs</option><option value="post_tool_use">After a tool runs</option><option value="stop">Task stop</option></select></label><label>Tool matcher <span class="label-hint">optional</span><input value={hook.matcher ?? ""} placeholder="bash, write, or leave blank" onInput={(e) => updateHook(index(), { matcher: e.currentTarget.value })} /></label><label>Command<input class="hook-command" value={hook.command} placeholder="e.g. cargo fmt --all --check" onInput={(e) => updateHook(index(), { command: e.currentTarget.value })} /></label><label>Timeout (ms)<input type="number" min="100" max="120000" value={hook.timeout_ms ?? 10000} onInput={(e) => updateHook(index(), { timeout_ms: Number(e.currentTarget.value) || 10000 })} /></label></div>}</For></div></Show><div class="settings-actions"><button class="btn" onClick={addHook}><Icon name="add" /> Add hook</button><button class="btn primary" disabled={!hooksDirty() || hooksSaving()} onClick={() => void saveHooks()}>{hooksSaving() ? "Saving…" : "Save hooks"}</button><Show when={hooksDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div></Group>
+              </Show>
             </Show>
 
             <Show when={page() === "advanced"}>
