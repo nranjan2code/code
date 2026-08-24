@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, onMount, Show, For } from "solid-js";
+import { createEffect, createMemo, onCleanup, onMount, Show, For } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -51,6 +51,13 @@ import {
   uiPreferences,
   workspaceSwitching,
   setWorkspaceSwitching,
+  splitId,
+  setSplitId,
+  splitFocused,
+  setSplitFocused,
+  splitRatio,
+  setSplitRatio,
+  paneSessions,
 } from "./store";
 import type { SessionSummary } from "./types";
 import * as api from "./api";
@@ -87,7 +94,19 @@ export async function refreshSessions() {
   if (!source) return;
   try {
     const res = await api.listSessions();
-    if (source === api.backendUrl()) setSessions(res.sessions);
+    if (source === api.backendUrl()) {
+      setSessions(res.sessions);
+      // The other pane's session was deleted elsewhere — collapse the split
+      // rather than showing a ghost.
+      const other = splitId();
+      if (
+        other &&
+        res.sessions.length > 0 &&
+        !res.sessions.some((s) => s.session_id === other)
+      ) {
+        closeSplit();
+      }
+    }
   } catch {
     /* backend restarting */
   }
@@ -141,6 +160,12 @@ function onFinished(id: string, summary: string) {
 }
 
 export async function activate(id: string) {
+  // Clicking the session already shown in the other pane focuses it there
+  // instead of duplicating it across both panes.
+  if (splitId() && id === splitId()) {
+    swapPanes();
+    return;
+  }
   setActiveId(id);
   if (sessions().find((session) => session.session_id === id)?.running) {
     markRunning(id, true);
@@ -165,6 +190,45 @@ export async function newSession() {
   } catch (e) {
     setNotice({ kind: "error", text: `Could not create a task: ${e instanceof Error ? e.message : String(e)}` });
   }
+}
+
+// ---- Split view ----------------------------------------------------------------
+
+/**
+ * Toggle two-session side-by-side view. The focused session stays put;
+ * `candidate` (or the most recent other session) fills the other pane.
+ * Positions never move afterwards — focusing a pane swaps contents.
+ */
+export async function toggleSplit(candidate?: string) {
+  if (splitId()) {
+    closeSplit();
+    return;
+  }
+  const current = activeId();
+  let other = candidate ?? null;
+  if (!other) {
+    const others = sessions().filter((s) => s.session_id !== current && !s.archived);
+    other = others[0]?.session_id ?? null;
+  }
+  if (!other || other === current || !current) return;
+  setSplitId(other);
+  setSplitFocused(false); // focus stays on the left; candidate sits right
+  openStream(other);
+  await hydrate(other);
+}
+
+export function closeSplit() {
+  setSplitId(null);
+  setSplitFocused(false);
+}
+
+/** Swap pane contents so the clicked side becomes the focused one. */
+export function swapPanes() {
+  if (!splitId()) return;
+  const prevActive = activeId();
+  setActiveId(splitId());
+  setSplitId(prevActive);
+  setSplitFocused(!splitFocused());
 }
 
 export async function sendPrompt(
@@ -229,8 +293,8 @@ export async function sendPrompt(
   }
 }
 
-export async function approve(requestId: string, ok: boolean) {
-  const id = activeId();
+export async function approve(requestId: string, ok: boolean, sessionId?: string | null) {
+  const id = sessionId ?? activeId();
   if (!id) return;
   try {
     await api.answerApproval(id, requestId, ok);
@@ -300,6 +364,8 @@ function resetWorkspaceView() {
   closeAllStreams();
   closeAllSideStreams();
   setActiveId(null);
+  setSplitId(null);
+  setSplitFocused(false);
   setSessions([]);
   setHealth(null);
   setHydratingId(null);
@@ -407,6 +473,109 @@ function closeAllStreams() {
   streams.clear();
 }
 
+/** Focus/follow header strip above each half of a split workspace. */
+function PaneBadge(props: { session: string | null; focused: boolean; onClose?: () => void }) {
+  const info = createMemo(() => sessions().find((x) => x.session_id === props.session));
+  return (
+    <div class="pane-badge" classList={{ focused: props.focused }}>
+      <button
+        class="pane-badge-main"
+        disabled={!props.session || props.focused}
+        title={props.focused ? "Focused — composer, stop, and dock act here" : "Click to focus this task"}
+        onClick={() => {
+          if (!props.focused) swapPanes();
+        }}
+      >
+        <span class="dot" classList={{ run: !!props.session && isRunning(props.session!) }} />
+        <span class="pane-badge-title">{info()?.title || (props.session ? "Untitled task" : "No task")}</span>
+        <Show when={props.session && isRunning(props.session!)}>
+          <span class="pane-badge-state">Working</span>
+        </Show>
+      </button>
+      <Show when={props.onClose}>
+        <button class="pane-badge-close" title="Close split view (⌘\)" aria-label="Close split view" onClick={props.onClose}>
+          <Icon name="close" size={12} />
+        </button>
+      </Show>
+    </div>
+  );
+}
+
+/**
+ * Two sessions side-by-side. Positions never move: the LEFT pane always
+ * shows the unfocused session, the RIGHT one the focused session
+ * (`paneSessions()` encodes this). Clicking a pane's badge swaps contents so
+ * that side becomes the focus target for composer/approvals/dock.
+ */
+function SplitPanes() {
+  let stack!: HTMLDivElement;
+  const panes = createMemo(() => paneSessions());
+
+  const persistRatio = (next: number) => {
+    setSplitRatio(next);
+    localStorage.setItem("vakcoder.splitRatio", String(next));
+  };
+
+  const beginDrag = (event: PointerEvent) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startRatio = splitRatio();
+    const width = stack.getBoundingClientRect().width;
+    if (width <= 0) return;
+    document.body.classList.add("is-resizing");
+    const move = (next: PointerEvent) => {
+      persistRatio(Math.max(0.25, Math.min(0.75, startRatio + (next.clientX - startX) / width)));
+    };
+    const end = () => {
+      document.body.classList.remove("is-resizing");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end, { once: true });
+  };
+
+  return (
+    <div class="main-stack split" ref={stack} style={`--split-left:${Math.round(splitRatio() * 100)}%`}>
+      <div class="pane" classList={{ focused: !splitFocused() }}>
+        <PaneBadge session={panes().left} focused={!splitFocused()} />
+        <ChatPane sessionId={panes().left} />
+        <Show when={sideOpen()}>
+          <SideChatPanel />
+        </Show>
+      </div>
+      <div
+        class="split-divider"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize split panes"
+        tabIndex={0}
+        onPointerDown={beginDrag}
+        onDblClick={() => persistRatio(0.5)}
+        onKeyDown={(e) => {
+          if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+          e.preventDefault();
+          persistRatio(Math.max(0.25, Math.min(0.75, splitRatio() + (e.key === "ArrowRight" ? 0.02 : -0.02))));
+        }}
+      />
+      <div class="pane" classList={{ focused: splitFocused() }}>
+        <PaneBadge session={panes().right} focused={splitFocused()} onClose={() => void toggleSplit()} />
+        <Show
+          when={panes().right}
+          fallback={
+            <div class="pane-empty">
+              <Icon name="grid" size={20} />
+              <p>Pick another task from the sidebar to watch it here while you work on the left.</p>
+            </div>
+          }
+        >
+          <ChatPane sessionId={panes().right} />
+        </Show>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   onMount(() => {
     const savedSidebar = Number(localStorage.getItem("vakcoder.sidebarWidth"));
@@ -457,6 +626,9 @@ export default function App() {
       } else if (e.key === "d" || e.key === "D") {
         e.preventDefault();
         setDockTab((t) => (t === "diff" ? null : "diff"));
+      } else if (e.key === "\\") {
+        e.preventDefault();
+        void toggleSplit();
       } else if (e.key === "`") {
         e.preventDefault();
         setDockTab((t) => (t === "terminal" ? null : "terminal"));
@@ -503,12 +675,19 @@ export default function App() {
           <Show when={sidebarOpen()}><ResizeHandle side="sidebar" /></Show>
           <div class="main">
             <WorkspaceHeader />
-            <div class="main-stack">
-              <ChatPane />
-              <Show when={sideOpen()}>
-                <SideChatPanel />
-              </Show>
-            </div>
+            <Show
+              when={splitId()}
+              fallback={
+                <div class="main-stack">
+                  <ChatPane />
+                  <Show when={sideOpen()}>
+                    <SideChatPanel />
+                  </Show>
+                </div>
+              }
+            >
+              <SplitPanes />
+            </Show>
             <Composer cwd={info().cwd ?? ""} />
           </div>
           <Show when={dockTab()}>

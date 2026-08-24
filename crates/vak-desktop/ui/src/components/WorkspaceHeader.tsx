@@ -13,7 +13,9 @@ import {
   setSidebarOpen,
   sideOpen,
   sidebarOpen,
+  splitId,
 } from "../store";
+import { toggleSplit } from "../App";
 import Icon, { type IconName } from "./Icon";
 
 const tools: { id: "preview" | "diff" | "terminal" | "editor" | "pr"; label: string; icon: IconName }[] = [
@@ -75,6 +77,18 @@ export default function WorkspaceHeader() {
           onClick={() => setBestOfOpen(true)}
         >
           <Icon name="layers" />
+        </button>
+        <button
+          class="icon-button has-tooltip"
+          data-tooltip="Split view ⌘\"
+          classList={{ on: !!splitId() }}
+          aria-pressed={!!splitId()}
+          title="Two tasks side-by-side (⌘\)"
+          aria-label="Toggle split view"
+          disabled={!activeId()}
+          onClick={() => void toggleSplit()}
+        >
+          <Icon name="grid" />
         </button>
         <button
           class="icon-button has-tooltip"

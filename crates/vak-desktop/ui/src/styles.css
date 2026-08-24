@@ -932,3 +932,118 @@ html[data-reduce-motion="true"] *, html[data-reduce-motion="true"] *::before, ht
   line-height: 1.5;
   margin: 0;
 }
+
+/* ---- Split view (two sessions side-by-side) ------------------------------- */
+
+.main-stack.split {
+  flex-direction: row;
+}
+.pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.main-stack.split .pane:first-child {
+  width: var(--split-left, 50%);
+  flex: none;
+}
+.main-stack.split .pane:last-child {
+  flex: 1;
+}
+.pane .chat-shell {
+  flex: 1;
+}
+.pane:not(.focused) .chat {
+  opacity: 0.94;
+}
+
+.split-divider {
+  flex: none;
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  border-left: 1px solid var(--border);
+  transition: background 0.12s ease;
+}
+.split-divider:hover,
+.split-divider:focus-visible {
+  background: rgba(223, 121, 95, 0.25);
+  outline: none;
+}
+body.is-resizing .split-divider {
+  background: rgba(223, 121, 95, 0.45);
+}
+
+.pane-badge {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+}
+.pane-badge.focused {
+  background: rgba(223, 121, 95, 0.06);
+}
+.pane-badge-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: default;
+  padding: 0;
+  text-align: left;
+}
+.pane-badge-main:not(:disabled) {
+  cursor: pointer;
+}
+.pane-badge-title {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pane-badge-state {
+  font-size: 10.5px;
+  color: #d4a85d;
+  flex: none;
+}
+.pane-badge-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--dim);
+  cursor: pointer;
+}
+.pane-badge-close:hover {
+  color: var(--text);
+  background: var(--border);
+}
+.pane-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--dim);
+  font-size: 12.5px;
+  max-width: 300px;
+  margin: 0 auto;
+  text-align: center;
+  line-height: 1.55;
+}

@@ -178,8 +178,8 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      w/ retry, per-channel reply formatting
                      (docs/design/22-gateway.md, docs/design/28-operations.md)
 crates/vak-desktop   Tauri 2 desktop app over an embedded secured_router —
-                     SolidJS SPA: sessions, approvals, diff review,
-                     subagents tab, MCP manager, image attachments,
+                     SolidJS SPA: sessions, split view, approvals, diff
+                     review, subagents tab, MCP manager, image attachments,
                      best-of-N, tasks, side chats
                      (docs/design/20-tauri-desktop.md)
 crates/vak-ops       service-control layer over launchd/systemd — status,

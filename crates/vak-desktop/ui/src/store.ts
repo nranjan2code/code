@@ -54,6 +54,26 @@ export const [hydratingId, setHydratingId] = createSignal<string | null>(null);
 export const [sidebarOpen, setSidebarOpen] = createSignal(true);
 export const [sidebarWidth, setSidebarWidth] = createSignal(252);
 export const [dockWidth, setDockWidth] = createSignal(520);
+
+/**
+ * Split view: the session shown in the non-focused pane. `activeId` always
+ * names the FOCUSED pane's session (composer, approvals, stop, dock all
+ * follow it); `splitFocused` says whether that focus currently sits on the
+ * right pane. Pane positions never move — focusing a pane swaps contents.
+ */
+export const [splitId, setSplitId] = createSignal<string | null>(null);
+export const [splitFocused, setSplitFocused] = createSignal(false);
+const storedSplitRatio = Number(localStorage.getItem("vakcoder.splitRatio"));
+export const [splitRatio, setSplitRatio] = createSignal(
+  Number.isFinite(storedSplitRatio) && storedSplitRatio >= 0.25 && storedSplitRatio <= 0.75 ? storedSplitRatio : 0.5,
+);
+/** Session id rendered in a given pane; focus decides which side is active. */
+export function paneSessions(): { left: string | null; right: string | null } {
+  if (!splitId()) return { left: activeId(), right: null };
+  return splitFocused()
+    ? { left: splitId(), right: activeId() }
+    : { left: activeId(), right: splitId() };
+}
 export type Notice = { kind: "error" | "info"; text: string };
 export const [notice, setNotice] = createSignal<Notice | null>(null);
 

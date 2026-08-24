@@ -65,7 +65,7 @@ advantages transfer directly:
 | Transcript density modes Normal/Verbose/Summary | D1 | three projections over same ledger |
 | Context usage ring (per session) | D0 | usage events already stream |
 | OS notification when unviewed session finishes | D0 | tauri-plugin-notification |
-| Split view: two sessions side-by-side | D2 | two consumers, independent cursors |
+| Split view: two sessions side-by-side | D2 ✅ (Aug 2026) | two consumers, independent cursors |
 | Scheduled routines/recurring tasks | D4 | daemon mode spawning normal runs in worktrees |
 | Environments: Local/SSH/cloud | D5 | SSH = tunnel to remote `serve`; no cloud infra needed |
 
@@ -417,9 +417,13 @@ visually in the preview pane.
 Aug 2026 additions closing the last interactive gaps: the **subagent dock
 tab** (attach/steer parity with the TUI, over parent-scoped server endpoints),
 a **graphical MCP manager** in Settings → Integrations (add/edit/remove
-servers, network toggle, persisted to project config + hot-applied), and
+servers, network toggle, persisted to project config + hot-applied),
 **composer image attachments** (button/paste/drag-drop, riding `/run` and
-`/steering` as native vision blocks).
+`/steering` as native vision blocks), and **split view** (⌘\ — two sessions
+side-by-side with independent transcripts; `activeId` names the focused pane
+so composer/approvals/stop/dock act where the user is looking, a badge strip
+on each half moves focus by swapping contents without repositioning panes,
+and a keyboard-accessible divider persists its ratio).
 
 Next up (in steal-list order): browser preview/auto-verify — the last major
 item. Everything else from the Claude/Codex/Cursor steal-lists that fits our

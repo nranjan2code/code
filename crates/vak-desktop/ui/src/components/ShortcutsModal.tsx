@@ -3,6 +3,7 @@ import { setShowShortcuts } from "../store";
 const SHORTCUTS: [string, string][] = [
   ["⌘N", "new session"],
   ["⌘D", "toggle diff pane"],
+  ["⌘\\", "toggle split view (two tasks side-by-side)"],
   ["⌘B", "toggle sidebar"],
   ["⌘H", "time travel (workspace snapshots)"],
   ["⌘,", "open settings"],

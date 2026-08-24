@@ -127,7 +127,7 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
   );
 };
 
-const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }> }) => (
+const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessionId?: string | null }) => (
   <div class="approval">
     <div class="ap-head">Approval requested — {props.item.tool}</div>
     <Show when={props.item.reason}>
@@ -139,10 +139,10 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }> }) => (
       fallback={<div class="ap-done">{props.item.resolved}</div>}
     >
       <div class="ap-actions">
-        <button class="btn primary" onClick={() => void approve(props.item.id, true)}>
+        <button class="btn primary" onClick={() => void approve(props.item.id, true, props.sessionId)}>
           Allow once
         </button>
-        <button class="btn danger" onClick={() => void approve(props.item.id, false)}>
+        <button class="btn danger" onClick={() => void approve(props.item.id, false, props.sessionId)}>
           Deny
         </button>
       </div>
@@ -199,7 +199,10 @@ export const Markdown = (props: { text: string; streaming?: boolean }): JSX.Elem
   return <div class="md" ref={el} onClick={onClick} />;
 };
 
-export default function ChatPane() {
+export default function ChatPane(props: { sessionId?: string | null }) {
+  // In split view each pane renders ITS OWN session; without the prop the
+  // pane follows the global focus (previous behavior, unchanged).
+  const sid = () => props.sessionId ?? activeId();
   let scroller!: HTMLDivElement;
   let pinned = true;
   const [atBottom, setAtBottom] = createSignal(true);
@@ -217,7 +220,7 @@ export default function ChatPane() {
   };
 
   createEffect(() => {
-    const id = activeId();
+    const id = sid();
     void id;
     pinned = true;
     setAtBottom(true);
@@ -225,13 +228,13 @@ export default function ChatPane() {
   });
 
   createEffect(() => {
-    itemsOf(activeId()).length;
+    itemsOf(sid()).length;
     queueMicrotask(scrollToBottom);
   });
 
   // follow streaming text growth too
   createEffect(() => {
-    const list = itemsOf(activeId());
+    const list = itemsOf(sid());
     const last = list[list.length - 1];
     if (last?.kind === "assistant") void last.text;
     queueMicrotask(scrollToBottom);
@@ -240,10 +243,10 @@ export default function ChatPane() {
   return (
     <div class="chat-shell">
       <div class="chat" ref={scroller} onScroll={onScroll}>
-        <Show when={activeId()} fallback={<EmptyChat />}>
-          <Show when={hydratingId() !== activeId()} fallback={<TranscriptSkeleton />}>
-            <Show when={visibleItems(itemsOf(activeId())).length} fallback={<EmptyChat />}>
-              <For each={visibleItems(itemsOf(activeId()))}>
+        <Show when={sid()} fallback={<EmptyChat />}>
+          <Show when={hydratingId() !== sid()} fallback={<TranscriptSkeleton />}>
+            <Show when={visibleItems(itemsOf(sid())).length} fallback={<EmptyChat />}>
+              <For each={visibleItems(itemsOf(sid()))}>
                 {(it) => <>
               {(it.kind === "user" && <div class="msg user"><Markdown text={it.text} /></div>) ||
                 (it.kind === "assistant" && (
@@ -263,7 +266,7 @@ export default function ChatPane() {
                   </details>
                 )) ||
                 (it.kind === "tool" && <ToolCard item={it} />) ||
-                (it.kind === "approval" && <ApprovalCard item={it} />) ||
+                (it.kind === "approval" && <ApprovalCard item={it} sessionId={sid()} />) ||
                 (it.kind === "subagent" && (
                   <details class="subagent">
                     <summary>
