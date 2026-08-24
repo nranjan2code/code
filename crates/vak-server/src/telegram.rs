@@ -274,10 +274,21 @@ impl TelegramBridge {
                 Err(e) => {
                     failures += 1;
                     eprintln!("[telegram] poll failed ({failures} consecutive): {e}");
+                    if failures == 3 && e.contains("409") {
+                        eprintln!(
+                            "[telegram] hint: persistent 409 Conflict means ANOTHER getUpdates\n\
+                             [telegram] consumer is polling this bot token (second machine, tmux\n\
+                             [telegram] session, or stale deploy). Telegram allows exactly one;\n\
+                             [telegram] stop the other poller or rotate the token."
+                        );
+                    }
                     if failures >= 10 {
                         return Err(format!("giving up after {failures} consecutive failures"));
                     }
-                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    // Back off harder on conflict: hammering only extends the
+                    // other consumer's long-poll window.
+                    let secs = if e.contains("409") { 15 } else { 3 };
+                    tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
                 }
             }
         }
