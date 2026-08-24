@@ -708,3 +708,54 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: #4
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 html[data-reduce-motion="true"] *, html[data-reduce-motion="true"] *::before, html[data-reduce-motion="true"] *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+
+/* Goal mode (docs/design/27 Phase H) */
+.goal-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin: 0 0 6px;
+  border: 1px solid var(--accent, #7c5cff);
+  border-radius: 6px;
+  font-size: 12px;
+  opacity: 0.95;
+}
+.goal-chip .goal-disarm {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+}
+.goal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  margin-bottom: 6px;
+  border: 1px dashed var(--accent, #7c5cff);
+  border-radius: 6px;
+}
+.goal-form input {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  color: inherit;
+  padding: 6px 8px;
+  font: inherit;
+}
+.goal-form button,
+.composer-goal {
+  background: transparent;
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  padding: 4px 10px;
+}
+.goal-form .goal-arm:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

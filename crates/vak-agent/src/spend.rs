@@ -23,4 +23,9 @@ pub trait SpendGate: Send + Sync {
 
     /// A settled dispatch: record it against run/day windows.
     fn record_settled(&self, model: &str, session_id: &str, usage: &Usage);
+
+    /// The approver accepted the budget Ask: lift the cap for the REST of
+    /// this run (raise-cap-once semantics, doc 27 Phase D). Default no-op
+    /// for gates without run state.
+    fn on_budget_approved(&self) {}
 }

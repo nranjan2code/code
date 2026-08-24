@@ -202,11 +202,13 @@ catches seeded regressions (drop-a-required-turn fixture fails).
 
 ## Phase D — FinOps (spend is a safety property)
 
-Status: **landed** with two honest deviations — (1) the one-time
-cap-raise exists on `CoreSpendGate::raise_once()` but has no UI surface
-yet (the Ask currently resolves approve/deny only); (2) unit lanes for
-non-token media costs are reserved, not tracked — unpriced models record
-`usd: null` (UNKNOWN), never fake zero.
+Status: **landed**; raise-cap-once is wired end-to-end — approving the
+budget Ask lifts the cap for the REST of the run via
+`SpendGate::on_budget_approved` (the Ask itself IS the UI across TUI,
+server, and gateway channels), covered by `spend_gate.rs`
+budget_approval_raises_cap_for_rest_of_run. One remaining honest gap:
+unit lanes for non-token media costs are reserved, not tracked —
+unpriced models record `usd: null` (UNKNOWN), never fake zero.
 
 Unattended gateway surfaces currently spend with no cap. Budget admission
 is therefore security work, aligned with `24-agent-security.md`.

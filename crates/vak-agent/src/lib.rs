@@ -1292,6 +1292,8 @@ impl Agent {
                                 "budget admission denied: {reason}"
                             )));
                         }
+                        // Raise-cap-once: the rest of THIS run is admitted.
+                        gate.on_budget_approved();
                     }
                 }
                 // Ceiling check happens before every paid dispatch; exhaustion

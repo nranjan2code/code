@@ -60,6 +60,12 @@ export default function Composer(props: { cwd: string }) {
   const [picked, setPicked] = createSignal(0);
   const [files, setFiles] = createSignal<string[]>([]);
   const [skills, setSkills] = createSignal<SkillInfo[]>([]);
+  // Goal mode (docs/design/27 Phase H): armed objective consumed by the
+  // next prompt; completion is audited against the criteria.
+  const [goalFormOpen, setGoalFormOpen] = createSignal(false);
+  const [goalObjective, setGoalObjective] = createSignal("");
+  const [goalCriteria, setGoalCriteria] = createSignal("");
+  const [goalArmed, setGoalArmed] = createSignal<{ objective: string; criteria: string[] } | null>(null);
   const [skillPicked, setSkillPicked] = createSignal(0);
   let ta!: HTMLTextAreaElement;
 
@@ -190,7 +196,19 @@ export default function Composer(props: { cwd: string }) {
     setText("");
     setMention(null);
     queueMicrotask(grow);
-    void sendPrompt(t);
+    void sendPrompt(t, goalArmed() ?? undefined);
+    setGoalArmed(null); // consumed by this run (TUI parity)
+  };
+
+  const armGoal = () => {
+    const objective = goalObjective().trim();
+    const criteria = goalCriteria()
+      .split(";")
+      .map((c) => c.trim())
+      .filter(Boolean);
+    if (!objective || criteria.length === 0) return;
+    setGoalArmed({ objective, criteria });
+    setGoalFormOpen(false);
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -321,7 +339,50 @@ export default function Composer(props: { cwd: string }) {
               <span class="composer-hint">@ to add files</span>
             </button>
           </div>
+          <Show when={goalArmed()}>
+            <div class="goal-chip" title="Goal mode armed (docs/design/27 Phase H) — completion will be audited against the criteria">
+              🎯 {goalArmed()!.objective.slice(0, 60)}
+              {" · "}
+              {goalArmed()!.criteria.length} criteria
+              <button
+                class="goal-disarm"
+                title="Disarm goal"
+                onClick={() => setGoalArmed(null)}
+              >
+                ✕
+              </button>
+            </div>
+          </Show>
+          <Show when={goalFormOpen()}>
+            <div class="goal-form">
+              <input
+                class="goal-objective"
+                placeholder="Objective — what done means"
+                value={goalObjective()}
+                onInput={(e) => setGoalObjective(e.currentTarget.value)}
+              />
+              <input
+                class="goal-criteria"
+                placeholder="Criteria separated by ';' — prefix 'verify:' to run as shell"
+                value={goalCriteria()}
+                onInput={(e) => setGoalCriteria(e.currentTarget.value)}
+              />
+              <button class="goal-arm" disabled={!goalObjective().trim() || goalCriteria().split(';').filter((c) => c.trim()).length === 0} onClick={armGoal}>
+                Arm
+              </button>
+              <button class="goal-cancel" onClick={() => setGoalFormOpen(false)}>
+                Cancel
+              </button>
+            </div>
+          </Show>
           <div class="composer-actions">
+            <button
+              class="composer-goal"
+              title="Goal mode — audited completion (docs/design/27 Phase H)"
+              onClick={() => setGoalFormOpen(!goalFormOpen())}
+            >
+              🎯
+            </button>
             <select
               class="composer-density"
               value={density()}

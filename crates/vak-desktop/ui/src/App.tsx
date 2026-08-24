@@ -166,7 +166,10 @@ export async function newSession() {
   }
 }
 
-export async function sendPrompt(text: string) {
+export async function sendPrompt(
+  text: string,
+  goal?: { objective: string; criteria: string[] },
+) {
   if (!text.trim()) return;
   // Typing into the empty state is the natural way to start: create the task
   // rather than silently dropping the prompt because nothing is selected.
@@ -213,7 +216,7 @@ export async function sendPrompt(text: string) {
     } else {
       markRunning(id, true);
       try {
-        await api.runPrompt(id, text, thisGoal ?? undefined);
+        await api.runPrompt(id, text, goal ?? thisGoal ?? undefined);
       } catch (e) {
         markRunning(id, false);
         throw e;

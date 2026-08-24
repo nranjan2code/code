@@ -5,7 +5,7 @@
 //! the one-time raise Ask; unattended (no approver) always aborts.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use tempfile::tempdir;
 use tokio::sync::mpsc;
@@ -157,4 +157,94 @@ async fn approved_budget_ask_lets_the_run_proceed() {
         matches!(outcome, TurnOutcome::Completed { .. }),
         "approved ask must proceed, got {outcome:?}"
     );
+}
+
+/// Always denies until on_budget_approved() flips it.
+struct CapGate {
+    raised: AtomicBool,
+    denials: AtomicU32,
+}
+
+#[async_trait::async_trait]
+impl SpendGate for CapGate {
+    async fn authorize(&self, _check: &SpendCheck<'_>) -> Result<(), String> {
+        if !self.raised.load(Ordering::SeqCst) {
+            self.denials.fetch_add(1, Ordering::SeqCst);
+            Err("run budget $1.00 would be exceeded".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn on_budget_approved(&self) {
+        self.raised.store(true, Ordering::SeqCst);
+    }
+
+    fn record_settled(&self, _model: &str, _session_id: &str, _usage: &Usage) {}
+}
+
+struct ApproveOnce {
+    remaining: AtomicU32,
+}
+
+#[async_trait::async_trait]
+impl Approver for ApproveOnce {
+    async fn approve(&self, tool: &str, _args_json: &str, _reason: &str) -> bool {
+        tool == "finops-budget" && self.remaining.fetch_sub(1, Ordering::SeqCst) > 0
+    }
+}
+
+/// Approval raises the cap for the WHOLE run: later dispatches pass
+/// without re-asking (raise-cap-once, doc 27 Phase D).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn budget_approval_raises_cap_for_rest_of_run() {
+    let gate = Arc::new(CapGate {
+        raised: AtomicBool::new(false),
+        denials: AtomicU32::new(0),
+    });
+    let dir = tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let header = SessionHeader {
+        session_id: "raise".into(),
+        created_at: chrono::Utc::now(),
+        cwd: cwd.clone(),
+        parent_session_id: None,
+        contract: FrozenContract {
+            app_version: "0".into(),
+            provider: "ok".into(),
+            model: "test-model".into(),
+            route_ladder: Vec::new(),
+            system_prompt: "sys".into(),
+            tools: vec![],
+            permission_mode: "workspace-write".into(),
+            skills: Vec::new(),
+        },
+    };
+    let home = cwd.join(".vak-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let log =
+        SessionLog::create(SessionPath::new_session_file(&home, &cwd, "raise"), header).unwrap();
+    let mut cfg = AgentConfig::new("sys");
+    cfg.model = "test-model".into();
+    cfg.mode = Mode::FullAccess;
+    cfg.permission = Some(Arc::new(PermissionEngine::default()));
+    cfg.approver = Some(Arc::new(ApproveOnce {
+        remaining: AtomicU32::new(1),
+    }));
+    cfg.spend_gate = Some(gate.clone() as Arc<dyn SpendGate>);
+    cfg.retry_base_backoff_ms = 1;
+    let mut agent = Agent::new(Arc::new(Success), log, cfg);
+
+    let (ev_tx, mut ev_rx) = mpsc::channel(256);
+    tokio::spawn(async move { while ev_rx.recv().await.is_some() {} });
+    let outcome = agent
+        .run(
+            "hello",
+            &SteeringQueues::new(),
+            CancellationToken::new(),
+            ev_tx,
+        )
+        .await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    assert_eq!(gate.denials.load(Ordering::SeqCst), 1, "exactly one denial");
 }
