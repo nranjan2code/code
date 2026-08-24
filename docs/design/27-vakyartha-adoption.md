@@ -321,13 +321,19 @@ API.
 
 ## Phase H — Loop engineering (the long-horizon kernel)
 
-Status: **core landed** — goal mode, audited completion (deterministic
-`verify:` criteria + judge dispatches receipted as `Verify` work),
-regression obligations, and reset-with-handoff are live behind
-`[goal]` config / `exec --goal --criteria`. Honest deviations: planner
-done-contracts (mechanism 5) land with the next flows touch; the judge
-sees a transcript digest, not yet a filesystem/checkpoint diff —
-checkpoint-delta auditing is the natural next slice.
+Status: **core landed + surfaces wired** — goal mode via `exec --goal
+--criteria`, TUI `/goal <objective> [-- c1; c2]` (arm/status/off), and
+server `POST /sessions/{id}/run {goal, criteria}` (+ desktop composer
+pass-through); audited completion (deterministic `verify:` criteria +
+judge dispatches receipted as `Verify` work), regression obligations,
+and reset-with-handoff all live behind `[goal]` config. Dispatch
+forensics exposed at `GET /sessions/{id}/receipts`. Honest deviations:
+planner done-contracts (mechanism 5) land with the next flows touch;
+the judge sees a transcript digest, not yet a filesystem/checkpoint
+diff — checkpoint-delta auditing is the natural next slice. TUI slash
+palette no longer swallows typed arguments on Enter (root-cause fix:
+'/'-triggered palette never fed the editor; palette now opens only as a
+hint and Enter submits composer text verbatim).
 
 Not a vakyartha import: sourced from the same public frontier evidence as
 the North star section, and the answer to "better than any other harness."

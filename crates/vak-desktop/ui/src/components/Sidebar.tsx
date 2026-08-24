@@ -1,6 +1,7 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import {
   activeId,
+  backend,
   isRunning,
   sessions,
   setShowShortcuts,
@@ -8,13 +9,14 @@ import {
   setNotice,
   setSettingsOpen,
   setTasksOpen,
+  workspaceSwitching,
 } from "../store";
-import { activate, newSession, refreshSessions } from "../App";
+import { activate, newSession, refreshSessions, switchProject } from "../App";
 import * as api from "../api";
 import type { SessionSummary } from "../types";
 import Icon from "./Icon";
 
-type Filter = "all" | "active" | "idle" | "archived";
+type Filter = "all" | "archived";
 
 type WorkspaceGroup = { cwd: string; name: string; sessions: SessionSummary[] };
 
@@ -31,6 +33,7 @@ function timeLabel(iso?: string | null): string {
 export default function Sidebar() {
   const [filter, setFilter] = createSignal<Filter>("all");
   const [query, setQuery] = createSignal("");
+  const [searchOpen, setSearchOpen] = createSignal(false);
 
   const visible = createMemo(() => {
     let list = sessions();
@@ -38,8 +41,6 @@ export default function Sidebar() {
       list = list.filter((session) => session.archived);
     } else {
       list = list.filter((session) => !session.archived);
-      if (filter() === "active") list = list.filter((session) => session.running || isRunning(session.session_id));
-      if (filter() === "idle") list = list.filter((session) => !session.running && !isRunning(session.session_id));
     }
     const needle = query().trim().toLowerCase();
     if (needle) {
@@ -54,8 +55,18 @@ export default function Sidebar() {
 
   const groups = createMemo<WorkspaceGroup[]>(() => {
     const grouped = new Map<string, SessionSummary[]>();
+    if (filter() !== "archived") {
+      const projects = [backend().cwd, ...(backend().recent_projects ?? [])].filter(
+        (cwd, index, items): cwd is string => !!cwd && items.indexOf(cwd) === index,
+      );
+      const needle = query().trim().toLowerCase();
+      for (const cwd of projects) {
+        const name = cwd.split(/[\\/]/).filter(Boolean).pop() || "Current workspace";
+        if (!needle || name.toLowerCase().includes(needle)) grouped.set(cwd, []);
+      }
+    }
     for (const session of visible()) {
-      const cwd = session.cwd || "";
+      const cwd = backend().cwd || session.cwd || "";
       const items = grouped.get(cwd) ?? [];
       items.push(session);
       grouped.set(cwd, items);
@@ -81,57 +92,72 @@ export default function Sidebar() {
       <div class="sb-head">
         <div class="brand" aria-label="VakCoder">
           <span class="brand-mark"><Icon name="spark" size={17} /></span>
-          <span>VakCoder</span>
+          <span>vakcoder</span>
         </div>
         <div class="sb-head-actions">
-          <button class="icon-button subtle has-tooltip" data-tooltip="Shortcuts" aria-label="Keyboard shortcuts" onClick={() => setShowShortcuts(true)}><span class="shortcut-glyph">⌘</span></button>
+          <button
+            class="icon-button subtle has-tooltip"
+            classList={{ on: searchOpen() }}
+            data-tooltip="Search tasks"
+            aria-label="Search tasks"
+            aria-expanded={searchOpen()}
+            onClick={() => setSearchOpen((open) => !open)}
+          ><Icon name="search" /></button>
           <button class="icon-button subtle has-tooltip" data-tooltip="Hide sidebar ⌘B" aria-label="Hide sidebar" onClick={() => setSidebarOpen(false)}><Icon name="sidebar" /></button>
         </div>
       </div>
 
-      <div class="sb-primary-actions">
-        <button class="btn primary sb-new" onClick={() => void newSession()}>
+      <nav class="sb-nav" aria-label="Primary">
+        <button class="sb-nav-item sb-new" onClick={() => void newSession()}>
           <Icon name="add" />
           <span>New task</span>
           <kbd>⌘N</kbd>
         </button>
-      </div>
+        <button class="sb-nav-item" onClick={() => setTasksOpen(true)}>
+          <Icon name="timer" />
+          <span>Automations</span>
+        </button>
+        <button class="sb-nav-item" classList={{ active: filter() === "archived" }} onClick={() => setFilter(filter() === "archived" ? "all" : "archived")}>
+          <Icon name="archive" />
+          <span>Archived tasks</span>
+        </button>
+      </nav>
 
-      <div class="sb-search-wrap">
-        <Icon name="search" />
-        <input
-          class="sb-search"
-          type="search"
-          aria-label="Search tasks"
-          placeholder="Search tasks"
-          value={query()}
-          onInput={(event) => setQuery(event.currentTarget.value)}
-        />
-      </div>
+      <Show when={searchOpen()}>
+        <div class="sb-search-wrap">
+          <Icon name="search" />
+          <input
+            class="sb-search"
+            type="search"
+            aria-label="Search tasks"
+            placeholder="Search tasks"
+            value={query()}
+            ref={(element) => requestAnimationFrame(() => element.focus())}
+            onInput={(event) => setQuery(event.currentTarget.value)}
+          />
+        </div>
+      </Show>
 
       <div class="sb-section-row">
-        <span class="sb-section-title">Workspaces</span>
-        <div class="sb-filters" aria-label="Filter tasks">
-          <For each={["all", "active", "archived"] as Filter[]}>
-            {(item) => (
-              <button class="filter-button" classList={{ on: filter() === item }} onClick={() => setFilter(item)}>
-                {item}
-              </button>
-            )}
-          </For>
-        </div>
+        <span class="sb-section-title">{filter() === "archived" ? "Archived" : "Projects"}</span>
+        <Show when={filter() === "archived"}>
+          <button class="sb-section-action" onClick={() => setFilter("all")}>Done</button>
+        </Show>
+        <Show when={filter() !== "archived"}>
+          <button class="sb-section-add has-tooltip" data-tooltip="Open project" aria-label="Open project" disabled={workspaceSwitching()} onClick={() => void switchProject()}><Icon name="add" size={14} /></button>
+        </Show>
       </div>
 
       <div class="sb-list">
-        <Show when={visible().length} fallback={<div class="sb-empty"><Icon name="folder" size={20} /><span>{filter() === "archived" ? "Nothing archived" : "No tasks here yet"}</span><small>{filter() === "archived" ? "Archived tasks stay in the ledger and can be restored anytime." : "Start with a clear outcome and VakCoder will handle the work."}</small></div>}>
+        <Show when={groups().length} fallback={<div class="sb-empty"><Icon name="folder" size={20} /><span>{filter() === "archived" ? "Nothing archived" : "No projects yet"}</span><small>{filter() === "archived" ? "Archived tasks stay in the ledger and can be restored anytime." : "Open a project to start a task with its files and history."}</small></div>}>
           <For each={groups()}>
             {(group) => (
               <section class="workspace-group">
-                <div class="workspace-group-head" title={group.cwd}>
+                <button class="workspace-group-head" classList={{ active: backend().cwd === group.cwd && filter() !== "archived" }} title={group.cwd} disabled={workspaceSwitching()} onClick={() => void switchProject(group.cwd)}>
                   <Icon name="folder" size={14} />
                   <span>{group.name}</span>
-                  <small>{group.sessions.length}</small>
-                </div>
+                  <Show when={group.sessions.length}><small>{group.sessions.length}</small></Show>
+                </button>
                 <For each={group.sessions}>
                   {(session: SessionSummary) => (
                     <button class="sb-item" classList={{ active: activeId() === session.session_id }} onClick={() => void activate(session.session_id)}>
@@ -152,6 +178,9 @@ export default function Sidebar() {
                     </button>
                   )}
                 </For>
+                <Show when={!group.sessions.length}>
+                  <div class="workspace-empty">No tasks</div>
+                </Show>
               </section>
             )}
           </For>
@@ -159,8 +188,8 @@ export default function Sidebar() {
       </div>
 
       <div class="sidebar-footer">
-        <button class="sidebar-settings" onClick={() => setTasksOpen(true)}><Icon name="timer" /><span>Automations</span></button>
         <button class="sidebar-settings" onClick={() => setSettingsOpen(true)}><Icon name="gear" /><span>Settings</span><kbd>⌘,</kbd></button>
+        <button class="sidebar-help has-tooltip" data-tooltip="Keyboard shortcuts" aria-label="Keyboard shortcuts" onClick={() => setShowShortcuts(true)}><span>?</span></button>
       </div>
     </aside>
   );

@@ -17,12 +17,17 @@ export function backendUrl(): string {
 }
 
 export async function initBackend(): Promise<BackendInfo> {
-  const info = await invoke<BackendInfo>("backend_info");
+  return invoke<BackendInfo>("backend_info");
+}
+
+export function adoptBackend(info: BackendInfo): void {
   if (info.ready && info.base_url && info.token) {
     base = info.base_url;
     token = info.token;
+  } else {
+    base = "";
+    token = "";
   }
-  return info;
 }
 
 export function isBackendReady(): boolean {
@@ -129,11 +134,20 @@ export function transcript(id: string): Promise<{
   return req(`/sessions/${id}/transcript`);
 }
 
-export function runPrompt(id: string, prompt: string): Promise<void> {
+export function runPrompt(
+  id: string,
+  prompt: string,
+  goal?: { objective: string; criteria: string[] },
+): Promise<void> {
   return req(`/sessions/${id}/run`, {
     method: "POST",
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, goal: goal?.objective, criteria: goal?.criteria }),
   });
+}
+
+/// Dispatch forensics (docs/design/27 Phase A): per-dispatch receipts.
+export function receipts(id: string): Promise<unknown[]> {
+  return req(`/sessions/${id}/receipts`);
 }
 
 export function steer(id: string, text: string): Promise<void> {

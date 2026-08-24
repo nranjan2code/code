@@ -17,6 +17,7 @@ import {
   setBackend,
   setDockTab,
   setEditorPath,
+  setDiffTarget,
   setHealth,
   setShowShortcuts,
   setSessions,
@@ -48,9 +49,14 @@ import {
   settingsOpen,
   setSettingsOpen,
   uiPreferences,
+  workspaceSwitching,
+  setWorkspaceSwitching,
 } from "./store";
 import type { SessionSummary } from "./types";
 import * as api from "./api";
+
+// Armed goal consumed by the next prompt (docs/design/27 Phase H).
+let armedGoal: { objective: string; criteria: string[] } | null = null;
 import Sidebar from "./components/Sidebar";
 import ChatPane from "./components/ChatPane";
 import Composer from "./components/Composer";
@@ -76,9 +82,11 @@ const streams = new Map<string, EventSource>();
 const sideStreams = new Map<string, EventSource>();
 
 export async function refreshSessions() {
+  const source = api.backendUrl();
+  if (!source) return;
   try {
     const res = await api.listSessions();
-    setSessions(res.sessions);
+    if (source === api.backendUrl()) setSessions(res.sessions);
   } catch {
     /* backend restarting */
   }
@@ -168,6 +176,36 @@ export async function sendPrompt(text: string) {
     id = activeId();
     if (!id) return; // newSession already surfaced why
   }
+  // Goal mode (docs/design/27 Phase H): /goal arms, bare /goal shows
+  // status, /goal off disarms — mirroring the TUI.
+  if (text.trim().startsWith("/goal")) {
+    const arg = text.trim().slice(5).trim();
+    if (!arg) {
+      appendSystem(id, armedGoal ? `🎯 armed: ${armedGoal.objective} (${armedGoal.criteria.length} criteria)` : "no goal armed · usage: /goal <objective> -- c1; c2");
+      return;
+    }
+    if (arg === "off") {
+      armedGoal = null;
+      appendSystem(id, "goal disarmed");
+      return;
+    }
+    const idx = arg.indexOf("--");
+    const objective = (idx >= 0 ? arg.slice(0, idx) : arg).trim();
+    const criteria = (idx >= 0 ? arg.slice(idx + 2) : "")
+      .split(";")
+      .map((c) => c.trim())
+      .filter(Boolean);
+    if (!objective || criteria.length === 0) {
+      appendSystem(id, "goal needs criteria: /goal <objective> -- c1; c2");
+      return;
+    }
+    armedGoal = { objective, criteria };
+    appendSystem(id, `🎯 goal armed (${criteria.length} criteria) — next prompt will be audited`);
+    return;
+  }
+
+  const thisGoal = armedGoal;
+  armedGoal = null;
   appendUser(id, text);
   try {
     if (isRunning(id)) {
@@ -175,7 +213,7 @@ export async function sendPrompt(text: string) {
     } else {
       markRunning(id, true);
       try {
-        await api.runPrompt(id, text);
+        await api.runPrompt(id, text, thisGoal ?? undefined);
       } catch (e) {
         markRunning(id, false);
         throw e;
@@ -203,8 +241,11 @@ export function stopRun() {
 }
 
 export async function loadHealth() {
+  const source = api.backendUrl();
+  if (!source) return;
   try {
-    setHealth(await api.health());
+    const next = await api.health();
+    if (source === api.backendUrl()) setHealth(next);
   } catch {
     setHealth(null);
   }
@@ -248,22 +289,46 @@ function ensureSideStream(id: string) {
  * about actually transitioning (project gate, project switch) awaits this,
  * so a missed event can never strand the UI.
  */
-export async function refreshBackend(): Promise<boolean> {
+let backendRefreshEpoch = 0;
+
+function resetWorkspaceView() {
+  closeAllStreams();
+  closeAllSideStreams();
+  setActiveId(null);
+  setSessions([]);
+  setHealth(null);
+  setHydratingId(null);
+  setDiffTarget(null);
+  setEditorPath(null);
+  setDockTab(null);
+  setSideOpen(false);
+  setHistoryOpen(false);
+}
+
+export async function refreshBackend(knownInfo?: import("./types").BackendInfo): Promise<boolean> {
+  const epoch = ++backendRefreshEpoch;
   try {
-    const info = await api.initBackend();
+    const info = knownInfo ?? await api.initBackend();
+    if (epoch !== backendRefreshEpoch) return false;
     if (!info.ready) {
+      api.adoptBackend(info);
       setBackend(info);
       return false;
     }
+    const changedWorkspace = !!backend().cwd && backend().cwd !== info.cwd;
+    api.adoptBackend(info);
+    if (changedWorkspace) resetWorkspaceView();
     // Resolve the provider picture *before* publishing readiness. Flipping
     // backend() first mounts the workspace for an instant with a stale
     // setupNeeded, and any error thrown by that render would propagate out
     // of this function and leave providers unset — stranding the gate.
     try {
       const p = await api.listProviders();
+      if (epoch !== backendRefreshEpoch) return false;
       setProviders(p);
       setSetupNeeded(!p.current_configured);
     } catch {
+      if (epoch !== backendRefreshEpoch) return false;
       setProviders(null);
       setSetupNeeded(false);
     }
@@ -312,19 +377,23 @@ function diffCoversPath(diff: string, path: string): boolean {
 }
 
 /** Pick a different project folder and reboot the backend against it. */
-export async function switchProject() {
+export async function switchProject(cwd?: string) {
+  if (workspaceSwitching()) return;
   try {
-    const dir = await open({ directory: true, multiple: false, title: "Open a project" });
+    const dir = cwd ?? await open({ directory: true, multiple: false, title: "Open a project" });
     if (typeof dir === "string") {
-      await invoke("start_backend", { cwd: dir });
-      // Do not rely on the backend-ready event alone.
-      await refreshBackend();
+      if (dir === backend().cwd) return;
+      setWorkspaceSwitching(true);
+      const info = await invoke<import("./types").BackendInfo>("start_backend", { cwd: dir });
+      await refreshBackend(info);
     }
   } catch (error) {
     setNotice({
       kind: "error",
       text: `Could not open that project: ${error instanceof Error ? error.message : String(error)}`,
     });
+  } finally {
+    setWorkspaceSwitching(false);
   }
 }
 
@@ -342,11 +411,8 @@ export default function App() {
     // Register the listener before the first probe: the shell boots the
     // backend during setup() and emits `backend-ready` within milliseconds,
     // so subscribing after init() loses the event to the race.
-    const un1 = listen("backend-ready", () => {
-      closeAllStreams();
-      closeAllSideStreams();
-      setActiveId(null);
-      void init();
+    const un1 = listen<import("./types").BackendInfo>("backend-ready", (event) => {
+      if (!workspaceSwitching()) void refreshBackend(event.payload);
     });
     void init();
     const sessionRefresh = window.setInterval(() => void refreshSessions(), 10_000);
@@ -428,6 +494,7 @@ export default function App() {
           style={`--sidebar-width:${sidebarWidth()}px;--dock-width:${dockWidth()}px`}
         >
           <Sidebar />
+          <Show when={workspaceSwitching()}><div class="workspace-switching"><span class="dot run" />Opening workspace…</div></Show>
           <Show when={sidebarOpen()}><ResizeHandle side="sidebar" /></Show>
           <div class="main">
             <WorkspaceHeader />

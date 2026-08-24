@@ -227,6 +227,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/{id}/attach", post(attach_session))
         .route("/sessions/{id}/diff", get(session_diff))
+        .route("/sessions/{id}/receipts", get(session_receipts))
         .route("/sessions/{id}/checkpoints", get(list_checkpoints))
         .route(
             "/sessions/{id}/checkpoints/{seq}/restore",
@@ -809,6 +810,14 @@ struct RunBody {
     /// (docs/design/22-gateway.md media passthrough).
     #[serde(default)]
     attachments: Vec<RunAttachment>,
+    /// Goal mode (docs/design/27 Phase H): durable objective; completion
+    /// is audited against `criteria`, never self-reported.
+    #[serde(default)]
+    goal: Option<String>,
+    /// Acceptance criteria for goal mode (`verify:` prefixed criteria run
+    /// as brokered shell commands; others are judged from evidence).
+    #[serde(default)]
+    criteria: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -897,32 +906,56 @@ async fn run_prompt(
             content: blocks,
         })
     };
+    if body.goal.is_some() && !body.attachments.is_empty() {
+        *handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
+        let _ = handle.events_tx.send(AgentEvent::RunFinished {
+            summary: "failed: goal runs do not support attachments".into(),
+            is_error: true,
+        });
+        return StatusCode::BAD_REQUEST;
+    }
+    // Goal mode (Phase H): captured before the spawn consumes `body`.
+    let goal_pair = body.goal.clone().map(|g| (g, body.criteria.clone()));
+
     tokio::spawn(async move {
-        let outcome = match prompt_message {
-            Some(msg) => {
-                core.run_turn_with_message(
-                    taken,
-                    msg,
-                    cancel,
-                    Some(approver),
-                    None,
-                    Some(steering.clone()),
-                    events,
-                )
-                .await
-            }
-            None => {
-                core.run_turn_with(
-                    taken,
-                    &body.prompt,
-                    cancel,
-                    Some(approver),
-                    None,
-                    Some(steering.clone()),
-                    events,
-                )
-                .await
-            }
+        let outcome = if let Some((objective, criteria)) = goal_pair {
+            core.run_goal_turn_with(
+                taken,
+                &body.prompt,
+                &objective,
+                criteria,
+                cancel.clone(),
+                Some(approver.clone()),
+                None,
+                Some(steering.clone()),
+                events,
+            )
+            .await
+        } else if let Some(msg) = prompt_message {
+            core.run_turn_with_message(
+                taken,
+                msg,
+                cancel,
+                Some(approver),
+                None,
+                Some(steering.clone()),
+                events,
+            )
+            .await
+        } else {
+            core.run_turn_with(
+                taken,
+                &body.prompt,
+                cancel,
+                Some(approver),
+                None,
+                Some(steering.clone()),
+                events,
+            )
+            .await
         };
         // Reset the token so the next run on this session is not born
         // already-cancelled.
@@ -1033,6 +1066,24 @@ async fn answer_approval(
             StatusCode::OK
         }
         None => StatusCode::NOT_FOUND,
+    }
+}
+
+/// Dispatch forensics (docs/design/27 Phase A): the session's work
+/// receipts, newest last.
+async fn session_receipts(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<vak_llm::WorkReceipt>>, StatusCode> {
+    let Some(handle) = state.get(&id) else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    let Ok(session) = handle.session.lock() else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    match session.as_ref() {
+        Some(log) => Ok(Json(log.receipts().into_iter().cloned().collect())),
+        None => Err(StatusCode::NOT_FOUND),
     }
 }
 

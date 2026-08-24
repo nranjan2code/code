@@ -1190,6 +1190,22 @@ pub fn load_env_file(path: &std::path::Path) {
         return;
     };
     let mut extra = dotenv_extra();
+    merge_env_text(&mut extra, &text);
+}
+
+/// Replaces file-sourced environment values as one atomic scope change.
+/// Runtime overrides and real environment variables remain untouched.
+pub fn replace_env_files(paths: &[&std::path::Path]) {
+    let mut extra = dotenv_extra();
+    extra.clear();
+    for path in paths {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            merge_env_text(&mut extra, &text);
+        }
+    }
+}
+
+fn merge_env_text(extra: &mut ExtraMap, text: &str) {
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {

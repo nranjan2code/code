@@ -119,6 +119,7 @@ export interface BackendInfo {
   token?: string;
   cwd?: string;
   boot_error?: string;
+  recent_projects: string[];
 }
 
 export interface ConfigSnapshot {

@@ -10,7 +10,7 @@ mod pty;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Clone)]
@@ -18,7 +18,10 @@ struct Backend {
     shutdown: tokio::sync::watch::Sender<bool>,
 }
 
-struct BackendState(Mutex<Option<Running>>);
+struct BackendState {
+    running: Mutex<Option<Running>>,
+    switching: tokio::sync::Mutex<()>,
+}
 
 struct Running {
     info: BackendInfo,
@@ -38,6 +41,14 @@ struct BackendInfo {
     /// so a silent launch failure never traps the user on the project gate.
     #[serde(skip_serializing_if = "Option::is_none")]
     boot_error: Option<String>,
+    recent_projects: Vec<String>,
+}
+
+#[derive(Deserialize, Serialize, Default)]
+#[serde(default)]
+struct DesktopPrefs {
+    last_project: Option<String>,
+    recent_projects: Vec<String>,
 }
 
 fn vak_home() -> PathBuf {
@@ -51,26 +62,55 @@ fn prefs_path() -> PathBuf {
     vak_home().join("desktop.json")
 }
 
+fn desktop_prefs() -> DesktopPrefs {
+    std::fs::read_to_string(prefs_path())
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
 fn last_project() -> Option<PathBuf> {
-    let text = std::fs::read_to_string(prefs_path()).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let cwd = PathBuf::from(value.get("last_project")?.as_str()?);
+    let cwd = PathBuf::from(desktop_prefs().last_project?);
     cwd.is_dir().then_some(cwd)
 }
 
-fn save_last_project(cwd: &str) {
+fn recent_projects() -> Vec<String> {
+    desktop_prefs()
+        .recent_projects
+        .into_iter()
+        .filter(|path| PathBuf::from(path).is_dir())
+        .collect()
+}
+
+fn save_project(cwd: &str) {
+    let mut prefs = desktop_prefs();
+    let previous = prefs.last_project.clone();
+    prefs.last_project = Some(cwd.to_string());
+    prefs
+        .recent_projects
+        .retain(|path| path != cwd && previous.as_deref() != Some(path));
+    prefs.recent_projects.insert(0, cwd.to_string());
+    if let Some(previous) = previous.filter(|path| path != cwd && PathBuf::from(path).is_dir()) {
+        prefs.recent_projects.insert(1, previous);
+    }
+    prefs.recent_projects.truncate(8);
     let _ = std::fs::create_dir_all(vak_home());
-    let _ = std::fs::write(
-        prefs_path(),
-        serde_json::json!({ "last_project": cwd }).to_string(),
-    );
+    if let Ok(json) = serde_json::to_string(&prefs) {
+        let _ = std::fs::write(prefs_path(), json);
+    }
+}
+
+fn load_workspace_env(cwd: &std::path::Path) {
+    let user = vak_home().join(".env");
+    let project = cwd.join(".env");
+    vak_config::replace_env_files(&[user.as_path(), project.as_path()]);
 }
 
 /// Boot the embedded agent server on an ephemeral loopback port.
 ///
 /// Trust note: the user picked this folder explicitly in-app, so its project
 /// config is trusted — mirroring an interactive CLI session.
-async fn start_backend_inner(app: &AppHandle, cwd: PathBuf) -> Result<BackendInfo, String> {
+async fn boot_backend(cwd: PathBuf) -> Result<Running, String> {
     let core = vak_core::Core::new_with_trust(cwd.clone(), true).map_err(|e| e.to_string())?;
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -98,21 +138,38 @@ async fn start_backend_inner(app: &AppHandle, cwd: PathBuf) -> Result<BackendInf
         token: Some(token),
         cwd: Some(cwd.to_string_lossy().into_owned()),
         boot_error: None,
+        recent_projects: Vec::new(),
     };
-    {
-        let state = app.state::<BackendState>();
-        *state
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Running {
-            info: info.clone(),
-            backend: Backend {
-                shutdown: shutdown_tx,
-            },
-        });
+    Ok(Running {
+        info,
+        backend: Backend {
+            shutdown: shutdown_tx,
+        },
+    })
+}
+
+fn install_backend(
+    app: &AppHandle,
+    state: &State<'_, BackendState>,
+    mut running: Running,
+    persist: bool,
+) -> BackendInfo {
+    let cwd = running.info.cwd.clone().unwrap_or_default();
+    if persist {
+        save_project(&cwd);
+    }
+    running.info.recent_projects = recent_projects();
+    let info = running.info.clone();
+    let previous = state
+        .running
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .replace(running);
+    if let Some(previous) = previous {
+        let _ = previous.backend.shutdown.send(true);
     }
     let _ = app.emit("backend-ready", &info);
-    Ok(info)
+    info
 }
 
 #[tauri::command]
@@ -122,22 +179,47 @@ async fn start_backend(
     cwd: String,
 ) -> Result<BackendInfo, String> {
     let path = PathBuf::from(&cwd);
-    if !path.is_dir() {
-        let msg = format!("not a directory: {cwd}");
-        set_boot_error(&state, Some(msg.clone()));
-        return Err(msg);
+    let path = match path.canonicalize() {
+        Ok(path) if path.is_dir() => path,
+        _ => {
+            let msg = format!("not a directory: {cwd}");
+            set_boot_error(&state, Some(msg.clone()));
+            return Err(msg);
+        }
+    };
+    let _switch = state.switching.lock().await;
+    let canonical = path.to_string_lossy().into_owned();
+    if let Some(info) = state
+        .running
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .filter(|running| running.info.cwd.as_deref() == Some(canonical.as_str()))
+        .map(|running| running.info.clone())
+    {
+        return Ok(info);
     }
-    stop_current(&state).await;
+    let previous_cwd = state
+        .running
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .and_then(|running| running.info.cwd.clone());
     // The freshly picked workspace is trusted; its .env joins the process
     // env table (real environment variables keep precedence).
-    vak_config::load_env_file(&path.join(".env"));
-    match start_backend_inner(&app, path).await {
-        Ok(info) => {
-            save_last_project(&cwd);
+    load_workspace_env(&path);
+    match boot_backend(path).await {
+        Ok(running) => {
+            let info = install_backend(&app, &state, running, true);
             set_boot_error(&state, None);
             Ok(info)
         }
         Err(e) => {
+            if let Some(previous_cwd) = previous_cwd {
+                load_workspace_env(std::path::Path::new(&previous_cwd));
+            } else {
+                vak_config::replace_env_files(&[vak_home().join(".env").as_path()]);
+            }
             set_boot_error(&state, Some(e.clone()));
             Err(e)
         }
@@ -145,7 +227,7 @@ async fn start_backend(
 }
 
 fn set_boot_error(state: &State<'_, BackendState>, error: Option<String>) {
-    if let Ok(mut guard) = state.0.lock() {
+    if let Ok(mut guard) = state.running.lock() {
         if error.is_some() && guard.as_ref().is_some_and(|r| r.info.ready) {
             return; // a live backend outranks a stale failure note
         }
@@ -168,26 +250,17 @@ fn set_boot_error(state: &State<'_, BackendState>, error: Option<String>) {
     }
 }
 
-async fn stop_current(state: &State<'_, BackendState>) {
-    let taken = state
-        .0
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take();
-    if let Some(running) = taken {
-        let _ = running.backend.shutdown.send(true);
-    }
-}
-
 #[tauri::command]
 fn backend_info(state: State<'_, BackendState>) -> BackendInfo {
     let guard = state
-        .0
+        .running
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    guard
+    let mut info = guard
         .as_ref()
-        .map_or_else(BackendInfo::default, |running| running.info.clone())
+        .map_or_else(BackendInfo::default, |running| running.info.clone());
+    info.recent_projects = recent_projects();
+    info
 }
 
 fn main() {
@@ -229,7 +302,10 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(BackendState(Mutex::new(None)))
+        .manage(BackendState {
+            running: Mutex::new(None),
+            switching: tokio::sync::Mutex::new(()),
+        })
         .manage(pty::PtyMap::default())
         .setup(|app| {
             let handle = app.handle().clone();
@@ -237,18 +313,26 @@ fn main() {
                 // Same secret-loading contract as the CLI: user-level
                 // .env always; the picked workspace's own .env too (the
                 // folder was explicitly chosen, so it is trusted).
-                if let Some(home) = std::env::var_os("HOME") {
-                    vak_config::load_env_file(
-                        &std::path::PathBuf::from(home).join(".vakcoder/.env"),
-                    );
-                }
+                vak_config::replace_env_files(&[vak_home().join(".env").as_path()]);
                 if let Some(cwd) = last_project() {
-                    vak_config::load_env_file(&cwd.join(".env"));
-                    if let Err(e) = start_backend_inner(&handle, cwd).await {
+                    let state = handle.state::<BackendState>();
+                    let _switch = state.switching.lock().await;
+                    if state
+                        .running
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .is_some()
+                    {
+                        return;
+                    }
+                    load_workspace_env(&cwd);
+                    if let Err(e) = boot_backend(cwd)
+                        .await
+                        .map(|running| install_backend(&handle, &state, running, false))
+                    {
                         eprintln!("backend boot failed: {e}");
                         // Surface it to the project gate; a bundled app has
                         // no stderr to show.
-                        let state = handle.state::<BackendState>();
                         set_boot_error(&state, Some(e));
                     }
                 }

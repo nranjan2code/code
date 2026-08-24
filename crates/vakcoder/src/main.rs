@@ -1097,6 +1097,22 @@ fn run_config_dump(cwd: PathBuf) {
                     .unwrap_or_else(|| "https://api.anthropic.com".into())
             );
             println!("tools            = {}", core.tool_names().join(", "));
+            let f = &core.config().finops;
+            println!(
+                "finops           = run_cap {} · day_cap {} · overrides {}",
+                f.max_run_usd
+                    .map(|v| format!("${v:.2}"))
+                    .unwrap_or_else(|| "none".into()),
+                f.max_day_usd
+                    .map(|v| format!("${v:.2}"))
+                    .unwrap_or_else(|| "none".into()),
+                f.price_overrides.len(),
+            );
+            println!(
+                "goal             = handoff_reset {} · max_audit_blocks {}",
+                core.config().goal.handoff_reset,
+                core.config().goal.max_audit_blocks,
+            );
             for w in &core.config().warnings {
                 println!("warning          = {w}");
             }

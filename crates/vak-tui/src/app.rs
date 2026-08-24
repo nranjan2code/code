@@ -99,12 +99,32 @@ impl Drop for RawMode {
     }
 }
 
+/// Splits "/goal objective -- c1; c2" spec into (objective, criteria).
+fn split_goal_spec(spec: &str) -> (String, Vec<String>) {
+    let (objective, criteria_str) = match spec.find("--") {
+        Some(i) => (spec[..i].trim(), &spec[i + 2..]),
+        None => (spec.trim(), ""),
+    };
+    let criteria = criteria_str
+        .split(';')
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+        .collect();
+    (objective.to_string(), criteria)
+}
+
+/// Armed goal: objective + acceptance criteria (docs/design/27 Phase H).
+type PendingGoal = Arc<std::sync::Mutex<Option<(String, Vec<String>)>>>;
+
 struct RunCtx {
     core: Core,
     session_slot: Arc<Mutex<Option<SessionLog>>>,
     steering: Arc<SteeringQueues>,
     approver: Arc<dyn Approver>,
     cancel: Arc<Mutex<CancellationToken>>,
+    /// Goal mode (docs/design/27 Phase H): armed via /goal, consumed by
+    /// the next spawned turn.
+    pending_goal: PendingGoal,
 }
 
 impl RunCtx {
@@ -115,6 +135,11 @@ impl RunCtx {
         prompt: &str,
     ) -> Option<(mpsc::Receiver<AgentEvent>, mpsc::Receiver<TurnOutcome>)> {
         let taken = self.session_slot.lock().await.take()?;
+        let goal = self
+            .pending_goal
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
         if self.core.provider().is_err() {
             *self.session_slot.lock().await = Some(taken);
             return None;
@@ -128,25 +153,51 @@ impl RunCtx {
         *self.cancel.lock().await = cancel.clone();
         let steering = self.steering.clone();
         tokio::spawn(async move {
-            let outcome = match core
-                .run_turn_with(
-                    taken,
-                    &prompt,
-                    cancel,
-                    Some(approver),
-                    None,
-                    Some(steering),
-                    ev_tx,
-                )
-                .await
-            {
-                Ok((o, _)) => o,
-                Err(e) => {
-                    let error = match e {
-                        vak_core::CoreError::Llm(l) => l,
-                        other => vak_llm::LlmError::InvalidRequest(other.to_string()),
-                    };
-                    TurnOutcome::Failed { error }
+            let outcome = if let Some((objective, criteria)) = goal {
+                match core
+                    .run_goal_turn_with(
+                        taken,
+                        &prompt,
+                        &objective,
+                        criteria,
+                        cancel,
+                        Some(approver),
+                        None,
+                        Some(steering),
+                        ev_tx,
+                    )
+                    .await
+                {
+                    Ok((o, _)) => o,
+                    Err(e) => {
+                        let error = match e {
+                            vak_core::CoreError::Llm(l) => l,
+                            other => vak_llm::LlmError::InvalidRequest(other.to_string()),
+                        };
+                        TurnOutcome::Failed { error }
+                    }
+                }
+            } else {
+                match core
+                    .run_turn_with(
+                        taken,
+                        &prompt,
+                        cancel,
+                        Some(approver),
+                        None,
+                        Some(steering),
+                        ev_tx,
+                    )
+                    .await
+                {
+                    Ok((o, _)) => o,
+                    Err(e) => {
+                        let error = match e {
+                            vak_core::CoreError::Llm(l) => l,
+                            other => vak_llm::LlmError::InvalidRequest(other.to_string()),
+                        };
+                        TurnOutcome::Failed { error }
+                    }
                 }
             };
             // Always release the loop back to the editor: an Err outcome must
@@ -302,12 +353,14 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
         tx: approval_tx,
         allowed: allowed.clone(),
     });
+    let pending_goal: PendingGoal = Arc::new(std::sync::Mutex::new(None));
     let ctx = RunCtx {
         core: core.clone(),
         session_slot: session_slot.clone(),
         steering: steering.clone(),
         approver,
         cancel: cancel.clone(),
+        pending_goal: pending_goal.clone(),
     };
 
     screen.set_title(&format!("VakCoder · {}", core.effective_model()));
@@ -908,13 +961,12 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                 KeyCode::Down => active.down(count),
                                 KeyCode::Backspace => active.backspace(),
                                 KeyCode::Enter => {
-                                    let items = active.items();
-                                    if let Some(item) = items.get(active.selected(items.len())) {
-                                        editor.set_text(&format!("/{}", item.name));
-                                        submit_selection = true;
-                                    }
+                                    // Slash mode: the composer already holds
+                                    // the full typed command; close the hint and
+                                    // let Submit process it verbatim.
                                     palette = None;
                                     palette_from_slash = false;
+                                    submit_selection = true;
                                 }
                                 KeyCode::Tab => {
                                     let items = active.items();
@@ -1009,12 +1061,17 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                             Action::Insert(c) => {
                                 if is_running {
                                     pending.push(c);
-                                } else if c == '/' && editor.is_empty() {
-                                    palette =
-                                        Some(CommandPalette::new(palette_extras(&core)));
-                                    palette_from_slash = true;
                                 } else {
                                     editor.insert(c);
+                                    // Keep the slash-palette hint in sync with
+                                    // the composer (source of truth) so Enter
+                                    // preserves typed arguments.
+                                    if palette_from_slash
+                                        && let Some(active) = palette.as_mut()
+                                    {
+                                        let (buf, _) = editor.view();
+                                        active.set_query(buf.trim_start_matches('/'));
+                                    }
                                 }
                             }
                             Action::Backspace => {
@@ -1022,6 +1079,12 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                     let _ = pending.pop();
                                 } else {
                                     editor.backspace();
+                                    if palette_from_slash
+                                        && let Some(active) = palette.as_mut()
+                                    {
+                                        let (buf, _) = editor.view();
+                                        active.set_query(buf.trim_start_matches('/'));
+                                    }
                                 }
                             }
                             Action::Delete => editor.delete(),
@@ -1111,6 +1174,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                 }
                             }
                             Action::Submit => {
+                                                                { let (b,_) = editor.view(); eprintln!("SUBMIT buf={b:?} running={is_running} pal={}", palette.is_some()); }
                                 if is_running {
                                     let text = std::mem::take(&mut pending);
                                     if !text.trim().is_empty() {
@@ -1134,12 +1198,49 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                         }
                                     }
                                 } else {
-                                    let text = editor.take();
+                                    let mut text = editor.take();
                                     if text.trim().is_empty() {
                                         continue;
                                     }
                                     editor.save_history(&hist_path);
                                     screen.clear_input();
+                                    // /goal bypasses the command table: its
+                                    // argument must reach the handler byte-exact.
+                                    if text.trim_start().starts_with("/goal") {
+                                        let arg = text.trim_start()[5..].trim().to_string();
+                                        text.clear();
+                                        if arg.is_empty() {
+                                            let armed = pending_goal
+                                                .lock()
+                                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                                .is_some();
+                                            if armed {
+                                                screen.dim("🎯 goal armed — next prompt runs audited; /goal off to disarm");
+                                            } else {
+                                                screen.dim("no goal armed · usage: /goal <objective> [-- criterion1; criterion2]");
+                                            }
+                                        } else if arg == "off" {
+                                            *pending_goal
+                                                .lock()
+                                                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                                            screen.dim("goal disarmed");
+                                        } else {
+                                            let (objective, criteria) = split_goal_spec(&arg);
+                                            if criteria.is_empty() {
+                                                screen.error("goal needs criteria: /goal <objective> -- c1; c2");
+                                            } else {
+                                                *pending_goal
+                                                    .lock()
+                                                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                                                    Some((objective.clone(), criteria.clone()));
+                                                screen.success(&format!(
+                                                    "🎯 goal armed ({} criteria) — next prompt will be audited: {objective}",
+                                                    criteria.len()
+                                                ));
+                                            }
+                                        }
+                                        continue;
+                                    }
                                     if text.trim_start().starts_with('/') {
                                         match commands::parse(&text) {
                                             Some(Command::Exit) => break,
@@ -1464,6 +1565,62 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                     ));
                                                 }
                                             },
+                                            Some(Command::Goal(arg)) => {
+                                                eprintln!("GOAL-CMD arg={arg:?}");
+                                                match arg {
+                                                    None => {
+                                                        let armed = pending_goal
+                                                            .lock()
+                                                            .unwrap_or_else(
+                                                                std::sync::PoisonError::into_inner,
+                                                            )
+                                                            .is_some();
+                                                        if armed {
+                                                            screen.dim(
+                                                                "🎯 goal armed — next prompt runs audited; /goal off to disarm",
+                                                            );
+                                                        } else {
+                                                            screen.dim(
+                                                                "no goal armed · usage: /goal <objective> [-- criterion1; criterion2]",
+                                                            );
+                                                        }
+                                                    }
+                                                    Some(a) if a.trim() == "off" => {
+                                                        *pending_goal
+                                                            .lock()
+                                                            .unwrap_or_else(
+                                                                std::sync::PoisonError::into_inner,
+                                                            ) = None;
+                                                        screen.dim("goal disarmed");
+                                                    }
+                                                    Some(spec) => {
+                                                        let (objective, criteria) =
+                                                            split_goal_spec(&spec);
+                                                        if criteria.is_empty() {
+                                                            screen.error(
+                                                                "goal needs criteria: /goal <objective> -- c1; c2",
+                                                            );
+                                                        } else {
+                                                            *pending_goal
+                                                                .lock()
+                                                                .unwrap_or_else(
+                                                                    std::sync::PoisonError::into_inner,
+                                                                ) = Some((objective, criteria));
+                                                            screen.success(&format!(
+                                                                "🎯 goal armed ({} criteria) — next prompt will be audited",
+                                                                pending_goal
+                                                                    .lock()
+                                                                    .unwrap_or_else(
+                                                                        std::sync::PoisonError::into_inner,
+                                                                    )
+                                                                    .as_ref()
+                                                                    .map(|(_, cs)| cs.len())
+                                                                    .unwrap_or(0)
+                                                            ));
+                                                        }
+                                                    }
+                                                }
+                                            }
                                             Some(Command::Subagents) => open_subagent_picker(
                                                 &core, &mut screen, &mut picker,
                                             ),
@@ -2084,7 +2241,12 @@ fn draw_approval(screen: &mut Screen, theme: &Theme, req: &ApprovalRequest) {
     let styled = |text: String, color: Color| {
         format!("{}{text}{}", theme::fg(color), theme::fg(Color::Reset))
     };
-    let mut lines = vec![styled(format!("╭─ approval · {}", req.tool), theme.warning)];
+    let tool_label = if req.tool == "finops-budget" {
+        "budget raise request".to_string()
+    } else {
+        req.tool.clone()
+    };
+    let mut lines = vec![styled(format!("╭─ approval · {tool_label}"), theme.warning)];
     if req.tool == "edit"
         && let Some(diff) = approval_edit_diff(&req.args_json, theme)
     {

@@ -38,6 +38,9 @@ pub enum Command {
     A11y(Option<String>),
     /// `/copy` — explicit OSC52 copy of the last response (gated by config).
     Copy,
+    /// `/goal <objective> [-- c1; c2]` — arm audited goal mode for the
+    /// next prompt (docs/design/27 Phase H). Bare `/goal` shows status.
+    Goal(Option<String>),
 }
 
 /// (name, description) — drives help text, completion, and parsing.
@@ -76,6 +79,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("keys", "shortcut map · /keys raw captures literal keys"),
     ("keymap", "view bindings · r rebinds interactively"),
     ("composer", "[emacs|vim] modal editing mode"),
+    (
+        "goal",
+        "<objective> [-- c1; c2] arm audited goal mode · bare = status",
+    ),
     ("subagents", "attach to a running subagent"),
     ("a11y", "accessibility: plain, motion, reader toggles"),
     ("copy", "copy last response via OSC52 if enabled"),
@@ -91,6 +98,13 @@ pub fn parse(input: &str) -> Option<Command> {
     let arg = parts.next().unwrap_or("").trim().to_string();
     let arg_opt = (!arg.is_empty()).then_some(arg.clone());
     match name {
+        "goal" => {
+            if arg.is_empty() {
+                Some(Command::Goal(None))
+            } else {
+                Some(Command::Goal(Some(arg)))
+            }
+        }
         "help" | "?" => Some(Command::Help),
         "exit" | "quit" => Some(Command::Exit),
         "cost" => Some(Command::Cost),

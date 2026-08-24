@@ -116,6 +116,13 @@ impl CommandPalette {
         self.selected = 0;
     }
 
+    /// Overwrite the filter (used when the editor is the source of truth,
+    /// e.g. slash-palette mode where keystrokes go to the composer first).
+    pub fn set_query(&mut self, q: &str) {
+        self.query = q.to_string();
+        self.selected = 0;
+    }
+
     pub fn up(&mut self, count: usize) {
         if count > 0 {
             self.selected = self.selected.checked_sub(1).unwrap_or(count - 1);

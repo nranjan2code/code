@@ -235,6 +235,14 @@ Shipped in `crates/vak-desktop` (+ additive `vak-server` endpoints):
   (summary/normal/verbose), context-usage ring from `/health.context_window`.
 - **Sidebar**: persisted-session listing (`GET /sessions`), search + status
   filters, resume via `POST /sessions/{id}/attach`, new session (⌘N).
+  The project-first navigation keeps up to eight valid recent workspaces in
+  `~/.vakcoder/desktop.json`; selecting one performs a two-phase backend
+  handoff. The current backend remains live until the replacement has bound
+  successfully, repeated selections are no-ops, concurrent switches are
+  serialized, and stale frontend refreshes cannot repopulate the new view
+  with sessions from the previous workspace. File-sourced environment values
+  are replaced as a user+project scope on each handoff so secrets and config
+  from an earlier workspace do not remain ambient.
 - **Diff pane** (⌘D): git diff/status projection (`GET /sessions/{id}/diff`),
   click-a-line → comment → steering entry.
 - **Terminal pane** (⌃\`): real PTY (`portable-pty`) → xterm.js over a Tauri

@@ -37,7 +37,8 @@ export type Item =
   | { kind: "subagent"; label: string; lines: string[]; open: boolean; isError: boolean }
   | { kind: "system"; text: string };
 
-export const [backend, setBackend] = createSignal<BackendInfo>({ ready: false });
+export const [backend, setBackend] = createSignal<BackendInfo>({ ready: false, recent_projects: [] });
+export const [workspaceSwitching, setWorkspaceSwitching] = createSignal(false);
 export const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
 export const [activeId, setActiveId] = createSignal<string | null>(null);
 export const [health, setHealth] = createSignal<Health | null>(null);
