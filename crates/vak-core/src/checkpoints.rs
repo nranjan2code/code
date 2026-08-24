@@ -339,6 +339,117 @@ pub fn load(sessions_home: &Path, session_id: &str, seq: u32) -> std::io::Result
 /// could not vouch for — oversized, unreadable, secret, gitignored,
 /// beyond-budget, or written by an old-format checkpoint without an
 /// observed manifest — is left untouched.
+/// Human-readable workspace delta between a stored checkpoint and the
+/// current tree (docs/design/27 Phase H): modified/added/deleted paths
+/// with byte deltas plus bounded excerpts for changed text files.
+/// Feeds goal-mode auditors so verdicts rest on environment facts.
+pub fn delta_summary(
+    cwd: &Path,
+    sessions_home: &Path,
+    session_id: &str,
+    seq: u32,
+    max_bytes: usize,
+) -> std::io::Result<String> {
+    let cp = load(sessions_home, session_id, seq)?;
+
+    let mut baseline: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+    for f in &cp.files {
+        baseline.insert(f.rel_path.clone(), f.content.clone());
+    }
+    let observed: std::collections::HashSet<String> = cp.observed.iter().cloned().collect();
+
+    // Walk current tree with the same ignore rules as capture.
+    let mut ignores = IgnoreRules::default();
+    ignores.load_dir(cwd, Path::new("."));
+
+    let mut modified: Vec<String> = Vec::new();
+    let mut added: Vec<String> = Vec::new();
+    let mut deleted: Vec<String> = Vec::new();
+    let mut excerpts: Vec<(String, String)> = Vec::new();
+
+    let mut seen_now: std::collections::HashSet<String> = Default::default();
+    for entry in WalkDir::new(cwd)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            let rel = e.path().strip_prefix(cwd).unwrap_or(e.path()).to_path_buf();
+            !ignores.is_ignored(&rel, e.file_type().is_dir())
+        })
+    {
+        let Ok(entry) = entry else { continue };
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let Ok(rel_path) = entry.path().strip_prefix(cwd) else {
+            continue;
+        };
+        let rel_full = rel_path.to_string_lossy().replace('\\', "/");
+        seen_now.insert(rel_full.clone());
+        let bytes = std::fs::read(entry.path()).unwrap_or_default();
+        match baseline.get(&rel_full.clone()) {
+            Some(old) => {
+                if old.as_slice() != bytes.as_slice() {
+                    modified.push(format!(
+                        "M {} ({} -> {} bytes)",
+                        rel_full,
+                        old.len(),
+                        bytes.len()
+                    ));
+                    if excerpts.len() < 8
+                        && let Ok(text) = String::from_utf8(bytes[..bytes.len().min(400)].to_vec())
+                    {
+                        excerpts.push((rel_full.clone(), text));
+                    }
+                }
+            }
+            None => {
+                added.push(format!("A {} ({} bytes)", rel_full, bytes.len()));
+                if excerpts.len() < 8
+                    && let Ok(text) = String::from_utf8(bytes[..bytes.len().min(200)].to_vec())
+                {
+                    excerpts.push((rel_full.clone(), text));
+                }
+            }
+        }
+    }
+    for rel in &observed {
+        if !baseline.contains_key(rel) {
+            continue; // observed-but-unstored: cannot diff contents
+        }
+        if !seen_now.contains(rel) {
+            deleted.push(format!("D {rel}"));
+        }
+    }
+
+    modified.sort();
+    added.sort();
+    deleted.sort();
+
+    let mut out = String::new();
+    if modified.is_empty() && added.is_empty() && deleted.is_empty() {
+        out.push_str("(workspace unchanged since checkpoint)");
+        return Ok(out);
+    }
+    for line in modified.iter().chain(added.iter()).chain(deleted.iter()) {
+        if out.len() > max_bytes {
+            break;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    for (path, text) in &excerpts {
+        if out.len() > max_bytes {
+            break;
+        }
+        out.push_str(&format!("--- {} (excerpt) ---\n{text}\n", path));
+    }
+    if out.len() > max_bytes {
+        out.truncate(max_bytes);
+        out.push_str("\n(truncated)");
+    }
+    Ok(out)
+}
+
 pub fn restore(cwd: &Path, cp: &Checkpoint) -> std::io::Result<(usize, usize)> {
     let mut restored = 0usize;
     let mut deleted = 0usize;
@@ -393,4 +504,44 @@ pub fn restore(cwd: &Path, cp: &Checkpoint) -> std::io::Result<(usize, usize)> {
         }
     }
     Ok((restored, deleted))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod delta_tests {
+    use super::*;
+
+    #[test]
+    fn delta_reports_modify_add_delete_with_excerpt() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path();
+        std::fs::write(cwd.join("a.txt"), b"v1").unwrap();
+        std::fs::create_dir_all(cwd.join("sub")).unwrap();
+        std::fs::write(cwd.join("sub/b.txt"), b"doomed").unwrap();
+
+        let cp = capture(cwd, "s1", 0, "start").unwrap();
+        store(dir.path(), &cp).unwrap();
+
+        // Mutate a, delete b, add c.
+        std::fs::write(cwd.join("a.txt"), "v2-longer content").unwrap();
+        let _ = std::fs::remove_file(cwd.join("sub/b.txt"));
+        std::fs::write(cwd.join("c-new.txt"), "brand new file").unwrap();
+
+        let summary = delta_summary(cwd, dir.path(), "s1", 0, 4096).unwrap();
+        assert!(summary.contains("M a.txt"), "{summary}");
+        assert!(summary.contains("D sub/b.txt"), "{summary}");
+        assert!(summary.contains("A c-new.txt"), "{summary}");
+        assert!(summary.contains("v2-longer content"), "excerpt included");
+    }
+
+    #[test]
+    fn unchanged_tree_reports_no_delta() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("only.txt"), b"same").unwrap();
+        let cp = capture(dir.path(), "s2", 0, "l").unwrap();
+        store(home.path(), &cp).unwrap();
+        let summary = delta_summary(dir.path(), home.path(), "s2", 0, 1024).unwrap();
+        assert!(summary.contains("unchanged"), "{summary}");
+    }
 }

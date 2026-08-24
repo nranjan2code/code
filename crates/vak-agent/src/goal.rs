@@ -42,9 +42,20 @@ EVIDENCE IN THE TRANSCRIPT ONLY — never give benefit of the doubt. Reply \
 with STRICT JSON and nothing else: \
 {\"results\":[{\"criterion\":\"<verbatim criterion>\",\"verdict\":\"pass|fail|unknown\",\"evidence\":\"<short quote or reason>\"}]}";
 
-pub fn audit_prompt(objective: &str, criteria: &[String], transcript_digest: &str) -> String {
+pub fn audit_prompt(
+    objective: &str,
+    criteria: &[String],
+    transcript_digest: &str,
+    workspace_delta: Option<&str>,
+) -> String {
+    let delta_section = match workspace_delta {
+        Some(d) if !d.trim().is_empty() => format!(
+            "\nWorkspace delta since run start:\n<workspace_delta>\n{d}\n</workspace_delta>\n"
+        ),
+        _ => "\n(workspace delta unavailable — judge from transcript evidence only)\n".to_string(),
+    };
     format!(
-        "Objective: {objective}\n\nAcceptance criteria:\n{}\n\nTranscript digest:\n<transcript>\n{transcript_digest}\n</transcript>\n\n\
+        "Objective: {objective}\n\nAcceptance criteria:\n{}\n\nTranscript digest:\n<transcript>\n{transcript_digest}\n</transcript>\n{delta_section}\n\
          Return the JSON verdict now.",
         criteria
             .iter()

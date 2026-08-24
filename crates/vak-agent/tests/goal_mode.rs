@@ -10,7 +10,9 @@ use tempfile::tempdir;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use vak_agent::{Agent, AgentConfig, AutoApprove, SteeringQueues, TurnOutcome};
+use vak_agent::{
+    Agent, AgentConfig, AutoApprove, SteeringQueues, TurnOutcome, workspace::WorkspaceDelta,
+};
 use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
@@ -92,6 +94,14 @@ fn setup(
     provider: Arc<Scripted>,
     tools: Vec<Arc<dyn vak_tools::Tool>>,
 ) -> (Agent, tempfile::TempDir) {
+    setup_with_delta(provider, tools, None)
+}
+
+fn setup_with_delta(
+    provider: Arc<Scripted>,
+    tools: Vec<Arc<dyn vak_tools::Tool>>,
+    delta: Option<Arc<dyn WorkspaceDelta>>,
+) -> (Agent, tempfile::TempDir) {
     let dir = tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
     let header = SessionHeader {
@@ -120,6 +130,7 @@ fn setup(
     cfg.mode = Mode::FullAccess;
     cfg.permission = Some(Arc::new(PermissionEngine::default()));
     cfg.approver = Some(Arc::new(AutoApprove));
+    cfg.workspace_delta = delta;
     cfg.retry_base_backoff_ms = 1;
     cfg.run_retry_base_backoff_ms = 1;
     (Agent::new(provider, log, cfg), dir)
@@ -157,7 +168,13 @@ async fn audited_done_when_judge_passes() {
             r#"{"results":[{"criterion":"summary mentions done","verdict":"pass","evidence":"said it"}]}"#,
         ),
     ]);
-    let (mut agent, _dir) = setup(provider.clone(), vec![]);
+    struct StaticDelta;
+    impl WorkspaceDelta for StaticDelta {
+        fn summary(&self) -> Result<String, String> {
+            Ok("M src/lib.rs\nA goal-live.txt\nWORKSPACE-DELTA-MARKER".into())
+        }
+    }
+    let (mut agent, _dir) = setup_with_delta(provider.clone(), vec![], Some(Arc::new(StaticDelta)));
     agent.set_goal("write a haiku", vec!["summary mentions done".into()]);
     let outcome = run(&mut agent, "write a haiku about rust").await;
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));

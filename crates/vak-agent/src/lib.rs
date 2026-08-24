@@ -11,12 +11,14 @@ pub mod spend;
 pub mod steering;
 pub mod stop_policy;
 pub mod task;
+pub mod workspace;
 
 pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
 pub use goal::GoalState;
 pub use spend::{SpendCheck, SpendGate};
 pub use stop_policy::{BlockReason, StopPolicy};
 pub use task::{ActiveSubagent, SubagentHandle, SubagentRegistry, TaskDeps, TaskTool};
+pub use workspace::WorkspaceDelta;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -168,6 +170,10 @@ pub struct AgentConfig {
     /// Frozen route ladder (Phase B): primary-first candidate legs beyond
     /// the configured provider/model. Empty ⇒ single-model legacy.
     pub ladder: Vec<(Arc<dyn Provider>, String)>,
+    /// Workspace-delta provider (Phase H MEA): supplies a bounded summary
+    /// of what changed since the run-start checkpoint, feeding goal-mode
+    /// auditors environment facts instead of transcript-only claims.
+    pub workspace_delta: Option<Arc<dyn WorkspaceDelta>>,
     /// Reset-with-handoff rescue on still-over contexts (Phase H).
     pub handoff_reset: bool,
     /// Audit blocks per goal before degrading to Unverified.
@@ -198,6 +204,7 @@ impl AgentConfig {
             stop_policy: Some(StopPolicy::default()),
             spend_gate: None,
             ladder: Vec::new(),
+            workspace_delta: None,
             handoff_reset: true,
             max_audit_blocks: 2,
         }
@@ -1086,9 +1093,20 @@ impl Agent {
             .as_ref()
             .map(|g| g.objective.clone())
             .unwrap_or_default();
+        // MEA: environment facts over transcript claims. Unavailable delta
+        // is stated as such to the judge (UNKNOWN, never fabricated).
+        let workspace_delta = match &self.config.workspace_delta {
+            Some(p) => p.summary().ok(),
+            None => None,
+        };
         let req = goal::audit_request(
             &model,
-            goal::audit_prompt(&objective, text_criteria, &digest),
+            goal::audit_prompt(
+                &objective,
+                text_criteria,
+                &digest,
+                workspace_delta.as_deref(),
+            ),
         );
         let mut ledger = StepLedger::new(
             WorkPurpose::Verify,

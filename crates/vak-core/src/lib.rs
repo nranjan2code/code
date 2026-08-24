@@ -887,6 +887,24 @@ impl Core {
                 &self.inner.sessions_home,
                 f,
             )));
+
+            // MEA substrate (Phase H): auditor sees the workspace delta between
+            // this run's start checkpoint and the live tree.
+            {
+                let home = self.sessions_home();
+                let sid = session
+                    .header()
+                    .map(|h| h.session_id.clone())
+                    .unwrap_or_default();
+                let seq = self.next_checkpoint_seq(&sid);
+                let cwd = self.inner.cwd.clone();
+                cfg.workspace_delta = Some(Arc::new(CheckpointDelta {
+                    home: home.clone(),
+                    sid: sid.clone(),
+                    seq,
+                    cwd,
+                }));
+            }
         }
         cfg.mode = match self.effective_permission_mode() {
             vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
@@ -1336,6 +1354,27 @@ when the task matches:\n",
         }
     }
     out
+}
+
+/// Phase H MEA provider: diff the run-start checkpoint against disk.
+struct CheckpointDelta {
+    home: PathBuf,
+    sid: String,
+    seq: u32,
+    cwd: PathBuf,
+}
+
+impl vak_agent::WorkspaceDelta for CheckpointDelta {
+    fn summary(&self) -> Result<String, String> {
+        checkpoints::delta_summary(
+            &self.cwd.clone(),
+            &self.home.clone(),
+            self.sid.as_str(),
+            self.seq,
+            8192,
+        )
+        .map_err(|e| e.to_string())
+    }
 }
 
 #[cfg(test)]
