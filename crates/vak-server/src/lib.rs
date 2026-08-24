@@ -228,6 +228,9 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/attach", post(attach_session))
         .route("/sessions/{id}/diff", get(session_diff))
         .route("/sessions/{id}/receipts", get(session_receipts))
+        .route("/flows", get(flows_list))
+        .route("/flows/{name}/runs", get(flow_runs_list))
+        .route("/flows/{name}/runs/{run}/graph", get(flow_run_graph))
         .route("/sessions/{id}/checkpoints", get(list_checkpoints))
         .route(
             "/sessions/{id}/checkpoints/{seq}/restore",
@@ -1084,6 +1087,70 @@ async fn session_receipts(
     match session.as_ref() {
         Some(log) => Ok(Json(log.receipts().into_iter().cloned().collect())),
         None => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+/// Flow names discovered under `<sessions_home>/flow-runs` (doc 27 G).
+async fn flows_list(State(state): State<AppState>) -> Json<Vec<String>> {
+    let root = state.core.sessions_home().join("flow-runs");
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        for e in entries.flatten() {
+            if e.path().is_dir() {
+                out.push(e.file_name().to_string_lossy().into_owned());
+            }
+        }
+    }
+    out.sort();
+    Json(out)
+}
+
+/// Run ledger filenames for one flow, oldest first.
+async fn flow_runs_list(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<Vec<String>>, StatusCode> {
+    let dir = state.core.sessions_home().join("flow-runs").join(&name);
+    let mut out = Vec::new();
+    match std::fs::read_dir(&dir) {
+        Ok(entries) => {
+            for e in entries.flatten() {
+                if e.path().extension().map(|x| x == "json").unwrap_or(false) {
+                    out.push(e.file_name().to_string_lossy().into_owned());
+                }
+            }
+            out.sort();
+            Ok(Json(out))
+        }
+        Err(_) => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+/// Typed run-graph snapshot (delta+snapshot invariant 4): projection of a
+/// single run ledger — statuses, layers, counts. No rendering opinions.
+async fn flow_run_graph(
+    State(state): State<AppState>,
+    Path((name, run)): Path<(String, String)>,
+) -> Result<Json<vak_flow::graph::RunGraph>, StatusCode> {
+    // `run` is either the ledger filename or its stem.
+    let run_file = if run.ends_with(".json") {
+        run.clone()
+    } else {
+        format!("{run}.json")
+    };
+    let path = state
+        .core
+        .sessions_home()
+        .join("flow-runs")
+        .join(&name)
+        .join(&run_file);
+    match std::fs::read_to_string(&path) {
+        Ok(body) => {
+            let state: vak_flow::FlowState =
+                serde_json::from_str(&body).map_err(|_| StatusCode::NOT_FOUND)?;
+            Ok(Json(vak_flow::graph::graph_snapshot(&state)))
+        }
+        Err(_) => Err(StatusCode::NOT_FOUND),
     }
 }
 

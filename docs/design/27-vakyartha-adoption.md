@@ -271,7 +271,7 @@ identical runs is empty; snapshot-tamper detection fails closed.
 
 From vakyartha's engineering practice, adapted:
 
-1. **Scenario harness** (`scripts/scenarios/`): drive the real binary end
+1. **Scenario harness** (planned dir scripts/scenarios/): drive the real binary end
    to end against the offline mock provider — exactly one stubbed
    boundary. Each scenario asserts universal invariants (abort preserves
    partial output; timeout-deny resolves nothing; breaker opens after N
@@ -285,8 +285,8 @@ From vakyartha's engineering practice, adapted:
 3. **Gate-to-subsystem table** in `AGENTS.md`: each subsystem maps to the
    exact command that proves it. Prefer property tests over curated
    fixtures for semantic gates.
-4. **CI checks doc citations**: referenced `crates/…` paths in design
-   docs must resolve; stale citations fail CI.
+4. **CI checks doc citations**: referenced repo paths in design docs
+   must resolve; stale citations fail CI (`scripts/check_doc_paths.py`).
 
 ## Phase G (conditional) — Run-graph projection & flow surfaces
 
@@ -395,6 +395,17 @@ the executor. Obligation regression reopens the goal. Compaction-still-
 over produces a handoff entry + fresh-segment continuation that completes
 the objective. Planner contract validation rejects criterion-less nodes
 while goal mode is active.
+
+## Phase G — Run-graph projection & flow surfaces (landed)
+
+`vak_flow::graph::graph_snapshot()` projects any run ledger into a typed
+snapshot (layer indices derived from the frozen definition; statuses,
+output sizes, counts) — deterministic, no rendering opinions. Served at
+`GET /flows`, `/flows/{name}/runs`, `/flows/{name}/runs/{run}/graph`.
+CLI gained the plan-shape preview before execution and a layer-aware
+progress strip (`[L2/6] ✓ step_2`) plus a final snapshot summary line.
+Deferred: SSE emission DURING server-executed flows (flows still run via
+CLI; the endpoint serves post-hoc ledgers), and typed tool outputs.
 
 ## Parking lot (post-adoption, demand-driven)
 

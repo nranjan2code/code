@@ -770,6 +770,12 @@ async fn run_flow_exec(
         }
     };
 
+    // Plan preview (doc 27 Phase G): show the shape before any effect.
+    if let Ok(layers) = vak_flow::parse::layers(&flow) {
+        let rendered: Vec<String> = layers.iter().map(|l| l.join(", ")).collect();
+        eprintln!("plan: {}", rendered.join(" | "));
+    }
+
     if let Some(p) = provider_flag {
         core.set_provider(p);
     }
@@ -896,15 +902,46 @@ async fn run_flow_exec(
     }
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
-    let runner = tokio::spawn(async move { executor.run(&flow, &mut state, cancel, tx).await });
+    // Layer-aware progress strip (doc 27 Phase G): prefix ✓/✗/⊘ events
+    // with their topological layer, other lines verbatim.
+    let layer_of: std::collections::HashMap<String, usize> = match vak_flow::parse::layers(&flow) {
+        Ok(layers) => layers
+            .iter()
+            .enumerate()
+            .flat_map(|(li, l)| l.iter().map(move |id| (id.clone(), li + 1)))
+            .collect(),
+        Err(_) => Default::default(),
+    };
+    let total_layers = layer_of.values().copied().max().unwrap_or(0);
 
+    let runner = tokio::spawn(async move { executor.run(&flow, &mut state, cancel, tx).await });
     while let Some(line) = rx.recv().await {
-        eprintln!("{line}");
+        let marker = line
+            .strip_prefix('✓')
+            .or_else(|| line.strip_prefix('✗'))
+            .or_else(|| line.strip_prefix('⊘'));
+        if let Some(rest) = marker {
+            let id = rest.trim();
+            let layer = layer_of.get(id).copied().unwrap_or(0);
+            eprintln!("[L{}/{}] {}", layer, total_layers, line);
+        } else {
+            eprintln!("{line}");
+        }
     }
 
     match runner.await {
         Ok(outcome) => match outcome {
             vak_flow::FlowOutcome::Completed { outputs } => {
+                // Snapshot from the persisted ledger (state moved into the runner).
+                if let Ok(body) = std::fs::read_to_string(&state_path)
+                    && let Ok(st) = serde_json::from_str::<vak_flow::FlowState>(&body)
+                {
+                    let snap = vak_flow::graph::graph_snapshot(&st);
+                    eprintln!(
+                        "── snapshot: {} completed / {} failed / {} skipped · {} layer(s)",
+                        snap.completed, snap.failed, snap.skipped, snap.layers_total
+                    );
+                }
                 eprintln!("── flow completed · state {}", state_path.display());
                 for (id, out) in outputs {
                     println!("[{id}]\n{out}\n");

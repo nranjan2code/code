@@ -5,6 +5,7 @@
 
 pub mod adopt;
 pub mod exec;
+pub mod graph;
 pub mod parse;
 pub mod planner;
 pub mod types;
