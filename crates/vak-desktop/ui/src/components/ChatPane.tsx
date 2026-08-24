@@ -7,9 +7,9 @@ import { highlight, languageForFence } from "../highlight";
 import Icon from "./Icon";
 
 const starters = [
-  { eyebrow: "Understand", prompt: "Map this codebase and explain the architecture, key flows, and highest-risk areas." },
-  { eyebrow: "Improve", prompt: "Review this project deeply and implement the highest-impact quality improvement." },
-  { eyebrow: "Ship", prompt: "Find the most important unfinished feature, implement it, and verify it end to end." },
+  { eyebrow: "Inspect", prompt: "Map this codebase and explain the architecture, key flows, and highest-risk areas." },
+  { eyebrow: "Change", prompt: "Review this project deeply and implement the highest-impact quality improvement." },
+  { eyebrow: "Verify", prompt: "Find the most important unfinished feature, implement it, and verify it end to end." },
 ];
 
 function EmptyChat() {
@@ -20,8 +20,8 @@ function EmptyChat() {
   return (
     <div class="chat-empty">
       <div class="chat-empty-mark"><Icon name="spark" size={24} /></div>
-      <h2>What should we build?</h2>
-      <p>Describe an outcome. VakCoder will inspect the project, make the changes, and verify the result.</p>
+      <h2>Start with an outcome</h2>
+      <p>Tell VakCoder what should be true when you are done. It will inspect the workspace, make changes, and verify the result.</p>
       <Show when={uiPreferences.suggestions}><div class="starter-grid">
         <For each={starters}>
           {(starter) => (
@@ -86,12 +86,20 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
     const parts = p.split("/").filter(Boolean);
     return parts.length > 2 ? parts.slice(-2).join("/") : p;
   };
+  const toolLabel = () => ({
+    read_file: "Read file",
+    write_file: "Write file",
+    edit_file: "Edit file",
+    bash: "Run command",
+    grep: "Search files",
+    glob: "Find files",
+  } as Record<string, string>)[props.item.name] ?? props.item.name.replaceAll("_", " ");
 
   return (
     <div class="tool" classList={{ err: props.item.isError, open: open() }}>
       <button class="tool-h" aria-expanded={open()} onClick={() => setOpen((v) => !v)}>
         <span class="tool-dot" />
-        <span class="tool-name">{props.item.name}</span>
+        <span class="tool-name">{toolLabel()}</span>
         <Show when={shortPath()}>
           <span class="tool-path">{shortPath()}</span>
         </Show>
@@ -127,13 +135,30 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
   );
 };
 
-const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessionId?: string | null }) => (
+const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessionId?: string | null }) => {
+  const summary = createMemo(() => {
+    try {
+      const parsed = JSON.parse(props.item.argsJson) as Record<string, unknown>;
+      return Object.entries(parsed)
+        .filter(([, value]) => typeof value === "string" && value.length < 180)
+        .slice(0, 2)
+        .map(([key, value]) => `${key.replaceAll("_", " ")}: ${String(value)}`)
+        .join(" · ");
+    } catch {
+      return "Review the requested operation before allowing it.";
+    }
+  });
+  return (
   <div class="approval">
     <div class="ap-head">Approval requested — {props.item.tool}</div>
     <Show when={props.item.reason}>
       <div class="ap-reason">{props.item.reason}</div>
     </Show>
-    <pre class="ap-args">{props.item.argsJson.slice(0, 2000)}</pre>
+    <div class="ap-summary">{summary()}</div>
+    <details class="ap-details">
+      <summary>View request details</summary>
+      <pre class="ap-args">{props.item.argsJson.slice(0, 2000)}</pre>
+    </details>
     <Show
       when={!props.item.resolved}
       fallback={<div class="ap-done">{props.item.resolved}</div>}
@@ -148,7 +173,8 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
       </div>
     </Show>
   </div>
-);
+  );
+};
 
 /**
  * Replace each fenced block's plain text with highlighted markup in place,

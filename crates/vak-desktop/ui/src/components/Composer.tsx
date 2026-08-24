@@ -426,16 +426,18 @@ export default function Composer(props: { cwd: string }) {
               }}
             />
             <button
-              class="composer-context"
+              class="composer-context composer-attach"
               title="Attach images (or paste / drop them here)"
+              aria-label="Attach images"
               onClick={() => fileInput.click()}
             >
-              📎
+              <Icon name="add" size={14} />
             </button>
           </div>
           <Show when={goalArmed()}>
             <div class="goal-chip" title="Goal mode armed (docs/design/27 Phase H) — completion will be audited against the criteria">
-              🎯 {goalArmed()!.objective.slice(0, 60)}
+              <Icon name="spark" size={13} />
+              <span>{goalArmed()!.objective.slice(0, 60)}</span>
               {" · "}
               {goalArmed()!.criteria.length} criteria
               <button
@@ -473,9 +475,10 @@ export default function Composer(props: { cwd: string }) {
             <button
               class="composer-goal"
               title="Goal mode — audited completion (docs/design/27 Phase H)"
+              aria-label="Configure goal mode"
               onClick={() => setGoalFormOpen(!goalFormOpen())}
             >
-              🎯
+              <Icon name="spark" size={14} />
             </button>
             <select
               class="composer-density"
@@ -487,8 +490,8 @@ export default function Composer(props: { cwd: string }) {
               <option value="normal">normal</option>
               <option value="verbose">verbose</option>
             </select>
-            <span class="composer-tokens" title={`in ${inTok()} / out ${outTok()}`}>
-              ↑{inTok()} ↓{outTok()}
+            <span class="composer-tokens" title={`Input ${inTok()} tokens · output ${outTok()} tokens`}>
+              {inTok()} in · {outTok()} out
             </span>
             <Ring
               pct={ctxPct()}

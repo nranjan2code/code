@@ -56,13 +56,13 @@ export default function WorkspaceHeader() {
         </div>
         </div>
       </div>
-      <div class="workspace-actions">
+      <div class="workspace-actions" aria-label="Workspace tools">
+        <div class="workspace-action-group" role="group" aria-label="Task views">
         <button
           class="icon-button has-tooltip"
           data-tooltip="Side question ⌘;"
           classList={{ on: sideOpen() }}
           aria-pressed={sideOpen()}
-          title="Ask a side question (⌘;)"
           aria-label="Ask a side question"
           disabled={!activeId()}
           onClick={() => setSideOpen((value) => !value)}
@@ -72,7 +72,6 @@ export default function WorkspaceHeader() {
         <button
           class="icon-button has-tooltip"
           data-tooltip="Compare approaches"
-          title="Compare multiple approaches"
           aria-label="Compare multiple approaches"
           disabled={!activeId()}
           onClick={() => setBestOfOpen(true)}
@@ -81,10 +80,9 @@ export default function WorkspaceHeader() {
         </button>
         <button
           class="icon-button has-tooltip"
-          data-tooltip="Split view ⌘\"
+          data-tooltip={'Split view ⌘\\'}
           classList={{ on: !!splitId() }}
           aria-pressed={!!splitId()}
-          title="Two tasks side-by-side (⌘\)"
           aria-label="Toggle split view"
           disabled={!activeId()}
           onClick={() => void toggleSplit()}
@@ -94,7 +92,6 @@ export default function WorkspaceHeader() {
         <button
           class="icon-button has-tooltip"
           data-tooltip="Time travel ⌘H"
-          title="Restore a workspace snapshot (⌘H)"
           aria-label="Time travel"
           disabled={!activeId()}
           onClick={() => setHistoryOpen(true)}
@@ -104,32 +101,32 @@ export default function WorkspaceHeader() {
         <button
           class="icon-button has-tooltip"
           data-tooltip="Dispatch forensics"
-          title="Per-dispatch receipts and frozen-ladder attempt walks"
           aria-label="Dispatch forensics"
           disabled={!activeId()}
           onClick={() => setReceiptsOpen(true)}
         >
           <Icon name="receipt" />
         </button>
-        <span class="action-separator" />
+        </div>
+        <span class="action-separator" aria-hidden="true" />
+        <div class="workspace-action-group" role="group" aria-label="Workspace surfaces">
         {tools.map((tool) => (
           <button
             class={`icon-button has-tooltip tool-${tool.id}`}
             data-tooltip={tool.label}
             classList={{ on: dockTab() === tool.id }}
             aria-pressed={dockTab() === tool.id}
-            title={tool.label}
             aria-label={tool.label}
             onClick={() => setDockTab((current) => (current === tool.id ? null : tool.id))}
           >
             <Icon name={tool.icon} />
           </button>
         ))}
-        <span class="action-separator" />
+        </div>
+        <span class="action-separator" aria-hidden="true" />
         <button
           class="icon-button has-tooltip"
           data-tooltip="Settings ⌘,"
-          title="Settings (⌘,)"
           aria-label="Open settings"
           onClick={() => setSettingsOpen(true)}
         >
