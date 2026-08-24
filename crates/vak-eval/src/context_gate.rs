@@ -88,6 +88,7 @@ fn build_fixture_log(
             app_version: "0".into(),
             provider: "fixture".into(),
             model: "fixture-model".into(),
+            route_ladder: Vec::new(),
             system_prompt: "sys".into(),
             tools: vec![],
             permission_mode: "workspace-write".into(),

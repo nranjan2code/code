@@ -296,6 +296,7 @@ async fn execute_node(
                     app_version: env!("CARGO_PKG_VERSION").into(),
                     provider: deps.provider.name().into(),
                     model: deps.model.clone(),
+                    route_ladder: Vec::new(),
                     system_prompt: deps.system_prompt.clone(),
                     tools: tools.iter().map(|t| t.name().to_string()).collect(),
                     permission_mode: match mode {

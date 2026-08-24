@@ -227,6 +227,7 @@ async fn run_case_with_tools(
             app_version: env!("CARGO_PKG_VERSION").into(),
             provider: "eval-scripted".into(),
             model: model.to_string(),
+            route_ladder: Vec::new(),
             system_prompt: "eval".into(),
             tools: tools.iter().map(|t| t.name().to_string()).collect(),
             permission_mode: "full-access".into(),

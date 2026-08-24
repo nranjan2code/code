@@ -86,6 +86,7 @@ fn harness(policy: Option<StopPolicy>, responses: Vec<ScriptedResponse>) -> Harn
             app_version: "0.1.0".into(),
             provider: "scripted".into(),
             model: "test-model".into(),
+            route_ladder: Vec::new(),
             system_prompt: "sys".into(),
             tools: vec![],
             permission_mode: "full-access".into(),

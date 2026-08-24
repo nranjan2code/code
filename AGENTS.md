@@ -21,7 +21,7 @@ must also follow the threat model and priority order in
 as durable services, and `docs/design/27-vakyartha-adoption.md` for the
 long-horizon program (work receipts + dispatch ceiling ✅, context packet
 accounting + deterministic gate ✅, FinOps budget admission ✅,
-loop-engineering kernel ✅; frozen-ladder routing, runs→flows replay,
+loop-engineering kernel ✅, frozen-ladder routing ✅; runs→flows replay,
 run-graph projection pending).
 
 ## Non-negotiable invariants
@@ -40,17 +40,18 @@ run-graph projection pending).
    async call; partial results survive.
 6. **Unsafe is denied** workspace-wide except process-group kill in
    `vak-tools/src/bash.rs` (annotated).
-7. **Transient provider failures retry, then trip the breaker.** 429/529/network
-   errors back off exponentially (`max_retries`, honoring `Retry-After`) under
-   a per-step watchdog deadline; if the window outlasts that budget,
-   **run-level endurance** (`run_retry_attempts`) re-attempts the same turn
-   after cancel-aware backoff — nothing was committed, so the re-attempt is
-   exact. Informed transience (429 with Retry-After, explicit overload) feeds
-   endurance but does not trip the shared circuit breaker; blind failures
-   (network loss, deadlines, truncated/malformed streams) do. An open breaker
-   fails fast; endurance paces its waits to the remaining cooldown so the
-   half-close probe gets through. Never retry user aborts; never switch
-   providers mid-contract.
+7. **Transient provider failures retry within the frozen route ladder
+   committed at admission.** The ladder is part of the contract, so
+   walking it never changes the contract. Never dispatch outside the
+   frozen ladder; never switch providers outside it; retries honor
+   `Retry-After` under a per-step watchdog deadline; run-level endurance
+   re-attempts the same turn after cancel-aware backoff when nothing was
+   committed. Informed transience (429 with Retry-After, explicit
+   overload) feeds endurance but does not trip the shared circuit breaker;
+   blind failures (network loss, deadlines, truncated/malformed streams)
+   do. An open breaker fails fast; endurance paces its waits to the
+   remaining cooldown so the half-close probe gets through. Never retry
+   user aborts.
 8. **Secrets never enter git.** API keys live in `.env` (project) or
    `~/.vakcoder/.env` (user), both gitignored, loaded via
    `vak_config::load_env_file/get_var`. Real environment variables take

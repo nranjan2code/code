@@ -18,6 +18,7 @@ fn header() -> SessionHeader {
             app_version: "0.1.0".into(),
             provider: "anthropic".into(),
             model: "claude-sonnet-4-5".into(),
+            route_ladder: Vec::new(),
             system_prompt: "system prompt v1".into(),
             tools: vec!["read".into(), "bash".into()],
             permission_mode: "workspace-write".into(),

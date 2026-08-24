@@ -10,6 +10,12 @@ pub struct FrozenContract {
     pub app_version: String,
     pub provider: String,
     pub model: String,
+    /// Frozen route ladder (docs/design/27 Phase B): ordered candidate
+    /// legs committed at admission; dispatch walks it top-down on typed
+    /// failures. Walking the ladder IS contract execution — never a
+    /// mid-contract switch. Empty/missing ⇒ single-model legacy.
+    #[serde(default)]
+    pub route_ladder: Vec<vak_llm::RouteLeg>,
     pub system_prompt: String,
     pub tools: Vec<String>,
     pub permission_mode: String,

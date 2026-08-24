@@ -82,6 +82,7 @@ fn build(responses: Vec<AssistantMessage>, hooks: Option<Vec<HookDef>>) -> Agent
             app_version: "0".into(),
             provider: "scripted".into(),
             model: "test-model".into(),
+            route_ladder: Vec::new(),
             system_prompt: "sys".into(),
             tools: vec!["bash".into()],
             permission_mode: "full-access".into(),

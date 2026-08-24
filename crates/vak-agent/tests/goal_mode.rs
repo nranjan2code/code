@@ -103,6 +103,7 @@ fn setup(
             app_version: "0".into(),
             provider: "scripted-goal".into(),
             model: "test-model".into(),
+            route_ladder: Vec::new(),
             system_prompt: "sys".into(),
             tools: tools.iter().map(|t| t.name().to_string()).collect(),
             permission_mode: "full-access".into(),

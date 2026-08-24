@@ -67,6 +67,7 @@ fn build_agent(provider: Arc<dyn Provider>, session_id: &str, attempts: u32) -> 
             app_version: "0".into(),
             provider: "scripted".into(),
             model: "test-model".into(),
+            route_ladder: Vec::new(),
             system_prompt: "sys".into(),
             tools: vec![],
             permission_mode: "full-access".into(),

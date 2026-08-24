@@ -84,6 +84,7 @@ fn multi_setup(
             app_version: "0".into(),
             provider: "scripted".into(),
             model: "test-model".into(),
+            route_ladder: Vec::new(),
             system_prompt: "sys".into(),
             tools: vec!["bash".into()],
             permission_mode: "workspace-write".into(),

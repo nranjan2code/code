@@ -165,6 +165,9 @@ pub struct AgentConfig {
     /// Pre-dispatch budget admission (docs/design/27 Phase D). None
     /// disables spend gating entirely.
     pub spend_gate: Option<Arc<dyn SpendGate>>,
+    /// Frozen route ladder (Phase B): primary-first candidate legs beyond
+    /// the configured provider/model. Empty ⇒ single-model legacy.
+    pub ladder: Vec<(Arc<dyn Provider>, String)>,
     /// Reset-with-handoff rescue on still-over contexts (Phase H).
     pub handoff_reset: bool,
     /// Audit blocks per goal before degrading to Unverified.
@@ -194,6 +197,7 @@ impl AgentConfig {
             context_policy: Default::default(),
             stop_policy: Some(StopPolicy::default()),
             spend_gate: None,
+            ladder: Vec::new(),
             handoff_reset: true,
             max_audit_blocks: 2,
         }
@@ -1226,170 +1230,192 @@ impl Agent {
                 .check()
                 .map_err(|open| LlmError::Network(open.to_string()))?;
         }
-        let mut attempt: u32 = 0;
-        loop {
-            if cancel.is_cancelled() {
-                return Err(LlmError::Aborted { partial: None });
-            }
-            // Budget admission precedes every paid dispatch (Phase D). A
-            // denial becomes one bounded budget Ask; refusal — or no
-            // approver, which is the unattended case — fails the step
-            // permanently (never retried, never breaker-tripping).
-            if let Some(gate) = &self.config.spend_gate {
-                let session_id = self
-                    .session
-                    .lock()
-                    .await
-                    .header()
-                    .map(|h| h.session_id.clone())
-                    .unwrap_or_default();
-                let est_input = context::estimate_tokens(
-                    &request.messages,
-                    request.system.as_deref(),
-                    &request.tools,
-                );
-                let check = SpendCheck {
-                    model: &request.model,
-                    session_id: &session_id,
-                    est_input_tokens: est_input,
-                    planned_output_tokens: self.config.context_policy.max_output,
-                };
-                if let Err(reason) = gate.authorize(&check).await {
-                    let approved = match &self.config.approver {
-                        Some(a) => {
-                            a.approve(
-                                "finops-budget",
-                                &args_preview(&serde_json::json!({
-                                    "model": request.model,
-                                    "reason": reason,
-                                })),
-                                &reason,
-                            )
-                            .await
-                        }
-                        None => false,
+        // Frozen-ladder walk (Phase B): `ladder` holds FALLBACK legs;
+        // the primary provider/model always walks first. Ceiling,
+        // receipt, and endurance budget are shared across ALL legs --
+        // walking the ladder is contract execution, never a switch.
+        let mut legs: Vec<(Arc<dyn Provider>, String)> =
+            Vec::with_capacity(1 + self.config.ladder.len());
+        legs.push((self.provider.clone(), request.model.clone()));
+        legs.extend(self.config.ladder.iter().cloned());
+        let mut leg_req = request.clone();
+        let mut last_err: Option<LlmError> = None;
+
+        'legs: for (li, (provider_arc, model)) in legs.iter().enumerate() {
+            leg_req.model = model.clone();
+            ledger.receipt.model = model.clone();
+            let mut attempt: u32 = 0;
+            loop {
+                if cancel.is_cancelled() {
+                    return Err(LlmError::Aborted { partial: None });
+                }
+                // Budget admission precedes every paid dispatch (Phase D). A
+                // denial becomes one bounded budget Ask; refusal -- or no
+                // approver, which is the unattended case -- fails the step
+                // permanently (never retried, never breaker-tripping).
+                if let Some(gate) = &self.config.spend_gate {
+                    let session_id = self
+                        .session
+                        .lock()
+                        .await
+                        .header()
+                        .map(|h| h.session_id.clone())
+                        .unwrap_or_default();
+                    let est_input = context::estimate_tokens(
+                        &leg_req.messages,
+                        leg_req.system.as_deref(),
+                        &leg_req.tools,
+                    );
+                    let check = SpendCheck {
+                        model,
+                        session_id: &session_id,
+                        est_input_tokens: est_input,
+                        planned_output_tokens: self.config.context_policy.max_output,
                     };
-                    if !approved {
-                        return Err(LlmError::InvalidRequest(format!(
-                            "budget admission denied: {reason}"
-                        )));
-                    }
-                }
-            }
-            // Ceiling check happens before every paid dispatch; exhaustion
-            // surfaces as a plain error that the endurance loop treats as
-            // fail-closed (never transient).
-            if let Err(c) = ledger.budget.consume() {
-                return Err(LlmError::Network(c.to_string()));
-            }
-            let reason = if attempt == 0 {
-                AttemptReason::Initial
-            } else {
-                AttemptReason::Retry
-            };
-            let started = std::time::Instant::now();
-
-            let step = async {
-                let mut stream = self
-                    .provider
-                    .stream(request.clone(), cancel.clone())
-                    .await?;
-                while let Some(ev) = futures::StreamExt::next(&mut stream).await {
-                    if forward && events.send(AgentEvent::Stream(ev)).await.is_err() {
-                        cancel.cancel();
-                    }
-                }
-                stream.result().await
-            };
-
-            let mut domain_override: Option<FailureDomain> = None;
-            let outcome = match self.config.request_timeout {
-                Some(t) => match tokio::time::timeout(t, step).await {
-                    Ok(r) => r,
-                    Err(_) => {
-                        domain_override = Some(FailureDomain::Deadline);
-                        Err(LlmError::Network(format!(
-                            "model step exceeded deadline of {}s",
-                            t.as_secs()
-                        )))
-                    }
-                },
-                None => step.await,
-            };
-            let elapsed_ms = started.elapsed().as_millis() as u64;
-
-            match outcome {
-                Ok(r) => {
-                    if let Some(breaker) = &self.config.circuit_breaker {
-                        breaker.record_success();
-                    }
-                    ledger.receipt.record(
-                        reason,
-                        FailureDomain::Unknown,
-                        Settlement::Ok,
-                        elapsed_ms,
-                        Some(r.usage.clone()),
-                        None,
-                    );
-                    return Ok(r);
-                }
-                Err(e @ LlmError::Aborted { .. }) => {
-                    ledger.receipt.record(
-                        reason,
-                        FailureDomain::Unknown,
-                        Settlement::Cancelled,
-                        elapsed_ms,
-                        None,
-                        None,
-                    );
-                    return Err(e);
-                }
-                Err(e) => {
-                    let (domain, settlement) = vak_llm::work::classify_error(&e);
-                    ledger.receipt.record(
-                        reason,
-                        domain_override.unwrap_or(domain),
-                        settlement,
-                        elapsed_ms,
-                        None,
-                        Some(e.to_string()),
-                    );
-                    if e.is_retryable() && attempt < self.config.max_retries {
-                        if trips_breaker(&e)
-                            && let Some(breaker) = &self.config.circuit_breaker
-                        {
-                            breaker.record_failure();
-                        }
-                        attempt += 1;
-                        let delay = backoff_delay(
-                            attempt,
-                            e.retry_after_secs(),
-                            self.config.retry_base_backoff_ms,
-                        );
-                        let _ = events
-                            .send(AgentEvent::RetryScheduled {
-                                attempt,
-                                delay_ms: delay.as_millis() as u64,
-                                reason: e.to_string(),
-                            })
-                            .await;
-                        tokio::select! {
-                            _ = cancel.cancelled() => {
-                                return Err(LlmError::Aborted { partial: None });
+                    if let Err(reason) = gate.authorize(&check).await {
+                        let approved = match &self.config.approver {
+                            Some(a) => {
+                                a.approve(
+                                    "finops-budget",
+                                    &args_preview(&serde_json::json!({
+                                        "model": model,
+                                        "reason": reason,
+                                    })),
+                                    &reason,
+                                )
+                                .await
                             }
-                            _ = tokio::time::sleep(delay) => {}
+                            None => false,
+                        };
+                        if !approved {
+                            return Err(LlmError::InvalidRequest(format!(
+                                "budget admission denied: {reason}"
+                            )));
                         }
-                    } else {
-                        if trips_breaker(&e)
-                            && let Some(breaker) = &self.config.circuit_breaker
-                        {
-                            breaker.record_failure();
+                    }
+                }
+                // Ceiling check happens before every paid dispatch; exhaustion
+                // surfaces as a plain error that the endurance loop treats as
+                // fail-closed (never transient).
+                if let Err(c) = ledger.budget.consume() {
+                    return Err(LlmError::Network(c.to_string()));
+                }
+                let reason = if li > 0 && attempt == 0 {
+                    AttemptReason::RouteFallback
+                } else if attempt == 0 {
+                    AttemptReason::Initial
+                } else {
+                    AttemptReason::Retry
+                };
+                let started = std::time::Instant::now();
+
+                let provider_for_stream = provider_arc.clone();
+                let req_for_stream = leg_req.clone();
+                let step = async move {
+                    let mut stream = provider_for_stream
+                        .stream(req_for_stream, cancel.clone())
+                        .await?;
+                    while let Some(ev) = futures::StreamExt::next(&mut stream).await {
+                        if forward && events.send(AgentEvent::Stream(ev)).await.is_err() {
+                            cancel.cancel();
                         }
+                    }
+                    stream.result().await
+                };
+
+                let mut domain_override: Option<FailureDomain> = None;
+                let outcome = match self.config.request_timeout {
+                    Some(t) => match tokio::time::timeout(t, step).await {
+                        Ok(r) => r,
+                        Err(_) => {
+                            domain_override = Some(FailureDomain::Deadline);
+                            Err(LlmError::Network(format!(
+                                "model step exceeded deadline of {}s",
+                                t.as_secs()
+                            )))
+                        }
+                    },
+                    None => step.await,
+                };
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+
+                match outcome {
+                    Ok(r) => {
+                        if let Some(breaker) = &self.config.circuit_breaker {
+                            breaker.record_success();
+                        }
+                        ledger.receipt.record(
+                            reason,
+                            FailureDomain::Unknown,
+                            Settlement::Ok,
+                            elapsed_ms,
+                            Some(r.usage.clone()),
+                            None,
+                        );
+                        return Ok(r);
+                    }
+                    Err(e @ LlmError::Aborted { .. }) => {
+                        ledger.receipt.record(
+                            reason,
+                            FailureDomain::Unknown,
+                            Settlement::Cancelled,
+                            elapsed_ms,
+                            None,
+                            None,
+                        );
                         return Err(e);
+                    }
+                    Err(e) => {
+                        let (domain, settlement) = vak_llm::work::classify_error(&e);
+                        ledger.receipt.record(
+                            reason,
+                            domain_override.unwrap_or(domain),
+                            settlement,
+                            elapsed_ms,
+                            None,
+                            Some(e.to_string()),
+                        );
+                        if e.is_retryable() && attempt < self.config.max_retries {
+                            if trips_breaker(&e)
+                                && let Some(breaker) = &self.config.circuit_breaker
+                            {
+                                breaker.record_failure();
+                            }
+                            attempt += 1;
+                            let delay = backoff_delay(
+                                attempt,
+                                e.retry_after_secs(),
+                                self.config.retry_base_backoff_ms,
+                            );
+                            let _ = events
+                                .send(AgentEvent::RetryScheduled {
+                                    attempt,
+                                    delay_ms: delay.as_millis() as u64,
+                                    reason: e.to_string(),
+                                })
+                                .await;
+                            tokio::select! {
+                                _ = cancel.cancelled() => {
+                                    return Err(LlmError::Aborted { partial: None });
+                                }
+                                _ = tokio::time::sleep(delay) => {}
+                            }
+                        } else {
+                            // Leg exhausted (retries burned or permanent error):
+                            // defer to the next frozen candidate.
+                            if trips_breaker(&e)
+                                && let Some(breaker) = &self.config.circuit_breaker
+                            {
+                                breaker.record_failure();
+                            }
+                            last_err = Some(e);
+                            continue 'legs;
+                        }
                     }
                 }
             }
         }
+        Err(last_err.unwrap_or_else(|| LlmError::Network("route ladder exhausted".into())))
     }
 
     async fn execute_batch(

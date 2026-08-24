@@ -12,6 +12,7 @@ pub mod models;
 pub mod openai;
 pub mod openai_responses;
 pub mod registry;
+pub mod route;
 pub mod sse;
 pub mod stream;
 pub mod types;
@@ -19,6 +20,7 @@ pub mod work;
 
 pub use error::LlmError;
 pub use registry::{ProviderAuth, ProviderRegistry};
+pub use route::{EvidenceSnapshot, ModelEvidence, RouteLeg};
 pub use stream::{EventSink, EventStream, StreamEvent};
 pub use types::{
     AssistantMessage, ChatRequest, ContentBlock, Message, Role, StopReason, ToolDefinition, Usage,

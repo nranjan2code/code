@@ -100,6 +100,7 @@ fn harness(responses: Vec<ScriptedResponse>, tools: Vec<Arc<dyn Tool>>) -> Harne
             app_version: "0.1.0".into(),
             provider: "scripted".into(),
             model: "test-model".into(),
+            route_ladder: Vec::new(),
             system_prompt: "sys".into(),
             tools: tools.iter().map(|t| t.name().to_string()).collect(),
             permission_mode: "full-access".into(),

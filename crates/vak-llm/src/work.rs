@@ -25,6 +25,9 @@ pub enum WorkPurpose {
 pub enum AttemptReason {
     Initial,
     Retry,
+    /// First dispatch of the NEXT frozen-ladder candidate after typed
+    // failure of the previous one (Phase B).
+    RouteFallback,
     EnduranceRetry,
 }
 

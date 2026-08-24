@@ -9,6 +9,7 @@ pub mod finops;
 pub mod learning;
 pub mod memory;
 pub mod reflection;
+pub mod routing;
 pub mod sandbox_docker;
 pub mod session_search;
 pub mod skills;
@@ -699,6 +700,48 @@ impl Core {
                 app_version: APP_VERSION.into(),
                 provider: self.effective_provider(),
                 model: self.effective_model(),
+                // Frozen-ladder admission (docs/design/27 Phase B):
+                // primary leg always; additional legs ONLY from warm
+                // discovery caches where this exact model is reachable
+                // with a configured key -- no invented ids, no network
+                // at admission. Ordered by the versioned pure function
+                // over TTL-filtered evidence, then frozen.
+                route_ladder: {
+                    let primary = vak_llm::RouteLeg {
+                        provider: self.effective_provider(),
+                        model: self.effective_model(),
+                    };
+                    let mut candidates = vec![primary.clone()];
+                    let warm: Vec<String> = if let Ok(cache) = self.inner.models_cache.lock() {
+                        cache
+                            .iter()
+                            .filter(|(p, (_, models))| {
+                                *p != &primary.provider && models.contains(&primary.model)
+                            })
+                            .map(|(p, _)| p.clone())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    for prov in warm {
+                        if self.provider_auth_for(&prov).is_ok() {
+                            candidates.push(vak_llm::RouteLeg {
+                                provider: prov,
+                                model: primary.model.clone(),
+                            });
+                        }
+                    }
+                    let finops_cfg = self.inner.config.finops.clone();
+                    let home = self.sessions_home();
+                    routing::order(
+                        candidates,
+                        &routing::EvidenceLedger::new(&home).snapshot(),
+                        move |m: &str| {
+                            vak_config::finops::resolve_usd_per_mtok(m, &finops_cfg.price_overrides)
+                                .map(|(_, out)| out)
+                        },
+                    )
+                },
                 system_prompt: self.system_prompt(),
                 tools: self.tool_names(),
                 permission_mode: format!("{:?}", self.inner.config.permission_mode)
@@ -861,6 +904,24 @@ impl Core {
             return Err(CoreError::MissingEngine);
         };
         cfg.sandbox = self.build_sandbox();
+
+        // Phase B: materialize fallback legs beyond the primary provider.
+        // Unresolvable legs (missing key/registry) skip silently --
+        // receipts record whatever actually walked.
+        if let Some(h) = session.header()
+            && h.contract.route_ladder.len() > 1
+        {
+            for leg in h.contract.route_ladder.iter().skip(1) {
+                if leg.provider == h.contract.provider {
+                    continue;
+                }
+                if let Ok(auth) = self.provider_auth_for(&leg.provider)
+                    && let Ok(p) = self.inner.registry.get(&leg.provider, &auth)
+                {
+                    cfg.ladder.push((p, leg.model.clone()));
+                }
+            }
+        }
 
         let mut tools = self.agent_tools();
         if self.inner.config.subagents
@@ -1040,8 +1101,25 @@ impl Core {
         if let Some((objective, criteria)) = goal {
             agent.set_goal(objective, criteria);
         }
+        let receipts_before = {
+            let s = agent.session.lock().await;
+            s.receipts().len()
+        };
         let outcome = agent.run_message(prompt, &steering, cancel, events).await;
         let session = agent.into_session().await;
+
+        // Phase B: fold this run's dispatches into the routing evidence
+        // ledger (success / failure / unknown by settlement).
+        let new_receipts: Vec<vak_llm::WorkReceipt> = session
+            .receipts()
+            .into_iter()
+            .skip(receipts_before)
+            .cloned()
+            .collect();
+        if !new_receipts.is_empty() {
+            routing::EvidenceLedger::new(&self.sessions_home()).record_receipts(&new_receipts);
+        }
+
         Ok((outcome, session))
     }
 

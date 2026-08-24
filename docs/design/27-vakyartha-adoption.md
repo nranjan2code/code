@@ -134,6 +134,11 @@ paid fallback; breaker classification unit matrix per `FailureDomain`.
 
 ## Phase B — Frozen ladder routing
 
+Status: **landed** — `vak_llm::route` ordering, `FrozenContract.route_ladder`,
+admission via warm discovery caches only (network-free), leg walk with
+`RouteFallback` receipts and shared ceiling/endurance,
+`routing-evidence.jsonl` with 30-day TTL; invariant 7 reworded.
+
 Today `FrozenContract` pins exactly one provider/model; losing that
 provider loses the turn (invariant 7 forbids mid-contract switching).
 Resolution adopted (user-confirmed): **freeze the ordered ladder INTO the

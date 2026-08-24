@@ -82,15 +82,19 @@ from a dead provider. Shared via Core across all runs of a process:
 Config keys: `circuit_breaker_threshold`,
 `circuit_breaker_cooldown_secs` (`0` cooldown disables opening).
 
-## Future: frozen route ladder
+## Frozen route ladder (landed — Phase B)
 
-Specced in `27-vakyartha-adoption.md` Phases A–B (demand-backed by an
-attested provider-outage session loss, 2026-08-23). Ordered candidate chain
-frozen INTO the contract at admission; walking it is contract execution,
-never mid-contract switching (invariant below gains that clause when it
-lands). Attempt records become typed receipts with failure domains;
-breaker/endurance classification consumes those types instead of error
-string-matching.
+`27-vakyartha-adoption.md` Phases A–B are live: at session admission an
+ordered candidate ladder is computed (primary + warm-discovery fallbacks
+only — no invented ids, no network) by the versioned pure function
+`order_ladder_v1` over TTL-filtered evidence, then frozen INTO the
+contract header. Dispatch walks legs top-down on typed failure domains;
+the first dispatch of each next leg is receipted `route-fallback`.
+Ceiling, receipts, and endurance budget are shared across all legs, so
+walking the ladder is contract execution, never mid-contract switching
+(invariant 7 above carries the new wording). Evidence rows land in
+`routing-evidence.jsonl`; unknown settlements shrink confidence without
+punishing direction.
 
 ## Invariants
 
