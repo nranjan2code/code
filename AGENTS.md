@@ -21,8 +21,10 @@ must also follow the threat model and priority order in
 as durable services, and `docs/design/27-vakyartha-adoption.md` for the
 long-horizon program (work receipts + dispatch ceiling ✅, context packet
 accounting + deterministic gate ✅, FinOps budget admission ✅,
-loop-engineering kernel ✅, frozen-ladder routing ✅; runs→flows replay,
-run-graph projection pending).
+loop-engineering kernel ✅, frozen-ladder routing ✅, runs→flows
+adopt/diff ✅, run-graph projection ✅, checkpoint-delta auditing ✅;
+remaining (parked): scenario-harness consolidation, planner
+done-contracts, typed tool outputs).
 
 ## Non-negotiable invariants
 
