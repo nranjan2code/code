@@ -6,7 +6,7 @@ One JSONL file per session at
 `$VAKCODER_HOME/sessions/<cwd-hash>/<session-id>.jsonl`. Every line:
 
 ```json
-{"id":"…","parent_id":"…|null","ts":"…","kind":"header|message|compaction|receipt", …}
+{"id":"…","parent_id":"…|null","ts":"…","kind":"header|message|compaction|receipt|goal", …}
 ```
 
 - `header` — the **frozen execution contract**: app version, provider, model,
@@ -17,6 +17,8 @@ One JSONL file per session at
 - `receipt` — one work unit's provider dispatches (`WorkReceipt`:
   purpose, winning attempt, per-attempt reason/domain/settlement/usage).
   Audit only — `derive_messages()` skips it (doc 27 Phase A).
+- `goal` — objective/criteria lifecycle statuses (Active/Done{audited}/
+  Unverified). Audit only — skipped by projection (doc 27 Phase H).
 
 ## Invariants
 

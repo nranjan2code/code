@@ -408,12 +408,9 @@ follows the North star — long-horizon reliability first.
 | conditional | G run-graph projection & flow surfaces | A; rides with E | S slices |
 | ongoing | F process | none | S slices |
 
-A first: everything else records into receipts. C and D can proceed in
-parallel after A; H follows once receipts exist because audits and
-obligations are ledger entries — it is the differentiating phase. B is
-demand-backed resilience plumbing, necessary but not differentiating; its
-pure-function core (admission set + versioned ordering) should land
-behind tests before any UI/config surface.
+Landed (in order): A → C → D → H → B. Remaining: E next (adopts from
+receipts), G rides with E, F ongoing. Each phase heading above carries its
+landed-status note with honest deviations.
 
 ## Open questions
 

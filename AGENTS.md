@@ -126,7 +126,8 @@ run-graph projection pending).
 crates/vak-llm       unified provider API (anthropic / openai-responses /
                      openai-completions / google), SSE, delta+snapshot events,
                      live model discovery (models.rs), work receipts +
-                     dispatch ceiling (work.rs, docs/design/27 Phase A)
+                     dispatch ceiling (work.rs), frozen-ladder ordering
+                     (route.rs) -- docs/design/27 Phases A+B
 crates/vak-session   append-only JSONL trees, frozen contract, projection,
                      receipt entries (audit-only, projection-neutral),
                      compaction packet partitions (docs/design/27 Phase C),
@@ -142,15 +143,16 @@ crates/vak-mcp       MCP stdio client behind a lazy meta-tool
 crates/vak-agent     loop, steering queues, parallel tool execution w/
                      resource-claim waves, retries + watchdog + circuit
                      breaker + stop gate (premature-completion guard),
-                     spend-gate seam (docs/design/27 Phase D), goal mode +
-                     audited completion + regression obligations + handoff
-                     reset (docs/design/27 Phase H), subagents (task tool) +
-                     live SubagentRegistry
+                     spend-gate seam (docs/design/27 Phase D), frozen-ladder
+                     leg walk (docs/design/27 Phase B), goal mode + audited
+                     completion + regression obligations + handoff reset
+                     (docs/design/27 Phase H), subagents (task tool) + live
+                     SubagentRegistry
 crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode +
                      context-quality scorecard (docs/design/27 Phase C)
 crates/vak-config    layered TOML config + .env secret loading + [finops]
-                     caps/pricing (docs/design/27 Phase D)
+                     caps/pricing + [goal] policy (docs/design/27 Phases D+H)
 crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      session_search injection, memory/skill-proposal tools
                      (docs/design/26-learning.md), sandbox selection incl.
