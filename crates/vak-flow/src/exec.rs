@@ -1,3 +1,38 @@
+
+/// Run a node's done-contract: every entry executes as brokered bash and
+/// must exit 0. First failure rejects the node with the failing check.
+async fn verify_accept(
+    node: &NodeDef,
+    deps: &ExecutorDeps,
+    cancel: &CancellationToken,
+) -> Result<(), String> {
+    if node.accept.is_empty() {
+        return Ok(());
+    }
+    let tool = deps
+        .tools
+        .iter()
+        .find(|t| t.name() == "bash")
+        .ok_or_else(|| "accept requires bash tool".to_string())?;
+    for check in &node.accept {
+        let command = check.trim_start_matches("verify:").trim();
+        let ctx = ToolContext {
+            cwd: deps.cwd.clone(),
+            cancel: cancel.child_token(),
+            limits: Default::default(),
+            sandbox: deps.sandbox.clone(),
+        };
+        let args = serde_json::json!({"command": command});
+        authorize_flow_tool("bash", &args, deps).await?;
+        let out = tool.execute(&args, &ctx).await;
+        if out.is_error {
+            return Err(format!("done-contract failed: `{command}`\n{}", out.content));
+        }
+        let _ = cancel.child_token();
+    }
+    Ok(())
+}
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -141,7 +176,20 @@ impl Executor {
                     .collect();
                 join.spawn(async move {
                     let id = node.id.clone();
-                    let res = execute_node(&node, &dep_outputs, &deps, &cancel, &events).await;
+                        let mut res =
+                        execute_node(&node, &dep_outputs, &deps, &cancel, &events).await;
+                    if res.is_ok() && !node.accept.is_empty() {
+                        let _ = events
+                            .send(format!(
+                                "⍗ accept {} ({} check(s))",
+                                node.id,
+                                node.accept.len()
+                            ))
+                            .await;
+                        res = verify_accept(&node, &deps, &cancel)
+                            .await
+                            .map(|_| res.unwrap_or_default());
+                    }
                     (id, res)
                 });
             }

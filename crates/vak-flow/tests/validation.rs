@@ -161,3 +161,26 @@ command = "echo 2"
 "#;
     assert!(matches!(parse_flow(toml), Err(ParseError::Duplicate(d)) if d == "a"));
 }
+
+#[test]
+fn accept_done_contract_parses_and_survives_validation() {
+    let toml = r#"
+[flow]
+name = "accept-flow"
+
+[[nodes]]
+id = "build"
+type = "bash"
+command = "cargo build"
+accept = ["verify: test -f target", "exit 0"]
+
+[[nodes]]
+id = "report"
+type = "merge"
+deps = ["build"]
+"#;
+    let flow = vak_flow::parse_flow(toml).expect("parse");
+    let node = flow.nodes.iter().find(|n| n.id == "build").unwrap();
+    assert_eq!(node.accept.len(), 2);
+    assert_eq!(node.accept[0], "verify: test -f target");
+}

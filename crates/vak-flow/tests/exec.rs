@@ -387,3 +387,110 @@ fn uuid_like() -> String {
     static C: AtomicU32 = AtomicU32::new(0);
     format!("u{}", C.fetch_add(1, Ordering::Relaxed))
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn done_contract_failure_rejects_node() {
+    let workspace = tempfile::tempdir().unwrap();
+    let toml = r#"
+[flow]
+name = "contract"
+
+[[nodes]]
+id = "build"
+type = "bash"
+command = "echo built > built.txt"
+accept = ["verify: test -f built.txt", "verify: test -f missing-artifact.txt"]
+
+[[nodes]]
+id = "after"
+type = "merge"
+deps = ["build"]
+"#;
+    let flow = vak_flow::parse_flow(toml).unwrap();
+    let provider = Arc::new(TaggedScripted {
+        routes: Mutex::new(HashMap::new()),
+    });
+    let state_path = workspace.path().join("state.json");
+    let executor = make_executor_with_policy(
+        provider,
+        state_path.clone(),
+        Mode::FullAccess,
+        None,
+        workspace.path().to_path_buf(),
+    );
+
+    let (tx, mut rx) = mpsc::channel(256);
+    tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let mut state = FlowState {
+        run_id: "r".into(),
+        flow_name: "contract".into(),
+        definition_toml: toml.into(),
+        started_at: chrono::Utc::now(),
+        nodes: Default::default(),
+    };
+    let outcome = executor
+        .run(&flow, &mut state, CancellationToken::new(), tx)
+        .await;
+    match outcome {
+        FlowOutcome::Failed { node, reason, .. } => {
+            assert_eq!(node, "build");
+            assert!(reason.contains("done-contract failed"), "{reason}");
+            assert!(reason.contains("missing-artifact.txt"), "{reason}");
+        }
+        other => panic!("expected contract failure, got {other:?}"),
+    }
+
+    // Ledger marks the node Failed despite the command itself succeeding.
+    let st: FlowState =
+        serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
+    assert_eq!(
+        st.nodes.get("build").map(|r| r.status),
+        Some(vak_flow::NodeStatus::Failed)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn done_contract_pass_keeps_node_green() {
+    let workspace = tempfile::tempdir().unwrap();
+    let toml = r#"
+[flow]
+name = "contract-ok"
+
+[[nodes]]
+id = "make"
+type = "bash"
+command = "echo v1 > artifact.txt"
+accept = ["verify: grep -q v1 artifact.txt"]
+"#;
+    let flow = vak_flow::parse_flow(toml).unwrap();
+    let provider = Arc::new(TaggedScripted {
+        routes: Mutex::new(HashMap::new()),
+    });
+    let state_path = workspace.path().join("state.json");
+    let executor = make_executor_with_policy(
+        provider,
+        state_path.clone(),
+        Mode::FullAccess,
+        None,
+        workspace.path().to_path_buf(),
+    );
+    let (tx, mut rx) = mpsc::channel(256);
+    tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let mut state = FlowState {
+        run_id: "r".into(),
+        flow_name: "contract-ok".into(),
+        definition_toml: toml.into(),
+        started_at: chrono::Utc::now(),
+        nodes: Default::default(),
+    };
+    let outcome = executor
+        .run(&flow, &mut state, CancellationToken::new(), tx)
+        .await;
+    assert!(matches!(outcome, FlowOutcome::Completed { .. }));
+    let st: FlowState =
+        serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
+    assert_eq!(
+        st.nodes.get("make").map(|r| r.status),
+        Some(vak_flow::NodeStatus::Completed)
+    );
+}

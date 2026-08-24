@@ -206,9 +206,12 @@ Status: **landed**; raise-cap-once is wired end-to-end — approving the
 budget Ask lifts the cap for the REST of the run via
 `SpendGate::on_budget_approved` (the Ask itself IS the UI across TUI,
 server, and gateway channels), covered by `spend_gate.rs`
-budget_approval_raises_cap_for_rest_of_run. One remaining honest gap:
-unit lanes for non-token media costs are reserved, not tracked —
-unpriced models record `usd: null` (UNKNOWN), never fake zero.
+budget_approval_raises_cap_for_rest_of_run. Unit lanes: the
+`CostRow` schema keeps non-token costs expressible (`units` field
+reserved) — but with no billable non-token integration shipped (no
+image/video generation, search billed upstream), there is nothing to
+record; building lane machinery now would be dead code. Revisit on the
+first billable non-token integration.
 
 Unattended gateway surfaces currently spend with no cap. Budget admission
 is therefore security work, aligned with `24-agent-security.md`.
@@ -406,6 +409,16 @@ CLI gained the plan-shape preview before execution and a layer-aware
 progress strip (`[L2/6] ✓ step_2`) plus a final snapshot summary line.
 Deferred: SSE emission DURING server-executed flows (flows still run via
 CLI; the endpoint serves post-hoc ledgers), and typed tool outputs.
+
+## Phase F — scenario harness (landed core)
+
+`scripts/scenarios/run_all.sh` drives three end-to-end scenarios against
+the REAL binary with exactly one stubbed boundary (offline mock):
+exec tool-loop (receipts + frozen-contract assertions), audited goal
+completion (judge receipted as verify, `done{audited:true}` asserted in
+ledger), and plan→adopt→run×2→diff. The mock grew an audit-verdict route
+(echoes every criterion PASS) and a goal-claim route so offline goal
+scenarios are deterministic. Unmatched mock expectations fail loudly.
 
 ## Parking lot (post-adoption, demand-driven)
 

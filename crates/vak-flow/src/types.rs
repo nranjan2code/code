@@ -32,6 +32,11 @@ pub struct NodeDef {
     pub paths: Vec<String>,
     #[serde(default)]
     pub timeout_ms: Option<u64>,
+    /// Done-contract (docs/design/27 Phase H mechanism 5): shell checks
+    /// that must pass AFTER the node succeeds. `verify:` prefix optional;
+    /// every entry runs as a brokered bash command and must exit 0.
+    #[serde(default)]
+    pub accept: Vec<String>,
 }
 
 fn default_required() -> bool {

@@ -40,7 +40,7 @@ Phases with exit criteria. Each phase ships a usable product.
 | adoption 27 E ✅ | Runs→flows adoption + diff (docs/design/27 Phase E): `flow adopt <ledger|session> --name` (frozen-TOML reuse w/ provenance header; green-bash chained flow w/ merge tail), `flow diff <A> <B>` deterministic node comparison, `--resume` recovery audit (frozen/drifted/missing → resume/fail-closed+--accept-drift/rebuild), `SessionLog::settled_bash_commands()` substrate | adopt.rs 7 unit tests; live e2e: real plan ledger adopted (4 nodes valid), goal session adopted (6-node chain), drift fail-closed + accept-drift on frozen verified |
 | adoption 27 G ✅ | Run-graph projection (docs/design/27 Phase G): `vak_flow::graph::graph_snapshot` pure projection (layers/statuses/counts), served at `GET /flows[/{name}/runs[/{run}/graph]]`, CLI plan preview + `[L{n}/{total}] ✓` progress strip + final snapshot summary | graph.rs 3 unit tests; live: adopted-goal 6-layer strip + JSON graph over HTTP |
 | adoption 27 G ✅ | Run-graph projection + flow surfaces (docs/design/27 Phase G): graph_snapshot served at /flows endpoints, CLI plan preview + layer strip + snapshot summary | graph.rs tests; live JSON verified |
-| adoption 27 F (partial) | Doc-citation CI gate live; scenario-harness consolidation pending. Remaining anywhere: planner done-contracts, typed tool outputs | per doc 27 parking/follow-ups |
+| adoption 27 F ✅(core) | Scenario harness live (scripts/scenarios/: exec tool-loop, audited goal, plan→adopt→run→diff; mock audit-verdict + claim routes), doc-citation CI gate | run_all 3/3 green |
 
 ## Decisions locked during research (2026-08)
 

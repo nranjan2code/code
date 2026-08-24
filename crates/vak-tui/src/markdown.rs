@@ -197,6 +197,9 @@ impl LineStyler {
                 inline(rest, theme)
             );
         }
+        if body.starts_with('|') && body.trim_end().ends_with('|') {
+            return table_line(body, theme);
+        }
         if let Some(marker) = numbered_marker(body) {
             return format!(
                 "{indent}{}{marker}{RESET_FG}{}",
@@ -206,6 +209,36 @@ impl LineStyler {
         }
         inline(raw, theme)
     }
+}
+
+
+/// Pipe-table row: dim the delimiters, keep cell text readable. The
+/// `|---|:--:|` separator renders as a thin rule so tables read as
+/// tables without cross-line layout state.
+fn table_line(body: &str, theme: &Theme) -> String {
+    let trimmed = body.trim();
+    let cells: Vec<&str> = trimmed[1..trimmed.len() - 1].split('|').collect();
+    let is_separator = cells.iter().all(|c| {
+        let t = c.trim().trim_start_matches(':').trim_end_matches(':');
+        !t.is_empty() && t.chars().all(|ch| ch == '-')
+    });
+    if is_separator {
+        let rule: String = std::iter::repeat("─".repeat(4)).take(cells.len()).collect::<Vec<_>>().join("┼");
+        return span(&format!("  ┌{rule}┐"), theme.dim);
+    }
+    let mut out = String::from("  ");
+    out.push_str(&fg(theme.dim));
+    out.push('│');
+    out.push_str(&RESET_FG.to_string());
+    for c in cells {
+        out.push(' ');
+        out.push_str(&inline(c.trim(), theme));
+        out.push(' ');
+        out.push_str(&fg(theme.dim));
+        out.push('│');
+        out.push_str(&RESET_FG.to_string());
+    }
+    out
 }
 
 fn span(text: &str, color: Color) -> String {
@@ -445,4 +478,38 @@ pub fn strip_ansi(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod markdown_tests {
+    use super::*;
+    use crate::theme;
+
+    #[test]
+    fn table_rows_dim_pipes_and_render_cells() {
+        let mut ls = LineStyler::new();
+        let th = theme::resolve("dark", &Default::default());
+        let out = ls.line("| name | qty |", &th);
+        assert!(out.contains("name") && out.contains("qty"));
+        assert!(out.contains('\u{2502}'), "pipe delimiter present");
+        assert_eq!(out.matches('\u{2502}').count(), 3);
+    }
+
+    #[test]
+    fn table_separator_renders_as_rule() {
+        let mut ls = LineStyler::new();
+        let th = theme::resolve("dark", &Default::default());
+        let out = ls.line("| --- | :---: |", &th);
+        assert!(out.contains('\u{2500}'));
+        assert!(!out.contains("---"));
+    }
+
+    #[test]
+    fn non_table_pipe_line_untouched_by_table_path() {
+        let mut ls = LineStyler::new();
+        let th = theme::resolve("dark", &Default::default());
+        // No trailing pipe → not a table row.
+        let out = ls.line("a | b", &th);
+        assert!(out.contains("a | b"));
+    }
 }
