@@ -152,6 +152,7 @@ async fn telegram_bridge_routes_message_and_delivers_reply() {
     });
 
     let bridge = TelegramBridge {
+        locks_dir: None,
         api_base: tg_base,
         bot_token: "bottok".into(),
         gateway_url: format!("http://{gw_addr}"),

@@ -12,6 +12,27 @@ gateway is therefore not a new product bolted on the side (OpenClaw's mistake
 contract the desktop already speaks. Core stays hostable anywhere — a $5 VPS,
 a homelab box, a cloud worker — and every surface keeps working unchanged.
 
+## Telegram bot ownership (single-consumer model)
+
+Telegram permits exactly ONE getUpdates poller per bot token; a second
+consumer gets `409 Conflict` for as long as both run. The bridge treats
+ownership as first-class state:
+
+- **Local mutual exclusion** — an O_EXCL marker at
+  `$VAKCODER_HOME/locks/telegram-<fnv(token)>.lock` records holder
+  host+pid. A second bridge on the same machine fails fast naming the
+  holder; a stale marker (crashed process) is detected via pid liveness
+  and taken over.
+- **Hot-standby takeover** — if a rival on ANOTHER machine owns the
+  long-poll, the local bridge does not hammer 409s: it probes quietly
+  (1s→30s capped backoff, one log line per ~10 probes) and takes over
+  automatically the moment the rival disappears.
+- **Send never conflicts** — sendMessage works regardless of who polls,
+  so outbound delivery is unaffected during contention.
+
+Operational rule: run at most one bridge per bot token across your fleet;
+the lock + standby make violations safe instead of silent.
+
 ## Thesis
 
 ```

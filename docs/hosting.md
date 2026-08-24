@@ -80,3 +80,5 @@ migration.
 | model errors | `/health` shows effective provider/model; keys live in `~/.vakcoder/.env` |
 | MCP server "spawn failed" / dies at handshake | under service managers PATH is minimal: use the absolute interpreter path (`which npx`) in `[mcp.servers.*].command`; network-client tools also need `network = true` |
 | Tavily/web search denied on phone | add `allow = ["+mcp(tavily/*)"]` to trusted config — scoped to that server |
+
+Telegram bridges are single-consumer per bot token: local duplicates fail fast via `$VAKCODER_HOME/locks`, cross-machine rivals put the local bridge into hot-standby with automatic takeover (`docs/design/22-gateway.md` § Telegram bot ownership).

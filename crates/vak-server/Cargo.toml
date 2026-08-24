@@ -30,6 +30,7 @@ toml = { workspace = true }
 [dev-dependencies]
 reqwest = { workspace = true }
 tempfile = { workspace = true }
+libc = { workspace = true }
 
 [lints]
 workspace = true

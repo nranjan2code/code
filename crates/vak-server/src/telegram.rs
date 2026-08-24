@@ -8,6 +8,7 @@
 //! `TELEGRAM_BOT_TOKEN` in the environment (.env included).
 
 use serde_json::Value;
+use std::path::PathBuf;
 
 pub struct TelegramBridge {
     /// Bot API base, e.g. `https://api.telegram.org`. Overridable for
@@ -16,6 +17,134 @@ pub struct TelegramBridge {
     pub bot_token: String,
     pub gateway_url: String,
     pub gateway_token: String,
+    /// Directory for the per-token single-instance lock
+    /// (`$VAKCODER_HOME/locks`). None skips locking (tests only).
+    pub locks_dir: Option<PathBuf>,
+}
+
+/// Why a poll failed -- recovery differs by kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PollBlock {
+    /// Another consumer holds the getUpdates long-poll. Telegram allows
+    /// exactly one per token; this is OWNERSHIP, not an outage.
+    Conflict,
+    /// Upstream blip / network / 5xx: retry shortly.
+    Transient,
+}
+
+/// Classify by message content (the bridge stores formatted errors).
+pub fn classify_poll_error(err: &str) -> PollBlock {
+    if err.contains("409") || err.to_lowercase().contains("conflict") {
+        PollBlock::Conflict
+    } else {
+        PollBlock::Transient
+    }
+}
+
+/// Exponential standby backoff while a rival owns the bot: doubling,
+/// capped at 30s. Pure so the schedule is testable.
+pub fn standby_backoff_secs(attempt: u32) -> u64 {
+    let exp = 1u64 << attempt.min(5);
+    exp.min(30)
+}
+
+fn hostname_fallback() -> String {
+    std::process::Command::new("hostname")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown-host".into())
+}
+
+fn identity() -> String {
+    format!("{}[pid {}]", hostname_fallback(), std::process::id())
+}
+
+/// Cross-process single-instance guard keyed by bot-token hash: two
+/// bridges on one machine can never fight each other (flock releases
+/// automatically when the holder dies, so stale locks are impossible).
+/// Cross-process AND cross-description single-instance guard keyed by
+/// bot-token hash: O_EXCL marker plus PID liveness check. A crashed
+/// holder leaves a stale marker; the next contender detects the dead PID
+/// and takes over. No unsafe, no extra dependencies.
+#[derive(Debug)]
+pub struct InstanceLock {
+    path: PathBuf,
+    owned: bool,
+}
+
+impl Drop for InstanceLock {
+    fn drop(&mut self) {
+        if self.owned {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+impl InstanceLock {
+    pub fn acquire(locks_dir: &PathBuf, bot_token: &str) -> Result<InstanceLock, String> {
+        std::fs::create_dir_all(locks_dir)
+            .map_err(|e| format!("lock dir {}: {e}", locks_dir.display()))?;
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in bot_token.as_bytes() {
+            h ^= u64::from(*b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        let path = locks_dir.join(format!("telegram-{h:016x}.lock"));
+
+        if let Ok(lock) = Self::try_create(&path) {
+            return Ok(lock);
+        }
+
+        // Marker exists: is its holder still alive?
+        let holder = std::fs::read_to_string(&path).unwrap_or_default();
+        let pid: Option<u32> = holder
+            .split_whitespace()
+            .find_map(|t| t.parse::<u32>().ok());
+        match pid {
+            Some(p) if Self::pid_alive(p) => Err(format!(
+                "another vakcoder telegram bridge already owns this bot\n  \
+                 lock: {}\n  \
+                 holder pid: {p}\n  \
+                 stop it first (launchctl kickstart -k gui/$(id -u)/com.vakcoder.telegram,\n  \
+                 or kill the stale process); rotating TELEGRAM_BOT_TOKEN also helps",
+                path.display()
+            )),
+            _ => {
+                // Stale marker (crashed holder): take over.
+                let _ = std::fs::remove_file(&path);
+                Self::try_create(&path)
+            }
+        }
+    }
+
+    fn try_create(path: &PathBuf) -> Result<InstanceLock, String> {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|e| e.to_string())?;
+        drop(file);
+        let me = format!("{} pid {}\n", hostname_fallback(), std::process::id());
+        std::fs::write(path, &me).map_err(|e| e.to_string())?;
+        Ok(InstanceLock {
+            path: path.clone(),
+            owned: true,
+        })
+    }
+
+    /// Safe liveness probe without libc: `kill -0` via a subprocess.
+    fn pid_alive(pid: u32) -> bool {
+        std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false)
+    }
 }
 
 struct TelegramUpdate {
@@ -262,7 +391,70 @@ impl TelegramBridge {
 
     /// Run until the process is killed. Transient poll/send failures back
     /// off and retry; they never drop the update stream position.
+    /// Non-acking ownership probe: `timeout=0, offset=-1` returns at most
+    /// the LAST update and acknowledges nothing, so probing is safe before
+    /// the real loop decides where to start.
+    async fn probe_ownership(&self) -> Result<(), PollBlock> {
+        let url = format!("{}/bot{}/getUpdates", self.api_base, self.bot_token);
+        let resp = http()
+            .get(&url)
+            .query(&[("timeout", "0"), ("offset", "-1")])
+            .send()
+            .await
+            .map_err(|_| PollBlock::Transient)?;
+        match resp.status().as_u16() {
+            200 => Ok(()),
+            409 => Err(PollBlock::Conflict),
+            _ => Err(PollBlock::Transient),
+        }
+    }
+
+    /// Hot-standby: while a rival owns the bot, wait quietly and take over
+    /// the moment it disappears. Logs entry once, then every 10th attempt.
+    async fn await_ownership(&self) {
+        let id = identity();
+        eprintln!(
+            "[telegram] bot token is owned by ANOTHER getUpdates consumer;\n[telegram] {id} standing by as hot standby (auto-takeover on rival exit)"
+        );
+        let mut attempt: u32 = 0;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(standby_backoff_secs(
+                attempt,
+            )))
+            .await;
+            attempt += 1;
+            match self.probe_ownership().await {
+                Ok(()) => {
+                    eprintln!("[telegram] {id} took over polling (rival gone)");
+                    return;
+                }
+                Err(PollBlock::Conflict) => {
+                    if attempt.is_multiple_of(10) {
+                        eprintln!(
+                            "[telegram] still owned elsewhere ({attempt} probes); standing by"
+                        );
+                    }
+                }
+                Err(PollBlock::Transient) => {}
+            }
+        }
+    }
+
     pub async fn run(&self) -> Result<(), String> {
+        // Local mutual exclusion first: two bridges on one host must fail
+        // fast with the holder's identity instead of flapping 409s.
+        let _instance_lock = match &self.locks_dir {
+            Some(dir) => Some(InstanceLock::acquire(dir, &self.bot_token)?),
+            None => None,
+        };
+
+        // Ownership probe: if another machine/session holds the long-poll,
+        // become hot standby instead of hammering 409s forever.
+        match self.probe_ownership().await {
+            Err(PollBlock::Conflict) => self.await_ownership().await,
+            Err(PollBlock::Transient) | Ok(()) => {}
+        }
+
         let mut offset: i64 = 0;
         let mut failures: u32 = 0;
         loop {
@@ -273,24 +465,72 @@ impl TelegramBridge {
                 }
                 Err(e) => {
                     failures += 1;
-                    eprintln!("[telegram] poll failed ({failures} consecutive): {e}");
-                    if failures == 3 && e.contains("409") {
-                        eprintln!(
-                            "[telegram] hint: persistent 409 Conflict means ANOTHER getUpdates\n\
-                             [telegram] consumer is polling this bot token (second machine, tmux\n\
-                             [telegram] session, or stale deploy). Telegram allows exactly one;\n\
-                             [telegram] stop the other poller or rotate the token."
-                        );
+                    match classify_poll_error(&e) {
+                        PollBlock::Conflict => {
+                            // A rival appeared mid-run: hand over gracefully
+                            // and stand by for auto-takeover.
+                            eprintln!(
+                                "[telegram] lost ownership to another getUpdates consumer; entering hot standby ({})",
+                                identity()
+                            );
+                            self.await_ownership().await;
+                        }
+                        PollBlock::Transient => {
+                            eprintln!("[telegram] poll failed ({failures} consecutive): {e}");
+                            if failures >= 10 {
+                                return Err(format!(
+                                    "giving up after {failures} consecutive failures"
+                                ));
+                            }
+                            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                        }
                     }
-                    if failures >= 10 {
-                        return Err(format!("giving up after {failures} consecutive failures"));
-                    }
-                    // Back off harder on conflict: hammering only extends the
-                    // other consumer's long-poll window.
-                    let secs = if e.contains("409") { 15 } else { 3 };
-                    tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_maps_conflict_vs_transient() {
+        assert_eq!(
+            classify_poll_error("getUpdates returned 409 Conflict"),
+            PollBlock::Conflict
+        );
+        assert_eq!(
+            classify_poll_error("getUpdates returned 502 Bad Gateway"),
+            PollBlock::Transient
+        );
+        assert_eq!(
+            classify_poll_error("getUpdates: error sending request"),
+            PollBlock::Transient
+        );
+    }
+
+    #[test]
+    fn standby_backoff_doubles_and_caps_at_thirty() {
+        assert_eq!(standby_backoff_secs(0), 1);
+        assert_eq!(standby_backoff_secs(1), 2);
+        assert_eq!(standby_backoff_secs(5), 30);
+        assert_eq!(standby_backoff_secs(50), 30);
+    }
+
+    #[test]
+    fn instance_lock_is_exclusive_per_token_and_released_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = InstanceLock::acquire(&dir.path().to_path_buf(), "tok-A");
+        assert!(a.is_ok(), "first holder acquires");
+        let b = InstanceLock::acquire(&dir.path().to_path_buf(), "tok-A");
+        assert!(b.is_err(), "second holder on SAME token rejected");
+        let c = InstanceLock::acquire(&dir.path().to_path_buf(), "tok-B");
+        assert!(c.is_ok(), "different token = different lock file");
+        drop(a);
+        let d = InstanceLock::acquire(&dir.path().to_path_buf(), "tok-A");
+        assert!(d.is_ok(), "flock releases when holder drops");
     }
 }
