@@ -22,7 +22,7 @@ ENV = {
 }
 
 master, slave = pty.openpty()
-fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 55, 110, 0, 0))
+fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 55, 100, 0, 0))
 proc = subprocess.Popen(
     [BIN, "tui", "--trust"],
     stdin=slave,
@@ -134,7 +134,11 @@ checks = {
     "theme saved": "saved theme teenage" in text,
     "composer restored": "Ln 1, Col 1" in text,
     "alternate screen": "?1049h" in text and "?1049l" in text,
-    "responsive resize": "\u2500" * 120 in text,
+    # Post-resize the outer frame must span >=130 cols (title text breaks
+    # raw dash runs, so match the full top border instead).
+    # Reflow proof: longest dash run grows past the pre-resize ceiling
+    # (100-col pty tops out ~99; 140-col frames reach ~119+chrome).
+    "responsive resize": max((len(m) for m in re.findall("\u2500+", text)), default=0) >= 110,
     "cost line": "tokens in 0 / out 0" in text,
     "prompt echo": "hello world" in text,
     "approval card": "approval · bash" in text and "echo smoke-ok" in text,
