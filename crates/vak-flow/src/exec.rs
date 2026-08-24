@@ -346,6 +346,8 @@ async fn execute_node(
                     provider: deps.provider.name().into(),
                     model: deps.model.clone(),
                     route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
                     system_prompt: deps.system_prompt.clone(),
                     tools: tools.iter().map(|t| t.name().to_string()).collect(),
                     permission_mode: match mode {

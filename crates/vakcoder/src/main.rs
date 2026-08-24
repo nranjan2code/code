@@ -1186,6 +1186,12 @@ async fn run_exec(
             } => {
                 eprintln!("⟳ [{attempt}] backing off {delay_ms}ms — {reason}");
             }
+            AgentEvent::RouteFallback {
+                to_provider,
+                to_model,
+            } => {
+                eprintln!("⤵ route fallback → {to_provider}/{to_model} (frozen ladder leg)");
+            }
             AgentEvent::ContextCompacting { estimated_tokens } => {
                 eprintln!("◌ compacting context (~{estimated_tokens} tokens)");
             }
@@ -1288,6 +1294,14 @@ fn run_config_dump(cwd: PathBuf) {
                 "goal             = handoff_reset {} · max_audit_blocks {}",
                 core.config().goal.handoff_reset,
                 core.config().goal.max_audit_blocks,
+            );
+            let r = &core.config().route;
+            println!(
+                "route            = objective {} · fallback_models [{}] · max_fallbacks {} · quality_hints [{}]",
+                r.objective,
+                r.fallback_models.join(", "),
+                r.max_fallbacks,
+                r.quality_hints.join(", "),
             );
             for w in &core.config().warnings {
                 println!("warning          = {w}");

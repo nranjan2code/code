@@ -78,6 +78,8 @@ fn header_for(id: &str, cwd: &Path) -> SessionHeader {
             provider: "scripted".into(),
             model: "m".into(),
             route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
             system_prompt: String::new(),
             tools: vec![],
             permission_mode: "workspace-write".into(),

@@ -46,6 +46,8 @@ import {
   tasksOpen,
   historyOpen,
   setHistoryOpen,
+  receiptsOpen,
+  setReceiptsOpen,
   settingsOpen,
   setSettingsOpen,
   uiPreferences,
@@ -77,6 +79,7 @@ import BestOfNDialog from "./components/BestOfNDialog";
 import PrPanel from "./components/PrPanel";
 import TasksModal from "./components/TasksModal";
 import CheckpointsModal from "./components/CheckpointsModal";
+import ReceiptsModal from "./components/ReceiptsModal";
 import PreviewPane from "./components/PreviewPane";
 import SubagentsPanel from "./components/SubagentsPanel";
 import ProjectGate from "./components/ProjectGate";
@@ -600,6 +603,7 @@ export default function App() {
           else if (bestOfOpen()) setBestOfOpen(false);
           else if (tasksOpen()) setTasksOpen(false);
           else if (historyOpen()) setHistoryOpen(false);
+          else if (receiptsOpen()) setReceiptsOpen(false);
           else if (sideOpen()) setSideOpen(false);
           else stopRun();
         }
@@ -756,6 +760,9 @@ export default function App() {
           <TasksModal />
           <Show when={historyOpen()}>
             <CheckpointsModal />
+          </Show>
+          <Show when={receiptsOpen()}>
+            <ReceiptsModal />
           </Show>
           <Toast />
           <Show when={settingsOpen()}><Settings /></Show>

@@ -2464,6 +2464,16 @@ fn render_event(screen: &mut Screen, ui: &mut UiState, theme: &Theme, ev: AgentE
             screen.clear_input();
             screen.dim(&format!("⟳ retry {attempt} in {delay_ms}ms — {reason}"));
         }
+        AgentEvent::RouteFallback {
+            to_provider,
+            to_model,
+        } => {
+            ui.run_state = RunState::Streaming;
+            screen.clear_input();
+            screen.dim(&format!(
+                "⤵ route fallback → {to_provider}/{to_model} (frozen ladder leg)"
+            ));
+        }
         AgentEvent::ContextCompacting { estimated_tokens } => {
             ui.run_state = RunState::Compacting;
             screen.clear_input();
@@ -3417,7 +3427,8 @@ fn run_doctor(core: &Core, session: Option<&SessionLog>, screen: &mut Screen) {
             .unwrap_or_default(),
     ));
     if let Some(header) = session.and_then(|s| s.header()) {
-        let legs = &header.contract.route_ladder;
+        let contract = &header.contract;
+        let legs = &contract.route_ladder;
         let ladder = legs
             .iter()
             .map(|leg| format!("{}/{}", leg.provider, leg.model))
@@ -3431,6 +3442,16 @@ fn run_doctor(core: &Core, session: Option<&SessionLog>, screen: &mut Screen) {
                 ladder
             }
         ));
+        if !contract.route_objective.is_empty() {
+            screen.dim(&format!(
+                "  · route objective: {} · fallback legs: {}",
+                contract.route_objective,
+                legs.len().saturating_sub(1),
+            ));
+        }
+        for note in &contract.route_annotations {
+            screen.warn(&format!("  · route: {note}"));
+        }
     }
     if failures == 0 {
         screen.success("all checks passed");

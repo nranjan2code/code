@@ -1858,6 +1858,12 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
             "verify_gate": cfg.stop_policy.verify_gate,
             "max_blocks": cfg.stop_policy.max_blocks,
         },
+        "route": {
+            "objective": cfg.route.objective,
+            "fallback_models": cfg.route.fallback_models,
+            "max_fallbacks": cfg.route.max_fallbacks,
+            "quality_hints": cfg.route.quality_hints,
+        },
         "integrations": {
             "mcp_servers": cfg.mcp.servers.keys().collect::<Vec<_>>(),
             "hooks": cfg.hooks.len(),

@@ -572,6 +572,18 @@ export default function Settings() {
                 <Row title="Cooldown" description="Time before a half-close probe is allowed."><span class="metric">{config()?.circuit_breaker_cooldown_secs}s</span></Row>
                 <Row title="Completion guard" description="Blocks premature completion and asks the agent to verify work."><span class="settings-status good">{config()?.stop_policy.enabled ? "Enabled" : "Disabled"}</span></Row>
               </Group>
+              <Group title="Route ladder">
+                <Row title="Objective" description={`How fallback legs are ordered: ${config()?.route.objective === "auto" ? "derived from request demand (utility / balanced / quality-critical)." : `fixed to ${config()?.route.objective}.`}`}><span class="metric">{config()?.route.objective}</span></Row>
+                <Row
+                  title="Cross-model fallbacks"
+                  description={config()?.route.fallback_models.length
+                    ? `Allowed models, admitted only when discovery reaches them: ${config()!.route.fallback_models.join(", ")}.`
+                    : "Same model on other providers only. Add route.fallback_models in project config to allow named alternates."}
+                >
+                  <span class="metric">{config()?.route.fallback_models.length ?? 0}</span>
+                </Row>
+                <Row title="Ladder length cap" description="Maximum frozen legs per session, including your primary choice — the primary never loses its head position."><span class="metric">{config()?.route.max_fallbacks}</span></Row>
+              </Group>
               <button class="settings-button" onClick={() => void openProjectConfig()}>Tune in project config</button>
             </Show>
 

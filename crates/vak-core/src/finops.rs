@@ -18,6 +18,10 @@ use vak_llm::Usage;
 pub struct CostRow {
     pub ts: chrono::DateTime<chrono::Utc>,
     pub model: String,
+    /// Serving provider of the frozen-ladder leg (Phase R per-provider
+    /// FinOps rollups). Empty on legacy rows.
+    #[serde(default)]
+    pub provider: String,
     pub input_tokens: u64,
     pub output_tokens: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -154,11 +158,12 @@ impl SpendGate for CoreSpendGate {
         Ok(())
     }
 
-    fn record_settled(&self, model: &str, session_id: &str, usage: &Usage) {
+    fn record_settled(&self, provider: &str, model: &str, session_id: &str, usage: &Usage) {
         let usd = self.estimate(model, usage);
         let row = CostRow {
             ts: chrono::Utc::now(),
             model: model.to_string(),
+            provider: provider.to_string(),
             input_tokens: usage.input_tokens,
             output_tokens: usage.output_tokens,
             cache_read_input_tokens: usage.cache_read_input_tokens,
@@ -212,6 +217,7 @@ mod tests {
     fn check(model: &'static str) -> SpendCheck<'static> {
         SpendCheck {
             model,
+            provider: "anthropic",
             session_id: "s1",
             est_input_tokens: 1_000_000,
             planned_output_tokens: 100_000,
@@ -222,7 +228,12 @@ mod tests {
     async fn unpriced_model_admits_and_records_unknown_usd() {
         let (gate, dir) = gate_with(&[("run", 0.01)]);
         gate.authorize(&check("mystery-model")).await.unwrap();
-        gate.record_settled("mystery-model", "s1", &usage(1_000_000, 100_000));
+        gate.record_settled(
+            "anthropic",
+            "mystery-model",
+            "s1",
+            &usage(1_000_000, 100_000),
+        );
         let ledger = FinOpsLedger::new(dir.path());
         assert_eq!(ledger.day_total_usd(chrono::Utc::now()), 0.0);
         let text = std::fs::read_to_string(dir.path().join("cost-log.jsonl")).unwrap();
@@ -234,7 +245,12 @@ mod tests {
         // sonnet: $3/MTok in → est = 3*1 + 15*0.1 = $4.50 per dispatch.
         let (gate, _dir) = gate_with(&[("run", 5.0)]);
         gate.authorize(&check("claude-sonnet")).await.unwrap(); // 4.5 <= 5
-        gate.record_settled("claude-sonnet", "s1", &usage(1_000_000, 100_000));
+        gate.record_settled(
+            "anthropic",
+            "claude-sonnet",
+            "s1",
+            &usage(1_000_000, 100_000),
+        );
         let err = gate.authorize(&check("claude-sonnet")).await.unwrap_err();
         assert!(err.contains("run budget $5.00"), "{err}");
         gate.raise_once();
@@ -249,6 +265,7 @@ mod tests {
             .append(&CostRow {
                 ts: chrono::Utc::now(),
                 model: "claude-sonnet".into(),
+                provider: String::new(),
                 input_tokens: 1_000_000,
                 output_tokens: 100_000,
                 cache_read_input_tokens: None,
@@ -271,6 +288,7 @@ mod tests {
             .append(&CostRow {
                 ts: yesterday,
                 model: "m".into(),
+                provider: String::new(),
                 input_tokens: 1,
                 output_tokens: 1,
                 cache_read_input_tokens: None,

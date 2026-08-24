@@ -94,6 +94,8 @@ async fn subagent_roundtrip_with_shared_scripted_provider() {
             provider: "scripted".into(),
             model: "test-model".into(),
             route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
             system_prompt: "sys".into(),
             tools: vec!["task".into()],
             permission_mode: "workspace-write".into(),

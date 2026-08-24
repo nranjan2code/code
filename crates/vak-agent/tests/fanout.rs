@@ -154,6 +154,8 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
             provider: "scripted".into(),
             model: "test-model".into(),
             route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
             system_prompt: "sys".into(),
             tools: vec!["task".into()],
             permission_mode: "full-access".into(),

@@ -104,7 +104,7 @@ impl SpendGate for ModelDenyGate {
         }
     }
 
-    fn record_settled(&self, _model: &str, _session_id: &str, _usage: &Usage) {}
+    fn record_settled(&self, _provider: &str, _model: &str, _session_id: &str, _usage: &Usage) {}
 }
 
 fn setup(provider: Arc<MatrixProvider>, cfg_tweaks: impl FnOnce(&mut AgentConfig)) -> Agent {
@@ -132,6 +132,8 @@ fn setup(provider: Arc<MatrixProvider>, cfg_tweaks: impl FnOnce(&mut AgentConfig
                     model: "fallback-model".into(),
                 },
             ],
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
             system_prompt: "sys".into(),
             tools: vec![],
             permission_mode: "workspace-write".into(),

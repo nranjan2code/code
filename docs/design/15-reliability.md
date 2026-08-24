@@ -82,19 +82,38 @@ from a dead provider. Shared via Core across all runs of a process:
 Config keys: `circuit_breaker_threshold`,
 `circuit_breaker_cooldown_secs` (`0` cooldown disables opening).
 
-## Frozen route ladder (landed — Phase B)
+## Frozen route ladder (landed — Phase B, router-grade ordering in Phase R)
 
 `27-vakyartha-adoption.md` Phases A–B are live: at session admission an
 ordered candidate ladder is computed (primary + warm-discovery fallbacks
-only — no invented ids, no network) by the versioned pure function
-`order_ladder_v1` over TTL-filtered evidence, then frozen INTO the
-contract header. Dispatch walks legs top-down on typed failure domains;
-the first dispatch of each next leg is receipted `route-fallback`.
-Ceiling, receipts, and endurance budget are shared across all legs, so
-walking the ladder is contract execution, never mid-contract switching
-(invariant 7 above carries the new wording). Evidence rows land in
-`routing-evidence.jsonl`; unknown settlements shrink confidence without
-punishing direction.
+only — no invented ids, no network) and frozen INTO the contract header.
+Dispatch walks legs top-down on typed failure domains; the first dispatch
+of each next leg is receipted `route-fallback` and surfaced as a
+`RouteFallback` event. Ceiling, receipts, and endurance budget are shared
+across all legs, so walking the ladder is contract execution, never
+mid-contract switching (invariant 7 above carries the new wording).
+
+Phase R (vakrouter adoption) upgrades the ordering machinery:
+
+- **Attribution is real**: every attempt records the `(provider, model)`
+  leg that actually served or failed; evidence rows land keyed correctly
+  in `routing-evidence.jsonl` with true p50 latency.
+- **Demand-scored objectives** (`order_ladder_v2`): request difficulty
+  picks utility/balanced/quality-critical ordering; `[route].objective`
+  overrides; `[route].quality_hints` replaces hardcoded model-name bands
+  (invariant 9). v1 stays only for replaying old contracts.
+- **Cross-model fallbacks are opt-in**: `[route].fallback_models` allowlist
+  ∩ warm discovery; the user's primary never loses the head position.
+- **Diversity caps + annotations**: ⌈max_total/3⌉ seats per provider;
+  thin-chain/dominant-domain/unreachable warnings frozen into the header,
+  visible in TUI introspection.
+- **Beliefs**: domain-weighted doubt demotes flaky legs below trusted
+  peers until one success clears them; governance failures are not
+  evidence.
+
+Evidence rows land in `routing-evidence.jsonl`; unknown settlements shrink
+confidence without punishing direction. FinOps attribution follows the
+serving leg per dispatch (`CostRow.provider`).
 
 ## Invariants
 

@@ -21,7 +21,9 @@ must also follow the threat model and priority order in
 as durable services, and `docs/design/27-vakyartha-adoption.md` for the
 long-horizon program (work receipts + dispatch ceiling ✅, context packet
 accounting + deterministic gate ✅, FinOps budget admission ✅,
-loop-engineering kernel ✅, frozen-ladder routing ✅, runs→flows
+loop-engineering kernel ✅, frozen-ladder routing ✅, router-grade
+ordering over that ladder (demand objectives, cross-model fallbacks,
+beliefs) ✅ via the vakrouter study Phase R, runs→flows
 adopt/diff ✅, run-graph projection ✅, checkpoint-delta auditing ✅;
 remaining (parked): scenario-harness consolidation, planner
 done-contracts, typed tool outputs).
@@ -128,8 +130,10 @@ done-contracts, typed tool outputs).
 crates/vak-llm       unified provider API (anthropic / openai-responses /
                      openai-completions / google), SSE, delta+snapshot events,
                      live model discovery (models.rs), work receipts +
-                     dispatch ceiling (work.rs), frozen-ladder ordering
-                     (route.rs) -- docs/design/27 Phases A+B
+                     dispatch ceiling (work.rs), frozen-ladder ordering:
+                     demand-scored objectives, belief demotion,
+                     cross-model fallbacks (route.rs) -- docs/design/27
+                     Phases A+B+R
 crates/vak-session   append-only JSONL trees, frozen contract, projection,
                      receipt entries (audit-only, projection-neutral),
                      compaction packet partitions (docs/design/27 Phase C),
@@ -155,7 +159,8 @@ crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode +
                      context-quality scorecard (docs/design/27 Phase C)
 crates/vak-config    layered TOML config + .env secret loading + [finops]
-                     caps/pricing + [goal] policy (docs/design/27 Phases D+H)
+                     caps/pricing + [goal] policy + [route] ladder
+                     preferences (docs/design/27 Phases D+H+R)
 crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      session_search injection, memory/skill-proposal tools
                      (docs/design/26-learning.md), sandbox selection incl.

@@ -53,6 +53,12 @@ export type AgentEvent =
   | { TurnEnd: { usage: Usage } }
   | { StopHookContinuation: { reason: string } }
   | { RetryScheduled: { attempt: number; delay_ms: number; reason: string } }
+  | {
+      RouteFallback: {
+        to_provider: string;
+        to_model: string;
+      };
+    }
   | { ContextCompacting: { estimated_tokens: number } }
   | {
       ContextCompacted: { before_tokens: number; after_tokens: number; summarized_messages: number };
@@ -140,6 +146,12 @@ export interface ConfigSnapshot {
   theme: string;
   bell: boolean;
   stop_policy: { enabled: boolean; marker_gate: boolean; verify_gate: boolean; max_blocks: number };
+  route: {
+    objective: string;
+    fallback_models: string[];
+    max_fallbacks: number;
+    quality_hints: string[];
+  };
   integrations: { mcp_servers: string[]; hooks: number; skills: string[] };
   paths: { project_config: string; global_config?: string | null; sessions_home: string; cwd: string };
   warnings: string[];
@@ -199,4 +211,38 @@ export interface OpsStatus {
   gateway: OpsServiceState;
   telegram: OpsServiceState;
   gateway_healthy: boolean;
+}
+
+// Dispatch forensics (docs/design/27 Phases A+B+R). Mirrors the serde
+// serialization of vak_llm::work — the JSONL ledger is truth.
+export type WorkPurpose = "execute" | "summarize" | "verify";
+export type AttemptReason = "initial" | "retry" | "route_fallback" | "endurance_retry";
+export type FailureDomain =
+  | "account"
+  | "provider"
+  | "model"
+  | "request"
+  | "network"
+  | "deadline"
+  | "unknown";
+export type Settlement = "ok" | "failed" | "cancelled" | "unknown";
+
+export interface DispatchAttempt {
+  ordinal: number;
+  reason: AttemptReason;
+  domain: FailureDomain;
+  settlement: Settlement;
+  latency_ms: number;
+  usage?: Usage | null;
+  error?: string | null;
+  provider?: string | null;
+  model?: string | null;
+}
+
+export interface WorkReceipt {
+  purpose: WorkPurpose;
+  provider: string;
+  model: string;
+  winning_attempt?: number | null;
+  attempts: DispatchAttempt[];
 }

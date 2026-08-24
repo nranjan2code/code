@@ -58,6 +58,7 @@ that overstated certainty. Corrected standing, per phase:
 | F process | hygiene; low risk; compounding | n/a | ongoing |
 | G projection (conditional) | cosmetic until the data layer exists | getting lost during a real flow run; remote flow-control demand | parked behind A/E |
 | H loop engineering | evidence-strongest tier: 2026 public frontier convergence + attested context loss | a frontier harness ships audited completion/goal mode and ours lags; or dogfood proves a mechanism dead weight → strip it | adopted 2026-08-24 |
+| R router-grade ordering (vakrouter study) | hygiene + demand: evidence ledger was provably inert (empty-provider rows); cross-model outage pain attested via B's trigger | a fallback leg rescue degrades a session silently (would surface as annotations + events); beliefs demote a leg users needed → tune weights | landed 2026-08-24 |
 
 All four demand triggers were attested on 2026-08-23, which promotes B, C,
 D, E from speculative to demand-backed. Standing rule going forward —
@@ -419,6 +420,66 @@ completion (judge receipted as verify, `done{audited:true}` asserted in
 ledger), and plan→adopt→run×2→diff. The mock grew an audit-verdict route
 (echoes every criterion PASS) and a goal-claim route so offline goal
 scenarios are deterministic. Unmatched mock expectations fail loudly.
+
+## Phase R — router-grade ordering (vakrouter adoption, landed)
+
+Source: a study of the sibling project **vakrouter** (`~/Projects/vakrouter`,
+Go AI gateway — demand scoring, belief doubt, diverse fallback chains,
+per-key access). Adopted the routing *mechanisms* that fit a coding-agent
+harness; rejected gateway-domain weight (firewall/redaction, virtual keys/
+BYOK, reserve/settle budgeting — our spend-gate already covers every
+dispatch, and approvals ride the existing `Ask` channel).
+
+1. **Evidence hygiene fixes (P0)**: receipts now carry per-attempt leg
+   attribution (`DispatchAttempt.provider/model` overrides +
+   `WorkReceipt::stamp_leg`), so fallback legs record against the leg that
+   actually served or failed — previously every row was written with an
+   empty provider and NEVER matched a real ladder key, making ranking dead
+   outside tests. Latency is now a true p50 over samples, not first-seen.
+2. **Demand scoring → objective** (`order_ladder_v2`): weighted saturation
+   anchors (context .30 / output .25 / reasoning .15 / tools .12 /
+   structured .10 / evidence .08) produce low/moderate/high bands that
+   resolve utility/balanced/quality-critical. This REPLACES v1's hardcoded
+   frontier-band table (an invariant 9 violation); hints are now
+   caller-declared `[route].quality_hints`. v1 is retained only for
+   byte-stable replay of old frozen contracts. Config override:
+   `[route].objective = auto|utility|balanced|quality-critical`.
+3. **Cross-model fallback legs** (opt-in): `[route].fallback_models` is an
+   explicit allowlist; allowed ids become candidate legs ONLY when warm
+   discovery shows a configured key reaches them (no network, no invented
+   ids at admission). The operator-selected primary never loses its head
+   position — v2 orders FALLBACKS, never substitutes the user's choice.
+4. **Diversity constraints + annotations**: seats per provider capped at
+   ⌈max_total/3⌉ (`[route].max_fallbacks`, default 4 total legs);
+   freeze-time warnings (`thin chain`, `dominant failure domain`,
+   configured-but-unreachable cross-model) land in
+   `FrozenContract.route_annotations` and surface in TUI introspection.
+5. **Domain-weighted beliefs**: session-scoped doubt per leg
+   (Provider .6 / Model .3 / Account .05; governance/transport domains say
+   nothing), multiplier Π(1−0.25·w) floored at 0.1, ONE success clears all
+   doubt — reality outranks priors. Doubted legs rank below fully-trusted
+   peers regardless of price advantage; retries are a cost too.
+6. **Per-provider FinOps attribution**: `CostRow.provider` +
+   `SpendGate::record_settled(provider, …)` attribute settled spend to the
+   serving frozen-ladder leg; caps still gate EVERY dispatch (unchanged).
+7. **UX**: new `RouteFallback` agent event renders as
+   `⤵ route fallback → provider/model` in TUI and exec output;
+   `/doctor`-style status shows the frozen objective, fallback count, and
+   annotations.
+
+Deliberately NOT adopted from vakrouter: firewall/PII redaction
+(different perimeter; our permission engine + brokered tools own that),
+virtual keys/BYOK/multi-region (we are not a multi-tenant gateway),
+reserve/settle ledger projection (spend-gate already serializes on caps),
+cascade judge + hallucination gate (parked for eval/flow extensions),
+feedback training-loop import (future `26-learning.md` extension).
+
+**Tests**: stamp_leg preserves prior-leg attribution; legacy receipts
+without provider deserialize; p50 median vs first-seen; beliefs demote on
+doubt, ignore governance domains, clear on success, floor but never zero;
+assemble pins primary head, caps provider seats, annotates dominant/thin/
+unreachable; e2e walk asserts per-attempt attribution + RouteFallback
+events (`route_ladder.rs::fallback_legs_carry_provider_attribution_and_events`).
 
 ## Parking lot (post-adoption, demand-driven)
 

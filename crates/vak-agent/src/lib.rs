@@ -67,6 +67,13 @@ pub enum AgentEvent {
         delay_ms: u64,
         reason: String,
     },
+    /// First dispatch of the NEXT frozen-ladder leg after a typed failure
+    /// of the previous one (Phase B). Walking the frozen ladder is contract
+    /// execution; this event surfaces each leg change to every consumer.
+    RouteFallback {
+        to_provider: String,
+        to_model: String,
+    },
     ContextCompacting {
         estimated_tokens: u64,
     },
@@ -502,6 +509,7 @@ impl Agent {
                     let req = context::compaction_request(&model, &transcript);
                     let mut ledger = StepLedger::new(
                         WorkPurpose::Summarize,
+                        self.provider.name(),
                         &model,
                         self.config.dispatch_ceiling,
                     );
@@ -520,7 +528,7 @@ impl Agent {
                                 sid
                             };
                             if let Some(gate) = &self.config.spend_gate {
-                                gate.record_settled(&m.model, &sid, &m.usage);
+                                gate.record_settled(self.provider.name(), &m.model, &sid, &m.usage);
                             }
                             m
                         }
@@ -629,8 +637,12 @@ impl Agent {
             // into the work receipt, which lands in the ledger on every
             // exit path. User aborts and partial-output aborts are never
             // retried; they propagate for caller handling.
-            let mut ledger =
-                StepLedger::new(WorkPurpose::Execute, &model, self.config.dispatch_ceiling);
+            let mut ledger = StepLedger::new(
+                WorkPurpose::Execute,
+                self.provider.name(),
+                &model,
+                self.config.dispatch_ceiling,
+            );
             let base_request = {
                 let session = self.session.lock().await;
                 ChatRequest {
@@ -738,17 +750,22 @@ impl Agent {
             };
 
             let usage = response.usage.clone();
+            let mut settled_provider_slot: Option<String> = None;
             let settled_session_id = {
                 let mut session = self.session.lock().await;
                 let sid = session
                     .header()
                     .map(|h| h.session_id.clone())
                     .unwrap_or_default();
-                let _ = session.append_receipt(ledger.take_receipt());
+                let receipt = ledger.take_receipt();
+                let settled_provider = receipt.provider.clone();
+                let _ = session.append_receipt(receipt);
+                settled_provider_slot.replace(settled_provider);
                 sid
             };
             if let Some(gate) = &self.config.spend_gate {
-                gate.record_settled(&response.model, &settled_session_id, &usage);
+                let provider = settled_provider_slot.as_deref().unwrap_or_default();
+                gate.record_settled(provider, &response.model, &settled_session_id, &usage);
             }
             self.append_assistant(&response).await;
             let _ = events.send(AgentEvent::TurnEnd { usage }).await;
@@ -1110,6 +1127,7 @@ impl Agent {
         );
         let mut ledger = StepLedger::new(
             WorkPurpose::Verify,
+            self.provider.name(),
             &model,
             self.config.dispatch_ceiling.min(4),
         );
@@ -1154,6 +1172,7 @@ impl Agent {
         let req = goal::handoff_request(&model, format!("{objective_line}{digest}"));
         let mut ledger = StepLedger::new(
             WorkPurpose::Summarize,
+            self.provider.name(),
             &model,
             self.config.dispatch_ceiling.min(3),
         );
@@ -1261,7 +1280,15 @@ impl Agent {
 
         'legs: for (li, (provider_arc, model)) in legs.iter().enumerate() {
             leg_req.model = model.clone();
-            ledger.receipt.model = model.clone();
+            ledger.receipt.stamp_leg(provider_arc.name(), model);
+            if li > 0 && forward {
+                let _ = events
+                    .send(AgentEvent::RouteFallback {
+                        to_provider: (*provider_arc).name().to_string(),
+                        to_model: model.clone(),
+                    })
+                    .await;
+            }
             let mut attempt: u32 = 0;
             loop {
                 if cancel.is_cancelled() {
@@ -1286,6 +1313,7 @@ impl Agent {
                     );
                     let check = SpendCheck {
                         model,
+                        provider: provider_arc.name(),
                         session_id: &session_id,
                         est_input_tokens: est_input,
                         planned_output_tokens: self.config.context_policy.max_output,

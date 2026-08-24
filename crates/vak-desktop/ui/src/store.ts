@@ -139,6 +139,8 @@ export const [sideOpen, setSideOpen] = createSignal(false);
 export const [tasksOpen, setTasksOpen] = createSignal(false);
 // Time-travel (checkpoints) modal.
 export const [historyOpen, setHistoryOpen] = createSignal(false);
+// Dispatch-forensics (receipts) modal.
+export const [receiptsOpen, setReceiptsOpen] = createSignal(false);
 // Diff pane binding: which session's changes are shown (best-of-N override).
 export const [diffTarget, setDiffTarget] = createSignal<string | null>(null);
 
@@ -448,6 +450,16 @@ export function applyEvent(
       b,
       id,
       `retrying (attempt ${ev.RetryScheduled.attempt}) in ${Math.round(ev.RetryScheduled.delay_ms / 100) / 10}s — ${ev.RetryScheduled.reason}`,
+    );
+  } else if ("RouteFallback" in ev) {
+    // The leg changed: whatever backoff the previous leg scheduled no
+    // longer describes this moment. Clear the header banner and show the
+    // frozen-contract step instead.
+    noteRetry(id, null);
+    note(
+      b,
+      id,
+      `route fallback → ${ev.RouteFallback.to_provider}/${ev.RouteFallback.to_model} (frozen ladder leg)`,
     );
   } else if ("ContextCompacting" in ev) {
     note(b, id, "compacting context…");

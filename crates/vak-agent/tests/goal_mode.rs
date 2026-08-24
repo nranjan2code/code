@@ -114,6 +114,8 @@ fn setup_with_delta(
             provider: "scripted-goal".into(),
             model: "test-model".into(),
             route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
             system_prompt: "sys".into(),
             tools: tools.iter().map(|t| t.name().to_string()).collect(),
             permission_mode: "full-access".into(),

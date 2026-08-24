@@ -276,6 +276,8 @@ impl TaskTool {
                 provider: self.deps.provider.name().into(),
                 model: self.deps.model.clone(),
                 route_ladder: Vec::new(),
+                route_objective: String::new(),
+                route_annotations: Vec::new(),
                 system_prompt: self.deps.system_prompt.clone(),
                 tools: child_tools.iter().map(|t| t.name().to_string()).collect(),
                 permission_mode: match child_mode {

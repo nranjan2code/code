@@ -134,6 +134,10 @@ struct CoreInner {
     mcp_inventory: std::sync::Mutex<Option<String>>,
     /// Runtime MCP table override (desktop/TUI management surface).
     mcp_override: std::sync::Mutex<Option<vak_config::McpConfig>>,
+    /// Session-scoped domain-weighted doubt per (provider, model) leg
+    /// (Phase R). Fed from work receipts at run end; read at ladder
+    /// admission.
+    beliefs: Arc<routing::BeliefState>,
 }
 
 /// Learned permission rules live outside the main config so they can be
@@ -206,12 +210,19 @@ impl Core {
                 models_cache: std::sync::Mutex::new(HashMap::new()),
                 mcp_inventory: std::sync::Mutex::new(None),
                 mcp_override: std::sync::Mutex::new(None),
+                beliefs: Arc::new(routing::BeliefState::new()),
             }),
         })
     }
 
     pub fn config(&self) -> &vak_config::Config {
         &self.inner.config
+    }
+
+    /// Session-scoped routing beliefs (Phase R): domain-weighted doubt
+    /// that demotes flaky legs until one success clears them.
+    pub fn beliefs(&self) -> &Arc<routing::BeliefState> {
+        &self.inner.beliefs
     }
 
     pub fn set_model(&self, model: String) {
@@ -776,6 +787,108 @@ impl Core {
         }
     }
 
+    /// Frozen-ladder admission (docs/design/27 Phase B + Phase R).
+    ///
+    /// Pure with respect to its inputs: warm discovery caches, the
+    /// evidence ledger, session beliefs, config, and tool count. No
+    /// network, no invented model ids. The operator-selected primary is
+    /// pinned to the head; v2 ordering decides only the FALLBACK order.
+    fn plan_route_ladder(&self) -> routing::RoutePlan {
+        let primary = vak_llm::RouteLeg {
+            provider: self.effective_provider(),
+            model: self.effective_model(),
+        };
+        let mut candidates = vec![primary.clone()];
+
+        // Same-model legs on other keyed providers (legacy Phase B set).
+        if let Ok(cache) = self.inner.models_cache.lock() {
+            for (p, (_, models)) in cache.iter() {
+                if *p != primary.provider
+                    && models.contains(&primary.model)
+                    && self.provider_auth_for(p).is_ok()
+                    && !candidates.iter().any(|c| c.provider == *p)
+                {
+                    candidates.push(vak_llm::RouteLeg {
+                        provider: p.clone(),
+                        model: primary.model.clone(),
+                    });
+                }
+            }
+        }
+
+        // Phase R cross-model legs: ONLY exact ids from the explicit
+        // `[route].fallback_models` allowlist, admitted when warm
+        // discovery shows a configured key reaches them.
+        let route_cfg = &self.inner.config.route;
+        if !route_cfg.fallback_models.is_empty()
+            && let Ok(cache) = self.inner.models_cache.lock()
+        {
+            for (p, (_, models)) in cache.iter() {
+                if self.provider_auth_for(p).is_err() {
+                    continue;
+                }
+                for m in models {
+                    if route_cfg.fallback_models.contains(m)
+                        && m != &primary.model
+                        && !candidates.iter().any(|c| c.provider == *p && c.model == *m)
+                    {
+                        candidates.push(vak_llm::RouteLeg {
+                            provider: p.clone(),
+                            model: m.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        candidates.sort();
+        candidates.dedup();
+
+        // Demand scoring from facts available at admission. Unknown
+        // context reads as moderate -- never zero, never fabricated.
+        let demand = vak_llm::score_demand(vak_llm::DemandInput {
+            estimated_input_tokens: 0,
+            output_budget_tokens: u64::from(self.inner.config.max_tokens),
+            tool_count: self.tool_names().len(),
+            structured_output: false,
+            reasoning_required: false,
+            evidence_required: false,
+        });
+        let objective = vak_llm::QualityObjective::resolve(
+            (route_cfg.objective != "auto").then_some(route_cfg.objective.as_str()),
+            demand.band,
+        );
+
+        let belief_map = vak_llm::BeliefMap {
+            multipliers: self.inner.beliefs.snapshot().multipliers,
+        };
+        let finops_cfg = self.inner.config.finops.clone();
+        let home = self.sessions_home();
+        let hints = route_cfg.quality_hints.clone();
+        let ranked = vak_llm::order_ladder_v2(
+            candidates,
+            &routing::EvidenceLedger::new(&home).snapshot(),
+            &belief_map,
+            objective,
+            &hints,
+            move |m: &str| {
+                vak_config::finops::resolve_usd_per_mtok(m, &finops_cfg.price_overrides)
+                    .map(|(_, out)| out)
+            },
+        );
+
+        let (ladder, annotations) = routing::assemble_ladder(
+            &primary,
+            ranked,
+            route_cfg.max_fallbacks,
+            !route_cfg.fallback_models.is_empty(),
+        );
+        routing::RoutePlan {
+            ladder,
+            objective: objective.as_str().to_string(),
+            annotations,
+        }
+    }
+
     pub async fn start_session(&self) -> Result<SessionLog, CoreError> {
         let session_id = uuid_like();
         let path = vak_session::SessionPath::new_session_file(
@@ -783,6 +896,7 @@ impl Core {
             &self.inner.cwd,
             &session_id,
         );
+        let plan = self.plan_route_ladder();
         let header = SessionHeader {
             session_id,
             created_at: chrono::Utc::now(),
@@ -792,48 +906,17 @@ impl Core {
                 app_version: APP_VERSION.into(),
                 provider: self.effective_provider(),
                 model: self.effective_model(),
-                // Frozen-ladder admission (docs/design/27 Phase B):
-                // primary leg always; additional legs ONLY from warm
-                // discovery caches where this exact model is reachable
-                // with a configured key -- no invented ids, no network
-                // at admission. Ordered by the versioned pure function
-                // over TTL-filtered evidence, then frozen.
-                route_ladder: {
-                    let primary = vak_llm::RouteLeg {
-                        provider: self.effective_provider(),
-                        model: self.effective_model(),
-                    };
-                    let mut candidates = vec![primary.clone()];
-                    let warm: Vec<String> = if let Ok(cache) = self.inner.models_cache.lock() {
-                        cache
-                            .iter()
-                            .filter(|(p, (_, models))| {
-                                *p != &primary.provider && models.contains(&primary.model)
-                            })
-                            .map(|(p, _)| p.clone())
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
-                    for prov in warm {
-                        if self.provider_auth_for(&prov).is_ok() {
-                            candidates.push(vak_llm::RouteLeg {
-                                provider: prov,
-                                model: primary.model.clone(),
-                            });
-                        }
-                    }
-                    let finops_cfg = self.inner.config.finops.clone();
-                    let home = self.sessions_home();
-                    routing::order(
-                        candidates,
-                        &routing::EvidenceLedger::new(&home).snapshot(),
-                        move |m: &str| {
-                            vak_config::finops::resolve_usd_per_mtok(m, &finops_cfg.price_overrides)
-                                .map(|(_, out)| out)
-                        },
-                    )
-                },
+                // Frozen-ladder admission (docs/design/27 Phase B +
+                // Phase R): primary leg always first; additional legs
+                // ONLY from warm discovery caches -- the same model on
+                // other keyed providers, plus explicit `[route]`
+                // fallback_models when warm discovery reaches them.
+                // No invented ids, no network at admission. Ordered by
+                // demand-scored v2 over TTL-filtered evidence and
+                // session beliefs, diversity-capped, then frozen.
+                route_ladder: plan.ladder,
+                route_objective: plan.objective,
+                route_annotations: plan.annotations,
                 system_prompt: self.system_prompt(),
                 tools: self.tool_names(),
                 permission_mode: format!("{:?}", self.inner.config.permission_mode)
@@ -1226,6 +1309,30 @@ impl Core {
             .collect();
         if !new_receipts.is_empty() {
             routing::EvidenceLedger::new(&self.sessions_home()).record_receipts(&new_receipts);
+            // Phase R: fold the same dispatches into session beliefs.
+            // Domain-weighted doubt accumulates per leg; one success
+            // clears it. Cancelled attempts say nothing.
+            for r in &new_receipts {
+                for a in &r.attempts {
+                    let (provider, model) = r.attempt_leg(a);
+                    if provider.is_empty() || model.is_empty() {
+                        continue;
+                    }
+                    match a.settlement {
+                        vak_llm::Settlement::Ok => {
+                            self.inner
+                                .beliefs
+                                .record_outcome(provider, model, a.domain, true);
+                        }
+                        vak_llm::Settlement::Failed => {
+                            self.inner
+                                .beliefs
+                                .record_outcome(provider, model, a.domain, false);
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
 
         Ok((outcome, session))
@@ -1277,7 +1384,8 @@ impl Core {
         let req = vak_agent::context::compaction_request(&model, &transcript);
 
         let started = std::time::Instant::now();
-        let mut receipt = vak_llm::WorkReceipt::new(vak_llm::WorkPurpose::Summarize, &model);
+        let mut receipt =
+            vak_llm::WorkReceipt::new(vak_llm::WorkPurpose::Summarize, provider.name(), &model);
         let summary = match provider.stream(req, cancel).await {
             Ok(stream) => match stream.result().await {
                 Ok(msg) => {

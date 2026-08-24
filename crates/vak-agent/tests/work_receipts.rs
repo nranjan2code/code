@@ -138,6 +138,8 @@ fn setup_with(
             provider: provider.name().to_string(),
             model: "test-model".into(),
             route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
             system_prompt: "sys".into(),
             tools: vec![],
             permission_mode: "workspace-write".into(),

@@ -348,7 +348,24 @@ Reliability, integration, context, and path pages expose the effective runtime
 configuration without
 pretending read-only values are editable. Persistent project settings open the
 workspace-confined `.vakcoder/config.toml`, creating a minimal starter only when
-the file does not already exist.
+the file does not already exist. The Reliability page also carries a Route
+ladder group (Phase R): the frozen objective, the cross-model fallback
+allowlist, and the ladder length cap.
+
+## Dispatch forensics panel (Phase R)
+
+Header toolbar gains a receipt button next to Time travel: a per-session
+drill-down over `GET /sessions/{id}/receipts` styled after vakrouter's trace
+view. Every paid model step lists its purpose (model step / compaction /
+completion audit), serving leg (`provider/model`), attempt count, delivery
+state, and latency; expanding a step reveals the frozen-ladder attempt walk —
+one row per dispatch with settlement chip (ok / failed / cancelled / unknown),
+reason (initial / retry / route fallback / endurance retry), failure domain,
+latency, token usage, error preview, and per-attempt leg attribution when a
+fallback walk restamped it. A summary line counts steps, dispatches, and
+ladder walks. Read-only by design: the ledger is the truth; this surface only
+projects it. Live leg changes during runs additionally render inline via the
+`RouteFallback` event in the transcript.
 
 ## End-to-end hardening + remaining platform capabilities (Aug 2026)
 

@@ -644,6 +644,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: #4
 .task-last { margin-top: 2px; color: var(--faint); font-size: 10px; }
 .task-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .danger-chip:hover { color: var(--red); border-color: rgba(216,111,114,.4); }
+.good-chip { color: var(--green); border-color: rgba(134,178,116,.4) !important; }
 .task-add-form { display: flex; flex-direction: column; gap: 7px; margin-top: 7px; padding-top: 12px; border-top: 1px solid var(--border); }
 .task-add-form textarea { min-height: 56px; resize: vertical; }
 .task-add-row { display: flex; align-items: center; gap: 9px; padding-top: 9px; }
@@ -678,6 +679,27 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: #4
 .checkpoint-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); font-size: 12px; font-weight: 540; }
 .checkpoint-meta { margin-top: 2px; color: var(--faint); font-size: 10.5px; }
 .checkpoint-confirm { display: inline-flex; align-items: center; gap: 4px; }
+
+/* Dispatch forensics (docs/design/27 Phases A+B+R) */
+.receipts-modal { width: min(680px, 94vw); }
+.receipt-summary { margin: 0 0 6px; color: var(--faint); font-size: 11px; }
+.receipt-row { border-bottom: 1px solid var(--border-soft); }
+.receipt-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 7px; background: none; border: 0; cursor: pointer; text-align: left; color: inherit; }
+.receipt-head:hover { background: rgba(255,255,255,.03); }
+.receipt-ord { flex: none; min-width: 34px; color: var(--accent-bright); font-family: var(--mono); font-size: 11px; }
+.receipt-main { flex: 1; min-width: 0; display: block; }
+.receipt-label { display: inline-flex; align-items: center; gap: 8px; color: var(--text-soft); font-size: 12px; font-weight: 540; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.receipt-won { margin-left: 2px; padding: 1px 7px; font-size: 9.5px; }
+.receipt-chev { transition: transform .12s ease; color: var(--faint); }
+.receipt-chev.flip { transform: rotate(90deg); }
+.receipt-attempts { padding: 2px 7px 10px 51px; display: grid; gap: 6px; }
+.attempt-row { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border: 1px solid var(--border-soft); border-radius: 7px; background: rgba(255,255,255,.02); }
+.attempt-settle { flex: none; padding: 1px 7px; font-size: 9.5px; text-transform: uppercase; letter-spacing: .04em; }
+.attempt-body { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.attempt-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--text-soft); }
+.attempt-domain { color: var(--faint); font-family: var(--mono); font-size: 10px; }
+.attempt-meta { color: var(--faint); font-size: 10.5px; }
+.attempt-error { color: var(--red); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .dock-head-actions { display: flex; align-items: center; gap: 5px; }
 

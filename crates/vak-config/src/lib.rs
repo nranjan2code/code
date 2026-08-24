@@ -80,6 +80,8 @@ pub struct FileConfig {
     pub finops: FinopsSettings,
     #[serde(default)]
     pub goal: GoalSettings,
+    #[serde(default)]
+    pub route: RouteSettings,
 }
 
 /// Cross-session recall (docs/design/23-memory.md). Read-only and
@@ -206,6 +208,28 @@ pub struct FinopsSettings {
     pub price_overrides: std::collections::BTreeMap<String, PriceEntry>,
 }
 
+/// Frozen-ladder routing preferences (docs/design/27 Phase B + Phase R).
+/// NOT privileged: choosing how to order discovered candidates grants no
+/// execution power.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct RouteSettings {
+    /// "auto" (default) derives utility/balanced/quality-critical from
+    /// request demand; explicit "utility" | "balanced" |
+    /// "quality-critical" overrides the derivation.
+    pub objective: Option<String>,
+    /// Explicit cross-model fallback allowlist. Model ids here become
+    /// candidate legs WHEN warm discovery shows a configured key can
+    /// reach them; empty keeps the legacy same-model-only ladder.
+    pub fallback_models: Vec<String>,
+    /// Total ladder length cap INCLUDING the primary leg (default 4).
+    pub max_fallbacks: Option<usize>,
+    /// Caller-declared frontier-tier model-id substrings promoted under
+    /// balanced/quality-critical objectives. Routing knowledge stays
+    /// operator-supplied, never baked into source (invariant 9).
+    pub quality_hints: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct PriceEntry {
     pub input: f64,
@@ -269,6 +293,7 @@ pub struct Config {
     pub sandbox: SandboxResolved,
     pub finops: FinopsResolved,
     pub goal: GoalResolved,
+    pub route: RouteResolved,
     pub warnings: Vec<String>,
 }
 
@@ -287,6 +312,19 @@ pub struct FinopsResolved {
     pub max_run_usd: Option<f64>,
     pub max_day_usd: Option<f64>,
     pub price_overrides: std::collections::BTreeMap<String, PriceEntry>,
+}
+
+/// Resolved routing policy (Phase R).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RouteResolved {
+    /// "auto" | "utility" | "balanced" | "quality-critical".
+    pub objective: String,
+    /// Cross-model fallback allowlist (exact model ids).
+    pub fallback_models: Vec<String>,
+    /// Total ladder length cap including the primary leg.
+    pub max_fallbacks: usize,
+    /// Frontier-tier model-id substrings (lowercased for matching).
+    pub quality_hints: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -397,6 +435,12 @@ impl Default for Config {
             goal: GoalResolved {
                 handoff_reset: true,
                 max_audit_blocks: 2,
+            },
+            route: RouteResolved {
+                objective: "auto".into(),
+                fallback_models: Vec::new(),
+                max_fallbacks: 4,
+                quality_hints: Vec::new(),
             },
             gateway: GatewayResolved {
                 enabled: false,
@@ -640,6 +684,28 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         handoff_reset: merged.goal.handoff_reset.unwrap_or(true),
         max_audit_blocks: merged.goal.max_audit_blocks.unwrap_or(2),
     };
+
+    cfg.route.objective = match merged.route.objective.as_deref() {
+        None | Some("auto") => "auto".into(),
+        Some("utility") => "utility".into(),
+        Some("balanced") => "balanced".into(),
+        Some("quality-critical") | Some("quality_critical") => "quality-critical".into(),
+        Some(other) => {
+            cfg.warnings.push(format!(
+                "unknown route.objective '{other}'; using 'auto' \
+                 (valid: auto | utility | balanced | quality-critical)"
+            ));
+            "auto".into()
+        }
+    };
+    cfg.route.fallback_models = merged.route.fallback_models.clone();
+    cfg.route.max_fallbacks = merged.route.max_fallbacks.unwrap_or(4).clamp(1, 16);
+    cfg.route.quality_hints = merged
+        .route
+        .quality_hints
+        .iter()
+        .map(|h| h.to_ascii_lowercase())
+        .collect();
 
     cfg.gateway.enabled = merged.gateway.enabled.unwrap_or(false);
     cfg.gateway.approvals = match merged.gateway.approvals.as_deref() {
@@ -1162,6 +1228,22 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.goal.max_audit_blocks.is_some() {
         base.goal.max_audit_blocks = over.goal.max_audit_blocks;
+    }
+    if over.route.objective.is_some() {
+        base.route.objective = over.route.objective;
+    }
+    for m in over.route.fallback_models {
+        if !base.route.fallback_models.contains(&m) {
+            base.route.fallback_models.push(m);
+        }
+    }
+    if over.route.max_fallbacks.is_some() {
+        base.route.max_fallbacks = over.route.max_fallbacks;
+    }
+    for h in over.route.quality_hints {
+        if !base.route.quality_hints.contains(&h) {
+            base.route.quality_hints.push(h);
+        }
     }
     for (name, hook) in over.gateway.outbound.webhooks {
         base.gateway.outbound.webhooks.insert(name, hook);

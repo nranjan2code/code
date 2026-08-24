@@ -20,7 +20,10 @@ pub mod work;
 
 pub use error::LlmError;
 pub use registry::{ProviderAuth, ProviderRegistry};
-pub use route::{EvidenceSnapshot, ModelEvidence, RouteLeg};
+pub use route::{
+    BELIEF_FLOOR, BeliefMap, Demand, DemandBand, DemandInput, EvidenceSnapshot, ModelEvidence,
+    QualityObjective, RouteLeg, order_ladder_v1, order_ladder_v2, score_demand,
+};
 pub use stream::{EventSink, EventStream, StreamEvent};
 pub use types::{
     AssistantMessage, ChatRequest, ContentBlock, Message, Role, StopReason, ToolDefinition, Usage,

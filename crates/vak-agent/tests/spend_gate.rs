@@ -68,7 +68,7 @@ impl SpendGate for FlakyGate {
         }
     }
 
-    fn record_settled(&self, _model: &str, _session_id: &str, _usage: &Usage) {}
+    fn record_settled(&self, _provider: &str, _model: &str, _session_id: &str, _usage: &Usage) {}
 }
 
 struct AutoApproveBudget;
@@ -96,6 +96,8 @@ fn setup(
             provider: "ok".into(),
             model: "test-model".into(),
             route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
             system_prompt: "sys".into(),
             tools: vec![],
             permission_mode: "workspace-write".into(),
@@ -180,7 +182,7 @@ impl SpendGate for CapGate {
         self.raised.store(true, Ordering::SeqCst);
     }
 
-    fn record_settled(&self, _model: &str, _session_id: &str, _usage: &Usage) {}
+    fn record_settled(&self, _provider: &str, _model: &str, _session_id: &str, _usage: &Usage) {}
 }
 
 struct ApproveOnce {
@@ -214,6 +216,8 @@ async fn budget_approval_raises_cap_for_rest_of_run() {
             provider: "ok".into(),
             model: "test-model".into(),
             route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
             system_prompt: "sys".into(),
             tools: vec![],
             permission_mode: "workspace-write".into(),

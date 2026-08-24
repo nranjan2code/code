@@ -19,6 +19,7 @@ export type IconName =
   | "palette"
   | "plug"
   | "preview"
+  | "receipt"
   | "restore"
   | "search"
   | "shield"
@@ -60,6 +61,7 @@ const paths: Record<IconName, () => JSX.Element> = {
   terminal: () => <><path d="m5 7 5 5-5 5M12 17h7" /></>,
   trash: () => <><path d="M4 7h16M10 11v5M14 11v5M6 7l1 13h10l1-13M9 7V4h6v3" /></>,
   timer: () => <><circle cx="12" cy="13" r="8" /><path d="M12 9v4l3 2M9 2h6" /></>,
+  receipt: () => <><path d="M6 3h12v18l-2.5-1.5L13 21l-2.5-1.5L8 21l-2-1.5Z" /><path d="M9 8h6M9 12h6M9 16h3" /></>,
   tune: () => <><path d="M4 7h10M18 7h2M4 17h2M10 17h10" /><circle cx="16" cy="7" r="2" /><circle cx="8" cy="17" r="2" /></>,
 };
 

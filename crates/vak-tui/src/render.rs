@@ -123,6 +123,10 @@ impl Screen {
         self.styled(s, self.theme.success);
     }
 
+    pub fn warn(&mut self, s: &str) {
+        self.styled(s, self.theme.warning);
+    }
+
     pub fn error(&mut self, s: &str) {
         self.styled(s, self.theme.error);
     }

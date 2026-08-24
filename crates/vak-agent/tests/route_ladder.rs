@@ -101,6 +101,8 @@ fn setup(ladder: Vec<(Arc<dyn Provider>, String)>) -> (Agent, tempfile::TempDir)
             provider: "primary-net-dead".into(),
             model: "primary-model".into(),
             route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
             system_prompt: "sys".into(),
             tools: vec![],
             permission_mode: "workspace-write".into(),
@@ -205,5 +207,61 @@ async fn all_legs_exhausted_fails_closed_within_ceiling() {
             .iter()
             .all(|a| a.settlement == vak_llm::Settlement::Unknown),
         "transport ambiguity stays UNKNOWN"
+    );
+}
+
+/// Phase R: per-attempt leg attribution survives a cross-model walk, and
+/// consumers see one RouteFallback event per leg change.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn fallback_legs_carry_provider_attribution_and_events() {
+    let fb = fallback_provider();
+    let (mut agent, _dir) = setup(vec![(
+        fb as Arc<dyn Provider>,
+        "fallback-model".to_string(),
+    )]);
+
+    let (ev_tx, mut ev_rx) = mpsc::channel(512);
+    let events = tokio::spawn(async move {
+        let mut fallbacks = Vec::new();
+        while let Some(ev) = ev_rx.recv().await {
+            if let vak_agent::AgentEvent::RouteFallback {
+                to_provider,
+                to_model,
+            } = ev
+            {
+                fallbacks.push((to_provider, to_model));
+            }
+        }
+        fallbacks
+    });
+
+    let cancel = CancellationToken::new();
+    let steering = SteeringQueues::new();
+    let outcome = agent.run("hello", &steering, cancel, ev_tx).await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+
+    let session = agent.into_session().await;
+    let r = &session.receipts()[0];
+    // Receipt-level stamp names the WINNING leg.
+    assert_eq!(
+        (r.provider.as_str(), r.model.as_str()),
+        ("fallback-ok", "fallback-model")
+    );
+    // Attempt 0 keeps its own (failed) leg attribution.
+    assert_eq!(
+        r.attempt_leg(&r.attempts[0]),
+        ("primary-net-dead", "primary-model")
+    );
+    // Attempt 1 attributes to the serving fallback leg.
+    assert_eq!(
+        r.attempt_leg(&r.attempts[1]),
+        ("fallback-ok", "fallback-model")
+    );
+
+    let fallbacks = events.await.unwrap();
+    assert_eq!(
+        fallbacks,
+        vec![("fallback-ok".into(), "fallback-model".into())],
+        "exactly one RouteFallback event for the single leg change"
     );
 }

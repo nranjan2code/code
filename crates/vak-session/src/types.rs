@@ -16,6 +16,15 @@ pub struct FrozenContract {
     /// mid-contract switch. Empty/missing ⇒ single-model legacy.
     #[serde(default)]
     pub route_ladder: Vec<vak_llm::RouteLeg>,
+    /// Objective the ladder was ordered for (Phase R): "utility" |
+    /// "balanced" | "quality-critical". Empty on legacy headers.
+    #[serde(default)]
+    pub route_objective: String,
+    /// Freeze-time routing warnings (thin chain, dominant failure
+    /// domain, unreachable cross-model fallbacks). Audit-only context,
+    /// never model-visible input. Empty on legacy headers.
+    #[serde(default)]
+    pub route_annotations: Vec<String>,
     pub system_prompt: String,
     pub tools: Vec<String>,
     pub permission_mode: String,

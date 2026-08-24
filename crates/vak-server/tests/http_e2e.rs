@@ -100,8 +100,8 @@ async fn http_lifecycle_run_events_transcript() {
     // health
     let health = client.get(format!("{base}/health")).send().await.unwrap();
     assert_eq!(health.status(), 200);
-    let body: serde_json::Value = health.json().await.unwrap();
-    assert_eq!(body["status"], "ok");
+    let body_health: serde_json::Value = health.json().await.unwrap();
+    assert_eq!(body_health["status"], "ok");
 
     // create session
     let res = client
@@ -197,6 +197,31 @@ async fn http_lifecycle_run_events_transcript() {
         joined.contains("RunFinished") || joined.contains("__done__"),
         "terminal event missing: {joined}"
     );
+
+    // Phase R forensics: receipts must be served over HTTP with leg
+    // attribution (the desktop drill-down panel reads exactly this).
+    let receipts: serde_json::Value = client
+        .get(format!("{base}/sessions/{session_id}/receipts"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let list = receipts.as_array().expect("receipts array");
+    assert!(!list.is_empty(), "a settled run must leave receipts");
+    let r = &list[list.len() - 1];
+    assert_eq!(r["purpose"], "execute");
+    assert_eq!(r["provider"], "scripted");
+    // The receipt stamps the CONTRACT leg (what was dispatched), which is
+    // the core's effective model -- not the mock's self-reported id.
+    let expected_model = body_health["model"].as_str().unwrap().to_string();
+    assert_eq!(r["model"], expected_model);
+    assert_eq!(r["winning_attempt"], 0);
+    let attempts = r["attempts"].as_array().unwrap();
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0]["settlement"], "ok");
+    assert_eq!(attempts[0]["reason"], "initial");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -356,6 +381,44 @@ async fn mode_change_revokes_run_waiting_for_approval() {
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn config_endpoint_exposes_route_policy() {
+    // Phase R: the desktop Settings panel reads routing policy from
+    // /config; the section must exist with resolved defaults.
+    struct Empty;
+    #[async_trait::async_trait]
+    impl Provider for Empty {
+        fn name(&self) -> &str {
+            "empty"
+        }
+        async fn stream(
+            &self,
+            _r: ChatRequest,
+            _c: CancellationToken,
+        ) -> Result<EventStream, LlmError> {
+            Err(LlmError::Network("unused".into()))
+        }
+    }
+    let (base, _server) =
+        spawn_server(Arc::new(Empty), vak_config::PermissionMode::FullAccess).await;
+    let client = reqwest::Client::new();
+    let cfg: serde_json::Value = client
+        .get(format!("{base}/config"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let route = cfg
+        .get("route")
+        .expect("/config must carry the route section");
+    assert_eq!(route["objective"], "auto");
+    assert_eq!(route["max_fallbacks"], 4);
+    assert!(route["fallback_models"].is_array());
+    assert!(route["quality_hints"].is_array());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

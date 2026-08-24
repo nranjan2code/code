@@ -7,6 +7,7 @@ import type {
   Message,
   SessionSummary,
   ConfigSnapshot,
+  WorkReceipt,
 } from "./types";
 
 let base = "";
@@ -178,8 +179,9 @@ export function stopSubagent(
   return req(`/sessions/${id}/subagents/${encodeURIComponent(child)}/stop`, { method: "POST" });
 }
 
-/// Dispatch forensics (docs/design/27 Phase A): per-dispatch receipts.
-export function receipts(id: string): Promise<unknown[]> {
+/// Dispatch forensics (docs/design/27 Phases A+B+R): per-dispatch receipts
+/// with the full frozen-ladder attempt ledger.
+export function receipts(id: string): Promise<WorkReceipt[]> {
   return req(`/sessions/${id}/receipts`);
 }
 

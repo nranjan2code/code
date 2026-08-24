@@ -8,6 +8,7 @@ import {
   setBestOfOpen,
   setDockTab,
   setHistoryOpen,
+  setReceiptsOpen,
   setSettingsOpen,
   setSideOpen,
   setSidebarOpen,
@@ -99,6 +100,16 @@ export default function WorkspaceHeader() {
           onClick={() => setHistoryOpen(true)}
         >
           <Icon name="history" />
+        </button>
+        <button
+          class="icon-button has-tooltip"
+          data-tooltip="Dispatch forensics"
+          title="Per-dispatch receipts and frozen-ladder attempt walks"
+          aria-label="Dispatch forensics"
+          disabled={!activeId()}
+          onClick={() => setReceiptsOpen(true)}
+        >
+          <Icon name="receipt" />
         </button>
         <span class="action-separator" />
         {tools.map((tool) => (

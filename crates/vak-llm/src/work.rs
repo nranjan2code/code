@@ -74,11 +74,22 @@ pub struct DispatchAttempt {
     pub usage: Option<Usage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Per-attempt leg attribution override. A receipt walks multiple
+    /// frozen-ladder legs, so the receipt-level provider/model names only
+    /// the FINAL leg; fallback legs must be attributed to what actually
+    /// failed over FROM. None ⇒ attribute to the receipt-level fields
+    /// (single-leg receipts and legacy entries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkReceipt {
     pub purpose: WorkPurpose,
+    #[serde(default)]
+    pub provider: String,
     pub model: String,
     /// Ordinal of the attempt that produced committed output; None when no
     /// attempt succeeded.
@@ -88,13 +99,42 @@ pub struct WorkReceipt {
 }
 
 impl WorkReceipt {
-    pub fn new(purpose: WorkPurpose, model: impl Into<String>) -> Self {
+    pub fn new(
+        purpose: WorkPurpose,
+        provider: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
         WorkReceipt {
             purpose,
+            provider: provider.into(),
             model: model.into(),
             winning_attempt: None,
             attempts: Vec::new(),
         }
+    }
+
+    /// Restamp the receipt for a frozen-ladder leg about to dispatch. The
+    /// previous leg's attempts keep their stamped attribution via the
+    /// per-attempt overrides recorded alongside them.
+    pub fn stamp_leg(&mut self, provider: &str, model: &str) {
+        for a in &mut self.attempts {
+            if a.provider.is_none() {
+                let prev = std::mem::take(&mut self.provider);
+                a.provider = Some(prev);
+                let prev_model = std::mem::take(&mut self.model);
+                a.model = Some(prev_model);
+            }
+        }
+        self.provider = provider.to_string();
+        self.model = model.to_string();
+    }
+
+    /// Effective (provider, model) attribution for one attempt.
+    pub fn attempt_leg<'a>(&'a self, a: &'a DispatchAttempt) -> (&'a str, &'a str) {
+        (
+            a.provider.as_deref().unwrap_or(self.provider.as_str()),
+            a.model.as_deref().unwrap_or(self.model.as_str()),
+        )
     }
 
     pub fn record(
@@ -118,6 +158,8 @@ impl WorkReceipt {
             latency_ms,
             usage,
             error,
+            provider: None,
+            model: None,
         });
     }
 
@@ -203,10 +245,10 @@ pub struct StepLedger {
 }
 
 impl StepLedger {
-    pub fn new(purpose: WorkPurpose, model: &str, ceiling: u32) -> Self {
+    pub fn new(purpose: WorkPurpose, provider: &str, model: &str, ceiling: u32) -> Self {
         StepLedger {
             budget: DispatchBudget::new(ceiling),
-            receipt: WorkReceipt::new(purpose, model),
+            receipt: WorkReceipt::new(purpose, provider, model),
         }
     }
 
@@ -214,8 +256,12 @@ impl StepLedger {
     /// place (used when a ledger outlives its first work unit's write).
     pub fn take_receipt(&mut self) -> WorkReceipt {
         let purpose = self.receipt.purpose;
+        let provider = self.receipt.provider.clone();
         let model = self.receipt.model.clone();
-        std::mem::replace(&mut self.receipt, WorkReceipt::new(purpose, model))
+        std::mem::replace(
+            &mut self.receipt,
+            WorkReceipt::new(purpose, provider, model),
+        )
     }
 
     /// Time one dispatch and record its outcome from start to end.
@@ -315,7 +361,7 @@ mod tests {
 
     #[test]
     fn receipt_tracks_winning_ordinal_and_cancellation() {
-        let mut r = WorkReceipt::new(WorkPurpose::Execute, "m");
+        let mut r = WorkReceipt::new(WorkPurpose::Execute, "p", "m");
         r.record(
             AttemptReason::Initial,
             FailureDomain::Account,
@@ -349,7 +395,7 @@ mod tests {
 
     #[test]
     fn receipt_json_round_trip_preserves_everything() {
-        let mut r = WorkReceipt::new(WorkPurpose::Summarize, "claude-x");
+        let mut r = WorkReceipt::new(WorkPurpose::Summarize, "anthropic", "claude-x");
         r.record(
             AttemptReason::Initial,
             FailureDomain::Network,
@@ -373,6 +419,7 @@ mod tests {
         let json = serde_json::to_string(&r).unwrap();
         let back: WorkReceipt = serde_json::from_str(&json).unwrap();
         assert_eq!(back.purpose, WorkPurpose::Summarize);
+        assert_eq!(back.provider, "anthropic");
         assert_eq!(back.model, "claude-x");
         assert_eq!(back.winning_attempt, Some(1));
         assert_eq!(back.attempts.len(), 2);
@@ -382,5 +429,51 @@ mod tests {
             back.attempts[1].usage.as_ref().map(|u| u.output_tokens),
             Some(7)
         );
+    }
+
+    #[test]
+    fn stamp_leg_preserves_prior_leg_attribution() {
+        let mut r = WorkReceipt::new(WorkPurpose::Execute, "anthropic", "claude-x");
+        r.record(
+            AttemptReason::Initial,
+            FailureDomain::Provider,
+            Settlement::Failed,
+            10,
+            None,
+            Some("overload".into()),
+        );
+        r.stamp_leg("openai", "gpt-x");
+        r.record(
+            AttemptReason::RouteFallback,
+            FailureDomain::Network,
+            Settlement::Ok,
+            20,
+            None,
+            None,
+        );
+        assert_eq!(r.provider, "openai");
+        assert_eq!(r.model, "gpt-x");
+        let (p0, m0) = r.attempt_leg(&r.attempts[0]);
+        assert_eq!((p0, m0), ("anthropic", "claude-x"));
+        let (p1, m1) = r.attempt_leg(&r.attempts[1]);
+        assert_eq!((p1, m1), ("openai", "gpt-x"));
+    }
+
+    #[test]
+    fn legacy_receipt_without_provider_deserializes() {
+        let legacy = serde_json::json!({
+            "purpose": "execute",
+            "model": "m",
+            "attempts": [{
+                "ordinal": 0,
+                "reason": "initial",
+                "domain": "network",
+                "settlement": "unknown",
+                "latency_ms": 5
+            }]
+        });
+        let back: WorkReceipt = serde_json::from_value(legacy).unwrap();
+        assert_eq!(back.provider, "");
+        assert_eq!(back.attempt_leg(&back.attempts[0]), ("", "m"));
     }
 }
