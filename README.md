@@ -1,79 +1,337 @@
+<div align="center">
+
 # vakcoder
 
-A Rust coding-agent harness. Thesis: **Codex-grade safety, pi-grade
-transparency, Claude Code-grade extensibility, opencode-grade simplicity.**
+### A coding agent you can inspect, constrain, and extend.
 
-v0.2.0 — the full roadmap (docs/design/00-roadmap.md) is implemented, plus
-five hardening/UX phases since (CHANGELOG.md).
+**A local-first Rust harness for running serious coding agents without giving up the receipts.**
+
+[![Version](https://img.shields.io/badge/version-0.3.0-E66A2C?style=flat-square)](CHANGELOG.md)
+[![Rust](https://img.shields.io/badge/Rust-2024-2B2B2B?style=flat-square&logo=rust)](Cargo.toml)
+[![License](https://img.shields.io/badge/license-MIT-536B58?style=flat-square)](Cargo.toml)
+[![Safety](https://img.shields.io/badge/safety-fail--closed-384A6B?style=flat-square)](docs/design/24-agent-security.md)
+
+[Quick start](#quick-start) · [Why vakcoder](#why-vakcoder) · [Features](#what-you-get) · [Architecture](#one-core-many-surfaces) · [Documentation](#documentation)
+
+</div>
+
+![An editorial illustration of vakcoder moving a coding task through an auditable ledger, permission gate, sandboxed execution, and verified patch](docs/assets/vakcoder-hero.webp)
+
+vakcoder is an open-source coding-agent runtime for people who want powerful automation **and** a system they can reason about. It combines a full-screen terminal experience, a native desktop app, a headless CLI, flows, an HTTP/SSE server, and chat gateways on top of one auditable core.
+
+Its thesis is simple: **Codex-grade safety, pi-grade transparency, Claude Code-grade extensibility, and opencode-grade simplicity.**
+
+The result is not another thin model wrapper. Sessions are append-only ledgers, permissions are evaluated before every effect, restricted tools run across a broker boundary, partial work survives cancellation, and every provider dispatch produces a receipt.
+
+> **Project status:** v0.3.0. The core roadmap is implemented and live-tested. The project is actively developed; see the [roadmap](docs/design/00-roadmap.md) and [changelog](CHANGELOG.md).
+
+## Why vakcoder
+
+Most coding agents make you choose between capability and legibility. vakcoder is built around the idea that the agent can be ambitious while the runtime remains explicit.
+
+| Principle | What it means in practice |
+|---|---|
+| **Model-visible means logged** | Anything sent to a model can be reconstructed from the session JSONL. |
+| **Permission before dispatch** | Agent turns, tools, subagents, flows, plans, evals, server runs, and desktop runs all pass through the same policy engine. |
+| **Append-only by default** | Branching and compaction create entries; they do not rewrite history. |
+| **Failure is part of the contract** | Typed errors, bounded retries, watchdogs, circuit breakers, frozen route ladders, and preserved partial output. |
+| **Extensions stay extensions** | Skills, hooks, MCP servers, custom commands, and flows add capability without bloating the kernel. |
+| **Your models, your machine** | Use Anthropic, OpenAI, OpenRouter, OpenCode Zen, Gemini, or Ollama; model catalogues are discovered from the provider. |
 
 ## Quick start
 
-```sh
-# keys: put them in .env (gitignored) or export directly
-export ANTHROPIC_API_KEY=sk-ant-…        # or OPENAI_API_KEY / OPENCODE_API_KEY / GEMINI_API_KEY / Ollama
-cargo run --bin vakcoder -- tui                                 # interactive TUI
-cargo run --bin vakcoder -- exec "fix the failing test"         # headless
-cargo run --bin vakcoder -- config dump                         # effective boot config
-cargo run --bin vakcoder -- eval                                # deterministic regression suite
-cargo run --bin vakcoder -- eval --live --provider opencode-zen --model x-preview-f-free
+### 1. Build from source
 
-# desktop app (first run builds the webview UI)
-cd crates/vak-desktop/ui && npm install && npm run build && cd -
+You need a [stable Rust toolchain](https://www.rust-lang.org/tools/install) and Git.
+
+```bash
+git clone https://github.com/vakcoder/vakcoder.git
+cd vakcoder
+cargo build --release -p vakcoder
+cargo install --path crates/vakcoder
+```
+
+`cargo install` places the `vakcoder` binary in Cargo's bin directory. You can also run every command from the repository with `cargo run --bin vakcoder -- <command>`.
+
+### 2. Add a provider key
+
+Put credentials in a gitignored project `.env`, in `~/.vakcoder/.env`, or in your environment. Real environment variables take precedence.
+
+```bash
+# Choose one—or use Ollama locally without a hosted-provider key.
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+OPENROUTER_API_KEY=sk-or-...
+OPENCODE_API_KEY=...
+GEMINI_API_KEY=...
+```
+
+Secrets are never forwarded as ambient Bash or MCP subprocess state. Project `.env` files and privileged project configuration are loaded only after the workspace is trusted.
+
+### 3. Start coding
+
+```bash
+vakcoder                         # opens the TUI
+vakcoder exec "fix the failing test"
+vakcoder plan "add rate limiting to the API"
+vakcoder config dump             # inspect the effective configuration
+```
+
+The default provider is Anthropic. Select another provider and one of the models discovered for your key in the TUI, through configuration, environment variables, or command flags:
+
+```bash
+vakcoder exec "explain this workspace" \
+  --provider openai-responses \
+  --model YOUR_DISCOVERED_MODEL
+```
+
+## What you get
+
+### A real agent loop
+
+- Streaming model output with both deltas and snapshots
+- Parallel tool calls scheduled in conflict-free resource waves
+- Steering while a run is active, cancellable work, and preserved partial output
+- Goal mode with acceptance criteria, brokered verification, and regression obligations
+- Static flow DAGs plus a bounded, fail-closed dynamic planner
+
+### Safety that is architectural
+
+- Three permission modes: `read-only`, `workspace-write`, and explicit `full-access`
+- Composable `allow`, `ask`, and `deny` rules with deny taking precedence
+- Canonical workspace confinement and symlink-escape protection in restricted modes
+- Disposable built-in tool workers and separately sandboxed MCP workers
+- Seatbelt on macOS, Landlock on Linux, and an opt-in no-network Docker Bash backend
+- Permission changes cancel in-flight work and reject stale approvals
+
+### Sessions with receipts
+
+- Append-only JSONL trees with branch lineage and compact-as-entry history
+- A frozen execution contract recorded at admission
+- Provider dispatch receipts with purpose, model, failure domain, settlement, and usage
+- State-based workspace checkpoints and restore
+- Cross-session search, durable memory, and human-reviewed skill proposals
+
+### An interface for every context
+
+- Retained-render TUI with Markdown, diffs, approvals, themes, Vim/Emacs editing, accessibility modes, and live subagent control
+- Tauri 2 desktop app with isolated worktrees, streaming chat, diff review, editor, PTY terminal, previews, side chats, and best-of-N comparison
+- Headless `exec` and `plan` commands for scripts and CI
+- HTTP + SSE server for custom clients
+- Always-on gateway with Telegram and outbound webhooks, including fail-closed approval forwarding
+
+### Multi-provider without a static catalogue
+
+| Provider flag | API family |
+|---|---|
+| `anthropic` | Anthropic Messages |
+| `openai-responses` | OpenAI Responses |
+| `openai` | OpenAI-compatible Chat Completions |
+| `openrouter` | OpenRouter |
+| `opencode-zen` | OpenCode Zen |
+| `google` | Gemini |
+| `ollama` | Local OpenAI-compatible Ollama endpoint |
+
+vakcoder asks the provider for the models available to your key and caches the result briefly. It does not bake yesterday's model list into the binary.
+
+## Choose your surface
+
+### Terminal UI
+
+```bash
+vakcoder
+# or explicitly
+vakcoder tui
+```
+
+Use `/help` inside the TUI to discover commands, `/doctor` to inspect the runtime, `/resume` and `/rewind` for session recovery, and `/keymap` to view or rebind controls.
+
+### Headless and goal mode
+
+```bash
+vakcoder exec "refactor the parser" --worktree
+
+vakcoder exec "ship the parser fix" \
+  --goal "the parser handles empty input without regressions" \
+  --criteria "verify:cargo test -p vak-parser,errors remain typed"
+```
+
+Goal mode does not accept the agent's declaration of success on faith: deterministic criteria run through the tool broker, qualitative criteria go through a skeptical judge, and failures are returned to the loop as evidence.
+
+### Desktop app
+
+The desktop client requires Node.js/npm in addition to Rust.
+
+```bash
+cd crates/vak-desktop/ui
+npm ci
+npm run build
+cd ../../..
 cargo run -p vak-desktop
 ```
 
-For a clean macOS release build, bundle, and user-level install:
+On macOS, the project installer can create and install a release bundle:
 
 ```bash
+cargo install tauri-cli --version '^2'
 ./build-install.sh
 ```
 
-Use `./build-install.sh --no-clean` for a faster incremental build or
-`./build-install.sh --no-install` to create bundles without installing the app.
+Use `./build-install.sh --no-clean` for an incremental build or `--no-install` to produce the bundle without installing it.
 
-Offline smoke tests: `scripts/mock_anthropic.py`, `scripts/mock_openai.py`,
-`scripts/tui_smoke.py`, `scripts/server_smoke.py`.
+### Server and gateway
 
-## What's inside
+```bash
+vakcoder serve --port 8901
+vakcoder serve --gateway --trust
+```
 
-| Capability | Notes |
+The server exposes the same session, run, approval, transcript, diff, and steering contracts used by the desktop app. For a durable macOS LaunchAgent or Linux systemd user service, follow the [hosting guide](docs/hosting.md).
+
+## One core, many surfaces
+
+![A flat editorial diagram showing a shared auditable vakcoder core connected to terminal, desktop, server, and chat interfaces](docs/assets/vakcoder-surfaces.webp)
+
+```text
+vakcoder CLI / TUI        Tauri desktop        HTTP + SSE / gateway
+         \                    |                    /
+          └──────────────── vak-core ─────────────┘
+                               |
+            ┌──────────────────┼──────────────────┐
+            |                  |                  |
+        vak-agent          vak-flow         vak-permission
+            |                                     |
+     ┌──────┼──────┐                              |
+     |      |      |                              |
+ vak-tools hooks  vak-mcp  ───── broker + sandbox boundary
+     |
+ vak-session ── append-only ledger, contracts, receipts, recall
+     |
+  vak-llm ─── providers, streaming, routing, usage accounting
+```
+
+The interfaces do not implement their own privileged shortcuts. They compose the same core, permission engine, brokered registry, and session ledger. Read the [architecture roadmap](docs/design/00-roadmap.md) for the full crate map and phase history.
+
+## Permission model
+
+| Mode | Filesystem | Commands | Intended use |
+|---|---|---|---|
+| `read-only` | Workspace reads only | Restricted | Audits, exploration, review |
+| `workspace-write` | Reads and writes inside the canonical workspace | Sandboxed and policy-gated | Everyday coding; the default |
+| `full-access` | Unrestricted host access | Unsandboxed, still rule-gated | Explicitly trusted, supervised work |
+
+`full-access` is never selected automatically after a denial, failure, retry, prompt request, or model recommendation. Missing containment fails closed. Unattended gateway turns deny escalations unless an explicitly configured approver surface answers in time.
+
+See the [threat model](docs/design/24-agent-security.md), [permission design](docs/design/08-permissions.md), and [Docker sandbox design](docs/design/25-docker-sandbox.md) before changing security-sensitive behavior.
+
+## Everyday commands
+
+```bash
+# Sessions and checkpoints
+vakcoder sessions
+vakcoder checkpoints list
+vakcoder checkpoints restore SESSION_ID SEQUENCE
+
+# Static flows
+vakcoder flow list
+vakcoder flow check FLOW_NAME
+vakcoder flow run FLOW_NAME
+
+# Memory and reviewed learning
+vakcoder memory
+vakcoder skills-review list
+
+# Deterministic and live evaluation
+vakcoder eval
+vakcoder eval --live --provider PROVIDER --model MODEL
+```
+
+Run `vakcoder --help` or `vakcoder <command> --help` for the complete flags.
+
+## Configuration
+
+Configuration is layered predictably:
+
+```text
+defaults < ~/.config/vakcoder/config.toml < .vakcoder/config.toml < environment < CLI
+```
+
+Unknown keys warn instead of preventing startup. Privileged project keys—permissions, hooks, MCP servers, gateway, sandbox, and provider endpoint overrides—require workspace trust. Start with:
+
+```bash
+vakcoder config dump
+```
+
+Then use the [configuration reference](docs/design/05-config.md) for provider, retry, context, UI, permission, hooks, MCP, FinOps, gateway, memory, and sandbox settings.
+
+## Reliability and cost control
+
+- Transient failures retry within a route ladder frozen when the run is admitted
+- `Retry-After`, watchdog deadlines, circuit breaking, and cancel-aware endurance are built into the loop
+- A shared dispatch ceiling prevents retry multiplication across nested mechanisms
+- FinOps admission can enforce per-run, daily, and monthly spend caps
+- Every attempt is receipted, including route fallback, cancellation, and typed failure domain
+- Deterministic evals cover the loop, context integrity, broker boundary, routing, spend gates, and goal completion
+
+The expected behavior for overloads, network loss, malformed streams, cancellation, open circuits, and other failures is documented in the [failure-handling matrix](docs/design/15-reliability.md).
+
+## Extending vakcoder
+
+Keep the core small; add specialized behavior at the edges:
+
+- **Skills** load instructions progressively when relevant
+- **Hooks** observe and gate lifecycle events
+- **MCP** exposes external tool servers through a lazy meta-tool
+- **Commands** add project, plugin, or user Markdown templates
+- **Subagents** run lineage-linked child sessions with attach, steer, and stop controls
+- **Flows** define validated, resumable DAGs with typed failure policy
+
+Start with the [extensibility design](docs/design/09-extensibility.md) and [flow design](docs/design/10-flows.md).
+
+## Development
+
+The workspace uses stable Rust, edition 2024. Before submitting a change, run the same checks required by the repository contract:
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+The deterministic eval suite runs offline in roughly 100 ms:
+
+```bash
+cargo run --bin vakcoder -- eval
+```
+
+Live checks need a configured provider key:
+
+```bash
+cargo run --bin vakcoder -- eval --live --provider PROVIDER --model MODEL
+```
+
+Read [AGENTS.md](AGENTS.md) before changing the agent loop, tool boundary, sessions, permissions, providers, gateway, or sandbox. Its invariants are part of the product contract.
+
+## Documentation
+
+| Start here | Covers |
 |---|---|
-| Multi-provider | Anthropic, OpenAI (responses + completions), OpenRouter, OpenCode Zen (incl. free models), Gemini, Ollama; SSE streaming; delta+snapshot events; abort preserves partials |
-| Sessions | Append-only JSONL trees; frozen execution contract header; context derived only from the log (`model-visible means logged`); branch/fork/compact-as-entry |
-| Tools | read/write/edit/bash/glob/grep behind one trait and a versioned broker-worker protocol; atomic edits; process-group kill; bounded inputs and outputs |
-| Safety | Rule engine (`allow/ask/deny` × read-only/workspace-write/full-access) gates every call. Built-in tools run in disposable workers; MCP servers run as separately sandboxed workers. Restricted file tools are canonical-workspace confined, child environments are secret-safe, permission changes revoke active runs and approvals, and missing containment fails closed. Seatbelt/Landlock restrict local workers; opt-in Docker contains Bash with no network and resource/privilege limits. FullAccess is an explicit unsandboxed trust decision. See [`docs/design/24-agent-security.md`](docs/design/24-agent-security.md). |
-| TUI | Full-screen retained terminal workspace with responsive header/transcript/composer regions and settings/help/features modals; markdown + syntax-highlighted code; tool cards with live edit diffs; status row (spinner · elapsed · tokens · ctx% · cost); approval queue with diff previews and always-allow; multiline/paste input, completion, Ctrl-R search; provider/model pickers; /resume + /rewind checkpoints; live-preview themes — ANSI packs (dark/light/neo/rich/teenage/plain) + truecolor packs (midnight/synthwave/forest) + custom `[ui.themes]` definitions; interactive keymap viewer and rebind UI (`/keymap`); Emacs/Vim composer modes (`/composer vim`); subagent attach/steer/stop (`Alt-S`, `/subagents`); opt-in OSC52 copy (`[ui] osc52` + `Alt-Y`/`/copy`); accessibility modes (`/a11y plain/motion/reader`); live subagent streams |
-| Extensibility | Skills (progressive disclosure), blocking subagents with lineage-linked child sessions + live attach/steer registry, lifecycle hooks with matcher syntax, MCP client via a lazy meta-tool, custom slash commands as markdown templates (`.vakcoder/commands/`, `plugins/*/commands/`, user `commands/` — `$ARGUMENTS` substitution, palette/completion integration) |
-| Agentic depth | Parallel fan-out gated by resource-claim waves; static flow DAGs (validate-before-run, typed failure policy, resume); dynamic planner with bounded replan (fail-closed) |
-| Server | HTTP+SSE over the same core: sessions, runs, steering, approvals, transcripts, diffs, fs (workspace-confined), side chats, best-of-N, PR status/merge, scheduled tasks, dev-server launch |
-| Desktop | Native Tauri 2 shell over the serve contract (`cargo run -p vak-desktop`): parallel sessions with worktree isolation, streaming chat + inline approvals, diff review w/ line-comment steering, PTY terminal, file editor, @file mentions, best-of-N compare (keep=merge/discard), PR monitor with auto-fix/auto-merge, local scheduled routines, preview pane for dev servers; see docs/design/20-tauri-desktop.md |
-| Checkpoints | State-based workspace snapshots at every run start; restore reverts edits and removes post-checkpoint files; git-worktree isolation for exec/plan |
-| Reliability | Retry w/ exponential backoff + Retry-After, per-step watchdog, cross-run circuit breaker, session resume (`--session`), server cancel + graceful shutdown |
-| Evals | Deterministic in-process suite (~100ms) gated in CI; JSON reports with token/cost accounting |
+| [Roadmap](docs/design/00-roadmap.md) | Phase history, shipped capabilities, and remaining work |
+| [Agent loop](docs/design/03-agent-loop.md) | Turns, tools, steering, scheduling, and outcomes |
+| [Sessions](docs/design/02-sessions.md) | Append-only trees, projection, compaction, and contracts |
+| [Security](docs/design/24-agent-security.md) | Threat model, trust boundaries, and priority order |
+| [Reliability](docs/design/15-reliability.md) | Retries, watchdogs, circuit breaking, and recovery |
+| [TUI](docs/design/21-world-class-tui.md) | Interaction model, themes, keymaps, and accessibility |
+| [Desktop](docs/design/20-tauri-desktop.md) | Native client architecture and workflows |
+| [Gateway](docs/design/22-gateway.md) | Chat routing, approvals, transports, and unattended safety |
+| [Memory](docs/design/23-memory.md) | Cross-session recall and model-visible search |
+| [Learning loop](docs/design/26-learning.md) | Durable notes and human-reviewed skill proposals |
+| [Hosting](docs/hosting.md) | Durable local or VPS deployment |
 
-## Architecture
+---
 
-```
-vakcoder (bin: tui · exec · plan · flow · serve · eval · checkpoints · config)
-  └── vak-desktop   Tauri 2 native shell (sidecar-free embed of the server contract)
-  └── vak-core      SDK facade, system prompt, session bootstrap, checkpoints, worktrees
-        ├── vak-agent       loop · steering · parallel tools · subagents · TurnOutcome
-        │     ├── vak-tools     Tool trait · built-ins · sandbox backends
-        │     ├── vak-hooks     lifecycle hooks (pre/post-tool-use, stop, …)
-        │     └── vak-mcp       MCP stdio client (lazy meta-tool)
-        ├── vak-flow        static flows · dynamic planner
-        ├── vak-permission  modes × rules → Allow/Ask/Deny
-        ├── vak-eval        deterministic eval harness
-        ├── vak-server      axum HTTP+SSE wrapper
-        └── vak-session     JSONL trees · frozen contract · projection
-              └── vak-llm   providers · SSE · EventStream(delta+snapshot)
-```
+<div align="center">
 
-Design invariants live in [AGENTS.md](AGENTS.md); per-subsystem rationale in
-[docs/design/](docs/design/).
+**Powerful enough to do the work. Explicit enough to trust the process.**
 
-## Verification
-
-```sh
-cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
-```
+</div>
