@@ -19,6 +19,10 @@ REPO = os.path.dirname(os.path.abspath(__file__))
 env = {
     **os.environ,
     "ANTHROPIC_API_KEY": "test",
+    # Pin the lane so user-level .env (opencode-zen etc.) can't hijack
+    # this offline run into a live provider.
+    "VAKCODER_PROVIDER": "anthropic",
+    "VAKCODER_MODEL": "claude-sonnet-4-5",
     "VAKCODER_ANTHROPIC_BASE_URL": f"http://127.0.0.1:{MOCK_PORT}",
     "VAKCODER_HOME": "/tmp/vak-smoke/home",
 }
@@ -38,7 +42,6 @@ for _ in range(50):
     line = server.stderr.readline().decode(errors="replace")
     if "auth token:" in line:
         token = line.split("auth token:")[1].strip()
-    if "listening" in line:
         break
 if not token:
     print("FAIL: no auth token from serve")
@@ -69,6 +72,17 @@ def sse_reader(sid):
                     if isinstance(v, dict) and "RunFinished" in v:
                         finish.set()
                         return
+                    if isinstance(v, dict) and "ApprovalRequested" in v:
+                        req_id = v["ApprovalRequested"]["id"]
+                        urllib.request.urlopen(
+                            urllib.request.Request(
+                                f"{BASE}/sessions/{sid}/approvals/{req_id}",
+                                data=json.dumps({"approve": True}).encode(),
+                                headers={**HDR, "content-type": "application/json"},
+                                method="POST",
+                            ),
+                            timeout=5,
+                        ).read()
                 except json.JSONDecodeError:
                     pass
 
@@ -76,7 +90,8 @@ def sse_reader(sid):
 try:
     # health stays open
     with urllib.request.urlopen(f"{BASE}/health", timeout=5) as r:
-        assert r.read() == b"ok"
+        health = json.load(r)
+        assert health.get("status") == "ok", health
 
     # unauthenticated request must be rejected
     try:

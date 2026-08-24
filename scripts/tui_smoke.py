@@ -14,13 +14,15 @@ BIN = sys.argv[1]
 ENV = {
     **os.environ,
     "ANTHROPIC_API_KEY": "test",
+    "VAKCODER_PROVIDER": "anthropic",
+    "VAKCODER_MODEL": "claude-sonnet-4-5",
     "VAKCODER_ANTHROPIC_BASE_URL": sys.argv[2],
     "VAKCODER_HOME": "/tmp/vak-smoke/home",
     "TERM": "xterm-256color",
 }
 
 master, slave = pty.openpty()
-fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
+fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 55, 110, 0, 0))
 proc = subprocess.Popen(
     [BIN, "tui", "--trust"],
     stdin=slave,
@@ -122,7 +124,7 @@ clean = clean.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 text = clean.decode("utf-8", "replace")
 checks = {
-    "banner version": "0.2.0" in text,
+    "banner version": "0.3.0" in text,
     "help lists configuration": "/model" in text and "/provider" in text and "/config" in text,
     "help modal": "help · commands" in text and "PROMPT INPUT" in text,
     "settings modal": "settings" in text and "RELIABILITY" in text and "PATHS" in text,
@@ -132,7 +134,7 @@ checks = {
     "theme saved": "saved theme teenage" in text,
     "composer restored": "Ln 1, Col 1" in text,
     "alternate screen": "?1049h" in text and "?1049l" in text,
-    "responsive resize": "─" * 120 in text,
+    "responsive resize": "\u2500" * 120 in text,
     "cost line": "tokens in 0 / out 0" in text,
     "prompt echo": "hello world" in text,
     "approval card": "approval · bash" in text and "echo smoke-ok" in text,
