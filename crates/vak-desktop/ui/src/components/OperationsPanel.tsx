@@ -1,0 +1,54 @@
+import { createEffect, createSignal, For, Show } from "solid-js";
+import * as api from "../api";
+import Icon from "./Icon";
+
+function Status(props: { value: string; good?: boolean }) {
+  return <span class="settings-status" classList={{ good: props.good ?? ["running", "ok", "enabled"].includes(props.value), bad: !(props.good ?? ["running", "ok", "enabled"].includes(props.value)) }}>{props.value}</span>;
+}
+
+export default function OperationsPanel(props: { onNotice?: (text: string) => void }) {
+  const [data, setData] = createSignal<api.OpsDiagnostics | null>(null);
+  const [finops, setFinops] = createSignal<api.FinopsStatus | null>(null);
+  const [loading, setLoading] = createSignal(true);
+  const [error, setError] = createSignal<string | null>(null);
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const [next, spend] = await Promise.all([api.opsDiagnostics(), api.finopsStatus()]);
+      setData(next); setFinops(spend); setError(null);
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setLoading(false); }
+  };
+  createEffect(() => { void refresh(); const timer = setInterval(() => void refresh(), 8000); return () => clearInterval(timer); });
+  const action = async (service: "gateway" | "telegram", verb: "start" | "stop" | "restart") => {
+    try { await api.opsAction(service, verb); await refresh(); }
+    catch (e) { props.onNotice?.(e instanceof Error ? e.message : String(e)); }
+  };
+  return <div class="operations-panel">
+    <Show when={error()}><div class="settings-warning"><Icon name="shield" /> {error()} <button class="settings-button" onClick={() => void refresh()}>Retry</button></div></Show>
+    <Show when={loading() && !data()}><div class="operations-empty">Loading operational status…</div></Show>
+    <Show when={data()}>
+      <section class="operations-hero"><div><h2>Operations</h2><p>Live health, background services, gateway bindings, flows, and spend controls.</p></div><button class="settings-button" onClick={() => void refresh()}>Refresh</button></section>
+      <div class="operations-grid">
+        <section class="operation-card"><header><div><h3>Runtime health</h3><p>Current execution environment</p></div><Status value={data()!.health.status} /></header>
+          <div class="operation-facts"><span><b>Provider</b>{data()!.health.provider || "—"}</span><span><b>Model</b>{data()!.health.model || "—"}</span><span><b>Sandbox</b>{data()!.health.sandbox || "—"}</span><span><b>Permission</b>{data()!.health.permission_mode || "—"}</span></div>
+          <Show when={data()!.health.warnings.length}><div class="settings-warning">{data()!.health.warnings.length} configuration warning(s) need attention.</div></Show>
+        </section>
+        <section class="operation-card"><header><div><h3>Background services</h3><p>Managed by vak-ops</p></div><Status value={data()!.services.gateway_healthy ? "healthy" : "unreachable"} /></header>
+          <For each={["gateway", "telegram"] as const}>{(service) => <div class="operation-service"><div><strong>{service === "gateway" ? "Gateway" : "Telegram bridge"}</strong><small>{data()!.services[service].state}</small></div><div><button class="settings-button" onClick={() => void action(service, "restart")}>Restart</button><button class="settings-button" onClick={() => void action(service, data()!.services[service].state === "running" ? "stop" : "start")}>{data()!.services[service].state === "running" ? "Stop" : "Start"}</button></div></div>}</For>
+        </section>
+        <section class="operation-card"><header><div><h3>Gateway</h3><p>Surfaces and approvals</p></div><Status value={data()!.gateway.enabled ? "enabled" : "disabled"} /></header>
+          <div class="operation-facts"><span><b>Approvals</b>{data()!.gateway.approvals.mode}</span><span><b>Pending</b>{data()!.gateway.approvals.pending}</span><span><b>Bindings</b>{data()!.gateway.bindings.length}</span></div>
+          <Show when={data()!.gateway.bindings.length} fallback={<p class="operation-muted">No surfaces are currently bound.</p>}><div class="operation-list"><For each={data()!.gateway.bindings}>{(binding) => <div><code>{binding.target}</code><small>{binding.session_id.slice(0, 8)}</small></div>}</For></div></Show>
+        </section>
+        <section class="operation-card"><header><div><h3>Flows</h3><p>Persisted run ledgers</p></div><span class="metric">{data()!.flows.reduce((sum, flow) => sum + flow.runs, 0)} runs</span></header>
+          <Show when={data()!.flows.length} fallback={<p class="operation-muted">No flow runs discovered yet.</p>}><div class="operation-list"><For each={data()!.flows}>{(flow) => <div><strong>{flow.name}</strong><small>{flow.runs} {flow.runs === 1 ? "run" : "runs"}</small></div>}</For></div></Show>
+        </section>
+        <section class="operation-card finops-card"><header><div><h3>Spend & budget</h3><p>Estimated local ledger, today</p></div><strong class="operation-cost">${finops()?.day_usd.toFixed(2) ?? "0.00"}</strong></header>
+          <div class="operation-facts"><span><b>Day cap</b>{finops()?.day_cap_usd == null ? "Not set" : `$${finops()!.day_cap_usd!.toFixed(2)}`}</span><span><b>Run cap</b>{finops()?.run_cap_usd == null ? "Not set" : `$${finops()!.run_cap_usd!.toFixed(2)}`}</span><span><b>Calls</b>{finops()?.total_rows ?? 0}</span><span><b>Unknown price</b>{finops()?.unknown_rows ?? 0}</span></div>
+          <div class="operation-rollups"><For each={finops()?.by_provider ?? []}>{(item) => <div><span>{item.name || "Unknown provider"}</span><small>${item.usd.toFixed(2)} · {item.calls} calls</small></div>}</For></div>
+        </section>
+      </div>
+    </Show>
+  </div>;
+}

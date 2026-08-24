@@ -168,7 +168,7 @@ impl GatewayState {
         })
     }
 
-    fn snapshot(&self) -> Vec<(String, String)> {
+    pub(crate) fn snapshot(&self) -> Vec<(String, String)> {
         let mut pairs: Vec<(String, String)> = self
             .bindings
             .lock()

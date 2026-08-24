@@ -284,6 +284,8 @@ fn router_with_state(state: AppState) -> Router {
         .route("/search", get(search_sessions))
         .route("/ops/status", get(ops_status))
         .route("/ops/{service}/{action}", post(ops_action))
+        .route("/ops/diagnostics", get(ops_diagnostics))
+        .route("/finops", get(finops_status))
         .route("/memory", get(list_memory))
         .route("/skills/proposals", get(list_proposals_route))
         .route("/skills/proposals/{id}/promote", post(promote_proposal))
@@ -306,6 +308,104 @@ fn ops_payload(cfg: &vak_ops::OpsConfig) -> serde_json::Value {
 async fn ops_status(State(_state): State<AppState>) -> Json<serde_json::Value> {
     let cfg = vak_ops::OpsConfig::detect();
     Json(ops_payload(&cfg))
+}
+
+/// Read-only operational projection for desktop/TUI surfaces. This keeps
+/// service, gateway, flow and health state in one refreshable payload without
+/// exposing credentials or implementation paths.
+async fn ops_diagnostics(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let cfg = vak_ops::OpsConfig::detect();
+    let root = state.core.sessions_home().join("flow-runs");
+    let mut flows = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        for entry in entries.flatten().filter(|e| e.path().is_dir()) {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let runs = std::fs::read_dir(entry.path())
+                .map(|items| {
+                    items
+                        .flatten()
+                        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+                        .count()
+                })
+                .unwrap_or(0);
+            flows.push(serde_json::json!({ "name": name, "runs": runs }));
+        }
+    }
+    flows.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    let gateway = state.gateway.snapshot();
+    Json(serde_json::json!({
+        "health": {
+            "status": "ok",
+            "provider": state.core.effective_provider(),
+            "model": state.core.effective_model(),
+            "sandbox": state.core.effective_sandbox_name(),
+            "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
+            "warnings": state.core.config().warnings,
+        },
+        "services": ops_payload(&cfg),
+        "gateway": {
+            "enabled": state.gateway.enabled,
+            "bindings": gateway.into_iter().map(|(target, session_id)| serde_json::json!({ "target": target, "session_id": session_id })).collect::<Vec<_>>(),
+            "approvals": {
+                "mode": state.gateway.approvals_mode(),
+                "approver": state.gateway.approver_target(),
+                "pending": state.gateway.pending_approval_count(),
+            },
+        },
+        "flows": flows,
+    }))
+}
+
+/// FinOps projection from the append-only cost ledger. Unknown-priced rows are
+/// retained as `unknown_rows`; they are never reported as zero spend.
+async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let cfg = &state.core.config().finops;
+    let path = state.core.sessions_home().join("cost-log.jsonl");
+    let mut rows = Vec::new();
+    if let Ok(body) = std::fs::read_to_string(path) {
+        for line in body.lines() {
+            if let Ok(row) = serde_json::from_str::<vak_core::finops::CostRow>(line) {
+                rows.push(row);
+            }
+        }
+    }
+    let now = chrono::Utc::now();
+    let day_start = now
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .and_then(|t| t.and_local_timezone(chrono::Utc).single());
+    let day_rows = rows
+        .iter()
+        .filter(|r| day_start.is_some_and(|start| r.ts >= start));
+    let day_usd: f64 = day_rows.clone().filter_map(|r| r.usd).sum();
+    let unknown_rows = day_rows.filter(|r| r.usd.is_none()).count();
+    let mut by_provider = std::collections::BTreeMap::<String, (f64, u64)>::new();
+    let mut by_model = std::collections::BTreeMap::<String, (f64, u64)>::new();
+    for row in rows
+        .iter()
+        .filter(|r| day_start.is_some_and(|start| r.ts >= start))
+    {
+        let usd = row.usd.unwrap_or(0.0);
+        let p = by_provider.entry(row.provider.clone()).or_default();
+        p.0 += usd;
+        p.1 += 1;
+        let m = by_model.entry(row.model.clone()).or_default();
+        m.0 += usd;
+        m.1 += 1;
+    }
+    let rollup =
+        |source: std::collections::BTreeMap<String, (f64, u64)>| -> Vec<serde_json::Value> {
+            source.into_iter().map(|(name, (usd, calls))| serde_json::json!({ "name": name, "usd": usd, "calls": calls })).collect()
+        };
+    Json(serde_json::json!({
+        "day_usd": day_usd,
+        "run_cap_usd": cfg.max_run_usd,
+        "day_cap_usd": cfg.max_day_usd,
+        "unknown_rows": unknown_rows,
+        "total_rows": rows.len(),
+        "by_provider": rollup(by_provider),
+        "by_model": rollup(by_model),
+    }))
 }
 
 #[derive(serde::Deserialize)]

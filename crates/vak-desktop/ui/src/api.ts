@@ -78,6 +78,31 @@ export function opsAction(
   return req(`/ops/${service}/${action}`, { method: "POST", body: "{}" });
 }
 
+export interface OpsDiagnostics {
+  health: { status: string; provider: string; model: string; sandbox: string; permission_mode: string; warnings: string[] };
+  services: OpsStatusShape;
+  gateway: { enabled: boolean; bindings: { target: string; session_id: string }[]; approvals: { mode: string; approver?: string | null; pending: number } };
+  flows: { name: string; runs: number }[];
+}
+
+export function opsDiagnostics(): Promise<OpsDiagnostics> {
+  return req("/ops/diagnostics");
+}
+
+export interface FinopsStatus {
+  day_usd: number;
+  run_cap_usd?: number | null;
+  day_cap_usd?: number | null;
+  unknown_rows: number;
+  total_rows: number;
+  by_provider: { name: string; usd: number; calls: number }[];
+  by_model: { name: string; usd: number; calls: number }[];
+}
+
+export function finopsStatus(): Promise<FinopsStatus> {
+  return req("/finops");
+}
+
 // ---- learning (memory notes + skill proposals) -------------------------------
 
 export interface NoteBlock {
@@ -92,6 +117,29 @@ export interface SkillProposal {
   id: string;
   name: string;
   description: string;
+}
+
+export interface DiscoveredSkill {
+  name: string;
+  description: string;
+  source?: string;
+  scope?: string;
+}
+
+export interface HookConfig {
+  event: string;
+  matcher?: string | null;
+  command: string;
+  timeout_ms?: number | null;
+  enabled?: boolean;
+}
+
+export function getHooks(): Promise<{ hooks: HookConfig[] }> {
+  return req("/config/hooks");
+}
+
+export function putHooks(hooks: HookConfig[]): Promise<{ saved: boolean; count: number }> {
+  return req("/config/hooks", { method: "PUT", body: JSON.stringify({ hooks }) });
 }
 
 export function listMemory(): Promise<{ notes: NoteBlock[] }> {
@@ -315,7 +363,7 @@ export function deleteAllArchived(): Promise<{ deleted: number }> {
 }
 
 export function listSkills(): Promise<{
-  skills: { name: string; description: string }[];
+  skills: DiscoveredSkill[];
 }> {
   return req("/skills");
 }
