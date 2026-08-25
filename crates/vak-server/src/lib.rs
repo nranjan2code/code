@@ -4183,6 +4183,10 @@ fn park_marker() -> chrono::DateTime<chrono::Local> {
 /// loaded/created tasks do not stampede on startup).
 async fn scheduler_tick(state: &AppState) {
     let now_local = chrono::Local::now();
+    // Reload from disk every tick: tasks.json is shared with the CLI and
+    // desktop, so definitions added while the server runs must fire too
+    // (found by the v0.6 live battery — CLI-added cron tasks never fired).
+    load_tasks(state);
     let due: Vec<String> = {
         let tasks = state
             .tasks
