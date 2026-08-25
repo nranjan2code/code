@@ -152,10 +152,10 @@ crates/vak-session   append-only JSONL trees, frozen contract, projection,
                       dependency-free cross-session search w/ mtime-indexed
                       cache + cross-project search_all (docs/design/
                       23-memory.md)
-crates/vak-tools     read/write/edit/bash/glob/grep/webfetch behind Tool
-                     trait, versioned broker-worker protocol, bounded
-                     subprocess environment, resource claims, sandbox
-                     backends (Seatbelt/Landlock)
+crates/vak-tools     read/write/edit/bash/glob/grep/webfetch/browse
+                     behind Tool trait, versioned broker-worker protocol,
+                     bounded subprocess environment, resource claims,
+                     sandbox backends (Seatbelt/Landlock)
 crates/vak-permission rule engine: modes × rules -> Allow/Ask/Deny
 crates/vak-hooks     lifecycle hooks: pre/post-tool-use, stop, session-start
 crates/vak-mcp       MCP stdio client behind a lazy meta-tool
