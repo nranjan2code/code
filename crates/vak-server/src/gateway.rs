@@ -513,6 +513,14 @@ async fn gateway_inbound(
     // between model steps, and any leftovers run as a continuation turn.
     // The full composed message (text + images) is queued so nothing the
     // sender supplied is degraded to bare text.
+    let who = body
+        .sender
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown");
+    let preview: String = text.chars().take(80).collect();
+    state.hub.emit_gateway_inbound(&body.surface, who, &preview);
     let busy = handle
         .session
         .lock()

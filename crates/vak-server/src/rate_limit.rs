@@ -193,6 +193,9 @@ pub async fn rate_limit_layer(
             &format!("path={path} limit={key}:{max}/min"),
             Some(&ip_str),
         );
+        if let Some(hub) = crate::events::global() {
+            hub.emit_security("RateLimit", &path);
+        }
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
             [("retry-after", "60")],

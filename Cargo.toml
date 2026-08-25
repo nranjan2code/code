@@ -69,6 +69,8 @@ regex = "1"
 walkdir = "2"
 # checkpoint file-content encoding
 base64 = "0.22"
+# Constant-time token comparison for auth (timing-attack resistance)
+subtle = "2"
 globset = "0.4"
 similar = { version = "2", features = ["text"] }
 libc = "0.2"

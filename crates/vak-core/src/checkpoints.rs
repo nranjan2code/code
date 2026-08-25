@@ -17,6 +17,12 @@ use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 const IGNORED_DIRS: [&str; 5] = [".git", "target", "node_modules", ".vakcoder", "dist"];
+
+/// Rebuildable runtime artifacts (the vak-store SQLite index and its WAL
+/// sidecars). Never meaningful workspace content: capturing them into a
+/// checkpoint would snapshot a derived cache, and restoring a stale one
+/// would corrupt the live index.
+const IGNORED_RUNTIME_FILES: [&str; 3] = ["store.db", "store.db-wal", "store.db-shm"];
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 /// Checkpoints accumulate once per turn; keep only the newest N per session.
@@ -67,7 +73,11 @@ fn is_ignored(rel: &Path) -> bool {
             std::path::Component::Normal(name) if IGNORED_DIRS
                 .contains(&name.to_string_lossy().as_ref())
         )
-    })
+    }) || rel
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| IGNORED_RUNTIME_FILES.contains(&n))
+        .unwrap_or(false)
 }
 
 /// Paths that must never be captured into checkpoints nor deleted by a

@@ -5,10 +5,74 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
 
 use crate::AppState;
+
+pub(crate) const SESSION_COOKIE: &str = "vak_session";
+
+// ---- Auth: POST /admin/login, POST /admin/logout ---------------------------
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct LoginBody {
+    pub token: String,
+}
+
+/// Constant-time token check → HttpOnly session cookie. Browsers need this
+/// because EventSource cannot send Authorization headers.
+///
+/// No `Secure` flag on purpose: this server is loopback-first and plain
+/// http://localhost would silently drop Secure cookies.
+pub(crate) async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Response {
+    use subtle::ConstantTimeEq;
+    let ok: bool = body
+        .token
+        .as_bytes()
+        .ct_eq(state.auth_token.as_bytes())
+        .into();
+    if !ok {
+        let ip = None;
+        vak_core::security_events::record(
+            &state.core.sessions_home(),
+            vak_core::security_events::EventKind::AuthFailure,
+            "admin_login_failed",
+            "invalid token on /admin/login",
+            ip,
+        );
+        state.hub.emit_security("AuthFailure", "admin_login_failed");
+        return (
+            axum::http::StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": "invalid token"
+            })),
+        )
+            .into_response();
+    }
+    (
+        [(
+            axum::http::header::SET_COOKIE,
+            format!(
+                "{}={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800",
+                SESSION_COOKIE, body.token
+            ),
+        )],
+        Json(serde_json::json!({ "ok": true })),
+    )
+        .into_response()
+}
+
+pub(crate) async fn logout() -> Response {
+    (
+        [(
+            axum::http::header::SET_COOKIE,
+            format!("{SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"),
+        )],
+        Json(serde_json::json!({ "ok": true })),
+    )
+        .into_response()
+}
 
 // ---- GET /admin/api/sessions ----------------------------------------------
 
@@ -35,40 +99,18 @@ pub(crate) async fn list_sessions_admin(
         return Json(serde_json::json!({ "error": "store not available" }));
     };
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    let filter = vak_store::query::SearchFilter {
-        project_hash: q.project,
-        ..Default::default()
-    };
-    match store.query(&filter, limit) {
-        Ok(entries) => {
-            let mut map: std::collections::BTreeMap<String, SessionAgg> =
-                std::collections::BTreeMap::new();
-            for e in &entries {
-                let agg = map
-                    .entry(e.session_id.clone())
-                    .or_insert_with(|| SessionAgg {
-                        session_id: e.session_id.clone(),
-                        project_hash: e.project_hash.clone(),
-                        count: 0,
-                        first_ts: e.ts.clone(),
-                        last_ts: e.ts.clone(),
-                    });
-                agg.count += 1;
-                if e.ts < agg.first_ts {
-                    agg.first_ts = e.ts.clone();
-                }
-                if e.ts > agg.last_ts {
-                    agg.last_ts = e.ts.clone();
-                }
-            }
-            let items: Vec<SessionListItem> = map
-                .into_values()
-                .map(|a| SessionListItem {
-                    session_id: a.session_id,
-                    project_hash: a.project_hash,
-                    entry_count: a.count,
-                    first_ts: a.first_ts,
-                    last_ts: a.last_ts,
+    match store.list_sessions() {
+        Ok(all) => {
+            let items: Vec<SessionListItem> = all
+                .into_iter()
+                .filter(|s| q.project.as_ref().is_none_or(|p| &s.project_hash == p))
+                .take(limit)
+                .map(|s| SessionListItem {
+                    session_id: s.session_id,
+                    project_hash: s.project_hash,
+                    entry_count: s.entry_count,
+                    first_ts: s.first_ts,
+                    last_ts: s.last_ts,
                 })
                 .collect();
             Json(serde_json::json!({ "sessions": items }))
@@ -77,22 +119,26 @@ pub(crate) async fn list_sessions_admin(
     }
 }
 
-#[derive(Debug)]
-struct SessionAgg {
-    session_id: String,
-    project_hash: String,
-    count: usize,
-    first_ts: String,
-    last_ts: String,
-}
-
 // ---- GET /admin/api/sessions/:id/transcript --------------------------------
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct TranscriptQuery {
     pub limit: Option<usize>,
+    pub offset: Option<usize>,
     pub kind: Option<String>,
     pub role: Option<String>,
+}
+
+/// Byte-safe truncation: never splits a multi-byte UTF-8 sequence.
+fn truncate_chars(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
 }
 
 pub(crate) async fn session_transcript_admin(
@@ -103,17 +149,22 @@ pub(crate) async fn session_transcript_admin(
     let Some(store) = &state.store else {
         return Json(serde_json::json!({ "error": "store not available" }));
     };
-    let limit = q.limit.unwrap_or(500).clamp(1, 2000);
+    // Fetch offset+limit so we can report whether more pages exist.
+    let limit = q.limit.unwrap_or(100).clamp(1, 500);
+    let offset = q.offset.unwrap_or(0);
     let filter = vak_store::query::SearchFilter {
         session_id: Some(session_id.clone()),
         kind: q.kind,
         role: q.role,
         ..Default::default()
     };
-    match store.query(&filter, limit) {
-        Ok(entries) => {
-            let items: Vec<serde_json::Value> = entries
+    match store.query(&filter, offset.saturating_add(limit)) {
+        Ok(mut entries) => {
+            entries.sort_by(|a, b| a.ts.cmp(&b.ts).then(a.entry_id.cmp(&b.entry_id)));
+            let has_more = entries.len() > offset + limit;
+            let page: Vec<serde_json::Value> = entries
                 .iter()
+                .skip(offset)
                 .map(|e| {
                     serde_json::json!({
                         "entry_id": e.entry_id,
@@ -122,18 +173,15 @@ pub(crate) async fn session_transcript_admin(
                         "role": e.role,
                         "tool_name": e.tool_name,
                         "is_error": e.is_error,
-                        "content": if e.content_text.len() > 4000 {
-                            format!("{}…", &e.content_text[..4000])
-                        } else {
-                            e.content_text.clone()
-                        },
+                        "content": truncate_chars(&e.content_text, 2000),
                     })
                 })
                 .collect();
             Json(serde_json::json!({
                 "session_id": session_id,
-                "entries": items,
-                "total": items.len(),
+                "entries": page,
+                "offset": offset,
+                "has_more": has_more,
             }))
         }
         Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
@@ -355,8 +403,10 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
 // ---- Admin route mounter --------------------------------------------------
 
 pub(crate) fn routes() -> axum::Router<AppState> {
-    use axum::routing::get;
+    use axum::routing::{get, post};
     axum::Router::new()
+        .route("/admin/login", post(login))
+        .route("/admin/logout", post(logout))
         .route("/admin/api/sessions", get(list_sessions_admin))
         .route(
             "/admin/api/sessions/{id}/transcript",
@@ -365,10 +415,11 @@ pub(crate) fn routes() -> axum::Router<AppState> {
         .route("/admin/api/search", get(search_admin))
         .route("/admin/api/events", get(admin_events_sse))
         .route("/admin/api/security", get(list_security_events))
-        .route("/admin/api/store/rebuild", get(rebuild_store))
+        // Mutations are POST: crawlers/prefetchers only ever issue GETs.
+        .route("/admin/api/store/rebuild", post(rebuild_store))
         .route(
             "/admin/api/store/import/{session_id}",
-            get(import_session_store),
+            post(import_session_store),
         )
         .route("/admin/api/config", get(get_config_admin))
         .route("/admin/api/gateway/status", get(gateway_status_admin))
@@ -392,46 +443,60 @@ mod tests {
         AppState::new(core)
     }
 
+    fn authed_app(state: &AppState) -> axum::Router {
+        crate::router_with_state(state.clone()).layer(axum::middleware::from_fn_with_state(
+            ((*state.auth_token).clone(), state.core.sessions_home()),
+            crate::require_bearer,
+        ))
+    }
+
+    async fn body_json(resp: axum::response::Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
     #[tokio::test]
     async fn list_sessions_returns_ok() {
         let state = test_state();
-        let app = crate::router_with_state(state);
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
         let req = Request::builder()
             .uri("/admin/api/sessions")
+            .header("authorization", format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let json = body_json(resp).await;
         assert!(json["sessions"].is_array());
     }
 
     #[tokio::test]
     async fn search_returns_ok() {
         let state = test_state();
-        let app = crate::router_with_state(state);
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
         let req = Request::builder()
             .uri("/admin/api/search?q=hello")
+            .header("authorization", format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert!(json.get("total").is_some(), "response should have total field");
+        let json = body_json(resp).await;
+        assert!(json.get("total").is_some());
     }
 
     #[tokio::test]
     async fn security_events_returns_ok() {
         let state = test_state();
-        let app = crate::router_with_state(state);
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
         let req = Request::builder()
             .uri("/admin/api/security")
+            .header("authorization", format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -441,34 +506,108 @@ mod tests {
     #[tokio::test]
     async fn store_rebuild_returns_ok() {
         let state = test_state();
-        let app = crate::router_with_state(state);
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
         let req = Request::builder()
+            .method("POST")
             .uri("/admin/api/store/rebuild")
+            .header("authorization", format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let json = body_json(resp).await;
         assert!(json["ok"].as_bool().unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn rebuild_via_get_is_rejected() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let req = Request::builder()
+            .uri("/admin/api/store/rebuild")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn login_sets_cookie_and_it_authenticates() {
+        use axum::http::header;
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+
+        // Login itself is auth-exempt; plain router is fine for it.
+        let plain = crate::router_with_state(state.clone());
+
+        // Wrong token → 401.
+        let req = Request::builder()
+            .method("POST")
+            .uri("/admin/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"token":"wrong"}"#))
+            .unwrap();
+        let resp = plain.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // Correct token → 200 + cookie.
+        let req = Request::builder()
+            .method("POST")
+            .uri("/admin/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(format!(r#"{{"token":"{token}"}}"#)))
+            .unwrap();
+        let resp = plain.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let set_cookie = resp
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(set_cookie.starts_with("vak_session="), "cookie must be set");
+        assert!(set_cookie.contains("HttpOnly"));
+
+        // Cookie authenticates a protected admin endpoint with no header.
+        let cookie_pair = &set_cookie[..set_cookie.find(';').unwrap_or(set_cookie.len())];
+        let authed = authed_app(&state);
+        let req = Request::builder()
+            .uri("/admin/api/sessions")
+            .header(header::COOKIE, cookie_pair)
+            .body(Body::empty())
+            .unwrap();
+        let resp = authed.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn unauthenticated_admin_api_is_401() {
+        let state = test_state();
+        let app = authed_app(&state);
+        let req = Request::builder()
+            .uri("/admin/api/sessions")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
     async fn config_endpoint_returns_ok() {
         let state = test_state();
-        let app = crate::router_with_state(state);
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
         let req = Request::builder()
             .uri("/admin/api/config")
+            .header("authorization", format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let json = body_json(resp).await;
         assert!(json["provider"].is_string());
     }
 }

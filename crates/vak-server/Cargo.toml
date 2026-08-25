@@ -27,6 +27,7 @@ vak-store = { workspace = true }
 vak-flow = { workspace = true }
 vak-hooks = { workspace = true }
 tower-http = { workspace = true }
+subtle = { workspace = true }
 chrono = { workspace = true }
 walkdir = { workspace = true }
 toml = { workspace = true }
