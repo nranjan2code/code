@@ -314,10 +314,14 @@ impl vak_agent::Approver for GatewayApprover {
         let announce = format!(
             "Approval requested [{short}]\nTool: {tool}\nArgs: {args_json}\nReason: {reason}\nReply 'yes' or 'no' to decide."
         );
-        if let Err(e) = deliver(
+        if let Err(e) = deliver_and_record(
             &self.core,
             self.state.approver_target().unwrap_or(""),
             &announce,
+            vak_core::inbox::Kind::ApprovalPending,
+            format!("Approval requested [{short}]"),
+            Some(&self.session_id),
+            None,
         )
         .await
         {
@@ -406,17 +410,35 @@ async fn gateway_inbound(
         && let Some((verdict, gate_id)) = parse_verdict(&text)
     {
         return match state.gateway.resolve_gate(verdict, gate_id.as_deref()) {
-            Ok(resolved) => (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "state": "approval_resolved",
-                    "approved": verdict,
-                    "gate": resolved.id,
-                    "session_id": resolved.session_id,
-                    "remaining": resolved.remaining,
-                })),
-            )
-                .into_response(),
+            Ok(resolved) => {
+                // A chat "no" is observable here and nowhere else, so the
+                // durable record of the denial is written at the same beat.
+                if !verdict {
+                    let short = resolved.id.get(..8).unwrap_or(resolved.id.as_str());
+                    let _ = vak_core::inbox::record(
+                        &state.core.sessions_home(),
+                        vak_core::inbox::Kind::ApprovalDenied,
+                        &format!("approval denied [{short}]"),
+                        &format!(
+                            "session {} denied forwarded gate {} ({} pending)",
+                            resolved.session_id, resolved.id, resolved.remaining
+                        ),
+                        Some(&resolved.session_id),
+                        None,
+                    );
+                }
+                (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "state": "approval_resolved",
+                        "approved": verdict,
+                        "gate": resolved.id,
+                        "session_id": resolved.session_id,
+                        "remaining": resolved.remaining,
+                    })),
+                )
+                    .into_response()
+            }
             Err(()) => (
                 StatusCode::OK,
                 Json(serde_json::json!({ "state": "no_pending_approvals" })),
@@ -800,6 +822,34 @@ pub async fn deliver(core: &Core, target: &str, text: &str) -> Result<(), String
         "webhook" => deliver_webhook(core, chat, text).await,
         other => Err(format!("unsupported gateway surface '{other}'")),
     }
+}
+
+/// Delivery plus its durable pull-side twin (docs/design/29-personal-os.md
+/// P6): once the transport succeeds, append the same signal to
+/// `<home>/inbox.jsonl` under `inbox_kind` so unattended output survives
+/// even when no chat channel is reachable. Inbox recording is best-effort
+/// by contract — it can never fail a delivery that already happened.
+pub(crate) async fn deliver_and_record(
+    core: &Core,
+    target: &str,
+    text: &str,
+    inbox_kind: vak_core::inbox::Kind,
+    title: String,
+    session_id: Option<&str>,
+    task_id: Option<&str>,
+) -> Result<(), String> {
+    let out = deliver(core, target, text).await;
+    if out.is_ok() {
+        let _ = vak_core::inbox::record(
+            &core.sessions_home(),
+            inbox_kind,
+            &title,
+            text,
+            session_id,
+            task_id,
+        );
+    }
+    out
 }
 
 fn deliver_log(core: &Core, target: &str, text: &str) -> Result<(), String> {

@@ -557,6 +557,9 @@ impl Core {
         if self.inner.config.tools.web_fetch {
             names.push("webfetch".into());
         }
+        if self.inner.config.tools.browse {
+            names.push("browse".into());
+        }
 
         if self.inner.config.memory.search_enabled {
             names.push("session_search".into());
@@ -1275,6 +1278,12 @@ impl Core {
         if self.inner.config.tools.web_fetch {
             tools.push(Arc::new(vak_tools::WebFetchTool));
         }
+        // Headless-browser DOM render: same narrow broker-owned shape as
+        // webfetch — the child Chromium process is spawned from wherever the
+        // tool executes, never holding policy or credentials.
+        if self.inner.config.tools.browse {
+            tools.push(Arc::new(vak_tools::WebBrowseTool));
+        }
         cfg.tools = tools;
         let hooks: Option<std::sync::Arc<Vec<vak_hooks::HookDef>>> = Some(std::sync::Arc::new(
             build_hooks_from(&self.effective_hooks())?,
@@ -1591,7 +1600,7 @@ fn rule_specs(config: &vak_config::Config, extra: &[String]) -> Vec<String> {
 
 /// Tools whose reach exceeds the workspace: network-capable capabilities
 /// registered next to built-ins (docs/design/29-personal-os.md P4).
-pub const NETWORK_TOOLS: [&str; 1] = ["webfetch"];
+pub const NETWORK_TOOLS: [&str; 2] = ["webfetch", "browse"];
 
 /// True when a BLANKET (patternless) rule spec targets `tool`. Only
 /// blanket rules govern the injection decision: patterned rules cannot
@@ -1932,16 +1941,16 @@ mod webfetch_classification_tests {
     use vak_config::PermissionMode;
     use vak_permission::{Decision, Mode, PermissionEngine};
 
-    fn decide(cfg: &vak_config::Config, extra: &[String], mode: PermissionMode) -> Decision {
+    fn decide(
+        cfg: &vak_config::Config,
+        extra: &[String],
+        mode: PermissionMode,
+        tool: &str,
+    ) -> Decision {
         let dir = tempfile::tempdir().unwrap();
         let engine: PermissionEngine =
             build_engine_for_mode(cfg, extra, mode).expect("engine builds");
-        engine.evaluate(
-            "webfetch",
-            &serde_json::json!({}),
-            to_mode(mode),
-            dir.path(),
-        )
+        engine.evaluate(tool, &serde_json::json!({}), to_mode(mode), dir.path())
     }
 
     fn to_mode(mode: PermissionMode) -> Mode {
@@ -1956,17 +1965,21 @@ mod webfetch_classification_tests {
     fn no_rule_outside_fullaccess_asks_fullaccess_allows() {
         let cfg = vak_config::Config::default();
         for mode in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
-            let d = decide(&cfg, &[], mode);
+            for tool in NETWORK_TOOLS {
+                let d = decide(&cfg, &[], mode, tool);
+                assert!(
+                    matches!(d, Decision::Ask { .. }),
+                    "{tool} in {mode:?} must Ask, got {d:?}"
+                );
+            }
+        }
+        for tool in NETWORK_TOOLS {
+            let d = decide(&cfg, &[], PermissionMode::FullAccess, tool);
             assert!(
-                matches!(d, Decision::Ask { .. }),
-                "{mode:?} must Ask, got {d:?}"
+                matches!(d, Decision::Allow),
+                "{tool} under FullAccess must Allow, got {d:?}"
             );
         }
-        let d = decide(&cfg, &[], PermissionMode::FullAccess);
-        assert!(
-            matches!(d, Decision::Allow),
-            "FullAccess must Allow, got {d:?}"
-        );
     }
 
     #[test]
@@ -1975,14 +1988,14 @@ mod webfetch_classification_tests {
             let mut cfg = vak_config::Config::default();
             cfg.allow.push(spec.into());
             for mode in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
-                let d = decide(&cfg, &[], mode);
+                let d = decide(&cfg, &[], mode, "webfetch");
                 assert!(matches!(d, Decision::Allow), "{spec:?} in {mode:?}: {d:?}");
             }
         }
         // Learned rules ride in via `extra`.
         let cfg = vak_config::Config::default();
         for mode in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
-            let d = decide(&cfg, &["+webfetch".to_string()], mode);
+            let d = decide(&cfg, &["+webfetch".to_string()], mode, "webfetch");
             assert!(matches!(d, Decision::Allow), "learned in {mode:?}: {d:?}");
         }
     }
@@ -1996,7 +2009,7 @@ mod webfetch_classification_tests {
             PermissionMode::WorkspaceWrite,
             PermissionMode::FullAccess,
         ] {
-            let d = decide(&cfg, &[], mode);
+            let d = decide(&cfg, &[], mode, "webfetch");
             assert!(matches!(d, Decision::Deny { .. }), "{mode:?}: {d:?}");
         }
     }
@@ -2010,9 +2023,56 @@ mod webfetch_classification_tests {
             PermissionMode::WorkspaceWrite,
             PermissionMode::FullAccess,
         ] {
-            let d = decide(&cfg, &[], mode);
+            let d = decide(&cfg, &[], mode, "webfetch");
             assert!(matches!(d, Decision::Ask { .. }), "{mode:?}: {d:?}");
         }
+    }
+
+    #[test]
+    fn browse_shares_the_full_webfetch_mode_matrix() {
+        // Same family, same posture: restricted modes Ask by default,
+        // FullAccess allows, blanket allow lifts the Ask, blanket deny
+        // denies even under FullAccess, and an explicit ?ask is honored
+        // everywhere.
+        let base = vak_config::Config::default();
+        for mode in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
+            let d = decide(&base, &[], mode, "browse");
+            assert!(matches!(d, Decision::Ask { .. }), "{mode:?}: {d:?}");
+        }
+        let d = decide(&base, &[], PermissionMode::FullAccess, "browse");
+        assert!(matches!(d, Decision::Allow), "FullAccess: {d:?}");
+
+        let mut allowed = vak_config::Config::default();
+        allowed.allow.push("browse".into());
+        for mode in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
+            let d = decide(&allowed, &[], mode, "browse");
+            assert!(
+                matches!(d, Decision::Allow),
+                "allow rule in {mode:?}: {d:?}"
+            );
+        }
+
+        let mut denied = vak_config::Config::default();
+        denied.deny.push("-browse".into());
+        for mode in [
+            PermissionMode::ReadOnly,
+            PermissionMode::WorkspaceWrite,
+            PermissionMode::FullAccess,
+        ] {
+            let d = decide(&denied, &[], mode, "browse");
+            assert!(
+                matches!(d, Decision::Deny { .. }),
+                "-browse in {mode:?}: {d:?}"
+            );
+        }
+
+        let mut asked = vak_config::Config::default();
+        asked.ask.push("?browse".into());
+        let d = decide(&asked, &[], PermissionMode::FullAccess, "browse");
+        assert!(
+            matches!(d, Decision::Ask { .. }),
+            "?browse under FullAccess: {d:?}"
+        );
     }
 
     #[test]
@@ -2089,5 +2149,9 @@ mod webfetch_classification_tests {
         assert!(!has_blanket_rule_for(&["webfetch(x)".into()], "webfetch"));
         assert!(!has_blanket_rule_for(&["webfetchy".into()], "webfetch"));
         assert!(!has_blanket_rule_for(&["bash".into()], "webfetch"));
+        assert!(has_blanket_rule_for(&["browse".into()], "browse"));
+        assert!(has_blanket_rule_for(&["+BROWSE".into()], "browse"));
+        assert!(!has_blanket_rule_for(&["browse(x)".into()], "browse"));
+        assert!(!has_blanket_rule_for(&["browser".into()], "browse"));
     }
 }

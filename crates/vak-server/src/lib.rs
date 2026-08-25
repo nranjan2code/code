@@ -31,6 +31,9 @@
 //! - `POST /backup/export`            → directory backup of the home dir
 //! - `POST /backup/import`            → restore with skip-or-rename conflicts
 //! - `GET  /digest?days=N`            → usage digest over the trailing window
+//! - `GET  /inbox?limit=&unread=true` → inbox entries + unread count (29-personal-os P6)
+//! - `POST /inbox/:id/ack`            → idempotent read-state tombstone
+//! - `GET  /inbox/unread_count`       → live unread total
 //! - `POST /gateway/inbound`          → surface message routed to its bound session (22-gateway)
 //! - `GET  /gateway/status`           → gateway enabled flag + binding table
 //! - `DELETE /gateway/bindings/:key`  → unbind a surface from its session
@@ -284,6 +287,9 @@ fn router_with_state(state: AppState) -> Router {
         .route("/backup/export", post(backup_export))
         .route("/backup/import", post(backup_import))
         .route("/digest", get(digest_report))
+        .route("/inbox", get(inbox_list))
+        .route("/inbox/unread_count", get(inbox_unread_count))
+        .route("/inbox/{id}/ack", post(inbox_ack))
         .route("/skills/proposals", get(list_proposals_route))
         .route("/skills/proposals/{id}/promote", post(promote_proposal))
         .route("/skills/proposals/{id}/reject", post(reject_proposal))
@@ -1806,6 +1812,76 @@ async fn digest_report(
 ) -> Json<vak_core::digest::DigestReport> {
     let days = q.days.unwrap_or(7).clamp(1, 90);
     Json(vak_core::digest::digest(&state.core.sessions_home(), days))
+}
+
+// ---- Inbox (durable attention layer, docs/design/29-personal-os.md P6) ------
+
+const DEFAULT_INBOX_LIMIT: usize = 200;
+
+#[derive(serde::Deserialize)]
+struct InboxQuery {
+    #[serde(default)]
+    limit: Option<usize>,
+    /// Only entries without an ack tombstone.
+    #[serde(default)]
+    unread: bool,
+}
+
+/// Newest-first inbox entries plus the live unread total. The count always
+/// reflects the full unfiltered set; `limit` bounds the returned window only.
+async fn inbox_list(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<InboxQuery>,
+) -> Json<serde_json::Value> {
+    let home = state.core.sessions_home();
+    let unread_count = vak_core::inbox::unread_count(&home);
+    let limit = q
+        .limit
+        .unwrap_or(DEFAULT_INBOX_LIMIT)
+        .clamp(1, vak_core::inbox::MAX_SCAN);
+    let entries = if q.unread {
+        vak_core::inbox::unread(&home)
+    } else {
+        vak_core::inbox::list(&home, limit)
+    }
+    .into_iter()
+    .take(limit)
+    .collect::<Vec<_>>();
+    Json(serde_json::json!({ "entries": entries, "unread_count": unread_count }))
+}
+
+async fn inbox_unread_count(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "count": vak_core::inbox::unread_count(&state.core.sessions_home())
+    }))
+}
+
+/// Idempotent read-state: a tombstone append via `inbox::ack`. An unknown id
+/// is a 404; re-acking reports `{acked:false}` instead of writing twice.
+async fn inbox_ack(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let home = state.core.sessions_home();
+    if !vak_core::inbox::list(&home, vak_core::inbox::MAX_SCAN)
+        .iter()
+        .any(|e| e.id == id)
+    {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("unknown inbox entry '{id}'") })),
+        )
+            .into_response();
+    }
+    match vak_core::inbox::ack(&home, &id) {
+        Ok(acked) => Json(serde_json::json!({ "acked": acked })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 async fn git_output(cwd: &std::path::Path, args: &[&str]) -> Option<String> {
@@ -3827,6 +3903,7 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
         let st = state.clone();
         let tid = id.to_string();
         let child_handle = h.clone();
+        let child_session = child_id.clone();
         let task_name = snapshot.name.clone();
         let deliver_to = snapshot.deliver_to.clone();
         let rx = h.events_tx.subscribe();
@@ -3850,10 +3927,14 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
                     if let Some(target) = &deliver_to {
                         // Delivery failure must not lose the recorded summary;
                         // it only means this transport could not be reached.
-                        let _ = gateway::deliver(
+                        let _ = gateway::deliver_and_record(
                             &st.core,
                             target,
                             &format!("routine '{task_name}' finished:\n{text}"),
+                            vak_core::inbox::Kind::TaskSummary,
+                            format!("routine '{task_name}' finished"),
+                            Some(&child_session),
+                            Some(&tid),
                         )
                         .await;
                     }
@@ -3949,12 +4030,36 @@ async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Opt
     }
     let outcome = execute_script(&state.core, &task.cwd, script).await;
     // Deliver FIRST: once the summary is visible on the task, its delivery
-    // attempt has already been made.
+    // attempt has already been made. With zero transports configured the
+    // inbox itself is the sink (docs/design/29 P6): a watchdog summary is
+    // never lost just because no chat channel exists.
     if outcome.ok {
-        if !outcome.text.is_empty()
-            && let Some(target) = &task.deliver_to
-        {
-            let _ = gateway::deliver(&state.core, target, &outcome.text).await;
+        if !outcome.text.is_empty() {
+            let title = format!("watchdog '{}'", task.name);
+            match task.deliver_to.as_deref() {
+                Some(target) => {
+                    let _ = gateway::deliver_and_record(
+                        &state.core,
+                        target,
+                        &outcome.text,
+                        vak_core::inbox::Kind::TaskSummary,
+                        title,
+                        None,
+                        Some(&task.id),
+                    )
+                    .await;
+                }
+                None => {
+                    let _ = vak_core::inbox::record(
+                        &state.core.sessions_home(),
+                        vak_core::inbox::Kind::TaskSummary,
+                        &title,
+                        &outcome.text,
+                        None,
+                        Some(&task.id),
+                    );
+                }
+            }
         }
     } else {
         eprintln!(
@@ -3962,10 +4067,14 @@ async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Opt
             task.name, outcome.text
         );
         let target = task.deliver_to.as_deref().unwrap_or(FALLBACK_ALERT_TARGET);
-        let _ = gateway::deliver(
+        let _ = gateway::deliver_and_record(
             &state.core,
             target,
             &format!("watchdog '{}' alert:\n{}", task.name, outcome.text),
+            vak_core::inbox::Kind::TaskSummary,
+            format!("failure: watchdog '{}'", task.name),
+            None,
+            Some(&task.id),
         )
         .await;
     }
@@ -4166,13 +4275,22 @@ pub async fn check_budget_alert(state: &AppState, session_id: &str) {
         day_total,
         cap
     );
-    let targets = configured_delivery_targets(state);
+    let title = format!("budget alert [{}]", level.as_str());
+    let mut targets = configured_delivery_targets(state);
     if targets.is_empty() {
-        let _ = gateway::deliver(&state.core, FALLBACK_ALERT_TARGET, &text).await;
-    } else {
-        for target in targets {
-            let _ = gateway::deliver(&state.core, &target, &text).await;
-        }
+        targets.push(FALLBACK_ALERT_TARGET.to_string());
+    }
+    for target in targets {
+        let _ = gateway::deliver_and_record(
+            &state.core,
+            &target,
+            &text,
+            vak_core::inbox::Kind::BudgetAlert,
+            title.clone(),
+            Some(session_id),
+            None,
+        )
+        .await;
     }
 }
 

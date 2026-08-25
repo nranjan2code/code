@@ -84,7 +84,7 @@ fn classify(ip: IpAddr) -> Option<&'static str> {
 /// address falls in a blocked range. v1 acknowledges the TOCTOU window of
 /// resolving here and letting the client resolve again (DNS rebinding);
 /// mitigation roadmap is single-use-resolve-then-connect pinning.
-fn ssrf_guard(host: &str) -> Result<(), GuardRejection> {
+pub(crate) fn ssrf_guard(host: &str) -> Result<(), GuardRejection> {
     // URL serialization brackets IPv6 literals ("[::1]"); ToSocketAddrs
     // wants the bare address.
     let bare = host
@@ -105,7 +105,7 @@ fn ssrf_guard(host: &str) -> Result<(), GuardRejection> {
 /// Why the SSRF screen refused a host; every variant renders as a typed,
 /// self-explanatory tool error.
 #[derive(Debug)]
-enum GuardRejection {
+pub(crate) enum GuardRejection {
     /// The lookup itself failed (fail closed); carries the rendered reason.
     Unresolvable(String),
     /// At least one resolved address fell in a protected range.

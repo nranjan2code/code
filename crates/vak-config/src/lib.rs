@@ -265,6 +265,10 @@ pub struct ToolsSettings {
     /// Register the bounded webfetch tool. Default true; network access is
     /// still permission-classified per request.
     pub web_fetch: Option<bool>,
+    /// Register the headless-browser DOM render tool (`browse`). Default
+    /// true; requires a locally installed Chromium-family browser and is
+    /// still permission-classified per request.
+    pub browse: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -446,6 +450,7 @@ pub struct UpdateResolved {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolsResolved {
     pub web_fetch: bool,
+    pub browse: bool,
 }
 
 impl Default for Config {
@@ -508,7 +513,10 @@ impl Default for Config {
                 url: None,
                 interval_hours: 24,
             },
-            tools: ToolsResolved { web_fetch: true },
+            tools: ToolsResolved {
+                web_fetch: true,
+                browse: true,
+            },
             gateway: GatewayResolved {
                 enabled: false,
                 approvals: "deny".into(),
@@ -829,6 +837,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     cfg.update.url = merged.update.url.clone();
     cfg.update.interval_hours = merged.update.interval_hours.unwrap_or(24);
     cfg.tools.web_fetch = merged.tools.web_fetch.unwrap_or(true);
+    cfg.tools.browse = merged.tools.browse.unwrap_or(true);
     for (name, hook) in merged.gateway.outbound.webhooks {
         if hook.url.trim().is_empty() {
             cfg.warnings.push(format!(
@@ -967,7 +976,7 @@ const KNOWN_OUTBOUND_KEYS: &[&str] = &["webhooks"];
 const KNOWN_WEBHOOK_KEYS: &[&str] = &["url", "token_env"];
 const KNOWN_AUTOMATION_KEYS: &[&str] = &["catch_up_missed"];
 const KNOWN_UPDATE_KEYS: &[&str] = &["url", "interval_hours"];
-const KNOWN_TOOLS_KEYS: &[&str] = &["web_fetch"];
+const KNOWN_TOOLS_KEYS: &[&str] = &["web_fetch", "browse"];
 
 /// A typo'd key must be visible, not silently dead: diff the raw TOML
 /// against the known schema and surface every unrecognized key.
@@ -1364,6 +1373,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     if over.tools.web_fetch.is_some() {
         base.tools.web_fetch = over.tools.web_fetch;
     }
+    if over.tools.browse.is_some() {
+        base.tools.browse = over.tools.browse;
+    }
     for (name, hook) in over.gateway.outbound.webhooks {
         base.gateway.outbound.webhooks.insert(name, hook);
     }
@@ -1563,6 +1575,7 @@ mod tests {
         assert_eq!(cfg.update.url, None);
         assert_eq!(cfg.update.interval_hours, 24);
         assert!(cfg.tools.web_fetch);
+        assert!(cfg.tools.browse);
         assert!(
             !cfg.warnings.iter().any(|w| w.contains("automation")),
             "absent sections must not warn: {:?}",
@@ -1599,6 +1612,19 @@ mod tests {
         write_project_config(dir.path(), "[tools]\nweb_fetch = false\n");
         let cfg = load_with_trust(dir.path(), true).unwrap();
         assert!(!cfg.tools.web_fetch);
+    }
+
+    #[test]
+    fn tools_browse_switch_parses() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "[tools]\nbrowse = false\n");
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert!(!cfg.tools.browse);
+        let dir2 = tempfile::tempdir().unwrap();
+        write_project_config(dir2.path(), "[tools]\nbrowse = true\nweb_fetch = false\n");
+        let cfg2 = load_with_trust(dir2.path(), true).unwrap();
+        assert!(cfg2.tools.browse);
+        assert!(!cfg2.tools.web_fetch);
     }
 
     #[test]

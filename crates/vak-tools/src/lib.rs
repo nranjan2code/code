@@ -13,6 +13,7 @@ pub mod grep;
 pub mod landlock;
 pub mod read;
 pub mod sandbox;
+pub mod webbrowse;
 pub mod webfetch;
 pub mod write;
 
@@ -20,6 +21,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 pub use context::{OutputLimits, ToolContext};
+pub use webbrowse::WebBrowseTool;
 pub use webfetch::WebFetchTool;
 
 #[derive(Debug, Clone)]
