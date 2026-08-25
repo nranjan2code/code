@@ -23,6 +23,7 @@ vak-llm = { workspace = true }
 futures = { workspace = true }
 vak-ops = { path = "../vak-ops" }
 vak-session = { workspace = true }
+vak-store = { workspace = true }
 vak-flow = { workspace = true }
 vak-hooks = { workspace = true }
 tower-http = { workspace = true }
@@ -38,6 +39,7 @@ vak-tools = { workspace = true }
 reqwest = { workspace = true }
 tempfile = { workspace = true }
 libc = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
 
 [lints]
 workspace = true
