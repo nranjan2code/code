@@ -275,7 +275,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/ops/{service}/{action}", post(ops_action))
         .route("/ops/diagnostics", get(ops_diagnostics))
         .route("/finops", get(finops_status))
-        .route("/memory", get(list_memory))
+        .route("/memory", get(list_memory).post(append_memory))
         .route(
             "/memory/{note_id}",
             axum::routing::patch(amend_memory_note).delete(forget_memory_note),
@@ -490,8 +490,61 @@ async fn list_memory(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({ "notes": blocks }))
 }
 
-/// Resolve a note id to the markdown store it lives in. The workspace tier
-/// is per-cwd; the profile tier is global (`<home>/memory/user/USER.md`).
+/// Resolve a note id to the markdown store it lives in. The workspace tier/// is per-cwd; the profile tier is global (`<home>/memory/user/USER.md`).
+#[derive(serde::Deserialize)]
+struct AppendMemoryBody {
+    text: String,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    tag: Option<String>,
+    #[serde(default)]
+    scope: Option<MemoryScope>,
+    #[serde(default)]
+    session_id: Option<String>,
+}
+
+/// Append a note to either tier. Keeps gateway/desktop/CLI symmetric —
+/// every surface writes through the same validated core API.
+async fn append_memory(
+    State(state): State<AppState>,
+    Json(body): Json<AppendMemoryBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let home = state.core.sessions_home();
+    let scope = body.scope.unwrap_or(MemoryScope::Workspace);
+    let kind = body.kind.unwrap_or_else(|| "fact".to_string());
+    let tag = body.tag.unwrap_or_default();
+    let session = body.session_id.unwrap_or_else(|| "http".to_string());
+    let result = match scope {
+        MemoryScope::Workspace => vak_core::memory::append_note(
+            &home,
+            state.core.cwd(),
+            &kind,
+            &tag,
+            &session,
+            &body.text,
+        ),
+        MemoryScope::Profile => {
+            vak_core::memory::append_profile_note(&home, &kind, &tag, &body.text, &session)
+        }
+    };
+    match result {
+        Ok(note) => {
+            let scope_str = match scope {
+                MemoryScope::Workspace => "workspace",
+                MemoryScope::Profile => "profile",
+            };
+            (StatusCode::CREATED, Json(note_payload(&note, scope_str))).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
 fn memory_store_path(state: &AppState, scope: MemoryScope) -> PathBuf {
     let home = state.core.sessions_home();
     match scope {
@@ -1473,23 +1526,40 @@ async fn events_sse(
 async fn transcript(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Json<serde_json::Value> {
-    let Some(handle) = state.get(&id) else {
-        return Json(serde_json::json!({ "error": "unknown session" }));
-    };
-    let guard = handle
-        .session
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some(s) = guard.as_ref() else {
-        return Json(serde_json::json!({ "error": "run in progress" }));
-    };
-    let msgs = s.derive_messages();
-    Json(serde_json::json!({
-        "count": msgs.len(),
-        "usage": s.total_usage(),
-        "messages": msgs,
-    }))
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Some(handle) = state.get(&id) {
+        let guard = handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(s) = guard.as_ref() else {
+            return Json(serde_json::json!({ "error": "run in progress" })).into_response();
+        };
+        let msgs = s.derive_messages();
+        return Json(serde_json::json!({
+            "count": msgs.len(),
+            "usage": s.total_usage(),
+            "messages": msgs,
+        }))
+        .into_response();
+    }
+    match open_historical_session(&state, &id) {
+        Some(s) => {
+            let msgs = s.derive_messages();
+            Json(serde_json::json!({
+                "count": msgs.len(),
+                "usage": s.total_usage(),
+                "messages": msgs,
+            }))
+            .into_response()
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "unknown session" })),
+        )
+            .into_response(),
+    }
 }
 
 /// Markdown export over the same projection the JSON transcript serves.
@@ -1500,33 +1570,51 @@ async fn transcript_markdown(
     Path(id): Path<String>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let Some(handle) = state.get(&id) else {
-        return (
+    if let Some(handle) = state.get(&id) {
+        let guard = handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(s) = guard.as_ref() else {
+            return Json(serde_json::json!({ "error": "run in progress" })).into_response();
+        };
+        let md = vak_core::transcript_md::render_markdown(&s.derive_messages());
+        return markdown_response(md);
+    }
+    match open_historical_session(&state, &id) {
+        Some(s) => markdown_response(vak_core::transcript_md::render_markdown(
+            &s.derive_messages(),
+        )),
+        None => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "unknown session" })),
         )
-            .into_response();
-    };
-    let guard = handle
-        .session
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some(s) = guard.as_ref() else {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({ "error": "run in progress" })),
-        )
-            .into_response();
-    };
-    let md = vak_core::transcript_md::render_markdown(&s.derive_messages());
+            .into_response(),
+    }
+}
+
+fn markdown_response(md: String) -> axum::response::Response {
     (
         [(
             axum::http::header::CONTENT_TYPE,
-            "text/markdown; charset=utf-8",
+            axum::http::HeaderValue::from_static("text/markdown; charset=utf-8"),
         )],
         md,
     )
         .into_response()
+}
+
+/// Historical sessions live on disk but not in the in-memory handle map
+/// (a fresh server process starts with an empty map). Open read-only for
+/// export/inspection without mutating run bookkeeping.
+fn open_historical_session(state: &AppState, id: &str) -> Option<vak_session::SessionLog> {
+    let path = state
+        .core
+        .sessions_home()
+        .join("sessions")
+        .join(vak_core::memory::hash_cwd(state.core.cwd()))
+        .join(format!("{id}.jsonl"));
+    vak_session::SessionLog::open(path).ok()
 }
 
 // ---- Personal-OS surfaces (docs/design/29-personal-os.md P1–P4) -------------

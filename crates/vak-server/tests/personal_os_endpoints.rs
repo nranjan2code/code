@@ -287,6 +287,57 @@ async fn search_all_spans_projects_and_flags_the_scope() {
 
 // ---- Markdown transcript export ----------------------------------------------
 
+// Regression: a fresh server process starts with an empty in-memory handle
+// map; historical sessions must still export from disk (found by live
+// dogfooding — transcript.md 404'd for every non-attached session, and the
+// JSON endpoint masked the same failure as a 200-wrapped error body).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn historical_sessions_serve_from_disk_without_attach() {
+    let srv = spawn_server("").await;
+    let id = "55555555-disk";
+    let path = SessionPath::new_session_file(&srv.home, &srv.cwd, id);
+    let mut log = SessionLog::create(path, header_for(id, &srv.cwd)).unwrap();
+    log.append_message(vak_session::types::MessageRecord {
+        message: vak_llm::Message::user_text("historical question"),
+        meta: None,
+    })
+    .unwrap();
+    log.append_message(vak_session::types::MessageRecord {
+        message: vak_llm::Message::assistant(vec![ContentBlock::text("historical answer")]),
+        meta: None,
+    })
+    .unwrap();
+    drop(log);
+
+    let res = srv
+        .client
+        .get(format!("{}/sessions/{id}/transcript.md", srv.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let body = res.text().await.unwrap();
+    assert!(body.contains("historical answer"));
+
+    let res = srv
+        .client
+        .get(format!("{}/sessions/{id}/transcript", srv.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(body["count"], 2);
+
+    let res = srv
+        .client
+        .get(format!("{}/sessions/unknown/transcript.md", srv.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 404);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn transcript_md_equals_shared_renderer_byte_for_byte() {
     let srv = spawn_server("").await;
