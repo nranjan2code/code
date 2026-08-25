@@ -121,3 +121,14 @@ serving leg per dispatch (`CostRow.provider`).
 - Retries are unbounded by wall-clock but bounded by count and cancel token.
 - A denied/failed tool result is data, not an exception — the loop continues;
   only provider-step exhaustion or required-node failure ends a run.
+
+## Network events (docs/design/31-network-resilience.md)
+
+| Event | Handling | Proof |
+|---|---|---|
+| DHCP change / network switch | local plane loopback-immune; outbound reconnectors own recovery | `telegram_bridge::bridge_survives_outage_window_and_resumes_cursor` |
+| Multi-minute outage on a channel | bridge never exits; capped backoff, cursor resumes gap-free via ownership probe | same regression |
+| Inference outage window | ladder legs + endurance ride it; breaker paces the half-close probe | fault_proxy scenario (`scripts/fault_proxy.py`) |
+| Hibernation / wake | tokio timers collapse across sleep; watchdog bounds dead sockets; scheduler per-tick evaluation fires each missed slot once | scheduler catch-up tests |
+| Full restart | sessions append-only + resume; gateway bindings + task store persisted; telegram cursor re-synced by probe | existing resume/bindings suites |
+| Delivery while channel down | inbox chokepoint stores durably; transports best-effort | P6 zero-transports test |

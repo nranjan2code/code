@@ -177,3 +177,124 @@ async fn telegram_bridge_routes_message_and_delivers_reply() {
         "long-poll must keep polling"
     );
 }
+
+// Regression (docs/design/31-network-resilience.md): the bridge must ride
+// out an outage window — refused polls, network switch, sleep/wake — and
+// resume consumption gap-free. It used to exit after 10 consecutive
+// failures, killing the channel until a human restarted it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn bridge_survives_outage_window_and_resumes_cursor() {
+    let down = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let served = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let sent: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let get_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    let d = down.clone();
+    let s = served.clone();
+    let gc = get_calls.clone();
+    async fn ok_json() -> serde_json::Value {
+        serde_json::json!({ "ok": true })
+    }
+    async fn updates_handler(
+        d: Arc<std::sync::atomic::AtomicBool>,
+        s: Arc<std::sync::atomic::AtomicUsize>,
+        gc: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        gc.fetch_add(1, Ordering::SeqCst);
+        if d.load(Ordering::SeqCst) {
+            return (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                axum::Json(serde_json::json!({ "ok": false })),
+            )
+                .into_response();
+        }
+        if s.fetch_add(1, Ordering::SeqCst) == 0 {
+            return axum::Json(serde_json::json!({
+                "ok": true,
+                "result": [{
+                    "update_id": 900,
+                    "message": { "chat": {"id": 1}, "text": "ping during recovery" }
+                }]
+            }))
+            .into_response();
+        }
+        axum::Json(serde_json::json!({ "ok": true, "result": [] })).into_response()
+    }
+    let app = axum::Router::new()
+        .route(
+            "/botbottok/getUpdates",
+            axum::routing::get(move || updates_handler(d.clone(), s.clone(), gc.clone())),
+        )
+        .route(
+            "/botbottok/sendMessage",
+            axum::routing::post({
+                let sent = sent.clone();
+                move |axum::Json(body): axum::Json<serde_json::Value>| async move {
+                    sent.lock().unwrap().push(body);
+                    axum::Json(ok_json().await)
+                }
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    // Gateway side accepts the inbound message.
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let _ = std::fs::create_dir_all(cwd.join(".vakcoder"));
+    let _ = std::fs::write(
+        cwd.join(".vakcoder/config.toml"),
+        "[memory]\nreflection = false\n",
+    );
+    let core = Core::new_with_trust(cwd.clone(), true).unwrap();
+    core.set_sessions_home(dir.path().join("home"));
+    core.set_provider_instance(Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::from(vec![text("pong after outage")])),
+    }));
+    std::mem::forget(dir);
+    let listener2 = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let gw_addr = listener2.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener2, vak_server::gateway_router(core))
+            .await
+            .unwrap();
+    });
+
+    let bridge = TelegramBridge {
+        locks_dir: None,
+        api_base: format!("http://{addr}"),
+        bot_token: "bottok".into(),
+        gateway_url: format!("http://{gw_addr}"),
+        gateway_token: "vk_test".into(),
+    };
+
+    // Ownership probe runs while "down" — must classify as transient, not
+    // conflict, and fall through to the loop.
+    let handle = tokio::spawn(async move { bridge.run().await });
+
+    // Let the bridge hit several refused polls, then heal the network.
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    let refused = get_calls.load(Ordering::SeqCst);
+    assert!(refused >= 1, "bridge should have attempted polls");
+    down.store(false, Ordering::SeqCst);
+
+    // Recovery must deliver the queued update end-to-end.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while sent.lock().unwrap().is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "bridge never recovered after outage window"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(sent.lock().unwrap()[0]["text"], "pong after outage");
+    assert!(
+        !handle.is_finished(),
+        "run() must not exit on transients (old give-up-after-10 behavior)"
+    );
+}

@@ -476,13 +476,19 @@ impl TelegramBridge {
                             self.await_ownership().await;
                         }
                         PollBlock::Transient => {
-                            eprintln!("[telegram] poll failed ({failures} consecutive): {e}");
-                            if failures >= 10 {
-                                return Err(format!(
-                                    "giving up after {failures} consecutive failures"
-                                ));
+                            // Never give up (docs/design/31-network-resilience.md):
+                            // outages, DHCP switches, and sleep/wake are all
+                            // ordinary transients. Backoff doubles to a 30s
+                            // cap — the same ceiling as hot standby — and
+                            // resets on first success. The offset cursor
+                            // makes every recovery gap-free.
+                            if failures == 1 || failures.is_multiple_of(10) {
+                                eprintln!("[telegram] poll failed ({failures} consecutive): {e}");
                             }
-                            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                            tokio::time::sleep(std::time::Duration::from_secs(
+                                standby_backoff_secs(failures),
+                            ))
+                            .await;
                         }
                     }
                 }

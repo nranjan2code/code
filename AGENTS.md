@@ -18,7 +18,9 @@ must also follow the threat model and priority order in
 (recall), `docs/design/25-docker-sandbox.md` (execution backends),
 `docs/design/26-learning.md` (learning loop),
 `docs/design/28-operations.md` with docs/hosting.md for running the stack
-as durable services, and `docs/design/27-vakyartha-adoption.md` for the
+as durable services, `docs/design/31-network-resilience.md` for the
+four-plane network contract (loopback-only local, crash-only channels,
+ladder+endurance inference, store-and-forward delivery), and `docs/design/27-vakyartha-adoption.md` for the
 long-horizon program (work receipts + dispatch ceiling ✅, context packet
 accounting + deterministic gate ✅, FinOps budget admission ✅,
 loop-engineering kernel ✅, frozen-ladder routing ✅, router-grade
