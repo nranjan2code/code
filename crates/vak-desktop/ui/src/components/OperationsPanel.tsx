@@ -9,13 +9,14 @@ function Status(props: { value: string; good?: boolean }) {
 export default function OperationsPanel(props: { onNotice?: (text: string) => void }) {
   const [data, setData] = createSignal<api.OpsDiagnostics | null>(null);
   const [finops, setFinops] = createSignal<api.FinopsStatus | null>(null);
+  const [doctor, setDoctor] = createSignal<api.DoctorReport | null>(null);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
   const refresh = async () => {
     setLoading(true);
     try {
-      const [next, spend] = await Promise.all([api.opsDiagnostics(), api.finopsStatus()]);
-      setData(next); setFinops(spend); setError(null);
+      const [next, spend, doc] = await Promise.all([api.opsDiagnostics(), api.finopsStatus(), api.doctor()]);
+      setData(next); setFinops(spend); setDoctor(doc); setError(null);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
   };
@@ -43,6 +44,36 @@ export default function OperationsPanel(props: { onNotice?: (text: string) => vo
         </section>
         <section class="operation-card"><header><div><h3>Flows</h3><p>Persisted run ledgers</p></div><span class="metric">{data()!.flows.reduce((sum, flow) => sum + flow.runs, 0)} runs</span></header>
           <Show when={data()!.flows.length} fallback={<p class="operation-muted">No flow runs discovered yet.</p>}><div class="operation-list"><For each={data()!.flows}>{(flow) => <div><strong>{flow.name}</strong><small>{flow.runs} {flow.runs === 1 ? "run" : "runs"}</small></div>}</For></div></Show>
+        </section>
+        <section class="operation-card doctor-card">
+          <header><div><h3>Diagnostics</h3><p>Doctor parity: health checks, runtime facts, frozen ladder</p></div>
+            <Status value={doctor() ? (doctor()!.failures === 0 ? "ok" : `${doctor()!.failures} failing`) : "unknown"} />
+          </header>
+          <Show when={doctor()}>
+            <div class="doctor-checks">
+              <For each={doctor()!.checks}>
+                {(check) => (
+                  <div class="doctor-check" title={check.detail}>
+                    <span class="dot" classList={{ ok: check.ok, fail: !check.ok }} aria-hidden="true" />
+                    <span class="doctor-check-label">{check.label}</span>
+                    <span class="doctor-check-detail">{check.detail}</span>
+                  </div>
+                )}
+              </For>
+            </div>
+            <div class="operation-facts doctor-facts"><For each={doctor()!.facts}>{(fact) => <span title={fact}>{fact}</span>}</For></div>
+            <Show when={doctor()!.ladder}>
+              {(ladder) => (
+                <div class="doctor-ladder">
+                  <b>Frozen ladder · {ladder().objective} · {ladder().fallback_legs} fallback leg{ladder().fallback_legs === 1 ? "" : "s"}</b>
+                  <code>{ladder().rendered}</code>
+                  <Show when={ladder().annotations.length}>
+                    <For each={ladder().annotations}>{(note) => <small>{note}</small>}</For>
+                  </Show>
+                </div>
+              )}
+            </Show>
+          </Show>
         </section>
         <section class="operation-card finops-card"><header><div><h3>Spend & budget</h3><p>Estimated local ledger, today</p></div><strong class="operation-cost">${finops()?.day_usd.toFixed(2) ?? "0.00"}</strong></header>
           <div class="operation-facts"><span><b>Day cap</b>{finops()?.day_cap_usd == null ? "Not set" : `$${finops()!.day_cap_usd!.toFixed(2)}`}</span><span><b>Run cap</b>{finops()?.run_cap_usd == null ? "Not set" : `$${finops()!.run_cap_usd!.toFixed(2)}`}</span><span><b>Calls</b>{finops()?.total_rows ?? 0}</span><span><b>Unknown price</b>{finops()?.unknown_rows ?? 0}</span></div>

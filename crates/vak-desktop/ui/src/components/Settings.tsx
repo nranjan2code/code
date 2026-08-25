@@ -1,7 +1,10 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   density,
   openInEditor,
+  pendingSettingsPage,
   providers,
   setDensity,
   setNotice,
@@ -19,6 +22,7 @@ import * as api from "../api";
 import { loadHealth, refreshSessions } from "../App";
 import Icon, { type IconName } from "./Icon";
 import OperationsPanel from "./OperationsPanel";
+import DigestCard from "./DigestCard";
 
 /** Sentinel option that swaps the model select for a free-text field. */
 const CUSTOM_MODEL = "\u0000custom";
@@ -55,7 +59,7 @@ function fmt(value: number): string {
 }
 
 export default function Settings() {
-  const [page, setPage] = createSignal<Page>("general");
+  const [page, setPage] = createSignal<Page>(pendingSettingsPage() ?? "general");
   const [query, setQuery] = createSignal("");
   const [config, setConfig] = createSignal<ConfigSnapshot | null>(null);
   const [loading, setLoading] = createSignal(true);
@@ -73,6 +77,67 @@ export default function Settings() {
 
   const [notes, setNotes] = createSignal<api.NoteBlock[]>([]);
   const [proposals, setProposals] = createSignal<api.SkillProposal[]>([]);
+  // Memory tiers (docs/design/29-personal-os.md P1): per-project MEMORY.md
+  // vs the global USER.md profile that follows the user everywhere.
+  const [tier, setTier] = createSignal<api.MemoryScope>("workspace");
+  const [editingId, setEditingId] = createSignal<string | null>(null);
+  const [editText, setEditText] = createSignal("");
+  const [noteTag, setNoteTag] = createSignal("");
+  const [noteKind, setNoteKind] = createSignal("preference");
+  const [noteText, setNoteText] = createSignal("");
+  const [addingNote, setAddingNote] = createSignal(false);
+
+  const tierNotes = createMemo(() =>
+    notes().filter((n) => (n.scope ?? "workspace") === tier()),
+  );
+
+  async function refreshLearning() {
+    try {
+      setNotes((await api.listMemory()).notes);
+      setProposals((await api.listProposals()).proposals);
+    } catch {
+      /* gateway down — lists simply stay stale */
+    }
+  }
+
+  async function forgetNote(id: string) {
+    if (!window.confirm("Forget this memory note? The block is removed from the markdown store; this cannot be undone.")) return;
+    try {
+      await api.forgetMemory(id, tier());
+      await refreshLearning();
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not forget note: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+
+  async function amendNote(id: string) {
+    const text = editText().trim();
+    if (!text) return;
+    try {
+      await api.amendMemory(id, tier(), text);
+      setEditingId(null);
+      await refreshLearning();
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not amend note: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+
+  async function addProfileNote() {
+    const text = noteText().trim();
+    if (!text) return;
+    try {
+      await invoke<{ id: string; ts: string }>("append_profile_note", {
+        draft: { kind: noteKind().trim() || "preference", tag: noteTag().trim(), text },
+      });
+      setNoteText("");
+      setNoteTag("");
+      setAddingNote(false);
+      await refreshLearning();
+      setNotice({ kind: "info", text: "Note appended to your USER.md profile — recalled in every project." });
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not append note: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
 
   // MCP manager state: loaded when the integrations page opens; edits are
   // local until Save pushes the whole table.
@@ -178,16 +243,6 @@ export default function Settings() {
       return next;
     });
     setMcpDirty(true);
-  }
-
-
-  async function refreshLearning() {
-    try {
-      setNotes((await api.listMemory()).notes);
-      setProposals((await api.listProposals()).proposals);
-    } catch {
-      /* gateway down — lists simply stay stale */
-    }
   }
 
   async function promote(id: string) {
@@ -345,6 +400,58 @@ export default function Settings() {
       setNotice({ kind: "info", text: `${result.deleted} archived task${result.deleted === 1 ? "" : "s"} deleted.` });
     } catch (error) {
       setNotice({ kind: "error", text: `Could not delete archived tasks: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  };
+
+  // ---- Data & backup (docs/design/29-personal-os.md P3) ----------------------
+  const [backupDir, setBackupDir] = createSignal("");
+  const [includeSecrets, setIncludeSecrets] = createSignal(false);
+  const [importDir, setImportDir] = createSignal("");
+  const [conflict, setConflict] = createSignal<"skip" | "rename">("skip");
+  const [backupBusy, setBackupBusy] = createSignal(false);
+
+  const pickDirectory = async (current: string): Promise<string> => {
+    try {
+      const dir = await openFileDialog({ directory: true, multiple: false, title: "Choose a folder", defaultPath: current || undefined });
+      if (typeof dir === "string") return dir;
+    } catch {
+      /* no native dialog in this environment — the text input remains */
+    }
+    return current;
+  };
+
+  const runExport = async () => {
+    const dest = backupDir().trim();
+    if (!dest) return;
+    setBackupBusy(true);
+    try {
+      const res = await api.backupExport(dest, includeSecrets());
+      const m = res.manifest;
+      setNotice({
+        kind: "info",
+        text: `Exported ${m.file_count} file${m.file_count === 1 ? "" : "s"} (${(m.total_bytes / 1024).toFixed(0)} KB) to ${dest}${res.included_secrets ? " — INCLUDING SECRETS" : ""}`,
+      });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Export failed: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const runImport = async () => {
+    const src = importDir().trim();
+    if (!src) return;
+    setBackupBusy(true);
+    try {
+      const report = await api.backupImport(src, conflict());
+      setNotice({
+        kind: "info",
+        text: `Imported from ${src} — ${report.copied} copied · ${report.renamed} renamed · ${report.skipped} skipped.`,
+      });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Import failed: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setBackupBusy(false);
     }
   };
 
@@ -635,6 +742,7 @@ export default function Settings() {
 
             <Show when={page() === "services"}>
               <OperationsPanel onNotice={(text) => setNotice({ kind: "error", text })} />
+              <DigestCard />
             </Show>
 
             <Show when={page() === "learning"}>
@@ -660,19 +768,72 @@ export default function Settings() {
                   </For>
                 </Show>
               </Group>
-              <Group title={`Memory notes (${notes().length})`}>
+              <nav class="capability-tabs memory-tabs" aria-label="Memory tiers">
+                <button classList={{ active: tier() === "workspace" }} onClick={() => setTier("workspace")}><Icon name="folder" /><span>Workspace</span><em>{notes().filter((n) => (n.scope ?? "workspace") === "workspace").length}</em></button>
+                <button classList={{ active: tier() === "profile" }} onClick={() => setTier("profile")}><Icon name="spark" /><span>Profile</span><em>{notes().filter((n) => n.scope === "profile").length}</em></button>
+              </nav>
+              <Group title={tier() === "profile" ? "Profile memories (USER.md)" : "Workspace memories (MEMORY.md)"}>
+                <Show when={tier() === "profile"}>
+                  <p class="settings-hint memory-hint">Global tier — these notes are recalled in every project.</p>
+                </Show>
                 <Show
-                  when={notes().length > 0}
-                  fallback={<Row title="No notes yet" description="Chat with reflection enabled — durable decisions land here as plain markdown you can edit in ~/.vakcoder/memory/."><span class="settings-status good">Ready</span></Row>}
+                  when={!addingNote()}
+                  fallback={
+                    <div class="memory-add">
+                      <div class="memory-add-fields">
+                        <label>Kind<input value={noteKind()} aria-label="Note kind" onInput={(e) => setNoteKind(e.currentTarget.value)} /></label>
+                        <label>Tag <span class="label-hint">optional</span><input value={noteTag()} aria-label="Note tag" onInput={(e) => setNoteTag(e.currentTarget.value)} /></label>
+                      </div>
+                      <textarea rows={2} placeholder="Something that should hold across every project…" aria-label="Note text" value={noteText()} onInput={(e) => setNoteText(e.currentTarget.value)} />
+                      <div class="task-add-row">
+                        <button class="btn primary" disabled={!noteText().trim() || !noteKind().trim()} onClick={() => void addProfileNote()}>Append note</button>
+                        <button class="btn" onClick={() => setAddingNote(false)}>Cancel</button>
+                      </div>
+                    </div>
+                  }
+                >
+                  <Show when={tier() === "profile"}>
+                    <div class="task-add-row"><button class="btn" onClick={() => setAddingNote(true)}><Icon name="add" /> Add profile note</button></div>
+                  </Show>
+                </Show>
+                <Show
+                  when={tierNotes().length > 0}
+                  fallback={<Row title={tier() === "profile" ? "No profile notes yet" : "No notes yet"} description={tier() === "profile" ? "Add a preference once and every workspace benefits." : "Chat with reflection enabled — durable decisions land here as plain markdown you can edit in ~/.vakcoder/memory/."}><span class="settings-status good">{tier() === "profile" ? "Ready" : "Ready"}</span></Row>}
                 >
                   <div class="archived-list" aria-label="Memory notes">
-                    <For each={notes().slice().reverse().slice(0, 20)}>
+                    <For each={tierNotes().slice().reverse()}>
                       {(n) => (
-                        <div class="task-row">
-                          <div>
-                            <strong>{n.tag || n.kind}</strong>
-                            <small>{new Date(n.ts).toLocaleString()} · {n.kind} · from {n.session_id.slice(0, 8)}</small>
-                            <p>{n.text}</p>
+                        <div class="task-row memory-note">
+                          <div class="task-main">
+                            <div class="task-name">
+                              <span class="badge memory-id" title={`Note id ${n.id}`}>{n.id.slice(0, 8)}</span>
+                              {n.tag || n.kind}
+                              <span class="badge">{n.kind}</span>
+                              <Show when={n.tag && n.tag !== n.kind}><span class="badge">tag: {n.tag}</span></Show>
+                            </div>
+                            <small class="memory-meta">{new Date(n.ts).toLocaleString()} · from {n.session_id.slice(0, 8)}</small>
+                            <Show
+                              when={editingId() === n.id}
+                              fallback={<p class="memory-text">{n.text}</p>}
+                            >
+                              <textarea
+                                class="memory-amend"
+                                rows={3}
+                                aria-label={`Amend note ${n.id.slice(0, 8)}`}
+                                value={editText()}
+                                onInput={(e) => setEditText(e.currentTarget.value)}
+                              />
+                              <div class="task-add-row">
+                                <button class="btn primary sm" disabled={!editText().trim()} onClick={() => void amendNote(n.id)}>Save</button>
+                                <button class="btn sm" onClick={() => setEditingId(null)}>Cancel</button>
+                              </div>
+                            </Show>
+                          </div>
+                          <div class="task-actions">
+                            <Show when={editingId() !== n.id}>
+                              <button class="chip sm" onClick={() => { setEditingId(n.id); setEditText(n.text); }}>amend</button>
+                            </Show>
+                            <button class="chip sm danger-chip" onClick={() => void forgetNote(n.id)}>forget</button>
                           </div>
                         </div>
                       )}
@@ -723,6 +884,59 @@ export default function Settings() {
                 <Row title="Project config" description={config()?.paths.project_config ?? ""}><button class="settings-button" onClick={() => void openProjectConfig()}>Open</button></Row>
                 <Row title="Global config" description={config()?.paths.global_config ?? "Not configured"}><button class="settings-button" onClick={() => void navigator.clipboard.writeText(config()?.paths.global_config ?? "")}>Copy path</button></Row>
                 <Row title="Session store" description={config()?.paths.sessions_home ?? ""}><button class="settings-button" onClick={() => void navigator.clipboard.writeText(config()?.paths.sessions_home ?? "")}>Copy path</button></Row>
+              </Group>
+              <Group title="Data & backup">
+                <div class="settings-callout"><Icon name="shield" /><div><strong>Backups copy your VakCoder home.</strong><span>Sessions, memory, config, and checkpoints go to a plain folder you choose. Secrets are excluded unless you explicitly opt in below.</span></div></div>
+                <Row
+                  title="Export backup"
+                  description="Pick a destination folder (or type a path), then export."
+                >
+                  <span class="key-edit">
+                    <input
+                      class="settings-input wide"
+                      placeholder="/path/to/backup-folder"
+                      aria-label="Backup destination folder"
+                      value={backupDir()}
+                      onInput={(e) => setBackupDir(e.currentTarget.value)}
+                    />
+                    <button class="settings-button" disabled={backupBusy()} onClick={async () => setBackupDir(await pickDirectory(backupDir()))}>Choose…</button>
+                  </span>
+                </Row>
+                <Row
+                  title="Include secrets"
+                  description="Adds provider API keys from .env files. Anyone with this folder can spend your credits — keep it offline and delete it when restored."
+                  danger
+                >
+                  <Switch label="Include secrets in export" checked={includeSecrets()} onChange={setIncludeSecrets} />
+                </Row>
+                <Show when={includeSecrets()}>
+                  <div class="settings-warning" role="alert">The export will contain live API keys. Treat the folder like a password vault.</div>
+                </Show>
+                <div class="settings-actions">
+                  <button class="btn primary" disabled={backupBusy() || !backupDir().trim()} onClick={() => void runExport()}>{backupBusy() ? "Working…" : "Export now"}</button>
+                </div>
+                <Row
+                  title="Import backup"
+                  description={`Restore a previously exported folder. Conflicts are ${conflict() === "skip" ? "skipped" : "renamed"} — the running home is never overwritten silently.`}
+                >
+                  <span class="key-edit">
+                    <input
+                      class="settings-input wide"
+                      placeholder="/path/to/exported-folder"
+                      aria-label="Backup source folder"
+                      value={importDir()}
+                      onInput={(e) => setImportDir(e.currentTarget.value)}
+                    />
+                    <button class="settings-button" disabled={backupBusy()} onClick={async () => setImportDir(await pickDirectory(importDir()))}>Choose…</button>
+                    <select value={conflict()} onChange={(e) => setConflict(e.currentTarget.value as "skip" | "rename")} aria-label="Conflict policy">
+                      <option value="skip">skip existing</option>
+                      <option value="rename">rename incoming</option>
+                    </select>
+                  </span>
+                </Row>
+                <div class="settings-actions">
+                  <button class="btn" disabled={backupBusy() || !importDir().trim()} onClick={() => void runImport()}>{backupBusy() ? "Working…" : "Import"}</button>
+                </div>
               </Group>
               <Show when={(config()?.warnings.length ?? 0) > 0}><Group title="Configuration warnings"><For each={config()?.warnings}>{(warning) => <div class="settings-warning">{warning}</div>}</For></Group></Show>
             </Show>

@@ -106,11 +106,49 @@ export function finopsStatus(): Promise<FinopsStatus> {
 // ---- learning (memory notes + skill proposals) -------------------------------
 
 export interface NoteBlock {
+  id: string;
   ts: string;
   kind: string;
   tag: string;
   session_id: string;
   text: string;
+  /** "workspace" (per-project MEMORY.md) | "profile" (global USER.md). */
+  scope?: "workspace" | "profile";
+}
+
+export type MemoryScope = NonNullable<NoteBlock["scope"]>;
+
+export function forgetMemory(id: string, scope: MemoryScope): Promise<{ forgotten: string; bytes: number }> {
+  return req(`/memory/${encodeURIComponent(id)}?scope=${scope}`, { method: "DELETE" });
+}
+
+export function amendMemory(id: string, scope: MemoryScope, text: string): Promise<{ amended: string }> {
+  return req(`/memory/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ text, scope }),
+  });
+}
+
+// ---- recall search -----------------------------------------------------------
+
+export interface SearchHit {
+  session_id: string;
+  entry_id: string;
+  ts: string;
+  role: string;
+  score: number;
+  snippet: string;
+  /** Set only in global mode: hash of the project the hit came from. */
+  project_hash?: string;
+}
+
+export function searchSessions(
+  q: string,
+  limit: number,
+  all: boolean,
+): Promise<{ all: boolean; hits: SearchHit[] }> {
+  const params = new URLSearchParams({ q, limit: String(limit), all: String(all) });
+  return req(`/search?${params.toString()}`);
 }
 
 export interface SkillProposal {
@@ -181,6 +219,15 @@ export function transcript(id: string): Promise<{
   messages: Message[];
 }> {
   return req(`/sessions/${id}/transcript`);
+}
+
+/** Markdown export (shared renderer with the TUI); text, not JSON. */
+export async function transcriptMarkdown(id: string): Promise<string> {
+  const res = await fetch(`${base}/sessions/${encodeURIComponent(id)}/transcript.md`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.text();
 }
 
 export function runPrompt(
@@ -466,14 +513,35 @@ export function listTasks(): Promise<{ tasks: import("./types").TaskDef[] }> {
   return req("/tasks");
 }
 
-export function createTask(name: string, prompt: string, intervalSecs: number): Promise<unknown> {
-  return req("/tasks", {
-    method: "POST",
-    body: JSON.stringify({ name, prompt, interval_secs: intervalSecs }),
-  });
+export interface TaskDraft {
+  name: string;
+  prompt: string;
+  interval_secs: number;
+  schedule?: string | null;
+  script?: string | null;
+  model_pin?: string | null;
 }
 
-export function patchTask(id: string, patch: Partial<{ enabled: boolean; name: string; prompt: string; interval_secs: number }>): Promise<unknown> {
+export function createTask(draft: TaskDraft): Promise<unknown> {
+  return req("/tasks", { method: "POST", body: JSON.stringify(draft) });
+}
+
+/**
+ * Tri-state optional strings mirror the server: absent key = keep current,
+ * explicit null = clear. `JSON.stringify` drops undefined keys, so callers
+ * express "keep" by simply not setting the field.
+ */
+export type TaskPatch = Partial<{
+  enabled: boolean;
+  name: string;
+  prompt: string;
+  interval_secs: number;
+  schedule: string | null;
+  script: string | null;
+  model_pin: string | null;
+}>;
+
+export function patchTask(id: string, patch: TaskPatch): Promise<import("./types").TaskDef> {
   return req(`/tasks/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
 }
 
@@ -502,4 +570,91 @@ export function stopLaunch(id: string, name: string): Promise<unknown> {
 
 export function launchLogs(id: string, name: string): Promise<{ lines: string[] }> {
   return req(`/sessions/${id}/launch/logs?name=${encodeURIComponent(name)}`);
+}
+
+// ---- personal-os surfaces (docs/design/29-personal-os.md) ---------------------
+
+export interface DoctorCheck {
+  label: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface DoctorLadder {
+  legs: string[];
+  rendered: string;
+  objective: string;
+  fallback_legs: number;
+  annotations: string[];
+}
+
+export interface DoctorReport {
+  failures: number;
+  checks: DoctorCheck[];
+  facts: string[];
+  ladder?: DoctorLadder | null;
+}
+
+/** `?session=` optionally adds that session's frozen-ladder section. */
+export function doctor(session?: string): Promise<DoctorReport> {
+  const q = session ? `?session=${encodeURIComponent(session)}` : "";
+  return req(`/doctor${q}`);
+}
+
+export interface BackupManifest {
+  version: number;
+  timestamp: string;
+  file_count: number;
+  total_bytes: number;
+}
+
+export function backupExport(
+  destDir: string,
+  includeSecrets: boolean,
+): Promise<{ manifest: BackupManifest; included_secrets: boolean }> {
+  return req("/backup/export", {
+    method: "POST",
+    body: JSON.stringify({ dest_dir: destDir, include_secrets: includeSecrets }),
+  });
+}
+
+export interface ImportReportShape {
+  copied: number;
+  renamed: number;
+  skipped: number;
+}
+
+export function backupImport(srcDir: string, conflict: "skip" | "rename"): Promise<ImportReportShape> {
+  return req("/backup/import", {
+    method: "POST",
+    body: JSON.stringify({ src_dir: srcDir, conflict }),
+  });
+}
+
+export interface DigestModelRollup {
+  rows: number;
+  usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+}
+
+export interface DigestReport {
+  days: number;
+  since?: string | null;
+  total_usd: number;
+  unpriced_rows: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  dispatches: number;
+  by_model: Record<string, DigestModelRollup>;
+  per_day: { day: string; usd: number; unpriced_rows: number }[];
+  distinct_sessions: string[];
+  memory_notes_appended: number;
+  skill_proposals_opened: number;
+}
+
+export function digest(days: number): Promise<DigestReport> {
+  return req(`/digest?days=${days}`);
 }

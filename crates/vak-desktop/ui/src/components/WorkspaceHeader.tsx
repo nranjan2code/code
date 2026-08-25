@@ -1,4 +1,6 @@
-import { createMemo, Show } from "solid-js";
+import { createMemo, createSignal, Show } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   activeId,
   dockTab,
@@ -8,7 +10,9 @@ import {
   setBestOfOpen,
   setDockTab,
   setHistoryOpen,
+  setNotice,
   setReceiptsOpen,
+  setSearchOpen,
   setSettingsOpen,
   setSideOpen,
   setSidebarOpen,
@@ -16,6 +20,7 @@ import {
   sidebarOpen,
   splitId,
 } from "../store";
+import * as api from "../api";
 import { toggleSplit } from "../App";
 import Icon, { type IconName } from "./Icon";
 
@@ -30,6 +35,45 @@ const tools: { id: "preview" | "diff" | "terminal" | "editor" | "pr"; label: str
 export default function WorkspaceHeader() {
   const session = createMemo(() => sessions().find((item) => item.session_id === activeId()));
   const title = createMemo(() => session()?.title || (activeId() ? "Untitled task" : "New task"));
+  const [exporting, setExporting] = createSignal(false);
+
+  // Markdown transcript export (docs/design/29-personal-os.md P4): the
+  // shared renderer's output is fetched from the router and written to a
+  // path the user picked in the native save dialog. Without a dialog (or in
+  // a plain browser build) fall back to a blob download.
+  const exportTranscript = async () => {
+    const id = activeId();
+    if (!id || exporting()) return;
+    setExporting(true);
+    try {
+      const md = await api.transcriptMarkdown(id);
+      let path: string | null = null;
+      try {
+        path = await saveDialog({
+          title: "Save transcript",
+          defaultPath: `${(title().replace(/[^\w.-]+/g, "-").trim() || "transcript")}-${id.slice(0, 8)}.md`,
+          filters: [{ name: "Markdown", extensions: ["md"] }],
+        });
+      } catch {
+        /* no native dialog — fall through to blob */
+      }
+      if (path) {
+        await invoke("export_text_file", { path, contents: md });
+        setNotice({ kind: "info", text: `Transcript saved to ${path}` });
+      } else {
+        const url = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${id.slice(0, 8)}.md`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not export transcript: ${e instanceof Error ? e.message : String(e)}` });
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <header class="workspace-head">
@@ -107,7 +151,25 @@ export default function WorkspaceHeader() {
         >
           <Icon name="receipt" />
         </button>
+        <button
+          class="icon-button has-tooltip"
+          data-tooltip="Download transcript (.md)"
+          aria-label="Download transcript as markdown"
+          disabled={!activeId() || exporting()}
+          onClick={() => void exportTranscript()}
+        >
+          <Icon name="download" />
+        </button>
         </div>
+        <span class="action-separator" aria-hidden="true" />
+        <button
+          class="icon-button has-tooltip"
+          data-tooltip="Recall search ⌘K"
+          aria-label="Recall search across sessions"
+          onClick={() => setSearchOpen(true)}
+        >
+          <Icon name="search" />
+        </button>
         <span class="action-separator" aria-hidden="true" />
         <div class="workspace-action-group" role="group" aria-label="Workspace surfaces">
         {tools.map((tool) => (

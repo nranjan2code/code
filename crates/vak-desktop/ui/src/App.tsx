@@ -46,8 +46,10 @@ import {
   tasksOpen,
   historyOpen,
   setHistoryOpen,
-  receiptsOpen,
+   receiptsOpen,
   setReceiptsOpen,
+  searchOpen,
+  setSearchOpen,
   settingsOpen,
   setSettingsOpen,
   uiPreferences,
@@ -88,6 +90,8 @@ import Icon, { type IconName } from "./components/Icon";
 import ResizeHandle from "./components/ResizeHandle";
 import Toast from "./components/Toast";
 import Settings from "./components/Settings";
+import BudgetBanner from "./components/BudgetBanner";
+import SearchModal from "./components/SearchModal";
 
 const streams = new Map<string, EventSource>();
 const sideStreams = new Map<string, EventSource>();
@@ -599,6 +603,7 @@ export default function App() {
       if (!mod) {
         if (e.key === "Escape") {
           if (showShortcuts()) setShowShortcuts(false);
+          else if (searchOpen()) setSearchOpen(false);
           else if (settingsOpen()) setSettingsOpen(false);
           else if (bestOfOpen()) setBestOfOpen(false);
           else if (tasksOpen()) setTasksOpen(false);
@@ -615,6 +620,9 @@ export default function App() {
       } else if (e.key === ",") {
         e.preventDefault();
         setSettingsOpen(true);
+      } else if (e.key === "k" || e.key === "K") {
+        e.preventDefault();
+        setSearchOpen(true);
       } else if (e.key === "/") {
         e.preventDefault();
         setShowShortcuts((v) => !v);
@@ -751,6 +759,7 @@ export default function App() {
             )}
           </Show>
           <StatusBar />
+          <BudgetBanner />
           <Show when={showShortcuts()}>
             <ShortcutsModal />
           </Show>
@@ -765,6 +774,7 @@ export default function App() {
             <ReceiptsModal />
           </Show>
           <Toast />
+          <SearchModal />
           <Show when={settingsOpen()}><Settings /></Show>
         </div>
       )}

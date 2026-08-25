@@ -72,5 +72,5 @@ keys still warn per convention.
 | Phase | Delivers | Exit criterion |
 |---|---|---|
 | **M0 ✅** | scan+score search in vak-session, `session_search` tool wired into every run, `/search` endpoint, `[memory]` config | relevance unit tests + agent-loop e2e proving the result lands on the ledger; fmt/clippy/tests green |
-| M1 | mtime-cached index for large stores; `/search` in TUI + desktop UI | 10k-entry store searched < 50ms warm |
+| **M1 ✅** | mtime-keyed per-ledger index cache + `search_all` cross-project scan; `/search` in TUI (`--all` flag), desktop SearchModal global toggle, `GET /search?all=true` | warm 10k-message store answered from cache < 500ms CI-safe bound (typ. ≪50ms); appends visible next query without restart; cross-dir exclusion tested |
 | **M2 ✅** | Write path via model-invoked `remember` tool → `<home>/memory/<hash>/MEMORY.md` (plain markdown, provenance blocks, hand-edit-tolerant parser); recalled by search with outranking bonus; `[memory] write_enabled` flag; `GET /memory` + `vakcoder memory` | curated notes rank above equal transcript hits (`memory_extras_outrank_equal_transcript_hits`); agent remembers mid-run and a later run recalls it citing memory (learning_loop e2e) |

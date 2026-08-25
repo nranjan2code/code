@@ -201,6 +201,12 @@ export interface TaskDef {
   last_summary?: string | null;
   last_wt?: { path: string; branch: string } | null;
   deliver_to?: string | null;
+  /** 5-field cron (`m h dom mon dow`, local time); replaces interval ticks. */
+  schedule?: string | null;
+  /** Watchdog shell one-liner; XOR with prompt (docs/design/29 P2). */
+  script?: string | null;
+  /** Pinned model id; a pinned task never escalates. */
+  model_pin?: string | null;
 }
 
 export interface OpsServiceState {

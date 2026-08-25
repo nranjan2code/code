@@ -807,13 +807,19 @@ fn deliver_log(core: &Core, target: &str, text: &str) -> Result<(), String> {
         "target": target,
         "text": text,
     });
+    // One formatted buffer + ONE write_all: O_APPEND makes a single write
+    // atomic, whereas `writeln!` emits several syscalls that two concurrent
+    // deliveries can interleave mid-line.
+    let mut buf = line.to_string();
+    buf.push('\n');
     use std::io::Write;
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
         .map_err(|e| format!("open deliveries log: {e}"))?;
-    writeln!(f, "{line}").map_err(|e| format!("append deliveries log: {e}"))
+    f.write_all(buf.as_bytes())
+        .map_err(|e| format!("append deliveries log: {e}"))
 }
 
 /// Transient webhook failures retry with bounded exponential backoff.

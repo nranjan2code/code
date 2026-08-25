@@ -12,6 +12,7 @@
 //! - `POST /sessions/:id/approvals/:rid` {approve} → resolve a pending gate
 //! - `GET  /sessions/:id/events`          → SSE of AgentEvent JSON
 //! - `GET  /sessions/:id/transcript`      → derived messages + usage
+//! - `GET  /sessions/:id/transcript.md`   → markdown export (shared renderer)
 //! - `GET  /sessions/:id/diff`            → git diff + status of the workspace
 //! - `GET  /sessions/:id/checkpoints`     → workspace snapshots (time travel)
 //! - `POST /sessions/:id/checkpoints/:seq/restore` → rewind the workspace
@@ -24,6 +25,12 @@
 //! - `DELETE /config/key` {provider}      → revoke a stored credential
 //! - `GET  /providers`                    → provider picker data (no secrets)
 //! - `GET  /providers/:name/models`   → models the stored key can reach
+//! - `PATCH/DELETE /memory/:note_id`  → amend / forget one memory note
+//! - `GET  /search?all=true`          → cross-project recall (23-memory)
+//! - `GET  /doctor?session=`          → HealthReport JSON (29-personal-os P3)
+//! - `POST /backup/export`            → directory backup of the home dir
+//! - `POST /backup/import`            → restore with skip-or-rename conflicts
+//! - `GET  /digest?days=N`            → usage digest over the trailing window
 //! - `POST /gateway/inbound`          → surface message routed to its bound session (22-gateway)
 //! - `GET  /gateway/status`           → gateway enabled flag + binding table
 //! - `DELETE /gateway/bindings/:key`  → unbind a surface from its session
@@ -37,6 +44,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use chrono::Utc;
+
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -48,6 +57,7 @@ use tokio_util::sync::CancellationToken;
 
 use vak_agent::{AgentEvent, Approver, SteeringQueues};
 use vak_core::Core;
+pub use vak_core::tasks::{TaskDef, WtMeta};
 use vak_llm::Provider;
 use vak_session::SessionLog;
 
@@ -79,43 +89,18 @@ pub struct AppState {
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     /// Live best-of-N runs keyed by child session id.
     best_runs: Arc<Mutex<HashMap<String, BestRunMeta>>>,
-    /// Scheduled tasks for this workspace.
+    /// Scheduled tasks for this workspace (store shape owned by vak-core).
     tasks: Arc<Mutex<HashMap<String, TaskDef>>>,
+    /// In-memory cron markers: task id → next scheduled local fire. Interval
+    /// tasks keep using `last_run_at`; only `schedule:` tasks appear here.
+    next_fire: Arc<Mutex<HashMap<String, chrono::DateTime<chrono::Local>>>>,
+    /// Script tasks currently executing (no child session to inspect, so
+    /// this stands in for the busy-check that prompt tasks get).
+    script_inflight: Arc<Mutex<std::collections::HashSet<String>>>,
     /// Managed dev servers (preview pane), keyed by session::name.
     procs: Arc<Mutex<HashMap<String, ManagedProc>>>,
     /// Gateway surface bindings + enable gate (docs/design/22-gateway.md).
     pub(crate) gateway: Arc<gateway::GatewayState>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TaskDef {
-    pub id: String,
-    pub name: String,
-    pub prompt: String,
-    #[serde(default = "default_interval")]
-    pub interval_secs: u64,
-    pub enabled: bool,
-    pub cwd: PathBuf,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub last_run_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub last_session_id: Option<String>,
-    pub last_summary: Option<String>,
-    /// Latest run's worktree, kept for diff review until replaced.
-    pub last_wt: Option<WtMeta>,
-    /// Gateway routing target ("surface:chat") that receives the run
-    /// summary when it finishes. None keeps delivery in-server only.
-    #[serde(default)]
-    pub deliver_to: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct WtMeta {
-    pub path: PathBuf,
-    pub branch: String,
-}
-
-fn default_interval() -> u64 {
-    3600
 }
 
 #[derive(Clone)]
@@ -133,6 +118,8 @@ impl AppState {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             best_runs: Arc::new(Mutex::new(HashMap::new())),
             tasks: Arc::new(Mutex::new(HashMap::new())),
+            next_fire: Arc::new(Mutex::new(HashMap::new())),
+            script_inflight: Arc::new(Mutex::new(std::collections::HashSet::new())),
             procs: Arc::new(Mutex::new(HashMap::new())),
             gateway,
         }
@@ -264,6 +251,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/approvals/{req_id}", post(answer_approval))
         .route("/sessions/{id}/events", get(events_sse))
         .route("/sessions/{id}/transcript", get(transcript))
+        .route("/sessions/{id}/transcript.md", get(transcript_markdown))
         .route("/sessions/{id}/side", post(side_chat))
         .route("/sessions/{id}/side/events", get(side_events_sse))
         .route("/sessions/{id}/side/cancel", post(side_cancel_run))
@@ -288,6 +276,14 @@ fn router_with_state(state: AppState) -> Router {
         .route("/ops/diagnostics", get(ops_diagnostics))
         .route("/finops", get(finops_status))
         .route("/memory", get(list_memory))
+        .route(
+            "/memory/{note_id}",
+            axum::routing::patch(amend_memory_note).delete(forget_memory_note),
+        )
+        .route("/doctor", get(doctor_report))
+        .route("/backup/export", post(backup_export))
+        .route("/backup/import", post(backup_import))
+        .route("/digest", get(digest_report))
         .route("/skills/proposals", get(list_proposals_route))
         .route("/skills/proposals/{id}/promote", post(promote_proposal))
         .route("/skills/proposals/{id}/reject", post(reject_proposal))
@@ -468,21 +464,113 @@ async fn ops_action(
     (StatusCode::OK, Json(result)).into_response()
 }
 
+fn note_payload(n: &vak_core::memory::NoteBlock, scope: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": n.id,
+        "ts": n.ts.to_rfc3339(),
+        "kind": n.kind,
+        "tag": n.tag,
+        "session_id": n.session_id,
+        "text": n.text,
+        "scope": scope,
+    })
+}
+
 async fn list_memory(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let notes = vak_core::memory::list_notes(&state.core.sessions_home(), state.core.cwd());
-    let blocks: Vec<serde_json::Value> = notes
+    let home = state.core.sessions_home();
+    let mut blocks: Vec<serde_json::Value> = vak_core::memory::list_notes(&home, state.core.cwd())
         .iter()
-        .map(|n| {
-            serde_json::json!({
-                "ts": n.ts.to_rfc3339(),
-                "kind": n.kind,
-                "tag": n.tag,
-                "session_id": n.session_id,
-                "text": n.text,
-            })
-        })
+        .map(|n| note_payload(n, "workspace"))
         .collect();
+    blocks.extend(
+        vak_core::memory::list_profile_notes(&home)
+            .iter()
+            .map(|n| note_payload(n, "profile")),
+    );
     Json(serde_json::json!({ "notes": blocks }))
+}
+
+/// Resolve a note id to the markdown store it lives in. The workspace tier
+/// is per-cwd; the profile tier is global (`<home>/memory/user/USER.md`).
+fn memory_store_path(state: &AppState, scope: MemoryScope) -> PathBuf {
+    let home = state.core.sessions_home();
+    match scope {
+        MemoryScope::Workspace => home
+            .join("memory")
+            .join(vak_core::memory::hash_cwd(state.core.cwd()))
+            .join("MEMORY.md"),
+        MemoryScope::Profile => vak_core::memory::profile_path(&home),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+enum MemoryScope {
+    #[default]
+    Workspace,
+    Profile,
+}
+
+async fn forget_memory_note(
+    State(state): State<AppState>,
+    Path(note_id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<MemoryScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = memory_store_path(&state, q.scope.unwrap_or_default());
+    match vak_core::memory::forget_note(&path, &note_id) {
+        Ok(bytes) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "forgotten": note_id, "bytes": bytes })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct MemoryAmendBody {
+    text: String,
+    #[serde(default)]
+    scope: Option<MemoryScope>,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct MemoryScopeQuery {
+    #[serde(default)]
+    scope: Option<MemoryScope>,
+}
+
+async fn amend_memory_note(
+    State(state): State<AppState>,
+    Path(note_id): Path<String>,
+    Json(body): Json<MemoryAmendBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if body.text.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "note must not be empty" })),
+        )
+            .into_response();
+    }
+    let path = memory_store_path(&state, body.scope.unwrap_or_default());
+    match vak_core::memory::amend_note(&path, &note_id, &body.text) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "amended": note_id })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
 }
 
 fn proposals_payload(core: &Core) -> Vec<serde_json::Value> {
@@ -544,6 +632,10 @@ struct SearchQuery {
     /// Session id whose (already-in-context) content should be skipped.
     #[serde(default)]
     exclude: Option<String>,
+    /// Cross-project recall: search every project's ledgers under the
+    /// sessions home (docs/design/29-personal-os.md P1), not just this cwd.
+    #[serde(default)]
+    all: bool,
 }
 
 async fn search_sessions(
@@ -551,20 +643,33 @@ async fn search_sessions(
     axum::extract::Query(q): axum::extract::Query<SearchQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    match tokio::task::spawn_blocking({
-        let home = state.core.sessions_home();
-        let cwd = state.core.cwd().clone();
-        let query = q.q.clone();
-        let limit = q.limit.unwrap_or(vak_session::DEFAULT_LIMIT);
-        let exclude = q.exclude.clone();
-        move || vak_session::search(&home, &cwd, &query, limit, exclude.as_deref())
+    let home = state.core.sessions_home();
+    let cwd = state.core.cwd().clone();
+    let query = q.q.clone();
+    let limit = q.limit.unwrap_or(vak_session::DEFAULT_LIMIT);
+    let exclude = q.exclude.clone();
+    let all = q.all;
+    match tokio::task::spawn_blocking(move || {
+        // Both hit shapes are Serialize; the workspace path keeps its flat
+        // SessionHit wire shape, cross-project adds the project_hash wrapper.
+        let searched = if all {
+            vak_session::search_all(&home, &query, limit, exclude.as_deref())
+                .map(|hits| serde_json::to_value(&hits).map_err(|e| e.to_string()))
+        } else {
+            vak_session::search(&home, &cwd, &query, limit, exclude.as_deref())
+                .map(|hits| serde_json::to_value(&hits).map_err(|e| e.to_string()))
+        };
+        match searched {
+            Ok(inner) => inner,
+            Err(e) => Err(e.to_string()),
+        }
     })
     .await
     {
-        Ok(Ok(hits)) => Json(serde_json::json!({ "hits": hits })).into_response(),
+        Ok(Ok(hits)) => Json(serde_json::json!({ "all": all, "hits": hits })).into_response(),
         Ok(Err(e)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
+            Json(serde_json::json!({ "error": e })),
         )
             .into_response(),
         Err(e) => (
@@ -1385,6 +1490,222 @@ async fn transcript(
         "usage": s.total_usage(),
         "messages": msgs,
     }))
+}
+
+/// Markdown export over the same projection the JSON transcript serves.
+/// One shared renderer with the TUI export — byte-identical output for the
+/// same session (docs/design/29-personal-os.md P4).
+async fn transcript_markdown(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(handle) = state.get(&id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "unknown session" })),
+        )
+            .into_response();
+    };
+    let guard = handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(s) = guard.as_ref() else {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "run in progress" })),
+        )
+            .into_response();
+    };
+    let md = vak_core::transcript_md::render_markdown(&s.derive_messages());
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/markdown; charset=utf-8",
+        )],
+        md,
+    )
+        .into_response()
+}
+
+// ---- Personal-OS surfaces (docs/design/29-personal-os.md P1–P4) -------------
+
+#[derive(serde::Deserialize)]
+struct DoctorQuery {
+    #[serde(default)]
+    session: Option<String>,
+}
+
+fn health_report_json(report: vak_core::health::HealthReport) -> serde_json::Value {
+    serde_json::json!({
+        "failures": report.failures,
+        "checks": report.checks.iter().map(|c| serde_json::json!({
+            "label": c.label,
+            "ok": c.detail.is_ok(),
+            "detail": match &c.detail { Ok(d) => d, Err(e) => e },
+        })).collect::<Vec<_>>(),
+        "facts": report.facts,
+        "ladder": report.ladder.map(|l| serde_json::json!({
+            "legs": l.legs,
+            "rendered": l.rendered,
+            "objective": l.objective,
+            "fallback_legs": l.fallback_legs,
+            "annotations": l.annotations,
+        })),
+    })
+}
+
+async fn doctor_report(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<DoctorQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    // The optional session adds its frozen-ladder section; a live run owns
+    // the ledger, in which case doctor reports without that section rather
+    // than failing.
+    let session_handle = q.session.and_then(|sid| state.get(&sid));
+    let session_guard = session_handle.as_deref().map(|h| {
+        h.session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    });
+    let report =
+        vak_core::health::collect(&state.core, session_guard.as_ref().and_then(|g| g.as_ref()));
+    (StatusCode::OK, Json(health_report_json(report))).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct BackupExportBody {
+    dest_dir: String,
+    #[serde(default)]
+    include_secrets: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct BackupImportBody {
+    src_dir: String,
+    #[serde(default)]
+    conflict: Option<String>,
+}
+
+/// Equality under canonicalization when both sides resolve; raw compare as
+/// a fallback for paths that do not exist yet.
+fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => a == b,
+    }
+}
+
+async fn backup_export(
+    State(state): State<AppState>,
+    Json(body): Json<BackupExportBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let home = state.core.sessions_home();
+    let dest = std::path::PathBuf::from(body.dest_dir.trim());
+    if dest.as_os_str().is_empty() || same_path(&dest, &home) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "backup destination must differ from the vakcoder home itself"
+            })),
+        )
+            .into_response();
+    }
+    match tokio::task::spawn_blocking(move || {
+        vak_core::backup::export_to(&home, &dest, body.include_secrets)
+    })
+    .await
+    {
+        Ok(Ok(manifest)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "manifest": manifest,
+                "included_secrets": body.include_secrets,
+            })),
+        )
+            .into_response(),
+        Ok(Err(e)) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn backup_import(
+    State(state): State<AppState>,
+    Json(body): Json<BackupImportBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let home = state.core.sessions_home();
+    let src = std::path::PathBuf::from(body.src_dir.trim());
+    if src.as_os_str().is_empty() || same_path(&src, &home) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "backup source must differ from the vakcoder home itself"
+            })),
+        )
+            .into_response();
+    }
+    let conflict = match body.conflict.as_deref() {
+        None | Some("skip") => vak_core::backup::Conflict::Skip,
+        Some("rename") => vak_core::backup::Conflict::Rename,
+        Some(other) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("unknown conflict policy '{other}': expected \"skip\" or \"rename\"")
+                })),
+            )
+                .into_response();
+        }
+    };
+    match tokio::task::spawn_blocking(move || vak_core::backup::import_from(&src, &home, conflict))
+        .await
+    {
+        Ok(Ok(report)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "copied": report.copied,
+                "renamed": report.renamed,
+                "skipped": report.skipped,
+            })),
+        )
+            .into_response(),
+        Ok(Err(e)) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct DigestQuery {
+    #[serde(default)]
+    days: Option<u32>,
+}
+
+async fn digest_report(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<DigestQuery>,
+) -> Json<vak_core::digest::DigestReport> {
+    let days = q.days.unwrap_or(7).clamp(1, 90);
+    Json(vak_core::digest::digest(&state.core.sessions_home(), days))
 }
 
 async fn git_output(cwd: &std::path::Path, args: &[&str]) -> Option<String> {
@@ -2607,7 +2928,7 @@ async fn start_bestofn(
 
     let mut runs = Vec::new();
     for (rid, wt) in &created {
-        match spawn_isolated_run(&state, provider.clone(), rid, wt, &body.prompt).await {
+        match spawn_isolated_run(&state, provider.clone(), rid, wt, &body.prompt, None).await {
             Ok(child_id) => {
                 state
                     .best_runs
@@ -2644,18 +2965,27 @@ async fn start_bestofn(
 }
 
 /// One isolated run inside `wt`: child Core + session + registered handle +
-/// fired turn. Shared by best-of-N and the task scheduler.
+/// fired turn. Shared by best-of-N and the task scheduler. `model_pin`
+/// (docs/design/29-personal-os.md P2) overrides the child's provider/model
+/// so BOTH main dispatches and any receipts carry the pinned id only — a
+/// pinned task never escalates to another model.
 async fn spawn_isolated_run(
     state: &AppState,
     provider: Arc<dyn Provider>,
     rid: &str,
     wt: &vak_core::worktree::Worktree,
     prompt: &str,
+    model_pin: Option<&str>,
 ) -> Result<String, String> {
     let child_core = vak_core::Core::new_with_trust(wt.path.clone(), true)
         .map_err(|e| format!("child core failed: {e}"))?;
     child_core.set_provider_instance(provider);
     child_core.set_sessions_home(state.core.sessions_home());
+    if let Some(pin) = model_pin.map(str::trim).filter(|p| !p.is_empty()) {
+        let (pin_provider, pin_model) = split_model_pin(pin, &child_core.effective_provider());
+        child_core.set_provider(pin_provider);
+        child_core.set_model(pin_model);
+    }
 
     let child_log = child_core
         .start_session()
@@ -2985,25 +3315,29 @@ fn last_assistant_text(handle: &SessionHandle) -> Option<String> {
 }
 
 fn tasks_file(core: &Core) -> PathBuf {
-    core.sessions_home().join("tasks.json")
+    vak_core::tasks::tasks_file(&core.sessions_home())
 }
 
 fn load_tasks(state: &AppState) {
-    let Ok(raw) = std::fs::read_to_string(tasks_file(&state.core)) else {
-        return;
-    };
-    if let Ok(list) = serde_json::from_str::<Vec<TaskDef>>(&raw) {
-        let mut map = state
-            .tasks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for t in list {
-            map.insert(t.id.clone(), t);
+    match vak_core::tasks::TaskStore::load(&state.core.sessions_home()) {
+        Ok(store) => {
+            let mut map = state
+                .tasks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for t in store.all() {
+                map.insert(t.id.clone(), t);
+            }
         }
+        // A corrupt tasks file is surfaced loudly, never silently dropped:
+        // those definitions represent real automation the user expects.
+        Err(e) => eprintln!("[scheduler] tasks file unreadable, ignoring: {e}"),
     }
 }
 
 fn save_tasks(state: &AppState) {
+    // The in-memory map is authoritative; the persisted array is rewritten
+    // wholesale in the exact wire shape TaskStore uses.
     let list: Vec<TaskDef> = state
         .tasks
         .lock()
@@ -3012,8 +3346,16 @@ fn save_tasks(state: &AppState) {
         .cloned()
         .collect();
     let _ = std::fs::create_dir_all(state.core.sessions_home());
-    if let Ok(json) = serde_json::to_string_pretty(&list) {
-        let _ = std::fs::write(tasks_file(&state.core), json);
+    let target = tasks_file(&state.core);
+    let tmp = target.with_extension("json.tmp");
+    match serde_json::to_string_pretty(&list)
+        .ok()
+        .filter(|json| std::fs::write(&tmp, json).is_ok())
+    {
+        Some(_) => {
+            let _ = std::fs::rename(&tmp, &target);
+        }
+        None => eprintln!("[scheduler] tasks file save failed"),
     }
 }
 
@@ -3034,10 +3376,46 @@ async fn list_tasks(State(state): State<AppState>) -> Json<serde_json::Value> {
 #[derive(serde::Deserialize)]
 struct TaskCreateBody {
     name: String,
+    /// LLM turn instruction. Optional only for `script:` watchdog tasks.
+    #[serde(default)]
     prompt: String,
+    #[serde(default = "task_default_interval")]
     interval_secs: u64,
     #[serde(default)]
     deliver_to: Option<String>,
+    /// 5-field cron (`m h dom mon dow`, local time) replacing interval ticks.
+    #[serde(default)]
+    schedule: Option<String>,
+    /// Watchdog shell one-liner; XOR with `prompt`, never touches the LLM.
+    #[serde(default)]
+    script: Option<String>,
+    /// Pin dispatches to one model id (`provider/model` or bare model id).
+    #[serde(default)]
+    model_pin: Option<String>,
+}
+
+fn task_default_interval() -> u64 {
+    3600
+}
+
+/// Structural validation shared by POST and PATCH: TaskDef::validate owns
+/// the prompt-XOR-script and cron-grammar rules; the server adds its
+/// transport-shape rules on top. Returns a typed 400 payload on failure.
+fn validate_task_fields(task: &TaskDef) -> Result<(), (StatusCode, serde_json::Value)> {
+    if task.deliver_to.as_deref().is_some_and(|t| !t.contains(':')) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({
+                "error": "deliver_to must be '<surface>:<chat>', e.g. 'log:ops'"
+            }),
+        ));
+    }
+    task.validate().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({ "error": e.to_string() }),
+        )
+    })
 }
 
 async fn create_task(
@@ -3045,19 +3423,11 @@ async fn create_task(
     Json(body): Json<TaskCreateBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    if body.interval_secs < 60 {
+    let scheduled = body.schedule.is_some();
+    if !scheduled && body.interval_secs < 60 {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "interval must be >= 60s" })),
-        )
-            .into_response();
-    }
-    if body.deliver_to.as_deref().is_some_and(|t| !t.contains(':')) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "deliver_to must be '<surface>:<chat>', e.g. 'log:ops'"
-            })),
         )
             .into_response();
     }
@@ -3074,7 +3444,13 @@ async fn create_task(
         last_summary: None,
         last_wt: None,
         deliver_to: body.deliver_to,
+        schedule: body.schedule.filter(|s| !s.trim().is_empty()),
+        script: body.script.filter(|s| !s.trim().is_empty()),
+        model_pin: body.model_pin.filter(|m| !m.trim().is_empty()),
     };
+    if let Err((status, payload)) = validate_task_fields(&task) {
+        return (status, Json(payload)).into_response();
+    }
     state
         .tasks
         .lock()
@@ -3091,17 +3467,55 @@ struct TaskPatchBody {
     prompt: Option<String>,
     interval_secs: Option<u64>,
     deliver_to: Option<Option<String>>,
+    /// Tri-state: absent = keep, null/empty = clear, string = set.
+    #[serde(default)]
+    schedule: OptionalStr,
+    #[serde(default)]
+    script: OptionalStr,
+    #[serde(default)]
+    model_pin: OptionalStr,
+}
+
+/// Distinguishes an absent JSON field from an explicit `null` (which plain
+/// `Option<Option<T>>` cannot: both deserialize to outer `None`).
+#[derive(Debug, Clone, Default)]
+enum OptionalStr {
+    #[default]
+    Keep,
+    Clear,
+    Set(String),
+}
+
+impl<'de> serde::Deserialize<'de> for OptionalStr {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Only reached when the key is present; null → None here.
+        match Option::<String>::deserialize(deserializer)? {
+            None => Ok(OptionalStr::Clear),
+            Some(s) if s.trim().is_empty() => Ok(OptionalStr::Clear),
+            Some(s) => Ok(OptionalStr::Set(s)),
+        }
+    }
 }
 
 async fn patch_task(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<TaskPatchBody>,
-) -> StatusCode {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
     if let Some(Some(t)) = &body.deliver_to
         && !t.contains(':')
     {
-        return StatusCode::BAD_REQUEST;
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "deliver_to must be '<surface>:<chat>', e.g. 'log:ops'"
+            })),
+        )
+            .into_response();
     }
     let updated = {
         let mut map = state
@@ -3110,41 +3524,76 @@ async fn patch_task(
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         match map.get_mut(&id) {
             Some(t) => {
+                // Apply to a candidate and validate BEFORE committing so a
+                // rejected patch never leaves half-mutated state behind.
+                let mut candidate = t.clone();
                 if let Some(v) = body.enabled {
-                    t.enabled = v;
+                    candidate.enabled = v;
                 }
                 if let Some(v) = body.name {
-                    t.name = v;
+                    candidate.name = v;
                 }
                 if let Some(v) = body.prompt {
-                    t.prompt = v;
+                    candidate.prompt = v;
                 }
                 if let Some(v) = body.interval_secs
                     && v >= 60
                 {
-                    t.interval_secs = v;
+                    candidate.interval_secs = v;
                 }
                 if let Some(v) = body.deliver_to {
-                    t.deliver_to = v;
+                    candidate.deliver_to = v;
                 }
-                t.clone()
+                match body.schedule {
+                    OptionalStr::Keep => {}
+                    OptionalStr::Clear => candidate.schedule = None,
+                    OptionalStr::Set(ref s) => candidate.schedule = Some(s.clone()),
+                }
+                match body.script {
+                    OptionalStr::Keep => {}
+                    OptionalStr::Clear => candidate.script = None,
+                    OptionalStr::Set(ref s) => candidate.script = Some(s.clone()),
+                }
+                match body.model_pin {
+                    OptionalStr::Keep => {}
+                    OptionalStr::Clear => candidate.model_pin = None,
+                    OptionalStr::Set(ref s) => candidate.model_pin = Some(s.clone()),
+                }
+                if let Err((status, payload)) = validate_task_fields(&candidate) {
+                    return (status, Json(payload)).into_response();
+                }
+                *t = candidate.clone();
+                candidate
             }
-            None => return StatusCode::NOT_FOUND,
+            None => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({ "error": format!("no task '{id}'") })),
+                )
+                    .into_response();
+            }
         }
     };
-    // Re-enabling reschedules from now.
+    // Re-enabling reschedules interval tasks from now; dropping the cron
+    // marker makes the next tick recompute the schedule from scratch.
     if body.enabled == Some(true) {
         let mut map = state
             .tasks
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(t) = map.get_mut(&id) {
+        if let Some(t) = map.get_mut(&id)
+            && t.schedule.is_none()
+        {
             t.last_run_at = None;
         }
     }
-    drop(updated);
+    state
+        .next_fire
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&id);
     save_tasks(&state);
-    StatusCode::OK
+    (StatusCode::OK, Json(serde_json::json!(updated))).into_response()
 }
 
 async fn delete_task(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
@@ -3178,10 +3627,7 @@ async fn delete_task(State(state): State<AppState>, Path(id): Path<String>) -> S
 
 /// Fire a task immediately (also resets its schedule).
 async fn run_task_now(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
-    let Ok(provider) = state.core.provider() else {
-        return StatusCode::SERVICE_UNAVAILABLE;
-    };
-    let fired = fire_task(&state, &provider, &id).await.is_some();
+    let fired = fire_task(&state, &id).await.is_some();
     if fired {
         StatusCode::ACCEPTED
     } else {
@@ -3189,9 +3635,21 @@ async fn run_task_now(State(state): State<AppState>, Path(id): Path<String>) -> 
     }
 }
 
+/// Split a `model_pin` into (provider, model). A bare model id pins only
+/// the model and keeps this server's active provider.
+fn split_model_pin(pin: &str, current_provider: &str) -> (String, String) {
+    match pin.split_once('/') {
+        Some((provider, model)) if !provider.trim().is_empty() && !model.trim().is_empty() => {
+            (provider.trim().to_string(), model.trim().to_string())
+        }
+        _ => (current_provider.to_string(), pin.trim().to_string()),
+    }
+}
+
 /// Spawn one isolated run for `task` if its previous run is idle. Returns
-/// the child session id on success.
-async fn fire_task(state: &AppState, provider: &Arc<dyn Provider>, id: &str) -> Option<String> {
+/// the child session id on success. Script tasks take the brokered-bash
+/// branch instead: no provider dispatch, no worktree, no child session.
+async fn fire_task(state: &AppState, id: &str) -> Option<String> {
     let snapshot = state
         .tasks
         .lock()
@@ -3209,6 +3667,21 @@ async fn fire_task(state: &AppState, provider: &Arc<dyn Provider>, id: &str) -> 
     {
         return None;
     }
+    let script = snapshot
+        .script
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(script) = script {
+        return fire_script_task(state, &snapshot, script).await;
+    }
+    let Ok(provider) = state.core.provider() else {
+        eprintln!(
+            "[scheduler] task '{}' skipped: no provider credential",
+            snapshot.name
+        );
+        return None;
+    };
     // Drop the previous worktree (latest-only retention).
     if let Some(wt) = &snapshot.last_wt {
         let old = vak_core::worktree::Worktree {
@@ -3219,9 +3692,16 @@ async fn fire_task(state: &AppState, provider: &Arc<dyn Provider>, id: &str) -> 
     }
     let rid = format!("task-{}", &uuid::Uuid::now_v7().simple().to_string()[..8]);
     let wt = vak_core::worktree::create(&snapshot.cwd, &rid).ok()?;
-    let child_id = spawn_isolated_run(state, provider.clone(), &rid, &wt, &snapshot.prompt)
-        .await
-        .ok()?;
+    let child_id = spawn_isolated_run(
+        state,
+        provider.clone(),
+        &rid,
+        &wt,
+        &snapshot.prompt,
+        snapshot.model_pin.as_deref(),
+    )
+    .await
+    .ok()?;
 
     let mut map = state
         .tasks
@@ -3277,6 +3757,7 @@ async fn fire_task(state: &AppState, provider: &Arc<dyn Provider>, id: &str) -> 
                         )
                         .await;
                     }
+                    check_budget_alert(&st, &tid).await;
                     break;
                 }
             }
@@ -3285,43 +3766,326 @@ async fn fire_task(state: &AppState, provider: &Arc<dyn Provider>, id: &str) -> 
     Some(child_id)
 }
 
-/// Background loop: fires due tasks every 20 seconds. Holds only weak state
-/// via `state` clones living inside the router — when the server shuts down
-/// the loop dies with the runtime.
+// ---- Watchdog script tasks (docs/design/29-personal-os.md P2) ---------------
+//
+// A `script:` task NEVER reaches the LLM. The shell line runs through the
+// exact brokered bash tool the agent loop uses (`Core::agent_tools()` →
+// BrokeredTool → `__tool_worker`), so sandboxing, environment scrubbing,
+// process-group isolation, and output caps are identical by construction.
+// Zero provider dispatch is a property of the call graph: nothing here can
+// name a Provider.
+
+const SCRIPT_TIMEOUT_MS: u64 = 120_000;
+/// Fallback delivery surface for error alerts when a watchdog has no
+/// `deliver_to`: failures are never silent.
+const FALLBACK_ALERT_TARGET: &str = "log:vakcoder";
+
+/// Extract the stdout section from BashTool's combined report
+/// ("[stdout]\n…\n[stderr]\n…" or "(no output)"). A literal "[stderr]"
+/// inside the script's own stdout ends the section early — watchdogs that
+/// print the marker get truncated delivery, never a misparse of stderr.
+fn stdout_section(content: &str) -> &str {
+    match content.strip_prefix("[stdout]\n") {
+        Some(rest) => match rest.find("\n[stderr]") {
+            Some(end) => &rest[..end],
+            None => rest,
+        },
+        None => "",
+    }
+}
+
+struct ScriptOutcome {
+    /// True when the brokered command exited zero within its watchdog.
+    ok: bool,
+    /// Trimmed stdout on success; combined failure detail otherwise.
+    text: String,
+}
+
+async fn execute_script(core: &Core, cwd: &std::path::Path, script: &str) -> ScriptOutcome {
+    let bash = core.agent_tools().into_iter().find(|t| t.name() == "bash");
+    let Some(bash) = bash else {
+        return ScriptOutcome {
+            ok: false,
+            text: "script task failed: no bash tool available".to_string(),
+        };
+    };
+    let ctx = vak_tools::ToolContext {
+        cwd: cwd.to_path_buf(),
+        cancel: CancellationToken::new(),
+        limits: vak_tools::OutputLimits::default(),
+        sandbox: core.agent_sandbox(),
+    };
+    let args = serde_json::json!({ "command": script, "timeout_ms": SCRIPT_TIMEOUT_MS });
+    let out = bash.execute(&args, &ctx).await;
+    if out.is_error {
+        ScriptOutcome {
+            ok: false,
+            text: format!("script failed: {}", out.content.trim()),
+        }
+    } else {
+        ScriptOutcome {
+            ok: true,
+            text: stdout_section(&out.content).trim().to_string(),
+        }
+    }
+}
+
+/// Run one watchdog tick: execute, record, deliver. Empty stdout on
+/// success stays silent (zero tokens, zero noise); any failure delivers a
+/// typed error alert even without a configured target.
+async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Option<String> {
+    // One execution at a time per watchdog: a scheduler tick and run-now
+    // must never double-fire (or double-deliver) the same tick.
+    if !state
+        .script_inflight
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(task.id.clone())
+    {
+        return None;
+    }
+    let outcome = execute_script(&state.core, &task.cwd, script).await;
+    // Deliver FIRST: once the summary is visible on the task, its delivery
+    // attempt has already been made.
+    if outcome.ok {
+        if !outcome.text.is_empty()
+            && let Some(target) = &task.deliver_to
+        {
+            let _ = gateway::deliver(&state.core, target, &outcome.text).await;
+        }
+    } else {
+        eprintln!(
+            "[scheduler] watchdog '{}' failed: {}",
+            task.name, outcome.text
+        );
+        let target = task.deliver_to.as_deref().unwrap_or(FALLBACK_ALERT_TARGET);
+        let _ = gateway::deliver(
+            &state.core,
+            target,
+            &format!("watchdog '{}' alert:\n{}", task.name, outcome.text),
+        )
+        .await;
+    }
+    {
+        let mut map = state
+            .tasks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(t) = map.get_mut(&task.id) {
+            t.last_run_at = Some(chrono::Utc::now());
+            t.last_summary = Some(if outcome.ok && outcome.text.is_empty() {
+                "(silent tick)".to_string()
+            } else {
+                outcome.text.clone()
+            });
+        }
+    }
+    save_tasks(state);
+    check_budget_alert(state, &task.id).await;
+    state
+        .script_inflight
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&task.id);
+    Some(task.id.clone())
+}
+
+// ---- Scheduler (intervals + cron + catch-up, docs/design/29 P2) -------------
+
+/// True when the first scheduled slot STRICTLY AFTER `last_run_at` has
+/// already arrived by `now` — i.e. a fire was skipped (typically while the
+/// process was down). A run made after the latest slot (manual run-now)
+/// covers it, so nothing is missed. Never-run tasks are decided by the
+/// caller: without history there is nothing to catch up on, and a freshly
+/// created task waits for its first computed slot. Pure; unit-tested
+/// against fixed instants.
+fn cron_slot_missed(
+    expr: &str,
+    last_run_at: chrono::DateTime<Utc>,
+    now: chrono::DateTime<chrono::Local>,
+) -> bool {
+    let last_local = last_run_at.with_timezone(&chrono::Local);
+    match vak_core::tasks::cron_next_after(expr, last_local) {
+        // Instant comparison: correct across DST folds and gaps.
+        Ok(next_due) => next_due <= now,
+        Err(_) => false,
+    }
+}
+
+/// Park an unparseable schedule's marker far in the future: validation
+/// should have rejected it, so this only contains legacy/corrupt entries.
+fn park_marker() -> chrono::DateTime<chrono::Local> {
+    chrono::Local::now() + chrono::Duration::days(366)
+}
+
+/// One scheduler pass over enabled tasks for this cwd: interval tasks use
+/// their `last_run_at`; scheduled tasks consult their in-memory next-fire
+/// marker, initializing it to the first future slot when absent (so newly
+/// loaded/created tasks do not stampede on startup).
+async fn scheduler_tick(state: &AppState) {
+    let now_local = chrono::Local::now();
+    let due: Vec<String> = {
+        let tasks = state
+            .tasks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut markers = state
+            .next_fire
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        tasks
+            .values()
+            .filter(|t| t.enabled && t.cwd.as_path() == state.core.cwd().as_path())
+            .filter(|t| match t.schedule.as_deref() {
+                Some(expr) => {
+                    let marker = markers.entry(t.id.clone()).or_insert_with(|| {
+                        vak_core::tasks::cron_next_after(expr, now_local)
+                            .unwrap_or_else(|_| park_marker())
+                    });
+                    now_local >= *marker
+                }
+                None => t
+                    .last_run_at
+                    .map(|l| {
+                        (now_local.with_timezone(&Utc) - l).num_seconds() >= t.interval_secs as i64
+                    })
+                    .unwrap_or(true),
+            })
+            .map(|t| t.id.clone())
+            .collect()
+    };
+    for id in due {
+        let _ = fire_task(state, &id).await;
+        advance_marker(state, &id);
+    }
+}
+
+fn advance_marker(state: &AppState, id: &str) {
+    let expr = state
+        .tasks
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(id)
+        .and_then(|t| t.schedule.clone());
+    if let Some(expr) = expr {
+        let next = vak_core::tasks::cron_next_after(&expr, chrono::Local::now())
+            .unwrap_or_else(|_| park_marker());
+        state
+            .next_fire
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id.to_string(), next);
+    }
+}
+
+/// Startup catch-up (docs/design/29-personal-os.md P2): when enabled and a
+/// scheduled task's most recent slot happened after its last run — a slot
+/// missed while the process was down — fire it once immediately. Interval
+/// tasks keep their self-healing `>= interval` behavior and need nothing.
+async fn catch_up_missed_tasks(state: &AppState) {
+    if !state.core.config().automation.catch_up_missed {
+        return;
+    }
+    let now_local = chrono::Local::now();
+    let due: Vec<String> = {
+        let tasks = state
+            .tasks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        tasks
+            .values()
+            .filter(|t| t.enabled && t.cwd.as_path() == state.core.cwd().as_path())
+            .filter_map(|t| {
+                let expr = t.schedule.as_deref()?;
+                t.last_run_at
+                    .is_some_and(|l| cron_slot_missed(expr, l, now_local))
+                    .then(|| t.id.clone())
+            })
+            .collect()
+    };
+    for id in due {
+        eprintln!("[scheduler] catch-up: firing missed slot for task '{id}'");
+        let _ = fire_task(state, &id).await;
+        advance_marker(state, &id);
+    }
+}
+
+/// Background loop: evaluates due tasks every 20 seconds. Holds only weak
+/// state via `state` clones living inside the router — when the server
+/// shuts down the loop dies with the runtime.
 pub fn start_scheduler(state: &AppState) {
     load_tasks(state);
+    let st = state.clone();
+    tokio::spawn(async move { catch_up_missed_tasks(&st).await });
     let st = state.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(20));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
-            let provider = match st.core.provider() {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            let now = chrono::Utc::now();
-            let due: Vec<(String, bool)> = {
-                let map = st
-                    .tasks
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                map.values()
-                    .filter(|t| {
-                        t.enabled
-                            && t.cwd.as_path() == st.core.cwd().as_path()
-                            && t.last_run_at
-                                .map(|l| (now - l).num_seconds() >= t.interval_secs as i64)
-                                .unwrap_or(true)
-                    })
-                    .map(|t| (t.id.clone(), true))
-                    .collect()
-            };
-            for (tid, _) in due {
-                let _ = fire_task(&st, &provider, &tid).await;
-            }
+            scheduler_tick(&st).await;
         }
     });
+}
+
+// ---- Budget alerts (docs/design/29-personal-os.md P2) -----------------------
+
+/// Proactive day-cap alerting, called after every task fire and exposed for
+/// surfaces to invoke wherever day spend updates land. Fires at most once
+/// per (level, UTC-day window): the audit row recorded by `record_alert`
+/// doubles as the once-per-window marker. Delivery reuses the gateway
+/// transports (`log:` / `webhook:` / telegram bridge); with no configured
+/// targets it falls back to the log surface so an approaching cap is never
+/// discovered at denial time.
+pub async fn check_budget_alert(state: &AppState, session_id: &str) {
+    let Some(cap) = state.core.config().finops.max_day_usd else {
+        return;
+    };
+    // Read through the EFFECTIVE sessions home (an embedded server may
+    // have relocated it); Core::spend_day_usd pins the constructed path.
+    let day_total =
+        vak_core::finops::FinOpsLedger::new(&state.core.sessions_home()).day_total_usd(Utc::now());
+    let Some(level) = vak_core::finops::alert_level(day_total, cap) else {
+        return;
+    };
+    let home = state.core.sessions_home();
+    if let Some(last) = vak_core::finops::last_alert(&home, level)
+        && last.ts.with_timezone(&Utc).date_naive() == Utc::now().date_naive()
+    {
+        return; // this level already alerted inside the current day window
+    }
+    if let Err(e) = vak_core::finops::record_alert(&home, level, session_id) {
+        eprintln!("[finops] budget-alert ledger write failed: {e}");
+    }
+    let text = format!(
+        "budget alert [{}]: ${:.2} of ${:.2} daily cap",
+        level.as_str(),
+        day_total,
+        cap
+    );
+    let targets = configured_delivery_targets(state);
+    if targets.is_empty() {
+        let _ = gateway::deliver(&state.core, FALLBACK_ALERT_TARGET, &text).await;
+    } else {
+        for target in targets {
+            let _ = gateway::deliver(&state.core, &target, &text).await;
+        }
+    }
+}
+
+/// Every distinct `deliver_to` routing target configured across all known
+/// tasks — the server's vocabulary of delivery surfaces.
+fn configured_delivery_targets(state: &AppState) -> Vec<String> {
+    let mut targets: Vec<String> = state
+        .tasks
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .values()
+        .filter_map(|t| t.deliver_to.clone())
+        .collect();
+    targets.sort();
+    targets.dedup();
+    targets
 }
 
 // ---- Dev-server lifecycle (preview pane) -----------------------------------
@@ -3622,5 +4386,69 @@ async fn launch_logs(
             Json(serde_json::json!({ "lines": lines }))
         }
         None => Json(serde_json::json!({ "lines": [], "error": "not running" })),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod scheduler_pure_tests {
+    use super::{cron_slot_missed, stdout_section};
+    use chrono::TimeZone;
+    use chrono::Utc;
+
+    fn local(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> chrono::DateTime<chrono::Local> {
+        chrono::Local
+            .with_ymd_and_hms(y, mo, d, h, mi, 0)
+            .single()
+            .unwrap()
+    }
+
+    fn utc(dt: chrono::DateTime<chrono::Local>) -> chrono::DateTime<Utc> {
+        dt.with_timezone(&Utc)
+    }
+
+    #[test]
+    fn missed_slot_matrix() {
+        let every_min = "* * * * *";
+        // Ran at the current slot → its next slot is in the future.
+        assert!(!cron_slot_missed(
+            every_min,
+            utc(local(2026, 8, 24, 10, 30)),
+            local(2026, 8, 24, 10, 30),
+        ));
+        // Ran yesterday; today's slot already passed → missed.
+        assert!(cron_slot_missed(
+            "0 12 * * *",
+            utc(local(2026, 8, 23, 12, 0)),
+            local(2026, 8, 24, 13, 0),
+        ));
+        // Ran after the latest slot (manual run-now covers it) → not missed.
+        assert!(!cron_slot_missed(
+            "0 12 * * *",
+            utc(local(2026, 8, 24, 12, 30)),
+            local(2026, 8, 24, 13, 0),
+        ));
+        // The slot exactly one step after the last run is due right now.
+        assert!(cron_slot_missed(
+            "*/15 * * * *",
+            utc(local(2026, 8, 24, 10, 30)),
+            local(2026, 8, 24, 10, 45),
+        ));
+        // Bad expression never reports a miss (parked markers handle it).
+        assert!(!cron_slot_missed(
+            "99 * * * *",
+            utc(local(2026, 8, 23, 12, 0)),
+            local(2026, 8, 24, 13, 0),
+        ));
+    }
+
+    #[test]
+    fn stdout_section_extracts_only_stdout() {
+        assert_eq!(
+            stdout_section("[stdout]\nhello\nworld\n\n[stderr]\noops\n"),
+            "hello\nworld\n"
+        );
+        assert_eq!(stdout_section("(no output)"), "");
+        assert_eq!(stdout_section(""), "");
     }
 }

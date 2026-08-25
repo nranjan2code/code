@@ -26,6 +26,9 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 vak-permission = { workspace = true }
 vak-tools = { workspace = true }
+# Opt-in update check ([update] url, docs/design/29 P3); blocking client on
+# its own thread so startup never waits past the 2s timeout.
+reqwest = { workspace = true }
 
 [lints]
 workspace = true

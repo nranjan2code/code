@@ -187,8 +187,106 @@ impl SpendGate for CoreSpendGate {
     }
 }
 
+// ---- Budget alerts (docs/design/29-personal-os.md P2) ----------------------
+
+/// Proactive spend-alert thresholds, delivered to surfaces once per
+/// threshold window instead of being discovered at denial time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AlertLevel {
+    Eighty,
+    Full,
+}
+
+impl AlertLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AlertLevel::Eighty => "eighty",
+            AlertLevel::Full => "full",
+        }
+    }
+}
+
+/// Which threshold `day_total_usd` has crossed against `cap`. Pure:
+/// `>= 100%` → Full, `>= 80%` → Eighty, otherwise None. A non-positive or
+/// non-finite cap means "no cap", which can never alert; a non-finite
+/// total likewise.
+pub fn alert_level(day_total_usd: f64, cap: f64) -> Option<AlertLevel> {
+    if !cap.is_finite() || cap <= 0.0 || !day_total_usd.is_finite() {
+        return None;
+    }
+    if day_total_usd >= cap {
+        Some(AlertLevel::Full)
+    } else if day_total_usd / cap >= 0.8 {
+        Some(AlertLevel::Eighty)
+    } else {
+        None
+    }
+}
+
+/// One audit-only budget-alert ledger row. Lives beside the cost log in
+/// `<home>/budget-alerts.jsonl`; never enters session logs, so projections
+/// are untouched. The `"kind"` tag mirrors session receipt entries so
+/// ledger consumers discriminate rows uniformly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BudgetAlertRow {
+    #[serde(rename = "kind")]
+    kind: String,
+    pub ts: chrono::DateTime<chrono::Utc>,
+    pub level: AlertLevel,
+    /// Day spend as observed when the alert fired.
+    pub day_total_usd: f64,
+    pub session_id: String,
+}
+
+fn alerts_path(home: &std::path::Path) -> PathBuf {
+    home.join("budget-alerts.jsonl")
+}
+
+/// Append an alert row for `level`, stamping it with the CURRENT day
+/// spend from the cost ledger. Returns the row as written.
+pub fn record_alert(
+    home: &std::path::Path,
+    level: AlertLevel,
+    session_id: &str,
+) -> std::io::Result<BudgetAlertRow> {
+    std::fs::create_dir_all(home)?;
+    let row = BudgetAlertRow {
+        kind: "budget_alert".to_string(),
+        ts: chrono::Utc::now(),
+        level,
+        day_total_usd: FinOpsLedger::new(home).day_total_usd(chrono::Utc::now()),
+        session_id: session_id.to_string(),
+    };
+    let line = serde_json::to_string(&row)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(alerts_path(home))?;
+    writeln!(f, "{line}")?;
+    Ok(row)
+}
+
+/// Most recent recorded alert at exactly `level`, for once-per-window
+/// firing decisions. Corrupt lines are skipped; a missing file is None.
+pub fn last_alert(home: &std::path::Path, level: AlertLevel) -> Option<BudgetAlertRow> {
+    let f = std::fs::File::open(alerts_path(home)).ok()?;
+    let mut found = None;
+    for line in BufReader::new(f).lines().map_while(Result::ok) {
+        if let Ok(row) = serde_json::from_str::<BudgetAlertRow>(&line)
+            && row.kind == "budget_alert"
+            && row.level == level
+        {
+            found = Some(row);
+        }
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
+
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use tempfile::tempdir;
@@ -298,5 +396,62 @@ mod tests {
             })
             .unwrap();
         assert_eq!(ledger.day_total_usd(chrono::Utc::now()), 0.0);
+    }
+
+    #[test]
+    fn alert_level_threshold_matrix() {
+        assert_eq!(alert_level(0.0, 10.0), None);
+        assert_eq!(alert_level(7.9, 10.0), None);
+        // Exactly at the thresholds fires.
+        assert_eq!(alert_level(8.0, 10.0), Some(AlertLevel::Eighty));
+        assert_eq!(alert_level(9.99, 10.0), Some(AlertLevel::Eighty));
+        assert_eq!(alert_level(10.0, 10.0), Some(AlertLevel::Full));
+        assert_eq!(alert_level(150.0, 10.0), Some(AlertLevel::Full));
+        // No cap / nonsense inputs never alert.
+        assert_eq!(alert_level(100.0, 0.0), None);
+        assert_eq!(alert_level(100.0, -5.0), None);
+        assert_eq!(alert_level(f64::NAN, 10.0), None);
+    }
+
+    #[test]
+    fn record_and_last_alert_roundtrip_per_level() {
+        let dir = tempdir().unwrap();
+        let home = dir.path();
+
+        assert_eq!(last_alert(home, AlertLevel::Eighty), None);
+
+        let first = record_alert(home, AlertLevel::Eighty, "s1").unwrap();
+        assert_eq!(first.kind, "budget_alert");
+        assert_eq!(first.level, AlertLevel::Eighty);
+
+        let full = record_alert(home, AlertLevel::Full, "s1").unwrap();
+        let later = record_alert(home, AlertLevel::Eighty, "s2").unwrap();
+
+        let eighty = last_alert(home, AlertLevel::Eighty).unwrap();
+        assert_eq!(eighty.session_id, "s2");
+        assert_eq!(eighty.ts, later.ts);
+        let full_back = last_alert(home, AlertLevel::Full).unwrap();
+        assert_eq!(full_back.ts, full.ts);
+        assert_eq!(full_back.day_total_usd, full.day_total_usd);
+        // Rows carry the current ledger day total (zero here).
+        assert_eq!(first.day_total_usd, 0.0);
+    }
+
+    #[test]
+    fn corrupt_or_foreign_lines_are_ignored_by_readback() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            alerts_path(dir.path()),
+            concat!(
+                "{not json\n",
+                "{\"kind\":\"receipt\",\"other\":1}\n",
+                "{\"kind\":\"budget_alert\",\"ts\":\"2026-08-24T00:00:00Z\",\"level\":\"eighty\",\"day_total_usd\":1.5,\"session_id\":\"seed\"}\n",
+            ),
+        )
+        .unwrap();
+        let found = last_alert(dir.path(), AlertLevel::Eighty).unwrap();
+        assert_eq!(found.session_id, "seed");
+        assert!((found.day_total_usd - 1.5).abs() < 1e-9);
+        assert!(last_alert(dir.path(), AlertLevel::Full).is_none());
     }
 }

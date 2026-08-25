@@ -49,8 +49,15 @@ pub enum Command {
     Compact,
     /// `/budget` — estimated spend today/trailing window vs configured caps.
     Budget,
-    /// `/memory [text]` — list durable notes, or store one.
+    /// `/memory [text|--profile …|forget <id>|amend <id> <text>]` — durable
+    /// notes across the workspace MEMORY.md tier and the USER.md profile tier.
     Memory(Option<String>),
+    /// `/search <query> [--all]` — recall over past session ledgers;
+    /// `--all` spans every project hash dir.
+    Search(Option<(String, bool)>),
+    /// `/tasks [enable|disable <name>]` — read-mostly scheduled-task manager;
+    /// creation/editing stays with the CLI/desktop surfaces.
+    Tasks(Option<String>),
     /// `/proposals [promote|reject <id>]` — review learned skill proposals.
     Proposals(Option<String>),
     /// `/mcp` — configured MCP servers and discovered tools.
@@ -109,7 +116,18 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     ("compact", "summarize older turns now to free context"),
     ("budget", "estimated spend vs configured caps"),
-    ("memory", "[note] durable notes · /memory <text> saves one"),
+    (
+        "memory",
+        "[note] durable notes · forget/amend <id> · --profile tier",
+    ),
+    (
+        "search",
+        "<query> [--all] recall past sessions · Enter views a hit",
+    ),
+    (
+        "tasks",
+        "[enable|disable <name>] scheduled tasks · bare = list",
+    ),
     (
         "proposals",
         "[promote|reject <id>] review learned-skill proposals",
@@ -173,6 +191,8 @@ pub fn parse(input: &str) -> Option<Command> {
         "compact" if arg.is_empty() => Some(Command::Compact),
         "budget" | "spend" if arg.is_empty() => Some(Command::Budget),
         "memory" => Some(Command::Memory(arg_opt)),
+        "search" => Some(Command::Search(search_arg(&arg))),
+        "tasks" => Some(Command::Tasks(arg_opt)),
         "proposals" | "skills-review" => Some(Command::Proposals(arg_opt)),
         "mcp" if arg.is_empty() => Some(Command::Mcp),
         "sandbox" => Some(Command::Sandbox(arg_opt)),
@@ -287,6 +307,21 @@ impl A11yFeature {
             Self::Reader => "screen reader",
         }
     }
+}
+
+/// Parses `/search` argument: the query with an optional `--all` flag
+/// (position-free). None when no usable query remains after stripping.
+pub fn search_arg(arg: &str) -> Option<(String, bool)> {
+    let mut all = false;
+    let mut words = Vec::new();
+    for tok in arg.split_whitespace() {
+        if tok.eq_ignore_ascii_case("--all") {
+            all = true;
+        } else {
+            words.push(tok);
+        }
+    }
+    (!words.is_empty()).then(|| (words.join(" "), all))
 }
 
 /// Parse `/services` argument: `action service` in either order, both

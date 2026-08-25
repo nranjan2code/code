@@ -416,6 +416,11 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
     let mut keymap_meta: Vec<(usize, &'static str)> = Vec::new();
     // Pending interactive rebind: next captured key becomes the binding.
     let mut rebind_action: Option<&'static str> = None;
+    // /search result rows aligned with the open search modal's selection.
+    let mut search_hits: Vec<SearchHit> = Vec::new();
+    let mut search_select: usize = 0;
+    // /memory forget armed but not yet confirmed (y/n inline prompt).
+    let mut confirm_forget: Option<ForgetConfirm> = None;
     // Mode switch requested while a run was in flight; applied when the run
     // actually stops so the new mode is never reported early (invariant 11).
     let mut deferred_mode: Option<vak_config::PermissionMode> = None;
@@ -534,6 +539,31 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                 }
                             }
                             approval_focused = false;
+                            continue;
+                        }
+                        // Inline y/n confirm for destructive /memory ops:
+                        // stray keys are ignored exactly like approvals.
+                        if !approval_focused && confirm_forget.is_some() {
+                            if let Some(action) = confirm_forget.take() {
+                                match key.code {
+                                    KeyCode::Char('y' | 'Y') => {
+                                        match vak_core::memory::forget_note(
+                                            &action.path,
+                                            &action.id,
+                                        ) {
+                                            Ok(bytes) => screen.success(&format!(
+                                                "✓ forgot note {} · {bytes} bytes reclaimed",
+                                                short_hex(&action.id),
+                                            )),
+                                            Err(e) => screen.error(&format!("forget failed: {e}")),
+                                        }
+                                    }
+                                    KeyCode::Char('n' | 'N' | 'q' | 'Q') | KeyCode::Esc => {
+                                        screen.dim("forget cancelled — note kept");
+                                    }
+                                    _ => confirm_forget = Some(action),
+                                }
+                            }
                             continue;
                         }
                         // Interactive rebind capture: the next key becomes
@@ -710,6 +740,29 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                         active.footer =
                                             "search: type query · Enter next · Esc cancel".to_string();
                                     }
+                                    KeyCode::Up | KeyCode::Down | KeyCode::Enter
+                                        if !search_hits.is_empty()
+                                            && active.title == "session search" =>
+                                    {
+                                        let last = search_hits.len().saturating_sub(1);
+                                        match key.code {
+                                            KeyCode::Up => {
+                                                search_select = search_select.saturating_sub(1);
+                                            }
+                                            KeyCode::Down => {
+                                                search_select = (search_select + 1).min(last);
+                                            }
+                                            _ => modal_action = Some('o'),
+                                        }
+                                        active.selected = Some(search_select);
+                                        // Keep the highlighted hit inside the viewport.
+                                        if search_select < active.scroll {
+                                            active.scroll = search_select;
+                                        } else if search_select >= active.scroll + page {
+                                            active.scroll =
+                                                (search_select + 1).saturating_sub(page);
+                                        }
+                                    }
                                     KeyCode::Up => active.scroll = active.scroll.saturating_sub(1),
                                     KeyCode::Down => {
                                         active.scroll = (active.scroll + 1).min(max_scroll);
@@ -729,8 +782,26 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                             if close {
                                 modal = None;
                                 transcript_search = None;
+                                search_hits.clear();
                             }
                             match modal_action {
+                                Some('o') => {
+                                    let hit = search_hits.get(search_select).cloned();
+                                    search_hits.clear();
+                                    if let Some(hit) = hit {
+                                        match session_view_modal(
+                                            &core.sessions_home(),
+                                            core.cwd(),
+                                            &hit,
+                                        ) {
+                                            Ok(m) => modal = Some(m),
+                                            Err(e) => screen.error(&format!(
+                                                "cannot open {} · {e}",
+                                                short_hex(&hit.session_id)
+                                            )),
+                                        }
+                                    }
+                                }
                                 Some('p') => {
                                     modal = None;
                                     picker = Some((
@@ -1517,13 +1588,50 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                 Some(Command::Memory(arg)) => {
                                                     let home = core.sessions_home();
                                                     let cwd = core.cwd().clone();
-                                                    match arg.as_deref().map(str::trim) {
-                                                        None | Some("") => {
-                                                            let notes = vak_core::memory::list_notes(&home, &cwd);
+                                                    let raw = arg.as_deref().map(str::trim);
+                                                    let (profile_scope, rest) = match raw {
+                                                        Some(rest)
+                                                            if rest == "--profile"
+                                                                || rest
+                                                                    .starts_with("--profile ") =>
+                                                        {
+                                                            let tail = rest
+                                                                ["--profile".len()..]
+                                                                .trim()
+                                                                .to_string();
+                                                            (true, Some(tail))
+                                                        }
+                                                        other => (false, other.map(String::from)),
+                                                    };
+                                                    let notes = if profile_scope {
+                                                        vak_core::memory::list_profile_notes(&home)
+                                                    } else {
+                                                        vak_core::memory::list_notes(&home, &cwd)
+                                                    };
+                                                    let memory_path = if profile_scope {
+                                                        vak_core::memory::profile_path(&home)
+                                                    } else {
+                                                        home.join("memory")
+                                                            .join(vak_core::memory::hash_cwd(&cwd))
+                                                            .join("MEMORY.md")
+                                                    };
+                                                    // Forms: bare list · <text> append ·
+                                                    // forget <id> · amend <id> <text>.
+                                                    let action = MemoryAction::parse(
+                                                        rest.as_deref(),
+                                                    );
+                                                    match action {
+                                                        MemoryAction::List => {
+                                                            let tier = if profile_scope {
+                                                                "profile · USER.md"
+                                                            } else {
+                                                                "workspace"
+                                                            };
                                                             let rows: Vec<String> = if notes.is_empty() {
                                                                 vec![
-                                                                    "no notes for this workspace yet".into(),
+                                                                    format!("no {tier} notes yet"),
                                                                     "the model saves via its remember tool; /memory <text> saves one directly".into(),
+                                                                    "/memory --profile <text> saves to the USER.md tier that follows you across projects".into(),
                                                                 ]
                                                             } else {
                                                                 notes
@@ -1531,7 +1639,8 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                                     .rev()
                                                                     .map(|n| {
                                                                         format!(
-                                                                            "[{}] {} · {}",
+                                                                            "{} [{}] {} · {}",
+                                                                            short_hex(&n.id),
                                                                             n.kind,
                                                                             n.tag,
                                                                             n.text.replace('\n', " ")
@@ -1541,16 +1650,16 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                             };
                                                             modal = Some(ModalView {
                                                                 title: format!(
-                                                                    "memory · {} note(s)",
+                                                                    "memory · {tier} · {} note(s)",
                                                                     notes.len()
                                                                 ),
                                                                 rows,
                                                                 scroll: 0,
-                                                                footer: "/memory <text> appends a note · Esc close".to_string(),
+                                                                footer: "/memory forget <id> · /memory amend <id> <text> · ids accept the 8-char prefix · Esc close".to_string(),
                                                                 ..Default::default()
                                                             });
                                                         }
-                                                        Some(text) => {
+                                                        MemoryAction::Append(text) => {
                                                             let session_id = session_slot
                                                                 .lock()
                                                                 .await
@@ -1558,21 +1667,173 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                                 .and_then(|s| s.header())
                                                                 .map(|h| h.session_id.clone())
                                                                 .unwrap_or_else(|| "manual".into());
-                                                            match vak_core::memory::append_note(
-                                                                &home,
-                                                                &cwd,
-                                                                "note",
-                                                                "",
-                                                                &session_id,
-                                                                text,
-                                                            ) {
-                                                                Ok(_) => {
-                                                                    screen.success("note saved to durable memory")
-                                                                }
+                                                            let saved = if profile_scope {
+                                                                vak_core::memory::append_profile_note(
+                                                                    &home, "note", "", &text, &session_id,
+                                                                )
+                                                            } else {
+                                                                vak_core::memory::append_note(
+                                                                    &home,
+                                                                    &cwd,
+                                                                    "note",
+                                                                    "",
+                                                                    &session_id,
+                                                                    &text,
+                                                                )
+                                                            };
+                                                            match saved {
+                                                                Ok(_) => screen.success(if profile_scope {
+                                                                    "note saved to USER.md profile"
+                                                                } else {
+                                                                    "note saved to durable memory"
+                                                                }),
                                                                 Err(e) => screen.error(&format!("save failed: {e}")),
                                                             }
                                                         }
+                                                        MemoryAction::Forget(given) => {
+                                                            if given.is_empty() {
+                                                                screen.error(
+                                                                    "usage: /memory forget <id> — ids show in /memory",
+                                                                );
+                                                            } else {
+                                                                match find_note(&notes, &given) {
+                                                                    Err(e) => screen.error(&e.to_string()),
+                                                                    Ok(note) => {
+                                                                        confirm_forget = Some(ForgetConfirm {
+                                                                            path: memory_path.clone(),
+                                                                            id: note.id.clone(),
+                                                                            preview: trunc_cells(
+                                                                                &note.text.replace('\n', " "),
+                                                                                80,
+                                                                            ),
+                                                                        });
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        MemoryAction::Amend(given, text) => {
+                                                            if given.is_empty() || text.trim().is_empty() {
+                                                                screen.error(
+                                                                    "usage: /memory amend <id> <new text>",
+                                                                );
+                                                            } else {
+                                                                let resolved = find_note(&notes, &given);
+                                                                match resolved {
+                                                                    Err(e) => screen.error(&e.to_string()),
+                                                                    Ok(note) => {
+                                                                        let full = note.id.clone();
+                                                                        match vak_core::memory::amend_note(
+                                                                            &memory_path, &full, &text,
+                                                                        ) {
+                                                                            Ok(()) => screen.success(&format!(
+                                                                                "✓ amended note {}",
+                                                                                short_hex(&full),
+                                                                            )),
+                                                                            Err(e) => screen.error(&format!("amend failed: {e}")),
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
                                                     }
+                                                }
+                                                Some(Command::Search(spec)) => match spec {
+                                                    None => screen.error("usage: /search <query> [--all]"),
+                                                    Some((query, all)) => {
+                                                        let home = core.sessions_home();
+                                                        let current = session_slot
+                                                            .lock()
+                                                            .await
+                                                            .as_ref()
+                                                            .and_then(|s| s.header())
+                                                            .map(|h| h.session_id.clone());
+                                                        let hits = if all {
+                                                            vak_session::search::search_all(
+                                                                &home,
+                                                                &query,
+                                                                vak_session::search::DEFAULT_LIMIT,
+                                                                current.as_deref(),
+                                                            )
+                                                            .map(|hs| {
+                                                                hs.into_iter()
+                                                                    .map(|p| SearchHit {
+                                                                        session_id: p.hit.session_id,
+                                                                        project_hash: p.project_hash,
+                                                                        ts: p.hit.ts,
+                                                                        score: p.hit.score,
+                                                                        snippet: p.hit.snippet,
+                                                                    })
+                                                                    .collect::<Vec<_>>()
+                                                            })
+                                                        } else {
+                                                            vak_session::search::search(
+                                                                &home,
+                                                                core.cwd(),
+                                                                &query,
+                                                                vak_session::search::DEFAULT_LIMIT,
+                                                                current.as_deref(),
+                                                            )
+                                                            .map(|hs| {
+                                                                hs.into_iter()
+                                                                    .map(|h| SearchHit {
+                                                                        session_id: h.session_id,
+                                                                        project_hash: String::new(),
+                                                                        ts: h.ts,
+                                                                        score: h.score,
+                                                                        snippet: h.snippet,
+                                                                    })
+                                                                    .collect::<Vec<_>>()
+                                                            })
+                                                        };
+                                                        match hits {
+                                                            Err(e) => screen.error(&format!("search failed: {e}")),
+                                                            Ok(hs) if hs.is_empty() => screen.dim(&format!(
+                                                                "no matches for '{query}'{}",
+                                                                if all { " across all projects" } else { "" },
+                                                            )),
+                                                            Ok(hs) => {
+                                                                let mut rows = vec![format!(
+                                                                    "'{query}' · {} hit(s){}",
+                                                                    hs.len(),
+                                                                    if all { " · all projects" } else { "" },
+                                                                )];
+                                                                for (i, h) in hs.iter().enumerate() {
+                                                                    let project =
+                                                                        if all && !h.project_hash.is_empty() {
+                                                                            format!(
+                                                                                " [{}]",
+                                                                                short_hex(&h.project_hash),
+                                                                            )
+                                                                        } else {
+                                                                            String::new()
+                                                                        };
+                                                                    rows.push(format!(
+                                                                        "{:>2}. {}{} · {} · {:>4.1}  {}",
+                                                                        i + 1,
+                                                                        short_hex(&h.session_id),
+                                                                        project,
+                                                                        rel_time(h.ts),
+                                                                        h.score,
+                                                                        trunc_cells(&h.snippet, 160),
+                                                                    ));
+                                                                }
+                                                                search_select = 0;
+                                                                modal = Some(ModalView {
+                                                                    title: "session search".to_string(),
+                                                                    rows,
+                                                                    scroll: 0,
+                                                                    footer: "↑↓ select · Enter opens read-only · /search <q> --all spans projects · Esc close"
+                                                                        .to_string(),
+                                                                    selected: Some(0),
+                                                                    ..Default::default()
+                                                                });
+                                                                search_hits = hs;
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                Some(Command::Tasks(arg)) => {
+                                                    handle_tasks(&core, arg.as_deref(), &mut screen);
                                                 }
                                                 Some(Command::Proposals(arg)) => {
                                                     let home = core.sessions_home();
@@ -2279,8 +2540,15 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
 
         if approval_focused && let Some(front) = approvals.front() {
             draw_approval(&mut screen, &ui_theme, front);
+        } else if let Some(req) = confirm_forget.as_ref() {
+            draw_confirm(&mut screen, &ui_theme, req);
         } else if running.is_some() {
             let elapsed = run_started.map(|t| t.elapsed().as_secs()).unwrap_or(0);
+            let budget = core
+                .config()
+                .finops
+                .max_day_usd
+                .and_then(|cap| budget_marker(core.spend_day_usd(), cap));
             let live_status = status_ansi(
                 &ui_theme,
                 &ui.run_state,
@@ -2291,6 +2559,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                 context_window,
                 last_agent_event.elapsed().as_secs(),
                 !a11y_motion,
+                budget,
             );
             screen.redraw_running(&live_status, &pending, follow_ups.len(), approvals.len());
         } else if let Some(active) = modal.as_ref() {
@@ -2622,6 +2891,17 @@ fn draw_approval(screen: &mut Screen, theme: &Theme, req: &ApprovalRequest) {
         req.tool.clone()
     };
     let mut lines = vec![styled(format!("╭─ approval · {tool_label}"), theme.warning)];
+    if req.tool == "webfetch"
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&req.args_json)
+        && let Some(url) = v.get("url").and_then(|u| u.as_str())
+    {
+        // The destination is the decision: show it prominently, before the
+        // generic args dump.
+        lines.push(styled(
+            format!("│ url · {}", trunc_cells(url, 120)),
+            theme.accent,
+        ));
+    }
     if req.tool == "edit"
         && let Some(diff) = approval_edit_diff(&req.args_json, theme)
     {
@@ -2646,6 +2926,23 @@ fn draw_approval(screen: &mut Screen, theme: &Theme, req: &ApprovalRequest) {
         "╰─ Y once · A session · P save rule · N/Esc deny".to_string(),
         theme.dim,
     ));
+    screen.redraw_block(&lines);
+}
+
+/// Inline confirm card for a destructive memory op — same shape as an
+/// approval so the interaction reads identically.
+fn draw_confirm(screen: &mut Screen, theme: &Theme, req: &ForgetConfirm) {
+    let styled = |text: String, color: Color| {
+        format!("{}{text}{}", theme::fg(color), theme::fg(Color::Reset))
+    };
+    let lines = vec![
+        styled(
+            format!("╭─ confirm forget · {}", short_hex(&req.id)),
+            theme.warning,
+        ),
+        styled(format!("│ {}", req.preview), theme.dim),
+        styled("╰─ y forget · n/Esc keep".to_string(), theme.dim),
+    ];
     screen.redraw_block(&lines);
 }
 
@@ -2766,6 +3063,7 @@ pub fn summarize_args(name: &str, args_json: &str) -> String {
         "bash" => pick("command"),
         "read" | "write" | "edit" => pick("path"),
         "glob" => pick("pattern"),
+        "webfetch" => pick("url"),
         "grep" => {
             let base = v.get("path").and_then(|x| x.as_str()).unwrap_or(".");
             format!("{} in {base}", pick("pattern"))
@@ -2786,6 +3084,18 @@ pub fn trunc_cells(s: &str, max: usize) -> String {
     s.to_string()
 }
 
+/// Compact day-cap marker for the live status row (personal-os budget
+/// awareness): ≥80% of cap shows `⚠ $spend/$cap`, ≥100% swaps ⚠ for ✗.
+/// Thresholds come from `vak_core::finops::alert_level`; no cap → None.
+pub fn budget_marker(day_usd: f64, cap: f64) -> Option<String> {
+    let level = vak_core::finops::alert_level(day_usd, cap)?;
+    let mark = match level {
+        vak_core::finops::AlertLevel::Full => '✗',
+        vak_core::finops::AlertLevel::Eighty => '⚠',
+    };
+    Some(format!("{mark} ${day_usd:.2}/${cap:.2}"))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn status_ansi(
     theme: &Theme,
@@ -2797,6 +3107,7 @@ fn status_ansi(
     window: u64,
     idle_secs: u64,
     animated: bool,
+    budget: Option<String>,
 ) -> String {
     let total = total_in + total_out;
     let pct = if window > 0 {
@@ -2836,6 +3147,18 @@ fn status_ansi(
             "{} · no events {}{}",
             theme::fg(theme.warning),
             status::fmt_elapsed(idle_secs),
+            theme::fg(Color::Reset),
+        ));
+    }
+    if let Some(marker) = budget {
+        let color = if marker.starts_with('✗') {
+            theme.error
+        } else {
+            theme.warning
+        };
+        line.push_str(&format!(
+            "{} · {marker}{}",
+            theme::fg(color),
             theme::fg(Color::Reset),
         ));
     }
@@ -3184,6 +3507,8 @@ fn build_transcript_rows(
 }
 
 /// Writes the full session transcript as Markdown next to the workspace.
+/// Byte-parity with the server-side export is guaranteed by
+/// `vak_core::transcript_md`'s shared-renderer test.
 /// Returns the path written.
 async fn export_transcript(
     slot: &Arc<Mutex<Option<SessionLog>>>,
@@ -3193,42 +3518,7 @@ async fn export_transcript(
     let Some(s) = guard.as_ref() else {
         return Err("no active session".to_string());
     };
-    let msgs = s.derive_messages();
-    let mut out = String::from("# VakCoder transcript\n\n");
-    for (idx, m) in msgs.iter().enumerate() {
-        let role = match m.role {
-            vak_llm::Role::User => "user",
-            _ => "assistant",
-        };
-        out.push_str(&format!("## {idx} · {role}\n\n"));
-        for block in &m.content {
-            match block {
-                vak_llm::ContentBlock::Text { text } => {
-                    out.push_str(text.trim());
-                    out.push_str("\n\n");
-                }
-                vak_llm::ContentBlock::Thinking { text, .. } => {
-                    out.push_str(&format!("> thinking: {}\n\n", text.trim()));
-                }
-                vak_llm::ContentBlock::ToolUse { name, input, .. } => {
-                    out.push_str(&format!("- tool `{name}` `{input}`\n"));
-                }
-                vak_llm::ContentBlock::ToolResult {
-                    content, is_error, ..
-                } => {
-                    let mark = if *is_error { "✗" } else { "→" };
-                    out.push_str(&format!(
-                        "- {mark} result: {}\n",
-                        content.replace('\n', " ")
-                    ));
-                }
-                vak_llm::ContentBlock::Image { source } => {
-                    out.push_str(&format!("- image ({})\n", source.media_type));
-                }
-            }
-        }
-        out.push('\n');
-    }
+    let out = vak_core::transcript_md::render_markdown(&s.derive_messages());
     let stem = s
         .path()
         .file_stem()
@@ -3353,110 +3643,39 @@ fn run_services(arg: Option<(String, String)>, screen: &mut Screen) {
     screen.dim("  /services start|stop|restart gateway|telegram");
 }
 
+/// Health check rendered as a checklist: auth, storage, config warnings,
+/// extensions, breaker, finops, frozen route ladder. Facts come from the
+/// shared `vak_core::health` collector so CLI/desktop/TUI agree.
 fn run_doctor(core: &Core, session: Option<&SessionLog>, screen: &mut Screen) {
     screen.clear_input();
     screen.accent("doctor:");
+    let health = vak_core::health::collect(core, session);
     let mut failures = 0usize;
-
-    let provider_check = match core.provider() {
-        Ok(p) => Ok(format!("{} ready", p.name())),
-        Err(e) => Err(e.to_string()),
-    };
-    report(screen, "provider", &provider_check, &mut failures);
-
-    let home_ok = std::fs::create_dir_all(core.sessions_home()).is_ok();
-    report(
-        screen,
-        "sessions home",
-        &(if home_ok {
-            Ok(core.sessions_home().display().to_string())
-        } else {
-            Err("not writable".to_string())
-        }),
-        &mut failures,
-    );
-
-    let warnings = core.config().warnings.clone();
-    report(
-        screen,
-        "config warnings",
-        &(if warnings.is_empty() {
-            Ok("none".to_string())
-        } else {
-            Err(warnings.join("; "))
-        }),
-        &mut failures,
-    );
-
-    screen.dim(&format!(
-        "  · model {} via {} · mode {:?} · sandbox {}",
-        core.effective_model(),
-        core.effective_provider(),
-        core.effective_permission_mode(),
-        core.effective_sandbox_name(),
-    ));
-    screen.dim(&format!(
-        "  · context window {} tokens · max turns {} · retries {} (+{})",
-        core.config().context_window,
-        core.effective_max_turns(),
-        core.config().max_retries,
-        core.config().run_retry_attempts,
-    ));
-    screen.dim(&format!(
-        "  · extensions: {} skills · {} hooks · {} mcp servers · subagents {}",
-        core.skills().len(),
-        core.config().hooks.len(),
-        core.config().mcp.servers.len(),
-        if core.config().subagents { "on" } else { "off" },
-    ));
-    let breaker_line = match core.breaker().check() {
-        Ok(()) => "closed (provider healthy)".to_string(),
-        Err(open) => format!(
-            "OPEN — cooling down {}s after {} failure(s)",
-            open.remaining_secs, open.failures
-        ),
-    };
-    screen.dim(&format!("  · circuit breaker: {breaker_line}"));
-    screen.dim(&format!(
-        "  · finops: today ~${:.2}{}",
-        core.spend_day_usd(),
-        core.config()
-            .finops
-            .max_day_usd
-            .map(|c| format!(" of ${c:.2} day cap"))
-            .unwrap_or_default(),
-    ));
-    if let Some(header) = session.and_then(|s| s.header()) {
-        let contract = &header.contract;
-        let legs = &contract.route_ladder;
-        let ladder = legs
-            .iter()
-            .map(|leg| format!("{}/{}", leg.provider, leg.model))
-            .collect::<Vec<_>>()
-            .join(" → ");
+    for check in &health.checks {
+        report(screen, &check.label, &check.detail, &mut failures);
+    }
+    for fact in &health.facts {
+        screen.dim(&format!("  · {fact}"));
+    }
+    if let Some(ladder) = &health.ladder {
         screen.dim(&format!(
             "  · route ladder (frozen at admission): {}",
-            if ladder.is_empty() {
-                header.contract.model.clone()
-            } else {
-                ladder
-            }
+            ladder.rendered
         ));
-        if !contract.route_objective.is_empty() {
+        if !ladder.objective.is_empty() {
             screen.dim(&format!(
                 "  · route objective: {} · fallback legs: {}",
-                contract.route_objective,
-                legs.len().saturating_sub(1),
+                ladder.objective, ladder.fallback_legs,
             ));
         }
-        for note in &contract.route_annotations {
+        for note in &ladder.annotations {
             screen.warn(&format!("  · route: {note}"));
         }
     }
-    if failures == 0 {
+    if health.failures == 0 {
         screen.success("all checks passed");
     } else {
-        screen.error(&format!("{failures} check(s) failed"));
+        screen.error(&format!("{} check(s) failed", health.failures));
     }
 }
 
@@ -3468,6 +3687,290 @@ fn report(screen: &mut Screen, label: &str, result: &Result<String, String>, fai
             *failures += 1;
         }
     }
+}
+
+// ---- personal-os surfaces (docs/design/29-personal-os.md) ------------------
+
+/// One `/search` result; kept beside the open modal so Enter can resolve the
+/// highlighted hit back to its ledger without re-searching.
+#[derive(Clone)]
+struct SearchHit {
+    session_id: String,
+    project_hash: String,
+    ts: chrono::DateTime<chrono::Utc>,
+    score: f32,
+    snippet: String,
+}
+
+/// A destructive memory op armed by `/memory forget`, awaiting y/n.
+struct ForgetConfirm {
+    path: PathBuf,
+    id: String,
+    preview: String,
+}
+
+/// Parsed `/memory [--profile] <form>` payload.
+enum MemoryAction {
+    List,
+    Append(String),
+    Forget(String),
+    Amend(String, String),
+}
+
+impl MemoryAction {
+    /// Empty arg lists; otherwise the first token selects forget/amend and
+    /// anything else is new-note text.
+    fn parse(arg: Option<&str>) -> Self {
+        let Some(arg) = arg.map(str::trim).filter(|a| !a.is_empty()) else {
+            return Self::List;
+        };
+        let mut tokens = arg.splitn(2, char::is_whitespace);
+        match tokens.next().unwrap_or("") {
+            "forget" | "rm" => Self::Forget(tokens.next().unwrap_or("").trim().to_string()),
+            "amend" => {
+                let rest = tokens.next().unwrap_or("").trim();
+                match rest.split_once(char::is_whitespace) {
+                    Some((id, text)) => Self::Amend(id.trim().to_string(), text.trim().to_string()),
+                    None => Self::Amend(rest.to_string(), String::new()),
+                }
+            }
+            _ => Self::Append(arg.to_string()),
+        }
+    }
+}
+
+/// First 8 chars of a hex id / project hash — display form only; all stored
+/// operations run on full ids.
+fn short_hex(hex: &str) -> String {
+    hex.chars().take(8).collect()
+}
+
+/// Relative timestamp for recall surfaces: now / 5m ago / 3h ago / 2d ago.
+pub fn rel_time(ts: chrono::DateTime<chrono::Utc>) -> String {
+    let secs = (chrono::Utc::now() - ts).num_seconds().max(0) as u64;
+    if secs < 60 {
+        "now".to_string()
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h ago", secs / 3600)
+    } else {
+        format!("{}d ago", secs / 86_400)
+    }
+}
+
+/// Why a `/memory forget|amend <prefix>` id could not be resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NoteMatchError {
+    NotFound(String),
+    Ambiguous(String),
+}
+
+impl std::fmt::Display for NoteMatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(given) => write!(f, "no note matches id '{given}'"),
+            Self::Ambiguous(given) => {
+                write!(f, "'{given}' matches several notes — use more of the id")
+            }
+        }
+    }
+}
+
+/// Resolve a user-supplied note id (full 16-hex or unique prefix) to exactly
+/// one note. An exact full-id hit wins even if it is also another's prefix.
+pub fn find_note<'a>(
+    notes: &'a [vak_core::memory::NoteBlock],
+    given: &str,
+) -> Result<&'a vak_core::memory::NoteBlock, NoteMatchError> {
+    if let Some(note) = notes.iter().find(|n| n.id == given) {
+        return Ok(note);
+    }
+    let matches: Vec<&vak_core::memory::NoteBlock> =
+        notes.iter().filter(|n| n.id.starts_with(given)).collect();
+    match matches.as_slice() {
+        [one] => Ok(one),
+        [] => Err(NoteMatchError::NotFound(given.to_string())),
+        _ => Err(NoteMatchError::Ambiguous(given.to_string())),
+    }
+}
+
+/// Opens another session's ledger purely for viewing: no session-slot swap,
+/// so nothing can append to it and the active session stays untouched.
+fn session_view_modal(
+    home: &std::path::Path,
+    cwd: &std::path::Path,
+    hit: &SearchHit,
+) -> Result<ModalView, String> {
+    let dir = if hit.project_hash.is_empty() {
+        vak_session::SessionPath::sessions_dir(home, cwd)
+    } else {
+        home.join("sessions").join(&hit.project_hash)
+    };
+    let path = dir.join(format!("{}.jsonl", hit.session_id));
+    let log = SessionLog::open(path).map_err(|e| e.to_string())?;
+    let msgs = log.derive_messages();
+    let start = msgs.len().saturating_sub(200);
+    let (mut rows, anchors) = build_transcript_rows(&msgs, start);
+    rows.insert(
+        0,
+        format!(
+            "{} messages · opened read-only from search",
+            msgs.len() - start
+        ),
+    );
+    Ok(ModalView {
+        title: format!("session transcript · {}", short_hex(&hit.session_id)),
+        scroll: rows.len().saturating_sub(1),
+        rows,
+        footer: "read-only view · /resume resumes your own sessions · Esc close".to_string(),
+        anchors,
+        ..Default::default()
+    })
+}
+
+const TASKS_FOOTER: &str =
+    "/tasks enable|disable <name> toggles · creation/editing lives in `vakcoder tasks`";
+
+/// `/tasks` — read-mostly manager over TaskStore. Bare lists the table;
+/// `enable|disable <name>` toggles and persists. Creation/editing stays with
+/// the CLI/desktop surfaces on purpose.
+fn handle_tasks(core: &Core, arg: Option<&str>, screen: &mut Screen) {
+    let mut store = match vak_core::tasks::TaskStore::load(&core.sessions_home()) {
+        Ok(store) => store,
+        Err(e) => {
+            screen.error(&e.to_string());
+            return;
+        }
+    };
+    match arg.map(str::trim).filter(|a| !a.is_empty()) {
+        None => {
+            let tasks = store.all();
+            let rows = if tasks.is_empty() {
+                vec![
+                    "no scheduled tasks".to_string(),
+                    "create them with `vakcoder tasks` on the CLI or the desktop Tasks page"
+                        .to_string(),
+                ]
+            } else {
+                task_rows(&tasks, chrono::Local::now())
+            };
+            screen.panel("scheduled tasks", &rows, TASKS_FOOTER);
+        }
+        Some(argstr) => {
+            let mut tokens = argstr.splitn(2, char::is_whitespace);
+            let action = tokens.next().unwrap_or("");
+            let name = tokens.next().map(str::trim).unwrap_or("");
+            if !matches!(action, "enable" | "disable") || name.is_empty() {
+                screen.error("usage: /tasks · /tasks enable <name> · /tasks disable <name>");
+                return;
+            }
+            let enable = action == "enable";
+            match store.all().into_iter().find(|t| t.name == name) {
+                None => screen.error(&format!("no task named '{name}'")),
+                Some(mut task) => {
+                    task.enabled = enable;
+                    store.put(task);
+                    match store.save() {
+                        Ok(()) => screen.success(&format!(
+                            "{} task '{name}'",
+                            if enable {
+                                "✓ enabled"
+                            } else {
+                                "✗ disabled"
+                            }
+                        )),
+                        Err(e) => screen.error(&e.to_string()),
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Humanized interval for the schedule column when no cron expression is set.
+pub fn fmt_interval(secs: u64) -> String {
+    if secs == 0 {
+        return "0s".to_string();
+    }
+    if secs.is_multiple_of(86_400) {
+        format!("{}d", secs / 86_400)
+    } else if secs.is_multiple_of(3600) {
+        format!("{}h", secs / 3600)
+    } else if secs.is_multiple_of(60) {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{secs}s")
+    }
+}
+
+/// One row per task: name · kind · schedule · enabled · model pin · last run
+/// · next cron fire (`cron_next_after` from `now`). Interval tasks show "-":
+/// their next fire depends on ticker state this surface does not own.
+pub fn task_rows(
+    tasks: &[vak_core::tasks::TaskDef],
+    now: chrono::DateTime<chrono::Local>,
+) -> Vec<String> {
+    const HEADER: [&str; 7] = [
+        "name",
+        "kind",
+        "schedule",
+        "on",
+        "model",
+        "last run",
+        "next fire",
+    ];
+    let mut cells: Vec<[String; 7]> = Vec::with_capacity(tasks.len());
+    for t in tasks {
+        let sched = t
+            .schedule
+            .clone()
+            .unwrap_or_else(|| fmt_interval(t.interval_secs));
+        let last = t
+            .last_run_at
+            .map(rel_time)
+            .unwrap_or_else(|| "never".to_string());
+        let next = match (&t.schedule, t.enabled) {
+            (Some(expr), true) => vak_core::tasks::cron_next_after(expr, now)
+                .map(|dt| dt.format("%m-%d %H:%M").to_string())
+                .unwrap_or_else(|_| "?".to_string()),
+            _ => "-".to_string(),
+        };
+        cells.push([
+            t.name.clone(),
+            if t.script.is_some() {
+                "script"
+            } else {
+                "prompt"
+            }
+            .to_string(),
+            sched,
+            if t.enabled { "✓" } else { "✗" }.to_string(),
+            t.model_pin.clone().unwrap_or_else(|| "-".to_string()),
+            last,
+            next,
+        ]);
+    }
+    let widths: [usize; 7] = std::array::from_fn(|i| {
+        HEADER[i].chars().count().max(
+            cells
+                .iter()
+                .map(|row| row[i].chars().count())
+                .max()
+                .unwrap_or(0),
+        )
+    });
+    let line = |row: &[String; 7]| {
+        row.iter()
+            .zip(widths)
+            .map(|(c, w)| format!("{c:<w$}"))
+            .collect::<Vec<_>>()
+            .join("  ")
+    };
+    let header = HEADER.map(String::from);
+    std::iter::once(line(&header))
+        .chain(cells.iter().map(line))
+        .collect()
 }
 
 fn mode_label(mode: PermissionMode) -> &'static str {
@@ -4400,9 +4903,9 @@ mod transcript_state_tests {
             ),
             (&RunState::Thinking, "thinking"),
         ] {
-            let row = status_ansi(&theme, state, 10, 20, 5, 0, 128_000, 0, true);
+            let row = status_ansi(&theme, state, 10, 20, 5, 0, 128_000, 0, true, None);
             let still_plain = crate::markdown::strip_ansi(&status_ansi(
-                &theme, state, 10, 20, 5, 0, 128_000, 0, false,
+                &theme, state, 10, 20, 5, 0, 128_000, 0, false, None,
             ));
             assert!(
                 !still_plain.contains('\u{280b}') && !still_plain.contains('\u{23f3}'),
@@ -4475,5 +4978,248 @@ mod transcript_search_tests {
     fn no_hits_return_empty_vec() {
         let rows = vec!["alpha".to_string(), "beta".to_string()];
         assert!(find_matches(&rows, "gamma").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod personal_os_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use chrono::TimeZone as _;
+    use vak_core::memory::NoteBlock;
+    use vak_core::tasks::TaskDef;
+
+    fn task(name: &str) -> TaskDef {
+        TaskDef {
+            id: format!("test-{name}"),
+            name: name.into(),
+            prompt: "tidy".into(),
+            interval_secs: 3600,
+            enabled: true,
+            cwd: std::path::PathBuf::from("/tmp/ws"),
+            created_at: chrono::Utc::now(),
+            last_run_at: None,
+            last_session_id: None,
+            last_summary: None,
+            last_wt: None,
+            deliver_to: None,
+            schedule: None,
+            script: None,
+            model_pin: None,
+        }
+    }
+
+    fn note(id: &str, text: &str) -> NoteBlock {
+        NoteBlock {
+            id: id.into(),
+            ts: chrono::Utc::now(),
+            kind: "fact".into(),
+            tag: "x".into(),
+            session_id: "s".into(),
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn task_table_lists_kind_schedule_pin_and_next_fire() {
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 8, 24, 12, 0, 0)
+            .earliest()
+            .unwrap();
+
+        let mut cron_task = task("standup");
+        cron_task.schedule = Some("0 9 * * *".into());
+        cron_task.model_pin = Some("haiku-fast".into());
+        cron_task.last_run_at = Some(chrono::Utc::now());
+
+        let mut watchdog = task("watch");
+        watchdog.prompt = String::new();
+        watchdog.script = Some("curl -sf http://x/health".into());
+        watchdog.schedule = Some("*/5 * * * *".into());
+
+        let mut off = task("paused");
+        off.enabled = false;
+        off.interval_secs = 86_400;
+
+        let rows = task_rows(&[cron_task, watchdog, off], now);
+
+        // Header + one row per task, columns aligned.
+        assert!(rows[0].contains("next fire"));
+        assert_eq!(rows.len(), 4);
+
+        let standup = &rows[1];
+        assert!(standup.contains("standup"));
+        assert!(standup.contains("prompt"));
+        assert!(standup.contains("0 9 * * *"));
+        assert!(standup.contains("✓"));
+        assert!(standup.contains("haiku-fast"));
+        assert!(!standup.contains("never"), "last run is stamped: {standup}");
+        assert!(
+            standup.contains("08-25 09:00"),
+            "cron next fire preview from the given now: {standup}"
+        );
+
+        assert!(rows[2].contains("script"), "script task kind: {}", rows[2]);
+        assert!(rows[2].contains("*/5 * * * *"));
+
+        let paused = &rows[3];
+        assert!(paused.contains("✗"), "disabled mark: {paused}");
+        assert!(paused.contains("1d"), "interval fallback: {paused}");
+        assert!(
+            paused.trim_end().ends_with('-'),
+            "no next fire for disabled/interval tasks: {paused}"
+        );
+    }
+
+    #[test]
+    fn fmt_interval_humanizes_common_steps() {
+        assert_eq!(fmt_interval(45), "45s");
+        assert_eq!(fmt_interval(300), "5m");
+        assert_eq!(fmt_interval(3600), "1h");
+        assert_eq!(fmt_interval(7200), "2h");
+        assert_eq!(fmt_interval(86_400), "1d");
+        assert_eq!(fmt_interval(0), "0s");
+    }
+
+    #[test]
+    fn memory_ids_resolve_by_full_or_unique_prefix_only() {
+        let a = note("aaaaaaaa11111111", "alpha");
+        let b = note("bbbbbbbb22222222", "beta");
+        let c = note(
+            "aaaaaaaac3333333",
+            "gamma shares an 8-char prefix with alpha",
+        );
+        let notes = vec![a, b.clone(), c.clone()];
+
+        // Full exact id always wins.
+        assert_eq!(find_note(&notes, "bbbbbbbb22222222").unwrap().id, b.id);
+
+        // Unique prefix resolves to the full stored id.
+        assert_eq!(find_note(&notes, "bbbbbbbb").unwrap().id, b.id);
+        assert_eq!(find_note(&notes, "aaaaaaaac3").unwrap().id, c.id);
+
+        // Ambiguous prefix is refused, not silently resolved.
+        assert_eq!(
+            find_note(&notes, "aaaaaaaa"),
+            Err(NoteMatchError::Ambiguous("aaaaaaaa".into()))
+        );
+        // Unknown prefix.
+        assert_eq!(
+            find_note(&notes, "deadbeef"),
+            Err(NoteMatchError::NotFound("deadbeef".into()))
+        );
+    }
+
+    #[test]
+    fn memory_arg_grammar_splits_forget_amend_append() {
+        use MemoryAction::{Amend, Append, Forget, List};
+        assert!(matches!(MemoryAction::parse(None), List));
+        assert!(matches!(MemoryAction::parse(Some("   ")), List));
+        assert!(matches!(MemoryAction::parse(Some("ship it")), Append(t) if t == "ship it"));
+        assert!(
+            matches!(MemoryAction::parse(Some("forget abc12345")), Forget(id) if id == "abc12345")
+        );
+        assert!(matches!(
+            MemoryAction::parse(Some("amend abc12345 new body text")),
+            Amend(id, text) if id == "abc12345" && text == "new body text"
+        ));
+        // Missing amend body parses but core's amend_note rejects empty text.
+        assert!(matches!(
+            MemoryAction::parse(Some("amend abc12345")),
+            Amend(id, text) if id == "abc12345" && text.is_empty()
+        ));
+    }
+
+    #[test]
+    fn budget_marker_matches_finops_thresholds() {
+        // Below 80% of cap: silent.
+        assert_eq!(budget_marker(7.9, 10.0), None);
+        assert_eq!(budget_marker(0.0, 10.0), None);
+        // ≥80% warns; ≥100% errors — mirroring AlertLevel.
+        assert_eq!(budget_marker(8.0, 10.0).as_deref(), Some("⚠ $8.00/$10.00"));
+        assert_eq!(budget_marker(9.99, 10.0).as_deref(), Some("⚠ $9.99/$10.00"));
+        assert_eq!(
+            budget_marker(10.0, 10.0).as_deref(),
+            Some("✗ $10.00/$10.00")
+        );
+        assert_eq!(
+            budget_marker(150.0, 10.0).as_deref(),
+            Some("✗ $150.00/$10.00")
+        );
+        // No/negative cap never alerts (alert_level contract).
+        assert_eq!(budget_marker(9.0, 0.0), None);
+        assert_eq!(budget_marker(9.0, -1.0), None);
+    }
+
+    #[test]
+    fn status_row_carries_budget_marker_when_armed() {
+        let theme = Theme::from_name("dark");
+        let state = RunState::Streaming;
+        let plain = crate::markdown::strip_ansi(&status_ansi(
+            &theme, &state, 10, 20, 5, 0, 128_000, 0, false, None,
+        ));
+        assert!(!plain.contains('$'), "silent under 80%: {plain}");
+
+        let warned = crate::markdown::strip_ansi(&status_ansi(
+            &theme,
+            &state,
+            10,
+            20,
+            5,
+            0,
+            128_000,
+            0,
+            false,
+            budget_marker(9.0, 10.0),
+        ));
+        assert!(warned.contains("⚠ $9.00/$10.00"), "{warned}");
+
+        let over = crate::markdown::strip_ansi(&status_ansi(
+            &theme,
+            &state,
+            10,
+            20,
+            5,
+            0,
+            128_000,
+            0,
+            false,
+            budget_marker(12.0, 10.0),
+        ));
+        assert!(over.contains("✗ $12.00/$10.00"), "{over}");
+    }
+
+    #[test]
+    fn rel_time_buckets_are_compact() {
+        let now = chrono::Utc::now();
+        assert_eq!(rel_time(now), "now");
+        assert_eq!(rel_time(now - chrono::Duration::minutes(5)), "5m ago");
+        assert_eq!(rel_time(now - chrono::Duration::hours(3)), "3h ago");
+        assert_eq!(rel_time(now - chrono::Duration::days(2)), "2d ago");
+        // Future timestamps clamp instead of going negative.
+        assert_eq!(rel_time(now + chrono::Duration::hours(1)), "now");
+    }
+
+    #[test]
+    fn search_arg_extracts_all_flag_position_free() {
+        assert_eq!(commands::search_arg(""), None);
+        assert_eq!(commands::search_arg("   "), None);
+        assert_eq!(
+            commands::search_arg("--all"),
+            None,
+            "flag alone is not a query"
+        );
+        assert_eq!(
+            commands::search_arg("deploy rollback"),
+            Some(("deploy rollback".into(), false))
+        );
+        assert_eq!(
+            commands::search_arg("deploy rollback --all"),
+            Some(("deploy rollback".into(), true))
+        );
+        assert_eq!(
+            commands::search_arg("--all deploy"),
+            Some(("deploy".into(), true))
+        );
     }
 }

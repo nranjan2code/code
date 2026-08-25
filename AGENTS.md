@@ -26,7 +26,12 @@ ordering over that ladder (demand objectives, cross-model fallbacks,
 beliefs) ✅ via the vakrouter study Phase R, runs→flows
 adopt/diff ✅, run-graph projection ✅, checkpoint-delta auditing ✅;
 remaining (parked): scenario-harness consolidation, planner
-done-contracts, typed tool outputs).
+done-contracts, typed tool outputs). The personal-use completion pass —
+tiered memory (USER.md profile + forget/amend), indexed + cross-project
+search, cron/watchdog/pinned automation with budget alerts,
+doctor/wizard/update-check/backup/digest, SSRF-guarded webfetch, shared
+markdown transcript export, duplicate-screened skill proposals — is ✅ per
+`docs/design/29-personal-os.md` (enterprise deferred).
 
 ## Non-negotiable invariants
 
@@ -135,14 +140,15 @@ crates/vak-llm       unified provider API (anthropic / openai-responses /
                      cross-model fallbacks (route.rs) -- docs/design/27
                      Phases A+B+R
 crates/vak-session   append-only JSONL trees, frozen contract, projection,
-                     receipt entries (audit-only, projection-neutral),
-                     compaction packet partitions (docs/design/27 Phase C),
-                     dependency-free cross-session search (docs/design/
-                     23-memory.md)
-crates/vak-tools     read/write/edit/bash/glob/grep behind Tool trait,
-                     versioned broker-worker protocol, bounded subprocess
-                     environment, resource claims, sandbox backends
-                     (Seatbelt/Landlock)
+                      receipt entries (audit-only, projection-neutral),
+                      compaction packet partitions (docs/design/27 Phase C),
+                      dependency-free cross-session search w/ mtime-indexed
+                      cache + cross-project search_all (docs/design/
+                      23-memory.md)
+crates/vak-tools     read/write/edit/bash/glob/grep/webfetch behind Tool
+                     trait, versioned broker-worker protocol, bounded
+                     subprocess environment, resource claims, sandbox
+                     backends (Seatbelt/Landlock)
 crates/vak-permission rule engine: modes × rules -> Allow/Ask/Deny
 crates/vak-hooks     lifecycle hooks: pre/post-tool-use, stop, session-start
 crates/vak-mcp       MCP stdio client behind a lazy meta-tool
@@ -160,33 +166,45 @@ crates/vak-eval      deterministic eval suite + live-model mode +
                      context-quality scorecard (docs/design/27 Phase C)
 crates/vak-config    layered TOML config + .env secret loading + [finops]
                      caps/pricing + [goal] policy + [route] ladder
-                     preferences (docs/design/27 Phases D+H+R)
+                     preferences (docs/design/27 Phases D+H+R) +
+                     [automation]/[update]/[tools] (docs/design/29)
 crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
-                     session_search injection, memory/skill-proposal tools
-                     (docs/design/26-learning.md), sandbox selection incl.
-                     Docker exec backend + runtime backend override
-                     (docs/design/25-docker-sandbox.md), manual compaction
-                     (compact_session_now), runtime MCP table hot-apply,
-                     cost ledger + budget admission gate
-                     (docs/design/27 Phase D)
+                     session_search injection w/ profile tier, memory/
+                     skill-proposal tools + duplicate screening
+                     (docs/design/26-learning.md, 29 P5), sandbox
+                     selection incl. Docker exec backend + runtime backend
+                     override (docs/design/25-docker-sandbox.md), manual
+                     compaction (compact_session_now), runtime MCP table
+                     hot-apply, cost ledger + budget admission gate +
+                     alert rows (docs/design/27 Phase D), task store +
+                     cron engine, health report, backup export/import,
+                     digest, shared transcript_md renderer
+                     (docs/design/29-personal-os.md)
 crates/vak-tui       retained-render terminal UI: contextual keymap +
                      interactive rebind, themes + custom theme packs,
                      vim/emacs composer, subagent attach/steer,
                      custom commands, OSC52 copy, accessibility modes,
                      /mode /compact /budget /memory /proposals /mcp
-                     /sandbox + live breaker/ladder/spend introspection
+                     /sandbox /search /tasks + live breaker/ladder/spend
+                     introspection + budget status marker
 crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
-                     subagent steer-stop/MCP management) + always-on
-                     gateway: chat-surface routing, persisted bindings,
-                     cron delivery-to-surface, approval forwarding with
+                     subagent steer-stop/MCP management/memory
+                     forget-amend/search-all/transcript.md/doctor/backup/
+                     digest endpoints) + always-on gateway: chat-surface
+                     routing, persisted bindings, cron+script-watchdog
+                     scheduler w/ catch-up and model pinning, budget-alert
+                     delivery-to-surface, approval forwarding with
                      addressed-gate resolution, Telegram/webhook transports
                      w/ retry, per-channel reply formatting
-                     (docs/design/22-gateway.md, docs/design/28-operations.md)
+                     (docs/design/22-gateway.md, 28-operations.md,
+                     29-personal-os.md)
 crates/vak-desktop   Tauri 2 desktop app over an embedded secured_router —
                      SolidJS SPA: sessions, split view, approvals, diff
                      review, subagents tab, MCP manager, image attachments,
-                     best-of-N, tasks, side chats
-                     (docs/design/20-tauri-desktop.md)
+                     best-of-N, tasks (cron/script/pin), side chats,
+                     memory tier editor, global search, diagnostics,
+                     backup/digest cards, budget banner
+                     (docs/design/20-tauri-desktop.md, 29-personal-os.md)
 crates/vak-ops       service-control layer over launchd/systemd — status,
                      start/stop/restart, install/uninstall shared by tray,
                      TUI and desktop (docs/design/28-operations.md)
@@ -195,6 +213,8 @@ crates/vak-tray      menu-bar controller: colour-coded service dot,
                      with auto-restart + notifications
 crates/vakcoder      binary: tui / exec / plan / flow / serve [--gateway] /
                      telegram / eval / checkpoints / config dump / sessions
+                     / doctor / backup / digest / tasks / memory
+                     (+ first-run wizard, opt-in update check)
 docs/design/         architecture decisions — update with behavior changes;
                      security boundaries and roadmap in 24-agent-security.md
 scripts/             dev utilities (mock servers, PTY/HTTP smoke drivers)

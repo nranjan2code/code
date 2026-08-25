@@ -82,6 +82,12 @@ pub struct FileConfig {
     pub goal: GoalSettings,
     #[serde(default)]
     pub route: RouteSettings,
+    #[serde(default)]
+    pub automation: AutomationSettings,
+    #[serde(default)]
+    pub update: UpdateSettings,
+    #[serde(default)]
+    pub tools: ToolsSettings,
 }
 
 /// Cross-session recall (docs/design/23-memory.md). Read-only and
@@ -230,6 +236,37 @@ pub struct RouteSettings {
     pub quality_hints: Vec<String>,
 }
 
+/// Scheduled-task behavior (docs/design/29-personal-os.md P2). NOT
+/// privileged: catch-up only widens when an already-configured task may run.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct AutomationSettings {
+    /// Run tasks that missed their schedule while the app was shut down.
+    /// Default true.
+    pub catch_up_missed: Option<bool>,
+}
+
+/// Opt-in update awareness (docs/design/29-personal-os.md P3). A `None`
+/// url disables update checks entirely; checks never auto-install.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// Version-manifest URL polled for update banners. Default: none
+    /// (update checks fully disabled).
+    pub url: Option<String>,
+    /// Hours between update checks (default 24).
+    pub interval_hours: Option<u64>,
+}
+
+/// Master switches for optional built-in tool registration.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct ToolsSettings {
+    /// Register the bounded webfetch tool. Default true; network access is
+    /// still permission-classified per request.
+    pub web_fetch: Option<bool>,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct PriceEntry {
     pub input: f64,
@@ -294,6 +331,9 @@ pub struct Config {
     pub finops: FinopsResolved,
     pub goal: GoalResolved,
     pub route: RouteResolved,
+    pub automation: AutomationResolved,
+    pub update: UpdateResolved,
+    pub tools: ToolsResolved,
     pub warnings: Vec<String>,
 }
 
@@ -389,6 +429,25 @@ pub struct MemoryResolved {
     pub reflection: bool,
 }
 
+/// Resolved scheduled-task behavior (docs/design/29-personal-os.md P2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutomationResolved {
+    pub catch_up_missed: bool,
+}
+
+/// Resolved update-check policy (docs/design/29-personal-os.md P3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateResolved {
+    pub url: Option<String>,
+    pub interval_hours: u64,
+}
+
+/// Resolved optional-tool registration policy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolsResolved {
+    pub web_fetch: bool,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -442,6 +501,14 @@ impl Default for Config {
                 max_fallbacks: 4,
                 quality_hints: Vec::new(),
             },
+            automation: AutomationResolved {
+                catch_up_missed: true,
+            },
+            update: UpdateResolved {
+                url: None,
+                interval_hours: 24,
+            },
+            tools: ToolsResolved { web_fetch: true },
             gateway: GatewayResolved {
                 enabled: false,
                 approvals: "deny".into(),
@@ -758,6 +825,10 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         }
     };
     cfg.sandbox.image = merged.sandbox.image.clone();
+    cfg.automation.catch_up_missed = merged.automation.catch_up_missed.unwrap_or(true);
+    cfg.update.url = merged.update.url.clone();
+    cfg.update.interval_hours = merged.update.interval_hours.unwrap_or(24);
+    cfg.tools.web_fetch = merged.tools.web_fetch.unwrap_or(true);
     for (name, hook) in merged.gateway.outbound.webhooks {
         if hook.url.trim().is_empty() {
             cfg.warnings.push(format!(
@@ -845,6 +916,9 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "memory",
     "sandbox",
     "finops",
+    "automation",
+    "update",
+    "tools",
 ];
 const KNOWN_FINOPS_KEYS: &[&str] = &["max_run_usd", "max_day_usd", "price_overrides"];
 const KNOWN_GOAL_KEYS: &[&str] = &["handoff_reset", "max_audit_blocks"];
@@ -891,6 +965,9 @@ const KNOWN_MEMORY_KEYS: &[&str] = &[
 const KNOWN_SANDBOX_KEYS: &[&str] = &["backend", "image"];
 const KNOWN_OUTBOUND_KEYS: &[&str] = &["webhooks"];
 const KNOWN_WEBHOOK_KEYS: &[&str] = &["url", "token_env"];
+const KNOWN_AUTOMATION_KEYS: &[&str] = &["catch_up_missed"];
+const KNOWN_UPDATE_KEYS: &[&str] = &["url", "interval_hours"];
+const KNOWN_TOOLS_KEYS: &[&str] = &["web_fetch"];
 
 /// A typo'd key must be visible, not silently dead: diff the raw TOML
 /// against the known schema and surface every unrecognized key.
@@ -1074,6 +1151,36 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
             }
         }
     }
+    if let Some(t) = top.get("automation").and_then(toml::Value::as_table) {
+        for key in t.keys() {
+            if !KNOWN_AUTOMATION_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown automation key 'automation.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+    }
+    if let Some(t) = top.get("update").and_then(toml::Value::as_table) {
+        for key in t.keys() {
+            if !KNOWN_UPDATE_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown update key 'update.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+    }
+    if let Some(t) = top.get("tools").and_then(toml::Value::as_table) {
+        for key in t.keys() {
+            if !KNOWN_TOOLS_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown tools key 'tools.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+    }
     out
 }
 
@@ -1244,6 +1351,18 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
         if !base.route.quality_hints.contains(&h) {
             base.route.quality_hints.push(h);
         }
+    }
+    if over.automation.catch_up_missed.is_some() {
+        base.automation.catch_up_missed = over.automation.catch_up_missed;
+    }
+    if over.update.url.is_some() {
+        base.update.url = over.update.url;
+    }
+    if over.update.interval_hours.is_some() {
+        base.update.interval_hours = over.update.interval_hours;
+    }
+    if over.tools.web_fetch.is_some() {
+        base.tools.web_fetch = over.tools.web_fetch;
     }
     for (name, hook) in over.gateway.outbound.webhooks {
         base.gateway.outbound.webhooks.insert(name, hook);
@@ -1423,4 +1542,82 @@ pub fn upsert_env_file(path: &std::path::Path, key: &str, value: &str) -> std::i
     }
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    fn write_project_config(dir: &Path, text: &str) {
+        let project = dir.join(".vakcoder");
+        std::fs::create_dir_all(&project).expect("project dir");
+        std::fs::write(project.join("config.toml"), text).expect("write config");
+    }
+
+    #[test]
+    fn automation_update_tools_default_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert!(cfg.automation.catch_up_missed);
+        assert_eq!(cfg.update.url, None);
+        assert_eq!(cfg.update.interval_hours, 24);
+        assert!(cfg.tools.web_fetch);
+        assert!(
+            !cfg.warnings.iter().any(|w| w.contains("automation")),
+            "absent sections must not warn: {:?}",
+            cfg.warnings
+        );
+    }
+
+    #[test]
+    fn automation_catch_up_missed_parses() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "[automation]\ncatch_up_missed = false\n");
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert!(!cfg.automation.catch_up_missed);
+    }
+
+    #[test]
+    fn update_url_and_interval_hours_parse() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "[update]\nurl = \"https://example.com/manifest.json\"\ninterval_hours = 6\n",
+        );
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(
+            cfg.update.url.as_deref(),
+            Some("https://example.com/manifest.json")
+        );
+        assert_eq!(cfg.update.interval_hours, 6);
+    }
+
+    #[test]
+    fn tools_web_fetch_switch_parses() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "[tools]\nweb_fetch = false\n");
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert!(!cfg.tools.web_fetch);
+    }
+
+    #[test]
+    fn unknown_keys_in_new_sections_warn() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "[automation]\nbogus = 1\n\n[update]\nbogus = 1\n\n[tools]\nbogus = 1\n",
+        );
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        for key in ["automation.bogus", "update.bogus", "tools.bogus"] {
+            assert!(
+                cfg.warnings.iter().any(|w| w.contains(key)),
+                "unknown {key} must warn: {:?}",
+                cfg.warnings
+            );
+        }
+        assert!(cfg.automation.catch_up_missed);
+        assert_eq!(cfg.update.interval_hours, 24);
+        assert!(cfg.tools.web_fetch);
+    }
 }

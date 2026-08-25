@@ -137,6 +137,21 @@ export const [editorPath, setEditorPath] = createSignal<string | null>(null);
 export const [sideOpen, setSideOpen] = createSignal(false);
 // Scheduled-tasks manager modal.
 export const [tasksOpen, setTasksOpen] = createSignal(false);
+// Cross-project recall search (docs/design/29-personal-os.md P1).
+export const [searchOpen, setSearchOpen] = createSignal(false);
+// Settings page to land on when the next open happens (budget banner link).
+export type SettingsPageId =
+  | "general"
+  | "appearance"
+  | "agent"
+  | "permissions"
+  | "reliability"
+  | "integrations"
+  | "services"
+  | "learning"
+  | "advanced"
+  | "archived";
+export const [pendingSettingsPage, setPendingSettingsPage] = createSignal<SettingsPageId | null>(null);
 // Time-travel (checkpoints) modal.
 export const [historyOpen, setHistoryOpen] = createSignal(false);
 // Dispatch-forensics (receipts) modal.

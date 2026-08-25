@@ -1,244 +1,26 @@
 use std::io::Write as _;
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use tokio_util::sync::CancellationToken;
 
 use vak_agent::{AgentEvent, TurnOutcome};
 use vak_core::Core;
 use vak_llm::stream::StreamEvent;
 
-#[derive(Parser)]
-#[command(name = "VakCoder", version, about = "A coding agent harness")]
-struct Cli {
-    #[command(subcommand)]
-    command: Option<Command>,
-}
+mod backup;
+mod cli;
+mod digest;
+mod doctor;
+mod memory;
+mod tasks;
+mod update_check;
+mod wizard;
 
-#[derive(Subcommand)]
-enum Command {
-    /// Interactive terminal UI (default when no subcommand given)
-    Tui {
-        /// Trust this workspace's project config and .env without prompting
-        #[arg(long)]
-        trust: bool,
-    },
-    /// Run one prompt headless and print the result
-    Exec {
-        prompt: String,
-        #[arg(long)]
-        model: Option<String>,
-        #[arg(long)]
-        provider: Option<String>,
-        #[arg(long, default_value_t = 40)]
-        max_turns: usize,
-        #[arg(long)]
-        json: bool,
-        #[arg(long)]
-        yes: bool,
-        #[arg(long)]
-        permission_mode: Option<String>,
-        /// Run in an isolated git worktree off HEAD
-        #[arg(long)]
-        worktree: bool,
-        /// Resume an existing session instead of starting a new one
-        #[arg(long)]
-        session: Option<String>,
-        /// Durable objective for goal mode (docs/design/27 Phase H):
-        /// completion is audited against --criteria, never self-reported.
-        #[arg(long)]
-        goal: Option<String>,
-        /// Acceptance criteria, comma-separated. Prefix `verify:` to run a
-        /// criterion as a shell command; others are judged from evidence.
-        #[arg(long, value_delimiter = ',')]
-        criteria: Vec<String>,
-        /// Trust this workspace's project config and .env
-        #[arg(long)]
-        trust: bool,
-    },
-    /// Show the effective composed configuration
-    Config {
-        #[command(subcommand)]
-        action: Option<ConfigAction>,
-    },
-    /// List recorded sessions for this project
-    Sessions,
-    /// Static flow DAGs: list, check, run
-    Flow {
-        #[command(subcommand)]
-        action: FlowAction,
-    },
-    /// Plan and execute an open-ended task with a dynamic planner
-    Plan {
-        task: String,
-        #[arg(long)]
-        yes: bool,
-        /// Run in an isolated git worktree off HEAD
-        #[arg(long)]
-        worktree: bool,
-        /// Trust this workspace's project config and .env
-        #[arg(long)]
-        trust: bool,
-    },
-    /// Run the built-in eval suite
-    Eval {
-        /// Write JSON report to this path
-        #[arg(long)]
-        report: Option<PathBuf>,
-        /// Run the live suite against the configured provider (needs API key)
-        #[arg(long)]
-        live: bool,
-        #[arg(long)]
-        provider: Option<String>,
-        #[arg(long)]
-        model: Option<String>,
-    },
-    /// Serve the agent over HTTP+SSE
-    Serve {
-        #[arg(long, default_value_t = 8901)]
-        port: u16,
-        /// Enable gateway surface routing regardless of config
-        /// (docs/design/22-gateway.md)
-        #[arg(long)]
-        gateway: bool,
-        /// Trust this workspace's project config and .env
-        #[arg(long)]
-        trust: bool,
-    },
-    /// Workspace checkpoints: list or restore
-    Checkpoints {
-        #[command(subcommand)]
-        action: CheckpointAction,
-    },
-    /// List durable memory notes for this workspace
-    Memory,
-    /// Review proposed skills: list / promote / reject
-    SkillsReview {
-        #[command(subcommand)]
-        action: SkillsReviewAction,
-    },
-    /// Bridge a Telegram bot to a running gateway (docs/design/22-gateway.md)
-    Telegram {
-        /// Gateway base URL, e.g. http://127.0.0.1:8901
-        #[arg(long)]
-        server: String,
-        /// Gateway bearer token (overrides VAKCODER_GATEWAY_TOKEN; the
-        /// env var is the normal path so secrets never appear in `ps`)
-        #[arg(long)]
-        token: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-enum FlowAction {
-    /// List discovered flows
-    List,
-    /// Convert proven work into a flow file (doc 27 Phase E):
-    /// --from accepts a flow-run/plan ledger JSON path or a session id.
-    Adopt {
-        /// Ledger JSON path, or a session id whose green bash commands
-        /// become a chained bash flow.
-        from: String,
-        /// Name for the adopted flow (written to .vakcoder/flows/)
-        #[arg(long)]
-        name: String,
-        /// Overwrite an existing flow file of the same name
-        #[arg(long)]
-        force: bool,
-    },
-    /// Deterministic run-vs-run diff over two ledger JSONs (no model)
-    Diff {
-        /// Path to first run/plan ledger JSON
-        a: std::path::PathBuf,
-        /// Path to second run/plan ledger JSON
-        b: std::path::PathBuf,
-    },
-    /// Validate a flow without running it
-    Check { name: String },
-    /// Run a flow (optionally resuming a previous run)
-    Run {
-        name: String,
-        #[arg(long)]
-        resume: bool,
-        /// Acknowledge live-file drift and resume the frozen snapshot
-        #[arg(long)]
-        accept_drift: bool,
-        #[arg(long)]
-        yes: bool,
-        #[arg(long)]
-        provider: Option<String>,
-        #[arg(long)]
-        model: Option<String>,
-        /// Trust this workspace's project config and .env
-        #[arg(long)]
-        trust: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum ConfigAction {
-    Dump,
-}
-
-#[derive(Subcommand)]
-enum SkillsReviewAction {
-    /// List pending proposals
-    List,
-    /// Promote a proposal into user-level skills
-    Promote { id: String },
-    /// Discard a proposal
-    Reject { id: String },
-}
-
-#[derive(Subcommand)]
-enum CheckpointAction {
-    /// List checkpoints for the latest session in this project
-    List {
-        #[arg(long)]
-        session: Option<String>,
-    },
-    /// Restore a checkpoint into the workspace
-    Restore { session: String, seq: u32 },
-}
-
-fn learning_core(cwd: PathBuf) -> Option<Core> {
-    match Core::new(cwd) {
-        Ok(c) => Some(c),
-        Err(e) => {
-            eprintln!("error: {e}");
-            None
-        }
-    }
-}
-
-fn run_memory_list(cwd: PathBuf) -> i32 {
-    let Some(core) = learning_core(cwd) else {
-        return 2;
-    };
-    let notes = vak_core::memory::list_notes(&core.sessions_home(), core.cwd());
-    if notes.is_empty() {
-        println!("no memory notes for this workspace");
-        return 0;
-    }
-    for n in &notes {
-        println!(
-            "{} [{}]{} session={}",
-            n.ts.to_rfc3339(),
-            n.kind,
-            if n.tag.is_empty() {
-                String::new()
-            } else {
-                format!(" tag={}", n.tag)
-            },
-            n.session_id
-        );
-        println!("  {}", n.text.replace('\n', "\n  "));
-    }
-    0
-}
+use cli::{CheckpointAction, Cli, Command, FlowAction, SkillsReviewAction};
 
 fn run_skills_review(cwd: PathBuf, action: SkillsReviewAction) -> i32 {
-    let Some(core) = learning_core(cwd) else {
+    let Some(core) = Core::new(cwd).ok() else {
         return 2;
     };
     match action {
@@ -392,6 +174,7 @@ async fn main() {
 
     let code = match cli.command {
         None => {
+            wizard::maybe_run_wizard(&cwd);
             let trusted = resolve_trust(&cwd, false, true);
             if trusted {
                 vak_config::load_env_file(std::path::Path::new(".env"));
@@ -399,6 +182,7 @@ async fn main() {
             run_tui(cwd, trusted).await
         }
         Some(Command::Tui { trust }) => {
+            wizard::maybe_run_wizard(&cwd);
             let trusted = resolve_trust(&cwd, trust, true);
             if trusted {
                 vak_config::load_env_file(std::path::Path::new(".env"));
@@ -448,11 +232,21 @@ async fn main() {
             run_sessions_list(cwd);
             0
         }
-        Some(Command::Memory) => run_memory_list(cwd),
+        Some(Command::Memory { action }) => memory::run_memory(cwd, action),
         Some(Command::SkillsReview { action }) => run_skills_review(cwd, action),
         Some(Command::Checkpoints { action }) => run_checkpoints(cwd, action).await,
         Some(Command::Telegram { server, token }) => run_telegram(server, token).await,
         Some(Command::Flow { action }) => run_flow(cwd, action).await,
+        Some(Command::Doctor { trust }) => {
+            let trusted = resolve_trust(&cwd, trust, false);
+            if trusted {
+                vak_config::load_env_file(std::path::Path::new(".env"));
+            }
+            doctor::run_doctor(cwd, trusted)
+        }
+        Some(Command::Backup { action }) => backup::run_backup(cwd, action),
+        Some(Command::Digest { days }) => digest::run_digest(cwd, days),
+        Some(Command::Tasks { action }) => tasks::run_tasks(cwd, action),
         Some(Command::Plan {
             task,
             yes,
@@ -551,7 +345,7 @@ fn resolve_trust(cwd: &std::path::Path, flag: bool, interactive: bool) -> bool {
     false
 }
 
-fn print_config_warnings(core: &Core) {
+pub(crate) fn print_config_warnings(core: &Core) {
     for w in &core.config().warnings {
         eprintln!("warning: {w}");
     }
@@ -992,6 +786,7 @@ async fn run_tui(cwd: PathBuf, trusted: bool) -> i32 {
         }
     };
     print_config_warnings(&core);
+    update_check::maybe_check_update(core.config());
     vak_tui::run(core, vak_tui::UiConfig { cwd }).await
 }
 
@@ -1034,6 +829,7 @@ async fn run_exec(
         }
     };
     print_config_warnings(&core);
+    update_check::maybe_check_update(core.config());
     if let Some(m) = model {
         core.set_model(m);
     }

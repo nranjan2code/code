@@ -250,6 +250,55 @@ fn set_boot_error(state: &State<'_, BackendState>, error: Option<String>) {
     }
 }
 
+/// Thin proxy for appending to the global USER.md memory tier: the embedded
+/// router exposes list/forget/amend but no append, and memory stores are
+/// plain hand-editable markdown by design (docs/design/29-personal-os.md
+/// P1), so this mirrors what `vakcoder memory add --profile` does locally.
+#[derive(Deserialize)]
+struct ProfileNoteDraft {
+    kind: String,
+    #[serde(default)]
+    tag: String,
+    text: String,
+}
+
+#[derive(Serialize)]
+struct ProfileNoteCreated {
+    id: String,
+    ts: String,
+}
+
+#[tauri::command]
+async fn append_profile_note(draft: ProfileNoteDraft) -> Result<ProfileNoteCreated, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        vak_core::memory::append_profile_note(
+            &vak_home(),
+            draft.kind.trim(),
+            draft.tag.trim(),
+            &draft.text,
+            "desktop",
+        )
+        .map(|note| ProfileNoteCreated {
+            id: note.id,
+            ts: note.ts.to_rfc3339(),
+        })
+    })
+    .await
+    .map_err(|e| format!("join: {e}"))?
+}
+
+/// Persist an exported document (e.g. a session transcript) to a path the
+/// user explicitly chose in a native save dialog. The webview has no fs
+/// plugin, so this is the one sanctioned write-out path; content arrives
+/// from the embedded router, not from ambient state.
+#[tauri::command]
+async fn export_text_file(path: String, contents: String) -> Result<usize, String> {
+    tokio::fs::write(&path, contents.as_bytes())
+        .await
+        .map(|_| contents.len())
+        .map_err(|e| format!("could not write {path}: {e}"))
+}
+
 #[tauri::command]
 fn backend_info(state: State<'_, BackendState>) -> BackendInfo {
     let guard = state
@@ -342,6 +391,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             backend_info,
             start_backend,
+            append_profile_note,
+            export_text_file,
             pty::spawn_pty,
             pty::pty_write,
             pty::pty_resize

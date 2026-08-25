@@ -1,0 +1,67 @@
+# 29 — Personal OS
+
+Personal-use completion pass. Source: 2026 market study (OpenClaw complaint
+taxonomy, Hermes Agent feature set, Claude Code friction) cross-referenced
+against a codebase inventory. Enterprise concerns are explicitly deferred.
+
+Thesis: vakcoder already neutralizes the two worst failure modes in the
+category — **lying** (stop-gate, audited goal completion, receipts) and
+**money burn** (SpendGate, day caps). This doc closes the remaining gaps so
+the system compounds for a single person: memory that follows the user,
+automation that can be trusted unattended, first-run trust, reach, and
+self-curating skills.
+
+## Market evidence (2026-08)
+
+| Signal | Source | Implication |
+|---|---|---|
+| #1 OpenClaw complaint: breaking updates rug-pull setups | Reddit/Discord complaint tracking | frozen contracts stay; add update *awareness*, never auto-update |
+| Agents corrupt their own memory/config ("Alzheimer's") | 150+ tracked complaints | memory writes provenance-stamped; forget is explicit + audited |
+| Cron/heartbeat unreliably fire; cheap-model jobs wake expensive models | same | per-task model pinning; silent-tick watchdog jobs never touch inference |
+| $2,100 overnight bills; caps discovered only at denial | same | proactive budget alerts at 80%/100%, delivered to surfaces |
+| Hermes wins on USER.md + MEMORY.md + procedural skills + Curator pruning | Nous docs/releases | adopt the tiered-memory shape, keep promotion human-gated |
+| Claude Code top complaint: session memory reset | community reviews | global profile tier recalled in every run |
+| Skill pollution degrades agents over weeks | Hermes issue tracking → fixed by Curator | dedup at proposal time + consolidation review |
+
+## Phases
+
+| Phase | Delivers | Exit criterion |
+|---|---|---|
+| **P1 ✅** | Memory that compounds: global `USER.md` profile tier (`<home>/memory/user/USER.md`), `MemoryStore::forget`/`amend` with rewrite-not-tombstone semantics (memory files are hand-editable by design; sessions stay append-only), reflection hook available on every surface behind `[memory] reflection`, M1 mtime-keyed search index, TUI `/search`, `search_all` across projects | warm 10k-line store searched < 50ms; forget removes exactly one block; USER.md notes outrank equal transcript hits; fmt/clippy/tests green |
+| **P2 ✅** | Automation you can trust: 5-field cron expressions (`m h dom mon dow`, numbers, `*`, lists, ranges, steps; local time) beside existing intervals, CLI+TUI task CRUD without the server, `script:` watchdog tasks (brokered bash; empty stdout = silent tick = zero tokens; nonzero exit = error alert), per-task `model:` pinning (pinned task dispatches only that model — never escalates), missed-run catch-up on startup, budget alerts via delivery transports once per threshold window | cron next-fire unit matrix green; watchdog task with failing script delivers alert and costs 0 tokens; pinned task receipt shows pinned model only |
+| **P3 ✅** | Daily-driver trust: `vakcoder doctor` (health module extracted from TUI), first-run wizard (tty-only provider-key setup, skippable, marker file), opt-in `[update] url` version check (off by default, banner once/day, never auto-installs), `vakcoder backup export/import <dir>` (directory copy of sessions/memory/config/checkpoints; secrets excluded unless `--include-secrets`; import conflicts skip-or-rename), `vakcoder digest [--days N]` weekly usage report | doctor parity TUI/CLI; wizard runs once; export→import round-trip preserves ledgers byte-identical; digest math matches ledger |
+| **P4 ✅** | Reach: bounded `web_fetch` tool (GET only, ≤3 redirects, 15s timeout, 512KB cap, SSRF guard rejecting private/link-local/loopback resolutions fail-closed, no credentials ever attached, permission-classified network-capable ⇒ Ask in restricted modes, Allow only in FullAccess or by explicit rule; ordinary logged tool result per invariant 1), server-side markdown transcript export reusing one shared renderer with the TUI, global `/search?all=true` | SSRF unit matrix (localhost/metadata/link-local denied); fetch lands on ledger; exported md equals TUI export for same session |
+| **P5 ✅** | Skill curation: proposal-time similarity screen (Jaccard vs existing accepted skills ≥ threshold ⇒ tagged `duplicate-of`), consolidation proposals into the existing human-gated review queue — no auto-promotion, no auto-deletion | duplicate skill proposal is flagged at submit; consolidate run produces reviewable merge entries only |
+
+## Surfaces rule
+
+Every personal-os capability ships on **all three surfaces** in the same
+phase: CLI/TUI, desktop SPA, and gateway channels where delivery applies.
+
+| Capability | TUI/CLI | Desktop | Channels |
+|---|---|---|---|
+| Memory profile + forget/amend | `/memory`, `vakcoder memory` | Learning page: profile tier tab, forget (confirm), inline amend | — |
+| Cross-project search | `/search --all`, CLI | Search page w/ global toggle | — |
+| Tasks/cron/watchdog/pinning | `/tasks`, `vakcoder tasks` | TasksModal: schedule grammar field, script field, model pin, catch-up badge | watchdog + task summaries delivered via existing transports |
+| Budget alerts | TUI status strip marker | Budget card alert state | 80%/100% push once per window |
+| Doctor/health | `vakcoder doctor`, `/doctor` | Services panel diagnostics section | — |
+| Backup export/import | `vakcoder backup …` | Settings: folder picker → export/import buttons | — |
+| Weekly digest | `vakcoder digest` | Digest card | scheduled digest as an ordinary task (`deliver_to`) |
+| web_fetch | approval prompt + transcript | approval queue w/ URL shown | forwarded gates per doc 22 rules |
+| Skill curation | `skills-review consolidate` | Learning page duplicate badges + merge review | — |
+
+Server gains the backing endpoints so the embedded router inside desktop
+needs no special-casing; unattended surfaces keep failing closed (doc 22,
+invariant 15).
+
+## Non-negotiables carried over
+
+- Invariant 1: USER.md recall, web_fetch output, digest data reaching a
+  model all arrive as logged session entries. Nothing ambient.
+- Invariant 2: sessions untouched; memory/skill stores remain plain,
+  hand-editable markdown outside the ledger.
+- Invariant 3: every new failure (SSRF reject, cron parse error, backup
+  conflict) is a typed value, never a panic.
+- No new dependencies. HTTP reuses workspace-pinned reqwest 0.12; cron and
+  tar-free directory backups are hand-rolled.
+- Secrets stay out of backups by default; `--include-secrets` warns loudly.

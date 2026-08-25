@@ -5813,6 +5813,7 @@ dependencies = [
  "vak-llm",
  "vak-ops",
  "vak-session",
+ "vak-tools",
  "walkdir",
 ]
 
@@ -5838,6 +5839,7 @@ dependencies = [
  "landlock",
  "libc",
  "regex",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "similar",
@@ -5867,6 +5869,7 @@ version = "0.4.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "chrono",
  "crossterm",
  "futures",
  "serde_json",
@@ -5891,6 +5894,7 @@ dependencies = [
  "chrono",
  "clap",
  "futures",
+ "reqwest 0.12.28",
  "serde_json",
  "tempfile",
  "tokio",

@@ -2,10 +2,13 @@
 //! the agent loop behind one entry point. TUI, server, and exec mode are
 //! thin consumers of this crate.
 
+pub mod backup;
 pub mod checkpoints;
 pub mod custom_commands;
+pub mod digest;
 pub mod files;
 pub mod finops;
+pub mod health;
 pub mod learning;
 pub mod memory;
 pub mod reflection;
@@ -13,6 +16,8 @@ pub mod routing;
 pub mod sandbox_docker;
 pub mod session_search;
 pub mod skills;
+pub mod tasks;
+pub mod transcript_md;
 pub mod worktree;
 
 use std::collections::HashMap;
@@ -547,6 +552,9 @@ impl Core {
         }
         if !self.effective_mcp().servers.is_empty() {
             names.push("mcp".into());
+        }
+        if self.inner.config.tools.web_fetch {
+            names.push("webfetch".into());
         }
 
         if self.inner.config.memory.search_enabled {
@@ -1108,9 +1116,10 @@ impl Core {
         };
         cfg.permission = Some(match permission {
             Some(p) => p,
-            None => std::sync::Arc::new(build_engine_with(
+            None => std::sync::Arc::new(build_engine_for_mode(
                 &self.inner.config,
                 &self.extra_allow_snapshot(),
+                self.effective_permission_mode(),
             )?),
         });
         let Some(engine) = cfg.permission.clone() else {
@@ -1258,6 +1267,12 @@ impl Core {
                 cwd: self.inner.cwd.clone(),
                 session_id: current_session,
             }));
+        }
+        // Bounded web fetch (docs/design/29-personal-os.md P4): registered
+        // like the other broker-owned narrow tools; every dispatch crosses
+        // the permission engine, where it is classified network-capable.
+        if self.inner.config.tools.web_fetch {
+            tools.push(Arc::new(vak_tools::WebFetchTool));
         }
         cfg.tools = tools;
         let hooks: Option<std::sync::Arc<Vec<vak_hooks::HookDef>>> = Some(std::sync::Arc::new(
@@ -1549,6 +1564,11 @@ pub fn build_engine_with(
     config: &vak_config::Config,
     extra: &[String],
 ) -> Result<vak_permission::PermissionEngine, CoreError> {
+    vak_permission::PermissionEngine::from_rule_strings(&rule_specs(config, extra))
+        .map_err(CoreError::Rule)
+}
+
+fn rule_specs(config: &vak_config::Config, extra: &[String]) -> Vec<String> {
     let mut specs: Vec<String> = Vec::new();
     for (list, prefix) in [
         (&config.deny, "-"),
@@ -1565,7 +1585,48 @@ pub fn build_engine_with(
         }
     }
     specs.extend(extra.iter().cloned());
-    Ok(vak_permission::PermissionEngine::from_rule_strings(&specs)?)
+    specs
+}
+
+/// Tools whose reach exceeds the workspace: network-capable capabilities
+/// registered next to built-ins (docs/design/29-personal-os.md P4).
+pub const NETWORK_TOOLS: [&str; 1] = ["webfetch"];
+
+/// True when a BLANKET (patternless) rule spec targets `tool`. Only
+/// blanket rules govern the injection decision: patterned rules cannot
+/// match webfetch requests today (`arg_candidates` has no webfetch family),
+/// so suppressing the Ask default on their behalf would widen access on
+/// arguments the rule can never see — restricted modes keep asking.
+fn has_blanket_rule_for(specs: &[String], tool: &str) -> bool {
+    specs.iter().any(|spec| {
+        let rest = spec.trim();
+        let rest = rest.strip_prefix(['+', '-', '?']).unwrap_or(rest);
+        let rest = rest.trim();
+        !rest.contains('(') && rest.eq_ignore_ascii_case(tool)
+    })
+}
+
+/// Mode-aware engine construction — the seam where network-capable tools
+/// are permission-classified (docs/design/29-personal-os.md P4): outside
+/// FullAccess every network tool gains an implicit Ask default; under
+/// FullAccess the mode's allow-by-default applies untouched. Injection is
+/// skipped when a blanket webfetch rule exists in any layer, because
+/// severity aggregation would otherwise rank an injected Ask over a
+/// deliberate Allow/Deny; deny always outranks ask regardless of layer.
+pub fn build_engine_for_mode(
+    config: &vak_config::Config,
+    extra: &[String],
+    mode: vak_config::PermissionMode,
+) -> Result<vak_permission::PermissionEngine, CoreError> {
+    let mut specs = rule_specs(config, extra);
+    if mode != vak_config::PermissionMode::FullAccess {
+        for tool in NETWORK_TOOLS {
+            if !has_blanket_rule_for(&specs, tool) {
+                specs.push(format!("?{tool}"));
+            }
+        }
+    }
+    vak_permission::PermissionEngine::from_rule_strings(&specs).map_err(CoreError::Rule)
 }
 
 trait KebabLower {
@@ -1743,5 +1804,173 @@ mod mcp_section_tests {
         assert_eq!(mcp_section(&[]), "");
         let s = mcp_section(&[("x".into(), vec![])]);
         assert!(s.contains("- x: (no tools)"));
+    }
+}
+
+#[cfg(test)]
+mod webfetch_classification_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+
+    use vak_config::PermissionMode;
+    use vak_permission::{Decision, Mode, PermissionEngine};
+
+    fn decide(cfg: &vak_config::Config, extra: &[String], mode: PermissionMode) -> Decision {
+        let dir = tempfile::tempdir().unwrap();
+        let engine: PermissionEngine =
+            build_engine_for_mode(cfg, extra, mode).expect("engine builds");
+        engine.evaluate(
+            "webfetch",
+            &serde_json::json!({}),
+            to_mode(mode),
+            dir.path(),
+        )
+    }
+
+    fn to_mode(mode: PermissionMode) -> Mode {
+        match mode {
+            PermissionMode::ReadOnly => Mode::ReadOnly,
+            PermissionMode::WorkspaceWrite => Mode::WorkspaceWrite,
+            PermissionMode::FullAccess => Mode::FullAccess,
+        }
+    }
+
+    #[test]
+    fn no_rule_outside_fullaccess_asks_fullaccess_allows() {
+        let cfg = vak_config::Config::default();
+        for mode in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
+            let d = decide(&cfg, &[], mode);
+            assert!(
+                matches!(d, Decision::Ask { .. }),
+                "{mode:?} must Ask, got {d:?}"
+            );
+        }
+        let d = decide(&cfg, &[], PermissionMode::FullAccess);
+        assert!(
+            matches!(d, Decision::Allow),
+            "FullAccess must Allow, got {d:?}"
+        );
+    }
+
+    #[test]
+    fn explicit_allow_rule_wins_in_every_restricted_mode() {
+        for spec in ["webfetch", "+webfetch"] {
+            let mut cfg = vak_config::Config::default();
+            cfg.allow.push(spec.into());
+            for mode in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
+                let d = decide(&cfg, &[], mode);
+                assert!(matches!(d, Decision::Allow), "{spec:?} in {mode:?}: {d:?}");
+            }
+        }
+        // Learned rules ride in via `extra`.
+        let cfg = vak_config::Config::default();
+        for mode in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
+            let d = decide(&cfg, &["+webfetch".to_string()], mode);
+            assert!(matches!(d, Decision::Allow), "learned in {mode:?}: {d:?}");
+        }
+    }
+
+    #[test]
+    fn explicit_deny_rule_wins_everywhere() {
+        let mut cfg = vak_config::Config::default();
+        cfg.deny.push("-webfetch".into());
+        for mode in [
+            PermissionMode::ReadOnly,
+            PermissionMode::WorkspaceWrite,
+            PermissionMode::FullAccess,
+        ] {
+            let d = decide(&cfg, &[], mode);
+            assert!(matches!(d, Decision::Deny { .. }), "{mode:?}: {d:?}");
+        }
+    }
+
+    #[test]
+    fn explicit_ask_rule_is_honored_even_under_fullaccess() {
+        let mut cfg = vak_config::Config::default();
+        cfg.ask.push("?webfetch".into());
+        for mode in [
+            PermissionMode::ReadOnly,
+            PermissionMode::WorkspaceWrite,
+            PermissionMode::FullAccess,
+        ] {
+            let d = decide(&cfg, &[], mode);
+            assert!(matches!(d, Decision::Ask { .. }), "{mode:?}: {d:?}");
+        }
+    }
+
+    #[test]
+    fn deny_outranks_allow_regardless_of_layer_order() {
+        let mut cfg = vak_config::Config::default();
+        cfg.allow.push("webfetch".into());
+        cfg.deny.push("-webfetch".into());
+        let dir = tempfile::tempdir().unwrap();
+        let e = build_engine_for_mode(&cfg, &[], PermissionMode::WorkspaceWrite).unwrap();
+        let d = e.evaluate(
+            "webfetch",
+            &serde_json::json!({}),
+            Mode::WorkspaceWrite,
+            dir.path(),
+        );
+        assert!(matches!(d, Decision::Deny { .. }));
+    }
+
+    #[test]
+    fn patterned_allow_cannot_lift_the_ask_default() {
+        // Patterned rules cannot see webfetch args today, so a patterned
+        // allow must NOT suppress the injected Ask: matching URLs still ask
+        // (severity Ask > Allow) and non-matching ones fall through to the
+        // same Ask. Failing toward asking is the safe direction.
+        let mut cfg = vak_config::Config::default();
+        cfg.allow.push("webfetch(example.com/*)".into());
+        let dir = tempfile::tempdir().unwrap();
+        let e = build_engine_for_mode(&cfg, &[], PermissionMode::WorkspaceWrite).unwrap();
+        for url in ["other.org/x", "example.com/x"] {
+            let d = e.evaluate(
+                "webfetch",
+                &serde_json::json!({"url": url}),
+                Mode::WorkspaceWrite,
+                dir.path(),
+            );
+            assert!(matches!(d, Decision::Ask { .. }), "{url}: {d:?}");
+        }
+    }
+
+    #[test]
+    fn other_tools_keep_their_existing_defaults() {
+        // The seam must not widen: bash still asks under workspace-write,
+        // session_search stays a read tool, remember stays sanctioned.
+        let dir = tempfile::tempdir().unwrap();
+        let e = build_engine_for_mode(
+            &vak_config::Config::default(),
+            &[],
+            PermissionMode::WorkspaceWrite,
+        )
+        .unwrap();
+        let bash = e.evaluate(
+            "bash",
+            &serde_json::json!({"command": "ls"}),
+            Mode::WorkspaceWrite,
+            dir.path(),
+        );
+        assert!(matches!(bash, Decision::Ask { .. }));
+        for tool in ["session_search", "remember", "propose_skill"] {
+            let d = e.evaluate(
+                tool,
+                &serde_json::json!({}),
+                Mode::WorkspaceWrite,
+                dir.path(),
+            );
+            assert!(matches!(d, Decision::Allow), "{tool}: {d:?}");
+        }
+    }
+
+    #[test]
+    fn has_rule_for_matches_only_blanket_specs() {
+        assert!(has_blanket_rule_for(&["webfetch".into()], "webfetch"));
+        assert!(has_blanket_rule_for(&["+webfetch".into()], "webfetch"));
+        assert!(has_blanket_rule_for(&["?WEBFETCH".into()], "webfetch"));
+        assert!(!has_blanket_rule_for(&["webfetch(x)".into()], "webfetch"));
+        assert!(!has_blanket_rule_for(&["webfetchy".into()], "webfetch"));
+        assert!(!has_blanket_rule_for(&["bash".into()], "webfetch"));
     }
 }
