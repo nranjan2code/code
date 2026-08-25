@@ -2,6 +2,7 @@ import type {
   ConfigInfo,
   GatewayStatus,
   HealthInfo,
+  PendingApproval,
   RebuildStats,
   SearchHit,
   SecurityEvent,
@@ -51,13 +52,14 @@ export const api = {
 
   transcript: (
     id: string,
-    opts: { limit?: number; offset?: number; kind?: string; role?: string } = {},
+    opts: { limit?: number; offset?: number; kind?: string; role?: string; refresh?: boolean } = {},
   ): Promise<{ session_id: string; entries: TranscriptEntry[]; offset: number; has_more: boolean }> => {
     const q = new URLSearchParams();
     if (opts.limit != null) q.set("limit", String(opts.limit));
     if (opts.offset != null) q.set("offset", String(opts.offset));
     if (opts.kind) q.set("kind", opts.kind);
     if (opts.role) q.set("role", opts.role);
+    if (opts.refresh) q.set("refresh", "true");
     return fetch(`/admin/api/sessions/${encodeURIComponent(id)}/transcript?${q}`).then((r) =>
       handle(r),
     );
@@ -87,4 +89,33 @@ export const api = {
 
   gatewayStatus: () =>
     fetch("/admin/api/gateway/status").then((r) => handle<GatewayStatus>(r)),
+
+  approvals: (): Promise<{ approvals: PendingApproval[]; total: number }> =>
+    fetch("/admin/api/approvals").then((r) => handle(r)),
+
+  answer: (sessionId: string, requestId: string, approve: boolean): Promise<void> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/approvals/${encodeURIComponent(requestId)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ approve }),
+    }).then((r) => void handle(r)),
+
+  setMode: (mode: string): Promise<void> =>
+    fetch("/config/mode", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode }),
+    }).then((r) => void handle(r)),
+
+  patchConfig: (patch: { provider?: string; model?: string }): Promise<void> =>
+    fetch("/config", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }).then((r) => void handle(r)),
+
+  cancelRun: (sessionId: string): Promise<void> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST" }).then((r) =>
+      void handle(r),
+    ),
 };

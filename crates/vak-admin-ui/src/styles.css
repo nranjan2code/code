@@ -450,6 +450,74 @@ tr[data-kind="auth_failure"] td:nth-child(2) .chip,
   padding: 0 2px;
 }
 
+/* ---- approvals ---- */
+
+.panel-alert { border-color: rgba(229, 181, 103, 0.45); box-shadow: 0 0 0 1px rgba(229, 181, 103, 0.12); }
+.approval-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.approval-list li {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.approval-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.approval-head .when { margin-left: auto; color: var(--text-faint); font-size: 11px; font-family: var(--mono); }
+.approval-reason { color: var(--amber); font-size: 12px; margin-bottom: 6px; }
+.approval-args {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  font-size: 11.5px;
+  max-height: 140px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-dim);
+}
+button.approve { background: var(--green); color: #04120a; }
+
+/* ---- forms / settings ---- */
+
+.form-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.form-row label { width: 80px; color: var(--text-faint); font-size: 12px; flex-shrink: 0; }
+.form-row input { flex: 1; }
+
+.mode-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+@media (max-width: 800px) { .mode-grid { grid-template-columns: 1fr; } }
+.mode-btn {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+.mode-btn:hover:not(:disabled) { border-color: var(--accent); filter: none; }
+.mode-btn.active { border-color: var(--accent); background: var(--accent-soft); }
+.mode-name { display: block; font-weight: 600; font-size: 13px; }
+.mode-desc { display: block; color: var(--text-faint); font-size: 11px; margin-top: 2px; }
+
+/* ---- transcript live tail ---- */
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.toggle input { accent-color: var(--accent); }
+.transcript.tailing { scroll-behavior: smooth; }
+.chip-running {
+  background: rgba(229, 181, 103, 0.14);
+  color: var(--amber);
+  animation: pulse 1.2s infinite alternate;
+}
+
 /* ---- small note ---- */
 .small-note { font-size: 12px; margin: 12px 0 0; }
 

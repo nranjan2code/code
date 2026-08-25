@@ -69,6 +69,7 @@ export type SystemEvent =
   | { type: "SessionEntryAppended"; data: { session_id: string; entry_id: string; kind: string } }
   | { type: "ConfigChanged"; data: { label: string; detail: string } }
   | { type: "GatewayInbound"; data: { surface: string; who: string; preview: string } }
+  | { type: "ApprovalRequested"; data: { id: string; session_id: string; tool: string; reason: string } }
   | { type: "ApprovalGranted"; data: { id: string; tool: string } }
   | { type: "ApprovalDenied"; data: { id: string; tool: string } }
   | { type: "SecurityEvent"; data: { kind: string; label: string } }
@@ -76,6 +77,15 @@ export type SystemEvent =
   | { type: "RateLimit"; data: { provider: string; retry_after_secs: number | null } }
   | { type: "Heartbeat" }
   | { type: "Lagged"; data: { missed: number } };
+
+export interface PendingApproval {
+  session_id: string;
+  request_id: string;
+  tool: string;
+  args_json: string;
+  reason: string;
+  requested_at: string;
+}
 
 export interface RebuildStats {
   ok: boolean;

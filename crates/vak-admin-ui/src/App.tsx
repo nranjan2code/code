@@ -1,11 +1,11 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { api, AuthRequired } from "./api";
 import { clock, shortId, timeAgo } from "./time";
 import {
-  authed, conn, connectEvents, disconnectEvents, feed, navigate, pushToast, route,
-  setAuthed, toasts,
+  approvalsVersion, authed, conn, connectEvents, disconnectEvents, feed, navigate, pushToast,
+  route, setAuthed, toasts,
 } from "./store";
-import type { SearchHit, SecurityEvent, SessionListItem, TranscriptEntry } from "./types";
+import type { PendingApproval, SearchHit, SecurityEvent, SessionListItem, TranscriptEntry } from "./types";
 
 // ---- icons (inline, stroke style) ------------------------------------------
 
@@ -97,8 +97,8 @@ function StatCard(props: { label: string; value: string | number; sub?: string; 
 }
 
 function Overview() {
-  const [health, hRefetch] = createResource(api.health);
-  const [sessions] = createResource(api.sessions);
+  const [health, healthActions] = createResource(() => api.health());
+  const [sessions] = createResource(() => api.sessions());
   const [security] = createResource(() => api.security(500));
 
   const recentSecurity = createMemo(
@@ -129,6 +129,8 @@ function Overview() {
         />
       </div>
 
+      <ApprovalsCard />
+
       <div class="two-col">
         <section class="panel">
           <h2>System</h2>
@@ -152,7 +154,7 @@ function Overview() {
                 <For each={health()?.warnings}>{(w) => <div class="warning">⚠ {w}</div>}</For>
               </div>
             </Show>
-            <button class="ghost small" onClick={() => hRefetch()}>
+            <button class="ghost small" onClick={() => healthActions.refetch()}>
               Refresh
             </button>
           </Show>
@@ -179,6 +181,72 @@ function Overview() {
         </section>
       </div>
     </div>
+  );
+}
+
+// ---- Pending approvals -----------------------------------------------------
+
+function ApprovalsCard() {
+  // Refetches live: approvalsVersion bumps on ApprovalRequested/Granted/Denied.
+  const [pending, { refetch }] = createResource(approvalsVersion, () => api.approvals());
+  const [busyId, setBusyId] = createSignal("");
+
+  const answer = async (a: PendingApproval, approve: boolean) => {
+    setBusyId(a.request_id);
+    try {
+      await api.answer(a.session_id, a.request_id, approve);
+      pushToast("info", `${approve ? "Granted" : "Denied"} ${a.tool}`);
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setBusyId("");
+      refetch();
+    }
+  };
+
+  return (
+    <section class="panel" classList={{ "panel-alert": (pending()?.total ?? 0) > 0 }}>
+      <h2>Pending approvals</h2>
+      <Show
+        when={(pending()?.approvals.length ?? 0) > 0}
+        fallback={<div class="empty">No gates waiting. Runs proceed without you.</div>}
+      >
+        <ul class="approval-list">
+          <For each={pending()!.approvals}>
+            {(a) => (
+              <li>
+                <div class="approval-head">
+                  <span class="chip chip-tool mono">{a.tool}</span>
+                  <span class="mono dim">{shortId(a.session_id)}</span>
+                  <span class="when">{timeAgo(a.requested_at)}</span>
+                </div>
+                <Show when={a.reason}>
+                  <div class="approval-reason">{a.reason}</div>
+                </Show>
+                <pre class="mono approval-args">{a.args_json}</pre>
+                <div class="row-gap">
+                  <button
+                    class="approve"
+                    disabled={busyId() === a.request_id}
+                    onClick={() => answer(a, true)}
+                  >
+                    Approve
+                  </button>
+                  <button class="danger" disabled={busyId() === a.request_id} onClick={() => answer(a, false)}>
+                    Deny
+                  </button>
+                  <span class="spacer" />
+                  <button class="ghost small" onClick={() => navigate(`#/sessions/${a.session_id}`)}>
+                    View session
+                  </button>
+                </div>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+    </section>
   );
 }
 
@@ -211,7 +279,7 @@ function summarizeEvent(ev: import("./types").SystemEvent): string {
 // ---- Sessions list ---------------------------------------------------------
 
 function Sessions() {
-  const [sessions, { refetch }] = createResource(api.sessions);
+  const [sessions, { refetch }] = createResource(() => api.sessions());
   const [q, setQ] = createSignal("");
 
   const filtered = createMemo(() => {
@@ -275,6 +343,8 @@ function Transcript(props: { sessionId: string }) {
   const [entries, setEntries] = createSignal<TranscriptEntry[]>([]);
   const [hasMore, setHasMore] = createSignal(false);
   const [loading, setLoading] = createSignal(true);
+  const [live, setLive] = createSignal(false);
+  const [running, setRunning] = createSignal(false);
 
   const PAGE = 100;
   let offset = 0;
@@ -288,10 +358,14 @@ function Transcript(props: { sessionId: string }) {
         offset,
         kind: kind() || undefined,
         role: role() || undefined,
+        refresh: true,
       });
       // API returns ascending; newest last.
       setEntries(res.entries);
       setHasMore(res.has_more);
+      if (live()) {
+        queueMicrotask(() => document.querySelector(".transcript")?.scrollTo({ top: 1e9 }));
+      }
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -307,9 +381,36 @@ function Transcript(props: { sessionId: string }) {
     load(true);
   });
 
+  // Live tail: subscribe to the session's own event stream; any activity
+  // refreshes the (re-imported) transcript.
+  createEffect(() => {
+    void props.sessionId;
+    if (!live()) return;
+    const es = new EventSource(`/sessions/${encodeURIComponent(props.sessionId)}/events`);
+    es.onmessage = (m) => {
+      try {
+        const ev = JSON.parse(m.data) as { type?: string };
+        if (ev.type === "TurnStart" || ev.type === "ToolCallStart") setRunning(true);
+        if (ev.type === "RunFinished") setRunning(false);
+      } catch { /* ignore */ }
+      clearTimeout((es as unknown as { t?: number }).t);
+      (es as unknown as { t?: number }).t = setTimeout(() => load(true), 300) as unknown as number;
+    };
+    onCleanup(() => es.close());
+  });
+
   const changePage = (delta: number) => {
     offset = Math.max(0, offset + delta * PAGE);
     load(false);
+  };
+
+  const cancel = async () => {
+    try {
+      await api.cancelRun(props.sessionId);
+      pushToast("info", "Cancellation requested");
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    }
   };
 
   return (
@@ -318,6 +419,14 @@ function Transcript(props: { sessionId: string }) {
         <button class="ghost" onClick={() => navigate("#/sessions")}>‹ Sessions</button>
         <span class="mono dim">{shortId(props.sessionId)}</span>
         <span class="spacer" />
+        <Show when={running()}>
+          <span class="chip chip-running">run active</span>
+          <button class="danger small" onClick={cancel}>Cancel</button>
+        </Show>
+        <label class="toggle">
+          <input type="checkbox" checked={live()} onChange={(e) => setLive(e.currentTarget.checked)} />
+          Live tail
+        </label>
         <select value={kind()} onChange={(e) => setKind(e.currentTarget.value)}>
           <For each={KIND_FILTERS}>{(f) => <option value={f.id}>{f.label}</option>}</For>
         </select>
@@ -331,7 +440,7 @@ function Transcript(props: { sessionId: string }) {
           when={entries().length > 0}
           fallback={<div class="empty">No entries match this filter.</div>}
         >
-          <div class="transcript">
+          <div class="transcript" classList={{ tailing: live() }}>
             <For each={entries()}>
               {(e) => (
                 <article class="entry" data-role={e.role ?? "system"} data-error={e.is_error}>
@@ -508,10 +617,50 @@ function Security() {
 
 // ---- Settings --------------------------------------------------------------
 
+const MODES = ["ReadOnly", "WorkspaceWrite", "FullAccess"];
+
 function Settings() {
-  const [config] = createResource(api.config);
-  const [gateway] = createResource(api.gatewayStatus);
+  const [config, { refetch }] = createResource(() => api.config());
+  const [gateway] = createResource(() => api.gatewayStatus());
   const [rebuilding, setRebuilding] = createSignal(false);
+
+  // Editable copies, seeded once the fetch lands.
+  const [provider, setProvider] = createSignal("");
+  const [model, setModel] = createSignal("");
+  createEffect(() => {
+    const c = config();
+    if (c) {
+      setProvider(c.provider);
+      setModel(c.model);
+    }
+  });
+  const dirty = createMemo(() => {
+    const c = config();
+    return !!c && (provider() !== c.provider || model() !== c.model);
+  });
+
+  const saveIdentity = async () => {
+    try {
+      await api.patchConfig({ provider: provider().trim(), model: model().trim() });
+      pushToast("info", "Provider/model updated");
+      refetch();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    }
+  };
+
+  const switchMode = async (mode: string) => {
+    try {
+      await api.setMode(mode);
+      pushToast("info", `Permission mode → ${mode}`);
+      refetch();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+      refetch(); // snap back to actual
+    }
+  };
 
   const rebuild = async () => {
     setRebuilding(true);
@@ -537,21 +686,56 @@ function Settings() {
     <div class="view">
       <div class="two-col">
         <section class="panel">
-          <h2>Configuration</h2>
+          <h2>Model identity</h2>
           <Show when={!config.loading} fallback={<div class="empty">Loading…</div>}>
-            <dl class="kv">
-              <dt>provider</dt><dd>{config()?.provider}</dd>
-              <dt>model</dt><dd class="mono">{config()?.model}</dd>
+            <div class="form-row">
+              <label>provider</label>
+              <input value={provider()} onInput={(e) => setProvider(e.currentTarget.value)} />
+            </div>
+            <div class="form-row">
+              <label>model</label>
+              <input class="mono" value={model()} onInput={(e) => setModel(e.currentTarget.value)} />
+            </div>
+            <div class="row-gap">
+              <button disabled={!dirty() || !provider().trim() || !model().trim()} onClick={saveIdentity}>
+                Save changes
+              </button>
+              <Show when={dirty()}>
+                <button class="ghost" onClick={() => { const c = config(); if (c) { setProvider(c.provider); setModel(c.model); } }}>
+                  Reset
+                </button>
+              </Show>
+            </div>
+            <dl class="kv" style="margin-top:18px">
               <dt>max turns</dt><dd>{config()?.max_turns}</dd>
-              <dt>permission mode</dt><dd><span class="chip chip-mode">{config()?.permission_mode}</span></dd>
               <dt>theme</dt><dd>{config()?.theme}</dd>
             </dl>
-            <p class="dim small-note">Edit via config.toml or the TUI — the console reflects live values.</p>
           </Show>
         </section>
 
         <section class="panel">
-          <h2>Index &amp; Gateway</h2>
+          <h2>Permission mode</h2>
+          <div class="mode-grid">
+            <For each={MODES}>
+              {(m) => (
+                <button
+                  class="mode-btn"
+                  classList={{ active: config()?.permission_mode === m }}
+                  onClick={() => switchMode(m)}
+                  disabled={config()?.permission_mode === m}
+                >
+                  <span class="mode-name">{m}</span>
+                  <span class="mode-desc">
+                    {m === "ReadOnly" && "Read-only tools; nothing is written"}
+                    {m === "WorkspaceWrite" && "Writes confined to the workspace"}
+                    {m === "FullAccess" && "Unsandboxed — explicit human trust"}
+                  </span>
+                </button>
+              )}
+            </For>
+          </div>
+
+          <h2 style="margin-top:22px">Index &amp; Gateway</h2>
           <Show when={!gateway.loading} fallback={<div class="empty">Loading…</div>}>
             <dl class="kv">
               <dt>gateway</dt>
@@ -568,6 +752,7 @@ function Settings() {
             <button disabled={rebuilding()} onClick={rebuild}>
               {rebuilding() ? "Rebuilding…" : "Rebuild search index"}
             </button>
+            <span class="spacer" />
             <button class="danger" onClick={signOut}>Sign out</button>
           </div>
         </section>

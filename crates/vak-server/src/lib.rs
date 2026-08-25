@@ -71,6 +71,7 @@ use vak_llm::Provider;
 use vak_session::SessionLog;
 
 pub(crate) struct SessionHandle {
+    pub(crate) id: String,
     /// Workspace this session's tools/diffs operate in (main cwd, or a
     /// best-of-N worktree).
     pub(crate) cwd: PathBuf,
@@ -176,10 +177,27 @@ impl AppState {
             .get(id)
             .cloned()
     }
+
+    /// Snapshot of every live session handle (admin surfaces aggregate
+    /// across sessions; nothing here crosses a session's approval scope —
+    /// answering still goes through the per-session endpoint).
+    pub(crate) fn live_handles(&self) -> Vec<Arc<SessionHandle>> {
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect()
+    }
 }
 
 #[derive(Clone)]
 pub struct ApprovalRequest {
+    pub id: String,
+    pub tool: String,
+    pub args_json: String,
+    pub reason: String,
+    pub requested_at: chrono::DateTime<chrono::Utc>,
     respond: Arc<Mutex<Option<oneshot::Sender<bool>>>>,
 }
 
@@ -199,6 +217,8 @@ impl ApprovalRequest {
 struct HttpApprover {
     events_tx: broadcast::Sender<AgentEvent>,
     pending: Arc<Mutex<HashMap<String, ApprovalRequest>>>,
+    /// Owning session, so admin-console surfaces can attribute gates.
+    session_id: String,
 }
 
 #[async_trait::async_trait]
@@ -212,6 +232,11 @@ impl Approver for HttpApprover {
             .insert(
                 id.clone(),
                 ApprovalRequest {
+                    id: id.clone(),
+                    tool: tool.to_string(),
+                    args_json: args_json.to_string(),
+                    reason: reason.to_string(),
+                    requested_at: chrono::Utc::now(),
                     respond: Arc::new(Mutex::new(Some(respond))),
                 },
             );
@@ -221,11 +246,32 @@ impl Approver for HttpApprover {
             args_json: args_json.to_string(),
             reason: reason.to_string(),
         });
+        if let Some(hub) = events::global() {
+            hub.emit(events::SystemEvent::ApprovalRequested {
+                id: id.clone(),
+                session_id: self.session_id.clone(),
+                tool: tool.to_string(),
+                reason: reason.to_string(),
+            });
+        }
         let approved = rx.await.unwrap_or(false);
         self.pending
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&id);
+        if let Some(hub) = events::global() {
+            hub.emit(if approved {
+                events::SystemEvent::ApprovalGranted {
+                    id: id.clone(),
+                    tool: tool.to_string(),
+                }
+            } else {
+                events::SystemEvent::ApprovalDenied {
+                    id,
+                    tool: tool.to_string(),
+                }
+            });
+        }
         approved
     }
 }
@@ -996,6 +1042,7 @@ pub(crate) fn register_handle(
     let (events_tx, _) = broadcast::channel(1024);
     let (side_events_tx, _) = broadcast::channel(1024);
     let handle = Arc::new(SessionHandle {
+        id: id.clone(),
         cwd,
         session: Arc::new(Mutex::new(Some(session))),
         steering: Arc::new(SteeringQueues::new()),
@@ -1042,24 +1089,30 @@ pub(crate) fn index_session_later(
         return;
     };
     tokio::spawn(async move {
-        let dir = home.join("sessions");
-        let Ok(read) = std::fs::read_dir(&dir) else {
-            return;
-        };
-        for project in read.flatten() {
-            let candidate = project.path().join(format!("{session_id}.jsonl"));
-            if candidate.is_file()
-                && let Ok(stats) = store.import_session(&home, &candidate)
-                && stats.entries_indexed > 0
-            {
-                eprintln!(
-                    "[store] indexed {session_id}: {} entries",
-                    stats.entries_indexed
-                );
-                break;
-            }
-        }
+        import_session_sync(&store, &home, &session_id);
     });
+}
+
+/// Locate `<home>/sessions/<hash>/<session>.jsonl` and import it into the
+/// index synchronously. Idempotent; cheap when nothing changed.
+pub(crate) fn import_session_sync(
+    store: &vak_store::Store,
+    home: &std::path::Path,
+    session_id: &str,
+) -> bool {
+    let dir = home.join("sessions");
+    let Ok(read) = std::fs::read_dir(&dir) else {
+        return false;
+    };
+    for project in read.flatten() {
+        let candidate = project.path().join(format!("{session_id}.jsonl"));
+        if candidate.is_file()
+            && let Ok(stats) = store.import_session(home, &candidate)
+        {
+            return stats.entries_indexed > 0 || stats.skipped > 0;
+        }
+    }
+    false
 }
 
 #[derive(serde::Deserialize)]
@@ -1297,6 +1350,7 @@ async fn run_prompt(
     let approver: Arc<dyn Approver> = Arc::new(HttpApprover {
         events_tx: handle.events_tx.clone(),
         pending: handle.pending.clone(),
+        session_id: handle.id.clone(),
     });
     let events = mpsc_to_broadcast(handle.events_tx.clone());
     let steering = handle.steering.clone();
@@ -3209,6 +3263,7 @@ async fn side_chat(
     let approver: Arc<dyn Approver> = Arc::new(HttpApprover {
         events_tx: handle.events_tx.clone(),
         pending: handle.pending.clone(),
+        session_id: handle.id.clone(),
     });
     let events = mpsc_to_broadcast(side_tx.clone());
     let cancel = handle
@@ -3447,6 +3502,7 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str) {
     let approver: Arc<dyn Approver> = Arc::new(HttpApprover {
         events_tx: handle.events_tx.clone(),
         pending: handle.pending.clone(),
+        session_id: handle.id.clone(),
     });
     let events = mpsc_to_broadcast(handle.events_tx.clone());
     let steering = Arc::new(SteeringQueues::new());

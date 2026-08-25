@@ -43,6 +43,12 @@ pub enum SystemEvent {
     },
 
     // ---- approvals ----
+    ApprovalRequested {
+        id: String,
+        session_id: String,
+        tool: String,
+        reason: String,
+    },
     ApprovalGranted {
         id: String,
         tool: String,

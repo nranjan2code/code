@@ -119,6 +119,47 @@ pub(crate) async fn list_sessions_admin(
     }
 }
 
+// ---- GET /admin/api/approvals ----------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub(crate) struct PendingApproval {
+    pub session_id: String,
+    pub request_id: String,
+    pub tool: String,
+    pub args_json: String,
+    pub reason: String,
+    pub requested_at: String,
+}
+
+/// Aggregated pending approval gates across every live session. Answering
+/// still goes through the per-session endpoint — listing never crosses a
+/// session's approval scope, only displays it.
+pub(crate) async fn list_pending_approvals(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let mut items: Vec<PendingApproval> = Vec::new();
+    for handle in state.live_handles() {
+        let pending = handle
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for req in pending.values() {
+            items.push(PendingApproval {
+                session_id: handle.id.clone(),
+                request_id: req.id.clone(),
+                tool: req.tool.clone(),
+                args_json: truncate_chars(&req.args_json, 400),
+                reason: req.reason.clone(),
+                requested_at: req.requested_at.to_rfc3339(),
+            });
+        }
+    }
+    // Oldest first — the gate that has been waiting longest is the most urgent.
+    items.sort_by(|a, b| a.requested_at.cmp(&b.requested_at));
+    let total = items.len();
+    Json(serde_json::json!({ "approvals": items, "total": total }))
+}
+
 // ---- GET /admin/api/sessions/:id/transcript --------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -127,6 +168,9 @@ pub(crate) struct TranscriptQuery {
     pub offset: Option<usize>,
     pub kind: Option<String>,
     pub role: Option<String>,
+    /// Re-import this session's JSONL into the index before reading, so
+    /// entries appended by an active run become visible immediately.
+    pub refresh: Option<bool>,
 }
 
 /// Byte-safe truncation: never splits a multi-byte UTF-8 sequence.
@@ -152,6 +196,9 @@ pub(crate) async fn session_transcript_admin(
     // Fetch offset+limit so we can report whether more pages exist.
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     let offset = q.offset.unwrap_or(0);
+    if q.refresh == Some(true) {
+        crate::import_session_sync(store, &state.core.sessions_home(), &session_id);
+    }
     let filter = vak_store::query::SearchFilter {
         session_id: Some(session_id.clone()),
         kind: q.kind,
@@ -412,6 +459,7 @@ pub(crate) fn routes() -> axum::Router<AppState> {
             "/admin/api/sessions/{id}/transcript",
             get(session_transcript_admin),
         )
+        .route("/admin/api/approvals", get(list_pending_approvals))
         .route("/admin/api/search", get(search_admin))
         .route("/admin/api/events", get(admin_events_sse))
         .route("/admin/api/security", get(list_security_events))
@@ -593,6 +641,36 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn pending_approvals_lists_empty_without_gates() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+
+        // Create a live session so the aggregation path has something to walk.
+        {
+            let core = state.core.clone();
+            let s = core.start_session().await.unwrap();
+            let id = s.header().map(|h| h.session_id.clone()).unwrap_or_default();
+            crate::register_handle(&state, id, s, state.core.cwd().clone());
+        }
+
+        let app =
+            crate::router_with_state(state.clone()).layer(axum::middleware::from_fn_with_state(
+                ((*state.auth_token).clone(), state.core.sessions_home()),
+                crate::require_bearer,
+            ));
+        let req = Request::builder()
+            .uri("/admin/api/approvals")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["total"], 0);
+        assert!(json["approvals"].is_array());
     }
 
     #[tokio::test]

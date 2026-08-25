@@ -44,15 +44,18 @@ function describe(ev: SystemEvent): { kind: Toast["kind"]; text: string } | null
       return { kind: "info", text: `new session ${ev.data.session_id.slice(0, 8)}` };
     case "GatewayInbound":
       return { kind: "info", text: `${ev.data.surface} · ${ev.data.who}: ${ev.data.preview}` };
+    case "ApprovalRequested":
+      return { kind: "warn", text: `approval: ${ev.data.tool} (${ev.data.reason || "gate"})` };
+    case "ApprovalGranted":
+      return { kind: "info", text: `granted ${ev.data.tool}` };
+    case "ApprovalDenied":
+      return { kind: "info", text: `denied ${ev.data.tool}` };
     case "SecurityEvent":
       return { kind: "alert", text: `${ev.data.kind} · ${ev.data.label}` };
     case "RateLimit":
       return { kind: "warn", text: `rate limited on ${ev.data.provider}` };
     case "ProviderError":
       return { kind: "alert", text: `${ev.data.provider} error` };
-    case "ApprovalGranted":
-    case "ApprovalDenied":
-      return { kind: "info", text: `${ev.type === "ApprovalGranted" ? "granted" : "denied"} ${ev.data.tool}` };
     case "Lagged":
       return { kind: "warn", text: `${ev.data.missed} events missed — reconnecting` };
     default:
@@ -64,7 +67,13 @@ export function ingest(ev: SystemEvent) {
   const d = describe(ev);
   if (d) pushToast(d.kind, d.text);
   setFeed((prev) => [...prev.slice(-59), { id: ++feedSeq, ts: new Date().toISOString(), event: ev }]);
+  if (ev.type.startsWith("Approval")) bumpApprovals((v) => v + 1);
 }
+
+// Bumped whenever approval-related events arrive; consumers createResource
+// on this to refetch the pending list live.
+const [approvalsVersion, bumpApprovals] = createSignal(0);
+export { approvalsVersion };
 
 let source: EventSource | null = null;
 let backoffMs = 1000;
