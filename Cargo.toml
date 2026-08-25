@@ -11,6 +11,7 @@ members = [
     "crates/vak-hooks",
     "crates/vak-mcp",
     "crates/vak-flow",
+    "crates/vak-delivery",
     "crates/vak-eval",
     "crates/vak-server",
     "crates/vak-ops",
@@ -38,6 +39,7 @@ vak-core = { path = "crates/vak-core" }
 vak-mcp = { path = "crates/vak-mcp" }
 vak-permission = { path = "crates/vak-permission" }
 vak-flow = { path = "crates/vak-flow" }
+vak-delivery = { path = "crates/vak-delivery" }
 vak-eval = { path = "crates/vak-eval" }
 vak-hooks = { path = "crates/vak-hooks" }
 vak-tui = { path = "crates/vak-tui" }
