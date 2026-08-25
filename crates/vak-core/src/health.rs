@@ -2,9 +2,23 @@
 //! substance from the TUI's `/doctor` so CLI, desktop, and TUI report the
 //! same facts from one implementation. Pure collection: no rendering.
 
+use std::path::{Path, PathBuf};
+
 use vak_session::SessionLog;
 
-use crate::Core;
+use crate::{Core, APP_VERSION};
+
+/// Where `self install` records the deployed release
+/// (docs/design/32-release-engineering.md).
+pub fn install_manifest_path(home: &Path) -> PathBuf {
+    home.join("local/release/install.json")
+}
+
+fn user_home() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
+}
 
 #[derive(Debug, Clone)]
 pub struct HealthCheck {
@@ -43,6 +57,37 @@ pub struct HealthReport {
     pub failures: usize,
 }
 
+/// "Self version parity" (docs/design/32-release-engineering.md): the
+/// running build vs the installed-release manifest. A missing manifest
+/// passes — nothing is managed yet, so nothing can drift.
+pub fn version_parity_check(home: &Path) -> HealthCheck {
+    let label = "self version parity".to_string();
+    let manifest = install_manifest_path(home);
+    let Ok(text) = std::fs::read_to_string(&manifest) else {
+        return HealthCheck {
+            label,
+            detail: Ok("no installed release manifest".into()),
+        };
+    };
+    let reported = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| v.get("version").and_then(|v| v.as_str()).map(str::to_string));
+    match reported {
+        Some(v) if v == APP_VERSION => HealthCheck {
+            label,
+            detail: Ok(format!("build matches installed {v}")),
+        },
+        Some(v) => HealthCheck {
+            label,
+            detail: Err(format!("build {APP_VERSION} != installed {v}")),
+        },
+        None => HealthCheck {
+            label,
+            detail: Err(format!("unreadable manifest at {}", manifest.display())),
+        },
+    }
+}
+
 /// Collect everything `/doctor` reports. `session` optionally adds the
 /// frozen-ladder section for the active session. Never panics; every
 /// failure mode lands as a failed check or an empty fact.
@@ -77,6 +122,7 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
             Err(warnings.join("; "))
         },
     });
+    checks.push(version_parity_check(&user_home()));
     let failures = checks.iter().filter(|c| c.failed()).count();
 
     let mut facts = vec![
@@ -175,7 +221,12 @@ mod tests {
                 .iter()
                 .map(|c| c.label.as_str())
                 .collect::<Vec<_>>(),
-            vec!["provider", "sessions home", "config warnings"]
+            vec![
+                "provider",
+                "sessions home",
+                "config warnings",
+                "self version parity"
+            ]
         );
         assert_eq!(
             report.failures,
@@ -219,6 +270,39 @@ mod tests {
 
         // webfetch registration is part of the tool surface doctor implies.
         assert!(core.tool_names().contains(&"webfetch".to_string()));
+    }
+
+    #[test]
+    fn parity_passes_without_manifest() {
+        let home = tempfile::tempdir().unwrap();
+        let check = version_parity_check(home.path());
+        assert_eq!(check.label, "self version parity");
+        assert!(check.detail.is_ok());
+    }
+
+    #[test]
+    fn parity_matches_installed_and_flags_drift() {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = install_manifest_path(home.path());
+        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+
+        std::fs::write(
+            &manifest,
+            format!(r#"{{"version":"{APP_VERSION}","git_sha":"deadbeef"}}"#),
+        )
+        .unwrap();
+        let ok = version_parity_check(home.path());
+        assert!(ok.detail.is_ok());
+
+        std::fs::write(&manifest, r#"{"version":"0.0.9-legacy"}"#).unwrap();
+        let drifted = version_parity_check(home.path());
+        assert_eq!(
+            drifted.detail.as_ref().err(),
+            Some(&format!("build {APP_VERSION} != installed 0.0.9-legacy"))
+        );
+
+        std::fs::write(&manifest, "not json").unwrap();
+        assert!(version_parity_check(home.path()).detail.is_err());
     }
 
     #[test]

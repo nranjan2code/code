@@ -19,6 +19,13 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 
+pub mod services;
+pub use services::{
+    render_launchd_plist, render_systemd_unit, resolve_specs, services_status, services_sync,
+    services_uninstall, status_specs, sync_specs, CommandRunner, Paths, ServiceDef, ServiceRow,
+    ServiceSpec, SyncAction, SyncOutcome, SystemRunner, SERVICES,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Service {
     Gateway,
@@ -102,7 +109,7 @@ fn run(cmd: &mut Command) -> bool {
         .unwrap_or(false)
 }
 
-fn home() -> PathBuf {
+pub(crate) fn home() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/"))
