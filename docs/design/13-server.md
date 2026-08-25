@@ -15,7 +15,8 @@ consumers.
 | POST | `/sessions/:id/steering` `{text}` | queue mid-run input |
 | POST | `/sessions/:id/approvals/:rid` `{approve}` | resolve a permission gate |
 | GET | `/sessions/:id/events` | SSE stream of `AgentEvent` JSON |
-| GET | `/sessions/:id/transcript` | derived messages + usage |
+| GET | `/sessions/:id/transcript` | derived messages + usage; historical (non-attached) sessions fall back to opening the ledger from disk — error bodies stay 200-wrapped for wire compatibility |
+| GET | `/sessions/:id/transcript.md` | markdown export through the shared `transcript_md` renderer (byte-parity with TUI export); same disk fallback, proper 404 when unknown |
 | GET | `/sessions` | persisted session summaries (sidebar projection) |
 | POST | `/sessions/:id/attach` `{session_id}` | resume a persisted session into memory |
 | GET | `/sessions/:id/diff` | git status + diff of the session workspace |
@@ -33,7 +34,7 @@ consumers.
 | POST | `/sessions/:id/keep` / `discard` | merge or drop a best-of-N candidate branch |
 | GET | `/sessions/:id/pr` | gh-backed PR view + check rollup (`reason: no_pr\|gh_unavailable`) |
 | POST | `/sessions/:id/pr/merge` `{number,method}` | `gh pr merge --auto` (squash/merge/rebase) |
-| GET/POST | `/tasks`, PATCH/DELETE `/tasks/:id` | scheduled-task CRUD (persisted to `~/.vakcoder/tasks.json`) |
+| GET/POST | `/tasks`, PATCH/DELETE `/tasks/:id` | scheduled-task CRUD (persisted to `~/.vakcoder/tasks.json`); additive `schedule` (5-field cron), `script` (zero-token watchdog), `model_pin` fields validated via `TaskDef::validate` → 400 |
 | POST | `/tasks/:id/run-now` | fire immediately; resets schedule |
 | GET | `/sessions/:id/launch` | dev-server configs (`.vakcoder/launch.toml` + npm autodetect) |
 | POST | `/sessions/:id/launch/start\|stop` `{name}` | manage a dev server process |
@@ -44,7 +45,28 @@ consumers.
 | GET/PUT | `/config/mcp` | read the effective MCP table / replace it: validates, persists `[mcp.servers]` to the project config without destroying other keys, hot-applies into the running Core |
 | POST | `/sessions/:id/run` attachments | base64 image blocks ride the prompt as native vision content |
 | POST | `/sessions/:id/steering` `{text,attachments?}` | queued input keeps image blocks — never degraded to bare text |
-| GET | `/memory`, `/skills/proposals` (+ promote/reject) | durable memory notes and the learned-skill review queue |
+| GET | `/memory` | durable memory notes, workspace tier + global `USER.md` profile tier (`id`, `scope` per note) |
+| POST | `/memory` `{text,kind?,tag?,scope?,session_id?}` | append to either tier (201; 400 on validation error) — desktop/gateway/CLI all write through this same API |
+| PATCH | `/memory/:note_id` `{text,scope?}` | amend a note body, provenance header preserved |
+| DELETE | `/memory/:note_id?scope=` | forget one block (byte-safe rewrite); 404 unknown id |
+| GET | `/search?q=&limit=&all=true` | recall over the current project's ledgers; `all=true` spans every project hash (`project_hash` annotated) |
+| GET | `/sessions/:id/receipts` | dispatch forensics: per-attempt walk receipts |
+| GET | `/doctor?session=` | `HealthReport` JSON (checks/facts/frozen-ladder) |
+| GET | `/digest?days=N` | usage rollup from the cost ledger + memory/skill deltas (1–90) |
+| POST | `/backup/export` `{dest_dir,include_secrets?}` / `/backup/import` `{src_dir,conflict?}` | home backup round-trip; secrets excluded by default; 400 when source/target equals the home itself |
+| GET | `/skills/proposals` (+ promote/reject) | learned-skill review queue; proposals carry a `duplicate-of:` screening tag where applicable |
+
+## Personal-OS scheduler semantics (docs/design/29)
+
+- Cron tasks fire via `cron_next_after` in local time (vixie dom∧dow
+  OR-semantics, DST-gap skip-forward). `[automation] catch_up_missed = true`
+  fires one missed slot at startup.
+- `script:` tasks never touch the LLM: brokered bash, stdout trimmed →
+  verbatim delivery, empty stdout → silent tick, failure/timeout → typed
+  error alert (never silent).
+- After every fire the day-spend is checked against `[finops] max_day_usd`;
+  crossing 80%/100% records an audit-only `budget_alert` ledger row and
+  delivers to configured surfaces once per level per window.
 
 ## Semantics
 

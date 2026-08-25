@@ -54,6 +54,26 @@ Server gains the backing endpoints so the embedded router inside desktop
 needs no special-casing; unattended surfaces keep failing closed (doc 22,
 invariant 15).
 
+## v0.5.0 dogfood postscript
+
+The live-fire pass (restored-real-data sandbox home, `serve --gateway`)
+caught two defects before any user did — both fixed in the release:
+
+1. **transcript.md 404 for historical sessions.** Both transcript endpoints
+   only saw the in-memory handle map; a fresh server process starts empty.
+   Fixed with a disk fallback (`open_historical_session`), wire behavior of
+   the JSON endpoint preserved byte-for-byte (error bodies stay 200-wrapped;
+   pinned by the gateway contract suite).
+2. **No HTTP memory-append.** Desktop wrote via a Tauri-only command, breaking
+   surface symmetry. `POST /memory` now covers both tiers; an argument-order
+   trap between `append_note` and `append_profile_note` (different param
+   orders) was caught by the live test and is documented here as a warning.
+
+Also proven live: backup export→import byte-identical on real data,
+cron/watchdog/catch-up firing over the real scheduler loop, budget alerts
+delivered once per window, and FNV note ids reproducible from header lines
+outside the process.
+
 ## Non-negotiables carried over
 
 - Invariant 1: USER.md recall, web_fetch output, digest data reaching a

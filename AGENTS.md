@@ -189,7 +189,7 @@ crates/vak-tui       retained-render terminal UI: contextual keymap +
                      introspection + budget status marker
 crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      subagent steer-stop/MCP management/memory
-                     forget-amend/search-all/transcript.md/doctor/backup/
+                     CRUD/search-all/transcript.md/doctor/backup/
                      digest endpoints) + always-on gateway: chat-surface
                      routing, persisted bindings, cron+script-watchdog
                      scheduler w/ catch-up and model pinning, budget-alert
