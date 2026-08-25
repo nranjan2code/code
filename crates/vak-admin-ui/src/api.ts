@@ -1,7 +1,9 @@
 import type {
+  BestOfNRun,
   ConfigInfo,
   GatewayStatus,
   HealthInfo,
+  InboxEntry,
   PendingApproval,
   RebuildStats,
   SearchHit,
@@ -118,4 +120,47 @@ export const api = {
     fetch(`/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST" }).then((r) =>
       void handle(r),
     ),
+
+  createSession: (): Promise<{ session_id: string }> =>
+    fetch("/sessions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }).then((r) => handle(r)),
+
+  runPrompt: (sessionId: string, prompt: string): Promise<void> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    }).then((r) => void handle(r)),
+
+  steer: (sessionId: string, text: string): Promise<void> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/steering`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+    }).then((r) => void handle(r)),
+
+  startBestofn: (sessionId: string, prompt: string, n: number): Promise<{ runs: { session_id: string; branch: string }[] }> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/bestofn`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt, n }),
+    }).then((r) => handle(r)),
+
+  bestofn: (): Promise<{ runs: BestOfNRun[]; total: number }> =>
+    fetch("/admin/api/bestofn").then((r) => handle(r)),
+
+  inbox: (unreadOnly = false, limit = 100): Promise<{ entries: InboxEntry[]; unread_count: number }> => {
+    const p = new URLSearchParams({ limit: String(limit) });
+    if (unreadOnly) p.set("unread", "true");
+    return fetch(`/inbox?${p}`).then((r) => handle(r));
+  },
+
+  inboxAck: (id: string): Promise<void> =>
+    fetch(`/inbox/${encodeURIComponent(id)}/ack`, { method: "POST" }).then((r) => void handle(r)),
+
+  unreadCount: (): Promise<{ count: number }> =>
+    fetch("/inbox/unread_count").then((r) => handle(r)),
 };

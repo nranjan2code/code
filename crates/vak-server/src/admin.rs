@@ -418,6 +418,33 @@ pub(crate) async fn import_session_store(
     Json(serde_json::json!({ "error": format!("session {session_id} not found") }))
 }
 
+// ---- GET /admin/api/bestofn ------------------------------------------------
+
+#[derive(Debug, Serialize)]
+struct BestOfNRun {
+    session_id: String,
+    repo: String,
+    branch: String,
+}
+
+/// Active best-of-N candidate runs keyed by child session.
+pub(crate) async fn list_bestofn(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let map = state
+        .best_runs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let runs: Vec<BestOfNRun> = map
+        .iter()
+        .map(|(id, meta)| BestOfNRun {
+            session_id: id.clone(),
+            repo: meta.repo.display().to_string(),
+            branch: meta.branch.clone(),
+        })
+        .collect();
+    let total = runs.len();
+    Json(serde_json::json!({ "runs": runs, "total": total }))
+}
+
 // ---- GET /admin/api/config ------------------------------------------------
 
 pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -460,6 +487,7 @@ pub(crate) fn routes() -> axum::Router<AppState> {
             get(session_transcript_admin),
         )
         .route("/admin/api/approvals", get(list_pending_approvals))
+        .route("/admin/api/bestofn", get(list_bestofn))
         .route("/admin/api/search", get(search_admin))
         .route("/admin/api/events", get(admin_events_sse))
         .route("/admin/api/security", get(list_security_events))

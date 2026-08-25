@@ -87,6 +87,21 @@ export interface PendingApproval {
   requested_at: string;
 }
 
+export interface InboxEntry {
+  id: string;
+  ts: string;
+  kind: string;
+  title: string;
+  body: string;
+  session_id?: string | null;
+}
+
+export interface BestOfNRun {
+  session_id: string;
+  repo: string;
+  branch: string;
+}
+
 export interface RebuildStats {
   ok: boolean;
   files_scanned?: number;

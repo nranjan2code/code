@@ -98,7 +98,7 @@ pub struct AppState {
     pub core: Core,
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     /// Live best-of-N runs keyed by child session id.
-    best_runs: Arc<Mutex<HashMap<String, BestRunMeta>>>,
+    pub(crate) best_runs: Arc<Mutex<HashMap<String, BestRunMeta>>>,
     /// Scheduled tasks for this workspace (store shape owned by vak-core).
     tasks: Arc<Mutex<HashMap<String, TaskDef>>>,
     /// In-memory cron markers: task id → next scheduled local fire. Interval

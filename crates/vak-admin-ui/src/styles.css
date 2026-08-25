@@ -518,6 +518,49 @@ button.approve { background: var(--green); color: #04120a; }
   animation: pulse 1.2s infinite alternate;
 }
 
+/* ---- composer ---- */
+
+.composer {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  margin-top: 16px;
+  position: sticky;
+  bottom: 0;
+  background: linear-gradient(transparent, var(--bg) 30%);
+  padding: 14px 0 4px;
+}
+.composer textarea {
+  flex: 1;
+  resize: vertical;
+  min-height: 44px;
+  max-height: 200px;
+  font: inherit;
+  line-height: 1.45;
+}
+.composer button { height: 40px; padding: 0 22px; }
+.n-stepper { width: auto; flex-shrink: 0; font-family: var(--mono); font-weight: 600; }
+
+/* ---- inbox ---- */
+
+.inbox-item { cursor: default !important; }
+.inbox-item .hit-snippet { white-space: pre-wrap; }
+.chip-tone-warn { background: rgba(229, 181, 103, 0.12); color: var(--amber); }
+.chip-tone-alert { background: rgba(239, 107, 115, 0.12); color: var(--red); }
+.chip-tone-info { background: var(--accent-soft); color: var(--accent); }
+
+.nav-badge {
+  margin-left: auto;
+  background: var(--red);
+  color: #fff;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  min-width: 18px;
+  text-align: center;
+  padding: 1px 5px;
+}
+
 /* ---- small note ---- */
 .small-note { font-size: 12px; margin: 12px 0 0; }
 
