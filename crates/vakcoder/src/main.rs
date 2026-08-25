@@ -163,6 +163,13 @@ async fn main() {
     if internal.as_deref() == Some(std::ffi::OsStr::new(vak_tools::broker::WORKER_SUBCOMMAND)) {
         std::process::exit(vak_tools::broker::worker_main().await);
     }
+    if internal.as_deref()
+        == Some(std::ffi::OsStr::new(
+            vak_delivery::worker::WORKER_SUBCOMMAND,
+        ))
+    {
+        std::process::exit(vak_delivery::worker::run_stdio());
+    }
     let cli = Cli::parse();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 

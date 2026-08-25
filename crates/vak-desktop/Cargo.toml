@@ -20,6 +20,7 @@ tauri-plugin-dialog = { workspace = true }
 tauri-plugin-notification = { workspace = true }
 tauri-plugin-single-instance = { workspace = true }
 vak-core = { workspace = true }
+vak-delivery = { workspace = true }
 vak-config = { workspace = true }
 vak-server = { workspace = true }
 vak-tools = { workspace = true }

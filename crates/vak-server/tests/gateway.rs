@@ -249,6 +249,45 @@ async fn inbound_wait_roundtrip_reuses_binding() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn telegram_reply_is_an_ordered_multi_message_packet() {
+    let answer = format!("# Long result\n\n{}", "🧪 result line\n".repeat(700));
+    let provider = Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::from(vec![text(&answer)])),
+    });
+    let (base, token, _home, _server) = spawn_gateway(provider).await;
+    let client = client_with(&token);
+    let response = inbound(
+        &client,
+        &base,
+        serde_json::json!({
+            "surface": "telegram",
+            "chat": "42",
+            "sender": "tester",
+            "text": "give me the full result",
+            "wait": true
+        }),
+    )
+    .await;
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["delivery"]["fallback_markdown"], answer);
+    let chunks = body["delivery"]["chunks"].as_array().unwrap();
+    assert!(
+        chunks.len() >= 3,
+        "long answer must become multiple messages"
+    );
+    assert!(chunks.iter().all(|chunk| {
+        chunk
+            .as_str()
+            .is_some_and(|text| text.chars().count() <= 4000)
+    }));
+    assert!(chunks.iter().all(|chunk| {
+        let text = chunk.as_str().unwrap_or_default();
+        text.matches('<').count() == text.matches('>').count()
+    }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn unbind_removes_route_and_404s_after() {
     let provider = Arc::new(Scripted {
         responses: Mutex::new(VecDeque::from(vec![text("only")])),

@@ -223,6 +223,9 @@ async fn webhook_delivery_posts_run_output() {
     let text = body["text"].as_str().unwrap_or_default();
     assert!(text.contains("routine 'nightly' finished"), "{body}");
     assert!(text.contains("built ok"), "real answer delivered: {body}");
+    assert_eq!(body["delivery"]["kind"], "task_summary");
+    assert_eq!(body["delivery"]["fallback_markdown"], body["text"]);
+    assert_eq!(body["job_id"], body["delivery"]["job_id"]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -270,6 +273,22 @@ async fn webhook_missing_token_fails_closed() {
     assert!(
         captured.lock().unwrap().is_empty(),
         "missing credential must fail closed: nothing posted"
+    );
+    let outbox = gw.cwd.join("home/delivery/jobs");
+    let pending = std::fs::read_dir(&outbox)
+        .unwrap()
+        .filter_map(Result::ok)
+        .find_map(|entry| std::fs::read_to_string(entry.path()).ok())
+        .expect("failed delivery remains in the durable outbox");
+    assert!(pending.contains("\"state\":\"pending\""), "{pending}");
+    assert!(
+        pending.contains("secret output"),
+        "exact output survives: {pending}"
+    );
+    let inbox = std::fs::read_to_string(gw.cwd.join("home/inbox.jsonl")).unwrap();
+    assert!(
+        inbox.contains("secret output"),
+        "inbox is recorded before push"
     );
 }
 

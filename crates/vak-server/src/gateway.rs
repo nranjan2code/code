@@ -24,6 +24,9 @@ use tokio::sync::oneshot;
 
 use vak_agent::{AgentEvent, AutoDeny, SteeringQueues};
 use vak_core::Core;
+use vak_delivery::{
+    AnswerDraft, ApprovalPayload, DeliveryAction, DeliveryContent, DeliveryKind, DeliveryPacket,
+};
 
 use crate::{AppState, SessionHandle};
 
@@ -36,10 +39,6 @@ const REFLECTION_CALL_TIMEOUT: Duration = Duration::from_secs(120);
 
 fn bindings_path(home: &std::path::Path) -> PathBuf {
     home.join("gateway").join("bindings.json")
-}
-
-fn deliveries_path(home: &std::path::Path) -> PathBuf {
-    home.join("gateway").join("deliveries.jsonl")
 }
 
 pub struct GatewayState {
@@ -248,6 +247,8 @@ struct InboundBody {
     /// Base64 images appended to the prompt as vision content.
     #[serde(default)]
     attachments: Vec<InboundAttachment>,
+    #[serde(default)]
+    capabilities: Option<crate::delivery::RequestedCapabilities>,
 }
 
 #[derive(serde::Deserialize)]
@@ -314,10 +315,24 @@ impl vak_agent::Approver for GatewayApprover {
         let announce = format!(
             "Approval requested [{short}]\nTool: {tool}\nArgs: {args_json}\nReason: {reason}\nReply 'yes' or 'no' to decide."
         );
-        if let Err(e) = deliver_and_record(
+        if let Err(e) = deliver_approval_and_record(
             &self.core,
             self.state.approver_target().unwrap_or(""),
-            &announce,
+            ApprovalPayload {
+                request_id: id.clone(),
+                title: format!("Approval requested [{short}]"),
+                detail: announce.clone(),
+                expires_at: Some(
+                    (chrono::Utc::now()
+                        + chrono::Duration::from_std(self.state.approval_timeout())
+                            .unwrap_or_default())
+                    .to_rfc3339(),
+                ),
+                actions: vec![
+                    delivery_action("approve", "Approve", "approve", &id),
+                    delivery_action("deny", "Deny", "deny", &id),
+                ],
+            },
             vak_core::inbox::Kind::ApprovalPending,
             format!("Approval requested [{short}]"),
             Some(&self.session_id),
@@ -506,15 +521,36 @@ async fn gateway_inbound(
             .into_response();
     }
     match tokio::time::timeout(WAIT_TIMEOUT, reply_rx).await {
-        Ok(Ok(text)) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "state": "completed",
-                "text": text,
-                "session_id": binding_session(&state, &key),
-            })),
+        Ok(Ok(text)) => match crate::delivery::render_response(
+            &state.core,
+            body.surface.trim(),
+            body.chat.trim(),
+            text.clone(),
+            body.capabilities.as_ref(),
         )
-            .into_response(),
+        .await
+        {
+            Ok(delivery) => (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "state": "completed",
+                    "text": text,
+                    "session_id": binding_session(&state, &key),
+                    "delivery": delivery,
+                })),
+            )
+                .into_response(),
+            Err(error) => (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "state": "completed",
+                    "text": text,
+                    "session_id": binding_session(&state, &key),
+                    "delivery_error": error,
+                })),
+            )
+                .into_response(),
+        },
         Ok(Err(_)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "turn chain ended without a reply"})),
@@ -808,24 +844,8 @@ fn http_client() -> reqwest::Client {
         .clone()
 }
 
-/// Deliver `text` to a routing target. Transports:
-/// - `log:<chat>`    — append-only journal at `<home>/gateway/deliveries.jsonl`
-/// - `webhook:<name>`— POST JSON to the configured `[gateway.outbound.webhooks.<name>]`
-pub async fn deliver(core: &Core, target: &str, text: &str) -> Result<(), String> {
-    let Some((kind, chat)) = target.split_once(':') else {
-        return Err(format!(
-            "invalid deliver target '{target}': expected '<surface>:<chat>'"
-        ));
-    };
-    match kind {
-        "log" => deliver_log(core, target, text),
-        "webhook" => deliver_webhook(core, chat, text).await,
-        other => Err(format!("unsupported gateway surface '{other}'")),
-    }
-}
-
 /// Delivery plus its durable pull-side twin (docs/design/29-personal-os.md
-/// P6): once the transport succeeds, append the same signal to
+/// P6): append the same signal before transport so a failed push cannot erase it.
 /// `<home>/inbox.jsonl` under `inbox_kind` so unattended output survives
 /// even when no chat channel is reachable. Inbox recording is best-effort
 /// by contract — it can never fail a delivery that already happened.
@@ -838,43 +858,60 @@ pub(crate) async fn deliver_and_record(
     session_id: Option<&str>,
     task_id: Option<&str>,
 ) -> Result<(), String> {
-    let out = deliver(core, target, text).await;
-    if out.is_ok() {
-        let _ = vak_core::inbox::record(
-            &core.sessions_home(),
-            inbox_kind,
-            &title,
-            text,
-            session_id,
-            task_id,
-        );
-    }
-    out
+    let _ = vak_core::inbox::record(
+        &core.sessions_home(),
+        inbox_kind,
+        &title,
+        text,
+        session_id,
+        task_id,
+    );
+    crate::delivery::deliver(
+        core,
+        target,
+        DeliveryKind::TaskSummary,
+        DeliveryContent::Answer(AnswerDraft::from_markdown(text)),
+    )
+    .await
+    .map(|_| ())
 }
 
-fn deliver_log(core: &Core, target: &str, text: &str) -> Result<(), String> {
-    let path = deliveries_path(&core.sessions_home());
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+async fn deliver_approval_and_record(
+    core: &Core,
+    target: &str,
+    approval: ApprovalPayload,
+    inbox_kind: vak_core::inbox::Kind,
+    title: String,
+    session_id: Option<&str>,
+    task_id: Option<&str>,
+) -> Result<(), String> {
+    let _ = vak_core::inbox::record(
+        &core.sessions_home(),
+        inbox_kind,
+        &title,
+        &approval.detail,
+        session_id,
+        task_id,
+    );
+    crate::delivery::deliver(
+        core,
+        target,
+        DeliveryKind::Approval,
+        DeliveryContent::Approval(approval),
+    )
+    .await
+    .map(|_| ())
+}
+
+fn delivery_action(id: &str, label: &str, verb: &str, request_id: &str) -> DeliveryAction {
+    DeliveryAction {
+        id: id.into(),
+        label: label.into(),
+        verb: verb.into(),
+        data: [("request_id".into(), request_id.into())]
+            .into_iter()
+            .collect(),
     }
-    let line = serde_json::json!({
-        "ts": chrono::Utc::now().to_rfc3339(),
-        "target": target,
-        "text": text,
-    });
-    // One formatted buffer + ONE write_all: O_APPEND makes a single write
-    // atomic, whereas `writeln!` emits several syscalls that two concurrent
-    // deliveries can interleave mid-line.
-    let mut buf = line.to_string();
-    buf.push('\n');
-    use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| format!("open deliveries log: {e}"))?;
-    f.write_all(buf.as_bytes())
-        .map_err(|e| format!("append deliveries log: {e}"))
 }
 
 /// Transient webhook failures retry with bounded exponential backoff.
@@ -890,7 +927,11 @@ fn webhook_retryable(status: Option<u16>) -> bool {
     }
 }
 
-async fn deliver_webhook(core: &Core, name: &str, text: &str) -> Result<(), String> {
+pub(crate) async fn deliver_webhook_packet(
+    core: &Core,
+    name: &str,
+    packet: &DeliveryPacket,
+) -> Result<(), String> {
     let hook = core.config().gateway.webhooks.get(name).ok_or_else(|| {
         let known: Vec<&String> = core.config().gateway.webhooks.keys().collect();
         format!("unknown webhook '{name}'; configured: {known:?}")
@@ -906,8 +947,10 @@ async fn deliver_webhook(core: &Core, name: &str, text: &str) -> Result<(), Stri
     };
     let payload = serde_json::json!({
         "target": format!("webhook:{name}"),
-        "text": text,
+        "text": packet.fallback_markdown,
         "ts": chrono::Utc::now().to_rfc3339(),
+        "job_id": packet.job_id,
+        "delivery": packet,
     });
 
     let mut last_error = String::new();
@@ -915,7 +958,10 @@ async fn deliver_webhook(core: &Core, name: &str, text: &str) -> Result<(), Stri
         if attempt > 0 {
             tokio::time::sleep(Duration::from_millis(400u64 << (attempt - 1))).await;
         }
-        let mut req = http_client().post(&hook.url).json(&payload);
+        let mut req = http_client()
+            .post(&hook.url)
+            .header("Idempotency-Key", &packet.job_id)
+            .json(&payload);
         if let Some(token) = &token {
             req = req.bearer_auth(token);
         }

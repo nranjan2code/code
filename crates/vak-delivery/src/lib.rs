@@ -8,6 +8,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub mod client;
+pub mod outbox;
+pub mod telegram;
+pub mod templates;
+
 pub const DELIVERY_SCHEMA_VERSION: u16 = 1;
 
 /// The complete answer and its conservative structural projection.
@@ -522,7 +527,11 @@ pub fn render(job: &DeliveryJob) -> Result<DeliveryPacket, DeliveryError> {
     }
 
     let (rendered, fallback_markdown, actions, coverage) = render_content(job)?;
-    let chunks = chunk_text(&rendered, job.profile.max_chars);
+    let chunks = if matches!(job.profile.markup, Markup::TelegramHtml) {
+        telegram::split_html_chunks(&rendered, job.profile.max_chars)
+    } else {
+        chunk_text(&rendered, job.profile.max_chars)
+    };
     let payload = match job.profile.markup {
         Markup::Json => DeliveryPayload::Structured(job.content.clone()),
         _ => DeliveryPayload::Text(rendered),
@@ -556,7 +565,7 @@ fn render_content(
     match &job.content {
         DeliveryContent::Answer(answer) => {
             let rendered = match job.profile.template.as_ref() {
-                Some(template) => template.render(answer)?,
+                Some(template) => render_text(&template.render(answer)?, job.profile.markup),
                 None => render_answer(answer, job.profile.markup),
             };
             let coverage = answer
@@ -636,14 +645,14 @@ fn render_answer(answer: &AnswerDraft, markup: Markup) -> String {
     match markup {
         Markup::Plain => render_plain(answer),
         Markup::Markdown => answer.source_markdown.clone(),
-        Markup::TelegramHtml => render_telegram_html(answer),
+        Markup::TelegramHtml => telegram::markdown_to_html(&answer.source_markdown),
         Markup::Json => String::new(),
     }
 }
 
 fn render_text(markdown: &str, markup: Markup) -> String {
     match markup {
-        Markup::TelegramHtml => escape_html(markdown),
+        Markup::TelegramHtml => telegram::markdown_to_html(markdown),
         Markup::Plain | Markup::Markdown | Markup::Json => markdown.to_string(),
     }
 }
@@ -848,26 +857,6 @@ fn render_plain(answer: &AnswerDraft) -> String {
         .join("\n\n")
 }
 
-fn render_telegram_html(answer: &AnswerDraft) -> String {
-    answer
-        .blocks
-        .iter()
-        .map(|block| match block {
-            Block::Heading { text, .. } => format!("<b>{}</b>", escape_html(text)),
-            Block::Paragraph { text, .. } => escape_html(text),
-            Block::List { items, .. } => items
-                .iter()
-                .map(|item| format!("• {}", escape_html(item)))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            Block::Quote { text, .. } => format!("<blockquote>{}</blockquote>", escape_html(text)),
-            Block::Code { content, .. } => format!("<pre>{}</pre>", escape_html(content)),
-            Block::RawMarkdown { markdown, .. } => escape_html(markdown),
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
 fn escape_html(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -910,14 +899,15 @@ pub mod worker {
     use std::io::{self, BufRead, Write};
 
     pub const WORKER_PROTOCOL_VERSION: u16 = 1;
+    pub const WORKER_SUBCOMMAND: &str = "__delivery_worker";
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize)]
     pub struct WorkerRequest {
         pub protocol_version: u16,
         pub job: DeliveryJob,
     }
 
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Serialize, Deserialize)]
     pub struct WorkerResponse {
         pub protocol_version: u16,
         pub job_id: Option<String>,

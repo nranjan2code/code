@@ -155,6 +155,11 @@ struct TelegramUpdate {
     photo_file_id: Option<String>,
 }
 
+struct GatewayReply {
+    text: String,
+    delivery: Option<vak_delivery::DeliveryPacket>,
+}
+
 fn http() -> reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT
@@ -189,9 +194,9 @@ impl TelegramBridge {
             let reply = self.process(u.chat_id, &u.text, &attachments).await;
             // Deliver whatever we got — an error notice beats silence, but a
             // failed send must not lose our offset progress either way.
-            if let Err(e) = self.send_message(u.chat_id, &reply).await {
-                eprintln!("[telegram] send to {chat}: {e}", chat = u.chat_id);
-            }
+            self.send_message(u.chat_id, &reply)
+                .await
+                .map_err(|error| format!("send to {}: {error}", u.chat_id))?;
             next = next.max(u.update_id + 1);
         }
         Ok(next)
@@ -199,7 +204,12 @@ impl TelegramBridge {
 
     /// One message through the gateway contract; wait for the final text.
     /// `attachments` are base64 image payloads posted alongside the text.
-    async fn process(&self, chat_id: i64, text: &str, attachments: &[serde_json::Value]) -> String {
+    async fn process(
+        &self,
+        chat_id: i64,
+        text: &str,
+        attachments: &[serde_json::Value],
+    ) -> GatewayReply {
         let res = http()
             .post(format!("{}/gateway/inbound", self.gateway_url))
             .bearer_auth(&self.gateway_token)
@@ -214,17 +224,30 @@ impl TelegramBridge {
             .send()
             .await;
         match res {
-            Ok(r) if r.status().as_u16() == 202 => {
+            Ok(r) if r.status().as_u16() == 202 => GatewayReply {
                 // Queued behind a running turn; poll the transcript later —
                 // for v1 tell the user the work is acknowledged.
-                "(queued: I'm still working on your previous message)".into()
-            }
-            Ok(r) if r.status().is_success() => match r.json::<Value>().await {
-                Ok(v) => v["text"].as_str().unwrap_or("(empty reply)").to_string(),
-                Err(e) => format!("(bad gateway reply: {e})"),
+                text: "(queued: I'm still working on your previous message)".into(),
+                delivery: None,
             },
-            Ok(r) => format!("(gateway error: {})", r.status()),
-            Err(e) => format!("(gateway unreachable: {e})"),
+            Ok(r) if r.status().is_success() => match r.json::<Value>().await {
+                Ok(v) => GatewayReply {
+                    text: v["text"].as_str().unwrap_or("(empty reply)").to_string(),
+                    delivery: serde_json::from_value(v["delivery"].clone()).ok(),
+                },
+                Err(e) => GatewayReply {
+                    text: format!("(bad gateway reply: {e})"),
+                    delivery: None,
+                },
+            },
+            Ok(r) => GatewayReply {
+                text: format!("(gateway error: {})", r.status()),
+                delivery: None,
+            },
+            Err(e) => GatewayReply {
+                text: format!("(gateway unreachable: {e})"),
+                delivery: None,
+            },
         }
     }
 
@@ -286,17 +309,22 @@ impl TelegramBridge {
         Ok(out)
     }
 
-    async fn send_message(&self, chat_id: i64, text: &str) -> Result<(), String> {
-        // Markdown in, Telegram HTML out; chunks never cut inside a tag.
-        let html = crate::channels::markdown_to_telegram_html(text);
-        for chunk in crate::channels::split_html_chunks(&html, 4000) {
+    async fn send_message(&self, chat_id: i64, reply: &GatewayReply) -> Result<(), String> {
+        let rendered = reply.delivery.as_ref().map(|packet| packet.chunks.clone());
+        let (chunks, parse_html) = match rendered {
+            Some(chunks) if !chunks.is_empty() => (chunks, true),
+            _ => (vec![reply.text.clone()], false),
+        };
+        for chunk in chunks {
             let url = format!("{}/bot{}/sendMessage", self.api_base, self.bot_token);
-            let body = serde_json::json!({
+            let mut body = serde_json::json!({
                 "chat_id": chat_id,
                 "text": chunk,
-                "parse_mode": "HTML",
                 "link_preview_options": { "is_disabled": true },
             });
+            if parse_html {
+                body["parse_mode"] = serde_json::Value::String("HTML".into());
+            }
             let resp = http().post(&url).json(&body).send().await;
             match resp {
                 Ok(r) if r.status().is_success() => {}
@@ -304,11 +332,11 @@ impl TelegramBridge {
                     let status = r.status();
                     // Converter edge-case guard: resend that chunk as plain
                     // text so a formatting bug degrades to ugly, not lost.
-                    if status.as_u16() == 400 {
+                    if parse_html && status.as_u16() == 400 {
                         eprintln!(
                             "[telegram] HTML rejected ({status}); falling back to plain text — \
                              chunk head: {}",
-                            &chunk[..chunk.chars().count().min(80)]
+                            chunk.chars().take(80).collect::<String>()
                         );
                         let fallback = serde_json::json!({
                             "chat_id": chat_id,

@@ -350,8 +350,13 @@ async fn addressed_yes_resolves_only_that_gate_and_reports_it() {
         "gate announced"
     );
     let raw = std::fs::read_to_string(deliveries(&gw.home)).unwrap();
-    let start = raw.find('[').unwrap() + 1;
-    let short = raw[start..start + 8].to_string();
+    let announcement = raw
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find_map(|line| line["text"].as_str().map(str::to_string))
+        .unwrap();
+    let start = announcement.find('[').unwrap() + 1;
+    let short = announcement[start..start + 8].to_string();
 
     // A verdict addressed to a nonexistent gate must leave the live gate
     // untouched.

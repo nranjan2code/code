@@ -5667,6 +5667,8 @@ version = "0.6.1"
 dependencies = [
  "serde",
  "serde_json",
+ "tokio",
+ "toml 0.8.2",
 ]
 
 [[package]]
@@ -5687,6 +5689,7 @@ dependencies = [
  "uuid",
  "vak-config",
  "vak-core",
+ "vak-delivery",
  "vak-server",
  "vak-tools",
 ]
@@ -5816,6 +5819,7 @@ dependencies = [
  "vak-agent",
  "vak-config",
  "vak-core",
+ "vak-delivery",
  "vak-flow",
  "vak-hooks",
  "vak-llm",
@@ -5911,6 +5915,7 @@ dependencies = [
  "vak-agent",
  "vak-config",
  "vak-core",
+ "vak-delivery",
  "vak-eval",
  "vak-flow",
  "vak-llm",

@@ -67,9 +67,9 @@ remain append-only JSONL trees keyed per-cwd exactly as before.
 A **surface** is anything that can deliver an inbound message and receive an
 outbound reply. The universal surface adapter is plain HTTP:
 
-- `POST /gateway/inbound` `{surface, chat, sender?, text, wait?}` →
+- `POST /gateway/inbound` `{surface, chat, sender?, text, wait?, capabilities?}` →
   - `202 {state:"started"|"steering_queued", session_id}` or, with
-    `"wait": true`, `200 {state:"completed", text, session_id}` after the
+    `"wait": true`, `200 {state:"completed", text, session_id, delivery}` after the
     turn finishes (240s cap). A curl one-liner is a complete adapter:
     message in, final assistant text out. Streaming consumers use the
     existing per-session SSE instead.
@@ -153,27 +153,30 @@ The desktop's routines daemon graduates into the platform scheduler:
 - Transports:
   - `log:<chat>` — append-only journal at `<home>/gateway/deliveries.jsonl`.
     No network, works headless, doubles as the test double.
-  - `webhook:<name>` — POST `{target, text, ts}` JSON to a URL configured
+  - `webhook:<name>` — POST `{target, text, ts, job_id, delivery}` JSON to a URL configured
     under `[gateway.outbound.webhooks.<name>]`; optional `token_env` names
     an env var whose value is attached as a bearer token at delivery time.
     A configured-but-missing credential fails the delivery **closed** (the
     run's answer is still recorded on the task) rather than posting
     unauthenticated.
 
-### Channel formatting
+### Channel formatting and adapters
 
-The agent emits GitHub-flavored markdown; delivery converts per surface
-(`crates/vak-server/src/channels.rs`):
+The agent emits GitHub-flavored markdown; `vak-delivery` projects it through a
+typed, loss-accounted packet. See `30-output-engineering.md` for the isolated
+renderer, templates, durable outbox, multi-message contract, and adapter recipe.
 
 | Surface | Flavor |
 |---|---|
 | Telegram | HTML (`parse_mode=HTML`) — headings→bold, links, inline code; fences/tables→monospace `<pre>`; bullets→•; model-emitted HTML escaped first |
-| webhook / log | raw markdown (machines) |
+| webhook | semantic JSON plus exact `text` compatibility fallback |
+| log | raw markdown plus the semantic packet |
 
 Rules: conversion is injection-safe (escape before translate); long messages
 chunk at paragraph boundaries without cutting tags; a chunk rejected by the
 channel (400) is resent stripped to plain text — degradation is ugly, never
-lost. New channels implement a flavor + adapter; agent code unchanged.
+lost. Sidecar channels declare capabilities on `/gateway/inbound`; native push
+channels implement the registry adapter trait. Agent code remains unchanged.
 
 ## Configuration
 

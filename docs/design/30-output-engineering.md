@@ -1,7 +1,9 @@
 # 30 — Output engineering and channel delivery
 
-Status: foundation implemented; server/outbox integration follows after the
-contract and worker protocol have stabilized.
+Status: contract, isolated worker, trusted templates, Telegram projection,
+semantic webhook envelope, adapter registry, ordered multi-message output, and
+durable retry outbox implemented. Native desktop/TUI block widgets remain a
+presentation-layer extension; existing event and HIL controls are unchanged.
 
 ## Problem
 
@@ -37,25 +39,29 @@ the complete assistant output. Delivery is a derived projection.
    but does not own transport credentials, sessions, permissions, or the
    canonical ledger.
 
-The eventual user/project configuration can select a template by ID and
-replace it without changing Rust code, for example:
+User and trusted-project configuration can select a template by ID and replace
+it without changing Rust code. Files are loaded from `<home>/output.toml` and
+trusted `<cwd>/.vakcoder/output.toml`; user definitions win by ID:
 
 ```toml
-[output]
-template = "compact-result"
-
-[output.templates.compact-result]
+[templates.compact-result]
 revision = 2
-origin = "user"
-format = "plain"
+format = "{title}\n\n{body}"
+
+[channels.telegram]
+template = "compact-result"
+max_chars = 3500
 ```
 
-The exact config syntax is intentionally deferred until the server outbox is
-integrated; the typed registry is the stable boundary underneath it.
+Allowed slots are `{title}`, `{body}`, `{source_markdown}`, `{block_count}` and
+`{metadata.KEY}`. Templates are schema- and size-bounded data: no scripts,
+includes, tools, filesystem lookup, network access, or expression language.
+An untrusted project output file is ignored. Agent proposals remain inactive
+until explicitly activated.
 
-Every block receives an ID. A later validator must require every ID to be
-rendered, preserved in fallback, attached as an artifact, or explicitly
-reported as degraded. Silent loss is a protocol error.
+Every block receives an ID and a coverage disposition. Unknown structures stay
+in the exact fallback even when the target cannot render them richly. Silent
+loss is a protocol error.
 
 Templates apply only to outward-facing answer-like messages. An approval keeps
 its action IDs, verbs, data, and expiry as separate fields even when its text
@@ -63,19 +69,71 @@ fallback is rendered. Progress and tool results retain their typed payloads.
 This prevents a template from accidentally turning a human-in-the-loop gate,
 system message, or tool event into ordinary prose.
 
-## Process boundary
+## Process boundary and load
 
-The server should eventually append a `DeliveryJob` to a durable outbox after
-the run is committed. A bounded worker consumes the outbox, renders the job,
-validates the target payload, and invokes the channel adapter. The job needs an
-idempotency key (`run + target + revision`) so worker restart and retries cannot
-duplicate delivery accidentally.
+Production CLI and desktop binaries host a private `__delivery_worker`
+subcommand. The server keeps one empty-environment child alive per sessions
+home and exchanges versioned JSON lines. The renderer receives no provider
+keys, channel credentials, tools, session handles, or network access. A
+five-second watchdog restarts a broken process once; a deterministic in-process
+fallback adds a diagnostic rather than suppressing output. Rendering calls no
+LLM and has bounded payload/template work.
+
+Before push, the server creates an append-only job-state JSONL under
+`<home>/delivery/jobs/`. It records pending, delivered, failed-attempt, and
+dead-letter snapshots without deleting the exact job. Writes are synced; Unix
+also syncs the containing directory on creation. Replay scans at most 100 jobs
+every 30 seconds and stops after ten attempts. The inbox copy is written before
+transport, so missing credentials or remote failure cannot erase the signal.
 
 Attached TUI and desktop clients should normally render semantic events locally:
 they know terminal width, theme, accessibility mode, and window state. The
 worker is primarily for Telegram, webhooks, scheduled tasks, and unattended
 surfaces. A small plain-text emergency path may remain in the server for
 critical failure alerts.
+
+## Multi-message rule
+
+When one message cannot satisfy a channel limit, `DeliveryPacket.chunks` holds
+every ordered part. Adapters must send all chunks sequentially; truncation is
+not normal delivery. Telegram closes and reopens HTML tags at boundaries so
+each chunk parses independently. Actions appear once, normally on the final
+chunk. A partial send returns an error and retains the same job ID for replay.
+`fallback_markdown` always carries the exact unsplit answer.
+
+Chunking is Unicode-scalar safe, but not yet grapheme-cluster aware; it can
+split a visible emoji sequence while remaining valid UTF-8. That limitation is
+explicit until grapheme golden tests land.
+
+## Adapter boundary
+
+Native outbound adapters implement three operations: routing `scheme`, hard
+`DeliveryProfile`, and async `send`. The registry currently contains `log:`
+and `webhook:`. Credentials are resolved only inside the adapter. Generic
+webhooks receive `{target,text,ts,job_id,delivery}` plus `Idempotency-Key`, so a
+relay can deduplicate and consume semantics while old receivers keep using
+`text`.
+
+Telegram is a sidecar adapter: `/gateway/inbound` returns the semantic packet
+and the bridge sends every chunk. Future Slack, Discord, Teams, or Matrix
+sidecars can post optional `capabilities` (`markup`, `max_chars`, tables, code,
+links, actions) and consume the same packet without changing the agent loop.
+Unknown surfaces start conservative; declared limits are capped at 100,000.
+
+For context, Telegram text is limited to 4096 characters, Slack recommends
+4000 top-level characters and imposes per-block limits, and Discord message
+content is limited to 2000 characters. Discord Components V2 also changes
+whether traditional content and embeds may coexist. These are distinct
+protocol contracts, not styling preferences.
+
+Primary references:
+
+- [CloudEvents core specification](https://github.com/cloudevents/spec/blob/main/cloudevents/spec.md)
+- [Telegram Bot API](https://core.telegram.org/bots/api#sendmessage)
+- [Slack `chat.postMessage`](https://api.slack.com/methods/chat.postMessage)
+- [Slack Block Kit limits](https://api.slack.com/reference/block-kit/blocks)
+- [Discord message resource](https://docs.discord.com/developers/resources/message)
+- [Discord components](https://docs.discord.com/developers/components/overview)
 
 ## Safety and performance rules
 
@@ -92,17 +150,12 @@ critical failure alerts.
 - Rendering is versioned. A packet records the renderer/schema version and
   degradation decisions for debugging and replay.
 
-## Planned integration slices
+## Integration status
 
-1. Add durable outbox records and a worker supervisor without changing current
-   gateway behavior.
-2. Move Telegram conversion behind the worker, retaining byte-compatible
-   fallback behavior and adding limit-aware chunking.
-3. Change generic webhooks to receive a semantic JSON envelope plus `text`
-   compatibility fallback.
-4. Expose the same semantic event stream to TUI and desktop renderers.
-5. Add golden fixtures for tables, diffs, long Unicode, links, code, errors,
+1. Durable outbox records and a persistent worker supervisor: complete.
+2. Telegram conversion behind the worker with tag-safe chunking: complete.
+3. Semantic webhook envelope plus `text` fallback: complete.
+4. Stable semantic packet returned to sidecars and available to native clients:
+   complete. Native desktop/TUI block widgets remain future presentation work.
+5. Golden fixtures for tables, diffs, long Unicode, links, code, errors,
    approvals, accessibility/plain mode, and unsupported features.
-
-The current crate is intentionally only the contract and pure renderer. This
-keeps the first change reviewable while other server work is active.

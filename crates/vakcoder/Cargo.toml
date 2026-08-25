@@ -12,6 +12,7 @@ path = "src/main.rs"
 vak-agent = { workspace = true }
 vak-config = { workspace = true }
 vak-core = { workspace = true }
+vak-delivery = { workspace = true }
 vak-eval = { workspace = true }
 vak-flow = { workspace = true }
 vak-llm = { workspace = true }

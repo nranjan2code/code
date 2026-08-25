@@ -336,6 +336,13 @@ fn main() {
         };
         std::process::exit(runtime.block_on(vak_tools::broker::worker_main()));
     }
+    if internal.as_deref()
+        == Some(std::ffi::OsStr::new(
+            vak_delivery::worker::WORKER_SUBCOMMAND,
+        ))
+    {
+        std::process::exit(vak_delivery::worker::run_stdio());
+    }
     tauri::Builder::default()
         // Exactly one instance ever runs: a second launch hands its argv to
         // the live process and refocuses that window instead of starting a

@@ -37,8 +37,10 @@ doctor/wizard/update-check/backup/digest, SSRF-guarded webfetch +
 headless browse, shared markdown transcript export, duplicate-screened
 skill proposals, inbox attention layer (P6), heartbeat proactive
 check-ins (P7) — is ✅ per `docs/design/29-personal-os.md`
-(enterprise deferred; channel delivery projection is a parallel work
-stream, docs/design/30-output-engineering.md).
+(enterprise deferred). Channel delivery projection now has a typed contract,
+isolated renderer, templates, semantic adapter envelope, ordered chunks, and
+durable retry outbox per `docs/design/30-output-engineering.md`; native
+desktop/TUI block widgets remain presentation-layer extensions.
 
 ## Non-negotiable invariants
 
@@ -152,6 +154,10 @@ crates/vak-session   append-only JSONL trees, frozen contract, projection,
                       dependency-free cross-session search w/ mtime-indexed
                       cache + cross-project search_all (docs/design/
                       23-memory.md)
+crates/vak-delivery  channel-neutral output contract, safe templates,
+                     exact Markdown fallback, ordered chunks, Telegram HTML,
+                     isolated renderer worker, and append-only retry outbox
+                     (docs/design/30-output-engineering.md)
 crates/vak-tools     read/write/edit/bash/glob/grep/webfetch/browse
                      behind Tool trait, versioned broker-worker protocol,
                      bounded subprocess environment, resource claims,
@@ -202,10 +208,10 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      cron+script-watchdog scheduler w/ catch-up and model
                      pinning, heartbeat proactive check-ins, budget-alert
                      delivery-to-surface, approval forwarding with
-                     addressed-gate resolution, Telegram/webhook transports
-                     w/ retry, per-channel reply formatting
+                     addressed-gate resolution, semantic adapter registry,
+                     Telegram/webhook transports, and outbox replay
                      (docs/design/22-gateway.md, 28-operations.md,
-                     29-personal-os.md)
+                     29-personal-os.md, 30-output-engineering.md)
 crates/vak-desktop   Tauri 2 desktop app over an embedded secured_router —
                      SolidJS SPA: sessions, split view, approvals, diff
                      review, subagents tab, MCP manager, image attachments,

@@ -264,6 +264,12 @@ impl Core {
         self.inner.config.provider.clone()
     }
 
+    /// Whether project-owned privileged configuration was admitted when this
+    /// core was created. Presentation files use the same trust boundary.
+    pub fn project_config_trusted(&self) -> bool {
+        self.inner.trust_project_config
+    }
+
     pub fn provider_names(&self) -> Vec<String> {
         self.inner.registry.names()
     }

@@ -39,6 +39,7 @@
 //! - `DELETE /gateway/bindings/:key`  → unbind a surface from its session
 
 mod channels;
+mod delivery;
 mod gateway;
 mod heartbeat;
 pub mod telegram;
@@ -807,6 +808,7 @@ pub fn secured_router_with(core: Core, force_gateway: bool) -> (Router, String) 
         .layer(cors);
     // Local routines: fires due scheduled tasks while this server lives.
     start_scheduler(&state);
+    delivery::start_replay(&state.core);
     (app, token)
 }
 
