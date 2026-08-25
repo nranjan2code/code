@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.7.0 — admin console release
+
+The web admin console: one binary, one URL, full control of a running
+vakcoder from any browser (docs/design/33-admin-console.md).
+
+- **`vak-store` crate**: SQLite FTS5 rebuildable index over session JSONL.
+  BM25 full-text search with snippets across ALL content blocks (tool
+  commands, results, thinking — not just prose), structured metadata
+  queries (role/kind/provider/model/date/project), idempotent import,
+  WAL mode. JSONL stays the source of truth; the index is disposable and
+  rebuilt automatically (startup, post-run, on-demand `refresh=true`).
+- **Global event hub + SSE**: typed SystemEvent broadcast (agent runs,
+  session lifecycle, config changes, gateway inbound,
+  approval requested/granted/denied, security alerts) streamed at
+  `/admin/api/events`; browsers reconnect with backoff and lag explicitly.
+- **Cookie auth alongside bearer**: `POST /admin/login` validates with
+  constant-time comparison and sets an HttpOnly SameSite=Strict cookie —
+  EventSource cannot send headers, so this unlocks browser SSE. Login is
+  rate-limited; failures land in the security-events log and alert live.
+- **Embedded console SPA** (`crates/vak-admin-ui`, SolidJS+Vite, dist
+  committed so cargo needs no node): overview with live activity feed and
+  stat cards, session catalog → transcripts with role rails/tool badges/
+  error highlighting and pagination, global FTS5 search with highlighted
+  snippets, color-coded security audit log, inbox with unread badge.
+- **Operational console**: answer approval gates from anywhere (args
+  preview, live refetch via SSE), edit provider/model, switch permission
+  mode via consequence-labeled cards, rebuild the index, cancel runs,
+  live-tail transcripts during active runs (session-scoped SSE → debounced
+  refresh), sign out.
+- **Canonical-client interaction**: composer sends prompts (Enter),
+  mid-run sends become steering automatically, ×1–×4 selector fans prompts
+  out as best-of-N candidates in isolated worktrees; "+ New session"
+  creates sessions from the browser.
+- **Security floor** (Phase 0 hardening): per-IP sliding-window rate
+  limiting (`[gateway.rate_limit]`), path confinement for tool resolution,
+  hook/PTY env allowlisting, SHA-256 trust markers, temp-file atomicity,
+  Telegram chat allowlist + sender attribution, append-only security-
+  events JSONL surfaced live, config audit trail across all mutation
+  endpoints, SECURITY.md disclosure policy.
+
 ## Unreleased
 
 - **Channel-aware message formatting**: the agent writes GFM markdown once;

@@ -41,6 +41,12 @@ check-ins (P7) — is ✅ per `docs/design/29-personal-os.md`
 isolated renderer, templates, semantic adapter envelope, ordered chunks, and
 durable retry outbox per `docs/design/30-output-engineering.md`; native
 desktop/TUI block widgets remain presentation-layer extensions.
+The web admin console follows `docs/design/33-admin-console.md`:
+vak-store FTS5 index (rebuildable, JSONL stays source of truth), global
+event hub + SSE, cookie login on the secured router, and an embedded
+SolidJS console at `/admin` covering observation (overview/search/
+security/inbox), operation (approvals/config/cancel), and interaction
+(prompts/steering/best-of-N fan-out) — shipped through Phase 3.
 
 ## Non-negotiable invariants
 
@@ -154,6 +160,11 @@ crates/vak-session   append-only JSONL trees, frozen contract, projection,
                       dependency-free cross-session search w/ mtime-indexed
                       cache + cross-project search_all (docs/design/
                       23-memory.md)
+crates/vak-store     SQLite FTS5 rebuildable index over session JSONL:
+                     BM25 full-text search (all content blocks incl. tool
+                     calls/results/thinking), structured metadata queries,
+                     idempotent import, WAL mode — docs/design/23 +
+                     33 (JSONL stays source of truth)
 crates/vak-delivery  channel-neutral output contract, safe templates,
                      exact Markdown fallback, ordered chunks, Telegram HTML,
                      isolated renderer worker, and append-only retry outbox
@@ -211,7 +222,15 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      addressed-gate resolution, semantic adapter registry,
                      Telegram/webhook transports, and outbox replay
                      (docs/design/22-gateway.md, 28-operations.md,
-                     29-personal-os.md, 30-output-engineering.md)
+                     29-personal-os.md, 30-output-engineering.md) +
+                     admin console: global event hub + SSE, cookie login
+                     (HttpOnly SameSite=Strict) alongside bearer auth,
+                     /admin/api/* data plane, embedded SolidJS SPA at
+                     /admin (docs/design/33-admin-console.md)
+crates/vak-admin-ui  SolidJS + Vite admin console source; built dist is
+                     committed so cargo builds need no node — observation,
+                     operation, and interaction views per docs/design/
+                     33-admin-console.md
 crates/vak-desktop   Tauri 2 desktop app over an embedded secured_router —
                      SolidJS SPA: sessions, split view, approvals, diff
                      review, subagents tab, MCP manager, image attachments,

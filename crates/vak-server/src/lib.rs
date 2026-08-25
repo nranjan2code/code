@@ -4136,8 +4136,26 @@ async fn delete_task(State(state): State<AppState>, Path(id): Path<String>) -> S
 
 /// Fire a task immediately (also resets its schedule).
 async fn run_task_now(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
-    let fired = fire_task(&state, &id).await.is_some();
-    if fired {
+    if fire_task(&state, &id).await.is_some() {
+        return StatusCode::ACCEPTED;
+    }
+    // A scheduler tick may hold the one-shot inflight slot for this script
+    // task — the requested execution is happening at this very moment, so
+    // report accepted rather than conflict (found by the 0.7 suite: the
+    // tick raced run-now on freshly created interval tasks).
+    let busy_elsewhere = state
+        .tasks
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&id)
+        .map(|t| t.script.as_deref().map(str::trim).is_some_and(|s| !s.is_empty()))
+        .unwrap_or(false)
+        && state
+            .script_inflight
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(&id);
+    if busy_elsewhere {
         StatusCode::ACCEPTED
     } else {
         StatusCode::CONFLICT

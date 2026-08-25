@@ -116,6 +116,7 @@ vakcoder exec "explain this workspace" \
 
 - Retained-render TUI with Markdown, diffs, approvals, themes, Vim/Emacs editing, accessibility modes, and live subagent control
 - Tauri 2 desktop app with isolated worktrees, streaming chat, diff review, editor, PTY terminal, previews, side chats, and best-of-N comparison
+- **Web admin console** at `/admin` on the secured server — live activity feed, session transcripts with search, approval gates, config editing, prompt/steering/best-of-N from any browser (cookie login; see `docs/design/33-admin-console.md`)
 - Headless `exec` and `plan` commands for scripts and CI
 - HTTP + SSE server for custom clients
 - Always-on gateway with Telegram and outbound webhooks, including fail-closed approval forwarding

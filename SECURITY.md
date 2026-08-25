@@ -78,6 +78,7 @@ HTTP inbound requests are rate-limited per source IP:
 | `POST /gateway/inbound`     | 30 req/min    |
 | `POST /sessions`            | 5 req/min     |
 | `POST /sessions/{id}/run`   | 10 req/min    |
+| `POST /admin/login`         | 20 req/min    |
 | All other POST endpoints    | 20 req/min    |
 
 Limits are configurable via `[gateway.rate_limit]` in TOML config.
@@ -93,16 +94,28 @@ Exceeded limits return `429 Too Many Requests` with `Retry-After`.
   is set to `"forward"` with a configured approver surface.
 - Constant-time token comparison prevents timing attacks on bearer tokens.
 - Token values are masked in stderr (only first/last 4 characters shown).
+- Browser surfaces authenticate once via `POST /admin/login`, which sets an
+  HttpOnly, SameSite=Strict session cookie; the same constant-time check
+  applies. No `Secure` flag by design (loopback/LAN-first server); do not
+  expose the port to untrusted networks without a TLS-terminating proxy.
+- The `/admin` SPA shell and static assets are auth-exempt but carry no
+  data; every `/admin/api/*` route requires the token or cookie.
+- Mutating admin operations are POST-only so crawlers/prefetchers cannot
+  trigger them via GET.
 
 ### Security Events
 
 Security-relevant events are logged to `<home>/security-events.jsonl`:
 
-- Auth failures (wrong/missing bearer token)
+- Auth failures (wrong/missing bearer token, failed logins)
 - Rate limit triggers
 - Chat allowlist rejections
+- Config changes (permission mode, provider keys, MCP servers, hooks)
+- FullAccess grants/revocations
 
 The log is append-only, structured JSONL, and lives alongside session data.
+The admin console surfaces it live (`GET /admin/api/security`) and the
+event hub pushes auth-failure/rate-limit alerts to connected browsers.
 
 ## Dependency Policy
 
