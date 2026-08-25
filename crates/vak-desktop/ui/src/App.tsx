@@ -38,8 +38,6 @@ import {
   sidebarWidth,
   setNotice,
   setBestOfOpen,
-  providers,
-  setupNeeded,
   setProviders,
   setSetupNeeded,
   setTasksOpen,
@@ -52,6 +50,8 @@ import {
   setSearchOpen,
   settingsOpen,
   setSettingsOpen,
+  transcriptViewId,
+  setTranscriptViewId,
   uiPreferences,
   workspaceSwitching,
   setWorkspaceSwitching,
@@ -92,6 +92,8 @@ import Toast from "./components/Toast";
 import Settings from "./components/Settings";
 import BudgetBanner from "./components/BudgetBanner";
 import SearchModal from "./components/SearchModal";
+import SetupCard from "./components/SetupCard";
+import TranscriptModal from "./components/TranscriptModal";
 
 const streams = new Map<string, EventSource>();
 const sideStreams = new Map<string, EventSource>();
@@ -381,6 +383,7 @@ function resetWorkspaceView() {
   setDockTab(null);
   setSideOpen(false);
   setHistoryOpen(false);
+  setTranscriptViewId(null);
 }
 
 export async function refreshBackend(knownInfo?: import("./types").BackendInfo): Promise<boolean> {
@@ -609,6 +612,7 @@ export default function App() {
           else if (tasksOpen()) setTasksOpen(false);
           else if (historyOpen()) setHistoryOpen(false);
           else if (receiptsOpen()) setReceiptsOpen(false);
+          else if (transcriptViewId()) setTranscriptViewId(null);
           else if (sideOpen()) setSideOpen(false);
           else stopRun();
         }
@@ -673,7 +677,7 @@ export default function App() {
 
   return (
     <Show
-      when={backend().ready && !setupNeeded() ? backend() : null}
+      when={backend().ready ? backend() : null}
       fallback={<ProjectGate />}
     >
       {(info) => (
@@ -759,6 +763,9 @@ export default function App() {
             )}
           </Show>
           <StatusBar />
+          {/* Missing provider never blocks the workspace — the card is
+              dismissible and everything read-only stays usable. */}
+          <SetupCard />
           <BudgetBanner />
           <Show when={showShortcuts()}>
             <ShortcutsModal />
@@ -772,6 +779,9 @@ export default function App() {
           </Show>
           <Show when={receiptsOpen()}>
             <ReceiptsModal />
+          </Show>
+          <Show when={transcriptViewId()}>
+            <TranscriptModal />
           </Show>
           <Toast />
           <SearchModal />

@@ -148,7 +148,27 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
   );
 };
 
+/** Arg keys that name the subject of a webfetch-style tool call. */
+const APPROVAL_PRIMARY_KEYS = ["url", "path", "file_path", "command", "file", "dir"] as const;
+
 const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessionId?: string | null }) => {
+  // Webfetch-style tools name their target under different keys; whatever
+  // the tool calls its subject (url/path/command…) is what the user needs
+  // to see before deciding, so it gets the prominent slot.
+  const primary = createMemo<{ key: string; value: string } | null>(() => {
+    try {
+      const parsed = JSON.parse(props.item.argsJson) as Record<string, unknown>;
+      for (const key of APPROVAL_PRIMARY_KEYS) {
+        const value = parsed[key];
+        if (typeof value === "string" && value.trim()) {
+          return { key, value: value.trim() };
+        }
+      }
+    } catch {
+      /* malformed args fall through to the generic summary below */
+    }
+    return null;
+  });
   const summary = createMemo(() => {
     try {
       const parsed = JSON.parse(props.item.argsJson) as Record<string, unknown>;
@@ -164,6 +184,14 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
   return (
   <div class="approval">
     <div class="ap-head">Approval requested — {props.item.tool}</div>
+    <Show when={primary()}>
+      {(p) => (
+        <code class="ap-primary" title={p().value}>
+          <span class="ap-primary-key">{p().key}</span>
+          {p().value.length > 160 ? `${p().value.slice(0, 160)}…` : p().value}
+        </code>
+      )}
+    </Show>
     <Show when={props.item.reason}>
       <div class="ap-reason">{props.item.reason}</div>
     </Show>
@@ -238,6 +266,57 @@ export const Markdown = (props: { text: string; streaming?: boolean }): JSX.Elem
   return <div class="md" ref={el} onClick={onClick} />;
 };
 
+/**
+ * One transcript row, shared by the live chat and the read-only historical
+ * viewer. Items are immutable snapshots replaced by identity in the store,
+ * so `<For>` re-creates a row whenever its item changes and a plain read
+ * here is safe.
+ */
+export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.Element => {
+  const item = props.item;
+  if (item.kind === "user") {
+    return <div class="msg user"><Markdown text={item.text} /></div>;
+  }
+  if (item.kind === "assistant") {
+    return (
+      <div class="msg assistant">
+        <Show when={item.text} fallback={<span class="caret" />}>
+          <Markdown text={item.text} streaming={item.streaming} />
+          <Show when={item.streaming}>
+            <span class="caret" />
+          </Show>
+        </Show>
+      </div>
+    );
+  }
+  if (item.kind === "thinking") {
+    return (
+      <details class="thinking" open={!item.done}>
+        <summary>thinking</summary>
+        <pre>{item.text}</pre>
+      </details>
+    );
+  }
+  if (item.kind === "tool") {
+    return <ToolCard item={item} />;
+  }
+  if (item.kind === "approval") {
+    return <ApprovalCard item={item} sessionId={props.sessionId} />;
+  }
+  if (item.kind === "subagent") {
+    return (
+      <details class="subagent">
+        <summary>
+          subagent · {item.label}
+          {item.isError ? " ✗" : ""}
+        </summary>
+        <pre>{item.lines.join("\n")}</pre>
+      </details>
+    );
+  }
+  return <div class="sysnote">{item.text}</div>;
+};
+
 export default function ChatPane(props: { sessionId?: string | null }) {
   // In split view each pane renders ITS OWN session; without the prop the
   // pane follows the global focus (previous behavior, unchanged).
@@ -286,37 +365,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
           <Show when={hydratingId() !== sid()} fallback={<TranscriptSkeleton />}>
             <Show when={visibleItems(itemsOf(sid())).length} fallback={<EmptyChat />}>
               <For each={visibleItems(itemsOf(sid()))}>
-                {(it) => <>
-              {(it.kind === "user" && <div class="msg user"><Markdown text={it.text} /></div>) ||
-                (it.kind === "assistant" && (
-                  <div class="msg assistant">
-                    <Show when={it.text} fallback={<span class="caret" />}>
-                      <Markdown text={it.text} streaming={it.streaming} />
-                      <Show when={it.streaming}>
-                        <span class="caret" />
-                      </Show>
-                    </Show>
-                  </div>
-                )) ||
-                (it.kind === "thinking" && (
-                  <details class="thinking" open={!it.done}>
-                    <summary>thinking</summary>
-                    <pre>{it.text}</pre>
-                  </details>
-                )) ||
-                (it.kind === "tool" && <ToolCard item={it} />) ||
-                (it.kind === "approval" && <ApprovalCard item={it} sessionId={sid()} />) ||
-                (it.kind === "subagent" && (
-                  <details class="subagent">
-                    <summary>
-                      subagent · {it.label}
-                      {it.isError ? " ✗" : ""}
-                    </summary>
-                    <pre>{it.lines.join("\n")}</pre>
-                  </details>
-                )) ||
-                (it.kind === "system" && <div class="sysnote">{it.text}</div>)}
-                </>}
+                {(it) => <ItemView item={it} sessionId={sid()} />}
               </For>
             </Show>
           </Show>

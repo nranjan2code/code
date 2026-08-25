@@ -6,10 +6,13 @@ import {
   setDiffTarget,
   setDockTab,
   setTasksOpen,
+  setTranscriptViewId,
   tasksOpen,
 } from "../store";
 import * as api from "../api";
 import type { TaskDef } from "../types";
+import { relAgo } from "../time";
+import Icon from "./Icon";
 
 function fmtInterval(s: number): string {
   if (s % 3600 === 0) return `${s / 3600}h`;
@@ -170,8 +173,31 @@ export default function TasksModal() {
                     {!t.enabled && <span class="badge">off</span>}
                   </div>
                   <div class="task-prompt" title={t.script ?? t.prompt}>{t.script ?? t.prompt}</div>
-                  <Show when={t.last_summary}>
-                    <div class="task-last">last: {t.last_summary}</div>
+                  <Show when={t.last_run_at || t.last_summary || t.last_session_id}>
+                    <details class="task-run">
+                      <summary>
+                        <Icon name="history" size={12} />
+                        <span>last run</span>
+                        <Show when={t.last_run_at}>{(at) => <span class="task-run-when">{relAgo(at())}</span>}</Show>
+                      </summary>
+                      <div class="task-run-body">
+                        <Show when={t.last_run_at} fallback={<Show when={!t.last_summary}><span class="task-run-none">never run</span></Show>}>
+                          <div class="task-run-line">ran {relAgo(t.last_run_at)} · {new Date(t.last_run_at!).toLocaleString()}</div>
+                        </Show>
+                        <Show when={t.last_summary}>
+                          <p class="task-run-summary">{t.last_summary}</p>
+                        </Show>
+                        <Show when={t.last_session_id}>
+                          <button
+                            class="chip sm"
+                            title={`Open the transcript of run ${t.last_session_id!.slice(0, 8)}`}
+                            onClick={() => setTranscriptViewId(t.last_session_id!)}
+                          >
+                            open transcript · {t.last_session_id!.slice(0, 8)}
+                          </button>
+                        </Show>
+                      </div>
+                    </details>
                   </Show>
                 </div>
                 <div class="task-actions">

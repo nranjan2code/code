@@ -30,6 +30,10 @@ use crate::{AppState, SessionHandle};
 /// Long-poll ceiling for `wait: true` inbound messages.
 const WAIT_TIMEOUT: Duration = Duration::from_secs(240);
 
+/// Upper bound on one background reflection pass (docs/design/29 P1) so a
+/// stuck auxiliary stream cannot hold the session ledger indefinitely.
+const REFLECTION_CALL_TIMEOUT: Duration = Duration::from_secs(120);
+
 fn bindings_path(home: &std::path::Path) -> PathBuf {
     home.join("gateway").join("bindings.json")
 }
@@ -663,17 +667,15 @@ async fn execute_turn_chain(
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
             tokio_util::sync::CancellationToken::new();
 
-        let (reply_text, is_error) = match outcome {
+        let (reply_text, is_error, ledger) = match outcome {
             Ok((o, log)) => {
-                *handle
-                    .session
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
-                (outcome_text(&o), outcome_is_error(&o))
+                let err = outcome_is_error(&o);
+                let text = outcome_text(&o);
+                (text, err, Some(log))
             }
             Err(e) => {
                 recover_ledger(&core, handle.clone(), &session_id).await;
-                (format!("error: {e}"), true)
+                (format!("error: {e}"), true, None)
             }
         };
         let _ = handle.events_tx.send(AgentEvent::RunFinished {
@@ -685,25 +687,28 @@ async fn execute_turn_chain(
             let _ = tx.send(reply_text.clone());
         }
 
-        // Reflection stage (docs/design/26-learning.md L1): after a clean
-        // completion, optionally propose durable notes/skills. Detached and
-        // best-effort — reflection failures must never touch the reply or
-        // the session.
-        if core.config().memory.reflection && !is_error {
-            let rcore = core.clone();
-            let sid = session_id.clone();
-            tokio::spawn(async move {
-                match reflection_tail(&rcore, &sid).await {
-                    Ok((notes, skill)) => {
-                        if notes > 0 || skill {
-                            eprintln!(
-                                "[gateway] reflection: {notes} note(s) persisted, skill queued: {skill}"
-                            );
-                        }
-                    }
-                    Err(e) => eprintln!("[gateway] reflection skipped: {e}"),
+        // Background reflection seam (docs/design/29 P1): the shared
+        // best-effort pass over the just-finished turn. It runs strictly
+        // after the reply above was handed over so delivery never waits on
+        // it, and while this chain still owns the ledger — a second
+        // in-process handle cannot take the file lock. Bounded; failures
+        // collapse into the outcome envelope.
+        if let Some(log) = ledger {
+            if !is_error && core.config().memory.reflection {
+                let pass = tokio::time::timeout(
+                    REFLECTION_CALL_TIMEOUT,
+                    core.reflect_after_turn(&log, ""),
+                )
+                .await;
+                match pass {
+                    Ok(outcome) => log_gateway_reflection(outcome),
+                    Err(_) => eprintln!("[gateway] reflection skipped: timeout"),
                 }
-            });
+            }
+            *handle
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
         }
 
         let queued = steering.drain(vak_agent::DrainMode::All);
@@ -883,56 +888,27 @@ async fn deliver_webhook(core: &Core, name: &str, text: &str) -> Result<(), Stri
     Err(last_error)
 }
 
-/// Reflection helper for the gateway: pulls the bound session's transcript
-/// tail, runs the auxiliary proposal call through the core's provider, and
-/// applies deduped writes. Returns (notes written, skill queued).
-pub(crate) async fn reflection_tail(
-    core: &Core,
-    session_id: &str,
-) -> Result<(usize, bool), String> {
-    let provider = core
-        .provider()
-        .map_err(|e| format!("reflection provider: {e}"))?;
-    // Read the transcript tail straight from disk: the live ledger may be
-    // owned by the agent at reflection time.
-    let path =
-        vak_session::SessionPath::new_session_file(&core.sessions_home(), core.cwd(), session_id);
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("read session for reflection: {e}"))?;
-    let mut tail = String::new();
-    for line in text.lines() {
-        if let Ok(e) = serde_json::from_str::<serde_json::Value>(line)
-            && e["kind"] == "message"
-        {
-            let role = e["message"]["role"].as_str().unwrap_or("?");
-            let txt = e["message"]["content"]
-                .as_array()
-                .map(|blocks| {
-                    blocks
-                        .iter()
-                        .filter_map(|b| b.get("text").and_then(|v| v.as_str()))
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                })
-                .unwrap_or_default();
-            tail.push_str(&format!("{role}: {txt}\n"));
+/// Reflection outcome reporting for chat surfaces: the success line keeps
+/// its historical format; config-driven and raced-out skips are routine and
+/// stay silent so a busy gateway does not spam its own log.
+fn log_gateway_reflection(outcome: vak_core::reflection::ReflectionOutcome) {
+    use vak_core::reflection::ReflectionOutcome as R;
+    match outcome {
+        R::Reflected {
+            notes_added,
+            skills_proposed,
+        } => {
+            if notes_added > 0 || skills_proposed {
+                eprintln!(
+                    "[gateway] reflection: {notes_added} note(s) persisted, skill queued: {skills_proposed}"
+                );
+            }
         }
+        R::Skipped { reason } => match reason {
+            "already-in-flight" | "reflection-disabled" | "memory-writes-disabled" => {}
+            other => eprintln!("[gateway] reflection skipped: {other}"),
+        },
     }
-
-    let model = core.effective_model();
-    let proposals = vak_core::reflection::propose(
-        provider,
-        &model,
-        &tail,
-        tokio_util::sync::CancellationToken::new(),
-    )
-    .await?;
-    if proposals.notes.is_empty() && proposals.skill.is_none() {
-        return Ok((0, false));
-    }
-    let home_dir = core.sessions_home();
-    let cwd = core.cwd().clone();
-    vak_core::reflection::apply(home_dir.as_path(), cwd.as_path(), session_id, &proposals)
 }
 
 #[cfg(test)]

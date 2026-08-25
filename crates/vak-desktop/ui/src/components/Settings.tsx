@@ -19,6 +19,7 @@ import {
 } from "../store";
 import type { ConfigSnapshot } from "../types";
 import * as api from "../api";
+import { relTime } from "../time";
 import { loadHealth, refreshSessions } from "../App";
 import Icon, { type IconName } from "./Icon";
 import OperationsPanel from "./OperationsPanel";
@@ -90,6 +91,25 @@ export default function Settings() {
   const tierNotes = createMemo(() =>
     notes().filter((n) => (n.scope ?? "workspace") === tier()),
   );
+
+  // Activity feed (docs/design/29): the newest notes across BOTH tiers, so a
+  // glance answers "what has the agent been learning lately?" without
+  // flipping tabs.
+  const recentNotes = createMemo(() =>
+    [...notes()].sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 8),
+  );
+  const [recentPickedId, setRecentPickedId] = createSignal<string | null>(null);
+
+  /** Switch to the note's tier and bring its row into view below. */
+  function jumpToNote(note: api.NoteBlock) {
+    setTier((note.scope ?? "workspace") as api.MemoryScope);
+    setRecentPickedId(note.id);
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-note-id="${CSS.escape(note.id)}"]`)
+        ?.scrollIntoView({ behavior: uiPreferences.reduceMotion ? "auto" : "smooth", block: "center" });
+    });
+  }
 
   async function refreshLearning() {
     try {
@@ -768,6 +788,29 @@ export default function Settings() {
                   </For>
                 </Show>
               </Group>
+              <Show when={recentNotes().length > 0}>
+                <section class="memory-recent" aria-label="Recent memory activity">
+                  <span class="memory-recent-label">Recent</span>
+                  <div class="memory-recent-chips">
+                    <For each={recentNotes()}>
+                      {(n) => (
+                        <button
+                          class="memory-recent-chip"
+                          classList={{ picked: recentPickedId() === n.id }}
+                          title={n.text}
+                          onClick={() => jumpToNote(n)}
+                        >
+                          <span class="badge">{n.kind}</span>
+                          <Show when={(n.scope ?? "workspace") === "profile"}>
+                            <span class="memory-recent-scope">profile</span>
+                          </Show>
+                          <span class="memory-recent-time">{relTime(n.ts)}</span>
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </section>
+              </Show>
               <nav class="capability-tabs memory-tabs" aria-label="Memory tiers">
                 <button classList={{ active: tier() === "workspace" }} onClick={() => setTier("workspace")}><Icon name="folder" /><span>Workspace</span><em>{notes().filter((n) => (n.scope ?? "workspace") === "workspace").length}</em></button>
                 <button classList={{ active: tier() === "profile" }} onClick={() => setTier("profile")}><Icon name="spark" /><span>Profile</span><em>{notes().filter((n) => n.scope === "profile").length}</em></button>
@@ -803,7 +846,7 @@ export default function Settings() {
                   <div class="archived-list" aria-label="Memory notes">
                     <For each={tierNotes().slice().reverse()}>
                       {(n) => (
-                        <div class="task-row memory-note">
+                        <div class="task-row memory-note" data-note-id={n.id} classList={{ picked: recentPickedId() === n.id }}>
                           <div class="task-main">
                             <div class="task-name">
                               <span class="badge memory-id" title={`Note id ${n.id}`}>{n.id.slice(0, 8)}</span>

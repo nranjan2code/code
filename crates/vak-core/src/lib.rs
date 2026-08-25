@@ -9,6 +9,7 @@ pub mod digest;
 pub mod files;
 pub mod finops;
 pub mod health;
+pub mod inbox;
 pub mod learning;
 pub mod memory;
 pub mod reflection;
@@ -1689,6 +1690,122 @@ fn build_hooks_from(
         });
     }
     Ok(out)
+}
+
+impl Core {
+    /// Background reflection seam (docs/design/29 P1): after a completed
+    /// turn on ANY surface, offer one auxiliary-model reflection pass.
+    ///
+    /// Contract: background reflection is best-effort by design. It never
+    /// blocks or fails a completed turn — every unhappy path collapses into
+    /// [`reflection::ReflectionOutcome::Skipped`] with a static reason,
+    /// never `Err`. Dispatch is budget-admitted BEFORE any provider call
+    /// through the same gate path runs use, so reflection can never bypass
+    /// a day/run cap; concurrent turns over the same session tail collapse
+    /// to a single pass via an in-flight marker; and all reflection logic
+    /// is the shared implementation in [`crate::reflection`] (no fork).
+    pub async fn reflect_after_turn(
+        &self,
+        session: &SessionLog,
+        final_text: &str,
+    ) -> reflection::ReflectionOutcome {
+        if !self.config().memory.reflection {
+            return reflection::ReflectionOutcome::Skipped {
+                reason: "reflection-disabled",
+            };
+        }
+        if !self.config().memory.write_enabled {
+            return reflection::ReflectionOutcome::Skipped {
+                reason: "memory-writes-disabled",
+            };
+        }
+        let sid = session
+            .header()
+            .map(|h| h.session_id.clone())
+            .unwrap_or_default();
+        let Ok(provider) = self.provider() else {
+            return reflection::ReflectionOutcome::Skipped {
+                reason: "provider-unready",
+            };
+        };
+        // One pass per session tail at a time, across every surface in
+        // this process.
+        let Some(_in_flight) = reflection::InFlightGuard::acquire(&sid) else {
+            return reflection::ReflectionOutcome::Skipped {
+                reason: "already-in-flight",
+            };
+        };
+
+        let mut tail = String::new();
+        for (_, m) in session.message_chain() {
+            tail.push_str(&reflection::render_message(m.role, &m.content));
+        }
+        if !final_text.is_empty() {
+            let block = vak_llm::ContentBlock::text(final_text.to_string());
+            tail.push_str(&reflection::render_message(
+                vak_llm::Role::Assistant,
+                &[block],
+            ));
+        }
+
+        // Budget admission before any dispatch — the same CoreSpendGate
+        // path that admits run turns, so caps bind identically here.
+        let f = &self.inner.config.finops;
+        if f.max_run_usd.is_some() || f.max_day_usd.is_some() || !f.price_overrides.is_empty() {
+            let gate = finops::CoreSpendGate::new(&self.sessions_home(), f);
+            let probe = vak_llm::Message {
+                role: vak_llm::Role::User,
+                content: vec![vak_llm::ContentBlock::text(tail.clone())],
+            };
+            let est = vak_agent::context::estimate_tokens(
+                &[probe],
+                Some(&reflection::system_prompt()),
+                &[],
+            );
+            let model = self.effective_model();
+            let provider_name = self.effective_provider();
+            let check = vak_agent::SpendCheck {
+                model: &model,
+                provider: &provider_name,
+                session_id: &sid,
+                est_input_tokens: est,
+                planned_output_tokens: u64::from(reflection::MAX_TOKENS),
+            };
+            if vak_agent::SpendGate::authorize(&gate, &check)
+                .await
+                .is_err()
+            {
+                return reflection::ReflectionOutcome::Skipped { reason: "budget" };
+            }
+        }
+
+        let model = self.effective_model();
+        let proposals =
+            match reflection::propose(provider, &model, &tail, CancellationToken::new()).await {
+                Ok(p) => p,
+                Err(_) => {
+                    return reflection::ReflectionOutcome::Skipped {
+                        reason: "reflect-call-failed",
+                    };
+                }
+            };
+        if proposals.notes.is_empty() && proposals.skill.is_none() {
+            return reflection::ReflectionOutcome::Reflected {
+                notes_added: 0,
+                skills_proposed: false,
+            };
+        }
+        let home = self.sessions_home();
+        match reflection::apply(home.as_path(), self.cwd(), &sid, &proposals) {
+            Ok((notes_added, skills_proposed)) => reflection::ReflectionOutcome::Reflected {
+                notes_added,
+                skills_proposed,
+            },
+            Err(_) => reflection::ReflectionOutcome::Skipped {
+                reason: "apply-failed",
+            },
+        }
+    }
 }
 
 fn load_permissions_local(cwd: &std::path::Path) -> Vec<String> {

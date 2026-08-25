@@ -1234,11 +1234,6 @@ async fn run_prompt(
             .unwrap_or_else(std::sync::PoisonError::into_inner) = CancellationToken::new();
         match outcome {
             Ok((o, session_log)) => {
-                // Return the ledger so transcript stays available.
-                *handle
-                    .session
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session_log);
                 let (summary, is_error) = match &o {
                     vak_agent::TurnOutcome::Completed { .. } => ("completed".to_string(), false),
                     vak_agent::TurnOutcome::Aborted { .. } => ("aborted".to_string(), false),
@@ -1248,6 +1243,23 @@ async fn run_prompt(
                 let _ = handle
                     .events_tx
                     .send(AgentEvent::RunFinished { summary, is_error });
+                // Background reflection seam (docs/design/29 P1): after the
+                // summary is recorded and while this task still owns the
+                // ledger (a second in-process handle cannot take the file
+                // lock). Bounded; the result is deliberately ignored — a
+                // completed run never fails on reflection.
+                if !is_error && core.config().memory.reflection {
+                    let _ = tokio::time::timeout(
+                        REFLECTION_CALL_TIMEOUT,
+                        core.reflect_after_turn(&session_log, ""),
+                    )
+                    .await;
+                }
+                // Return the ledger so transcript stays available.
+                *handle
+                    .session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session_log);
             }
             Err(e) => {
                 let _ = handle.events_tx.send(AgentEvent::RunFinished {
@@ -3864,6 +3876,9 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
 // name a Provider.
 
 const SCRIPT_TIMEOUT_MS: u64 = 120_000;
+/// Upper bound on one background reflection pass (docs/design/29 P1) so a
+/// stuck auxiliary stream cannot pin a session handle indefinitely.
+const REFLECTION_CALL_TIMEOUT: Duration = Duration::from_secs(120);
 /// Fallback delivery surface for error alerts when a watchdog has no
 /// `deliver_to`: failures are never silent.
 const FALLBACK_ALERT_TARGET: &str = "log:vakcoder";

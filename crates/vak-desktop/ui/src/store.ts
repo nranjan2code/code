@@ -152,6 +152,9 @@ export type SettingsPageId =
   | "advanced"
   | "archived";
 export const [pendingSettingsPage, setPendingSettingsPage] = createSignal<SettingsPageId | null>(null);
+// Read-only historical transcript viewer (docs/design/29): any session by id,
+// served from disk — no attach, no stream, never touches live view state.
+export const [transcriptViewId, setTranscriptViewId] = createSignal<string | null>(null);
 // Time-travel (checkpoints) modal.
 export const [historyOpen, setHistoryOpen] = createSignal(false);
 // Dispatch-forensics (receipts) modal.
@@ -261,8 +264,11 @@ function blocksToItems(blocks: ContentBlock[], keyBase: string): Item[] {
   return out;
 }
 
-/** Rebuild a session view from the persisted ledger. */
-export function hydrateFromTranscript(id: string, messages: Message[]) {
+/**
+ * Rebuild chat items from a persisted ledger without writing any store
+ * state. Shared by live hydration and the read-only transcript viewer.
+ */
+export function transcriptToItems(id: string, messages: Message[]): Item[] {
   const next: Item[] = [];
   let assistantSeq = 0;
 
@@ -317,7 +323,12 @@ export function hydrateFromTranscript(id: string, messages: Message[]) {
       next[i] = { ...it, resolved: "gone" };
     }
   }
-  setItemsBySession(id, next);
+  return next;
+}
+
+/** Rebuild a session view from the persisted ledger. */
+export function hydrateFromTranscript(id: string, messages: Message[]) {
+  setItemsBySession(id, transcriptToItems(id, messages));
 }
 
 // ---- live event application ------------------------------------------------

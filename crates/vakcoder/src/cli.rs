@@ -172,21 +172,23 @@ pub(crate) enum BackupAction {
 pub(crate) enum TasksAction {
     /// List tasks with schedule and next-fire preview
     List,
-    /// Add a task (prompt XOR script; interval XOR cron)
+    /// Add a task, or expand a built-in preset (prompt XOR script;
+    /// interval XOR cron)
     Add {
-        #[arg(long)]
-        name: String,
+        /// Task name (with --preset: overrides the preset's default name)
+        #[arg(long, required_unless_present = "preset")]
+        name: Option<String>,
         /// Prompt dispatched to the model on each run
-        #[arg(long)]
+        #[arg(long, conflicts_with = "preset")]
         prompt: Option<String>,
         /// Watchdog shell one-liner (zero tokens while stdout stays empty)
-        #[arg(long)]
+        #[arg(long, conflicts_with = "preset")]
         script: Option<String>,
         /// Seconds between runs (default 3600 when no cron given)
-        #[arg(long)]
+        #[arg(long, conflicts_with = "preset")]
         every: Option<u64>,
         /// 5-field cron expression (`m h dom mon dow`, local time)
-        #[arg(long)]
+        #[arg(long, conflicts_with = "preset")]
         cron: Option<String>,
         /// Working directory for runs (default: this directory)
         #[arg(long)]
@@ -197,6 +199,10 @@ pub(crate) enum TasksAction {
         /// Pin this task to a model id (never escalates)
         #[arg(long)]
         model: Option<String>,
+        /// Expand a built-in preset: weekly-digest (Mondays 09:00,
+        /// runs `digest --days 7` via this binary)
+        #[arg(long)]
+        preset: Option<String>,
     },
     /// Remove a task by id
     Remove { id: String },
@@ -426,7 +432,7 @@ mod tests {
                         ..
                     },
             } => {
-                assert_eq!(name, "nightly");
+                assert_eq!(name.as_deref(), Some("nightly"));
                 assert_eq!(prompt.as_deref(), Some("tidy"));
                 assert_eq!(script, None);
                 assert_eq!(every, None);
@@ -436,6 +442,61 @@ mod tests {
             }
             other => panic!("unexpected: {other:?}"),
         }
+    }
+
+    #[test]
+    fn tasks_add_preset_parses_without_name_or_content_flags() {
+        match parse(&["tasks", "add", "--preset", "weekly-digest"]) {
+            Command::Tasks {
+                action:
+                    TasksAction::Add {
+                        name,
+                        prompt,
+                        script,
+                        every,
+                        cron,
+                        deliver,
+                        model,
+                        preset,
+                        ..
+                    },
+            } => {
+                assert_eq!(preset.as_deref(), Some("weekly-digest"));
+                assert_eq!(name, None);
+                assert_eq!(prompt, None);
+                assert_eq!(script, None);
+                assert_eq!(every, None);
+                assert_eq!(cron, None);
+                assert_eq!(deliver, None);
+                assert_eq!(model, None);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tasks_add_preset_conflicts_are_clap_errors() {
+        for extra in [
+            vec!["--prompt", "tidy"],
+            vec!["--script", "echo tick"],
+            vec!["--cron", "0 9 * * 1"],
+            vec!["--every", "60"],
+        ] {
+            let args: Vec<&str> = ["tasks", "add", "--preset", "weekly-digest"]
+                .into_iter()
+                .chain(extra.iter().copied())
+                .collect();
+            let err = Cli::try_parse_from(std::iter::once("vakcoder").chain(args))
+                .expect_err("preset must reject conflicting flag");
+            assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+        }
+    }
+
+    #[test]
+    fn tasks_add_requires_name_without_preset() {
+        let err = Cli::try_parse_from(["vakcoder", "tasks", "add"])
+            .expect_err("--name is required without --preset");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }
 
     #[test]

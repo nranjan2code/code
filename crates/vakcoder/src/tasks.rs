@@ -38,26 +38,55 @@ pub fn run_tasks(cwd: PathBuf, action: crate::cli::TasksAction) -> i32 {
             cwd: task_cwd,
             deliver,
             model,
+            preset,
         } => {
             let task_dir = task_cwd.unwrap_or_else(|| cwd.clone());
-            match build_task_def(
-                &name,
-                prompt.as_deref(),
-                script.as_deref(),
-                every,
-                cron.as_deref(),
-                &task_dir,
-                deliver.as_deref(),
-                model.as_deref(),
-            ) {
+            let built = match preset.as_deref() {
+                None => build_task_def(
+                    name.as_deref().unwrap_or_default(),
+                    prompt.as_deref(),
+                    script.as_deref(),
+                    every,
+                    cron.as_deref(),
+                    &task_dir,
+                    deliver.as_deref(),
+                    model.as_deref(),
+                ),
+                Some(preset_name) => expand_preset(preset_name, deliver.as_deref()).and_then(|x| {
+                    // clap rejects the content/schedule flags with
+                    // --preset; an explicit --name may rename the task.
+                    let task_name = name
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or(x.default_name);
+                    build_task_def(
+                        task_name,
+                        None,
+                        Some(&x.script),
+                        None,
+                        Some(x.schedule),
+                        &task_dir,
+                        Some(&x.deliver_to),
+                        model.as_deref(),
+                    )
+                }),
+            };
+            match built {
                 Ok(task) => {
                     if let Err(e) = task.validate() {
                         eprintln!("error: {e}");
                         return 2;
                     }
                     let id = task.id.clone();
-                    store.put(task);
-                    save_and_report(&mut store, || println!("added task {id}"))
+                    store.put(task.clone());
+                    save_and_report(&mut store, || {
+                        println!("added task {id} · {}", add_detail(&task));
+                        println!(
+                            "      next fire {}",
+                            next_fire_preview(&task, chrono::Local::now())
+                        );
+                    })
                 }
                 Err(msg) => {
                     eprintln!("error: {msg}");
@@ -170,6 +199,78 @@ fn timestamp_id() -> String {
         .to_string()
 }
 
+/// A built-in `tasks add --preset` expansion (docs/design/29-personal-os.md
+/// P2/P3). Script presets only: each runs this binary as a shell one-liner,
+/// so adding a preset must never require new prompt semantics.
+struct TaskPreset {
+    name: &'static str,
+    /// Argument vector appended after the current executable.
+    args: &'static [&'static str],
+    schedule: &'static str,
+    deliver_default: &'static str,
+}
+
+const TASK_PRESETS: &[TaskPreset] = &[TaskPreset {
+    name: "weekly-digest",
+    args: &["digest", "--days", "7"],
+    schedule: "0 9 * * 1",
+    deliver_default: "log:vakcoder",
+}];
+
+#[derive(Debug)]
+pub(crate) struct PresetExpansion {
+    pub default_name: &'static str,
+    pub script: String,
+    pub schedule: &'static str,
+    pub deliver_to: String,
+}
+
+/// Expand a preset, resolving the running binary so the task invokes this
+/// exact build even after upgrades move it.
+pub(crate) fn expand_preset(
+    preset: &str,
+    deliver: Option<&str>,
+) -> Result<PresetExpansion, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("resolve current executable: {e}"))?;
+    expand_preset_with(preset, &exe, deliver)
+}
+
+fn expand_preset_with(
+    preset: &str,
+    exe: &Path,
+    deliver: Option<&str>,
+) -> Result<PresetExpansion, String> {
+    let known = TASK_PRESETS
+        .iter()
+        .find(|p| p.name == preset)
+        .ok_or_else(|| {
+            format!(
+                "unknown preset '{preset}' (known: {})",
+                TASK_PRESETS
+                    .iter()
+                    .map(|p| p.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?;
+    Ok(PresetExpansion {
+        default_name: known.name,
+        script: format!("{} {}", shell_quote(exe), known.args.join(" ")),
+        schedule: known.schedule,
+        deliver_to: deliver
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| known.deliver_default.to_string()),
+    })
+}
+
+/// POSIX single-quote wrapper; embedded quotes become the `'\''` idiom.
+fn shell_quote(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    format!("'{}'", raw.replace('\'', "'\\''"))
+}
+
 fn list(store: &TaskStore) {
     let tasks = store.all();
     if tasks.is_empty() {
@@ -216,6 +317,15 @@ fn next_fire_preview(task: &TaskDef, now: chrono::DateTime<chrono::Local>) -> St
         Ok(next) => next.format("%Y-%m-%d %H:%M (%a)").to_string(),
         Err(reason) => format!("invalid: {reason}"),
     }
+}
+
+/// One-line expanded definition shown after every successful add.
+fn add_detail(t: &TaskDef) -> String {
+    let schedule = match &t.schedule {
+        Some(expr) => format!("schedule {expr}"),
+        None => format!("every {}s", t.interval_secs),
+    };
+    format!("{schedule} · {}", kind_line(t))
 }
 
 fn kind_line(t: &TaskDef) -> String {
@@ -436,5 +546,95 @@ mod tests {
         list(&store);
         let empty = TaskStore::load(dir.path()).unwrap();
         list(&empty);
+    }
+
+    fn weekly_digest_task(exe: &Path) -> TaskDef {
+        let x = expand_preset_with("weekly-digest", exe, None).unwrap();
+        build_task_def(
+            x.default_name,
+            None,
+            Some(&x.script),
+            None,
+            Some(x.schedule),
+            Path::new("/w"),
+            Some(&x.deliver_to),
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn weekly_digest_preset_expands_fully() {
+        let task = weekly_digest_task(Path::new("/opt/bin/vakcoder"));
+        assert_eq!(task.name, "weekly-digest");
+        assert_eq!(task.schedule.as_deref(), Some("0 9 * * 1"));
+        assert_eq!(task.deliver_to.as_deref(), Some("log:vakcoder"));
+        assert_eq!(
+            task.script.as_deref(),
+            Some("'/opt/bin/vakcoder' digest --days 7")
+        );
+        assert!(task.prompt.is_empty());
+        assert!(task.model_pin.is_none());
+        assert!(task.validate().is_ok());
+    }
+
+    #[test]
+    fn preset_deliver_override_wins_over_default() {
+        let x =
+            expand_preset_with("weekly-digest", Path::new("/v"), Some(" telegram:42 ")).unwrap();
+        assert_eq!(x.deliver_to, "telegram:42");
+    }
+
+    #[test]
+    fn unknown_preset_lists_known_names() {
+        let err = expand_preset_with("inbox-zero", Path::new("/v"), None).unwrap_err();
+        assert!(err.contains("unknown preset 'inbox-zero'"), "{err}");
+        assert!(err.contains("weekly-digest"), "{err}");
+    }
+
+    #[test]
+    fn exe_quoting_survives_spaces_and_quotes() {
+        assert_eq!(shell_quote(Path::new("/app dir/vak")), "'/app dir/vak'");
+        assert_eq!(shell_quote(Path::new("/o'mal/vak")), "'/o'\\''mal/vak'");
+    }
+
+    #[test]
+    fn expanded_preset_roundtrips_through_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut task = weekly_digest_task(Path::new("/opt/bin/vakcoder"));
+        task.id = "preset-rt".into();
+        let mut store = TaskStore::load(dir.path()).unwrap();
+        store.put(task.clone());
+        store.save().unwrap();
+        let reloaded = TaskStore::load(dir.path())
+            .unwrap()
+            .get("preset-rt")
+            .cloned();
+        let same = reloaded.as_ref().is_some_and(|t| {
+            t.name == task.name
+                && t.script == task.script
+                && t.schedule == task.schedule
+                && t.deliver_to == task.deliver_to
+                && t.prompt == task.prompt
+                && t.model_pin == task.model_pin
+                && t.enabled == task.enabled
+        });
+        assert!(same, "roundtrip lost fields: {reloaded:?}");
+    }
+
+    #[test]
+    fn weekly_digest_next_fire_lands_on_monday() {
+        let task = weekly_digest_task(Path::new("/opt/bin/vakcoder"));
+        let preview = next_fire_preview(&task, chrono::Local::now());
+        assert!(preview.ends_with("(Mon)"), "{preview}");
+    }
+
+    #[test]
+    fn add_detail_includes_schedule_script_and_delivery() {
+        let task = weekly_digest_task(Path::new("/opt/bin/vakcoder"));
+        let detail = add_detail(&task);
+        assert!(detail.contains("schedule 0 9 * * 1"), "{detail}");
+        assert!(detail.contains("digest --days 7"), "{detail}");
+        assert!(detail.contains("deliver log:vakcoder"), "{detail}");
     }
 }

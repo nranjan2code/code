@@ -4,6 +4,7 @@ import {
   backend,
   isRunning,
   sessions,
+  setTranscriptViewId,
   setShowShortcuts,
   setSidebarOpen,
   setNotice,
@@ -14,21 +15,12 @@ import {
 import { activate, newSession, refreshSessions, switchProject } from "../App";
 import * as api from "../api";
 import type { SessionSummary } from "../types";
+import { relTime } from "../time";
 import Icon from "./Icon";
 
 type Filter = "all" | "archived";
 
 type WorkspaceGroup = { cwd: string; name: string; sessions: SessionSummary[] };
-
-function timeLabel(iso?: string | null): string {
-  if (!iso) return "";
-  const date = new Date(iso);
-  const seconds = (Date.now() - date.getTime()) / 1000;
-  if (seconds < 60) return "now";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
 
 export default function Sidebar() {
   const [filter, setFilter] = createSignal<Filter>("all");
@@ -171,10 +163,13 @@ export default function Sidebar() {
                           </Show>
                         </span>
                       </span>
+                      <span role="button" class="sb-view has-tooltip" data-tooltip="Read-only history" aria-label={`View transcript of ${session.title || "untitled task"}`} onClick={(e) => { e.stopPropagation(); setTranscriptViewId(session.session_id); }}>
+                        <Icon name="history" size={13} />
+                      </span>
                       <span role="button" class="sb-archive has-tooltip" data-tooltip={session.archived ? "Restore task" : "Archive task"} aria-label={session.archived ? "Restore task" : "Archive task"} onClick={(e) => { e.stopPropagation(); void toggleArchive(session, !session.archived); }}>
                         <Icon name={session.archived ? "restore" : "archive"} size={13} />
                       </span>
-                      <span class="sb-time">{timeLabel(session.updated_at)}</span>
+                      <span class="sb-time">{relTime(session.updated_at)}</span>
                     </button>
                   )}
                 </For>

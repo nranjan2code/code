@@ -19,6 +19,78 @@ pub const MAX_NOTES_PER_RUN: usize = 2;
 const DEDUP_THRESHOLD: f32 = 0.55;
 /// Transcript tail fed to the reflector, in messages.
 const TAIL_MESSAGES: usize = 24;
+/// Completion budget reserved for the auxiliary call (also the planning
+/// figure handed to budget admission before dispatch).
+pub const MAX_TOKENS: u32 = 700;
+
+/// Result envelope of a background reflection pass. Serializable and cheap
+/// to log; every non-happy path collapses into `Skipped` so callers never
+/// have to handle reflection errors.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum ReflectionOutcome {
+    Reflected {
+        notes_added: usize,
+        skills_proposed: bool,
+    },
+    Skipped {
+        reason: &'static str,
+    },
+}
+
+/// Process-wide marker so concurrent turns over the same session tail do
+/// not double-dispatch the reflector (and double-write near-identical
+/// notes). Keyed by session id; spans every surface sharing the process.
+static REFLECTIONS_IN_FLIGHT: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashSet<String>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+/// Holds one session id in [`REFLECTIONS_IN_FLIGHT`] until dropped.
+pub(crate) struct InFlightGuard(String);
+
+impl InFlightGuard {
+    /// Mark `session_id` as being reflected; None when a pass is already
+    /// running for that tail.
+    pub(crate) fn acquire(session_id: &str) -> Option<InFlightGuard> {
+        let mut set = (*REFLECTIONS_IN_FLIGHT)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !set.insert(session_id.to_string()) {
+            return None;
+        }
+        Some(InFlightGuard(session_id.to_string()))
+    }
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        let mut set = (*REFLECTIONS_IN_FLIGHT)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        set.remove(&self.0);
+    }
+}
+
+/// Render one transcript message the way the reflector reads history:
+/// `{role}: {text}` per line over text/thinking blocks only — tool plumbing
+/// is noise for durable-knowledge extraction. Mirrors the gateway's JSONL
+/// flattening byte-for-byte.
+pub fn render_message(role: Role, blocks: &[ContentBlock]) -> String {
+    let text = blocks
+        .iter()
+        .filter_map(|b| match b {
+            ContentBlock::Text { text } | ContentBlock::Thinking { text, .. } => {
+                Some(text.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let role = match role {
+        Role::User => "user",
+        Role::Assistant => "assistant",
+    };
+    format!("{role}: {text}\n")
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NoteProposal {
@@ -149,7 +221,9 @@ pub fn parse_proposals(reply: &str) -> Proposals {
     out
 }
 
-fn system_prompt() -> String {
+/// The reflector's system prompt. Public so budget admission can price the
+/// auxiliary dispatch with its real input shape.
+pub fn system_prompt() -> String {
     "You are the reflection stage of a coding agent. Given a recent \
      conversation, decide what is worth persisting across future sessions. \
      Be extremely selective: only durable decisions, facts or preferences — \
@@ -188,7 +262,7 @@ pub async fn propose(
     let mut req = ChatRequest::new(model);
     req.system = Some(system_prompt());
     req.messages = vec![user];
-    req.max_tokens = 700;
+    req.max_tokens = MAX_TOKENS;
 
     let stream = provider
         .stream(req, cancel)

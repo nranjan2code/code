@@ -116,6 +116,10 @@ fn split_goal_spec(spec: &str) -> (String, Vec<String>) {
 /// Armed goal: objective + acceptance criteria (docs/design/27 Phase H).
 type PendingGoal = Arc<std::sync::Mutex<Option<(String, Vec<String>)>>>;
 
+/// Upper bound on one background reflection pass (docs/design/29 P1) so a
+/// stuck auxiliary stream cannot keep the session ledger pinned.
+const REFLECTION_CALL_TIMEOUT: Duration = Duration::from_secs(120);
+
 struct RunCtx {
     core: Core,
     session_slot: Arc<Mutex<Option<SessionLog>>>,
@@ -125,6 +129,8 @@ struct RunCtx {
     /// Goal mode (docs/design/27 Phase H): armed via /goal, consumed by
     /// the next spawned turn.
     pending_goal: PendingGoal,
+    /// Transient status ticks emitted by the post-turn reflection pass.
+    refl_tx: mpsc::UnboundedSender<String>,
 }
 
 impl RunCtx {
@@ -152,58 +158,71 @@ impl RunCtx {
         let cancel = CancellationToken::new();
         *self.cancel.lock().await = cancel.clone();
         let steering = self.steering.clone();
+        let session_slot = self.session_slot.clone();
+        let refl_tx = self.refl_tx.clone();
         tokio::spawn(async move {
-            let outcome = if let Some((objective, criteria)) = goal {
-                match core
-                    .run_goal_turn_with(
-                        taken,
-                        &prompt,
-                        &objective,
-                        criteria,
-                        cancel,
-                        Some(approver),
-                        None,
-                        Some(steering),
-                        ev_tx,
-                    )
-                    .await
-                {
-                    Ok((o, _)) => o,
-                    Err(e) => {
-                        let error = match e {
-                            vak_core::CoreError::Llm(l) => l,
-                            other => vak_llm::LlmError::InvalidRequest(other.to_string()),
-                        };
-                        TurnOutcome::Failed { error }
-                    }
-                }
+            let turned = if let Some((objective, criteria)) = goal {
+                core.run_goal_turn_with(
+                    taken,
+                    &prompt,
+                    &objective,
+                    criteria,
+                    cancel,
+                    Some(approver),
+                    None,
+                    Some(steering),
+                    ev_tx,
+                )
+                .await
             } else {
-                match core
-                    .run_turn_with(
-                        taken,
-                        &prompt,
-                        cancel,
-                        Some(approver),
-                        None,
-                        Some(steering),
-                        ev_tx,
-                    )
-                    .await
-                {
-                    Ok((o, _)) => o,
-                    Err(e) => {
-                        let error = match e {
-                            vak_core::CoreError::Llm(l) => l,
-                            other => vak_llm::LlmError::InvalidRequest(other.to_string()),
-                        };
-                        TurnOutcome::Failed { error }
-                    }
+                core.run_turn_with(
+                    taken,
+                    &prompt,
+                    cancel,
+                    Some(approver),
+                    None,
+                    Some(steering),
+                    ev_tx,
+                )
+                .await
+            };
+            let (outcome, session_log) = match turned {
+                Ok((o, log)) => (o, Some(log)),
+                Err(e) => {
+                    let error = match e {
+                        vak_core::CoreError::Llm(l) => l,
+                        other => vak_llm::LlmError::InvalidRequest(other.to_string()),
+                    };
+                    (TurnOutcome::Failed { error }, None)
                 }
             };
             // Always release the loop back to the editor: an Err outcome must
             // still clear `running`, or every later keystroke would be
             // swallowed as steering input and the TUI could never exit.
+            let completed = matches!(outcome, TurnOutcome::Completed { .. });
             let _ = done_tx.send(outcome).await;
+            // Background reflection seam (docs/design/29 P1): runs only after
+            // the loop was released (input stays live while it works),
+            // bounded so a stuck auxiliary stream cannot pin the ledger.
+            // The slot is restored afterwards on every path so later turns
+            // still work.
+            if let Some(log) = session_log {
+                if completed {
+                    let pass = tokio::time::timeout(
+                        REFLECTION_CALL_TIMEOUT,
+                        core.reflect_after_turn(&log, ""),
+                    )
+                    .await;
+                    if let Ok(vak_core::reflection::ReflectionOutcome::Reflected {
+                        notes_added,
+                        ..
+                    }) = pass
+                    {
+                        let _ = refl_tx.send(format!("✎ memory +{notes_added}"));
+                    }
+                }
+                *session_slot.lock().await = Some(log);
+            }
         });
         Some((ev_rx, done_rx))
     }
@@ -354,6 +373,10 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
         allowed: allowed.clone(),
     });
     let pending_goal: PendingGoal = Arc::new(std::sync::Mutex::new(None));
+    let (refl_tx, mut refl_rx) = mpsc::unbounded_channel::<String>();
+    // Background reflection surfaces here as a transient composer-footer
+    // tick ("✎ memory +N"); expires on its own, never steals focus.
+    let mut refl_tick: Option<(String, std::time::Instant)> = None;
     let ctx = RunCtx {
         core: core.clone(),
         session_slot: session_slot.clone(),
@@ -361,6 +384,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
         approver,
         cancel: cancel.clone(),
         pending_goal: pending_goal.clone(),
+        refl_tx,
     };
 
     screen.set_title(&format!("VakCoder · {}", core.effective_model()));
@@ -449,6 +473,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
             }
         };
         let approval_ev = approval_rx.recv();
+        let refl_ev = refl_rx.recv();
         let tick_delay = if running_now {
             Duration::from_millis(200)
         } else {
@@ -456,6 +481,11 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
         };
 
         tokio::select! {
+            refl = refl_ev => {
+                if let Some(msg) = refl {
+                    refl_tick = Some((msg, std::time::Instant::now()));
+                }
+            }
             maybe_event = input_ev => {
                 match maybe_event {
                     Some(Ok(Event::Key(key))) => {
@@ -2586,6 +2616,14 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
             );
         } else {
             let (buf, cur) = editor.view();
+            if let Some((msg, at)) = refl_tick.as_ref() {
+                if at.elapsed() < std::time::Duration::from_secs(6) {
+                    let footer = format!("{msg} · {}", composer_footer(&editor));
+                    screen.redraw_composer(&composer_label(&ui), buf, cur, &footer);
+                    continue;
+                }
+                refl_tick = None;
+            }
             screen.redraw_composer(&composer_label(&ui), buf, cur, &composer_footer(&editor));
         }
     }
