@@ -51,6 +51,9 @@ pub(crate) fn routes() -> axum::Router<crate::AppState> {
     let mut router = axum::Router::new()
         .route("/admin", get(index))
         .route("/admin/", get(index))
+        // dist/favicon.svg is served by the dynamic loop below at
+        // /admin/favicon.svg; the bare /favicon.svg alias is registered
+        // here since it lives outside that prefix.
         .route("/favicon.svg", get(|| async { serve_file("favicon.svg") }));
 
     for file in ADMIN_UI.files() {

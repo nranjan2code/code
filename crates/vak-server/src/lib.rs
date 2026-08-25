@@ -944,6 +944,7 @@ fn auth_exempt_path(path: &str) -> bool {
         || path == "/admin"
         || path == "/admin/"
         || path == "/admin/login"
+        || path == "/admin/favicon.svg"
         || path.starts_with("/admin/assets/")
         || path == "/favicon.ico"
         || path == "/favicon.svg"
@@ -4148,7 +4149,12 @@ async fn run_task_now(State(state): State<AppState>, Path(id): Path<String>) -> 
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(&id)
-        .map(|t| t.script.as_deref().map(str::trim).is_some_and(|s| !s.is_empty()))
+        .map(|t| {
+            t.script
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|s| !s.is_empty())
+        })
         .unwrap_or(false)
         && state
             .script_inflight
