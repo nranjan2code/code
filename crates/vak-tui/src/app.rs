@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 use vak_agent::{AgentEvent, Approver, SteeringQueues, TurnOutcome};
 use vak_config::PermissionMode;
 use vak_core::Core;
+use vak_core::inbox::{Entry, Kind};
 use vak_llm::stream::StreamEvent;
 use vak_session::SessionLog;
 
@@ -119,6 +120,11 @@ type PendingGoal = Arc<std::sync::Mutex<Option<(String, Vec<String>)>>>;
 /// Upper bound on one background reflection pass (docs/design/29 P1) so a
 /// stuck auxiliary stream cannot keep the session ledger pinned.
 const REFLECTION_CALL_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Cadence for refreshing the cached unread-inbox badge count (personal-os
+/// P6): disk reads stay bounded to one small scan per minute at most, plus
+/// explicit refreshes whenever /inbox itself runs.
+const INBOX_REFRESH_SECS: u64 = 60;
 
 struct RunCtx {
     core: Core,
@@ -443,14 +449,29 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
     // /search result rows aligned with the open search modal's selection.
     let mut search_hits: Vec<SearchHit> = Vec::new();
     let mut search_select: usize = 0;
+    // /inbox entries aligned with the open inbox modal's selection, so Enter
+    // can resolve the highlighted row back to its ledger without re-reading.
+    let mut inbox_hits: Vec<Entry> = Vec::new();
+    let mut inbox_select: usize = 0;
     // /memory forget armed but not yet confirmed (y/n inline prompt).
     let mut confirm_forget: Option<ForgetConfirm> = None;
+    // /inbox ack armed but not yet confirmed (y/n inline prompt).
+    let mut confirm_ack: Option<InboxAck> = None;
+    // Cached unread-inbox count behind the idle ✉ badge; refreshed on
+    // /inbox use and by the idle tick at most every INBOX_REFRESH_SECS.
+    let mut inbox_unread = vak_core::inbox::unread_count(&core.sessions_home());
+    let mut inbox_next_poll = Instant::now() + Duration::from_secs(INBOX_REFRESH_SECS);
     // Mode switch requested while a run was in flight; applied when the run
     // actually stops so the new mode is never reported early (invariant 11).
     let mut deferred_mode: Option<vak_config::PermissionMode> = None;
 
     let (buf, cur) = editor.view();
-    screen.redraw_composer(&composer_label(&ui), buf, cur, &composer_footer(&editor));
+    screen.redraw_composer(
+        &composer_label(&ui, inbox_unread),
+        buf,
+        cur,
+        &composer_footer(&editor),
+    );
 
     loop {
         let running_now = running.is_some();
@@ -477,7 +498,9 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
         let tick_delay = if running_now {
             Duration::from_millis(200)
         } else {
-            Duration::from_secs(3600)
+            // Idle ticks wake early only when the inbox badge cache is due
+            // for its bounded refresh; otherwise they stay hour-scaled.
+            Duration::from_secs(3600).min(inbox_next_poll.saturating_duration_since(Instant::now()))
         };
 
         tokio::select! {
@@ -592,6 +615,45 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                         screen.dim("forget cancelled — note kept");
                                     }
                                     _ => confirm_forget = Some(action),
+                                }
+                            }
+                            continue;
+                        }
+                        // Inline y/n confirm for /inbox ack: same stray-key
+                        // discipline as the forget card.
+                        if !approval_focused && confirm_ack.is_some() {
+                            if let Some(action) = confirm_ack.take() {
+                                match key.code {
+                                    KeyCode::Char('y' | 'Y') => {
+                                        match vak_core::inbox::ack(
+                                            &core.sessions_home(),
+                                            &action.id,
+                                        ) {
+                                            Ok(true) => {
+                                                inbox_unread =
+                                                    vak_core::inbox::unread_count(
+                                                        &core.sessions_home(),
+                                                    );
+                                                inbox_next_poll = Instant::now()
+                                                    + Duration::from_secs(INBOX_REFRESH_SECS);
+                                                refl_tick = Some((
+                                                    format!(
+                                                        "✓ acked {}",
+                                                        short_hex(&action.id)
+                                                    ),
+                                                    Instant::now(),
+                                                ));
+                                            }
+                                            Ok(false) => screen.dim("already acked"),
+                                            Err(e) => {
+                                                screen.error(&format!("ack failed: {e}"))
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Char('n' | 'N' | 'q' | 'Q') | KeyCode::Esc => {
+                                        screen.dim("ack cancelled — entry left unread");
+                                    }
+                                    _ => confirm_ack = Some(action),
                                 }
                             }
                             continue;
@@ -793,6 +855,29 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                 (search_select + 1).saturating_sub(page);
                                         }
                                     }
+                                    KeyCode::Up | KeyCode::Down | KeyCode::Enter
+                                        if !inbox_hits.is_empty()
+                                            && active.title == "inbox" =>
+                                    {
+                                        let last = inbox_hits.len().saturating_sub(1);
+                                        match key.code {
+                                            KeyCode::Up => {
+                                                inbox_select = inbox_select.saturating_sub(1);
+                                            }
+                                            KeyCode::Down => {
+                                                inbox_select = (inbox_select + 1).min(last);
+                                            }
+                                            _ => modal_action = Some('i'),
+                                        }
+                                        active.selected = Some(inbox_select);
+                                        // Keep the highlighted hit inside the viewport.
+                                        if inbox_select < active.scroll {
+                                            active.scroll = inbox_select;
+                                        } else if inbox_select >= active.scroll + page {
+                                            active.scroll =
+                                                (inbox_select + 1).saturating_sub(page);
+                                        }
+                                    }
                                     KeyCode::Up => active.scroll = active.scroll.saturating_sub(1),
                                     KeyCode::Down => {
                                         active.scroll = (active.scroll + 1).min(max_scroll);
@@ -813,8 +898,45 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                 modal = None;
                                 transcript_search = None;
                                 search_hits.clear();
+                                inbox_hits.clear();
                             }
                             match modal_action {
+                                Some('i') => {
+                                    let entry = inbox_hits.get(inbox_select).cloned();
+                                    inbox_hits.clear();
+                                    if let Some(entry) = entry {
+                                        let linked =
+                                            entry.session_id.filter(|s| !s.is_empty());
+                                        match linked {
+                                            None => screen.dim(
+                                                "this entry has no linked session",
+                                            ),
+                                            Some(sid) => {
+                                                match locate_session_dir(
+                                                    &core.sessions_home(),
+                                                    core.cwd(),
+                                                    &sid,
+                                                )
+                                                .ok_or_else(|| {
+                                                    format!("session {sid} not found on disk")
+                                                })
+                                                .and_then(|dir| {
+                                                    session_transcript_modal(
+                                                        &dir,
+                                                        &sid,
+                                                        "opened read-only from inbox",
+                                                    )
+                                                }) {
+                                                    Ok(m) => modal = Some(m),
+                                                    Err(e) => screen.error(&format!(
+                                                        "cannot open {} · {e}",
+                                                        short_hex(&sid)
+                                                    )),
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 Some('o') => {
                                     let hit = search_hits.get(search_select).cloned();
                                     search_hits.clear();
@@ -894,7 +1016,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                             } else {
                                 let (buf, cur) = editor.view();
                                 screen.redraw_composer(
-                                    &composer_label(&ui),
+                                    &composer_label(&ui, inbox_unread),
                                     buf,
                                     cur,
                                     &composer_footer(&editor),
@@ -1036,7 +1158,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                             } else {
                                 let (buf, cur) = editor.view();
                                 screen.redraw_composer(
-                                    &composer_label(&ui),
+                                    &composer_label(&ui, inbox_unread),
                                     buf,
                                     cur,
                                     &composer_footer(&editor),
@@ -1099,7 +1221,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                             } else {
                                 let (buf, cur) = editor.view();
                                 screen.redraw_composer(
-                                    &composer_label(&ui),
+                                    &composer_label(&ui, inbox_unread),
                                     buf,
                                     cur,
                                     &composer_footer(&editor),
@@ -1136,7 +1258,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                 );
                             } else {
                                 screen.redraw_composer(
-                                    &composer_label(&ui),
+                                    &composer_label(&ui, inbox_unread),
                                     buf,
                                     cur,
                                     &composer_footer(&editor),
@@ -1930,7 +2052,101 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                         }
                                                     }
                                                 }
-                                                Some(Command::Mcp) => {
+                                                Some(Command::Inbox(arg)) => {
+                                                    // Any /inbox touch refreshes the
+                                                    // badge cache immediately.
+                                                    let home = core.sessions_home();
+                                                    inbox_unread =
+                                                        vak_core::inbox::unread_count(&home);
+                                                    inbox_next_poll = Instant::now()
+                                                        + Duration::from_secs(
+                                                            INBOX_REFRESH_SECS,
+                                                        );
+                                                    match InboxAction::parse(arg.as_deref()) {
+                                                        Err(usage) => screen.error(&usage),
+                                                        Ok(InboxAction::List { all }) => {
+                                                            let entries = if all {
+                                                                vak_core::inbox::list(
+                                                                    &home,
+                                                                    vak_core::inbox::MAX_SCAN,
+                                                                )
+                                                            } else {
+                                                                vak_core::inbox::unread(&home)
+                                                            };
+                                                            let total = if all {
+                                                                entries.len()
+                                                            } else {
+                                                                vak_core::inbox::list(
+                                                                    &home,
+                                                                    vak_core::inbox::MAX_SCAN,
+                                                                )
+                                                                .len()
+                                                            };
+                                                            let rows = if entries.is_empty()
+                                                                && total == 0
+                                                            {
+                                                                vec![
+                                                                    "no inbox entries yet".into(),
+                                                                    "gateway pushes, task summaries, and budget alerts land here".into(),
+                                                                    "/inbox ack <id8> marks an entry read".into(),
+                                                                ]
+                                                            } else if entries.is_empty() {
+                                                                vec![
+                                                                    "no unread entries".into(),
+                                                                    format!(
+                                                                        "{total} already read — /inbox all shows them"
+                                                                    ),
+                                                                ]
+                                                            } else {
+                                                                inbox_rows(&entries, &ui_theme)
+                                                            };
+                                                            inbox_select = 0;
+                                                            inbox_hits = entries;
+                                                            modal = Some(ModalView {
+                                                                title: "inbox".to_string(),
+                                                                rows,
+                                                                scroll: 0,
+                                                                footer: format!(
+                                                                    "{} unread of {} · ↑↓ select · Enter opens linked session · /inbox ack <id8>",
+                                                                    inbox_unread, total
+                                                                ),
+                                                                selected: (!inbox_hits.is_empty())
+                                                                    .then_some(0),
+                                                                ..Default::default()
+                                                            });
+                                                        }
+                                                        Ok(InboxAction::Ack(given)) => {
+                                                            // Unread entries resolve
+                                                            // first; the full ledger
+                                                            // is the fallback tier.
+                                                            let unread_list =
+                                                                vak_core::inbox::unread(&home);
+                                                            let all_list = vak_core::inbox::list(
+                                                                &home,
+                                                                vak_core::inbox::MAX_SCAN,
+                                                            );
+                                                            match resolve_entry(
+                                                                &unread_list,
+                                                                &all_list,
+                                                                &given,
+                                                            ) {
+                                                                Err(e) => {
+                                                                    screen.error(&e.to_string())
+                                                                }
+                                                                Ok(entry) => {
+                                                                    confirm_ack = Some(InboxAck {
+                                                                        id: entry.id.clone(),
+                                                                        preview: inbox_title(
+                                                                            &entry.title,
+                                                                            80,
+                                                                        ),
+                                                                    });
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                 Some(Command::Mcp) => {
                                                     let mut rows: Vec<String> = Vec::new();
                                                     let servers = &core.config().mcp.servers;
                                                     if servers.is_empty() {
@@ -2363,7 +2579,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                         } else if picker.is_none() {
                                             let (buf, cur) = editor.view();
                                             screen.redraw_composer(
-                                                &composer_label(&ui),
+                                                &composer_label(&ui, inbox_unread),
                                                 buf,
                                                 cur,
                                                 &composer_footer(&editor),
@@ -2382,7 +2598,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                         .await;
                                         let (buf, cur) = editor.view();
                                         screen.redraw_composer(
-                                            &composer_label(&ui),
+                                            &composer_label(&ui, inbox_unread),
                                             buf,
                                             cur,
                                             &composer_footer(&editor),
@@ -2565,6 +2781,10 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
             }
             _ = tokio::time::sleep(tick_delay) => {
                 tick_count += 1;
+                if Instant::now() >= inbox_next_poll {
+                    inbox_unread = vak_core::inbox::unread_count(&core.sessions_home());
+                    inbox_next_poll = Instant::now() + Duration::from_secs(INBOX_REFRESH_SECS);
+                }
             }
         }
 
@@ -2572,6 +2792,8 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
             draw_approval(&mut screen, &ui_theme, front);
         } else if let Some(req) = confirm_forget.as_ref() {
             draw_confirm(&mut screen, &ui_theme, req);
+        } else if let Some(req) = confirm_ack.as_ref() {
+            draw_ack_confirm(&mut screen, &ui_theme, req);
         } else if running.is_some() {
             let elapsed = run_started.map(|t| t.elapsed().as_secs()).unwrap_or(0);
             let budget = core
@@ -2619,12 +2841,17 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
             if let Some((msg, at)) = refl_tick.as_ref() {
                 if at.elapsed() < std::time::Duration::from_secs(6) {
                     let footer = format!("{msg} · {}", composer_footer(&editor));
-                    screen.redraw_composer(&composer_label(&ui), buf, cur, &footer);
+                    screen.redraw_composer(&composer_label(&ui, inbox_unread), buf, cur, &footer);
                     continue;
                 }
                 refl_tick = None;
             }
-            screen.redraw_composer(&composer_label(&ui), buf, cur, &composer_footer(&editor));
+            screen.redraw_composer(
+                &composer_label(&ui, inbox_unread),
+                buf,
+                cur,
+                &composer_footer(&editor),
+            );
         }
     }
 
@@ -3729,6 +3956,199 @@ fn report(screen: &mut Screen, label: &str, result: &Result<String, String>, fai
 
 // ---- personal-os surfaces (docs/design/29-personal-os.md) ------------------
 
+/// Idle status-row unread marker (P6): `· ✉ N` appended to the composer
+/// label — the quiet twin of the live row's budget marker. Empty while
+/// nothing awaits attention so the row stays clean at zero.
+pub fn inbox_badge(unread: usize) -> String {
+    if unread == 0 {
+        String::new()
+    } else {
+        format!(" · ✉ {unread}")
+    }
+}
+
+const INBOX_TITLE_CELLS: usize = 48;
+
+/// Titles collapse whitespace and clip to a cell budget (CLI parity).
+fn inbox_title(title: &str, max: usize) -> String {
+    let flat = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    trunc_cells(&flat, max)
+}
+
+/// Short display chip per notification kind; labels match `vakcoder inbox`.
+fn kind_chip(kind: Kind) -> &'static str {
+    match kind {
+        Kind::TaskSummary => "task",
+        Kind::ApprovalPending => "approval",
+        Kind::ApprovalDenied => "denied",
+        Kind::BudgetAlert => "budget",
+        Kind::Digest => "digest",
+        Kind::Heartbeat => "beat",
+        Kind::ProposalOpened => "proposal",
+    }
+}
+
+/// Theme slot per kind — approvals and budget alerts warn, denials error,
+/// digests succeed, the rest take their house accent/dim/code slots.
+fn kind_color(kind: Kind, theme: &Theme) -> Color {
+    match kind {
+        Kind::TaskSummary => theme.accent,
+        Kind::ApprovalPending => theme.warning,
+        Kind::ApprovalDenied => theme.error,
+        Kind::BudgetAlert => theme.warning,
+        Kind::Digest => theme.success,
+        Kind::Heartbeat => theme.dim,
+        Kind::ProposalOpened => theme.code,
+    }
+}
+
+/// One `/inbox` table row: rel-ts · colored kind chip · clipped title · id8.
+/// The chip embeds its SGR like the budget marker does; the base heading
+/// color is restored after so the rest of the row renders uniformly.
+fn inbox_row(entry: &Entry, theme: &Theme) -> String {
+    format!(
+        "{} · {}{}{} · {} · {}",
+        rel_time(entry.ts),
+        theme::fg(kind_color(entry.kind, theme)),
+        kind_chip(entry.kind),
+        theme::fg(theme.heading),
+        inbox_title(&entry.title, INBOX_TITLE_CELLS),
+        short_hex(&entry.id),
+    )
+}
+
+fn inbox_rows(entries: &[Entry], theme: &Theme) -> Vec<String> {
+    entries.iter().map(|e| inbox_row(e, theme)).collect()
+}
+
+/// Parsed `/inbox [all|ack <id>]` payload. Err carries the usage line.
+enum InboxAction {
+    List { all: bool },
+    Ack(String),
+}
+
+impl InboxAction {
+    /// Bare/blank lists unread; `all` includes acked entries;
+    /// `ack <id8-prefix>` arms the inline confirm.
+    fn parse(arg: Option<&str>) -> Result<Self, String> {
+        const USAGE: &str = "usage: /inbox [all|ack <id8-prefix>]";
+        let Some(arg) = arg.map(str::trim).filter(|a| !a.is_empty()) else {
+            return Ok(Self::List { all: false });
+        };
+        let mut tokens = arg.splitn(2, char::is_whitespace);
+        match tokens.next().unwrap_or("") {
+            "all" => Ok(Self::List { all: true }),
+            "ack" | "done" | "read" => {
+                let id = tokens.next().map(str::trim).unwrap_or("");
+                if id.is_empty() {
+                    Err(USAGE.to_string())
+                } else {
+                    Ok(Self::Ack(id.to_string()))
+                }
+            }
+            _ => Err(USAGE.to_string()),
+        }
+    }
+}
+
+/// Why a `/inbox ack <prefix>` id could not be resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InboxMatchError {
+    NotFound(String),
+    Ambiguous(String),
+}
+
+impl std::fmt::Display for InboxMatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(given) => write!(f, "no inbox entry matches '{given}'"),
+            Self::Ambiguous(given) => {
+                write!(
+                    f,
+                    "'{given}' matches several inbox entries — use more of the id"
+                )
+            }
+        }
+    }
+}
+
+/// Resolve a user-supplied entry id (full 16-hex or unique prefix) against
+/// UNREAD entries first, then the whole ledger; an exact full-id hit wins
+/// over any prefix set. Uniqueness is judged per tier, so one unread entry
+/// shadows acked entries sharing its prefix.
+pub fn resolve_entry<'a>(
+    unread: &'a [Entry],
+    all: &'a [Entry],
+    given: &str,
+) -> Result<&'a Entry, InboxMatchError> {
+    enum Tier {
+        NotFound,
+        Ambiguous,
+    }
+    fn tier<'a>(entries: &'a [Entry], given: &str) -> Result<&'a Entry, Tier> {
+        if let Some(e) = entries.iter().find(|e| e.id == given) {
+            return Ok(e);
+        }
+        let hits: Vec<&Entry> = entries.iter().filter(|e| e.id.starts_with(given)).collect();
+        match hits.as_slice() {
+            [one] => Ok(one),
+            [] => Err(Tier::NotFound),
+            _ => Err(Tier::Ambiguous),
+        }
+    }
+    match tier(unread, given) {
+        Ok(e) => Ok(e),
+        Err(Tier::Ambiguous) => Err(InboxMatchError::Ambiguous(given.to_string())),
+        Err(Tier::NotFound) => tier(all, given).map_err(|t| match t {
+            Tier::NotFound => InboxMatchError::NotFound(given.to_string()),
+            Tier::Ambiguous => InboxMatchError::Ambiguous(given.to_string()),
+        }),
+    }
+}
+
+/// An `/inbox ack <prefix>` armed by the command, awaiting y/n.
+struct InboxAck {
+    id: String,
+    preview: String,
+}
+
+/// Inline confirm card for marking an inbox entry read — same shape as the
+/// forget card so destructive-op interactions read identically.
+fn draw_ack_confirm(screen: &mut Screen, theme: &Theme, req: &InboxAck) {
+    let styled = |text: String, color: Color| {
+        format!("{}{text}{}", theme::fg(color), theme::fg(Color::Reset))
+    };
+    let lines = vec![
+        styled(
+            format!("╭─ confirm ack · {}", short_hex(&req.id)),
+            theme.warning,
+        ),
+        styled(format!("│ {}", req.preview), theme.dim),
+        styled("╰─ y mark read · n/Esc keep unread".to_string(), theme.dim),
+    ];
+    screen.redraw_block(&lines);
+}
+
+/// Finds the project directory holding `<session_id>.jsonl`: the active
+/// workspace's dir first, then any other project under `<home>/sessions`.
+fn locate_session_dir(
+    home: &std::path::Path,
+    cwd: &std::path::Path,
+    session_id: &str,
+) -> Option<PathBuf> {
+    let name = format!("{session_id}.jsonl");
+    let primary = vak_session::SessionPath::sessions_dir(home, cwd);
+    if primary.join(&name).exists() {
+        return Some(primary);
+    }
+    for dir in std::fs::read_dir(home.join("sessions")).ok()?.flatten() {
+        if dir.file_type().is_ok_and(|t| t.is_dir()) && dir.path().join(&name).exists() {
+            return Some(dir.path());
+        }
+    }
+    None
+}
+
 /// One `/search` result; kept beside the open modal so Enter can resolve the
 /// highlighted hit back to its ledger without re-searching.
 #[derive(Clone)]
@@ -3845,20 +4265,23 @@ fn session_view_modal(
     } else {
         home.join("sessions").join(&hit.project_hash)
     };
-    let path = dir.join(format!("{}.jsonl", hit.session_id));
+    session_transcript_modal(&dir, &hit.session_id, "opened read-only from search")
+}
+
+/// Read-only transcript over any project dir's `<session_id>.jsonl`.
+fn session_transcript_modal(
+    dir: &std::path::Path,
+    session_id: &str,
+    origin: &str,
+) -> Result<ModalView, String> {
+    let path = dir.join(format!("{session_id}.jsonl"));
     let log = SessionLog::open(path).map_err(|e| e.to_string())?;
     let msgs = log.derive_messages();
     let start = msgs.len().saturating_sub(200);
     let (mut rows, anchors) = build_transcript_rows(&msgs, start);
-    rows.insert(
-        0,
-        format!(
-            "{} messages · opened read-only from search",
-            msgs.len() - start
-        ),
-    );
+    rows.insert(0, format!("{} messages · {origin}", msgs.len() - start));
     Ok(ModalView {
-        title: format!("session transcript · {}", short_hex(&hit.session_id)),
+        title: format!("session transcript · {}", short_hex(session_id)),
         scroll: rows.len().saturating_sub(1),
         rows,
         footer: "read-only view · /resume resumes your own sessions · Esc close".to_string(),
@@ -4064,14 +4487,15 @@ fn sandbox_rows(core: &Core) -> Vec<String> {
     ]
 }
 
-fn composer_label(ui: &UiState) -> String {
-    match &ui.attached_label {
+fn composer_label(ui: &UiState, inbox_unread: usize) -> String {
+    let base = match &ui.attached_label {
         Some(label) => {
             let provider_model = format!("{}/{}", ui.provider, ui.model);
             format!("subagent · {} · {provider_model}", trunc_cells(label, 24))
         }
         None => format!("task · {}/{}", ui.provider, ui.model),
-    }
+    };
+    format!("{base}{}", inbox_badge(inbox_unread))
 }
 
 fn composer_footer(editor: &Editor) -> String {
@@ -5056,6 +5480,168 @@ mod personal_os_tests {
             session_id: "s".into(),
             text: text.into(),
         }
+    }
+
+    use vak_core::inbox::{Entry, Kind};
+
+    fn inbox_entry(id: &str, kind: Kind, title: &str) -> Entry {
+        Entry {
+            id: id.into(),
+            ts: chrono::Utc::now(),
+            kind,
+            title: title.into(),
+            body: String::new(),
+            session_id: None,
+            task_id: None,
+        }
+    }
+
+    fn bare_ui() -> UiState {
+        UiState {
+            styler: LineStyler::new(),
+            partial: String::new(),
+            total_in: 0,
+            total_out: 0,
+            tool_args: HashMap::new(),
+            thinking_shown: false,
+            model: "test-model".into(),
+            provider: "test-provider".into(),
+            cost_usd: 0.0,
+            sub_in: 0,
+            sub_out: 0,
+            thinking_mode: ThinkingMode::Off,
+            thinking_partial: String::new(),
+            expanded_tools: false,
+            run_state: RunState::Thinking,
+            last_response: String::new(),
+            attached_label: None,
+        }
+    }
+
+    #[test]
+    fn inbox_prefix_resolution_prefers_unread_then_all() {
+        let unread_entry = inbox_entry("aaaa111111111111", Kind::Digest, "unread");
+        let acked_a = inbox_entry("aaaa222222222222", Kind::Digest, "read one");
+        let acked_b = inbox_entry("bbbb333333333333", Kind::Digest, "read two");
+        let unread = vec![unread_entry.clone()];
+        let all = vec![unread_entry.clone(), acked_a, acked_b.clone()];
+        let id_of = |r: Result<&Entry, InboxMatchError>| r.map(|e| e.id.clone());
+
+        // Exact full-id hit wins even when it lives in the acked tier only.
+        assert_eq!(
+            id_of(resolve_entry(&unread, &all, "aaaa222222222222")),
+            Ok("aaaa222222222222".to_string())
+        );
+        // Unique prefix in the unread tier shadows acked entries sharing it.
+        assert_eq!(
+            id_of(resolve_entry(&unread, &all, "aaaa")),
+            Ok("aaaa111111111111".to_string())
+        );
+        // Prefix unique only among acked entries falls through to the ledger.
+        assert_eq!(id_of(resolve_entry(&[], &all, "bbbb")), Ok(acked_b.id));
+        // Ambiguity inside the ledger tier is refused.
+        assert_eq!(
+            resolve_entry(&[], &all, "aaaa"),
+            Err(InboxMatchError::Ambiguous("aaaa".into()))
+        );
+        assert_eq!(
+            resolve_entry(&unread, &all, "ffff"),
+            Err(InboxMatchError::NotFound("ffff".into()))
+        );
+    }
+
+    #[test]
+    fn inbox_arg_grammar_splits_all_and_ack() {
+        assert!(matches!(
+            InboxAction::parse(None),
+            Ok(InboxAction::List { all: false })
+        ));
+        assert!(matches!(
+            InboxAction::parse(Some("   ")),
+            Ok(InboxAction::List { all: false })
+        ));
+        assert!(matches!(
+            InboxAction::parse(Some("all")),
+            Ok(InboxAction::List { all: true })
+        ));
+        assert!(matches!(
+            InboxAction::parse(Some("ack abc12345")),
+            Ok(InboxAction::Ack(ref id)) if id == "abc12345"
+        ));
+        // Missing id and unknown actions are usage errors, never guesses.
+        assert!(InboxAction::parse(Some("ack")).is_err());
+        assert!(InboxAction::parse(Some("wat")).is_err());
+    }
+
+    #[test]
+    fn inbox_chips_cover_every_kind_with_theme_colors() {
+        let theme = Theme::from_name("dark");
+        for kind in [
+            Kind::TaskSummary,
+            Kind::ApprovalPending,
+            Kind::ApprovalDenied,
+            Kind::BudgetAlert,
+            Kind::Digest,
+            Kind::Heartbeat,
+            Kind::ProposalOpened,
+        ] {
+            let chip = kind_chip(kind);
+            assert!(chip.chars().count() <= 8, "{chip} breaks the column");
+            // Every kind carries its own theme slot, never the default fg.
+            assert_ne!(kind_color(kind, &theme), Color::Reset);
+        }
+        // Distinct kinds land in distinct slots where semantics differ.
+        assert_ne!(
+            kind_color(Kind::ApprovalDenied, &theme),
+            kind_color(Kind::Digest, &theme)
+        );
+
+        let e = inbox_entry("0123456789abcdef", Kind::BudgetAlert, "day cap 92%");
+        let row = inbox_row(&e, &theme);
+        // The chip is embedded with its theme color; the base heading color
+        // is restored after so the row tail stays uniform.
+        assert!(row.contains(&theme::fg(theme.warning)), "{row}");
+        assert!(row.contains(&theme::fg(theme.heading)));
+        assert!(crate::markdown::strip_ansi(&row).contains("budget"));
+    }
+
+    #[test]
+    fn inbox_rows_render_rel_ts_chip_title_and_id8() {
+        let theme = Theme::from_name("dark");
+        let e = inbox_entry(
+            "0123456789abcdef",
+            Kind::Digest,
+            "weekly   digest\nline two",
+        );
+        let plain = crate::markdown::strip_ansi(&inbox_row(&e, &theme));
+        assert_eq!(
+            plain, "now · digest · weekly digest line two · 01234567",
+            "rel-ts · chip · collapsed title · id8"
+        );
+
+        let long = inbox_entry(
+            "ffffffffffffffff",
+            Kind::Heartbeat,
+            &format!("{} tail", "x".repeat(60)),
+        );
+        let plain = crate::markdown::strip_ansi(&inbox_row(&long, &theme));
+        assert!(plain.contains('…'), "{plain}");
+        assert!(!plain.contains("tail"), "{plain}");
+    }
+
+    #[test]
+    fn inbox_badge_gates_on_positive_unread() {
+        assert_eq!(inbox_badge(0), "");
+        assert_eq!(inbox_badge(12), " · ✉ 12");
+
+        let mut ui = bare_ui();
+        let idle = composer_label(&ui, 0);
+        assert!(!idle.contains('✉'), "{idle}");
+        assert!(composer_label(&ui, 2).contains("· ✉ 2"));
+        ui.attached_label = Some("nightly digest".into());
+        let attached = composer_label(&ui, 1);
+        assert!(attached.starts_with("subagent · "), "{attached}");
+        assert!(attached.contains("✉ 1"), "{attached}");
     }
 
     #[test]

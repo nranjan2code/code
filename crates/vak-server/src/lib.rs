@@ -40,6 +40,7 @@
 
 mod channels;
 mod gateway;
+mod heartbeat;
 pub mod telegram;
 
 use std::collections::HashMap;
@@ -104,6 +105,8 @@ pub struct AppState {
     procs: Arc<Mutex<HashMap<String, ManagedProc>>>,
     /// Gateway surface bindings + enable gate (docs/design/22-gateway.md).
     pub(crate) gateway: Arc<gateway::GatewayState>,
+    /// Proactive heartbeat runtime (docs/design/29-personal-os.md P7).
+    pub(crate) heartbeat: Arc<heartbeat::HeartbeatRuntime>,
 }
 
 #[derive(Clone)]
@@ -125,6 +128,7 @@ impl AppState {
             script_inflight: Arc::new(Mutex::new(std::collections::HashSet::new())),
             procs: Arc::new(Mutex::new(HashMap::new())),
             gateway,
+            heartbeat: Arc::new(heartbeat::HeartbeatRuntime::new()),
         }
     }
 
@@ -3813,7 +3817,7 @@ async fn run_task_now(State(state): State<AppState>, Path(id): Path<String>) -> 
 
 /// Split a `model_pin` into (provider, model). A bare model id pins only
 /// the model and keeps this server's active provider.
-fn split_model_pin(pin: &str, current_provider: &str) -> (String, String) {
+pub(crate) fn split_model_pin(pin: &str, current_provider: &str) -> (String, String) {
     match pin.split_once('/') {
         Some((provider, model)) if !provider.trim().is_empty() && !model.trim().is_empty() => {
             (provider.trim().to_string(), model.trim().to_string())
@@ -3962,7 +3966,7 @@ const SCRIPT_TIMEOUT_MS: u64 = 120_000;
 const REFLECTION_CALL_TIMEOUT: Duration = Duration::from_secs(120);
 /// Fallback delivery surface for error alerts when a watchdog has no
 /// `deliver_to`: failures are never silent.
-const FALLBACK_ALERT_TARGET: &str = "log:vakcoder";
+pub(crate) const FALLBACK_ALERT_TARGET: &str = "log:vakcoder";
 
 /// Extract the stdout section from BashTool's combined report
 /// ("[stdout]\n…\n[stderr]\n…" or "(no output)"). A literal "[stderr]"
@@ -4238,6 +4242,21 @@ pub fn start_scheduler(state: &AppState) {
             scheduler_tick(&st).await;
         }
     });
+    // Proactive heartbeat (docs/design/29-personal-os.md P7): its own
+    // per-process timer alongside the task tick; the pass itself re-checks
+    // the enabled flag every beat.
+    if state.core.config().heartbeat.enabled {
+        let st = state.clone();
+        tokio::spawn(async move {
+            let mut tick =
+                tokio::time::interval(std::time::Duration::from_secs(heartbeat::TICK_SECS));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tick.tick().await;
+                heartbeat::heartbeat_tick(&st).await;
+            }
+        });
+    }
 }
 
 // ---- Budget alerts (docs/design/29-personal-os.md P2) -----------------------
@@ -4296,7 +4315,7 @@ pub async fn check_budget_alert(state: &AppState, session_id: &str) {
 
 /// Every distinct `deliver_to` routing target configured across all known
 /// tasks — the server's vocabulary of delivery surfaces.
-fn configured_delivery_targets(state: &AppState) -> Vec<String> {
+pub(crate) fn configured_delivery_targets(state: &AppState) -> Vec<String> {
     let mut targets: Vec<String> = state
         .tasks
         .lock()

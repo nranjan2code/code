@@ -55,6 +55,18 @@ export default function BudgetBanner() {
     return null;
   };
 
+  createEffect(() => {
+    if (level() === "red" && document.hidden) {
+      void import("../App").then((m) =>
+        m.notifyOnce(
+          "budget-red",
+          "VakCoder day budget exceeded",
+          `$${spent().toFixed(2)} of $${cap().toFixed(2)} — new runs may be denied.`,
+        ),
+      );
+    }
+  });
+
   const dismiss = () => {
     sessionStorage.setItem("vakcoder.budgetDismissed", todayKey());
     setDismissedDay(todayKey());

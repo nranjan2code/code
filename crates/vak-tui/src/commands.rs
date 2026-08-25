@@ -60,6 +60,10 @@ pub enum Command {
     Tasks(Option<String>),
     /// `/proposals [promote|reject <id>]` — review learned skill proposals.
     Proposals(Option<String>),
+    /// `/inbox [all|ack <id>]` — durable notification ledger
+    /// (docs/design/29-personal-os.md P6): gateway pushes, task summaries,
+    /// budget alerts; ack tombstones mark entries read.
+    Inbox(Option<String>),
     /// `/mcp` — configured MCP servers and discovered tools.
     Mcp,
     /// `/sandbox [os|docker|default]` — bash execution backend for this session.
@@ -132,6 +136,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "proposals",
         "[promote|reject <id>] review learned-skill proposals",
     ),
+    (
+        "inbox",
+        "[all|ack <id>] notifications · ✉ marks unread count",
+    ),
     ("mcp", "configured MCP servers and their tools"),
     (
         "sandbox",
@@ -194,6 +202,7 @@ pub fn parse(input: &str) -> Option<Command> {
         "search" => Some(Command::Search(search_arg(&arg))),
         "tasks" => Some(Command::Tasks(arg_opt)),
         "proposals" | "skills-review" => Some(Command::Proposals(arg_opt)),
+        "inbox" => Some(Command::Inbox(arg_opt)),
         "mcp" if arg.is_empty() => Some(Command::Mcp),
         "sandbox" => Some(Command::Sandbox(arg_opt)),
         _ => None,

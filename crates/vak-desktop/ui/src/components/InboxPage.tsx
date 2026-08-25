@@ -50,6 +50,7 @@ export default function InboxPage() {
 
   const refresh = async () => {
     const mine = ++epoch;
+    const prevIds = new Set(unreadIds());
     try {
       if (filter() === "unread") {
         const res = await api.listInbox(LIMIT, true);
@@ -68,6 +69,25 @@ export default function InboxPage() {
         setInboxUnread(all.unread_count);
       }
       setError(null);
+      // Attention-worthy new arrivals notify while the window is hidden
+      // (desktop round 2); per-entry dedupe lives in notifyOnce.
+      if (document.hidden) {
+        for (const e of unreadIds()) {
+          if (prevIds.has(e)) continue;
+          const entry = (entries() ?? []).find((x) => x.id === e);
+          if (!entry) continue;
+          if (
+            entry.kind === "approval_pending" ||
+            entry.kind === "approval_denied" ||
+            entry.kind === "budget_alert" ||
+            entry.kind === "heartbeat"
+          ) {
+            void import("../App").then((m) =>
+              m.notifyOnce(`inbox:${e}`, `VakCoder ${entry.kind.replace(/_/g, " ")}`, entry.title),
+            );
+          }
+        }
+      }
     } catch (e) {
       if (mine !== epoch) return;
       setError(e instanceof Error ? e.message : String(e));

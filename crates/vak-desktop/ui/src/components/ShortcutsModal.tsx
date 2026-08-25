@@ -6,6 +6,8 @@ const SHORTCUTS: [string, string][] = [
   ["⌘\\", "toggle split view (two tasks side-by-side)"],
   ["⌘B", "toggle sidebar"],
   ["⌘H", "time travel (workspace snapshots)"],
+  ["⌘K", "global search across sessions"],
+  ["G then I", "open inbox"],
   ["⌘,", "open settings"],
   ["⌃`", "toggle terminal"],
   ["⌘;", "toggle side chat (ask aside)"],

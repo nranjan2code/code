@@ -151,6 +151,17 @@ function openStream(id: string) {
   streams.set(id, es);
 }
 
+const NOTIFY_DEDUPE_MS = 5 * 60 * 1000;
+const lastNotifyAt = new Map<string, number>();
+
+/** Native notification with per-source 5-minute dedupe (desktop round 2). */
+export async function notifyOnce(source: string, title: string, body: string) {
+  const now = Date.now();
+  if (now - (lastNotifyAt.get(source) ?? 0) < NOTIFY_DEDUPE_MS) return;
+  lastNotifyAt.set(source, now);
+  await notify(title, body);
+}
+
 async function notify(title: string, body: string) {
   if (!uiPreferences.notifications) return;
   try {
@@ -606,6 +617,7 @@ export default function App() {
     void init();
     const sessionRefresh = window.setInterval(() => void refreshSessions(), 10_000);
 
+    let pendingG = 0;
     const keys = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) {
@@ -621,6 +633,19 @@ export default function App() {
           else if (inboxOpen()) setInboxOpen(false);
           else if (sideOpen()) setSideOpen(false);
           else stopRun();
+        } else if (e.key === "g" || e.key === "G") {
+          pendingG = Date.now();
+        } else if ((e.key === "i" || e.key === "I") && Date.now() - pendingG < 1000) {
+          const target = e.target as HTMLElement | null;
+          const typing =
+            target &&
+            (target.tagName === "INPUT" ||
+              target.tagName === "TEXTAREA" ||
+              target.isContentEditable);
+          if (!typing) {
+            pendingG = 0;
+            setInboxOpen(true);
+          }
         }
         return;
       }

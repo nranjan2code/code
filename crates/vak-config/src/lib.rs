@@ -88,6 +88,8 @@ pub struct FileConfig {
     pub update: UpdateSettings,
     #[serde(default)]
     pub tools: ToolsSettings,
+    #[serde(default)]
+    pub heartbeat: HeartbeatSettings,
 }
 
 /// Cross-session recall (docs/design/23-memory.md). Read-only and
@@ -271,6 +273,25 @@ pub struct ToolsSettings {
     pub browse: Option<bool>,
 }
 
+/// Proactive heartbeat (docs/design/29-personal-os.md P7). NOT privileged:
+/// it spends this server's own configured credentials on a bounded review
+/// turn, never grants new execution power.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct HeartbeatSettings {
+    pub enabled: Option<bool>,
+    /// Seconds between review turns (default 1800, minimum 300).
+    pub interval_secs: Option<u64>,
+    /// Model pin ("model" or "provider/model"); default keeps the
+    /// provider's current model.
+    pub model: Option<String>,
+    /// Local-time quiet window "HH:MM-HH:MM" during which cycles skip.
+    /// Wraps midnight ("22:00-07:00").
+    pub quiet_hours: Option<String>,
+    /// Maximum findings reported per beat (default 3).
+    pub max_findings: Option<usize>,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct PriceEntry {
     pub input: f64,
@@ -338,7 +359,63 @@ pub struct Config {
     pub automation: AutomationResolved,
     pub update: UpdateResolved,
     pub tools: ToolsResolved,
+    pub heartbeat: HeartbeatResolved,
     pub warnings: Vec<String>,
+}
+
+/// Resolved heartbeat policy (docs/design/29-personal-os.md P7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeartbeatResolved {
+    pub enabled: bool,
+    pub interval_secs: u64,
+    /// Model pin; None keeps the provider's current model.
+    pub model: Option<String>,
+    /// Parsed quiet window; None means cycles may fire any time.
+    pub quiet_hours: Option<QuietWindow>,
+    pub max_findings: usize,
+}
+
+/// Local-time quiet window parsed from "HH:MM-HH:MM". `start_min` is
+/// inclusive, `end_min` exclusive, and the window may wrap midnight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuietWindow {
+    pub start_min: u32,
+    pub end_min: u32,
+}
+
+impl QuietWindow {
+    /// Parses "HH:MM-HH:MM". A zero-length window is rejected as
+    /// meaningless rather than treated as empty or full-day.
+    pub fn parse(s: &str) -> Option<Self> {
+        let (a, b) = s.split_once('-')?;
+        let start_min = parse_hhmm(a.trim())?;
+        let end_min = parse_hhmm(b.trim())?;
+        if start_min == end_min {
+            return None;
+        }
+        Some(QuietWindow { start_min, end_min })
+    }
+
+    /// True when `minutes_from_midnight` falls inside the window. The
+    /// start bound is inclusive, the end exclusive.
+    pub fn contains(&self, minutes_from_midnight: u32) -> bool {
+        let t = minutes_from_midnight % (24 * 60);
+        if self.start_min < self.end_min {
+            t >= self.start_min && t < self.end_min
+        } else {
+            t >= self.start_min || t < self.end_min
+        }
+    }
+}
+
+fn parse_hhmm(s: &str) -> Option<u32> {
+    let (h, m) = s.split_once(':')?;
+    let h: u32 = h.trim().parse().ok()?;
+    let m: u32 = m.trim().parse().ok()?;
+    if h > 23 || m > 59 {
+        return None;
+    }
+    Some(h * 60 + m)
 }
 
 /// Resolved goal-mode policy (docs/design/27 Phase H).
@@ -516,6 +593,13 @@ impl Default for Config {
             tools: ToolsResolved {
                 web_fetch: true,
                 browse: true,
+            },
+            heartbeat: HeartbeatResolved {
+                enabled: false,
+                interval_secs: 1800,
+                model: None,
+                quiet_hours: None,
+                max_findings: 3,
             },
             gateway: GatewayResolved {
                 enabled: false,
@@ -838,6 +922,40 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     cfg.update.interval_hours = merged.update.interval_hours.unwrap_or(24);
     cfg.tools.web_fetch = merged.tools.web_fetch.unwrap_or(true);
     cfg.tools.browse = merged.tools.browse.unwrap_or(true);
+    let hb = &merged.heartbeat;
+    cfg.heartbeat.interval_secs = match hb.interval_secs {
+        Some(v) if v < 300 => {
+            cfg.warnings.push(format!(
+                "heartbeat.interval_secs {v} below minimum; using 300"
+            ));
+            300
+        }
+        Some(v) => v,
+        None => 1800,
+    };
+    cfg.heartbeat.enabled = hb.enabled.unwrap_or(false);
+    cfg.heartbeat.model = hb.model.clone();
+    cfg.heartbeat.quiet_hours = match hb.quiet_hours.as_deref() {
+        None => None,
+        Some(raw) => match QuietWindow::parse(raw) {
+            Some(w) => Some(w),
+            None => {
+                cfg.warnings.push(format!(
+                    "heartbeat.quiet_hours '{raw}' is not 'HH:MM-HH:MM'; ignoring"
+                ));
+                None
+            }
+        },
+    };
+    match hb.max_findings {
+        Some(0) => {
+            cfg.warnings
+                .push("heartbeat.max_findings must be >= 1; using 1".into());
+            cfg.heartbeat.max_findings = 1;
+        }
+        Some(n) => cfg.heartbeat.max_findings = n,
+        None => cfg.heartbeat.max_findings = 3,
+    }
     for (name, hook) in merged.gateway.outbound.webhooks {
         if hook.url.trim().is_empty() {
             cfg.warnings.push(format!(
@@ -928,6 +1046,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "automation",
     "update",
     "tools",
+    "heartbeat",
 ];
 const KNOWN_FINOPS_KEYS: &[&str] = &["max_run_usd", "max_day_usd", "price_overrides"];
 const KNOWN_GOAL_KEYS: &[&str] = &["handoff_reset", "max_audit_blocks"];
@@ -977,6 +1096,13 @@ const KNOWN_WEBHOOK_KEYS: &[&str] = &["url", "token_env"];
 const KNOWN_AUTOMATION_KEYS: &[&str] = &["catch_up_missed"];
 const KNOWN_UPDATE_KEYS: &[&str] = &["url", "interval_hours"];
 const KNOWN_TOOLS_KEYS: &[&str] = &["web_fetch", "browse"];
+const KNOWN_HEARTBEAT_KEYS: &[&str] = &[
+    "enabled",
+    "interval_secs",
+    "model",
+    "quiet_hours",
+    "max_findings",
+];
 
 /// A typo'd key must be visible, not silently dead: diff the raw TOML
 /// against the known schema and surface every unrecognized key.
@@ -1190,6 +1316,16 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
             }
         }
     }
+    if let Some(t) = top.get("heartbeat").and_then(toml::Value::as_table) {
+        for key in t.keys() {
+            if !KNOWN_HEARTBEAT_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown heartbeat key 'heartbeat.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+    }
     out
 }
 
@@ -1375,6 +1511,21 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.tools.browse.is_some() {
         base.tools.browse = over.tools.browse;
+    }
+    if over.heartbeat.enabled.is_some() {
+        base.heartbeat.enabled = over.heartbeat.enabled;
+    }
+    if over.heartbeat.interval_secs.is_some() {
+        base.heartbeat.interval_secs = over.heartbeat.interval_secs;
+    }
+    if over.heartbeat.model.is_some() {
+        base.heartbeat.model = over.heartbeat.model;
+    }
+    if over.heartbeat.quiet_hours.is_some() {
+        base.heartbeat.quiet_hours = over.heartbeat.quiet_hours;
+    }
+    if over.heartbeat.max_findings.is_some() {
+        base.heartbeat.max_findings = over.heartbeat.max_findings;
     }
     for (name, hook) in over.gateway.outbound.webhooks {
         base.gateway.outbound.webhooks.insert(name, hook);
@@ -1645,5 +1796,123 @@ mod tests {
         assert!(cfg.automation.catch_up_missed);
         assert_eq!(cfg.update.interval_hours, 24);
         assert!(cfg.tools.web_fetch);
+    }
+
+    #[test]
+    fn heartbeat_defaults_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert!(!cfg.heartbeat.enabled);
+        assert_eq!(cfg.heartbeat.interval_secs, 1800);
+        assert_eq!(cfg.heartbeat.model, None);
+        assert_eq!(cfg.heartbeat.quiet_hours, None);
+        assert_eq!(cfg.heartbeat.max_findings, 3);
+        assert!(
+            !cfg.warnings.iter().any(|w| w.contains("heartbeat")),
+            "absent heartbeat section must not warn: {:?}",
+            cfg.warnings
+        );
+    }
+
+    #[test]
+    fn heartbeat_full_section_parses() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "[heartbeat]\nenabled = true\ninterval_secs = 900\nmodel = \"openai/gpt-5-mini\"\nquiet_hours = \"22:00-07:00\"\nmax_findings = 5\n",
+        );
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert!(cfg.heartbeat.enabled);
+        assert_eq!(cfg.heartbeat.interval_secs, 900);
+        assert_eq!(cfg.heartbeat.model.as_deref(), Some("openai/gpt-5-mini"));
+        assert_eq!(
+            cfg.heartbeat.quiet_hours,
+            Some(QuietWindow {
+                start_min: 22 * 60,
+                end_min: 7 * 60
+            })
+        );
+        assert_eq!(cfg.heartbeat.max_findings, 5);
+    }
+
+    #[test]
+    fn heartbeat_interval_below_minimum_warns_and_clamps() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "[heartbeat]\ninterval_secs = 10\n");
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.heartbeat.interval_secs, 300);
+        assert!(cfg.warnings.iter().any(|w| w.contains("interval_secs")));
+    }
+
+    #[test]
+    fn heartbeat_zero_max_findings_clamps_with_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "[heartbeat]\nmax_findings = 0\n");
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.heartbeat.max_findings, 1);
+        assert!(cfg.warnings.iter().any(|w| w.contains("max_findings")));
+    }
+
+    #[test]
+    fn heartbeat_bad_quiet_hours_warns_and_ignores() {
+        for bad in [
+            "9am-5pm",
+            "25:00-07:00",
+            "07:00-07:00",
+            "22:00",
+            "22:61-07:00",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            write_project_config(
+                dir.path(),
+                &format!("[heartbeat]\nquiet_hours = \"{bad}\"\n"),
+            );
+            let cfg = load_with_trust(dir.path(), true).unwrap();
+            assert_eq!(cfg.heartbeat.quiet_hours, None, "{bad} must be ignored");
+            assert!(
+                cfg.warnings.iter().any(|w| w.contains("quiet_hours")),
+                "{bad} must warn: {:?}",
+                cfg.warnings
+            );
+        }
+    }
+
+    #[test]
+    fn quiet_window_contains_boundary_matrix() {
+        // Wrapping window 22:00-07:00.
+        let night = QuietWindow {
+            start_min: 22 * 60,
+            end_min: 7 * 60,
+        };
+        assert!(night.contains(22 * 60), "start bound inclusive");
+        assert!(night.contains(23 * 60 + 59));
+        assert!(night.contains(0));
+        assert!(night.contains(6 * 60 + 59));
+        assert!(!night.contains(7 * 60), "end bound exclusive");
+        assert!(!night.contains(21 * 60 + 59));
+        assert!(!night.contains(12 * 60));
+
+        // Plain window 13:00-14:00.
+        let lunch = QuietWindow {
+            start_min: 13 * 60,
+            end_min: 14 * 60,
+        };
+        assert!(lunch.contains(13 * 60));
+        assert!(lunch.contains(13 * 60 + 59));
+        assert!(!lunch.contains(14 * 60), "end bound exclusive");
+        assert!(!lunch.contains(12 * 60 + 59));
+    }
+
+    #[test]
+    fn unknown_heartbeat_key_warns() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "[heartbeat]\nbogus = 1\n");
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert!(
+            cfg.warnings.iter().any(|w| w.contains("heartbeat.bogus")),
+            "{:?}",
+            cfg.warnings
+        );
+        assert!(!cfg.heartbeat.enabled);
     }
 }

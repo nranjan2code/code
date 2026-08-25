@@ -25,13 +25,18 @@ loop-engineering kernel ✅, frozen-ladder routing ✅, router-grade
 ordering over that ladder (demand objectives, cross-model fallbacks,
 beliefs) ✅ via the vakrouter study Phase R, runs→flows
 adopt/diff ✅, run-graph projection ✅, checkpoint-delta auditing ✅;
-remaining (parked): scenario-harness consolidation, planner
-done-contracts, typed tool outputs). The personal-use completion pass —
+remaining (parked): skill intent-discovery, release supply-chain
+hardening (SBOM/signing), capacity-exhaustion Ask type — all three
+original parked items (scenario-harness, planner done-contracts,
+typed tool outputs) have landed). The personal-use completion pass —
 tiered memory (USER.md profile + forget/amend), indexed + cross-project
 search, cron/watchdog/pinned automation with budget alerts,
-doctor/wizard/update-check/backup/digest, SSRF-guarded webfetch, shared
-markdown transcript export, duplicate-screened skill proposals — is ✅ per
-`docs/design/29-personal-os.md` (enterprise deferred).
+doctor/wizard/update-check/backup/digest, SSRF-guarded webfetch +
+headless browse, shared markdown transcript export, duplicate-screened
+skill proposals, inbox attention layer (P6), heartbeat proactive
+check-ins (P7) — is ✅ per `docs/design/29-personal-os.md`
+(enterprise deferred; channel delivery projection is a parallel work
+stream, docs/design/30-output-engineering.md).
 
 ## Non-negotiable invariants
 
@@ -185,14 +190,15 @@ crates/vak-tui       retained-render terminal UI: contextual keymap +
                      vim/emacs composer, subagent attach/steer,
                      custom commands, OSC52 copy, accessibility modes,
                      /mode /compact /budget /memory /proposals /mcp
-                     /sandbox /search /tasks + live breaker/ladder/spend
+                     /sandbox /search /tasks /inbox + live breaker/ladder/spend
                      introspection + budget status marker
 crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      subagent steer-stop/MCP management/memory
                      CRUD/search-all/transcript.md/doctor/backup/
-                     digest endpoints) + always-on gateway: chat-surface
-                     routing, persisted bindings, cron+script-watchdog
-                     scheduler w/ catch-up and model pinning, budget-alert
+                     digest/inbox-ack endpoints) + always-on gateway:
+                     chat-surface routing, persisted bindings,
+                     cron+script-watchdog scheduler w/ catch-up and model
+                     pinning, heartbeat proactive check-ins, budget-alert
                      delivery-to-surface, approval forwarding with
                      addressed-gate resolution, Telegram/webhook transports
                      w/ retry, per-channel reply formatting
@@ -213,7 +219,7 @@ crates/vak-tray      menu-bar controller: colour-coded service dot,
                      with auto-restart + notifications
 crates/vakcoder      binary: tui / exec / plan / flow / serve [--gateway] /
                      telegram / eval / checkpoints / config dump / sessions
-                     / doctor / backup / digest / tasks / memory
+                     / doctor / backup / digest / tasks / memory / inbox
                      (+ first-run wizard, opt-in update check)
 docs/design/         architecture decisions — update with behavior changes;
                      security boundaries and roadmap in 24-agent-security.md
