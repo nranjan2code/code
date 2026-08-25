@@ -51,6 +51,17 @@ async fn spawn_secured(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
+    // Isolate from the developer's real global config: layered config
+    // loads $HOME/.config/vakcoder/config.toml, and a personal
+    // `[memory] reflection = true` would make the post-turn reflection
+    // seam consume scripted provider responses mid-test.
+    let project = cwd.join(".vakcoder");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("config.toml"),
+        "[memory]\nreflection = false\n",
+    )
+    .unwrap();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_provider_instance(provider);
@@ -469,6 +480,74 @@ async fn fs_tree_lists_and_skips_vendored_dirs() {
         !files.iter().any(|f| f.starts_with("node_modules")),
         "vendored dirs must be skipped"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn failed_side_turn_does_not_wedge_the_session() {
+    // Regression (v0.6 deployment gate): whatever way a side turn ends
+    // without a restorable log — provider exhausted into endless endurance
+    // retries, or an explicit cancel — the session handle must become
+    // usable again instead of answering "run in progress" forever.
+    let provider = Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::from(vec![
+            text("main answer"),
+            text("side answer"),
+        ])),
+    });
+    let (base, token, _cwd, _server) = spawn_secured(provider).await;
+    let client = client_with(&token);
+
+    let session_id: String = client
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({"prompt": "say main answer"}))
+        .send()
+        .await
+        .unwrap();
+    let before = wait_transcript(&client, &base, &session_id).await;
+    assert_eq!(before["count"].as_u64(), Some(2));
+
+    // Start a side turn and cancel it mid-flight.
+    let started = client
+        .post(format!("{base}/sessions/{session_id}/side"))
+        .json(&serde_json::json!({"question": "long aside?"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(started.status(), 202);
+    let cancelled = client
+        .post(format!("{base}/sessions/{session_id}/side/cancel"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cancelled.status(), 202);
+
+    // The handle must come back: transcript answers with real content and
+    // a follow-up side turn is accepted rather than 409-conflicted.
+    let after = wait_transcript(&client, &base, &session_id).await;
+    assert_eq!(
+        after["count"].as_u64(),
+        Some(2),
+        "cancelled side turn must leave the main chain intact"
+    );
+    let again = client
+        .post(format!("{base}/sessions/{session_id}/side"))
+        .json(&serde_json::json!({"question": "still here?"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(again.status(), 202, "session handle must be restorable");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

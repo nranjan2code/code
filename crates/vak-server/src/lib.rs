@@ -1198,6 +1198,7 @@ async fn run_prompt(
     }
     // Goal mode (Phase H): captured before the spawn consumes `body`.
     let goal_pair = body.goal.clone().map(|g| (g, body.criteria.clone()));
+    let run_id = id.clone();
 
     tokio::spawn(async move {
         let outcome = if let Some((objective, criteria)) = goal_pair {
@@ -1272,6 +1273,14 @@ async fn run_prompt(
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session_log);
             }
             Err(e) => {
+                // Same leak class: restore from the durable ledger so the
+                // handle does not stay wedged on "run in progress".
+                if let Some(restored) = reopen_ledger(&core, &run_id) {
+                    *handle
+                        .session
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
+                }
                 let _ = handle.events_tx.send(AgentEvent::RunFinished {
                     summary: format!("error: {e}"),
                     is_error: true,
@@ -1635,6 +1644,19 @@ fn open_historical_session(state: &AppState, id: &str) -> Option<vak_session::Se
         .sessions_home()
         .join("sessions")
         .join(vak_core::memory::hash_cwd(state.core.cwd()))
+        .join(format!("{id}.jsonl"));
+    vak_session::SessionLog::open(path).ok()
+}
+
+/// Reopen a session whose in-memory handle was consumed by a turn that
+/// then failed: `run_turn_with` returns `Err(CoreError)` without the log,
+/// but the append-only ledger file is durable — restore from it so the
+/// session does not stay wedged as "run in progress" forever.
+fn reopen_ledger(core: &vak_core::Core, id: &str) -> Option<vak_session::SessionLog> {
+    let path = core
+        .sessions_home()
+        .join("sessions")
+        .join(vak_core::memory::hash_cwd(core.cwd()))
         .join(format!("{id}.jsonl"));
     vak_session::SessionLog::open(path).ok()
 }
@@ -2986,6 +3008,7 @@ async fn side_chat(
             Ok((_, _)) => ("ended".to_string(), false),
             Err(e) => (format!("error: {e}"), true),
         };
+        let turn_ok = matches!(&outcome, Ok((_, _)));
         if let Ok((_, mut restored)) = outcome {
             // Rewind the branch pointer to the main line: the side entries
             // remain in the ledger as a sibling branch — reconstructable via
@@ -2999,6 +3022,15 @@ async fn side_chat(
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
         }
         let _ = side_tx.send(AgentEvent::RunFinished { summary, is_error });
+        // On a failed turn the taken log is gone with the Err — reopen the
+        // durable ledger so the session does not stay wedged as
+        // "run in progress" forever (found by the v0.6 deployment gate).
+        if !turn_ok && let Some(log) = reopen_ledger(&core, &id) {
+            *handle
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
+        }
     });
 
     StatusCode::ACCEPTED
@@ -3201,6 +3233,10 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str) {
     else {
         return; // busy — caller should have checked
     };
+    let turn_session_id = log
+        .header()
+        .map(|h| h.session_id.clone())
+        .unwrap_or_default();
     let core = core.clone();
     let prompt = prompt.to_string();
     let h2 = handle.clone();
@@ -3230,6 +3266,13 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str) {
                 });
             }
             Err(e) => {
+                // Same leak class as side chats: restore from the durable
+                // ledger so the handle is not wedged on "run in progress".
+                if let Some(log) = reopen_ledger(&core, &turn_session_id) {
+                    *h2.session
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
+                }
                 let _ = h2.events_tx.send(AgentEvent::RunFinished {
                     summary: format!("error: {e}"),
                     is_error: true,
