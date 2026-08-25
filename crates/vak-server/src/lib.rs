@@ -39,6 +39,7 @@
 //! - `DELETE /gateway/bindings/:key`  → unbind a surface from its session
 
 mod admin;
+mod admin_ui;
 mod channels;
 mod delivery;
 mod events;
@@ -327,6 +328,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/skills/proposals/{id}/reject", post(reject_proposal))
         .merge(gateway::routes())
         .merge(admin::routes())
+        .merge(admin_ui::routes())
         .with_state(state)
 }
 

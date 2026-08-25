@@ -1,0 +1,654 @@
+import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal } from "solid-js";
+import { api, AuthRequired } from "./api";
+import { clock, shortId, timeAgo } from "./time";
+import {
+  authed, conn, connectEvents, disconnectEvents, feed, navigate, pushToast, route,
+  setAuthed, toasts,
+} from "./store";
+import type { SearchHit, SecurityEvent, SessionListItem, TranscriptEntry } from "./types";
+
+// ---- icons (inline, stroke style) ------------------------------------------
+
+const Icon = (props: { d: string; size?: number }) => (
+  <svg
+    width={props.size ?? 16}
+    height={props.size ?? 16}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <path d={props.d} />
+  </svg>
+);
+
+const ICONS = {
+  overview: "M3 3v18h18M7 15l4-6 4 4 5-8",
+  sessions: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87",
+  search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35",
+  security: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
+  settings: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
+};
+
+// ---- Login -----------------------------------------------------------------
+
+function Login() {
+  const [token, setToken] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal("");
+
+  const submit = async (e: SubmitEvent) => {
+    e.preventDefault();
+    if (!token().trim() || busy()) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api.login(token().trim());
+      setAuthed(true);
+      connectEvents();
+      navigate("#/overview");
+    } catch (err) {
+      setError(err instanceof AuthRequired || `${err}`.includes("401") ? "Invalid token" : `${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div class="login-wrap">
+      <form class="login-card" onSubmit={submit}>
+        <div class="login-logo">◆</div>
+        <h1>vakcoder admin</h1>
+        <p class="hint">Paste the token printed by <code>vakcoder serve</code></p>
+        <input
+          type="password"
+          placeholder="access token"
+          autocomplete="current-password"
+          autofocus
+          value={token()}
+          onInput={(e) => setToken(e.currentTarget.value)}
+          classList={{ shake: !!error() }}
+        />
+        <Show when={error()}>
+          <div class="login-error">{error()}</div>
+        </Show>
+        <button type="submit" disabled={busy() || !token().trim()}>
+          {busy() ? "Signing in…" : "Sign in"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// ---- Overview --------------------------------------------------------------
+
+function StatCard(props: { label: string; value: string | number; sub?: string; tone?: string }) {
+  return (
+    <div class="stat-card" data-tone={props.tone ?? "default"}>
+      <div class="stat-value">{props.value}</div>
+      <div class="stat-label">{props.label}</div>
+      <Show when={props.sub}>
+        <div class="stat-sub">{props.sub}</div>
+      </Show>
+    </div>
+  );
+}
+
+function Overview() {
+  const [health, hRefetch] = createResource(api.health);
+  const [sessions] = createResource(api.sessions);
+  const [security] = createResource(() => api.security(500));
+
+  const recentSecurity = createMemo(
+    () =>
+      (security()?.events ?? []).filter((e) => Date.now() - new Date(e.ts).getTime() < 86_400_000)
+        .length,
+  );
+
+  const feedItems = createMemo(() => [...feed()].reverse());
+
+  return (
+    <div class="view">
+      <div class="stats-row">
+        <StatCard label="Sessions indexed" value={sessions()?.sessions.length ?? "…"} />
+        <StatCard
+          label="Total entries"
+          value={sessions()?.sessions.reduce((a, s) => a + s.entry_count, 0) ?? "…"}
+        />
+        <StatCard
+          label="Security events · 24h"
+          value={security.loading ? "…" : recentSecurity()}
+          tone={recentSecurity() > 0 ? "warn" : undefined}
+        />
+        <StatCard
+          label="Gateway"
+          value={health()?.status === "ok" ? "ready" : "…"}
+          sub={health()?.provider}
+        />
+      </div>
+
+      <div class="two-col">
+        <section class="panel">
+          <h2>System</h2>
+          <Show when={!health.loading} fallback={<div class="empty">Loading…</div>}>
+            <dl class="kv">
+              <dt>provider</dt>
+              <dd>{health()?.provider}</dd>
+              <dt>model</dt>
+              <dd class="mono">{health()?.model}</dd>
+              <dt>permission mode</dt>
+              <dd><span class="chip chip-mode">{health()?.permission_mode}</span></dd>
+              <dt>sandbox</dt>
+              <dd>{health()?.sandbox}</dd>
+              <dt>context window</dt>
+              <dd>{(health()?.context_window ?? 0).toLocaleString()} tok</dd>
+              <dt>workspace</dt>
+              <dd class="mono wrap">{health()?.cwd}</dd>
+            </dl>
+            <Show when={(health()?.warnings?.length ?? 0) > 0}>
+              <div class="warnings">
+                <For each={health()?.warnings}>{(w) => <div class="warning">⚠ {w}</div>}</For>
+              </div>
+            </Show>
+            <button class="ghost small" onClick={() => hRefetch()}>
+              Refresh
+            </button>
+          </Show>
+        </section>
+
+        <section class="panel">
+          <h2>Live activity</h2>
+          <Show
+            when={feedItems().length > 0}
+            fallback={<div class="empty">Waiting for events… they will appear here in real time.</div>}
+          >
+            <ul class="feed">
+              <For each={feedItems()}>
+                {(item) => (
+                  <li data-type={item.event.type}>
+                    <span class="feed-time">{clock(item.ts)}</span>
+                    <span class="feed-kind">{item.event.type}</span>
+                    <span class="feed-text">{summarizeEvent(item.event)}</span>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Show>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function summarizeEvent(ev: import("./types").SystemEvent): string {
+  switch (ev.type) {
+    case "Agent":
+      return ev.data.summary + (ev.data.detail ? ` · ${ev.data.detail}` : "");
+    case "SessionCreated":
+      return ev.data.session_id.slice(0, 12);
+    case "SessionEntryAppended":
+      return `${ev.data.kind} → ${ev.data.session_id.slice(0, 12)}`;
+    case "ConfigChanged":
+      return `${ev.data.label}: ${ev.data.detail}`;
+    case "GatewayInbound":
+      return `[${ev.data.surface}] ${ev.data.who}: ${ev.data.preview}`;
+    case "ApprovalGranted":
+    case "ApprovalDenied":
+      return `${ev.data.tool} (${ev.data.id.slice(0, 8)})`;
+    case "SecurityEvent":
+      return `${ev.data.kind} — ${ev.data.label}`;
+    case "ProviderError":
+      return `${ev.data.provider}/${ev.data.model}: ${ev.data.error}`;
+    case "RateLimit":
+      return ev.data.provider;
+    default:
+      return "";
+  }
+}
+
+// ---- Sessions list ---------------------------------------------------------
+
+function Sessions() {
+  const [sessions, { refetch }] = createResource(api.sessions);
+  const [q, setQ] = createSignal("");
+
+  const filtered = createMemo(() => {
+    const needle = q().toLowerCase();
+    return (sessions()?.sessions ?? []).filter(
+      (s: SessionListItem) => !needle || s.session_id.toLowerCase().includes(needle),
+    );
+  });
+
+  return (
+    <div class="view">
+      <div class="toolbar">
+        <input class="search-input" placeholder="Filter by session id…" value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
+        <button class="ghost" onClick={() => refetch()}>Refresh</button>
+      </div>
+      <Show when={!sessions.loading} fallback={<div class="empty">Loading sessions…</div>}>
+        <Show
+          when={filtered().length > 0}
+          fallback={<div class="empty">No sessions yet. Run a prompt via TUI, desktop, or gateway and it appears here.</div>}
+        >
+          <table class="table">
+            <thead>
+              <tr><th>session</th><th>entries</th><th>first seen</th><th>last activity</th><th /></tr>
+            </thead>
+            <tbody>
+              <For each={filtered()}>
+                {(s) => (
+                  <tr onClick={() => navigate(`#/sessions/${s.session_id}`)}>
+                    <td class="mono">{shortId(s.session_id)}</td>
+                    <td>{s.entry_count}</td>
+                    <td title={s.first_ts}>{timeAgo(s.first_ts)}</td>
+                    <td title={s.last_ts}>{timeAgo(s.last_ts)}</td>
+                    <td><span class="chev">›</span></td>
+                  </tr>
+                )}
+              </For>
+            </tbody>
+          </table>
+        </Show>
+      </Show>
+    </div>
+  );
+}
+
+// ---- Transcript ------------------------------------------------------------
+
+const KIND_FILTERS = [
+  { id: "", label: "All" },
+  { id: "message", label: "Messages" },
+];
+
+const ROLE_FILTERS = [
+  { id: "", label: "Everyone" },
+  { id: "user", label: "User" },
+  { id: "assistant", label: "Assistant" },
+];
+
+function Transcript(props: { sessionId: string }) {
+  const [kind, setKind] = createSignal("");
+  const [role, setRole] = createSignal("");
+  const [entries, setEntries] = createSignal<TranscriptEntry[]>([]);
+  const [hasMore, setHasMore] = createSignal(false);
+  const [loading, setLoading] = createSignal(true);
+
+  const PAGE = 100;
+  let offset = 0;
+
+  const load = async (reset: boolean) => {
+    setLoading(true);
+    try {
+      if (reset) offset = 0;
+      const res = await api.transcript(props.sessionId, {
+        limit: PAGE,
+        offset,
+        kind: kind() || undefined,
+        role: role() || undefined,
+      });
+      // API returns ascending; newest last.
+      setEntries(res.entries);
+      setHasMore(res.has_more);
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  createEffect(() => {
+    void props.sessionId;
+    void kind();
+    void role();
+    load(true);
+  });
+
+  const changePage = (delta: number) => {
+    offset = Math.max(0, offset + delta * PAGE);
+    load(false);
+  };
+
+  return (
+    <div class="view">
+      <div class="toolbar">
+        <button class="ghost" onClick={() => navigate("#/sessions")}>‹ Sessions</button>
+        <span class="mono dim">{shortId(props.sessionId)}</span>
+        <span class="spacer" />
+        <select value={kind()} onChange={(e) => setKind(e.currentTarget.value)}>
+          <For each={KIND_FILTERS}>{(f) => <option value={f.id}>{f.label}</option>}</For>
+        </select>
+        <select value={role()} onChange={(e) => setRole(e.currentTarget.value)}>
+          <For each={ROLE_FILTERS}>{(f) => <option value={f.id}>{f.label}</option>}</For>
+        </select>
+      </div>
+
+      <Show when={!loading()} fallback={<div class="empty">Loading transcript…</div>}>
+        <Show
+          when={entries().length > 0}
+          fallback={<div class="empty">No entries match this filter.</div>}
+        >
+          <div class="transcript">
+            <For each={entries()}>
+              {(e) => (
+                <article class="entry" data-role={e.role ?? "system"} data-error={e.is_error}>
+                  <header>
+                    <span class="who">{e.role ?? e.kind}</span>
+                    <Show when={e.tool_name}>
+                      <span class="chip chip-tool mono">{e.tool_name}</span>
+                    </Show>
+                    <Show when={e.is_error}>
+                      <span class="chip chip-error">error</span>
+                    </Show>
+                    <span class="when" title={e.ts}>{clock(e.ts)}</span>
+                  </header>
+                  <pre class="mono">{e.content}</pre>
+                </article>
+              )}
+            </For>
+          </div>
+          <div class="pager">
+            <button class="ghost small" disabled={offset === 0} onClick={() => changePage(-1)}>‹ Newer</button>
+            <span class="dim">page {Math.floor(offset / PAGE) + 1}</span>
+            <button class="ghost small" disabled={!hasMore()} onClick={() => changePage(1)}>Older ›</button>
+          </div>
+        </Show>
+      </Show>
+    </div>
+  );
+}
+
+// ---- Search ----------------------------------------------------------------
+
+function highlight(snippet: string): string {
+  // Server emits <b>…</b>; convert to <mark>.
+  return snippet.replaceAll("<b>", "<mark>").replaceAll("</b>", "</mark>");
+}
+
+function SearchView() {
+  const [q, setQ] = createSignal("");
+  const [role, setRole] = createSignal("");
+  const [hits, setHits] = createSignal<SearchHit[] | null>(null);
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal("");
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const runSearch = (query: string) => {
+    clearTimeout(timer);
+    if (!query.trim()) {
+      setHits(null);
+      return;
+    }
+    setBusy(true);
+    timer = setTimeout(async () => {
+      try {
+        const res = await api.search(query.trim(), { role: role() || undefined, limit: 50 });
+        setHits(res.hits);
+        setError("");
+      } catch (err) {
+        if (err instanceof AuthRequired) setAuthed(false);
+        else setError(`${err}`);
+      } finally {
+        setBusy(false);
+      }
+    }, 250);
+  };
+
+  return (
+    <div class="view">
+      <div class="search-hero">
+        <input
+          class="search-big"
+          placeholder="Search every session… (FTS5 syntax supported)"
+          value={q()}
+          onInput={(e) => {
+            setQ(e.currentTarget.value);
+            runSearch(e.currentTarget.value);
+          }}
+        />
+        <select value={role()} onChange={(e) => { setRole(e.currentTarget.value); runSearch(q()); }}>
+          <For each={ROLE_FILTERS}>{(f) => <option value={f.id}>{f.label}</option>}</For>
+        </select>
+      </div>
+      <Show when={error()}>
+        <div class="login-error">{error()}</div>
+      </Show>
+      <Switch>
+        <Match when={busy() && !hits()}>
+          <div class="empty">Searching…</div>
+        </Match>
+        <Match when={hits() === null}>
+          <div class="empty">Type to search across all indexed transcripts. Phrases in quotes, prefix with star.</div>
+        </Match>
+        <Match when={hits()?.length === 0}>
+          <div class="empty">No matches.</div>
+        </Match>
+        <Match when={hits()}>
+          <ul class="hit-list">
+            <For each={hits() ?? []}>
+              {(h) => (
+                <li onClick={() => navigate(`#/sessions/${h.session_id}`)}>
+                  <div class="hit-meta">
+                    <span class="mono">{shortId(h.session_id)}</span>
+                    <span class="chip chip-kind">{h.kind}</span>
+                    <Show when={h.role}><span class="chip chip-role">{h.role}</span></Show>
+                    <Show when={h.tool_name}><span class="chip chip-tool mono">{h.tool_name}</span></Show>
+                    <span class="when">{timeAgo(h.ts)}</span>
+                  </div>
+                  {/* snippet comes from our own server; markers are inserted by us */}
+                  <div class="hit-snippet" innerHTML={highlight(h.snippet)} />
+                </li>
+              )}
+            </For>
+          </ul>
+        </Match>
+      </Switch>
+    </div>
+  );
+}
+
+// ---- Security --------------------------------------------------------------
+
+const SEC_KINDS = ["", "auth_failure", "rate_limit", "chat_allowlist", "config_change", "provider_key_change"];
+
+function Security() {
+  const [kind, setKind] = createSignal("");
+  const [events, { refetch }] = createResource(() => api.security(500, kind() || undefined));
+
+  return (
+    <div class="view">
+      <div class="toolbar">
+        <div class="chips">
+          <For each={SEC_KINDS}>
+            {(k) => (
+              <button
+                class="chip-btn"
+                classList={{ active: kind() === k }}
+                onClick={() => setKind(k)}
+              >
+                {k === "" ? "All" : k.replaceAll("_", " ")}
+              </button>
+            )}
+          </For>
+        </div>
+        <span class="spacer" />
+        <button class="ghost" onClick={() => refetch()}>Refresh</button>
+      </div>
+      <Show when={!events.loading} fallback={<div class="empty">Loading audit log…</div>}>
+        <Show
+          when={(events()?.events.length ?? 0) > 0}
+          fallback={<div class="empty">No security events recorded. Quiet is good.</div>}
+        >
+          <table class="table">
+            <thead>
+              <tr><th>when</th><th>kind</th><th>label</th><th>detail</th><th>source</th></tr>
+            </thead>
+            <tbody>
+              <For each={events()?.events}>
+                {(e: SecurityEvent) => (
+                  <tr data-kind={e.kind}>
+                    <td title={e.ts}>{timeAgo(e.ts)}</td>
+                    <td><span class="chip" data-kind={e.kind}>{e.kind.replaceAll("_", " ")}</span></td>
+                    <td>{e.label}</td>
+                    <td class="mono dim wrap">{e.detail}</td>
+                    <td class="mono dim">{e.ip ?? "—"}</td>
+                  </tr>
+                )}
+              </For>
+            </tbody>
+          </table>
+        </Show>
+      </Show>
+    </div>
+  );
+}
+
+// ---- Settings --------------------------------------------------------------
+
+function Settings() {
+  const [config] = createResource(api.config);
+  const [gateway] = createResource(api.gatewayStatus);
+  const [rebuilding, setRebuilding] = createSignal(false);
+
+  const rebuild = async () => {
+    setRebuilding(true);
+    try {
+      const stats = await api.rebuild();
+      if (stats.ok) pushToast("info", `Rebuilt: ${stats.files_scanned} files, ${stats.entries_indexed} entries`);
+      else pushToast("alert", `Rebuild failed: ${stats.error}`);
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setRebuilding(false);
+    }
+  };
+
+  const signOut = async () => {
+    await api.logout();
+    disconnectEvents();
+    setAuthed(false);
+    navigate("#/overview");
+  };
+
+  return (
+    <div class="view">
+      <div class="two-col">
+        <section class="panel">
+          <h2>Configuration</h2>
+          <Show when={!config.loading} fallback={<div class="empty">Loading…</div>}>
+            <dl class="kv">
+              <dt>provider</dt><dd>{config()?.provider}</dd>
+              <dt>model</dt><dd class="mono">{config()?.model}</dd>
+              <dt>max turns</dt><dd>{config()?.max_turns}</dd>
+              <dt>permission mode</dt><dd><span class="chip chip-mode">{config()?.permission_mode}</span></dd>
+              <dt>theme</dt><dd>{config()?.theme}</dd>
+            </dl>
+            <p class="dim small-note">Edit via config.toml or the TUI — the console reflects live values.</p>
+          </Show>
+        </section>
+
+        <section class="panel">
+          <h2>Index &amp; Gateway</h2>
+          <Show when={!gateway.loading} fallback={<div class="empty">Loading…</div>}>
+            <dl class="kv">
+              <dt>gateway</dt>
+              <dd>
+                <span class="chip" data-on={gateway()?.enabled}>{gateway()?.enabled ? "enabled" : "disabled"}</span>
+              </dd>
+              <dt>bindings</dt>
+              <dd>{gateway()?.bindings.length ? gateway()!.bindings.join(", ") : "none"}</dd>
+              <dt>chat allowlist</dt>
+              <dd class="wrap">{gateway()?.chat_allowlist.length ? gateway()!.chat_allowlist.join(", ") : "all chats permitted"}</dd>
+            </dl>
+          </Show>
+          <div class="row-gap">
+            <button disabled={rebuilding()} onClick={rebuild}>
+              {rebuilding() ? "Rebuilding…" : "Rebuild search index"}
+            </button>
+            <button class="danger" onClick={signOut}>Sign out</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+// ---- Shell -----------------------------------------------------------------
+
+const NAV = [
+  { hash: "#/overview", label: "Overview", icon: ICONS.overview },
+  { hash: "#/sessions", label: "Sessions", icon: ICONS.sessions },
+  { hash: "#/search", label: "Search", icon: ICONS.search },
+  { hash: "#/security", label: "Security", icon: ICONS.security },
+  { hash: "#/settings", label: "Settings", icon: ICONS.settings },
+];
+
+export default function App() {
+  // Probe auth once: any authenticated endpoint answering 200 means we're in.
+  createEffect(() => {
+    api.config()
+      .then(() => {
+        setAuthed(true);
+        connectEvents();
+      })
+      .catch(() => setAuthed(false));
+  });
+
+  const currentRoute = () => {
+    const r = route();
+    if (r.startsWith("#/sessions/")) return "transcript";
+    return NAV.find((n) => r.startsWith(n.hash))?.hash ?? "#/overview";
+  };
+
+  return (
+    <Switch>
+      <Match when={authed() === null}>
+        <div class="boot"><div class="spin" /></div>
+      </Match>
+      <Match when={authed() === false}>
+        <Login />
+      </Match>
+      <Match when={authed() === true}>
+        <div class="shell">
+          <aside class="sidebar">
+            <div class="brand"><span class="brand-mark">◆</span> vakcoder</div>
+            <nav>
+              <For each={NAV}>
+                {(item) => (
+                  <a href={item.hash} classList={{ active: currentRoute() === item.hash }}>
+                    <Icon d={item.icon} />
+                    {item.label}
+                  </a>
+                )}
+              </For>
+            </nav>
+            <div class="sidebar-foot">
+              <span class={`dot dot-${conn()}`} />
+              <span class="conn-label">{conn()}</span>
+            </div>
+          </aside>
+          <main class="main">
+            <Switch>
+              <Match when={currentRoute() === "#/overview"}><Overview /></Match>
+              <Match when={currentRoute() === "#/sessions"}><Sessions /></Match>
+              <Match when={currentRoute() === "transcript"}>
+                <Transcript sessionId={route().slice("#/sessions/".length)} />
+              </Match>
+              <Match when={currentRoute() === "#/search"}><SearchView /></Match>
+              <Match when={currentRoute() === "#/security"}><Security /></Match>
+              <Match when={currentRoute() === "#/settings"}><Settings /></Match>
+            </Switch>
+          </main>
+          <div class="toasts">
+            <For each={toasts()}>
+              {(t) => <div class={`toast toast-${t.kind}`}>{t.text}</div>}
+            </For>
+          </div>
+        </div>
+      </Match>
+    </Switch>
+  );
+}
