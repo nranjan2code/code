@@ -50,6 +50,8 @@ import {
   setSearchOpen,
   settingsOpen,
   setSettingsOpen,
+  inboxOpen,
+  setInboxOpen,
   transcriptViewId,
   setTranscriptViewId,
   uiPreferences,
@@ -94,6 +96,7 @@ import BudgetBanner from "./components/BudgetBanner";
 import SearchModal from "./components/SearchModal";
 import SetupCard from "./components/SetupCard";
 import TranscriptModal from "./components/TranscriptModal";
+import InboxPage from "./components/InboxPage";
 
 const streams = new Map<string, EventSource>();
 const sideStreams = new Map<string, EventSource>();
@@ -169,6 +172,8 @@ function onFinished(id: string, summary: string) {
 }
 
 export async function activate(id: string) {
+  // Choosing a task always lands back in the workspace view.
+  setInboxOpen(false);
   // Clicking the session already shown in the other pane focuses it there
   // instead of duplicating it across both panes.
   if (splitId() && id === splitId()) {
@@ -613,6 +618,7 @@ export default function App() {
           else if (historyOpen()) setHistoryOpen(false);
           else if (receiptsOpen()) setReceiptsOpen(false);
           else if (transcriptViewId()) setTranscriptViewId(null);
+          else if (inboxOpen()) setInboxOpen(false);
           else if (sideOpen()) setSideOpen(false);
           else stopRun();
         }
@@ -692,19 +698,28 @@ export default function App() {
           <div class="main">
             <WorkspaceHeader />
             <Show
-              when={splitId()}
+              when={inboxOpen()}
               fallback={
-                <div class="main-stack">
-                  <ChatPane />
-                  <Show when={sideOpen()}>
-                    <SideChatPanel />
+                <>
+                  <Show
+                    when={splitId()}
+                    fallback={
+                      <div class="main-stack">
+                        <ChatPane />
+                        <Show when={sideOpen()}>
+                          <SideChatPanel />
+                        </Show>
+                      </div>
+                    }
+                  >
+                    <SplitPanes />
                   </Show>
-                </div>
+                  <Composer cwd={info().cwd ?? ""} />
+                </>
               }
             >
-              <SplitPanes />
+              <InboxPage />
             </Show>
-            <Composer cwd={info().cwd ?? ""} />
           </div>
           <Show when={dockTab()}>
             {(tab) => (

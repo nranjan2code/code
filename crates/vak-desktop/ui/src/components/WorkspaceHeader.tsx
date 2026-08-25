@@ -1,15 +1,19 @@
-import { createMemo, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   activeId,
   dockTab,
+  inboxOpen,
+  inboxUnread,
   isRunning,
   retryOf,
   sessions,
   setBestOfOpen,
   setDockTab,
   setHistoryOpen,
+  setInboxOpen,
+  setInboxUnread,
   setNotice,
   setReceiptsOpen,
   setSearchOpen,
@@ -24,6 +28,11 @@ import * as api from "../api";
 import { toggleSplit } from "../App";
 import Icon, { type IconName } from "./Icon";
 
+const INBOX_POLL_MS = 20_000;
+
+/** Badge counters stay one glyph wide: 100+ collapses to 99+. */
+const countLabel = (n: number) => (n > 99 ? "99+" : String(n));
+
 const tools: { id: "preview" | "diff" | "terminal" | "editor" | "pr"; label: string; icon: IconName }[] = [
   { id: "preview", label: "Preview", icon: "preview" },
   { id: "diff", label: "Changes", icon: "diff" },
@@ -36,6 +45,22 @@ export default function WorkspaceHeader() {
   const session = createMemo(() => sessions().find((item) => item.session_id === activeId()));
   const title = createMemo(() => session()?.title || (activeId() ? "Untitled task" : "New task"));
   const [exporting, setExporting] = createSignal(false);
+
+  // Unread badge shares the BudgetBanner's polling cadence; the inbox page
+  // also publishes counts on its refreshes, so the two stay in sync.
+  const pollUnread = async () => {
+    try {
+      const res = await api.inboxUnreadCount();
+      setInboxUnread(res.count);
+    } catch {
+      /* backend restarting — keep the last known count */
+    }
+  };
+  createEffect(() => {
+    void pollUnread();
+    const t = setInterval(() => void pollUnread(), INBOX_POLL_MS);
+    onCleanup(() => clearInterval(t));
+  });
 
   // Markdown transcript export (docs/design/29-personal-os.md P4): the
   // shared renderer's output is fetched from the router and written to a
@@ -162,6 +187,19 @@ export default function WorkspaceHeader() {
         </button>
         </div>
         <span class="action-separator" aria-hidden="true" />
+        <button
+          class="icon-button has-tooltip inbox-bell"
+          data-tooltip="Inbox"
+          classList={{ on: inboxOpen() }}
+          aria-pressed={inboxOpen()}
+          aria-label={inboxUnread() > 0 ? `Inbox, ${countLabel(inboxUnread())} unread` : "Inbox"}
+          onClick={() => setInboxOpen(!inboxOpen())}
+        >
+          <Icon name="bell" />
+          <Show when={inboxUnread() > 0}>
+            <span class="bell-count" aria-hidden="true">{countLabel(inboxUnread())}</span>
+          </Show>
+        </button>
         <button
           class="icon-button has-tooltip"
           data-tooltip="Recall search ⌘K"

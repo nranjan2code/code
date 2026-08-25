@@ -139,6 +139,10 @@ export const [sideOpen, setSideOpen] = createSignal(false);
 export const [tasksOpen, setTasksOpen] = createSignal(false);
 // Cross-project recall search (docs/design/29-personal-os.md P1).
 export const [searchOpen, setSearchOpen] = createSignal(false);
+// Inbox page (docs/design/29-personal-os.md P6) + live unread total shared by
+// the header bell and the sidebar badge.
+export const [inboxOpen, setInboxOpen] = createSignal(false);
+export const [inboxUnread, setInboxUnread] = createSignal(0);
 // Settings page to land on when the next open happens (budget banner link).
 export type SettingsPageId =
   | "general"

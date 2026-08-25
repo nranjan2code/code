@@ -146,6 +146,30 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: TasksAction,
     },
+    /// Durable attention inbox (gateway pushes): list / show / ack / count
+    Inbox {
+        #[command(subcommand)]
+        action: Option<InboxAction>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum InboxAction {
+    /// List entries: unread by default, acked included with --all
+    List {
+        /// Include already-acked entries
+        #[arg(long)]
+        all: bool,
+        /// Maximum rows to print
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Print one entry's body and session/task refs by unique id prefix
+    Show { id_prefix: String },
+    /// Mark an entry read (idempotent tombstone append)
+    Ack { id_prefix: String },
+    /// One-line unread total
+    Count,
 }
 
 #[derive(Subcommand, Debug)]
@@ -519,6 +543,38 @@ mod tests {
             } => assert_eq!(id, "abc"),
             other => panic!("unexpected: {other:?}"),
         }
+    }
+
+    #[test]
+    fn inbox_subactions_parse_with_defaults() {
+        assert!(matches!(parse(&["inbox"]), Command::Inbox { action: None }));
+        match parse(&["inbox", "list", "--all", "--limit", "5"]) {
+            Command::Inbox {
+                action: Some(InboxAction::List { all, limit }),
+            } => {
+                assert!(all);
+                assert_eq!(limit, 5);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+        match parse(&["inbox", "show", "abcd1234"]) {
+            Command::Inbox {
+                action: Some(InboxAction::Show { id_prefix }),
+            } => assert_eq!(id_prefix, "abcd1234"),
+            other => panic!("unexpected: {other:?}"),
+        }
+        assert!(matches!(
+            parse(&["inbox", "ack", "abcd1234"]),
+            Command::Inbox {
+                action: Some(InboxAction::Ack { .. })
+            }
+        ));
+        assert!(matches!(
+            parse(&["inbox", "count"]),
+            Command::Inbox {
+                action: Some(InboxAction::Count)
+            }
+        ));
     }
 
     #[test]

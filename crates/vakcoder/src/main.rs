@@ -12,6 +12,7 @@ mod backup;
 mod cli;
 mod digest;
 mod doctor;
+mod inbox;
 mod memory;
 mod tasks;
 mod update_check;
@@ -247,6 +248,7 @@ async fn main() {
         Some(Command::Backup { action }) => backup::run_backup(cwd, action),
         Some(Command::Digest { days }) => digest::run_digest(cwd, days),
         Some(Command::Tasks { action }) => tasks::run_tasks(cwd, action),
+        Some(Command::Inbox { action }) => inbox::run_inbox(cwd, action),
         Some(Command::Plan {
             task,
             yes,

@@ -3,6 +3,7 @@ import type { JSX } from "solid-js";
 export type IconName =
   | "add"
   | "archive"
+  | "bell"
   | "branch"
   | "chat"
   | "check"
@@ -36,6 +37,7 @@ export type IconName =
 const paths: Record<IconName, () => JSX.Element> = {
   add: () => <><path d="M12 5v14M5 12h14" /></>,
   archive: () => <><rect x="3" y="4" width="18" height="5" rx="1" /><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4" /></>,
+  bell: () => <><path d="M6 9a6 6 0 0 1 12 0c0 4.6 1.8 5.7 1.8 5.7H4.2S6 13.6 6 9Z" /><path d="M10.3 19.2a2 2 0 0 0 3.4 0" /></>,
   branch: () => <><circle cx="6" cy="5" r="2" /><circle cx="18" cy="6" r="2" /><circle cx="6" cy="19" r="2" /><path d="M6 7v10M8 9c5 0 5-3 8-3" /></>,
   chat: () => <path d="M20 15a3 3 0 0 1-3 3H9l-5 3v-6a3 3 0 0 1-1-2V7a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3Z" />,
   check: () => <path d="m5 12 4 4L19 6" />,

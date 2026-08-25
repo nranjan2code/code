@@ -658,3 +658,34 @@ export interface DigestReport {
 export function digest(days: number): Promise<DigestReport> {
   return req(`/digest?days=${days}`);
 }
+
+// ---- inbox (docs/design/29-personal-os.md P6) ---------------------------------
+
+export interface InboxEntry {
+  id: string;
+  ts: string;
+  /** Server enum tag: task_summary | approval_pending | approval_denied |
+   *  budget_alert | digest | heartbeat | proposal_opened (snake_case). */
+  kind: string;
+  title: string;
+  body: string;
+  session_id?: string | null;
+  task_id?: string | null;
+}
+
+export function listInbox(
+  limit: number,
+  unreadOnly: boolean,
+): Promise<{ entries: InboxEntry[]; unread_count: number }> {
+  const params = new URLSearchParams({ limit: String(limit), unread: String(unreadOnly) });
+  return req(`/inbox?${params.toString()}`);
+}
+
+/** Idempotent read-state tombstone; unknown ids come back as a 404 error. */
+export function ackInbox(id: string): Promise<{ acked: boolean }> {
+  return req(`/inbox/${encodeURIComponent(id)}/ack`, { method: "POST", body: "{}" });
+}
+
+export function inboxUnreadCount(): Promise<{ count: number }> {
+  return req("/inbox/unread_count");
+}

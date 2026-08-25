@@ -2,8 +2,11 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import {
   activeId,
   backend,
+  inboxOpen,
+  inboxUnread,
   isRunning,
   sessions,
+  setInboxOpen,
   setTranscriptViewId,
   setShowShortcuts,
   setSidebarOpen,
@@ -108,6 +111,18 @@ export default function Sidebar() {
         <button class="sb-nav-item" onClick={() => setTasksOpen(true)}>
           <Icon name="timer" />
           <span>Automations</span>
+        </button>
+        <button
+          class="sb-nav-item"
+          classList={{ active: inboxOpen() }}
+          aria-label={inboxUnread() > 0 ? `Inbox, ${inboxUnread()} unread` : "Inbox"}
+          onClick={() => setInboxOpen(!inboxOpen())}
+        >
+          <Icon name="bell" />
+          <span>Inbox</span>
+          <Show when={inboxUnread() > 0}>
+            <small class="sb-nav-count">{inboxUnread() > 99 ? "99+" : inboxUnread()}</small>
+          </Show>
         </button>
         <button class="sb-nav-item" classList={{ active: filter() === "archived" }} onClick={() => setFilter(filter() === "archived" ? "all" : "archived")}>
           <Icon name="archive" />
