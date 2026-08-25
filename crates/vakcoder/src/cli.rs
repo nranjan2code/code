@@ -11,6 +11,11 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
+    /// Managed release lifecycle (docs/design/32): install/status/sync
+    Self_ {
+        #[command(subcommand)]
+        action: SelfAction,
+    },
     /// Interactive terminal UI (default when no subcommand given)
     Tui {
         /// Trust this workspace's project config and .env without prompting
@@ -150,6 +155,37 @@ pub(crate) enum Command {
     Inbox {
         #[command(subcommand)]
         action: Option<InboxAction>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum SelfAction {
+    /// Copy release binaries into the managed prefix + manifest
+    Install {
+        /// Managed prefix (default <home>/local/release)
+        #[arg(long)]
+        prefix: Option<PathBuf>,
+    },
+    /// Regenerate + reload service units onto the installed binary
+    ServicesSync {
+        /// Service names (default: all); unknown names are reported
+        names: Vec<String>,
+    },
+    /// Drift matrix: build vs manifest vs per-service units
+    Status,
+    /// Reverse of install; --purge also deletes ~/.vakcoder (confirmed)
+    Uninstall {
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        purge: bool,
+    },
+    /// Opt-in pull-and-replace from a release manifest URL
+    Update {
+        #[arg(long)]
+        url: String,
+        #[arg(long)]
+        yes: bool,
     },
 }
 

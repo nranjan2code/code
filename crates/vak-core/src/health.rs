@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use vak_session::SessionLog;
 
-use crate::{Core, APP_VERSION};
+use crate::{APP_VERSION, Core};
 
 /// Where `self install` records the deployed release
 /// (docs/design/32-release-engineering.md).
@@ -71,7 +71,11 @@ pub fn version_parity_check(home: &Path) -> HealthCheck {
     };
     let reported = serde_json::from_str::<serde_json::Value>(&text)
         .ok()
-        .and_then(|v| v.get("version").and_then(|v| v.as_str()).map(str::to_string));
+        .and_then(|v| {
+            v.get("version")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
     match reported {
         Some(v) if v == APP_VERSION => HealthCheck {
             label,

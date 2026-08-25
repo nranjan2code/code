@@ -14,6 +14,7 @@ mod digest;
 mod doctor;
 mod inbox;
 mod memory;
+mod self_release;
 mod tasks;
 mod update_check;
 mod wizard;
@@ -233,6 +234,13 @@ async fn main() {
             run_sessions_list(cwd);
             0
         }
+        Some(Command::Self_ { action }) => match action {
+            cli::SelfAction::Install { prefix } => self_release::run_install(prefix),
+            cli::SelfAction::ServicesSync { names } => self_release::run_services_sync(names),
+            cli::SelfAction::Status => self_release::run_status(),
+            cli::SelfAction::Uninstall { yes, purge } => self_release::run_uninstall(yes, purge),
+            cli::SelfAction::Update { url, yes } => self_release::run_update(&url, yes),
+        },
         Some(Command::Memory { action }) => memory::run_memory(cwd, action),
         Some(Command::SkillsReview { action }) => run_skills_review(cwd, action),
         Some(Command::Checkpoints { action }) => run_checkpoints(cwd, action).await,

@@ -239,6 +239,7 @@ impl CommandRunner for SystemRunner {
 
 mod platform {
     use super::CommandRunner;
+    use std::path::Path;
 
     #[cfg(target_os = "macos")]
     fn uid(runner: &dyn CommandRunner) -> String {
@@ -246,10 +247,6 @@ mod platform {
             .text("id", &["-u".to_string()])
             .filter(|u| !u.is_empty())
             .unwrap_or_else(|| "501".to_string())
-    }
-
-    fn systemd_unit(name: &str) -> String {
-        format!("vakcoder-{}.service", super::short_name(name))
     }
 
     /// Stop + deregister. Best-effort: a not-loaded service fails here and
@@ -310,12 +307,22 @@ mod platform {
         {
             runner.success(
                 "launchctl",
-                &["kickstart".to_string(), format!("gui/{}/{}", uid(runner), name)],
+                &[
+                    "kickstart".to_string(),
+                    format!("gui/{}/{}", uid(runner), name),
+                ],
             )
         }
         #[cfg(not(target_os = "macos"))]
         {
-            runner.success("systemctl", &["--user".to_string(), "start".to_string(), systemd_unit(name)])
+            runner.success(
+                "systemctl",
+                &[
+                    "--user".to_string(),
+                    "start".to_string(),
+                    systemd_unit(name),
+                ],
+            )
         }
     }
 
@@ -349,8 +356,7 @@ mod platform {
     fn parse_launchd_pid(text: &str) -> Option<u32> {
         for line in text.lines() {
             if let Some(rest) = line.trim().strip_prefix("pid = ") {
-                let digits: String =
-                    rest.chars().take_while(char::is_ascii_digit).collect();
+                let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
                 if let Ok(pid) = digits.parse::<u32>() {
                     return Some(pid);
                 }
@@ -432,9 +438,10 @@ fn sync_one_inner(
     }
 
     // Content drift: take the old instance down before replacing its unit.
-    if was_running {
-        unload(spec.name, runner);
-    }
+    // Bootout unconditionally — a crashed-but-loaded service (pid absent,
+    // registration alive) would otherwise fail the later bootstrap with
+    // "already bootstrapped" and roll back a perfectly good unit.
+    unload(spec.name, runner);
     write_atomic(&unit_path, &rendered)?;
     if load(spec.name, &unit_path, runner) {
         Ok(if previous.is_some() {
@@ -566,4 +573,237 @@ pub fn services_status(
         .flatten()
         .collect();
     status_specs(&specs, paths, runner)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct Fake {
+        cmds: Mutex<Vec<(String, Vec<String>)>>,
+        pid_text: Option<String>,
+        fail_load: bool,
+    }
+    impl Fake {
+        fn new() -> Self {
+            Fake {
+                cmds: Mutex::new(Vec::new()),
+                pid_text: None,
+                fail_load: false,
+            }
+        }
+        fn with_pid(pid: u32) -> Self {
+            Fake {
+                pid_text: Some(format!("com.vakcoder.x = {{\n\tpid = {pid}\n}}")),
+                ..Self::new()
+            }
+        }
+    }
+    impl CommandRunner for Fake {
+        fn success(&self, program: &str, args: &[String]) -> bool {
+            self.cmds
+                .lock()
+                .unwrap()
+                .push((program.to_string(), args.to_vec()));
+            !(self.fail_load
+                && program == "launchctl"
+                && args.first().map(String::as_str) == Some("bootstrap"))
+        }
+        fn text(&self, program: &str, args: &[String]) -> Option<String> {
+            if program == "id" {
+                return Some("501".to_string());
+            }
+            self.success(program, args);
+            self.pid_text.clone()
+        }
+    }
+
+    fn tmp_paths(tag: &str) -> (tempfile::TempDir, Paths) {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            launch_agents_dir: dir.path().join(format!("{tag}-agents")),
+            systemd_unit_dir: dir.path().join(format!("{tag}-units")),
+        };
+        (dir, paths)
+    }
+
+    fn spec_for(def: &ServiceDef, bin_dir: &Path, log_dir: &Path) -> ServiceSpec {
+        ServiceSpec {
+            name: def.name,
+            bin_path: bin_dir.join(def.bin_file),
+            args: def.args.iter().map(|a| (*a).to_string()).collect(),
+            log_path: log_dir.join(def.log_file),
+        }
+    }
+
+    #[test]
+    fn launchd_plist_renders_paths_args_and_zero_secrets() {
+        let def = &SERVICES[0];
+        let spec = spec_for(
+            def,
+            Path::new("/opt/vak/bin"),
+            Path::new("/Users/x/.vakcoder/logs"),
+        );
+        let plist = render_launchd_plist(&spec);
+        assert!(plist.contains("/opt/vak/bin/vakcoder"));
+        for a in def.args {
+            assert!(plist.contains(a), "missing arg {a}");
+        }
+        assert!(plist.contains("/Users/x/.vakcoder/logs/gateway.log"));
+        assert!(plist.contains("KeepAlive"));
+        assert!(plist.contains("RunAtLoad"));
+        // Update safety (doc 32): units never embed credentials.
+        for secret in ["TOKEN", "SECRET", "BOT_TOKEN", "EnvironmentVariables"] {
+            assert!(!plist.contains(secret), "unit must not contain {secret}");
+        }
+    }
+
+    #[test]
+    fn systemd_unit_renders_restart_and_exec() {
+        let def = &SERVICES[0];
+        let spec = spec_for(def, Path::new("/opt/vak/bin"), Path::new("/h/.vakcoder"));
+        let unit = render_systemd_unit(&spec);
+        assert!(
+            unit.contains("ExecStart="),
+            "unit missing ExecStart: {unit}"
+        );
+        assert!(unit.contains("/opt/vak/bin/vakcoder"), "{unit}");
+        assert!(unit.contains("--gateway"), "{unit}");
+        assert!(unit.contains("Restart=always"));
+    }
+
+    #[test]
+    fn sync_is_created_then_unchanged_when_running() {
+        let (_d, paths) = tmp_paths("sync1");
+        let fake = Fake::with_pid(4242);
+        let specs: Vec<ServiceSpec> = SERVICES
+            .iter()
+            .map(|d| spec_for(d, Path::new("/opt/vak/bin"), Path::new("/tmp/logs")))
+            .collect();
+
+        let first = sync_specs(&specs, &paths, &fake);
+        assert!(
+            matches!(first[0].action, SyncAction::Created),
+            "{:?}",
+            first[0]
+        );
+        let unit = std::fs::read_to_string(unit_file_path(SERVICES[0].name, &paths)).unwrap();
+        assert!(unit.contains("/opt/vak/bin/vakcoder"));
+
+        let second = sync_specs(&specs, &paths, &fake);
+        assert!(
+            matches!(second[0].action, SyncAction::Unchanged),
+            "{:?}",
+            second[0]
+        );
+    }
+
+    #[test]
+    fn sync_restarts_when_unit_current_but_process_down() {
+        let (_d, paths) = tmp_paths("sync2");
+        let down = Fake::new(); // no pid text => not running
+        let up = Fake::with_pid(7);
+        let specs: Vec<ServiceSpec> = SERVICES
+            .iter()
+            .map(|d| spec_for(d, Path::new("/opt/vak/bin"), Path::new("/tmp/logs")))
+            .collect();
+        let _ = sync_specs(&specs, &paths, &up); // create while "running"
+        let out = sync_specs(&specs, &paths, &down);
+        assert!(
+            matches!(out[0].action, SyncAction::Restarted),
+            "{:?}",
+            out[0]
+        );
+    }
+
+    #[test]
+    fn sync_updates_on_drift_and_restores_previous_unit_on_load_failure() {
+        let (_d, paths) = tmp_paths("sync3");
+        let good = Fake::with_pid(9);
+        let specs: Vec<ServiceSpec> = SERVICES
+            .iter()
+            .map(|d| spec_for(d, Path::new("/opt/vak/bin"), Path::new("/tmp/logs")))
+            .collect();
+        let _ = sync_specs(&specs, &paths, &good);
+        let unit_path = unit_file_path(SERVICES[0].name, &paths);
+        let original = std::fs::read_to_string(&unit_path).unwrap();
+
+        // Drifted content + a manager that refuses bootstrap.
+        let bad = Fake {
+            fail_load: true,
+            ..Fake::with_pid(9)
+        };
+        let drifted = spec_for(
+            &SERVICES[0],
+            Path::new("/elsewhere/bin"),
+            Path::new("/tmp/logs"),
+        );
+        let out = sync_one(&drifted, &paths, &bad);
+        assert!(
+            matches!(out.action, SyncAction::Failed(_)),
+            "{:?}",
+            out.action
+        );
+        // Rollback: the previous healthy unit is still on disk.
+        assert_eq!(std::fs::read_to_string(&unit_path).unwrap(), original);
+
+        // A healthy runner sees content drift and reports Updated.
+        let moved = sync_one(&drifted, &paths, &good);
+        assert!(
+            matches!(moved.action, SyncAction::Updated),
+            "{:?}",
+            moved.action
+        );
+    }
+
+    #[test]
+    fn status_flags_units_not_pointing_at_installed_binary() {
+        let (_d, paths) = tmp_paths("status");
+        let fake = Fake::with_pid(11);
+        let installed: Vec<ServiceSpec> = SERVICES
+            .iter()
+            .map(|d| spec_for(d, Path::new("/opt/vak/bin"), Path::new("/l")))
+            .collect();
+        let _ = sync_specs(&installed, &paths, &fake);
+
+        let rows = status_specs(&installed, &paths, &fake);
+        assert!(rows.iter().all(|r| r.unit_points_at_installed), "{rows:?}");
+
+        // Legacy layout: same name, binary inside a build tree ⇒ drift flag.
+        let legacy: Vec<ServiceSpec> = SERVICES
+            .iter()
+            .map(|d| spec_for(d, Path::new("/repo/target/release"), Path::new("/l")))
+            .collect();
+        let rows = status_specs(&legacy, &paths, &fake);
+        assert!(rows.iter().all(|r| !r.unit_points_at_installed), "{rows:?}");
+    }
+
+    #[test]
+    fn uninstall_removes_units_and_tolerates_missing() {
+        let (_d, paths) = tmp_paths("rm");
+        let fake = Fake::new();
+        let names: Vec<&str> = SERVICES.iter().map(|d| d.name).collect();
+        services_uninstall(&names, &paths, &fake).unwrap(); // nothing to remove yet
+        let installed: Vec<ServiceSpec> = SERVICES
+            .iter()
+            .map(|d| spec_for(d, Path::new("/b"), Path::new("/l")))
+            .collect();
+        let _ = sync_specs(&installed, &paths, &fake);
+        services_uninstall(&names, &paths, &fake).unwrap();
+        for def in SERVICES {
+            assert!(!unit_file_path(def.name, &paths).exists());
+        }
+    }
+
+    #[test]
+    fn resolve_specs_reports_unknown_names_without_touching_known_ones() {
+        let out = resolve_specs(Path::new("/b"), &["com.vakcoder.gateway", "nope"]);
+        assert!(out[0].is_ok());
+        assert!(out[1].as_ref().err().unwrap().contains("unknown service"));
+
+        let synced = services_sync(Path::new("/b"), &["nope"], &Paths::default(), &Fake::new());
+        assert!(matches!(synced[0].action, SyncAction::Failed(_)));
+    }
 }
