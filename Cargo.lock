@@ -5678,7 +5678,7 @@ dependencies = [
 
 [[package]]
 name = "vak-agent"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5699,7 +5699,7 @@ dependencies = [
 
 [[package]]
 name = "vak-config"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "serde",
  "tempfile",
@@ -5710,7 +5710,7 @@ dependencies = [
 
 [[package]]
 name = "vak-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5737,7 +5737,7 @@ dependencies = [
 
 [[package]]
 name = "vak-delivery"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5747,7 +5747,7 @@ dependencies = [
 
 [[package]]
 name = "vak-desktop"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "axum",
  "portable-pty",
@@ -5770,7 +5770,7 @@ dependencies = [
 
 [[package]]
 name = "vak-eval"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5789,7 +5789,7 @@ dependencies = [
 
 [[package]]
 name = "vak-flow"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5809,7 +5809,7 @@ dependencies = [
 
 [[package]]
 name = "vak-hooks"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "libc",
  "serde",
@@ -5823,7 +5823,7 @@ dependencies = [
 
 [[package]]
 name = "vak-llm"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -5839,7 +5839,7 @@ dependencies = [
 
 [[package]]
 name = "vak-mcp"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -5853,7 +5853,7 @@ dependencies = [
 
 [[package]]
 name = "vak-ops"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
@@ -5863,7 +5863,7 @@ dependencies = [
 
 [[package]]
 name = "vak-permission"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "globset",
  "serde",
@@ -5873,7 +5873,7 @@ dependencies = [
 
 [[package]]
 name = "vak-server"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -5910,7 +5910,7 @@ dependencies = [
 
 [[package]]
 name = "vak-session"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "serde",
@@ -5923,7 +5923,7 @@ dependencies = [
 
 [[package]]
 name = "vak-store"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -5940,7 +5940,7 @@ dependencies = [
 
 [[package]]
 name = "vak-tools"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "globset",
@@ -5961,7 +5961,7 @@ dependencies = [
 
 [[package]]
 name = "vak-tray"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "notify-rust",
  "reqwest 0.12.28",
@@ -5974,7 +5974,7 @@ dependencies = [
 
 [[package]]
 name = "vak-tui"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5998,7 +5998,7 @@ dependencies = [
 
 [[package]]
 name = "vakcoder"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "clap",

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.8.0 — canonical layout release
+
+Platform-standard filesystem locations. One-time automatic migration from
+`~/.vakcoder` to `~/Library/Application Support/vakcoder` (macOS) or
+`~/.local/share/vakcoder` (Linux). Logs to `~/Library/Logs/vakcoder`,
+cache (store.db) to `~/Library/Caches/vakcoder`. Desktop app now ships
+in the install bundle with frontend assets.
+
+- **`vak-config::paths` module**: single source of truth for data home,
+  cache home, and log directory. `VAKCODER_HOME` override nests everything
+  under one directory for tests and portable installs.
+- **`user_env_path()` follows data home**: secrets live in
+  `data_home()/.env`, not a hardcoded `~/.vakcoder/.env`.
+- **Desktop in bundle**: `self install` copies `vak-desktop` binary and
+  frontend assets into the app bundle. `Resources/` now contains the
+  SolidJS SPA.
+- **Stale reference purge**: 36 files changed — all user-facing
+  `~/.vakcoder` strings replaced in source code, 19 doc references fixed
+  across 16 design docs, AGENTS.md, SECURITY.md, README.md, hosting.md.
+- **Legacy migration**: one-time rename of `~/.vakcoder` → canonical data
+  home. store.db* → cache. logs → Library/Logs. Skipped when
+  `VAKCODER_HOME` is set. Called at all binary entry points.
+
 ## 0.7.0 — admin console release
 
 The web admin console: one binary, one URL, full control of a running

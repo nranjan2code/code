@@ -6,7 +6,7 @@
 
 **A local-first Rust harness for running serious coding agents without giving up the receipts.**
 
-[![Version](https://img.shields.io/badge/version-0.7.0-E66A2C?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.8.0-E66A2C?style=flat-square)](CHANGELOG.md)
 [![Rust](https://img.shields.io/badge/Rust-2024-2B2B2B?style=flat-square&logo=rust)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-MIT-536B58?style=flat-square)](Cargo.toml)
 [![Safety](https://img.shields.io/badge/safety-fail--closed-384A6B?style=flat-square)](docs/design/24-agent-security.md)
@@ -23,7 +23,7 @@ Its thesis is simple: **Codex-grade safety, pi-grade transparency, Claude Code-g
 
 The result is not another thin model wrapper. Sessions are append-only ledgers, permissions are evaluated before every effect, restricted tools run across a broker boundary, partial work survives cancellation, and every provider dispatch produces a receipt.
 
-> **Project status:** v0.7.0. The core roadmap is implemented and live-tested. The project is actively developed; see the [roadmap](docs/design/00-roadmap.md) and [changelog](CHANGELOG.md).
+> **Project status:** v0.8.0. The core roadmap is implemented and live-tested. The project is actively developed; see the [roadmap](docs/design/00-roadmap.md) and [changelog](CHANGELOG.md).
 
 ## Why vakcoder
 

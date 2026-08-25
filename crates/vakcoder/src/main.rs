@@ -1490,10 +1490,7 @@ async fn run_telegram(server: String, token_flag: Option<String>) -> i32 {
         .unwrap_or_else(|| "https://api.telegram.org".to_string());
     // Single-instance guard keyed by bot token: a second local bridge
     // fails fast with the holder's identity instead of flapping 409s.
-    let locks_dir = vak_config::get_var("VAKCODER_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".vakcoder")))
-        .map(|home| home.join("locks"));
+    let locks_dir = Some(vak_config::paths::data_home().join("locks"));
     let bridge = vak_server::telegram::TelegramBridge {
         api_base,
         bot_token: bot_token.clone(),

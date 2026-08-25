@@ -114,6 +114,25 @@ fn copy_executable(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| format!("mkdir {}: {e}", dst.display()))?;
+    for entry in std::fs::read_dir(src).map_err(|e| format!("read dir {}: {e}", src.display()))? {
+        let entry = entry.map_err(|e| format!("dir entry: {e}"))?;
+        let ty = entry
+            .file_type()
+            .map_err(|e| format!("file type {}: {e}", entry.path().display()))?;
+        let target = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_recursive(&entry.path(), &target)?;
+        } else {
+            let bytes = std::fs::read(entry.path())
+                .map_err(|e| format!("read {}: {e}", entry.path().display()))?;
+            write_atomic(&target, &bytes)?;
+        }
+    }
+    Ok(())
+}
+
 fn current_git_sha() -> String {
     option_env!("VAKCODER_GIT_SHA")
         .map(str::to_string)
@@ -153,6 +172,16 @@ pub(crate) fn run_install(prefix: Option<PathBuf>) -> i32 {
         && let Err(e) = copy_executable(&sibling, &bin_dir.join("vak-delivery-worker"))
     {
         eprintln!("warning: delivery worker not installed: {e}");
+    }
+    // Desktop app (Tauri) rides along when built.
+    if let Some(sibling) = exe.parent().map(|p| p.join("vak-desktop"))
+        && sibling.exists()
+    {
+        if let Err(e) = copy_executable(&sibling, &bin_dir.join("vak-desktop")) {
+            eprintln!("warning: desktop not installed: {e}");
+        } else {
+            binaries.push(("vak-desktop".into(), bin_dir.join("vak-desktop")));
+        }
     }
 
     if bundle && let Err(e) = write_bundle_metadata(&prefix) {
@@ -231,7 +260,32 @@ fn write_bundle_metadata(prefix: &Path) -> Result<(), String> {
     let contents = prefix.join("Contents");
     std::fs::create_dir_all(contents.join("Resources")).map_err(|e| e.to_string())?;
     // Plist first: a bundle without it is not launchable as an app.
-    write_atomic(&contents.join("Info.plist"), info_plist().as_bytes())
+    write_atomic(&contents.join("Info.plist"), info_plist().as_bytes())?;
+    // Copy desktop frontend assets into Resources so vak-desktop can find them.
+    // Walk up from the binary to the workspace root, then into the source tree.
+    let resources = contents.join("Resources");
+    if let Ok(exe) = std::env::current_exe() {
+        // Binary is at <workspace>/target/release/vakcoder or
+        // <bundle>/Contents/MacOS/vakcoder — walk up to find ui/dist.
+        let candidates = [
+            exe.parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+                .map(|p| p.join("crates/vak-desktop/ui/dist")),
+            exe.parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+                .map(|p| p.join("crates/vak-desktop/ui/dist")),
+        ];
+        for candidate in candidates.into_iter().flatten() {
+            if candidate.exists() {
+                copy_dir_recursive(&candidate, &resources)?;
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn read_manifest(prefix: &Path) -> Result<Manifest, String> {
