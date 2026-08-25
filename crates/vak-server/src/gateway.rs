@@ -51,6 +51,8 @@ pub struct GatewayState {
     /// Forwarded gates awaiting a yes/no from the approver surface,
     /// oldest first (uuidv7 keys sort by insertion time).
     pending_approvals: Mutex<std::collections::BTreeMap<String, PendingGate>>,
+    /// Allowed inbound chat keys. Empty = all chats permitted.
+    chat_allowlist: Vec<String>,
 }
 
 struct PendingGate {
@@ -93,11 +95,22 @@ impl GatewayState {
             },
             approval_timeout: Duration::from_secs(gw.approval_timeout_secs),
             pending_approvals: Mutex::new(std::collections::BTreeMap::new()),
+            chat_allowlist: gw.chat_allowlist.clone(),
         }
     }
 
     pub(crate) fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
+    }
+
+    /// Snapshot of current surface bindings (key→value).
+    pub(crate) fn bindings_snapshot(&self) -> Vec<(String, String)> {
+        self.bindings
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 
     /// True when forwarded gates are active.
@@ -115,6 +128,10 @@ impl GatewayState {
 
     pub(crate) fn approvals_mode(&self) -> &str {
         &self.approvals
+    }
+
+    pub(crate) fn chat_allowlist(&self) -> &[String] {
+        &self.chat_allowlist
     }
 
     pub(crate) fn pending_approval_count(&self) -> usize {
@@ -415,6 +432,25 @@ async fn gateway_inbound(
             .into_response();
     }
     let key = format!("{}:{}", body.surface.trim(), body.chat.trim());
+    // 0c-01: chat allowlist — reject messages from unknown chats.
+    // An empty list means all chats are permitted (backward compatible).
+    if !state.gateway.chat_allowlist().is_empty() && !state.gateway.chat_allowlist().contains(&key)
+    {
+        vak_core::security_events::record(
+            &state.core.sessions_home(),
+            vak_core::security_events::EventKind::ChatAllowlist,
+            "chat_rejected",
+            &format!("key={key}"),
+            None,
+        );
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": format!("chat '{key}' not in gateway.chat_allowlist")
+            })),
+        )
+            .into_response();
+    }
 
     // Approval replies from the designated approver surface resolve the
     // addressed gate (or the oldest one) instead of becoming conversation
@@ -510,7 +546,12 @@ async fn gateway_inbound(
 
     let (reply_tx, reply_rx) = oneshot::channel::<String>();
     let want_reply = body.wait;
-    let prompt = compose_prompt(&text, &body.attachments);
+    // 0c-02: attribute the sender identity to the prompt text.
+    let attributed = match body.sender.as_deref().map(str::trim) {
+        Some(who) if !who.is_empty() => format!("[from {who}] {text}"),
+        _ => text.clone(),
+    };
+    let prompt = compose_prompt(&attributed, &body.attachments);
     start_turn_chain(&state, handle, prompt, want_reply.then_some(reply_tx));
 
     if !want_reply {

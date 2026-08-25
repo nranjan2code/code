@@ -139,6 +139,26 @@ pub struct GatewaySettings {
     pub approval_timeout_secs: Option<u64>,
     #[serde(default)]
     pub outbound: OutboundSettings,
+    /// Inbound rate limiting (0a-06). None uses sensible defaults.
+    pub rate_limit: Option<RateLimitSettings>,
+    /// Allowed inbound chat keys: `["telegram:12345", "log:ops"]`.
+    /// Empty list = all chats allowed (backward compatible).
+    #[serde(default)]
+    pub chat_allowlist: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct RateLimitSettings {
+    /// Max requests per window for `POST /gateway/inbound`.
+    pub inbound_per_min: Option<u32>,
+    /// Max requests per window for `POST /sessions`.
+    pub sessions_per_min: Option<u32>,
+    /// Max requests per window for `POST /sessions/{id}/run`.
+    pub runs_per_min: Option<u32>,
+    /// Max requests per window for all other POST endpoints.
+    pub other_post_per_min: Option<u32>,
+    /// Window duration in seconds.
+    pub window_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -487,6 +507,9 @@ pub struct GatewayResolved {
     pub approver: Option<String>,
     pub approval_timeout_secs: u64,
     pub webhooks: std::collections::BTreeMap<String, WebhookResolved>,
+    pub rate_limit: Option<RateLimitSettings>,
+    /// Allowed inbound chat keys. Empty = all chats permitted.
+    pub chat_allowlist: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -607,6 +630,8 @@ impl Default for Config {
                 approver: None,
                 approval_timeout_secs: 300,
                 webhooks: std::collections::BTreeMap::new(),
+                rate_limit: None,
+                chat_allowlist: Vec::new(),
             },
             memory: MemoryResolved {
                 search_enabled: true,
@@ -903,6 +928,8 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         Some(t) => cfg.gateway.approval_timeout_secs = t,
         None => {}
     }
+    cfg.gateway.rate_limit = merged.gateway.rate_limit.clone();
+    cfg.gateway.chat_allowlist = merged.gateway.chat_allowlist.clone();
     cfg.memory.search_enabled = merged.memory.search_enabled.unwrap_or(true);
     cfg.memory.write_enabled = merged.memory.write_enabled.unwrap_or(true);
     cfg.memory.skill_proposals = merged.memory.skill_proposals.unwrap_or(true);
@@ -1083,6 +1110,8 @@ const KNOWN_GATEWAY_KEYS: &[&str] = &[
     "approver",
     "approval_timeout_secs",
     "outbound",
+    "rate_limit",
+    "chat_allowlist",
 ];
 const KNOWN_MEMORY_KEYS: &[&str] = &[
     "search_enabled",
@@ -1447,6 +1476,12 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.gateway.approval_timeout_secs.is_some() {
         base.gateway.approval_timeout_secs = over.gateway.approval_timeout_secs;
+    }
+    if over.gateway.rate_limit.is_some() {
+        base.gateway.rate_limit = over.gateway.rate_limit;
+    }
+    if !over.gateway.chat_allowlist.is_empty() {
+        base.gateway.chat_allowlist = over.gateway.chat_allowlist;
     }
     if over.memory.search_enabled.is_some() {
         base.memory.search_enabled = over.memory.search_enabled;

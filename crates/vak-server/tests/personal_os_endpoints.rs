@@ -416,7 +416,15 @@ async fn doctor_reports_checks_facts_and_optional_ladder() {
         .iter()
         .map(|c| c["label"].as_str().unwrap())
         .collect();
-    assert_eq!(labels, vec!["provider", "sessions home", "config warnings"]);
+    assert_eq!(
+        labels,
+        vec![
+            "provider",
+            "sessions home",
+            "config warnings",
+            "self version parity"
+        ]
+    );
     assert!(
         body["facts"]
             .as_array()

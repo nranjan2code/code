@@ -38,10 +38,13 @@
 //! - `GET  /gateway/status`           → gateway enabled flag + binding table
 //! - `DELETE /gateway/bindings/:key`  → unbind a surface from its session
 
+mod admin;
 mod channels;
 mod delivery;
+mod events;
 mod gateway;
 mod heartbeat;
+mod rate_limit;
 pub mod telegram;
 
 use std::collections::HashMap;
@@ -108,6 +111,10 @@ pub struct AppState {
     pub(crate) gateway: Arc<gateway::GatewayState>,
     /// Proactive heartbeat runtime (docs/design/29-personal-os.md P7).
     pub(crate) heartbeat: Arc<heartbeat::HeartbeatRuntime>,
+    /// Global event hub for admin console SSE streaming.
+    pub(crate) hub: events::EventHub,
+    /// SQLite FTS5 session index (rebuildable from JSONL).
+    pub(crate) store: Option<vak_store::Store>,
 }
 
 #[derive(Clone)]
@@ -120,6 +127,11 @@ pub struct BestRunMeta {
 impl AppState {
     pub fn new(core: Core) -> Self {
         let gateway = Arc::new(gateway::GatewayState::load(&core, false));
+        let hub = events::init_global();
+        let store = vak_store::Store::open(&core.sessions_home()).ok();
+        if store.is_none() {
+            eprintln!("[warn] store open failed, search will use fallback");
+        }
         AppState {
             core,
             sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -130,6 +142,8 @@ impl AppState {
             procs: Arc::new(Mutex::new(HashMap::new())),
             gateway,
             heartbeat: Arc::new(heartbeat::HeartbeatRuntime::new()),
+            hub,
+            store,
         }
     }
 
@@ -299,6 +313,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/skills/proposals/{id}/promote", post(promote_proposal))
         .route("/skills/proposals/{id}/reject", post(reject_proposal))
         .merge(gateway::routes())
+        .merge(admin::routes())
         .with_state(state)
 }
 
@@ -800,9 +815,16 @@ pub fn secured_router_with(core: Core, force_gateway: bool) -> (Router, String) 
     if force_gateway {
         state.enable_gateway();
     }
+    let rl_settings = state.core.config().gateway.rate_limit.clone();
+    let rl_config = rate_limit::RateLimitConfig::from_settings(rl_settings);
+    let limiter = rate_limit::RateLimiter::new(rl_config, state.core.sessions_home());
     let app = router_with_state(state.clone())
         .layer(axum::middleware::from_fn_with_state(
-            token.clone(),
+            limiter,
+            rate_limit::rate_limit_layer,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            (token.clone(), state.core.sessions_home()),
             require_bearer,
         ))
         .layer(cors);
@@ -848,7 +870,7 @@ pub async fn serve_with(
 }
 
 async fn require_bearer(
-    State(token): State<String>,
+    State((token, home)): State<(String, std::path::PathBuf)>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
@@ -870,6 +892,32 @@ async fn require_bearer(
     if provided.as_deref() == Some(token.as_str()) {
         next.run(req).await
     } else {
+        let ip = req
+            .headers()
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(',').next())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let detail = format!(
+            "path={} provided={}",
+            req.uri().path(),
+            provided
+                .as_deref()
+                .map(|p| format!(
+                    "{}...{}",
+                    &p[..4.min(p.len())],
+                    &p[p.len().saturating_sub(4)..]
+                ))
+                .unwrap_or_else(|| "<none>".into())
+        );
+        vak_core::security_events::record(
+            &home,
+            vak_core::security_events::EventKind::AuthFailure,
+            "auth_failure",
+            &detail,
+            ip,
+        );
         StatusCode::UNAUTHORIZED.into_response()
     }
 }
@@ -2326,7 +2374,17 @@ async fn set_permission_mode(
 ) -> StatusCode {
     match parse_mode(&body.mode) {
         Some(mode) => {
+            let old = state.core.effective_permission_mode();
             apply_permission_mode(&state, mode);
+            if old != mode {
+                vak_core::security_events::record(
+                    &state.core.sessions_home(),
+                    vak_core::security_events::EventKind::ConfigChange,
+                    "permission_mode_changed",
+                    &format!("{old:?} -> {mode:?}"),
+                    None,
+                );
+            }
             StatusCode::OK
         }
         None => StatusCode::BAD_REQUEST,
@@ -2395,13 +2453,25 @@ async fn delete_provider_key(
     Json(body): Json<ProviderRef>,
 ) -> axum::response::Response {
     match state.core.remove_provider_key(&body.provider) {
-        Ok(removed) => Json(serde_json::json!({
-            "provider": body.provider,
-            "env_var": removed.env_var,
-            "configured": removed.shadowed_by_env,
-            "shadowed_by_env": removed.shadowed_by_env,
-        }))
-        .into_response(),
+        Ok(removed) => {
+            vak_core::security_events::record(
+                &state.core.sessions_home(),
+                vak_core::security_events::EventKind::ProviderKeyChange,
+                "provider_key_removed",
+                &format!(
+                    "provider={} shadowed={}",
+                    body.provider, removed.shadowed_by_env
+                ),
+                None,
+            );
+            Json(serde_json::json!({
+                "provider": body.provider,
+                "env_var": removed.env_var,
+                "configured": removed.shadowed_by_env,
+                "shadowed_by_env": removed.shadowed_by_env,
+            }))
+            .into_response()
+        }
         Err(e) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -2449,12 +2519,21 @@ async fn put_provider_key(
     Json(body): Json<ProviderKeyBody>,
 ) -> axum::response::Response {
     match state.core.set_provider_key(&body.provider, &body.key) {
-        Ok(env_var) => Json(serde_json::json!({
-            "provider": body.provider,
-            "env_var": env_var,
-            "configured": true,
-        }))
-        .into_response(),
+        Ok(env_var) => {
+            vak_core::security_events::record(
+                &state.core.sessions_home(),
+                vak_core::security_events::EventKind::ProviderKeyChange,
+                "provider_key_set",
+                &format!("provider={}", body.provider),
+                None,
+            );
+            Json(serde_json::json!({
+                "provider": body.provider,
+                "env_var": env_var,
+                "configured": true,
+            }))
+            .into_response()
+        }
         Err(e) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -2520,35 +2599,50 @@ struct ConfigPatch {
 }
 
 async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatch>) -> StatusCode {
+    let mut changes = Vec::new();
     if let Some(provider) = body.provider {
         if provider.trim().is_empty() {
             return StatusCode::BAD_REQUEST;
         }
         state.core.set_provider(provider.trim().to_string());
+        changes.push(format!("provider={}", provider.trim()));
     }
     if let Some(model) = body.model {
         if model.trim().is_empty() {
             return StatusCode::BAD_REQUEST;
         }
         state.core.set_model(model.trim().to_string());
+        changes.push(format!("model={}", model.trim()));
     }
     if let Some(max_turns) = body.max_turns {
         if !(1..=1000).contains(&max_turns) {
             return StatusCode::BAD_REQUEST;
         }
         state.core.set_max_turns(max_turns);
+        changes.push(format!("max_turns={max_turns}"));
     }
     if let Some(mode) = body.permission_mode {
         let Some(mode) = parse_mode(&mode) else {
             return StatusCode::BAD_REQUEST;
         };
         apply_permission_mode(&state, mode);
+        changes.push(format!("permission_mode={mode:?}"));
     }
     if let Some(theme) = body.theme {
         if !matches!(theme.as_str(), "dark" | "light" | "plain") {
             return StatusCode::BAD_REQUEST;
         }
+        changes.push(format!("theme={theme}"));
         state.core.set_theme(theme);
+    }
+    if !changes.is_empty() {
+        vak_core::security_events::record(
+            &state.core.sessions_home(),
+            vak_core::security_events::EventKind::ConfigChange,
+            "config_patched",
+            &changes.join(", "),
+            None,
+        );
     }
     StatusCode::OK
 }
@@ -2725,7 +2819,19 @@ async fn put_hooks(
             })
             .collect(),
     );
-    (StatusCode::OK, Json(serde_json::json!({ "saved": true, "count": body.hooks.iter().filter(|h| h.enabled).count() }))).into_response()
+    let enabled_count = body.hooks.iter().filter(|h| h.enabled).count();
+    vak_core::security_events::record(
+        &state.core.sessions_home(),
+        vak_core::security_events::EventKind::ConfigChange,
+        "hooks_updated",
+        &format!("enabled={enabled_count} total={}", body.hooks.len()),
+        None,
+    );
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "saved": true, "count": enabled_count })),
+    )
+        .into_response()
 }
 
 #[derive(serde::Deserialize, Clone)]
@@ -2853,6 +2959,13 @@ async fn put_mcp_servers(
             .collect(),
     };
     state.core.set_mcp_servers(cfg);
+    vak_core::security_events::record(
+        &state.core.sessions_home(),
+        vak_core::security_events::EventKind::ConfigChange,
+        "mcp_servers_updated",
+        &format!("count={}", body.servers.len()),
+        None,
+    );
     (
         StatusCode::OK,
         Json(serde_json::json!({ "saved": true, "count": body.servers.len() })),
