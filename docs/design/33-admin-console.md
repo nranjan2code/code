@@ -47,7 +47,7 @@ subscribe with `EventSource`; auth rides the session cookie because
 
 ### Store (FTS5 index)
 
-- One SQLite DB at `<home>/store.db`, WAL mode, schema-versioned.
+- One SQLite DB at `cache_home()/store.db`, WAL mode, schema-versioned.
 - `entries` table: entry_id, session_id, project_hash, parent_id, ts,
   kind (header/message/compaction/receipt/goal), role, provider, model,
   tool_name, content_text, is_error.

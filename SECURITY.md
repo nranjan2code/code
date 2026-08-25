@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 0.6.x   | Yes       |
-| < 0.6   | No        |
+| 0.7.x   | Yes       |
+| < 0.7   | No        |
 
 ## Reporting a Vulnerability
 
@@ -39,7 +39,7 @@ responsibly:
 7. **Transient provider failures retry within the frozen route ladder.**
    Retries honor `Retry-After`; never retry user aborts.
 8. **Secrets never enter git.** API keys live in `.env` (project) or
-   `~/.vakcoder/.env` (user), both gitignored.
+   the user `.env` at `data_home()/.env` (gitignored).
 9. **Model catalogues are discovered, never hardcoded.** The set of models
    a provider offers is a property of the user's key.
 10. **Restricted filesystem access is workspace-rooted.** Symlink and

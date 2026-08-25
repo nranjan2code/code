@@ -165,9 +165,8 @@ fn load_watchdog() -> bool {
 }
 
 fn home() -> std::path::PathBuf {
-    std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("/"))
+    // Canonical data home (doc 32) — never hand-roll HOME/.vakcoder.
+    vak_config::paths::data_home()
 }
 
 fn notify(title: &str, body: &str) {
@@ -178,6 +177,11 @@ fn notify(title: &str, body: &str) {
 }
 
 fn main() {
+    // Canonical layout migration (doc 32); tray has no config override
+    // path of its own — a failed migration only degrades to old paths.
+    if let Err(e) = vak_config::paths::migrate_legacy_home() {
+        eprintln!("[warn] home migration skipped: {e}");
+    }
     let watchdog = Arc::new(AtomicBool::new(load_watchdog()));
 
     let event_loop: EventLoop<TrayEvent> =

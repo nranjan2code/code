@@ -216,7 +216,7 @@ Telegram's 4096-char cap on newline-safe boundaries). Non-text updates
 advance the offset without routing so they are never replayed. Transient
 failures back off 3s; ten consecutive failures give up with a clear error.
 `TELEGRAM_API_BASE` overrides the API host for self-hosted relays and tests.
-Tokens live in `.env` / `~/.vakcoder/.env`, never in config or flags.
+Tokens live in `.env` / the user `.env`, never in config or flags.
 
 ## Security posture
 

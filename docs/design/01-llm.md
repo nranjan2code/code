@@ -77,13 +77,13 @@ defaults (`default_base_url`) because those are configuration; model *ids*
 are always live.
 
 Keys are user-supplied and user-revocable. `Core::set_provider_key` writes
-`~/.vakcoder/.env` (0600); `remove_provider_key` strips the entry, clears the
+`data_home()/.env` (0600); `remove_provider_key` strips the entry, clears the
 runtime override and the loaded-dotenv copy, and reports `shadowed_by_env`
 when the variable is *also* exported in the real environment — that copy
 cannot be unset from inside the app, and the provider stays authenticated.
 Both paths drop the cached provider client and the discovered-model cache.
 
-Secrets live in `.env` (project) or `~/.vakcoder/.env` (user) — both are
+Secrets live in `.env` (project) or `data_home()/.env` (user) — both are
 gitignored by convention and loaded at startup; real environment variables
 always take precedence. Never commit keys.
 

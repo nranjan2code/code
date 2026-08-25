@@ -2,7 +2,7 @@
 
 ## Format
 
-`.vakcoder/flows/<name>.toml` (project) or `~/.vakcoder/flows/` (user):
+`.vakcoder/flows/<name>.toml` (project) or `data_home()/flows/` (user):
 
 ```toml
 [flow]
@@ -45,7 +45,7 @@ report when upstream failed).
   `required = false` — node fails, dependents are skipped, but merge nodes
   still produce partial-outcome reports.
 - **Frozen definition + resume**: each run persists a state ledger JSON
-  (`~/.vakcoder/flow-runs/<flow>/<run>.json`) containing the raw TOML frozen
+  (`data_home()/flow-runs/<flow>/<run>.json`) containing the raw TOML frozen
   at first run plus per-node status/output. `flow run <name> --resume`
   replays only non-completed nodes.
 

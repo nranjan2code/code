@@ -132,7 +132,9 @@ impl AppState {
     pub fn new(core: Core) -> Self {
         let gateway = Arc::new(gateway::GatewayState::load(&core, false));
         let hub = events::init_global();
-        let store = vak_store::Store::open(&core.sessions_home()).ok();
+        // Canonical layout (doc 32): the FTS index is a rebuildable cache,
+        // never user data — it lives under Library/Caches / XDG_CACHE_HOME.
+        let store = vak_store::Store::open(&core.cache_home()).ok();
         if store.is_none() {
             eprintln!("[warn] store open failed, search will use fallback");
         }

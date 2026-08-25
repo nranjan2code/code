@@ -50,7 +50,7 @@ fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
     }
     if include_secrets {
         eprintln!();
-        eprintln!("!! WARNING: --include-secrets will copy ~/.vakcoder/.env");
+        eprintln!("!! WARNING: --include-secrets will copy the user .env");
         eprintln!("!! containing provider API keys into the destination.");
         eprintln!("!! Store that directory encrypted and share it with no one.");
         eprintln!();
@@ -65,7 +65,7 @@ fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
             );
             println!("manifest: {}", dir.join("manifest.json").display());
             if include_secrets && !home.join(".env").is_file() {
-                println!("note: no ~/.vakcoder/.env present; nothing secret was copied");
+                println!("note: no user .env present; nothing secret was copied");
             }
             0
         }

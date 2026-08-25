@@ -4,7 +4,7 @@
 
 State-based workspace snapshots captured automatically at the start of every
 run (`run_turn_with`), stored under
-`~/.vakcoder/checkpoints/<session-id>/<seq>.json`.
+`data_home()/checkpoints/<session-id>/<seq>.json`.
 
 - **Scope**: every regular file under cwd, excluding `.git`, `target`,
   `node_modules`, `.vakcoder`, `dist`; per-file cap 8MB, total cap 64MB.

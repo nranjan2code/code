@@ -241,7 +241,7 @@ transport.
   Ctrl-C still interrupts. Mode tag renders in the composer footer.
 - ✅ Custom commands, project command namespaces, and plugin-contributed
   palette actions: markdown prompt templates discovered from
-  `.vakcoder/commands/*.md` (project), `<home>/commands/*.md` (user), and
+  `.vakcoder/commands/*.md` (project), `data_home()/commands/*.md` (user), and
   `.vakcoder/plugins/<plugin>/commands/*.md` (labeled `plugin:<name>`),
   with project > plugin > user precedence. `$ARGUMENTS` substitutes the
   invocation args (appended when the template has no placeholder). They

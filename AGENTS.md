@@ -77,7 +77,7 @@ security/inbox), operation (approvals/config/cancel), and interaction
    remaining cooldown so the half-close probe gets through. Never retry
    user aborts.
 8. **Secrets never enter git.** API keys live in `.env` (project) or
-   `~/.vakcoder/.env` (user), both gitignored, loaded via
+   the user `.env` at `data_home()/.env` (gitignored), loaded via
    `vak_config::load_env_file/get_var`. Real environment variables take
    precedence over `.env`. Never hardcode, echo, or commit keys. Keys are
    user-supplied and user-revocable: `Core::set_provider_key` /
@@ -188,7 +188,9 @@ crates/vak-agent     loop, steering queues (full user messages: text +
 crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode +
                      context-quality scorecard (docs/design/27 Phase C)
-crates/vak-config    layered TOML config + .env secret loading + [finops]
+ crates/vak-config    layered TOML config + .env secret loading + canonical
+                     filesystem paths (paths.rs: data_home, cache_home,
+                     logs_dir, migrate_legacy_home) + [finops]
                      caps/pricing + [goal] policy + [route] ladder
                      preferences (docs/design/27 Phases D+H+R) +
                      [automation]/[update]/[tools] (docs/design/29)
@@ -269,4 +271,4 @@ target/debug/vakcoder eval --live             # real model benchmark
 ## Parallel agents
 
 Only touch files you changed in this session. Sessions are per-cwd-hashed;
-never edit another session's files under `~/.vakcoder`.
+never edit another session's files under the data home (`~/Library/Application Support/vakcoder` on macOS, `~/.local/share/vakcoder` on Linux).

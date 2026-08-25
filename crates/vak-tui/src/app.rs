@@ -2002,7 +2002,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                         {
                                                             match vak_core::learning::promote(&home, &cwd, &id) {
                                                                 Ok(name) => screen.success(&format!(
-                                                                    "skill '{name}' promoted to ~/.vakcoder/skills"
+                                                                    "skill '{name}' promoted to skills"
                                                                 )),
                                                                 Err(e) => screen.error(&e),
                                                             }
@@ -2368,7 +2368,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                                 ));
                                                             }
                                                             Ok(removed) => screen.accent(&format!(
-                                                                "{target} key removed ({} cleared from ~/.vakcoder/.env)",
+                                                                "{target} key removed ({} cleared from the user .env)",
                                                                 removed.env_var,
                                                             )),
                                                             Err(e) => screen.error(&e.to_string()),
@@ -2379,7 +2379,7 @@ pub async fn run(core: Core, _cfg: UiConfig) -> i32 {
                                                     {
                                                         Ok(env_var) => {
                                                             screen.accent(&format!(
-                                                                "{target} key stored as {env_var} (~/.vakcoder/.env, owner-only) · effective immediately · /provider {target} to switch",
+                                                                "{target} key stored as {env_var} (user .env, owner-only) · effective immediately · /provider {target} to switch",
                                                             ));
                                                         }
                                                         Err(e) => screen.error(&e.to_string()),
@@ -4704,7 +4704,7 @@ fn provider_choices(core: &Core, current: &str) -> Vec<ChoiceItem> {
 /// One source of truth for provider→env-var wiring: the Core's own map.
 /// Readiness goes through the same lookup runs use (real env, runtime
 /// overrides, then loaded .env files), so a key stored from any surface —
-/// or sitting in ~/.vakcoder/.env — shows as ready everywhere.
+/// or sitting in the user `.env` — shows as ready everywhere.
 fn provider_status(core: &Core, provider: &str) -> String {
     match Core::provider_env_var(provider) {
         None if !Core::provider_known(provider) => "custom provider".to_string(),

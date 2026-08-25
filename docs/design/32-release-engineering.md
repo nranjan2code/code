@@ -13,7 +13,8 @@ no plists pointing into build trees, no spot-fixing deploys.
    at build/run time from the binary (`--version`, `env!("CARGO_PKG_VERSION")`).
 2. **Installed ≠ built.** Services never execute from `target/`.
    `self install` copies release artifacts into a managed prefix
-   (`~/.local/share/vakcoder/bin`) plus an `install.json` manifest
+   (`/Applications/vakcoder.app/Contents/MacOS/` on macOS,
+   `~/.local/share/vakcoder/bin/` on Linux) plus an `install.json` manifest
    {version, git_sha, installed_at, binaries}. The build tree may be
    cleaned at any time without touching a running deployment.
 3. **Services are generated, never hand-edited.** `self services sync`
@@ -25,7 +26,7 @@ no plists pointing into build trees, no spot-fixing deploys.
    surfaces the same check so any surface reveals drift.
 5. **Lifecycle is symmetric.** `self uninstall` reverses install exactly
    (stop → unload → remove units → remove binaries+manifest), preserving
-   user data (`~/.vakcoder`) unless `--purge`.
+   user data unless `--purge`.
 6. **Updates are opt-in and atomic.** Passive `[update] url` check only
    notifies. `self update --url <manifest.json>` downloads to temp,
    verifies, renames over the installed binary, re-syncs services —
@@ -48,36 +49,80 @@ desktop bundle → `self install` → `self services sync` →
 smoke (doctor parity, gateway port, bridge alive) → tag + GitHub release.
 Humans and agents run the script; nobody replays steps from memory.
 
+## Canonical filesystem layout
+
+`vak_config::paths` is the single source of truth. Every crate resolves
+homes through it; no crate hardcodes `~/.vakcoder` or platform-specific
+paths directly.
+
+### macOS (default)
+
+| Purpose | Path |
+|---------|------|
+| **Data home** | `~/Library/Application Support/vakcoder` |
+| **Cache** | `~/Library/Caches/vakcoder` |
+| **Logs** | `~/Library/Logs/vakcoder` |
+| **User secrets** | `<data_home>/.env` |
+| **Config state** | `<data_home>/` (sessions, memory, tasks, inbox) |
+| **Store DB** | `<cache>/store.db` (rebuildable from JSONL) |
+| **Binary bundle** | `/Applications/vakcoder.app/Contents/MacOS/` |
+
+### Linux (default)
+
+| Purpose | Path |
+|---------|------|
+| **Data home** | `~/.local/share/vakcoder` |
+| **Cache** | `~/.cache/vakcoder` |
+| **Logs** | `~/.local/state/vakcoder/logs` |
+| **User secrets** | `<data_home>/.env` |
+| **Installed binaries** | `~/.local/share/vakcoder/bin/` |
+
+### VAKCODER_HOME override
+
+Setting `VAKCODER_HOME=/some/path` nests everything under that directory:
+`/some/path/`, `/some/path/cache/`, `/some/path/logs/`. Used for
+self-contained sandboxes (tests, portable installs).
+
 ## Update safety & data continuity
 
 Releases and updates must never lose data or credentials:
 
 - **No secrets in units.** Templates embed zero credentials. The binary
-  self-sources from `~/.vakcoder/.env` (gateway token, bot tokens,
-  provider keys) — `secured_router_with` falls back to `.env` when the
-  process env is empty. Regenerating units on a new machine therefore
-  cannot strand auth.
-- **Logs live at stable paths** (`~/.vakcoder/logs/<service>.log`),
-  independent of install location; upgrades append, never truncate.
+  self-sources from the user `.env` at `data_home()/.env` (gateway token,
+  bot tokens, provider keys) — `secured_router_with` falls back to `.env`
+  when the process env is empty. Regenerating units on a new machine
+  therefore cannot strand auth.
+- **Logs live at stable paths** under `logs_dir()`, independent of
+  install location; upgrades append, never truncate.
 - **User data is out of scope for every lifecycle command.** Sessions,
-  memory, inbox, tasks, checkpoints under `~/.vakcoder` are untouched by
+  memory, inbox, tasks, checkpoints under the data home are untouched by
   install/update/sync/uninstall; only `self uninstall --purge` may remove
   them, interactively confirmed.
-- **Migration preserves state by identity.** Service names, ports,
-  bindings, task store, and the telegram lock/cursor all key off
-  `~/.vakcoder`, so moving the *binary* changes nothing else.
 - **Atomic replacement.** Binaries are written temp-then-rename; units
   are diffed before rewrite; a failed sync leaves the previous healthy
   unit in place.
+- **Stale-process detection.** `self status` compares binary mtime vs
+  unit mtime; when the binary is newer and the process is still running
+  on the old version, a kickstart (`launchctl kickstart -k` on macOS,
+  `systemctl --user restart` on Linux) converges the process. Three
+  tests in vak-ops enforce this invariant.
 
 ### Legacy migration (one-time, per machine)
 
-1. Harvest any secrets embedded in existing hand-made units → merge into
-   `~/.vakcoder/.env` (never clobber existing keys).
-2. `self install` + `self services sync` — new units reference the
-   installed path, source no secrets, log to the same stable paths.
-3. `self status` proves: unit points at installed bin, service running,
-   version parity across build/manifest/services.
+The pre-0.8 layout stored everything under `~/.vakcoder/`. On first run,
+`migrate_legacy_home()` performs a one-time rename:
+
+1. `~/.vakcoder` → the platform data home (atomic rename under `$HOME`).
+2. `store.db*` → relocated to the cache home (rebuildable, not user data).
+3. `logs/` contents → relocated to `logs_dir()` so Console.app / journald
+   keeps seeing them.
+4. When `VAKCODER_HOME` is set, migration is skipped (the override is
+   already self-contained).
+5. If both old and new locations exist, migration refuses to guess a merge
+   order and surfaces an error for manual resolution.
+
+All entry points (vakcoder binary, vak-tray, vak-desktop) call migration
+at startup before any other logic.
 
 ## Migration of legacy deployments
 

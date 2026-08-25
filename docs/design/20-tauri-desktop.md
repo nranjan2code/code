@@ -18,7 +18,7 @@ advantages transfer directly:
 1. **One append-only ledger shared by every surface.** Codex's #1 desktop
    complaint is CLI sessions being invisible in the app (#24197, still open).
    Ours cannot happen structurally: `vak-tui`, `exec`, `serve`, and the
-   desktop app all read/write the same JSONL trees under `~/.vakcoder`.
+   desktop app all read/write the same JSONL trees under the data home.
 2. **Delta+snapshot streaming everywhere** (invariant 4). Every pane — chat,
    diff, subagent view — consumes the same event stream at whichever level it
    wants. No re-derivation hacks.
@@ -92,7 +92,7 @@ advantages transfer directly:
 
 | feature | copy? | mechanism here |
 |---|---|---|
-| One window managing agents across repos/environments | D2 | sidebar spans all projects under ~/.vakcoder |
+| One window managing agents across repos/environments | D2 | sidebar spans all projects under the data home |
 | Tabbed agent chats | D1 | trivial |
 | Best-of-N: same prompt fanned across models/worktrees, side-by-side compare, color-coded agreement (agree/partial/diverge) | D4 | N child branches off one prompt entry (ledger-native!); comparison = sibling projection; optional judge via vak-flow |
 | Aggregated diff viewer across parallel runs | D4 | union of sibling diffs, agreement coloring |
@@ -228,7 +228,7 @@ Shipped in `crates/vak-desktop` (+ additive `vak-server` endpoints):
   in-process linking keeps one binary and the exact same HTTP+SSE contract;
   remote/SSH targets still work later by pointing the webview at a URL).
   Project picker gate on first run; last project persisted to
-  `~/.vakcoder/desktop.json`; project switch restarts the backend.
+  `data_home()/desktop.json`; project switch restarts the backend.
 - **Chat**: SSE streaming with markdown-lite renderer, thinking blocks,
   tool cards (args/result/error), approvals inline (allow/deny), steering
   while running, stop (Esc/cancel), transcript density modes
@@ -236,7 +236,7 @@ Shipped in `crates/vak-desktop` (+ additive `vak-server` endpoints):
 - **Sidebar**: persisted-session listing (`GET /sessions`), search + status
   filters, resume via `POST /sessions/{id}/attach`, new session (⌘N).
   The project-first navigation keeps up to eight valid recent workspaces in
-  `~/.vakcoder/desktop.json`; selecting one performs a two-phase backend
+  `data_home()/desktop.json`; selecting one performs a two-phase backend
   handoff. The current backend remains live until the replacement has bound
   successfully, repeated selections are no-ops, concurrent switches are
   serialized, and stale frontend refreshes cannot repopulate the new view
@@ -309,7 +309,7 @@ Shipped in `crates/vak-desktop` (+ additive `vak-server` endpoints):
   structured status on seeded repo, deterministic merge failure as a value.
 
 - **Scheduled-task daemon** (Codex/Claude routines, local-first): task CRUD
-  (`/tasks`) persisted at `~/.vakcoder/tasks.json`, scheduler loop spawned by
+  (`/tasks`) persisted in the data home, scheduler loop spawned by
   `secured_router` (20s ticks; fires tasks for the active workspace when due).
   Each fire reuses `spawn_isolated_run` — best-of-N's shared primitive — so
   every run lands in its own worktree with a full session in the ledger.
@@ -377,7 +377,7 @@ contract (`vak-server/tests/server_ext.rs` covers every one):
   sidebar after an app restart answered `POST /run` with 404 — the handle was
   never re-registered. Attach is idempotent for live sessions.
 - **Secrets actually reach the shell (critical).** The desktop boot now loads
-  `~/.vakcoder/.env` always plus the picked workspace's trusted `.env` — the
+  the user `.env` always plus the picked workspace's trusted `.env` — the
   exact CLI contract — before starting the Core. Previously the shell loaded
   no env files at all, so CLI users' keys never worked in the app until they
   happened to export them globally.
@@ -386,7 +386,7 @@ contract (`vak-server/tests/server_ext.rs` covers every one):
     whether credentials resolve right now, curated model suggestions per
     provider. Never returns secret values.
   - `PUT /config/key {provider, key}` — upserts into the user-level
-    `~/.vakcoder/.env` (0600, atomic replace, shared by TUI/exec/serve) and
+    the user `.env` (0600, atomic replace, shared by TUI/exec/serve) and
     registers a runtime override so the very next request uses it — no
     restart. Keys are accepted once and never echoed back.
   - Lookup precedence stays: runtime override → real environment → .env

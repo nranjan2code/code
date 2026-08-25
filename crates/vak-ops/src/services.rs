@@ -76,13 +76,14 @@ pub const SERVICES: &[ServiceDef] = &[
 
 impl ServiceDef {
     /// Resolve against an install prefix: `bin_dir` holds the release
-    /// binaries, `vak_home` anchors the stable log directory.
-    pub fn spec(&self, bin_dir: &Path, vak_home: &Path) -> ServiceSpec {
+    /// binaries; logs land in the canonical platform logs dir
+    /// (`~/Library/Logs/vakcoder` / XDG state) — never inside data.
+    pub fn spec(&self, bin_dir: &Path, _vak_home: &Path) -> ServiceSpec {
         ServiceSpec {
             name: self.name,
             bin_path: bin_dir.join(self.bin_file),
             args: self.args.iter().map(|a| (*a).to_string()).collect(),
-            log_path: vak_home.join("logs").join(self.log_file),
+            log_path: vak_config::paths::logs_dir().join(self.log_file),
         }
     }
 
@@ -326,6 +327,35 @@ mod platform {
         }
     }
 
+    /// Kill + restart in one step (kickstart -k keeps launchd KeepAlive
+    /// semantics; systemctl restart is the systemd analogue). Used when the
+    /// unit is current but a live process predates the installed binary —
+    /// it would otherwise keep executing the old image indefinitely.
+    pub fn restart(name: &str, runner: &dyn CommandRunner) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            runner.success(
+                "launchctl",
+                &[
+                    "kickstart".to_string(),
+                    "-k".to_string(),
+                    format!("gui/{}/{}", uid(runner), name),
+                ],
+            )
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            runner.success(
+                "systemctl",
+                &[
+                    "--user".to_string(),
+                    "restart".to_string(),
+                    systemd_unit(name),
+                ],
+            )
+        }
+    }
+
     /// Live PID according to the manager, None when not running.
     pub fn running_pid(name: &str, runner: &dyn CommandRunner) -> Option<u32> {
         #[cfg(target_os = "macos")]
@@ -379,6 +409,12 @@ pub enum SyncAction {
     Unchanged,
     /// Unit identical but process down; started without rewrite.
     Restarted,
+    /// Unit identical but the running process predated the installed
+    /// binary (started before the last `self install`); bounced so it
+    /// executes the current image. Without this, an in-place upgrade
+    /// leaves every service silently running stale code while `status`
+    /// reports healthy pids (doc 32 invariant 4).
+    Bounced,
     Failed(String),
 }
 
@@ -397,6 +433,9 @@ pub struct ServiceRow {
     /// False for missing units and for legacy units exec'ing outside the
     /// install prefix (e.g. anything under `target/`) — the drift flag.
     pub unit_points_at_installed: bool,
+    /// True when a live process predates the installed binary (started
+    /// before the last install touched it) — stale-image drift.
+    pub binary_stale: bool,
     pub running_pid: Option<u32>,
 }
 
@@ -404,6 +443,20 @@ fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, contents).map_err(|e| format!("write {}: {e}", tmp.display()))?;
     std::fs::rename(&tmp, path).map_err(|e| format!("rename into {}: {e}", path.display()))
+}
+
+/// True when the installed binary changed after the unit was last written:
+/// a live service synced against the older image is executing stale code.
+/// Missing files never count as stale (handled by other branches).
+fn binary_newer_than_unit(bin_path: &Path, unit_path: &Path) -> bool {
+    let (Ok(bin_meta), Ok(unit_meta)) = (std::fs::metadata(bin_path), std::fs::metadata(unit_path))
+    else {
+        return false;
+    };
+    let (Ok(bin_mtime), Ok(unit_mtime)) = (bin_meta.modified(), unit_meta.modified()) else {
+        return false;
+    };
+    bin_mtime > unit_mtime
 }
 
 fn sync_one(spec: &ServiceSpec, paths: &Paths, runner: &dyn CommandRunner) -> SyncOutcome {
@@ -428,12 +481,26 @@ fn sync_one_inner(
     let was_running = running_pid(spec.name, runner).is_some();
 
     if previous.as_deref() == Some(rendered.as_str()) {
-        return if was_running {
-            Ok(SyncAction::Unchanged)
-        } else if start(spec.name, runner) {
-            Ok(SyncAction::Restarted)
+        return if !was_running {
+            if start(spec.name, runner) {
+                Ok(SyncAction::Restarted)
+            } else {
+                Err(format!("start {} failed", spec.name))
+            }
+        } else if binary_newer_than_unit(&spec.bin_path, &unit_path) {
+            // The live process predates the installed binary. Bounce it and
+            // re-stamp the unit so staleness converges — without the stamp,
+            // every later sync would bounce again forever.
+            if platform::restart(spec.name, runner) && write_atomic(&unit_path, &rendered).is_ok() {
+                Ok(SyncAction::Bounced)
+            } else {
+                Err(format!(
+                    "restart {} failed: process predates the installed binary",
+                    spec.name
+                ))
+            }
         } else {
-            Err(format!("start {} failed", spec.name))
+            Ok(SyncAction::Unchanged)
         };
     }
 
@@ -489,11 +556,19 @@ pub fn status_specs(
             let unit_path = unit_file_path(spec.name, paths);
             let on_disk = std::fs::read_to_string(&unit_path).ok();
             let wanted = spec.bin_path.to_string_lossy().into_owned();
+            let pid = running_pid(spec.name, runner);
+            let points_at_installed = on_disk.is_some_and(|t| t.contains(wanted.as_str()));
             ServiceRow {
                 name: spec.name.to_string(),
-                unit_points_at_installed: on_disk.is_some_and(|t| t.contains(wanted.as_str())),
+                unit_points_at_installed: points_at_installed,
+                // Stale-image drift: a live process synced against an
+                // older binary. Only meaningful when the unit itself is
+                // current, otherwise the legacy-path flag covers it.
+                binary_stale: pid.is_some()
+                    && points_at_installed
+                    && binary_newer_than_unit(&spec.bin_path, &unit_path),
                 unit_path,
-                running_pid: running_pid(spec.name, runner),
+                running_pid: pid,
             }
         })
         .collect()
@@ -527,7 +602,9 @@ pub fn services_uninstall(
 /// as Err entries so callers can report them individually.
 pub fn resolve_specs(bin_path: &Path, names: &[&str]) -> Vec<Result<ServiceSpec, String>> {
     let bin_dir = bin_path.parent().unwrap_or(Path::new("/"));
-    let vak_home = super::home().join(".vakcoder");
+    // Canonical data home (doc 32) — service logs live under the
+    // platform logs dir; specs only need a base for their log paths.
+    let vak_home = vak_config::paths::data_home();
     names
         .iter()
         .map(|name| {
@@ -660,6 +737,41 @@ mod tests {
         }
     }
 
+    /// Canonical-layout invariant (doc 32): specs derived from the real
+    /// resolver never point logs into the legacy dotdir nor binaries at
+    /// a build tree. This is the regression guard for the 0.7 incident
+    /// where services silently executed stale images from ad-hoc paths.
+    #[test]
+    fn resolved_specs_never_reference_legacy_dotdir_or_build_trees() {
+        let specs: Vec<ServiceSpec> = resolve_specs(
+            Path::new("/Applications/vakcoder.app/Contents/MacOS/vakcoder"),
+            &[],
+        )
+        .into_iter()
+        .flatten()
+        .collect();
+        for spec in specs {
+            let log = spec.log_path.to_string_lossy();
+            let bin = spec.bin_path.to_string_lossy();
+            assert!(
+                !log.contains("/.vakcoder/"),
+                "log path must use the canonical logs dir, got {log}"
+            );
+            assert!(
+                !bin.contains("/target/"),
+                "binaries must come from the managed install, got {bin}"
+            );
+            assert!(
+                bin.starts_with("/Applications/vakcoder.app/"),
+                "binaries must live inside the installed bundle, got {bin}"
+            );
+            assert!(
+                log.contains("Library/Logs/vakcoder"),
+                "logs must land in Library/Logs on macOS, got {log}"
+            );
+        }
+    }
+
     #[test]
     fn systemd_unit_renders_restart_and_exec() {
         let def = &SERVICES[0];
@@ -716,6 +828,94 @@ mod tests {
             "{:?}",
             out[0]
         );
+    }
+
+    #[test]
+    fn sync_bounces_live_process_predating_installed_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("vakcoder");
+        std::fs::write(&bin, b"binary").unwrap();
+        let (_d, paths) = tmp_paths("sync3");
+        let fake = Fake::with_pid(99);
+        let specs: Vec<ServiceSpec> = SERVICES
+            .iter()
+            .map(|d| spec_for(d, dir.path(), Path::new("/tmp/logs")))
+            .collect();
+
+        assert!(matches!(
+            sync_specs(&specs, &paths, &fake)[0].action,
+            SyncAction::Created
+        ));
+
+        // Simulate `self install` replacing the binary AFTER the unit was
+        // written: push the unit's mtime into the past relative to the
+        // binary so the running pid predates the current image.
+        let now = std::time::SystemTime::now();
+        let unit_path = unit_file_path(SERVICES[0].name, &paths);
+        // Unit 10s in the past, binary at now → running pid predates image.
+        for (path, age) in [(&unit_path, 10u64), (&bin, 0u64)] {
+            let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+            f.set_modified(now - std::time::Duration::from_secs(age))
+                .unwrap();
+            drop(f);
+        }
+
+        let second = sync_specs(&specs, &paths, &fake);
+        assert!(
+            matches!(second[0].action, SyncAction::Bounced),
+            "expected Bounced, got {:?}",
+            second[0]
+        );
+        {
+            // Scope the guard: sync_specs locks the same log internally.
+            let bounced = fake.cmds.lock().unwrap();
+            assert!(
+                bounced.iter().any(|(p, a)| p == "launchctl"
+                    && a.first().map(String::as_str) == Some("kickstart")
+                    && a.contains(&"-k".to_string())),
+                "expected kickstart -k among {:?}",
+                *bounced
+            );
+        }
+
+        // The bounce re-stamps the unit, so later syncs are true no-ops.
+        let third = sync_specs(&specs, &paths, &fake);
+        assert!(
+            matches!(third[0].action, SyncAction::Unchanged),
+            "staleness must converge after a bounce, got {:?}",
+            third[0]
+        );
+    }
+
+    #[test]
+    fn status_flags_stale_running_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("vakcoder");
+        std::fs::write(&bin, b"binary").unwrap();
+        let (_d, paths) = tmp_paths("sync4");
+        let fake = Fake::with_pid(11);
+        let specs: Vec<ServiceSpec> = SERVICES
+            .iter()
+            .map(|d| spec_for(d, dir.path(), Path::new("/tmp/logs")))
+            .collect();
+        let _ = sync_specs(&specs, &paths, &fake);
+
+        let fresh = status_specs(&specs, &paths, &fake)[0].clone();
+        assert!(!fresh.binary_stale);
+
+        // Binary replaced after the unit landed → running pid is stale.
+        let now = std::time::SystemTime::now();
+        let unit_path = unit_file_path(SERVICES[0].name, &paths);
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&unit_path)
+            .unwrap();
+        f.set_modified(now - std::time::Duration::from_secs(10))
+            .unwrap();
+        drop(f);
+        let stale = status_specs(&specs, &paths, &fake)[0].clone();
+        assert!(stale.binary_stale, "{stale:?}");
+        assert!(stale.running_pid.is_some());
     }
 
     #[test]

@@ -21,7 +21,7 @@ consumers.
 | POST | `/sessions/:id/attach` `{session_id}` | resume a persisted session into memory |
 | GET | `/sessions/:id/diff` | git status + diff of the session workspace |
 | POST | `/config/mode` `{mode}` | switch mode; a changed value cancels all active main/side runs and denies pending approvals before returning 200 |
-| PUT | `/config/key` `{provider,key}` | store a provider credential in `~/.vakcoder/.env` (0600) |
+| PUT | `/config/key` `{provider,key}` | store a provider credential in the user `.env` (0600) |
 | DELETE | `/config/key` `{provider}` | revoke it; `shadowed_by_env` reports a key still exported in the real environment |
 | GET | `/providers` | provider list + which are configured (never key values) |
 | GET | `/providers/:name/models` | models that provider's stored key can reach, live (502 + reason on failure — never a static fallback) |
@@ -34,7 +34,7 @@ consumers.
 | POST | `/sessions/:id/keep` / `discard` | merge or drop a best-of-N candidate branch |
 | GET | `/sessions/:id/pr` | gh-backed PR view + check rollup (`reason: no_pr\|gh_unavailable`) |
 | POST | `/sessions/:id/pr/merge` `{number,method}` | `gh pr merge --auto` (squash/merge/rebase) |
-| GET/POST | `/tasks`, PATCH/DELETE `/tasks/:id` | scheduled-task CRUD (persisted to `~/.vakcoder/tasks.json`); additive `schedule` (5-field cron), `script` (zero-token watchdog), `model_pin` fields validated via `TaskDef::validate` → 400 |
+| GET/POST | `/tasks`, PATCH/DELETE `/tasks/:id` | scheduled-task CRUD (persisted in the data home); additive `schedule` (5-field cron), `script` (zero-token watchdog), `model_pin` fields validated via `TaskDef::validate` → 400 |
 | POST | `/tasks/:id/run-now` | fire immediately; resets schedule |
 | GET | `/sessions/:id/launch` | dev-server configs (`.vakcoder/launch.toml` + npm autodetect) |
 | POST | `/sessions/:id/launch/start\|stop` `{name}` | manage a dev server process |

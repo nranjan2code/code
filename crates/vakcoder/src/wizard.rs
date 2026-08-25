@@ -85,7 +85,7 @@ fn run_wizard(core: &Core) {
     };
     match core.set_provider_key(&choice, &key) {
         Ok(env_var) => {
-            eprintln!("✓ {choice} key stored as {env_var} (~/.vakcoder/.env, owner-only)");
+            eprintln!("✓ {choice} key stored as {env_var} (user .env, owner-only)");
             eprintln!("  switch with /provider {choice} inside the TUI");
             finish_wizard(false);
         }

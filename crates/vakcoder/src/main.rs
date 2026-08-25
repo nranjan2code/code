@@ -147,6 +147,11 @@ fn latest_session_id(core: &Core) -> Option<String> {
 }
 #[tokio::main]
 async fn main() {
+    // Canonical layout migration (doc 32): pre-0.8 dotdir → Library/XDG
+    // homes. One-time rename; no-op when absent or overridden.
+    if let Err(e) = vak_config::paths::migrate_legacy_home() {
+        eprintln!("[warn] home migration skipped: {e}");
+    }
     let internal = std::env::args_os().nth(1);
     #[cfg(target_os = "linux")]
     {
@@ -177,8 +182,8 @@ async fn main() {
     // trusted workspaces: a cloned repository must not be able to inject
     // VAKCODER_*_BASE_URL (credential redirection) or other env on first
     // run.
-    if let Some(home) = std::env::var_os("HOME") {
-        vak_config::load_env_file(&std::path::PathBuf::from(home).join(".vakcoder/.env"));
+    if let Some(env_path) = vak_config::user_env_path() {
+        vak_config::load_env_file(&env_path);
     }
 
     let code = match cli.command {
@@ -1463,7 +1468,10 @@ async fn run_telegram(server: String, token_flag: Option<String>) -> i32 {
     let token = match token_flag {
         Some(t) => t,
         None => vak_config::get_var("VAKCODER_GATEWAY_TOKEN").unwrap_or_else(|| {
-            eprintln!("error: gateway token missing — set VAKCODER_GATEWAY_TOKEN in ~/.vakcoder/.env or pass --token");
+            let hint = vak_config::user_env_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "the user .env".into());
+            eprintln!("error: gateway token missing — set VAKCODER_GATEWAY_TOKEN in {hint} or pass --token");
             String::new()
         }),
     };
@@ -1472,7 +1480,10 @@ async fn run_telegram(server: String, token_flag: Option<String>) -> i32 {
     }
     // .env-aware lookup so the bot token never has to be exported by hand.
     let Some(bot_token) = vak_config::get_var("TELEGRAM_BOT_TOKEN") else {
-        eprintln!("error: TELEGRAM_BOT_TOKEN is not set (put it in .env or ~/.vakcoder/.env)");
+        let hint = vak_config::user_env_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "the user .env".into());
+        eprintln!("error: TELEGRAM_BOT_TOKEN is not set (put it in .env or {hint})");
         return 2;
     };
     let api_base = vak_config::get_var("TELEGRAM_API_BASE")

@@ -15,6 +15,7 @@ notify-rust = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
 vak-ops = { path = "../vak-ops" }
+vak-config = { workspace = true }
 
 [lints]
 workspace = true

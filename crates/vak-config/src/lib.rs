@@ -2,6 +2,7 @@
 //! < environment. Unknown keys are ignored with a warning, never fatal.
 
 pub mod finops;
+pub mod paths;
 
 pub use finops::{estimate_cost_usd, resolve_usd_per_mtok, usd_per_mtok_heuristic};
 
@@ -1665,7 +1666,7 @@ pub fn forget_dotenv_var(key: &str) {
 /// `$HOME/.vakcoder/.env` — the user-level secret store shared by every
 /// vakcoder surface.
 pub fn user_env_path() -> Option<std::path::PathBuf> {
-    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".vakcoder").join(".env"))
+    Some(crate::paths::data_home().join(".env"))
 }
 
 /// Removes every definition of `key` from `path`, preserving the rest of

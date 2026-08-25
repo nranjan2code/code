@@ -103,7 +103,7 @@ one headless core, many surfaces, durable services.
   close tool-call turns without canonical finish reasons no longer strand
   dangling tool calls, and subscriber-less runs are never self-cancelled.
 
-## Unreleased
+## 0.4.0–0.6.0 (released)
 
 - **Model catalogues are discovered, not hardcoded.** `Core::models_for` — a
   static per-provider table — is gone. `vak_llm::models::list_models` asks the
@@ -118,7 +118,7 @@ one headless core, many surfaces, durable services.
   4 Anthropic models for a key that no longer authenticates.
 - **Provider keys are revocable.** `DELETE /config/key`, a Remove key control
   in desktop Settings, and `/key <provider> --remove` in the TUI. Revoking
-  strips the entry from `~/.vakcoder/.env`, clears the runtime override and
+  strips the entry from the user `.env`, clears the runtime override and
   the loaded-dotenv copy, drops the cached provider client and discovered
   models, and reports `shadowed_by_env` when the variable is also exported in
   the real environment (which the app cannot unset).

@@ -3,22 +3,85 @@
 use std::io::{IsTerminal as _, Write as _};
 use std::path::{Path, PathBuf};
 
-use vak_config::get_var;
-
 const BIN_DIR: &str = "bin";
+const MACOS_BUNDLE_NAME: &str = "vakcoder.app";
 
 fn home() -> PathBuf {
-    get_var("VAKCODER_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".vakcoder")))
-        .unwrap_or_else(|| PathBuf::from(".vakcoder"))
+    // Canonical data home (doc 32) — used only for the Linux default
+    // prefix and legacy-path warnings, never as the data home itself.
+    vak_config::paths::data_home()
 }
 
+/// Default install root. macOS installs a proper application bundle in
+/// `/Applications` (falling back to the per-user `~/Applications` when
+/// the system folder is not writable); Linux keeps a managed prefix
+/// under the XDG data home. An explicit `--prefix` always wins so tests
+/// and portable installs stay deterministic.
 fn prefix_default() -> PathBuf {
-    home().join("local/release")
+    #[cfg(target_os = "macos")]
+    {
+        let system = PathBuf::from("/Applications").join(MACOS_BUNDLE_NAME);
+        if dir_writable(Path::new("/Applications")) || system.exists() {
+            return system;
+        }
+        if let Some(h) = std::env::var_os("HOME") {
+            return PathBuf::from(h)
+                .join("Applications")
+                .join(MACOS_BUNDLE_NAME);
+        }
+        system
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        home().join("local").join("release")
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn dir_writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".vak-write-probe-{}", std::process::id()));
+    match std::fs::write(&probe, b"") {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// True when the install root is a macOS application bundle; binaries
+/// then live under Contents/MacOS and the manifest under Contents/
+/// Resources instead of `<root>/bin`.
+#[cfg(target_os = "macos")]
+fn is_bundle(root: &Path) -> bool {
+    root.extension().and_then(|e| e.to_str()) == Some("app")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_bundle(_root: &Path) -> bool {
+    false
+}
+
+fn bin_dir_of(prefix: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        if is_bundle(prefix) {
+            return prefix.join("Contents").join("MacOS");
+        }
+    }
+    prefix.join(BIN_DIR)
 }
 
 fn manifest_path(prefix: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        if is_bundle(prefix) {
+            return prefix
+                .join("Contents")
+                .join("Resources")
+                .join("install.json");
+        }
+    }
     prefix.join("install.json")
 }
 
@@ -59,6 +122,7 @@ fn current_git_sha() -> String {
 
 pub(crate) fn run_install(prefix: Option<PathBuf>) -> i32 {
     let prefix = prefix.unwrap_or_else(prefix_default);
+    let bundle = is_bundle(&prefix);
     let exe = match std::env::current_exe() {
         Ok(e) => e,
         Err(e) => {
@@ -66,7 +130,7 @@ pub(crate) fn run_install(prefix: Option<PathBuf>) -> i32 {
             return 1;
         }
     };
-    let bin_dir = prefix.join(BIN_DIR);
+    let bin_dir = bin_dir_of(&prefix);
     let mut binaries = Vec::new();
     if let Err(e) = copy_executable(&exe, &bin_dir.join("vakcoder")) {
         eprintln!("error: {e}");
@@ -83,6 +147,19 @@ pub(crate) fn run_install(prefix: Option<PathBuf>) -> i32 {
             binaries.push(("vakcoder-tray".into(), bin_dir.join("vakcoder-tray")));
         }
     }
+    // Delivery outbox worker (doc 30) rides along when built.
+    if let Some(sibling) = exe.parent().map(|p| p.join("vak-delivery-worker"))
+        && sibling.exists()
+        && let Err(e) = copy_executable(&sibling, &bin_dir.join("vak-delivery-worker"))
+    {
+        eprintln!("warning: delivery worker not installed: {e}");
+    }
+
+    if bundle && let Err(e) = write_bundle_metadata(&prefix) {
+        eprintln!("error: {e}");
+        return 1;
+    }
+
     let manifest = Manifest {
         version: env!("CARGO_PKG_VERSION").to_string(),
         git_sha: current_git_sha(),
@@ -111,6 +188,50 @@ pub(crate) fn run_install(prefix: Option<PathBuf>) -> i32 {
     }
     println!("next: vakcoder self services-sync");
     0
+}
+
+/// Info.plist for the menu-bar app bundle. LSUIElement keeps the tray
+/// out of the Dock (menu-bar-only identity, per macOS HIG for agents).
+#[cfg(target_os = "macos")]
+fn info_plist() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>vakcoder</string>
+	<key>CFBundleDisplayName</key>
+	<string>vakcoder</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.vakcoder.tray</string>
+	<key>CFBundleExecutable</key>
+	<string>vakcoder-tray</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>{version}</string>
+	<key>CFBundleVersion</key>
+	<string>{version}</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>MIT licensed — see https://github.com/vakcoder/vakcoder</string>
+</dict>
+</plist>
+"#
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn write_bundle_metadata(prefix: &Path) -> Result<(), String> {
+    let contents = prefix.join("Contents");
+    std::fs::create_dir_all(contents.join("Resources")).map_err(|e| e.to_string())?;
+    // Plist first: a bundle without it is not launchable as an app.
+    write_atomic(&contents.join("Info.plist"), info_plist().as_bytes())
 }
 
 fn read_manifest(prefix: &Path) -> Result<Manifest, String> {
@@ -166,6 +287,7 @@ struct StatusRow {
     name: String,
     unit_path: PathBuf,
     points_at_installed: bool,
+    binary_stale: bool,
     pid: Option<u32>,
 }
 
@@ -190,6 +312,7 @@ pub(crate) fn run_status() -> i32 {
             name: r.name,
             unit_path: r.unit_path,
             points_at_installed: r.unit_points_at_installed,
+            binary_stale: r.binary_stale,
             pid: r.running_pid,
         })
         .collect(),
@@ -199,17 +322,36 @@ pub(crate) fn run_status() -> i32 {
     println!("build     {} ({})", build_version, current_git_sha());
     match &manifest {
         Ok(m) => println!("manifest  {} installed {}", m.version, m.installed_at),
-        Err(e) => println!("manifest  — ({e})"),
+        Err(e) => {
+            println!("manifest  — ({e})");
+            // Adoption hint: a pre-bundle install at the old dotdir
+            // prefix is the one migration path into the canonical layout.
+            let legacy = home().join("local").join("release");
+            #[cfg(target_os = "macos")]
+            if legacy.join("install.json").exists() {
+                eprintln!(
+                    "note: legacy install found at {} — run `vakcoder self install` to adopt {}",
+                    legacy.display(),
+                    prefix.display()
+                );
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = legacy;
+            }
+        }
     }
     for r in &rows {
         let state = match r.pid {
             Some(pid) => format!("running (pid {pid})"),
             None => "down".to_string(),
         };
-        let flag = if r.points_at_installed {
-            "✓"
-        } else {
+        let flag = if !r.points_at_installed {
             "✗ legacy path"
+        } else if r.binary_stale {
+            "⚠ stale process — run `self services-sync` to bounce"
+        } else {
+            "✓"
         };
         println!(
             "service   {} {state} · {} · {flag}",
@@ -227,6 +369,18 @@ pub(crate) fn run_status() -> i32 {
     }
     if !rows.is_empty() && rows.iter().any(|r| !r.points_at_installed) {
         eprintln!("drift: a unit still execs outside the managed prefix");
+        drifted = true;
+    }
+    let stale: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.binary_stale)
+        .map(|r| r.name.as_str())
+        .collect();
+    if !stale.is_empty() {
+        eprintln!(
+            "drift: {} predate the installed binary (still executing the old image)",
+            stale.join(", ")
+        );
         drifted = true;
     }
     if drifted { 1 } else { 0 }
@@ -259,12 +413,12 @@ pub(crate) fn run_uninstall(yes: bool, purge: bool) -> i32 {
     }
     if purge {
         if !yes && std::io::stdin().is_terminal() {
-            print!("ALSO delete ~/.vakcoder (sessions, memory, tasks)? [y/N] ");
+            print!("ALSO delete the data home (sessions, memory, tasks)? [y/N] ");
             let _ = std::io::stdout().flush();
             let mut line = String::new();
             let _ = std::io::stdin().read_line(&mut line);
             if !line.trim().eq_ignore_ascii_case("y") {
-                println!("kept ~/.vakcoder");
+                println!("kept data home at {}", home().display());
                 return 0;
             }
         }

@@ -280,7 +280,9 @@ pub fn restart(service: Service, cfg: &OpsConfig) -> bool {
 pub fn open_log(service: Service) {
     #[cfg(target_os = "macos")]
     {
-        let log = home().join(".vakcoder/logs").join(match service {
+        // Canonical logs home (doc 32): ~/Library/Logs/vakcoder —
+        // Console.app-visible. Overridden homes keep self-contained logs.
+        let log = vak_config::paths::logs_dir().join(match service {
             Service::Gateway => "gateway.log",
             Service::Telegram => "telegram.log",
         });

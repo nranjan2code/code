@@ -34,7 +34,7 @@ Rules:
 - Colour-coded dot: green both-up, amber degraded, red down, grey not
   installed. Polls every 3 s on a worker thread; UI updates via winit user
   events; menu rebuilt per refresh.
-- Watchdog (persisted in `~/.vakcoder/tray.json`): when a previously
+- Watchdog (persisted in the data home): when a previously
   running service disappears, restarts it at most once per minute and
   posts a system notification.
 - Menu actions map to encoded ids (`(slot << 8) | action`) forwarded as
@@ -43,7 +43,7 @@ Rules:
 ## Token pinning
 
 Bridges must survive gateway restarts without human help:
-`VAKCODER_GATEWAY_TOKEN` (from `~/.vakcoder/.env`) overrides the random
+`VAKCODER_GATEWAY_TOKEN` (from the user `.env`) overrides the random
 per-process bearer token. The value is honoured verbatim and never logged;
 when absent, behaviour is unchanged (fresh token printed once).
 

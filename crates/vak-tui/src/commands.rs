@@ -24,7 +24,7 @@ pub enum Command {
     Provider(Option<String>),
     /// `/key [provider [SECRET|--remove]]` — inspect, store, or revoke a
     /// provider credential.
-    /// Stored via the shared Core into ~/.vakcoder/.env (0600); effective
+    /// Stored via the shared Core into the user `.env` (0600); effective
     /// immediately, no restart.
     Key(Option<String>),
     Config,

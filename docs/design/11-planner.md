@@ -36,7 +36,7 @@ task + tool catalog ──► planner model ──► candidate TOML DAG
 - **Bounded replan** (vakyartha pattern): max 1 retry; seeded with settled
   outputs ("do not redo this work") and the failure reason. Budget exhausted
   ⇒ `Failed` with the last failing node.
-- Per-attempt state ledgers under `~/.vakcoder/flow-runs/plan-*.json` freeze
+- Per-attempt state ledgers under `data_home()/flow-runs/plan-*.json` freeze
   the planner's TOML for audit.
 - Planner system prompt is compact (~350 tokens) and covered by the prompt
   diff discipline (docs/design/07-prompt.md policy).

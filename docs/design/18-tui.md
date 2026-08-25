@@ -139,7 +139,7 @@ accessibility surfaces live there and in 05-config.md).
   choosing one selects that provider's first discovered model.
 - **Key lifecycle**: `/key` opens a status board of every provider's env var
   and readiness; `/key <provider> SECRET` stores it through the shared Core
-  into `~/.vakcoder/.env` (0600) and it is effective immediately;
+  into the user `.env` (0600) and it is effective immediately;
   `/key <provider> --remove` revokes it (also `--revoke` / `--clear`) and
   warns when the variable is still exported in the real environment, which
   no app-level action can unset. Identical to the desktop Settings pane and

@@ -175,13 +175,17 @@ impl Core {
     /// or hook/base-URL redirection on first run.
     pub fn new_with_trust(cwd: PathBuf, trust_project_config: bool) -> Result<Self, CoreError> {
         let config = vak_config::load_with_trust(&cwd, trust_project_config)?;
-        let sessions_home = vak_config::get_var("VAKCODER_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                std::env::var_os("HOME")
-                    .map(|h| PathBuf::from(h).join(".vakcoder"))
-                    .unwrap_or_else(|| cwd.join(".vakcoder"))
-            });
+        // Canonical layout (doc 32): one resolver for the whole workspace.
+        // The cwd fallback covers exotic environments with no HOME.
+        let sessions_home = vak_config::paths::data_home();
+        let sessions_home = if std::env::var_os("VAKCODER_HOME").is_none()
+            && std::env::var_os("HOME").is_none()
+            && std::env::var_os("USERPROFILE").is_none()
+        {
+            cwd.join(".vakcoder")
+        } else {
+            sessions_home
+        };
         let breaker = Arc::new(vak_agent::CircuitBreaker::new(
             vak_agent::CircuitBreakerConfig {
                 threshold: config.circuit_breaker_threshold,
@@ -524,6 +528,19 @@ impl Core {
         self.inner.sessions_home.clone()
     }
 
+    /// Rebuildable-artifact directory (SQLite FTS index + WAL sidecars).
+    /// Canonical layout (doc 32): Library/Caches on macOS, XDG cache on
+    /// Linux — deleting it must always be safe.
+    pub fn cache_home(&self) -> PathBuf {
+        if let Ok(h) = self.inner.sessions_home_override.lock()
+            && h.is_some()
+        {
+            // Overridden homes are self-contained sandboxes.
+            return self.sessions_home().join("cache");
+        }
+        vak_config::paths::cache_home()
+    }
+
     pub fn system_prompt(&self) -> String {
         let project_prompt = self.inner.cwd.join(".vakcoder/SYSTEM.md");
         let base = if project_prompt.is_file()
@@ -735,7 +752,7 @@ impl Core {
     }
 
     /// Persists the key for `provider` into the user-level
-    /// `~/.vakcoder/.env` (0600, shared by every surface) and registers it
+    /// `.env` at `data_home()/.env` (0600, shared by every surface) and registers it
     /// as a runtime override so the next request uses it immediately —
     /// no restart. Returns the env var that was written. The key itself
     /// never re-enters any response.
@@ -762,7 +779,7 @@ impl Core {
         Ok(env.to_string())
     }
 
-    /// Revoke `provider`'s key: strip it from `~/.vakcoder/.env`, drop the
+    /// Revoke `provider`'s key: strip it from the user `.env`, drop the
     /// runtime override and the loaded-dotenv copy, and forget any
     /// discovered models. A key exported in the real environment cannot be
     /// unset from here — the caller is told so it can say as much.

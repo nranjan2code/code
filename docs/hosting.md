@@ -57,7 +57,7 @@ token when one is provided via environment.
 4. Unattended turns auto-deny approval gates unless you configure
    `approvals = "forward"` with an approver surface (docs/design/
    22-gateway.md G2).
-5. Backups = copy `<home>` (`~/.vakcoder/` by default): sessions, memory,
+5. Backups = copy `<home>` (the data home: `~/Library/Application Support/vakcoder` on macOS, `~/.local/share/vakcoder` on Linux): sessions, memory,
    tasks, bindings are all plain files.
 
 ## Updating
@@ -75,7 +75,7 @@ migration.
 | Symptom | Check |
 |---|---|
 | bridge replies "(gateway unreachable)" | gateway down or token mismatch — compare `VAKCODER_GATEWAY_TOKEN` in `.env` vs the gateway's launchd environment |
-| replies "(aborted)" | pre-0.3.0 bug; upgrade. Also check `~/.vakcoder/logs/gateway.log` |
+| replies "(aborted)" | pre-0.3.0 bug; upgrade. Also check `~/Library/Logs/vakcoder/gateway.log` (macOS) or `~/.local/state/vakcoder/logs/gateway.log` (Linux) |
 | tool calls denied on phone | expected in default deny mode; configure an approver surface or use TUI/desktop for escalations |
 | model errors | `/health` shows effective provider/model; keys live in `~/.vakcoder/.env` |
 | MCP server "spawn failed" / dies at handshake | under service managers PATH is minimal: use the absolute interpreter path (`which npx`) in `[mcp.servers.*].command`; network-client tools also need `network = true` |

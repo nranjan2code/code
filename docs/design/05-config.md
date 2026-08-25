@@ -15,7 +15,7 @@ splits without duplicating files.
 - Unknown keys are ignored with a warning, never fatal (forward compatibility).
 - ~15 keys total to know; everything else is discoverable via
   `vakcoder config dump` (boot-tree introspection, DeepSeek-Harness pattern).
-- `VAKCODER_HOME` relocates session storage (default `~/.vakcoder`).
+- `VAKCODER_HOME` relocates the data home and nests `cache/` and `logs/` under it (default: `~/Library/Application Support/vakcoder` on macOS, `~/.local/share/vakcoder` on Linux).
 
 ## Current keys
 
