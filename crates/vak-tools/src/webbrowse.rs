@@ -25,7 +25,6 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio::io::AsyncReadExt;
 
 use crate::webfetch::ssrf_guard;
 use crate::{ResourceClaims, Tool, ToolContext, ToolOutput};
@@ -34,7 +33,6 @@ const DEFAULT_WAIT_MS: u64 = 4000;
 const MAX_WAIT_MS: u64 = 10_000;
 const TOTAL_TIMEOUT_SECS: u64 = 20;
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(TOTAL_TIMEOUT_SECS);
-const MAX_CAPTURE: usize = 1 << 20;
 const BROWSER_ENV: &str = "VAKCODER_BROWSER";
 
 pub struct WebBrowseTool;
@@ -120,6 +118,7 @@ fn assemble_args(wait_ms: u64, url: &str, profile_dir: &Path) -> Vec<String> {
         "--no-default-browser-check".to_string(),
         format!("--user-data-dir={}", profile_dir.display()),
         format!("--virtual-time-budget={wait_ms}"),
+        "--dump-dom".to_string(),
         url.to_string(),
     ]
 }
@@ -158,27 +157,6 @@ fn parse_target(raw: &str) -> Result<reqwest::Url, String> {
         return Err("invalid url: missing host".to_string());
     }
     Ok(url)
-}
-
-async fn read_capped<R: AsyncReadExt + Unpin>(mut r: Option<R>) -> String {
-    let mut buf = Vec::new();
-    let Some(stream) = r.as_mut() else {
-        return String::new();
-    };
-    let mut chunk = [0u8; 8192];
-    loop {
-        match stream.read(&mut chunk).await {
-            Ok(0) | Err(_) => break,
-            Ok(n) => {
-                let space = MAX_CAPTURE.saturating_sub(buf.len());
-                buf.extend_from_slice(&chunk[..n.min(space)]);
-                if buf.len() >= MAX_CAPTURE {
-                    break;
-                }
-            }
-        }
-    }
-    String::from_utf8_lossy(&buf).into_owned()
 }
 
 fn stderr_tail(err: &str) -> String {
@@ -271,11 +249,25 @@ impl WebBrowseTool {
             Err(e) => return ToolOutput::error(format!("profile dir creation failed: {e}")),
         };
 
+        // Capture DOM/stderr via FILES, not pipes: Chromium helper
+        // processes inherit pipe fds and never let EOF fire, while file
+        // redirection makes output inspectable while Chrome still runs.
+        let out_path = profile.0.join("dom.html");
+        let err_path = profile.0.join("stderr.txt");
+        let out_file = match std::fs::File::create(&out_path) {
+            Ok(f) => f,
+            Err(e) => return ToolOutput::error(format!("dom capture create failed: {e}")),
+        };
+        let err_file = match std::fs::File::create(&err_path) {
+            Ok(f) => f,
+            Err(e) => return ToolOutput::error(format!("stderr capture create failed: {e}")),
+        };
+
         let mut cmd = tokio::process::Command::new(&browser);
         cmd.args(assemble_args(wait_ms, url.as_str(), &profile.0))
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::from(out_file))
+            .stderr(std::process::Stdio::from(err_file))
             .kill_on_drop(true);
         crate::bash::scrub_environment(&mut cmd);
         if std::env::var_os(crate::broker::WORKER_ENV).is_none() {
@@ -289,57 +281,74 @@ impl WebBrowseTool {
                 return ToolOutput::error(format!("failed to launch {}: {e}", basename(&browser)));
             }
         };
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-        let out_fut = tokio::spawn(read_capped(stdout));
-        let err_fut = tokio::spawn(read_capped(stderr));
 
+        // Completion is content-based: --dump-dom writes the document then
+        // frequently HANGS (headless=new quirk), so poll for a closed-html
+        // sentinel (or natural exit) and kill the group either way. The
+        // deadline is checked against elapsed time each cycle — a fresh
+        // per-iteration timer would always lose to the 250 ms tick.
         let header_base = format!("[browse] GET {url} via {}", basename(&browser));
-        let deadline = tokio::time::sleep(TOTAL_TIMEOUT);
-        let cancelled = ctx.cancel.cancelled();
-        tokio::select! {
-            _ = deadline => {
+        let started_at = Instant::now();
+        loop {
+            if started_at.elapsed() >= TOTAL_TIMEOUT {
                 crate::bash::kill_process_group(&child.id());
+                // macOS Chrome re-execs into a fresh process group, so the
+                // group signal can miss the main binary entirely; a
+                // direct-pid SIGKILL cannot.
+                let _ = child.start_kill();
                 let _ = child.wait().await;
-                ToolOutput::error(format!(
-                    "{header_base}: exceeded its {TOTAL_TIMEOUT_SECS}s total timeout"
-                ))
+                let elapsed_ms = started_at.elapsed().as_millis();
+                return ToolOutput::error(format!(
+                    "{header_base} ({elapsed_ms} ms): exceeded its {TOTAL_TIMEOUT_SECS}s total timeout"
+                ));
             }
-            _ = cancelled => {
-                crate::bash::kill_process_group(&child.id());
-                let _ = child.wait().await;
-                ToolOutput::error(format!("{header_base}: browse cancelled"))
-            }
-            status = child.wait() => {
-                let status = match status {
-                    Ok(s) => s,
-                    Err(e) => return ToolOutput::error(format!("wait failed: {e}")),
-                };
-                let dom = out_fut.await.unwrap_or_default();
-                let err = err_fut.await.unwrap_or_default();
-                let elapsed_ms = started.elapsed().as_millis();
-                let header = format!(
-                    "{header_base} ({elapsed_ms} ms, {} bytes)",
-                    dom.len()
-                );
-                if !status.success() {
-                    let code = status.code().unwrap_or(-1);
-                    let tail = stderr_tail(&err);
-                    let detail = if tail.is_empty() {
-                        String::new()
-                    } else {
-                        format!("\nbrowser stderr: {tail}")
-                    };
-                    return ToolOutput::error(format!("{header}: exit code {code}{detail}"));
+            let wait = std::cmp::min(
+                std::time::Duration::from_millis(250),
+                TOTAL_TIMEOUT - started_at.elapsed(),
+            );
+            let mut done = false;
+            tokio::select! {
+                _ = ctx.cancel.cancelled() => {
+                    crate::bash::kill_process_group(&child.id());
+                    // Direct-pid SIGKILL: see re-exec note above.
+                    let _ = child.start_kill();
+                    let _ = child.wait().await;
+                    return ToolOutput::error(format!("{header_base}: browse cancelled"));
                 }
-                let body = if dom.is_empty() {
-                    "(no DOM captured)".to_string()
-                } else {
-                    dom
-                };
-                ToolOutput::ok(ctx.truncate_output(format!("{header}\n{body}")))
+                _ = tokio::time::sleep(wait) => {
+                    if matches!(child.try_wait(), Ok(Some(_))) {
+                        done = true;
+                    } else if let Ok(s) = std::fs::read_to_string(&out_path)
+                        && s.to_ascii_lowercase().contains("</html>")
+                    {
+                        done = true;
+                    }
+                }
+            }
+            if done {
+                break;
             }
         }
+        crate::bash::kill_process_group(&child.id());
+        // Direct-pid SIGKILL: see re-exec note above.
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+
+        let dom = std::fs::read_to_string(&out_path).unwrap_or_default();
+        let err = std::fs::read_to_string(&err_path).unwrap_or_default();
+        let elapsed_ms = started.elapsed().as_millis();
+        let header = format!("{header_base} ({elapsed_ms} ms, {} bytes)", dom.len());
+        let body = if dom.is_empty() {
+            let tail = stderr_tail(&err);
+            if tail.is_empty() {
+                "(no DOM captured)".to_string()
+            } else {
+                format!("(no DOM captured)\nbrowser stderr: {tail}")
+            }
+        } else {
+            dom
+        };
+        ToolOutput::ok(ctx.truncate_output(format!("{header}\n{body}")))
     }
 }
 
@@ -434,6 +443,7 @@ mod tests {
                 "--no-default-browser-check".to_string(),
                 format!("--user-data-dir={}", profile.display()),
                 "--virtual-time-budget=10000".to_string(),
+                "--dump-dom".to_string(),
                 "https://example.com/".to_string(),
             ]
         );
