@@ -137,7 +137,7 @@ async fn spawn_with_config(provider: Arc<dyn Provider>, gateway_toml: &str) -> G
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let (app, token) = vak_server::secured_router_with(core, false);
+    let (app, token) = vak_server::secured_router_with(core, true);
     let server = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });

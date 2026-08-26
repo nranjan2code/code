@@ -1,3 +1,35 @@
+//! Slash-command surface: parsing, help tables, and domain handler modules.
+
+mod config;
+mod memory;
+mod session;
+mod system;
+
+pub use config::{
+    composer_footer, composer_label, default_model, feature_rows, mode_label, mode_modal_rows,
+    model_choices, provider_choices, provider_status, remove_provider_key_cmd, sandbox_rows,
+    set_provider_key, settings_rows, theme_choices,
+};
+pub use memory::{
+    MemoryAction, MemoryOutcome, NoteMatchError, find_note, forget_confirmed, handle_memory,
+    rel_time, short_hex,
+};
+pub use session::{
+    age_of, cmd_resume, cmd_rewind, first_user_prompt, list_sessions, session_choices,
+    sessions_by_mtime, transcript_modal,
+};
+pub use system::{export_transcript, report_line, run_doctor, run_local_shell, run_services};
+
+/// Composer-mode display name for status lines.
+pub fn composer_mode_name(editor: &crate::editor::Editor) -> &'static str {
+    match editor.mode() {
+        crate::editor::ComposerMode::Vim => "vim",
+        crate::editor::ComposerMode::Emacs => "emacs",
+    }
+}
+
+use crate::data::ClientData;
+
 #[derive(Debug)]
 pub enum Command {
     Help,
@@ -24,8 +56,6 @@ pub enum Command {
     Provider(Option<String>),
     /// `/key [provider [SECRET|--remove]]` — inspect, store, or revoke a
     /// provider credential.
-    /// Stored via the shared Core into the user `.env` (0600); effective
-    /// immediately, no restart.
     Key(Option<String>),
     Config,
     Features,
@@ -39,7 +69,7 @@ pub enum Command {
     /// `/copy` — explicit OSC52 copy of the last response (gated by config).
     Copy,
     /// `/goal <objective> [-- c1; c2]` — arm audited goal mode for the
-    /// next prompt (docs/design/27 Phase H). Bare `/goal` shows status.
+    /// next prompt. Bare `/goal` shows status.
     Goal(Option<String>),
     /// `/mode [read-only|workspace-write|full-access]` — runtime permission
     /// switch. In-flight runs are cancelled and pending approvals denied
@@ -60,9 +90,8 @@ pub enum Command {
     Tasks(Option<String>),
     /// `/proposals [promote|reject <id>]` — review learned skill proposals.
     Proposals(Option<String>),
-    /// `/inbox [all|ack <id>]` — durable notification ledger
-    /// (docs/design/29-personal-os.md P6): gateway pushes, task summaries,
-    /// budget alerts; ack tombstones mark entries read.
+    /// `/inbox [all|ack <id>]` — durable notification ledger: gateway pushes,
+    /// task summaries, budget alerts; ack tombstones mark entries read.
     Inbox(Option<String>),
     /// `/mcp` — configured MCP servers and discovered tools.
     Mcp,
@@ -97,11 +126,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("theme", "choose a theme · previews live"),
     ("transcript", "[n] dump recent messages of this session"),
     ("view", "<path> read a workspace file · /cat is an alias"),
-    ("doctor", "health check: auth, sandbox, config, extensions"),
-    (
-        "services",
-        "[action svc] gateway & bridge control · bare = status",
-    ),
+    ("doctor", "health check: auth, sandbox, storage, extensions"),
+    ("services", "[action svc] gateway control · bare = status"),
     ("details", "toggle expanded tool result previews"),
     ("keys", "shortcut map · /keys raw captures literal keys"),
     ("keymap", "view bindings · r rebinds interactively"),
@@ -209,37 +235,41 @@ pub fn parse(input: &str) -> Option<Command> {
     }
 }
 
+pub fn custom_commands(data: &ClientData) -> Vec<(String, String)> {
+    data.custom_commands()
+}
+
 pub fn keys_text() -> &'static str {
     "Keyboard\n\
-  Enter          send prompt / steer active run\n\
-  Alt-Enter      insert newline\n\
-  Tab            complete / queue follow-up while running\n\
-  Ctrl-P         open command palette\n\
-  Ctrl-R         reverse history search\n\
-  Ctrl-T         cycle thinking: indicator / full / off\n\
-  Ctrl-Z         undo edit group\n\
-  Alt-Z          redo edit group\n\
-  Ctrl-W         delete previous word\n\
-  Alt-D          delete next word\n\
-  Ctrl-A / Home  start of current line\n\
-  Ctrl-E / End   end of current line\n\
-  Ctrl-K         delete to end of line\n\
-  Alt-B / Alt-F  move by word\n\
-  Alt-S          attach to a running subagent\n\
-  Alt-Y          copy the last response (OSC52, if enabled)\n\
-  Ctrl-U         clear composer\n\
-  Ctrl-O         expand a stashed large paste\n\
-  Ctrl-G         edit the draft in $EDITOR\n\
-  Ctrl-L         clear terminal viewport\n\
-  Alt-A          review a pending approval\n\
-  Ctrl-C         interrupt run / clear composer\n\
-  Esc            remove newest follow-up, then stop\n\
-  Ctrl-D         exit\n\
-  /vim · /emacs  modal composer editing (hjkl x dd yy p i A …)\n\
-\nPrompt syntax\n\
-  @path          attach file contents\n\
-  !command       run local shell and share output\n\
-  /command       run a terminal command"
+      Enter          send prompt / steer active run\n\
+      Alt-Enter      insert newline\n\
+      Tab            complete / queue follow-up while running\n\
+      Ctrl-P         open command palette\n\
+      Ctrl-R         reverse history search\n\
+      Ctrl-T         cycle thinking: indicator / full / off\n\
+      Ctrl-Z         undo edit group\n\
+      Alt-Z          redo edit group\n\
+      Ctrl-W         delete previous word\n\
+      Alt-D          delete next word\n\
+      Ctrl-A / Home  start of current line\n\
+      Ctrl-E / End   end of current line\n\
+      Ctrl-K         delete to end of line\n\
+      Alt-B / Alt-F  move by word\n\
+      Alt-S          attach to a running subagent\n\
+      Alt-Y          copy the last response (OSC52, if enabled)\n\
+      Ctrl-U         clear composer\n\
+      Ctrl-O         expand a stashed large paste\n\
+      Ctrl-G         edit the draft in $EDITOR\n\
+      Ctrl-L         clear terminal viewport\n\
+      Alt-A          review a pending approval\n\
+      Ctrl-C         interrupt run / clear composer\n\
+      Esc            remove newest follow-up, then stop\n\
+      Ctrl-D         exit\n\
+      /vim · /emacs  modal composer editing (hjkl x dd yy p i A …)\n\
+     \nPrompt syntax\n\
+      @path          attach file contents\n\
+      !command       run local shell and share output\n\
+      /command       run a terminal command"
 }
 
 pub fn help_text() -> String {

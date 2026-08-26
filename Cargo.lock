@@ -6012,17 +6012,20 @@ dependencies = [
 name = "vak-tui"
 version = "0.8.0"
 dependencies = [
+ "async-stream",
  "async-trait",
  "base64 0.22.1",
  "chrono",
  "crossterm",
  "futures",
+ "serde",
  "serde_json",
  "similar",
  "tempfile",
  "tokio",
  "tokio-util",
  "vak-agent",
+ "vak-client",
  "vak-config",
  "vak-core",
  "vak-llm",

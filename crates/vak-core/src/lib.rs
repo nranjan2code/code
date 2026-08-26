@@ -532,9 +532,15 @@ impl Core {
     /// Canonical layout (doc 32): Library/Caches on macOS, XDG cache on
     /// Linux — deleting it must always be safe.
     pub fn cache_home(&self) -> PathBuf {
-        if let Ok(h) = self.inner.sessions_home_override.lock()
-            && h.is_some()
-        {
+        // Release the override guard before the recursive read below;
+        // holding it across sessions_home() would self-deadlock.
+        let overridden = self
+            .inner
+            .sessions_home_override
+            .lock()
+            .map(|h| h.is_some())
+            .unwrap_or(false);
+        if overridden {
             // Overridden homes are self-contained sandboxes.
             return self.sessions_home().join("cache");
         }

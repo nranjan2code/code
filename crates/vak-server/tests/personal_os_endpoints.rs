@@ -422,7 +422,9 @@ async fn doctor_reports_checks_facts_and_optional_ladder() {
             "provider",
             "sessions home",
             "config warnings",
-            "self version parity"
+            "install layout",
+            "self version parity",
+            "gateway topology"
         ]
     );
     assert!(

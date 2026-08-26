@@ -107,7 +107,7 @@ async fn spawn_full_seeded(
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let (app, _token) = vak_server::secured_router_with(core, false);
+    let (app, _token) = vak_server::secured_router_with(core, true);
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });

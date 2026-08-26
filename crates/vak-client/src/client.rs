@@ -72,15 +72,31 @@ impl Client {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            return Err(ClientError::Http {
-                status,
-                body: text,
-            });
+            return Err(ClientError::Http { status, body: text });
         }
         Ok(serde_json::from_str(&text)?)
     }
 
-    async fn post_empty(&self, path: &str) -> Result<StatusCode> {
+    pub async fn get_raw(&self, path: &str) -> Result<(StatusCode, String)> {
+        let resp = self
+            .http
+            .get(self.url(path))
+            .header("authorization", self.auth())
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_connect() {
+                    ClientError::ConnectionRefused
+                } else {
+                    ClientError::Reqwest(e)
+                }
+            })?;
+        let status = resp.status();
+        let text = resp.text().await?;
+        Ok((status, text))
+    }
+
+    pub async fn post_empty(&self, path: &str) -> Result<StatusCode> {
         let resp = self
             .http
             .post(self.url(path))
@@ -97,7 +113,7 @@ impl Client {
         Ok(resp.status())
     }
 
-    async fn post_json<B: serde::Serialize, T: serde::de::DeserializeOwned>(
+    pub async fn post_json<B: serde::Serialize, T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
         body: &B,
@@ -119,15 +135,12 @@ impl Client {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            return Err(ClientError::Http {
-                status,
-                body: text,
-            });
+            return Err(ClientError::Http { status, body: text });
         }
         Ok(serde_json::from_str(&text)?)
     }
 
-    async fn post_json_status<B: serde::Serialize>(
+    pub async fn post_json_status<B: serde::Serialize>(
         &self,
         path: &str,
         body: &B,
@@ -149,7 +162,11 @@ impl Client {
         Ok(resp.status())
     }
 
-    async fn patch_json<B: serde::Serialize>(&self, path: &str, body: &B) -> Result<StatusCode> {
+    pub async fn patch_json<B: serde::Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<StatusCode> {
         let resp = self
             .http
             .patch(self.url(path))
@@ -167,7 +184,7 @@ impl Client {
         Ok(resp.status())
     }
 
-    async fn delete(&self, path: &str) -> Result<StatusCode> {
+    pub async fn delete(&self, path: &str) -> Result<StatusCode> {
         let resp = self
             .http
             .delete(self.url(path))
@@ -182,6 +199,82 @@ impl Client {
                 }
             })?;
         Ok(resp.status())
+    }
+
+    pub async fn put_json<B: serde::Serialize, T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        let resp = self
+            .http
+            .put(self.url(path))
+            .header("authorization", self.auth())
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_connect() {
+                    ClientError::ConnectionRefused
+                } else {
+                    ClientError::Reqwest(e)
+                }
+            })?;
+        let status = resp.status();
+        let text = resp.text().await?;
+        if !status.is_success() {
+            return Err(ClientError::Http { status, body: text });
+        }
+        Ok(serde_json::from_str(&text)?)
+    }
+
+    pub async fn put_json_status<B: serde::Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<StatusCode> {
+        let resp = self
+            .http
+            .put(self.url(path))
+            .header("authorization", self.auth())
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_connect() {
+                    ClientError::ConnectionRefused
+                } else {
+                    ClientError::Reqwest(e)
+                }
+            })?;
+        Ok(resp.status())
+    }
+
+    pub async fn delete_json<B: serde::Serialize, T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        let resp = self
+            .http
+            .delete(self.url(path))
+            .header("authorization", self.auth())
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_connect() {
+                    ClientError::ConnectionRefused
+                } else {
+                    ClientError::Reqwest(e)
+                }
+            })?;
+        let status = resp.status();
+        let text = resp.text().await?;
+        if !status.is_success() {
+            return Err(ClientError::Http { status, body: text });
+        }
+        Ok(serde_json::from_str(&text)?)
     }
 
     // ── Health ───────────────────────────────────────────────────
@@ -210,6 +303,15 @@ impl Client {
         self.delete(&format!("/sessions/{id}")).await
     }
 
+    /// Resume a persisted session into the base's live-handle map. Returns
+    /// the canonical session id (the header id can differ from the request).
+    pub async fn attach_session(&self, id: &str) -> Result<String> {
+        let resp: CreateSessionResponse = self
+            .post_json(&format!("/sessions/{id}/attach"), &serde_json::json!({}))
+            .await?;
+        Ok(resp.session_id)
+    }
+
     // ── Run / Steering ───────────────────────────────────────────
 
     pub async fn run_prompt(&self, session_id: &str, req: &RunRequest) -> Result<StatusCode> {
@@ -234,10 +336,7 @@ impl Client {
 
     // ── SSE streaming ────────────────────────────────────────────
 
-    pub fn events(
-        &self,
-        session_id: &str,
-    ) -> impl Stream<Item = Result<AgentEvent>> + '_ {
+    pub fn events(&self, session_id: &str) -> impl Stream<Item = Result<AgentEvent>> + '_ {
         let url = self.url(&format!("/sessions/{session_id}/events"));
         let token = self.token.clone();
         let client = self.http.clone();
@@ -348,6 +447,32 @@ impl Client {
         self.get("/skills").await
     }
 
+    // ── Custom commands ──────────────────────────────────────────
+
+    pub async fn custom_commands(&self) -> Result<Vec<CustomCommandInfo>> {
+        let resp: CustomCommandsResponse = self.get("/config/commands").await?;
+        Ok(resp.commands)
+    }
+
+    // ── Tools / breaker introspection ────────────────────────────
+
+    pub async fn tools(&self) -> Result<Vec<String>> {
+        let resp: serde_json::Value = self.get("/tools").await?;
+        Ok(resp
+            .get("tools")
+            .and_then(|t| t.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    pub async fn breaker(&self) -> Result<serde_json::Value> {
+        self.get("/breaker").await
+    }
+
     // ── Memory ───────────────────────────────────────────────────
 
     pub async fn memory(&self) -> Result<Vec<MemoryNote>> {
@@ -412,6 +537,166 @@ impl Client {
     // ── Backup ───────────────────────────────────────────────────
 
     pub async fn backup_export(&self) -> Result<serde_json::Value> {
-        self.post_json("/backup/export", &serde_json::json!({})).await
+        self.post_json("/backup/export", &serde_json::json!({}))
+            .await
+    }
+
+    // ── Inbox ────────────────────────────────────────────────────
+
+    pub async fn inbox_list(&self, limit: u32, unread_only: bool) -> Result<InboxResponse> {
+        let mut url = format!("/inbox?limit={limit}");
+        if unread_only {
+            url.push_str("&unread=true");
+        }
+        self.get(&url).await
+    }
+
+    pub async fn inbox_ack(&self, id: &str) -> Result<InboxAckResponse> {
+        self.post_json(&format!("/inbox/{id}/ack"), &serde_json::json!({}))
+            .await
+    }
+
+    pub async fn inbox_unread_count(&self) -> Result<UnreadCountResponse> {
+        self.get("/inbox/unread_count").await
+    }
+
+    // ── Task management ──────────────────────────────────────────
+
+    pub async fn task_enable(&self, id: &str) -> Result<StatusCode> {
+        self.patch_json(
+            &format!("/tasks/{id}"),
+            &serde_json::json!({ "enabled": true }),
+        )
+        .await
+    }
+
+    pub async fn task_disable(&self, id: &str) -> Result<StatusCode> {
+        self.patch_json(
+            &format!("/tasks/{id}"),
+            &serde_json::json!({ "enabled": false }),
+        )
+        .await
+    }
+
+    pub async fn task_run_now(&self, id: &str) -> Result<StatusCode> {
+        self.post_empty(&format!("/tasks/{id}/run-now")).await
+    }
+
+    pub async fn proposals_list(&self) -> Result<ProposalsResponse> {
+        self.get("/skills/proposals").await
+    }
+
+    pub async fn proposal_promote(&self, id: &str) -> Result<serde_json::Value> {
+        self.post_json(
+            &format!("/skills/proposals/{id}/promote"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    pub async fn proposal_reject(&self, id: &str) -> Result<serde_json::Value> {
+        self.post_json(
+            &format!("/skills/proposals/{id}/reject"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    // ── Provider key management ──────────────────────────────────
+
+    pub async fn set_provider_key(&self, provider: &str, key: &str) -> Result<ProviderKeyResponse> {
+        self.put_json(
+            "/config/key",
+            &ProviderKeyRequest {
+                provider: provider.to_string(),
+                key: key.to_string(),
+            },
+        )
+        .await
+    }
+
+    pub async fn remove_provider_key(&self, provider: &str) -> Result<ProviderRemoveResponse> {
+        self.delete_json(
+            "/config/key",
+            &ProviderRef {
+                provider: provider.to_string(),
+            },
+        )
+        .await
+    }
+
+    // ── Subagents ────────────────────────────────────────────────
+
+    pub async fn subagents_list(&self, session_id: &str) -> Result<SubagentsResponse> {
+        self.get(&format!("/sessions/{session_id}/subagents")).await
+    }
+
+    pub async fn subagent_steer(
+        &self,
+        session_id: &str,
+        child: &str,
+        text: &str,
+    ) -> Result<StatusCode> {
+        self.post_json_status(
+            &format!("/sessions/{session_id}/subagents/{child}/steer"),
+            &SteeringRequest {
+                text: text.to_string(),
+            },
+        )
+        .await
+    }
+
+    pub async fn subagent_stop(&self, session_id: &str, child: &str) -> Result<StatusCode> {
+        self.post_empty(&format!("/sessions/{session_id}/subagents/{child}/stop"))
+            .await
+    }
+
+    // ── Checkpoint restore ───────────────────────────────────────
+
+    pub async fn checkpoint_restore(
+        &self,
+        session_id: &str,
+        seq: u32,
+    ) -> Result<CheckpointRestoreResponse> {
+        self.post_json(
+            &format!("/sessions/{session_id}/checkpoints/{seq}/restore"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    // ── Compaction ───────────────────────────────────────────────
+
+    pub async fn compact(&self, session_id: &str) -> Result<serde_json::Value> {
+        self.post_json(
+            &format!("/sessions/{session_id}/compact"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    pub async fn set_permission_mode(&self, mode: &str) -> Result<StatusCode> {
+        self.post_json_status("/config/mode", &serde_json::json!({ "mode": mode }))
+            .await
+    }
+
+    // ── Sandbox backend ──────────────────────────────────────────
+
+    pub async fn sandbox_info(&self) -> Result<serde_json::Value> {
+        self.get("/config/sandbox").await
+    }
+
+    pub async fn set_sandbox_backend(&self, backend: Option<&str>) -> Result<StatusCode> {
+        self.post_json_status(
+            "/config/sandbox",
+            &serde_json::json!({ "backend": backend }),
+        )
+        .await
+    }
+
+    // ── MCP hot-apply ────────────────────────────────────────────
+
+    pub async fn mcp_apply(&self, servers: &serde_json::Value) -> Result<StatusCode> {
+        self.put_json_status("/config/mcp", servers).await
     }
 }

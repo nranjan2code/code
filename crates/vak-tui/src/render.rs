@@ -65,8 +65,11 @@ impl Screen {
 
     pub fn set_theme(&mut self, theme: Theme) {
         self.theme = theme;
-        self.last_transient = None;
-        self.render_workspace();
+        self.header = None;
+    }
+
+    pub fn theme(&self) -> &Theme {
+        &self.theme
     }
 
     pub fn clear_viewport(&mut self) {

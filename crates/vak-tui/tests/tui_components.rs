@@ -722,32 +722,32 @@ fn search_cancel_restores_buffer_being_edited() {
 #[test]
 fn learned_spec_scopes_calls_and_rejects_unscopeable() {
     // bash: scoped to first word
-    let s = vak_tui::app::learned_spec("bash", r#"{"command":"cargo test --lib"}"#);
+    let (_, s) = vak_tui::events::learned_spec(r#"bash {"command":"cargo test --lib"}"#);
     assert_eq!(s.as_deref(), Some("bash(cargo *)"));
 
     // opaque bash (command substitution) cannot be scoped safely
     assert_eq!(
-        vak_tui::app::learned_spec("bash", r#"{"command":"echo $(rm -rf /)"}"#),
+        vak_tui::events::learned_spec(r#"bash {"command":"echo $(rm -rf /)"}"#).1,
         None
     );
 
     // file tools: exact-path scope that must round-trip match the call
     let args = r#"{"path":"src/lib.rs","old_string":"a","new_string":"b"}"#;
-    let s = vak_tui::app::learned_spec("edit", args);
+    let (_, s) = vak_tui::events::learned_spec(&format!("edit {args}"));
     assert_eq!(s.as_deref(), Some("edit(src/lib.rs)"));
 
     // mcp: server-scoped, only for calls
     assert_eq!(
-        vak_tui::app::learned_spec("mcp", r#"{"action":"call","server":"gh","tool":"pr"}"#),
+        vak_tui::events::learned_spec(r#"mcp {"action":"call","server":"gh","tool":"pr"}"#).1,
         Some("mcp(gh/*)".to_string())
     );
     assert_eq!(
-        vak_tui::app::learned_spec("mcp", r#"{"action":"list"}"#),
+        vak_tui::events::learned_spec(r#"mcp {"action":"list"}"#).1,
         None
     );
 
     // unknown tools get no persisted rule
-    assert_eq!(vak_tui::app::learned_spec("mystery", "{}"), None);
+    assert_eq!(vak_tui::events::learned_spec("mystery {}").1, None);
 
     // round-trip: the derived bash rule actually matches a sibling command
     let rule = vak_permission::Rule::parse("bash(cargo *)").expect("parses");
@@ -758,21 +758,22 @@ fn learned_spec_scopes_calls_and_rejects_unscopeable() {
 }
 
 #[test]
-fn edit_diff_text_accepts_both_arg_shapes() {
-    let theme = vak_tui::theme::Theme::from_name("plain");
+fn edit_diff_and_approval_shapes_render() {
+    let d = vak_tui::events::edit_diff_text("fn a() {}", "fn a() { b(); }", Some("a.rs"));
+    let plain = vak_tui::markdown::strip_ansi(&d);
+    assert!(plain.contains("+ fn a() { b(); }"), "{plain}");
+    assert!(plain.contains("- fn a() {}"));
+    assert!(plain.contains("@@"));
+
     let edits_shape =
         r#"{"path":"a.rs","edits":[{"old_string":"fn a() {}","new_string":"fn a() { b(); }"}]}"#;
-    let flat_shape = r#"{"path":"a.rs","old_string":"fn a() {}","new_string":"fn a() { b(); }"}"#;
-    for shape in [edits_shape, flat_shape] {
-        let d = vak_tui::app::edit_diff_text(shape, &theme, 10).expect("diff");
-        let plain = vak_tui::markdown::strip_ansi(&d);
-        assert!(plain.contains("+ fn a() { b(); }"), "shape: {shape}");
-        assert!(plain.contains("- fn a() {}"));
-        assert!(plain.contains("@@"));
-    }
-    // nothing renderable -> None
+    let approval = vak_tui::events::approval_edit_diff(edits_shape).expect("diff");
+    let plain = vak_tui::markdown::strip_ansi(&approval);
+    assert!(plain.contains("+ fn a() { b(); }"));
+
+    // nothing renderable -> None / empty
     assert_eq!(
-        vak_tui::app::edit_diff_text(r#"{"path":"a.rs"}"#, &theme, 10),
+        vak_tui::events::approval_edit_diff(r#"{"path":"a.rs"}"#),
         None
     );
 }

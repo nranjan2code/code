@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — M4.2 TUI thin-client rewrite
+
+- **vak-tui rebuilt as a thin client** over the `vak-client` HTTP+SSE
+  contract: the 5.8k-line god-file split into 16 focused modules, all
+  slash commands ported, adapter deleted, zero agent state in the
+  surface. Presentation prefs (themes/keymap/composer/a11y) stay local.
+- Server endpoints added: `/config/commands`, `/tools`, `/breaker`,
+  `/sessions/{id}/compact`, `/config/sandbox`.
+- Fixed pre-existing suite breakages: `Core::cache_home` re-entrant
+  mutex deadlock that hung gateway integration tests; heartbeat,
+  scheduler and webhook fixtures now boot in gateway mode per the
+  singleton invariant; `POST /sessions` accepts an empty body again;
+  doctor check-list test updated.
+
 ## 0.8.0 — canonical layout release
 
 Platform-standard filesystem locations. One-time automatic migration from

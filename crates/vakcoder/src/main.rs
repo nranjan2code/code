@@ -824,17 +824,40 @@ fn load_state(state_path: &PathBuf, flow_name: &str, definition_toml: &str) -> v
     }
 }
 
-async fn run_tui(cwd: PathBuf, trusted: bool) -> i32 {
-    let core = match Core::new_with_trust(cwd.clone(), trusted) {
-        Ok(c) => c,
+async fn run_tui(cwd: PathBuf, _trusted: bool) -> i32 {
+    let resolved = match connect::discover(None, None, None) {
+        Ok(r) => r,
         Err(e) => {
             eprintln!("error: {e}");
             return 2;
         }
     };
-    print_config_warnings(&core);
-    update_check::maybe_check_update(core.config());
-    vak_tui::run(core, vak_tui::UiConfig { cwd }).await
+    let data = match vak_tui::data::ClientData::connect(&resolved.url, &resolved.token).await {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    vak_tui::run(data, vak_tui::UiConfig { cwd }).await
+}
+
+/// Renders the edit-tool diff preview for exec output from stored args.
+fn exec_edit_diff(args_json: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(args_json).ok()?;
+    let (old, new) = if let Some(edits) = v.get("edits").and_then(|e| e.as_array()) {
+        let first = edits.first()?;
+        (
+            first.get("old_string")?.as_str()?,
+            first.get("new_string")?.as_str()?,
+        )
+    } else {
+        (
+            v.get("old_string")?.as_str()?,
+            v.get("new_string")?.as_str()?,
+        )
+    };
+    Some(vak_tui::events::edit_diff_text(old, new, None))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -984,11 +1007,7 @@ async fn run_exec(
                 args_json,
             } => {
                 tool_args.insert(id, (name.clone(), args_json.clone()));
-                eprintln!(
-                    "▸ {} {}",
-                    name,
-                    vak_tui::app::summarize_args(&name, &args_json)
-                );
+                eprintln!("▸ {} {}", name, vak_tui::events::summarize_args(&args_json));
             }
             AgentEvent::ToolCallEnd {
                 id,
@@ -1001,11 +1020,7 @@ async fn run_exec(
                 if name == "edit"
                     && !is_error
                     && let Some((_, args)) = &stored
-                    && let Some(diff) = vak_tui::app::edit_diff_text(
-                        args,
-                        &vak_tui::theme::Theme::from_name("plain"),
-                        10,
-                    )
+                    && let Some(diff) = exec_edit_diff(args)
                 {
                     for line in vak_tui::markdown::strip_ansi(&diff).lines() {
                         eprintln!("  {line}");

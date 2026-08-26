@@ -368,15 +368,15 @@ fn composer_layout_preserves_explicit_multiline_rows() {
 #[test]
 fn summarize_args_picks_meaningful_hints() {
     assert_eq!(
-        vak_tui::app::summarize_args("bash", r#"{"command":"cargo test --lib"}"#),
+        vak_tui::events::summarize_args(r#"{"command":"cargo test --lib"}"#),
         "cargo test --lib"
     );
     assert_eq!(
-        vak_tui::app::summarize_args("edit", r#"{"path":"src/x.rs"}"#),
+        vak_tui::events::summarize_args(r#"{"path":"src/x.rs"}"#),
         "src/x.rs"
     );
     // long commands truncate with an ellipsis marker
     let long = "a".repeat(120);
-    let s = vak_tui::app::summarize_args("bash", &format!(r#"{{"command":"{long}"}}"#));
+    let s = vak_tui::events::summarize_args(&format!(r#"{{"command":"{long}"}}"#));
     assert!(s.ends_with('…') && s.chars().count() < 120);
 }

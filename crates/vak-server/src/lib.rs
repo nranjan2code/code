@@ -343,18 +343,26 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/bestofn", post(start_bestofn))
         .route("/sessions/{id}/keep", post(keep_best_run))
         .route("/sessions/{id}/discard", post(discard_best_run))
+        .route("/sessions/{id}/compact", post(compact_session))
         .route("/fs/file", get(read_file).put(write_file))
         .route("/fs/tree", get(fs_tree))
         .route("/config", get(get_config).patch(patch_config))
         .route("/config/mode", post(set_permission_mode))
+        .route(
+            "/config/sandbox",
+            post(set_sandbox_backend).get(get_sandbox),
+        )
         .route("/config/mcp", get(get_mcp_servers).put(put_mcp_servers))
         .route("/config/hooks", get(get_hooks).put(put_hooks))
         .route(
             "/config/key",
             put(put_provider_key).delete(delete_provider_key),
         )
+        .route("/config/commands", get(list_custom_commands))
         .route("/providers", get(list_providers))
         .route("/providers/{name}/models", get(discover_models))
+        .route("/tools", get(list_tools))
+        .route("/breaker", get(breaker_status))
         .route("/search", get(search_sessions))
         .route("/ops/status", get(ops_status))
         .route("/ops/{service}/{action}", post(ops_action))
@@ -1167,9 +1175,13 @@ struct CreateSessionBody {
 
 async fn create_session(
     State(state): State<AppState>,
-    axum::extract::Json(body): axum::extract::Json<CreateSessionBody>,
+    body: Result<axum::extract::Json<CreateSessionBody>, axum::extract::rejection::JsonRejection>,
 ) -> Json<serde_json::Value> {
-    let session_cwd = body.cwd.unwrap_or_else(|| state.core.cwd().clone());
+    // Empty or absent bodies are legal: cwd falls back to Core's default.
+    let session_cwd = body
+        .ok()
+        .and_then(|j| j.0.cwd)
+        .unwrap_or_else(|| state.core.cwd().clone());
     let session = match state.core.start_session_in(&session_cwd).await {
         Ok(s) => s,
         Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
@@ -2656,6 +2668,99 @@ async fn set_permission_mode(
     }
 }
 
+async fn get_sandbox(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "backend": state.core.effective_sandbox_backend(),
+        "name": state.core.effective_sandbox_name(),
+        "image": state.core.config().sandbox.image,
+    }))
+}
+
+#[derive(serde::Deserialize)]
+struct SandboxBody {
+    backend: Option<String>,
+}
+
+async fn set_sandbox_backend(
+    State(state): State<AppState>,
+    Json(body): Json<SandboxBody>,
+) -> StatusCode {
+    match body.backend.as_deref() {
+        None | Some("default") => {
+            state.core.set_sandbox_backend(None);
+        }
+        Some("os") | Some("docker") => {
+            state
+                .core
+                .set_sandbox_backend(Some(body.backend.unwrap_or_default()));
+        }
+        Some(_) => return StatusCode::BAD_REQUEST,
+    }
+    state
+        .hub
+        .emit_config_changed("sandbox_backend", &state.core.effective_sandbox_backend());
+    StatusCode::OK
+}
+
+async fn compact_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(handle) = state.get(&id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "session not found" })),
+        )
+            .into_response();
+    };
+    // Compaction rewrites the ledger tail; a live run must never race it.
+    if handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_none()
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "a run is active on this session" })),
+        )
+            .into_response();
+    }
+    let taken = handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    let Some(session) = taken else {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "a run is active on this session" })),
+        )
+            .into_response();
+    };
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let (session, outcome) = state.core.compact_session_now(session, cancel).await;
+    *handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session);
+    match (outcome.report, outcome.error) {
+        (Some(report), _) => Json(serde_json::json!({
+            "before_tokens": report.before_tokens,
+            "after_tokens": report.after_tokens,
+            "summarized_messages": report.summarized_messages,
+        }))
+        .into_response(),
+        (None, Some(error)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+        (None, None) => Json(serde_json::json!({ "noop": true })).into_response(),
+    }
+}
+
 fn apply_permission_mode(state: &AppState, mode: vak_config::PermissionMode) {
     if state.core.effective_permission_mode() == mode {
         return;
@@ -2810,6 +2915,44 @@ async fn put_provider_key(
             Json(serde_json::json!({ "error": e.to_string() })),
         )
             .into_response(),
+    }
+}
+
+async fn list_custom_commands(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let commands: Vec<serde_json::Value> = state
+        .core
+        .custom_commands()
+        .into_iter()
+        .map(|c| {
+            serde_json::json!({
+                "name": c.name,
+                "description": c.description,
+                "source": c.source,
+                "template": c.template,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "commands": commands }))
+}
+
+async fn list_tools(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let names: Vec<String> = state
+        .core
+        .agent_tools()
+        .iter()
+        .map(|t| t.name().to_string())
+        .collect();
+    Json(serde_json::json!({ "tools": names }))
+}
+
+async fn breaker_status(State(state): State<AppState>) -> Json<serde_json::Value> {
+    match state.core.breaker().check() {
+        Ok(()) => Json(serde_json::json!({ "open": false })),
+        Err(open) => Json(serde_json::json!({
+            "open": true,
+            "remaining_secs": open.remaining_secs,
+            "failures": open.failures,
+        })),
     }
 }
 

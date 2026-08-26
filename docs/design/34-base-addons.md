@@ -128,11 +128,32 @@ Client resolution order:
 5. **Shutdown**: SIGINT / SIGTERM handler removes `runtime/gateway.json`
    before exit.
 
+## M4.2 — TUI thin-client rewrite (delivered)
+
+The 5.8k-line `app.rs` god-file is gone. The TUI now holds zero agent
+state: it renders what the base reports over HTTP+SSE and persists only
+presentation prefs locally (`[ui]` tables via `vak-config`).
+
+| Module | Role |
+|---|---|
+| `app.rs` (~1.7k) | `App` struct + `tokio::select!` loop: SSE events, keyboard, turn completion, idle tick |
+| `data.rs` | The only place that talks HTTP: typed wrappers over every `vak-client` call, poison-tolerant caches, custom-command expansion |
+| `events.rs` | SSE → transcript rendering (delta+snapshot consumers), diff/args helpers |
+| `commands/{session,config,memory,system}.rs` | All ~36 slash commands against `ClientData`, no filesystem scanning |
+| `state.rs` / `modals.rs` / `pickers.rs` / `transcript.rs` | Shared UI types + rendering |
+| `prefs.rs` | Local-only theme/keymap/composer/bell/a11y persistence with full TOML upsert |
+| `inbox.rs` / `tasks.rs` | Inbox attention layer; cron/watchdog/proposal management |
+
+Server additions for parity: `GET /config/commands`, `GET /tools`,
+`GET /breaker`, `POST /sessions/{id}/compact`,
+`POST|GET /config/sandbox`. `vakcoder tui` connects through
+`connect::discover` like every other surface.
+
 ## Status
 
-M0–M3 delivered and live-tested. Remaining milestones:
+M0–M3 plus M4.2 delivered. Remaining milestones:
 
 | Milestone | Scope |
 |---|---|
-| M4 | Thin clients: `vak-client` crate, TUI rewrite, desktop rewrite |
+| M4 remainder | Desktop rewrite onto `vak-client`; M4.3 hardening items below |
 | M5 | Hardening: TLS guard (http:// non-loopback), version handshake, fan-out tests, docs |
