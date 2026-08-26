@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — normal-user bring-up
+
+- **Tray launcher**: new "Open VakCoder" and "Open Admin Console…" menu
+  items. The admin link reads `runtime/gateway.json`, verifies pid
+  liveness, and deep-links with a `#token=` fragment — the SPA trades it
+  for the HttpOnly session cookie and scrubs the fragment immediately,
+  so one menu click signs in a non-technical user (fragment never
+  reaches the network; dead/garbage runtime falls back to the login
+  page). Unit-tested URL builder.
+- Admin SPA supports `#token=` auto-login; Tavily key now provisioned in
+  the canonical `.env` alongside Telegram/provider keys.
+
 ## Unreleased — M4.2/M4.3 thin-client completion
 
 - **Desktop live-streaming fixed**: the SPA still attached SSE with

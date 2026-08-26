@@ -953,6 +953,23 @@ const NAV = [
 ];
 
 export default function App() {
+  // One-click login: the tray (and bookmarked links) may open the console
+  // as /admin#token=… — the fragment never leaves the machine, so trade it
+  // for the session cookie and scrub it from the address bar immediately.
+  createEffect(() => {
+    const m = /^#token=(.+)$/.exec(location.hash);
+    if (!m) return;
+    history.replaceState(null, "", location.pathname + "#/overview");
+    api
+      .login(decodeURIComponent(m[1]))
+      .then(() => {
+        setAuthed(true);
+        connectEvents();
+        navigate("#/overview");
+      })
+      .catch(() => setAuthed(false));
+  });
+
   // Probe auth once: any authenticated endpoint answering 200 means we're in.
   createEffect(() => {
     api.config()

@@ -133,6 +133,8 @@ impl Ui {
                 self.watchdog.store(newval, Ordering::SeqCst);
                 persist_watchdog(newval);
             }
+            ACT_OPEN_DESKTOP => open_desktop(),
+            ACT_OPEN_ADMIN => open_admin_console(),
             ACT_QUIT => std::process::exit(0),
             _ => {}
         }
@@ -147,6 +149,8 @@ const ACT_UNINSTALL: u32 = 5;
 const ACT_LOG: u32 = 6;
 const ACT_WATCHDOG_TOGGLE: u32 = 7;
 const ACT_QUIT: u32 = 8;
+const ACT_OPEN_DESKTOP: u32 = 9;
+const ACT_OPEN_ADMIN: u32 = 10;
 
 fn persist_watchdog(on: bool) {
     let path = home().join("tray.json");
@@ -263,8 +267,99 @@ fn states_now() -> [vak_ops::State; 2] {
     ]
 }
 
+
+/// Launch the desktop app: prefer the installed bundle so Dock behaviour is
+/// normal, fall back to a sibling binary for dev checkouts.
+fn open_desktop() {
+    #[cfg(target_os = "macos")]
+    {
+        let ok = std::process::Command::new("open")
+            .arg("-a")
+            .arg("VakCoder")
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            return;
+        }
+    }
+    if let Some(exe) = std::env::current_exe().ok()
+        .and_then(|p| p.parent().map(|d| d.join("vak-desktop")))
+    {
+        let _ = std::process::Command::new(exe).spawn();
+    }
+}
+
+/// Open the web admin console. When the gateway runtime file is fresh, the
+/// URL carries `#token=…`: the fragment never reaches the network and the
+/// console trades it for an HttpOnly cookie, then scrubs itself — one click
+/// for a non-technical user, no plaintext token in any server log.
+fn open_admin_console() {
+    let home = vak_config::paths::data_home();
+    let raw = std::fs::read_to_string(home.join("runtime").join("gateway.json"))
+        .unwrap_or_default();
+    open_url(&admin_url(&raw, &|pid| {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }));
+}
+
+/// Builds the console URL from the gateway runtime file contents. Falls
+/// back to the tokenless login page unless pid liveness confirms the file.
+fn admin_url(runtime_json: &str, pid_alive: &dyn Fn(i32) -> bool) -> String {
+    let fallback = "http://127.0.0.1:8901/admin".to_string();
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(runtime_json) else {
+        return fallback;
+    };
+    let pid = v["pid"].as_i64().unwrap_or(0);
+    if pid <= 0 || !pid_alive(pid as i32) {
+        return fallback;
+    }
+    match (v["addr"].as_str(), v["token"].as_str()) {
+        (Some(addr), Some(token)) => {
+            format!("http://{addr}/admin#token={}", urlencode(token))
+        }
+        _ => fallback,
+    }
+}
+
+fn urlencode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+fn open_url(url: &str) {
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+}
+
 fn build_menu(states: &[vak_ops::State; 2], watchdog_on: bool) -> Menu {
     let menu = Menu::new();
+    let open_app =
+        MenuItem::with_id(ACT_OPEN_DESKTOP.to_string(), "Open VakCoder", true, None);
+    let _ = menu.append(&open_app);
+    let admin = MenuItem::with_id(
+        ACT_OPEN_ADMIN.to_string(),
+        "Open Admin Console…",
+        true,
+        None,
+    );
+    let _ = menu.append(&admin);
     let _ = menu.append(&PredefinedMenuItem::separator());
     for (i, st) in states.iter().enumerate() {
         let dot = match st {
@@ -327,4 +422,28 @@ fn build_menu(states: &[vak_ops::State; 2], watchdog_on: bool) -> Menu {
     let quit = MenuItem::with_id(ACT_QUIT.to_string(), "Quit tray", true, None);
     let _ = menu.append(&quit);
     menu
+}
+
+#[cfg(test)]
+mod admin_url_tests {
+    use super::admin_url;
+
+    const ALIVE: &dyn Fn(i32) -> bool = &|_| true;
+    const DEAD: &dyn Fn(i32) -> bool = &|_| false;
+
+    #[test]
+    fn fresh_runtime_yields_one_click_fragment() {
+        let raw = r#"{"pid":42,"addr":"127.0.0.1:8901","token":"vk_a/b.c~d"}"#;
+        assert_eq!(
+            admin_url(raw, ALIVE),
+            "http://127.0.0.1:8901/admin#token=vk_a%2Fb.c~d"
+        );
+    }
+
+    #[test]
+    fn dead_pid_or_garbage_falls_back_to_login_page() {
+        let raw = r#"{"pid":42,"addr":"127.0.0.1:8901","token":"t"}"#;
+        assert_eq!(admin_url(raw, DEAD), "http://127.0.0.1:8901/admin");
+        assert_eq!(admin_url("not json", ALIVE), "http://127.0.0.1:8901/admin");
+    }
 }
