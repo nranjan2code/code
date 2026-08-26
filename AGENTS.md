@@ -9,8 +9,9 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v0.3.0+ — all roadmap phases implemented and live-tested.**
-See `docs/design/00-roadmap.md` for the phase history and
+**Status: v0.8.0+ — base+addons architecture (M0–M3 delivered).**
+See `docs/design/34-base-addons.md` for the base+addons architecture,
+`docs/design/00-roadmap.md` for the phase history and
 `docs/design/15-reliability.md` for the failure-handling matrix. Security work
 must also follow the threat model and priority order in
 `docs/design/24-agent-security.md`. The always-on platform layer follows
@@ -132,6 +133,12 @@ security/inbox), operation (approvals/config/cancel), and interaction
     must use the same permission decision and brokered registry. A direct flow
     node or convenience SDK path may not call an effectful tool before
     evaluating `PermissionEngine` and resolving `Ask` through its approver.
+17. **Gateway is a singleton.** A flock on `data_home/locks/gateway.lock`
+    prevents multiple gateway processes. Time-based effects (cron, replay,
+    rebuild, outbox, channel delivery) are gated behind `force_gateway`
+    so a plain `serve` process never touches scheduled work. The runtime
+    file (`runtime/gateway.json`) is written on boot and removed on
+    shutdown; clients check PID liveness before connecting.
 
 ## Code rules
 
@@ -190,9 +197,11 @@ crates/vak-eval      deterministic eval suite + live-model mode +
                      context-quality scorecard (docs/design/27 Phase C)
  crates/vak-config    layered TOML config + .env secret loading + canonical
                      filesystem paths (paths.rs: data_home, cache_home,
-                     logs_dir, migrate_legacy_home) + [finops]
-                     caps/pricing + [goal] policy + [route] ladder
-                     preferences (docs/design/27 Phases D+H+R) +
+                     logs_dir) + unique .env.tmp.<pid> for concurrent
+                     safety + [finops] caps/pricing + [goal] policy +
+                     [route] ladder preferences (docs/design/27
+                     Phases D+H+R) + [connect] section (url, token,
+                     profile, profiles) for base discovery (doc 34) +
                      [automation]/[update]/[tools] (docs/design/29)
 crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      session_search injection w/ profile tier, memory/
@@ -205,7 +214,8 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      alert rows (docs/design/27 Phase D), task store +
                      cron engine, health report, backup export/import,
                      digest, shared transcript_md renderer
-                     (docs/design/29-personal-os.md)
+                     (docs/design/29-personal-os.md), multi-project
+                     session creation via start_session_in()
 crates/vak-tui       retained-render terminal UI: contextual keymap +
                      interactive rebind, themes + custom theme packs,
                      vim/emacs composer, subagent attach/steer,
@@ -228,7 +238,10 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      admin console: global event hub + SSE, cookie login
                      (HttpOnly SameSite=Strict) alongside bearer auth,
                      /admin/api/* data plane, embedded SolidJS SPA at
-                     /admin (docs/design/33-admin-console.md)
+                     /admin (docs/design/33-admin-console.md) +
+                     token bootstrap, runtime/gateway.json, gateway
+                     flock, SIGTERM cleanup, multi-project session
+                     create/list (doc 34)
 crates/vak-admin-ui  SolidJS + Vite admin console source; built dist is
                      committed so cargo builds need no node — observation,
                      operation, and interaction views per docs/design/
@@ -249,7 +262,7 @@ crates/vak-tray      menu-bar controller: colour-coded service dot,
 crates/vakcoder      binary: tui / exec / plan / flow / serve [--gateway] /
                      telegram / eval / checkpoints / config dump / sessions
                      / doctor / backup / digest / tasks / memory / inbox
-                     (+ first-run wizard, opt-in update check)
+                     / connect (+ first-run wizard, opt-in update check)
 docs/design/         architecture decisions — update with behavior changes;
                      security boundaries and roadmap in 24-agent-security.md
 scripts/             dev utilities (mock servers, PTY/HTTP smoke drivers)

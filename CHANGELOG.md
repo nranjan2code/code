@@ -65,6 +65,30 @@ vakcoder from any browser (docs/design/33-admin-console.md).
 
 ## Unreleased
 
+- **Base + addons architecture (M0–M3)**: the server is now THE core;
+  all surfaces connect over HTTP+SSE. See `docs/design/34-base-addons.md`.
+  - **M0 — Concurrency floor**: singleton duties gated behind
+    `force_gateway` (cron/replay/rebuild never run in a plain `serve`
+    process), SQLite `busy_timeout=5000`, transactional FTS import
+    (`BEGIN IMMEDIATE`/`COMMIT`), gateway flock (`libc::flock` on
+    `data_home/locks/gateway.lock`), unique `.env.tmp.<pid>` for
+    concurrent config mutations. Dead legacy migration code removed (-57
+    lines net).
+  - **M1 — Identity & discovery**: auto-generated `vk_*` token persisted
+    to `data_home/.env` on first gateway boot, runtime file
+    (`data_home/runtime/gateway.json`) with pid/token/addr written on
+    boot and cleaned on SIGINT/SIGTERM, doctor topology check via PID
+    liveness (`kill -0`).
+  - **M2 — Connect command**: `vakcoder connect` with 5-step resolution
+    (explicit flags → profile → `[connect]` config → runtime file →
+    onboarding prompt), `[connect]` config section (url, token, profile,
+    profiles map), `--save` persists back to config, token masked in
+    output.
+  - **M3 — Multi-project base**: `create_session` endpoint accepts
+    optional `{"cwd": "path"}` for per-session workspace, `Core::start_session_in(cwd)`
+    stamps session header, `list_sessions` scans all project hash dirs
+    (not just Core.cwd's).
+
 - **Channel-aware message formatting**: the agent writes GFM markdown once;
   delivery converts per surface. Telegram replies now render as native HTML
   (bold headings/links/inline-code, fences and tables as monospace,

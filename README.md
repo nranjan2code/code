@@ -55,7 +55,7 @@ cargo install --path crates/vakcoder
 
 ### 2. Add a provider key
 
-Put credentials in a gitignored project `.env`, in `~/.vakcoder/.env`, or in your environment. Real environment variables take precedence.
+Put credentials in a gitignored project `.env`, in `<data_home>/.env` (`~/Library/Application Support/vakcoder/.env` on macOS, `~/.local/share/vakcoder/.env` on Linux), or in your environment. Real environment variables take precedence.
 
 ```bash
 # Choose one—or use Ollama locally without a hosted-provider key.

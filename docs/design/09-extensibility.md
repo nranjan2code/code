@@ -3,7 +3,7 @@
 ## Skills (shipped)
 
 Markdown packages: `.vakcoder/skills/<name>/SKILL.md` (project) and
-`~/.vakcoder/skills/<name>/SKILL.md` (user). Frontmatter `name:` +
+`<data_home>/skills/<name>/SKILL.md` (user). Frontmatter `name:` +
 `description:` (name falls back to directory). Only the name/description/
 path line enters the system prompt; the model reads the file with `read`
 when relevant — progressive disclosure, Claude Code-skill compatible.

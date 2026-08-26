@@ -43,7 +43,7 @@ verify_gate/max_blocks.
 Project-layer privileged keys (`permission_mode`, `allow`, `hooks`,
 `anthropic_base_url`, `mcp.servers`) are ignored unless the workspace is
 trusted: `Core::new_with_trust(cwd, trust)` / CLI `--trust` / per-directory
-prompt marker under `~/.vakcoder/trusted/`. The project `.env` is likewise
+prompt marker under `<data_home>/trusted/`. The project `.env` is likewise
 only loaded when trusted (it can inject `VAKCODER_*_BASE_URL`). Restrictive
 keys (`deny`, `ask`) still apply from untrusted projects. Unknown config
 keys are diffed against the schema and surfaced as warnings — a typo'd key
