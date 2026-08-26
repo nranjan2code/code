@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+## 0.9.1 — admin console full parity
+
+### Admin console: desktop-parity settings
+
+The web admin console Settings page is expanded from plain text inputs to
+a full 7-tab interface matching the desktop app:
+
+- **Agent**: discovered provider dropdown (`GET /providers`), live model
+  discovery with custom text input fallback, API key add/replace/remove
+  with `shadowed_by_env` warning, max turns input, permission mode switcher.
+- **Integrations**: MCP server full CRUD (edit-local-then-push), skills
+  list with proposals, lifecycle hooks full CRUD (event matcher, command,
+  timeout).
+- **Learning**: two-tier memory notes (workspace/profile) with add/amend/
+  forget, skill proposals with promote/reject.
+- **Tasks**: scheduled task CRUD with cron/interval scheduling, model
+  pinning, run-now, enable/disable toggle.
+- **Services**: runtime health diagnostics, background service controls
+  (start/stop/restart), spend & budget (finops) with per-provider rollup,
+  usage digest with configurable window, doctor check results.
+- **Reliability**: context window, max output, route ladder display
+  (objective, cross-model fallbacks, ladder length cap), integrations
+  summary, config warnings.
+- **Advanced**: paths display with copy buttons, backup export (with
+  secrets toggle) and import (with conflict policy), config warnings.
+
+New top-level Tasks nav item. 25+ new API methods, 15 new type
+definitions, full CSS for tabs/cards/forms/tiles.
+
 ## 0.9.0 — base + addons release
 
 - Introduces one managed, versioned base install under the platform data home,
