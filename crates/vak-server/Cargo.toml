@@ -36,11 +36,11 @@ toml = { workspace = true }
 # loop uses (docs/design/29-personal-os.md P2); this pulls in the Tool
 # trait + ToolContext needed to drive it from the scheduler.
 vak-tools = { workspace = true }
+libc = { workspace = true }
 
 [dev-dependencies]
 reqwest = { workspace = true }
 tempfile = { workspace = true }
-libc = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 
 [lints]

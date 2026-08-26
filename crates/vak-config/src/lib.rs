@@ -1689,7 +1689,7 @@ pub fn remove_env_file_key(path: &std::path::Path, key: &str) -> std::io::Result
     }
     let mut out = lines.join("\n");
     out.push('\n');
-    let tmp = path.with_extension("env.tmp");
+    let tmp = path.with_extension(format!("env.tmp.{}", std::process::id()));
     std::fs::write(&tmp, out)?;
     #[cfg(unix)]
     {
@@ -1732,7 +1732,7 @@ pub fn upsert_env_file(path: &std::path::Path, key: &str, value: &str) -> std::i
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let tmp = path.with_extension("env.tmp");
+    let tmp = path.with_extension(format!("env.tmp.{}", std::process::id()));
     std::fs::write(&tmp, out)?;
     #[cfg(unix)]
     {

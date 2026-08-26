@@ -106,7 +106,9 @@ impl Store {
         std::fs::create_dir_all(sessions_home)?;
         let db_path = sessions_home.join(DB_NAME);
         let conn = Connection::open(&db_path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;",
+        )?;
         Self::ensure_schema(&conn)?;
         Ok(Store {
             inner: Arc::new(StoreInner {
@@ -126,12 +128,14 @@ impl Store {
     /// index is fully derivable from JSONL.
     pub fn rebuild(&self, sessions_home: &Path) -> Result<RebuildStats, StoreError> {
         let conn = self.inner.conn.lock().unwrap_or_else(|p| p.into_inner());
+        conn.execute_batch("BEGIN IMMEDIATE")?;
         conn.execute_batch("DELETE FROM entries; DELETE FROM entries_fts;")?;
         let stats = self.import_all(&conn, sessions_home)?;
         conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES ('version', ?1)",
             [SCHEMA_VERSION.to_string()],
         )?;
+        conn.execute_batch("COMMIT")?;
         Ok(stats)
     }
 
@@ -143,7 +147,13 @@ impl Store {
         jsonl_path: &Path,
     ) -> Result<ImportStats, StoreError> {
         let conn = self.inner.conn.lock().unwrap_or_else(|p| p.into_inner());
-        self.import_file(&conn, sessions_home, jsonl_path)
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = self.import_file(&conn, sessions_home, jsonl_path);
+        match &result {
+            Ok(_) => conn.execute_batch("COMMIT")?,
+            Err(_) => conn.execute_batch("ROLLBACK")?,
+        }
+        result
     }
 
     /// Append a single entry (real-time update path). Called from

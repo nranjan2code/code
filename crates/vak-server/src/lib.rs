@@ -49,6 +49,7 @@ mod rate_limit;
 pub mod telegram;
 
 use std::collections::HashMap;
+use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -883,23 +884,27 @@ pub fn secured_router_with(core: Core, force_gateway: bool) -> (Router, String) 
             require_bearer,
         ))
         .layer(cors);
-    // Local routines: fires due scheduled tasks while this server lives.
-    start_scheduler(&state);
-    delivery::start_replay(&state.core);
-    // Background index sync: keeps the admin console populated from the
-    // very first boot. Idempotent; never blocks request handling.
-    if let Some(store) = state.store.clone() {
-        let home = state.core.sessions_home();
-        tokio::spawn(async move {
-            match store.rebuild(&home) {
-                Ok(s) if s.files_scanned > 0 => eprintln!(
-                    "[store] indexed {} files / {} entries",
-                    s.files_scanned, s.entries_indexed
-                ),
-                Ok(_) => {}
-                Err(e) => eprintln!("[store] startup rebuild failed: {e}"),
-            }
-        });
+    // Singleton duties: scheduler, delivery replay, and destructive index
+    // rebuild run *only* in gateway mode.  Clients (TUI, desktop, exec)
+    // embed this router without single-owner conflicts.
+    if force_gateway {
+        start_scheduler(&state);
+        delivery::start_replay(&state.core);
+        // Background index sync: keeps the admin console populated from the
+        // very first boot.  Idempotent; never blocks request handling.
+        if let Some(store) = state.store.clone() {
+            let home = state.core.sessions_home();
+            tokio::spawn(async move {
+                match store.rebuild(&home) {
+                    Ok(s) if s.files_scanned > 0 => eprintln!(
+                        "[store] indexed {} files / {} entries",
+                        s.files_scanned, s.entries_indexed
+                    ),
+                    Ok(_) => {}
+                    Err(e) => eprintln!("[store] startup rebuild failed: {e}"),
+                }
+            });
+        }
     }
     (app, token)
 }
@@ -915,6 +920,37 @@ pub async fn serve_with(
     addr: std::net::SocketAddr,
     force_gateway: bool,
 ) -> std::io::Result<()> {
+    // Singleton flock: prevent two gateway processes on the same data_home.
+    let _flock_guard = if force_gateway {
+        let data_home = core.sessions_home();
+        let lock_path = data_home.join("locks").join("gateway.lock");
+        if let Some(parent) = lock_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&lock_path)?;
+        #[allow(unsafe_code)]
+        let acquired =
+            unsafe { ::libc::flock(lock_file.as_raw_fd(), ::libc::LOCK_EX | ::libc::LOCK_NB) };
+        if acquired != 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                format!(
+                    "another gateway is already running (lock: {}). \
+                     Stop it before starting a new instance.",
+                    lock_path.display()
+                ),
+            ));
+        }
+        Some(lock_file)
+    } else {
+        None
+    };
+
     // Local-only does not mean safe-by-default: any local process could
     // reach an unauthenticated agent and drive arbitrary tool execution
     // plus self-approval. Every serve() instance gets a per-process

@@ -177,11 +177,6 @@ fn notify(title: &str, body: &str) {
 }
 
 fn main() {
-    // Canonical layout migration (doc 32); tray has no config override
-    // path of its own — a failed migration only degrades to old paths.
-    if let Err(e) = vak_config::paths::migrate_legacy_home() {
-        eprintln!("[warn] home migration skipped: {e}");
-    }
     let watchdog = Arc::new(AtomicBool::new(load_watchdog()));
 
     let event_loop: EventLoop<TrayEvent> =

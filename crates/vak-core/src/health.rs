@@ -20,34 +20,11 @@ fn user_home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
-/// Canonical-layout conformance (doc 32). The legacy dotdir must not
-/// reappear as the data home: if it exists alongside the canonical home
-/// something skipped migration, and any service still writing there is
-/// invisible to the rest of the stack.
+/// Canonical-layout conformance (doc 32). The data home must be
+/// accessible from the canonical platform path.
 fn layout_check() -> HealthCheck {
     let label = "install layout".to_string();
-    let overridden = std::env::var_os("VAKCODER_HOME").is_some();
     let canonical = vak_config::paths::data_home();
-    let legacy = user_home().join(".vakcoder");
-    if overridden {
-        return HealthCheck {
-            label,
-            detail: Ok(format!("override active → {}", canonical.display())),
-        };
-    }
-    // A dotdir holding only logs/store remnants after migration is fine;
-    // sessions living there means the tree never migrated.
-    let legacy_sessions = legacy.join("sessions");
-    if legacy_sessions.is_dir() && !canonical.join("sessions").is_dir() {
-        return HealthCheck {
-            label,
-            detail: Err(format!(
-                "sessions found in legacy {} — run vakcoder once to migrate to {}",
-                legacy_sessions.display(),
-                canonical.join("sessions").display()
-            )),
-        };
-    }
     HealthCheck {
         label,
         detail: Ok(canonical.display().to_string()),

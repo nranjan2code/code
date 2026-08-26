@@ -647,7 +647,9 @@ pub(crate) fn run_update(url: &str, yes: bool) -> i32 {
     }
     // Re-write bundle plist so version stays current.
     #[cfg(target_os = "macos")]
-    if is_bundle(&prefix) && let Err(e) = write_bundle_metadata(&prefix) {
+    if is_bundle(&prefix)
+        && let Err(e) = write_bundle_metadata(&prefix)
+    {
         eprintln!("warning: bundle refresh: {e}");
     }
     // Manifest version moves with the artifact so status stays truthful.
