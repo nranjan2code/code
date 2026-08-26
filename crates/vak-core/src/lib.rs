@@ -23,7 +23,7 @@ pub mod transcript_md;
 pub mod worktree;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
@@ -946,30 +946,27 @@ impl Core {
     }
 
     pub async fn start_session(&self) -> Result<SessionLog, CoreError> {
+        self.start_session_in(&self.inner.cwd.clone()).await
+    }
+
+    /// Start a session in a specific project directory. The session header
+    /// freezes the provided cwd (not Core's own), so agent turns and tools
+    /// execute in that workspace. Config is loaded from the project layer
+    /// of the provided cwd if it exists.
+    pub async fn start_session_in(&self, cwd: &Path) -> Result<SessionLog, CoreError> {
         let session_id = uuid_like();
-        let path = vak_session::SessionPath::new_session_file(
-            &self.sessions_home(),
-            &self.inner.cwd,
-            &session_id,
-        );
+        let path =
+            vak_session::SessionPath::new_session_file(&self.sessions_home(), cwd, &session_id);
         let plan = self.plan_route_ladder();
         let header = SessionHeader {
             session_id,
             created_at: chrono::Utc::now(),
-            cwd: self.inner.cwd.clone(),
+            cwd: cwd.to_path_buf(),
             parent_session_id: None,
             contract: FrozenContract {
                 app_version: APP_VERSION.into(),
                 provider: self.effective_provider(),
                 model: self.effective_model(),
-                // Frozen-ladder admission (docs/design/27 Phase B +
-                // Phase R): primary leg always first; additional legs
-                // ONLY from warm discovery caches -- the same model on
-                // other keyed providers, plus explicit `[route]`
-                // fallback_models when warm discovery reaches them.
-                // No invented ids, no network at admission. Ordered by
-                // demand-scored v2 over TTL-filtered evidence and
-                // session beliefs, diversity-capped, then frozen.
                 route_ladder: plan.ladder,
                 route_objective: plan.objective,
                 route_annotations: plan.annotations,

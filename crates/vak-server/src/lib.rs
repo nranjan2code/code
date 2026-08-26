@@ -1157,8 +1157,20 @@ pub(crate) fn register_handle(
     handle
 }
 
-async fn create_session(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let session = match state.core.start_session().await {
+#[derive(serde::Deserialize, Default)]
+struct CreateSessionBody {
+    /// Optional project directory. When provided, the session operates in
+    /// that workspace (frozen into the session header). When absent,
+    /// falls back to Core's default cwd.
+    cwd: Option<std::path::PathBuf>,
+}
+
+async fn create_session(
+    State(state): State<AppState>,
+    axum::extract::Json(body): axum::extract::Json<CreateSessionBody>,
+) -> Json<serde_json::Value> {
+    let session_cwd = body.cwd.unwrap_or_else(|| state.core.cwd().clone());
+    let session = match state.core.start_session_in(&session_cwd).await {
         Ok(s) => s,
         Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
     };
@@ -1166,7 +1178,7 @@ async fn create_session(State(state): State<AppState>) -> Json<serde_json::Value
         .header()
         .map(|h| h.session_id.clone())
         .unwrap_or_default();
-    register_handle(&state, id.clone(), session, state.core.cwd().clone());
+    register_handle(&state, id.clone(), session, session_cwd);
 
     state.hub.emit_session_created(&id, "");
     index_session_later(state.store.clone(), state.core.sessions_home(), id.clone());
@@ -1263,53 +1275,63 @@ async fn attach_session(
 
 /// Sidebar projection over the persisted store: one summary per JSONL file.
 async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), state.core.cwd());
+    let sessions_dir = state.core.sessions_home().join("sessions");
     let archive_map = read_archive(&state.core);
     let deleted_map = read_deleted(&state.core);
     let mut sessions = Vec::new();
-    let Ok(read) = std::fs::read_dir(&dir) else {
+    // Scan all project directories under sessions/ for multi-project support.
+    let Ok(sessions_base) = std::fs::read_dir(&sessions_dir) else {
         return Json(serde_json::json!({ "sessions": sessions }));
     };
-    for entry in read.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+    for project_dir in sessions_base.flatten() {
+        if !project_dir.path().is_dir() {
             continue;
         }
-        let Some(session_id) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
+        let Ok(read) = std::fs::read_dir(project_dir.path()) else {
             continue;
         };
-        if deleted_map.get(&session_id).copied().unwrap_or(false) {
-            continue;
+        for entry in read.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Some(session_id) = path.file_stem().and_then(|s| s.to_str()).map(String::from)
+            else {
+                continue;
+            };
+            if deleted_map.get(&session_id).copied().unwrap_or(false) {
+                continue;
+            }
+            let updated_at = std::fs::metadata(&path)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
+            let (created_at, title, entries, cwd) = summarize_jsonl(&path);
+            // Header-only sessions are abandoned drafts (for example, creating a
+            // task and immediately switching away). Keep the ledger append-only,
+            // but do not let empty drafts accumulate in the task switcher.
+            if entries <= 1 {
+                continue;
+            }
+            let running = state.get(&session_id).is_some_and(|handle| {
+                handle
+                    .session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .is_none()
+            });
+            let archived = archive_map.get(&session_id).copied().unwrap_or(false);
+            sessions.push(serde_json::json!({
+                "session_id": session_id,
+                "cwd": cwd.unwrap_or_else(|| state.core.cwd().to_string_lossy().into_owned()),
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "entries": entries,
+                "title": title,
+                "running": running,
+                "archived": archived,
+            }));
         }
-        let updated_at = std::fs::metadata(&path)
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
-        let (created_at, title, entries, cwd) = summarize_jsonl(&path);
-        // Header-only sessions are abandoned drafts (for example, creating a
-        // task and immediately switching away). Keep the ledger append-only,
-        // but do not let empty drafts accumulate in the task switcher.
-        if entries <= 1 {
-            continue;
-        }
-        let running = state.get(&session_id).is_some_and(|handle| {
-            handle
-                .session
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_none()
-        });
-        let archived = archive_map.get(&session_id).copied().unwrap_or(false);
-        sessions.push(serde_json::json!({
-            "session_id": session_id,
-            "cwd": cwd.unwrap_or_else(|| state.core.cwd().to_string_lossy().into_owned()),
-            "created_at": created_at,
-            "updated_at": updated_at,
-            "entries": entries,
-            "title": title,
-            "running": running,
-            "archived": archived,
-        }));
     }
     sessions.sort_by_key(|s| s["updated_at"].as_str().unwrap_or("").to_string());
     sessions.reverse();
