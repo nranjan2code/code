@@ -151,9 +151,10 @@ Server additions for parity: `GET /config/commands`, `GET /tools`,
 
 ## Status
 
-M0–M3 plus M4.2 delivered. Remaining milestones:
+M0–M3, M4.2, and M4.3 delivered. Remaining milestones:
 
 | Milestone | Scope |
 |---|---|
-| M4 remainder | Desktop rewrite onto `vak-client`; M4.3 hardening items below |
+| M4 remainder | Desktop SPA audit against `vak-client` types |
+| M5 | Hardening: version handshake ✅, TLS guard ✅, fan-out tests ✅ — remaining: docs sweep |
 | M5 | Hardening: TLS guard (http:// non-loopback), version handshake, fan-out tests, docs |

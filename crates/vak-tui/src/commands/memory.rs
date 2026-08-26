@@ -127,7 +127,7 @@ pub fn memory_rows(notes: &[MemoryNote]) -> Vec<String> {
             format!(
                 "{} [{}] {}",
                 short_hex(&n.id),
-                n.tier,
+                n.scope,
                 n.text.replace('\n', " ")
             )
         })
@@ -158,7 +158,7 @@ pub async fn handle_memory(
     let notes: Vec<MemoryNote> = if profile_scope {
         all_notes
             .into_iter()
-            .filter(|n| n.tier == "profile")
+            .filter(|n| n.scope == "profile")
             .collect()
     } else {
         all_notes
@@ -263,8 +263,11 @@ mod memory_tests {
         MemoryNote {
             id: id.into(),
             text: text.into(),
-            created_at: Utc::now().to_rfc3339(),
-            tier: "workspace".into(),
+            kind: "note".into(),
+            tag: String::new(),
+            session_id: "test".into(),
+            ts: Utc::now().to_rfc3339(),
+            scope: "workspace".into(),
         }
     }
 
@@ -320,7 +323,7 @@ mod memory_tests {
     fn memory_rows_show_newest_first_with_tier_chips() {
         let old = note("1111111111111111", "older\nnote");
         let new = MemoryNote {
-            tier: "profile".into(),
+            scope: "profile".into(),
             ..note("2222222222222222", "newer")
         };
         let rows = memory_rows(&[old, new]);

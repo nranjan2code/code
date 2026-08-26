@@ -247,10 +247,10 @@ fn set_boot_error(state: &State<'_, BackendState>, error: Option<String>) {
     }
 }
 
-/// Thin proxy for appending to the global USER.md memory tier: the embedded
-/// router exposes list/forget/amend but no append, and memory stores are
-/// plain hand-editable markdown by design (docs/design/29-personal-os.md
-/// P1), so this mirrors what `vakcoder memory add --profile` does locally.
+/// Thin proxy for appending to the global USER.md memory tier. Writes go
+/// through the embedded router (`POST /memory`, scope=profile) like every
+/// other surface — the desktop never touches memory stores directly
+/// (docs/design/34-base-addons.md ownership contract).
 #[derive(Deserialize)]
 struct ProfileNoteDraft {
     kind: String,
@@ -266,22 +266,46 @@ struct ProfileNoteCreated {
 }
 
 #[tauri::command]
-async fn append_profile_note(draft: ProfileNoteDraft) -> Result<ProfileNoteCreated, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        vak_core::memory::append_profile_note(
-            &vak_home(),
+async fn append_profile_note(
+    state: State<'_, BackendState>,
+    draft: ProfileNoteDraft,
+) -> Result<ProfileNoteCreated, String> {
+    let (base, token) = {
+        let guard = state
+            .running
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let running = guard
+            .as_ref()
+            .filter(|r| r.info.ready)
+            .ok_or_else(|| "no backend running".to_string())?;
+        let base = running
+            .info
+            .base_url
+            .clone()
+            .ok_or_else(|| "backend missing base url".to_string())?;
+        let token = running
+            .info
+            .token
+            .clone()
+            .ok_or_else(|| "backend missing token".to_string())?;
+        (base, token)
+    };
+    let client = vak_client::Client::new(base, token);
+    let note = client
+        .append_memory(
+            draft.text.trim(),
+            "profile",
             draft.kind.trim(),
             draft.tag.trim(),
-            &draft.text,
             "desktop",
         )
-        .map(|note| ProfileNoteCreated {
-            id: note.id,
-            ts: note.ts.to_rfc3339(),
-        })
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(ProfileNoteCreated {
+        id: note.id,
+        ts: note.ts,
     })
-    .await
-    .map_err(|e| format!("join: {e}"))?
 }
 
 /// Persist an exported document (e.g. a session transcript) to a path the

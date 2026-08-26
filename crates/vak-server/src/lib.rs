@@ -92,6 +92,10 @@ pub(crate) struct SessionHandle {
     /// context but never land on the main chain.
     pub(crate) side_events_tx: broadcast::Sender<AgentEvent>,
     pub(crate) side_cancel: Arc<std::sync::Mutex<CancellationToken>>,
+    /// Per-run ordered event bridge (mpsc front). Terminal frames for the
+    /// CURRENT run go through it so they can never overtake deltas still
+    /// draining behind the same pump. None between runs.
+    pub(crate) run_events: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::Sender<AgentEvent>>>>,
 }
 
 #[derive(Clone)]
@@ -346,6 +350,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/compact", post(compact_session))
         .route("/fs/file", get(read_file).put(write_file))
         .route("/fs/tree", get(fs_tree))
+        .route("/version", get(server_version))
         .route("/config", get(get_config).patch(patch_config))
         .route("/config/mode", post(set_permission_mode))
         .route(
@@ -1156,6 +1161,7 @@ pub(crate) fn register_handle(
         subscribed: Arc::new(tokio::sync::Notify::new()),
         side_events_tx,
         side_cancel: Arc::new(std::sync::Mutex::new(CancellationToken::new())),
+        run_events: Arc::new(std::sync::Mutex::new(None)),
     });
     state
         .sessions
@@ -1483,6 +1489,10 @@ async fn run_prompt(
         session_id: handle.id.clone(),
     });
     let events = mpsc_to_broadcast(handle.events_tx.clone());
+    *handle
+        .run_events
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(events.clone());
     let steering = handle.steering.clone();
     let cancel = handle
         .cancel
@@ -1527,6 +1537,7 @@ async fn run_prompt(
     let admin_store = state.store.clone();
     let sessions_home = state.core.sessions_home();
 
+    let finish_tx = events.clone();
     tokio::spawn(async move {
         let outcome = if let Some((objective, criteria)) = goal_pair {
             core.run_goal_turn_with(
@@ -1579,9 +1590,15 @@ async fn run_prompt(
                     vak_agent::TurnOutcome::MaxTurnsReached => ("max_turns".to_string(), true),
                 };
                 hub.emit_agent_summary(&summary, Some(run_id.clone()));
-                let _ = handle
-                    .events_tx
-                    .send(AgentEvent::RunFinished { summary, is_error });
+                // Ordered behind every delta still draining through the
+                // bridge — a direct broadcast send here could overtake them.
+                let _ = finish_tx
+                    .send(AgentEvent::RunFinished { summary, is_error })
+                    .await;
+                *handle
+                    .run_events
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
                 index_session_later(admin_store.clone(), sessions_home.clone(), run_id.clone());
                 // Background reflection seam (docs/design/29 P1): after the
                 // summary is recorded and while this task still owns the
@@ -1610,12 +1627,18 @@ async fn run_prompt(
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
                 }
-                let _ = handle.events_tx.send(AgentEvent::RunFinished {
-                    summary: format!("error: {e}"),
-                    is_error: true,
-                });
+                let _ = finish_tx
+                    .send(AgentEvent::RunFinished {
+                        summary: format!("error: {e}"),
+                        is_error: true,
+                    })
+                    .await;
             }
         }
+        *handle
+            .run_events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         drop(steering);
     });
 
@@ -1672,10 +1695,26 @@ async fn cancel_run(State(state): State<AppState>, Path(id): Path<String>) -> St
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .cancel();
     deny_pending_approvals(&handle);
-    let _ = handle.events_tx.send(AgentEvent::RunFinished {
+    // Route through the run's ordered bridge when one is live so the
+    // terminal cannot overtake deltas still in flight; fall back to a
+    // direct send between runs (nothing to overtake).
+    let bridge = handle
+        .run_events
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    let finished = AgentEvent::RunFinished {
         summary: "cancelled by client".into(),
         is_error: false,
-    });
+    };
+    match bridge {
+        Some(tx) => {
+            let _ = tx.send(finished).await;
+        }
+        None => {
+            let _ = handle.events_tx.send(finished);
+        }
+    }
     StatusCode::ACCEPTED
 }
 
@@ -2666,6 +2705,16 @@ async fn set_permission_mode(
         }
         None => StatusCode::BAD_REQUEST,
     }
+}
+
+/// M4.3 version handshake: lets clients verify they speak the same wire
+/// generation as the base before issuing commands.
+async fn server_version() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "name": "vakcoder",
+        "version": env!("CARGO_PKG_VERSION"),
+        "protocol": 1,
+    }))
 }
 
 async fn get_sandbox(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -3788,6 +3837,7 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str) {
     let prompt = prompt.to_string();
     let h2 = handle.clone();
     tokio::spawn(async move {
+        let finish_tx = events.clone();
         let outcome = core
             .run_turn_with(
                 log,
@@ -3807,10 +3857,12 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str) {
                 *h2.session
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
-                let _ = h2.events_tx.send(AgentEvent::RunFinished {
-                    summary: "completed".into(),
-                    is_error: false,
-                });
+                let _ = finish_tx
+                    .send(AgentEvent::RunFinished {
+                        summary: "completed".into(),
+                        is_error: false,
+                    })
+                    .await;
             }
             Err(e) => {
                 // Same leak class as side chats: restore from the durable
@@ -3820,10 +3872,12 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str) {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
                 }
-                let _ = h2.events_tx.send(AgentEvent::RunFinished {
-                    summary: format!("error: {e}"),
-                    is_error: true,
-                });
+                let _ = finish_tx
+                    .send(AgentEvent::RunFinished {
+                        summary: format!("error: {e}"),
+                        is_error: true,
+                    })
+                    .await;
             }
         }
         drop(steering);

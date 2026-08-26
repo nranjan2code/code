@@ -241,7 +241,10 @@ impl App {
         let (buf, cursor) = self.editor.view();
         let footer = commands::composer_footer(&self.editor);
         self.screen.redraw_composer(&label, buf, cursor, &footer);
-        let status = events::status_ansi(&self.ui, false, &th);
+        let mut status = events::status_ansi(&self.ui, false, &th);
+        if let Some(note) = self.data.version_note() {
+            status.push_str(&format!(" \x1b[{}m· {note}\x1b[39m", theme::fg(th.dim)));
+        }
         self.screen.redraw_status(&status);
         if let Some((kind, pk)) = self.picker.as_ref() {
             modals::draw_picker(&mut self.screen, *kind, pk);

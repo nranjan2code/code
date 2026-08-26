@@ -19,9 +19,36 @@ pub enum ClientError {
 
     #[error("connection refused — is the base running?")]
     ConnectionRefused,
+
+    #[error(
+        "refusing plaintext http:// to non-loopback host \"{host}\" — use https:// or a loopback address"
+    )]
+    InsecureUrl { host: String },
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;
+
+/// Wire identity of a vakcoder base, served at `GET /version`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ServerVersion {
+    pub name: String,
+    pub version: String,
+    pub protocol: u32,
+}
+
+/// True when `url` is `http://` pointed at a host other than loopback.
+/// Plaintext to anything off-machine leaks the bearer token; the guard
+/// fails closed (docs/design/34-base-addons.md M4.3).
+fn is_insecure_http(url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    if parsed.scheme() != "http" {
+        return None;
+    }
+    let host = parsed.host_str()?.to_string();
+    let loopback =
+        matches!(host.as_str(), "localhost" | "::1" | "[::1]") || host.starts_with("127.");
+    (!loopback).then_some(host)
+}
 
 /// Typed HTTP + SSE client for a vakcoder base.
 ///
@@ -35,6 +62,16 @@ pub struct Client {
 }
 
 impl Client {
+    /// Validated constructor for real surfaces: refuses plaintext http://
+    /// to non-loopback hosts. Tests and embedded routers may use `new`.
+    pub fn connect(base_url: impl Into<String>, token: impl Into<String>) -> Result<Self> {
+        let base_url = base_url.into();
+        if let Some(host) = is_insecure_http(&base_url) {
+            return Err(ClientError::InsecureUrl { host });
+        }
+        Ok(Self::new(base_url, token))
+    }
+
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
             http: reqwest::Client::builder()
@@ -44,6 +81,11 @@ impl Client {
             base_url: base_url.into(),
             token: token.into(),
         }
+    }
+
+    /// Identity of the connected base; also the M4.3 version handshake.
+    pub async fn server_version(&self) -> Result<ServerVersion> {
+        self.get("/version").await
     }
 
     fn url(&self, path: &str) -> String {
@@ -476,7 +518,34 @@ impl Client {
     // ── Memory ───────────────────────────────────────────────────
 
     pub async fn memory(&self) -> Result<Vec<MemoryNote>> {
-        self.get("/memory").await
+        #[derive(serde::Deserialize)]
+        struct Notes {
+            notes: Vec<MemoryNote>,
+        }
+        let notes: Notes = self.get("/memory").await?;
+        Ok(notes.notes)
+    }
+
+    /// Appends a note to the `workspace` or `profile` tier via `POST /memory`.
+    pub async fn append_memory(
+        &self,
+        text: &str,
+        scope: &str,
+        kind: &str,
+        tag: &str,
+        session_id: &str,
+    ) -> Result<MemoryNote> {
+        self.post_json(
+            "/memory",
+            &serde_json::json!({
+                "text": text,
+                "kind": kind,
+                "tag": tag,
+                "scope": scope,
+                "session_id": session_id,
+            }),
+        )
+        .await
     }
 
     // ── Tasks ────────────────────────────────────────────────────
@@ -698,5 +767,42 @@ impl Client {
 
     pub async fn mcp_apply(&self, servers: &serde_json::Value) -> Result<StatusCode> {
         self.put_json_status("/config/mcp", servers).await
+    }
+}
+
+#[cfg(test)]
+mod tls_guard_tests {
+    use super::is_insecure_http;
+
+    #[test]
+    fn loopback_http_is_allowed() {
+        assert_eq!(is_insecure_http("http://127.0.0.1:8901"), None);
+        assert_eq!(is_insecure_http("http://127.9.9.9"), None);
+        assert_eq!(is_insecure_http("http://localhost"), None);
+        assert_eq!(is_insecure_http("http://localhost:1234/x"), None);
+        assert_eq!(is_insecure_http("http://[::1]:8901"), None);
+    }
+
+    #[test]
+    fn https_is_always_allowed() {
+        assert_eq!(is_insecure_http("https://base.example.com"), None);
+        assert_eq!(is_insecure_http("https://192.168.1.10:8443"), None);
+    }
+
+    #[test]
+    fn plaintext_to_lan_or_wan_is_rejected_with_host() {
+        assert_eq!(
+            is_insecure_http("http://base.example.com"),
+            Some("base.example.com".to_string())
+        );
+        assert_eq!(
+            is_insecure_http("http://192.168.1.10:8901"),
+            Some("192.168.1.10".to_string())
+        );
+    }
+
+    #[test]
+    fn unparseable_urls_do_not_panic() {
+        assert_eq!(is_insecure_http("not a url"), None);
     }
 }

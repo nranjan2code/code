@@ -15,6 +15,7 @@ pub struct ClientData {
     config: Arc<Mutex<Option<ConfigResponse>>>,
     health: Arc<Mutex<Option<HealthResponse>>>,
     custom_commands: Arc<StdMutex<Option<CommandCache>>>,
+    version_note: Option<String>,
 }
 
 impl ClientData {
@@ -34,7 +35,15 @@ impl ClientData {
     }
 
     pub async fn connect(url: &str, token: &str) -> Result<Self, String> {
-        let client = vak_client::Client::new(url, token);
+        let client = vak_client::Client::connect(url, token)
+            .map_err(|e| format!("refusing to connect: {e}"))?;
+        // Version handshake (doc 34 M4.3): record drift between this
+        // surface and the base; the statusline surfaces it.
+        let server = client.server_version().await.ok();
+        let version_note = server.as_ref().and_then(|v| {
+            let mine = env!("CARGO_PKG_VERSION");
+            (v.version != mine).then(|| format!("base v{} ≠ tui v{mine}", v.version))
+        });
         let cfg = client
             .config()
             .await
@@ -44,7 +53,13 @@ impl ClientData {
             config: Arc::new(Mutex::new(Some(cfg))),
             health: Arc::new(Mutex::new(None)),
             custom_commands: Arc::new(StdMutex::new(None)),
+            version_note,
         })
+    }
+
+    /// Non-empty when the base runs a different build than this surface.
+    pub fn version_note(&self) -> Option<&str> {
+        self.version_note.as_deref()
     }
 
     pub fn client(&self) -> &vak_client::Client {
@@ -334,13 +349,12 @@ impl ClientData {
         self.client.memory().await.map_err(|e| e.to_string())
     }
 
-    pub async fn append_memory(&self, text: &str, tier: &str) -> Result<(), String> {
-        let body = serde_json::json!({ "text": text, "tier": tier });
+    pub async fn append_memory(&self, text: &str, scope: &str) -> Result<(), String> {
         self.client
-            .post_json_status("/memory", &body)
+            .append_memory(text, scope, "note", "", "tui")
             .await
-            .map_err(|e| e.to_string())?;
-        Ok(())
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 
     pub async fn amend_memory(&self, note_id: &str, text: &str) -> Result<(), String> {

@@ -552,8 +552,14 @@ pub struct CustomCommandsResponse {
 pub struct MemoryNote {
     pub id: String,
     pub text: String,
-    pub created_at: String,
-    pub tier: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub tag: String,
+    #[serde(default)]
+    pub session_id: String,
+    pub ts: String,
+    pub scope: String,
 }
 
 // ── Tasks ────────────────────────────────────────────────────────────

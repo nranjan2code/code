@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — M4.2/M4.3 thin-client completion
+
+- **SSE terminal-frame ordering fix**: `RunFinished` was sent directly to
+  the session broadcast channel while deltas drained through the async
+  bridge, so the terminal frame could overtake un-delivered events.
+  All main-session and best-of-N terminals now flow through the ordered
+  per-run bridge; cancel prefers it too. New `sse_fanout` integration
+  test proves five concurrent subscribers each receive the full turn.
+- **TLS guard** (`vak-client::Client::connect`): refuses plaintext
+  `http://` to non-loopback hosts — bearer tokens never leave the
+  machine unencrypted. Loopback and https unaffected; surfaces migrated.
+- **Version handshake**: `GET /version` reports name/version/protocol;
+  the TUI records build drift between surface and base on connect and
+  shows it in the statusline.
+- **Desktop memory writes via the router**: `append_profile_note` no
+  longer touches vak-core directly; it POSTs `/memory` (scope=profile)
+  through the embedded base like every other surface.
+- **Memory wire-contract fixes**: `GET /memory` envelope unwrapping,
+  `MemoryNote` fields aligned to the server payload (`ts`/`scope` not
+  `created_at`/`tier`), and TUI profile-scope appends actually reach the
+  profile tier (`scope` key, not the ignored `tier`).
+
 ## Unreleased — M4.2 TUI thin-client rewrite
 
 - **vak-tui rebuilt as a thin client** over the `vak-client` HTTP+SSE
