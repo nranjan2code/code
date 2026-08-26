@@ -10,6 +10,7 @@ use vak_llm::stream::StreamEvent;
 
 mod backup;
 mod cli;
+mod connect;
 mod digest;
 mod doctor;
 mod inbox;
@@ -264,6 +265,35 @@ async fn main() {
         Some(Command::Digest { days }) => digest::run_digest(cwd, days),
         Some(Command::Tasks { action }) => tasks::run_tasks(cwd, action),
         Some(Command::Inbox { action }) => inbox::run_inbox(cwd, action),
+        Some(Command::Connect {
+            profile,
+            url,
+            token,
+            save,
+        }) => match connect::discover(profile.as_deref(), url.as_deref(), token.as_deref()) {
+            Ok(resolved) => {
+                eprintln!("Connected via: {}", resolved.source);
+                eprintln!("  URL:   {}", resolved.url);
+                let masked = if resolved.token.len() > 8 {
+                    format!("{}...", &resolved.token[..8])
+                } else {
+                    "(redacted)".into()
+                };
+                eprintln!("  Token: {masked}");
+                if save {
+                    if let Err(e) = connect::save_to_config(&resolved) {
+                        eprintln!("warning: could not save to config: {e}");
+                    } else {
+                        eprintln!("Saved to user config (~/.config/vakcoder/config.toml)");
+                    }
+                }
+                0
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                1
+            }
+        },
         Some(Command::Plan {
             task,
             yes,

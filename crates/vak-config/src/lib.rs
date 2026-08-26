@@ -91,6 +91,8 @@ pub struct FileConfig {
     pub tools: ToolsSettings,
     #[serde(default)]
     pub heartbeat: HeartbeatSettings,
+    #[serde(default)]
+    pub connect: ConnectSettings,
 }
 
 /// Cross-session recall (docs/design/23-memory.md). Read-only and
@@ -294,6 +296,37 @@ pub struct ToolsSettings {
     pub browse: Option<bool>,
 }
 
+/// Client connection settings for thin-client surfaces (TUI, desktop,
+/// exec, plan) that talk to a remote or local base over HTTP+SSE.
+/// Lives in the user-level config (`~/.config/vakcoder/config.toml`).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct ConnectSettings {
+    /// Base URL to connect to (e.g. "http://127.0.0.1:8901").
+    pub url: Option<String>,
+    /// Auth token for the base.
+    pub token: Option<String>,
+    /// Named profile to use (selects from `[connect.profiles]`).
+    pub profile: Option<String>,
+    /// Named connection profiles. Each must have `url` and `token`.
+    #[serde(default)]
+    pub profiles: std::collections::BTreeMap<String, ConnectProfile>,
+}
+
+/// A named connection profile: url + token for a specific base.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ConnectProfile {
+    pub url: String,
+    pub token: String,
+}
+
+/// Resolved connection info used by client surfaces at runtime.
+#[derive(Debug, Clone, Default)]
+pub struct ConnectResolved {
+    pub url: String,
+    pub token: String,
+}
+
 /// Proactive heartbeat (docs/design/29-personal-os.md P7). NOT privileged:
 /// it spends this server's own configured credentials on a bounded review
 /// turn, never grants new execution power.
@@ -381,6 +414,7 @@ pub struct Config {
     pub update: UpdateResolved,
     pub tools: ToolsResolved,
     pub heartbeat: HeartbeatResolved,
+    pub connect: ConnectResolved,
     pub warnings: Vec<String>,
 }
 
@@ -644,6 +678,7 @@ impl Default for Config {
                 backend: "auto".into(),
                 image: None,
             },
+            connect: ConnectResolved::default(),
             warnings: Vec::new(),
         }
     }
@@ -665,6 +700,21 @@ pub enum ConfigError {
 
 pub fn global_path() -> Option<PathBuf> {
     dirs_home().map(|h| h.join(".config/vakcoder/config.toml"))
+}
+
+/// Load just the `[connect]` section from the user-level global config.
+/// Returns default (empty) if the file or section doesn't exist.
+pub fn load_connect_settings() -> ConnectSettings {
+    let Some(path) = global_path() else {
+        return ConnectSettings::default();
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return ConnectSettings::default();
+    };
+    let Ok(fc): Result<FileConfig, _> = toml::from_str(&text) else {
+        return ConnectSettings::default();
+    };
+    fc.connect
 }
 
 pub fn project_path(cwd: &Path) -> PathBuf {
@@ -1007,6 +1057,28 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         );
     }
 
+    // Resolve [connect] section: explicit url/token or named profile.
+    let connect_profiles = merged.connect.profiles.clone();
+    if let Some(profile_name) = &merged.connect.profile {
+        if let Some(profile) = connect_profiles.get(profile_name.as_str()) {
+            cfg.connect = ConnectResolved {
+                url: profile.url.clone(),
+                token: profile.token.clone(),
+            };
+        } else {
+            cfg.warnings
+                .push(format!("connect.profile '{profile_name}' not defined"));
+        }
+    } else if let (Some(url), Some(token)) = (&merged.connect.url, &merged.connect.token)
+        && !url.is_empty()
+        && !token.is_empty()
+    {
+        cfg.connect = ConnectResolved {
+            url: url.clone(),
+            token: token.clone(),
+        };
+    }
+
     if let Some(name) = &merged.profile {
         if let Some(profile) = merged.profiles.get(name) {
             if let Some(model) = &profile.model {
@@ -1075,6 +1147,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "update",
     "tools",
     "heartbeat",
+    "connect",
 ];
 const KNOWN_FINOPS_KEYS: &[&str] = &["max_run_usd", "max_day_usd", "price_overrides"];
 const KNOWN_GOAL_KEYS: &[&str] = &["handoff_reset", "max_audit_blocks"];

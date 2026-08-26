@@ -1009,11 +1009,13 @@ pub async fn serve_with(
             #[cfg(unix)]
             {
                 use tokio::signal::unix::{SignalKind, signal};
-                let mut term =
-                    signal(SignalKind::terminate()).expect("failed to listen for SIGTERM");
-                tokio::select! {
-                    _ = tokio::signal::ctrl_c() => {}
-                    _ = term.recv() => {}
+                if let Ok(mut term) = signal(SignalKind::terminate()) {
+                    tokio::select! {
+                        _ = tokio::signal::ctrl_c() => {}
+                        _ = term.recv() => {}
+                    }
+                } else {
+                    let _ = tokio::signal::ctrl_c().await;
                 }
             }
             #[cfg(not(unix))]

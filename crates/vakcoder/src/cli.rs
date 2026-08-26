@@ -156,6 +156,21 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: Option<InboxAction>,
     },
+    /// Discover and save connection info for a remote or local base
+    Connect {
+        /// Connection profile name (selects from [connect.profiles] in config)
+        #[arg(long)]
+        profile: Option<String>,
+        /// Base URL to connect to (e.g. http://127.0.0.1:8901)
+        #[arg(long)]
+        url: Option<String>,
+        /// Auth token for the base
+        #[arg(long)]
+        token: Option<String>,
+        /// Save the resolved connection to user config for future use
+        #[arg(long)]
+        save: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
