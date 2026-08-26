@@ -9,19 +9,19 @@ APP_NAME="VakCoder.app"
 INSTALL_DIR="${VAKCODER_INSTALL_DIR:-$HOME/Applications}"
 
 usage() {
-    printf 'Usage: %s [--no-clean] [--no-install]\n' "$(basename "$0")"
-    printf '\nBuilds the VakCoder desktop app, creates release bundles, and installs the macOS app.\n'
+    printf 'Usage: %s [--clean] [--install]\n' "$(basename "$0")"
+    printf '\nDeveloper helper: builds the optional macOS desktop addon.\n'
     printf '\nEnvironment:\n'
     printf '  VAKCODER_INSTALL_DIR  Installation directory (default: ~/Applications)\n'
 }
 
-CLEAN=true
-INSTALL=true
+CLEAN=false
+INSTALL=false
 
 while (($# > 0)); do
     case "$1" in
-        --no-clean) CLEAN=false ;;
-        --no-install) INSTALL=false ;;
+        --clean) CLEAN=true ;;
+        --install) INSTALL=true ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
@@ -36,7 +36,7 @@ fi
 command -v cargo >/dev/null || { printf 'cargo is required.\n' >&2; exit 1; }
 command -v npm >/dev/null || { printf 'npm is required.\n' >&2; exit 1; }
 command -v cargo-tauri >/dev/null || {
-    printf 'cargo-tauri is required. Install it with: cargo install tauri-cli --version ^2\n' >&2
+    printf 'cargo-tauri is required. Install it with: cargo install tauri-cli --version 2.11.4 --locked\n' >&2
     exit 1
 }
 
@@ -51,20 +51,31 @@ printf '%s\n' 'Installing UI dependencies from package-lock.json...'
 (cd "$UI_DIR" && npm ci)
 
 printf '%s\n' 'Building and bundling VakCoder...'
-(cd "$DESKTOP_DIR" && cargo tauri build)
+(cd "$DESKTOP_DIR" && cargo tauri build --bundles app)
 
 APP_PATH="$ROOT_DIR/target/release/bundle/macos/$APP_NAME"
 if [[ ! -d "$APP_PATH" ]]; then
     printf 'Expected app bundle was not produced: %s\n' "$APP_PATH" >&2
     exit 1
 fi
+codesign --force --deep --sign - "$APP_PATH"
+codesign --verify --deep --strict "$APP_PATH"
 
 printf 'Bundle created: %s\n' "$ROOT_DIR/target/release/bundle"
 
 if [[ "$INSTALL" == true ]]; then
     mkdir -p "$INSTALL_DIR"
     INSTALLED_APP="$INSTALL_DIR/$APP_NAME"
+    if [[ -e "/Applications/$APP_NAME" && "$INSTALLED_APP" != "/Applications/$APP_NAME" ]]; then
+        printf 'Refusing to create a second app beside /Applications/%s. Set VAKCODER_INSTALL_DIR=/Applications or remove the stale copy explicitly.\n' "$APP_NAME" >&2
+        exit 2
+    fi
     rm -rf "$INSTALLED_APP"
     ditto "$APP_PATH" "$INSTALLED_APP"
+    codesign --verify --deep --strict "$INSTALLED_APP"
     printf 'Installed: %s\n' "$INSTALLED_APP"
+fi
+
+if [[ "$INSTALL" == false ]]; then
+    printf '%s\n' 'Not installed. Pass --install explicitly after reviewing the bundle.'
 fi

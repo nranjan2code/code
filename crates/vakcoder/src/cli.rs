@@ -16,7 +16,8 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: SelfAction,
     },
-    /// Interactive terminal UI (default when no subcommand given)
+    #[cfg(feature = "tui")]
+    /// Interactive terminal UI (default when included in this build)
     Tui {
         /// Trust this workspace's project config and .env without prompting
         #[arg(long)]
@@ -104,6 +105,12 @@ pub(crate) enum Command {
         #[arg(long)]
         trust: bool,
     },
+    /// Open the browser admin console for the live local gateway
+    Admin {
+        /// Print the authenticated URL instead of opening a browser
+        #[arg(long)]
+        print: bool,
+    },
     /// Workspace checkpoints: list or restore
     Checkpoints {
         #[command(subcommand)]
@@ -180,6 +187,9 @@ pub(crate) enum SelfAction {
         /// Managed prefix (default <home>/local/release)
         #[arg(long)]
         prefix: Option<PathBuf>,
+        /// Install program files only; intended for containers and packaging tests
+        #[arg(long)]
+        no_service: bool,
     },
     /// Regenerate + reload service units onto the installed binary
     ServicesSync {
@@ -194,6 +204,9 @@ pub(crate) enum SelfAction {
         yes: bool,
         #[arg(long)]
         purge: bool,
+        /// Remove program files only; intended for containers and packaging tests
+        #[arg(long)]
+        no_service: bool,
     },
     /// Opt-in pull-and-replace from a release manifest URL
     Update {

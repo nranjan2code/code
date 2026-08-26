@@ -71,7 +71,7 @@
 └─────────────────────────────────────────┘
          ▲            ▲            ▲
          │            │            │
-   vakcoder tui  vakcoder exec  Desktop
+   vakcoder-tui  vakcoder exec  Desktop
     (thin client) (thin client) (thin client)
 ```
 
@@ -146,7 +146,7 @@ presentation prefs locally (`[ui]` tables via `vak-config`).
 
 Server additions for parity: `GET /config/commands`, `GET /tools`,
 `GET /breaker`, `POST /sessions/{id}/compact`,
-`POST|GET /config/sandbox`. `vakcoder tui` connects through
+`POST|GET /config/sandbox`. `vakcoder-tui` connects through
 `connect::discover` like every other surface.
 
 ## Status

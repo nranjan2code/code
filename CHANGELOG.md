@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased — normal-user bring-up
+## Unreleased
+
+## 0.9.0 — base + addons release
+
+- Introduces one managed, versioned base install under the platform data home,
+  with a stable `current` link and a single launcher in `~/.local/bin`.
+- Makes the TUI and desktop independent, later-installable thin-client addons;
+  the base works headlessly and owns the gateway and admin console.
+- Adds the greenfield build/install, release-candidate, isolated install smoke,
+  version-bump, and version-consistency scripts. Legacy paths are audited and
+  moved to Trash only through the explicit macOS cleanup option.
+
+### Normal-user bring-up
 
 - **Tray launcher**: new "Open VakCoder" and "Open Admin Console…" menu
   items. The admin link reads `runtime/gateway.json`, verifies pid
@@ -12,7 +24,7 @@
 - Admin SPA supports `#token=` auto-login; Tavily key now provisioned in
   the canonical `.env` alongside Telegram/provider keys.
 
-## Unreleased — M4.2/M4.3 thin-client completion
+### M4.2/M4.3 thin-client completion
 
 - **Desktop live-streaming fixed**: the SPA still attached SSE with
   `?token=` query strings via `EventSource`, which the server stopped
@@ -43,7 +55,7 @@
   `created_at`/`tier`), and TUI profile-scope appends actually reach the
   profile tier (`scope` key, not the ignored `tier`).
 
-## Unreleased — M4.2 TUI thin-client rewrite
+### M4.2 TUI thin-client rewrite
 
 - **vak-tui rebuilt as a thin client** over the `vak-client` HTTP+SSE
   contract: the 5.8k-line god-file split into 16 focused modules, all

@@ -1,0 +1,65 @@
+name: release-candidate
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  base-clients:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: macos-aarch64
+          - os: ubuntu-latest
+            artifact: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/check-release-version.sh
+      - run: cargo fmt --all --check
+      - run: cargo clippy -p vakcoder -p vak-tui -p vak-ops --all-targets -- -D warnings
+      - run: cargo test -p vakcoder -p vak-tui -p vak-ops
+      - name: Build headless base
+        run: VAKCODER_GIT_SHA="$GITHUB_SHA" cargo build --release -p vakcoder --no-default-features
+      - name: Smoke installed artifact
+        run: ./scripts/release_install_smoke.sh target/release/vakcoder
+      - name: Build optional TUI addon
+        run: VAKCODER_GIT_SHA="$GITHUB_SHA" cargo build --release -p vak-tui --bin vakcoder-tui
+      - name: Verify built versions
+        run: VAKCODER_CHECK_BINARIES=vakcoder,vakcoder-tui ./scripts/check-release-version.sh
+      - name: Stage artifacts
+        run: |
+          mkdir -p dist
+          cp target/release/vakcoder target/release/vakcoder-tui dist/
+          if command -v shasum >/dev/null; then
+            (cd dist && shasum -a 256 vakcoder vakcoder-tui > SHA256SUMS)
+          else
+            (cd dist && sha256sum vakcoder vakcoder-tui > SHA256SUMS)
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/
+
+  desktop-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/check-release-version.sh
+      - run: cd crates/vak-desktop/ui && npm ci && npm run build
+      - run: cargo install tauri-cli --version 2.11.4 --locked
+      - run: cd crates/vak-desktop && cargo tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos-unsigned
+          path: target/release/bundle/

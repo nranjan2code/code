@@ -6,7 +6,7 @@
 
 **A local-first Rust harness for running serious coding agents without giving up the receipts.**
 
-[![Version](https://img.shields.io/badge/version-0.8.0-E66A2C?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.0-E66A2C?style=flat-square)](CHANGELOG.md)
 [![Rust](https://img.shields.io/badge/Rust-2024-2B2B2B?style=flat-square&logo=rust)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-MIT-536B58?style=flat-square)](Cargo.toml)
 [![Safety](https://img.shields.io/badge/safety-fail--closed-384A6B?style=flat-square)](docs/design/24-agent-security.md)
@@ -23,7 +23,7 @@ Its thesis is simple: **Codex-grade safety, pi-grade transparency, Claude Code-g
 
 The result is not another thin model wrapper. Sessions are append-only ledgers, permissions are evaluated before every effect, restricted tools run across a broker boundary, partial work survives cancellation, and every provider dispatch produces a receipt.
 
-> **Project status:** v0.8.0. The core roadmap is implemented and live-tested. The project is actively developed; see the [roadmap](docs/design/00-roadmap.md) and [changelog](CHANGELOG.md).
+> **Project status:** v0.9.0. The core roadmap is implemented and live-tested. The project is actively developed; see the [roadmap](docs/design/00-roadmap.md) and [changelog](CHANGELOG.md).
 
 ## Why vakcoder
 
@@ -40,18 +40,43 @@ Most coding agents make you choose between capability and legibility. vakcoder i
 
 ## Quick start
 
-### 1. Build from source
+For a local build and managed installation, use the scenario-driven installer:
+
+```bash
+./scripts/build-install.sh                       # headless base + gateway
+./scripts/build-install.sh --with-tui            # add the terminal client
+./scripts/build-install.sh --with-tray           # add the menu-bar tray client
+./scripts/build-install.sh --with-tui --with-desktop # add both UI clients on macOS
+./scripts/build-install.sh --help
+```
+
+Add `--no-service` for packaging/container tests or `--gates` to run the full
+release gate before installation. Telegram is never implicit; enable it only
+with `--with-telegram` after its credentials are configured.
+
+### 1. Build the base from source
 
 You need a [stable Rust toolchain](https://www.rust-lang.org/tools/install) and Git.
 
 ```bash
 git clone https://github.com/vakcoder/vakcoder.git
 cd vakcoder
-cargo build --release -p vakcoder
-cargo install --path crates/vakcoder
+cargo build --release -p vakcoder --no-default-features
+target/release/vakcoder self install
 ```
 
-`cargo install` places the `vakcoder` binary in Cargo's bin directory. You can also run every command from the repository with `cargo run --bin vakcoder -- <command>`.
+This installs the headless base, gateway service, embedded browser admin, and a
+`~/.local/bin/vakcoder` launcher. It does not install a TUI, desktop app, tray,
+or channel bridge. Release artifacts will use the same lifecycle; the current
+release-hardening status is tracked in [the install audit](docs/design/35-install-release-audit.md).
+
+Install the TUI client later if wanted:
+
+```bash
+cargo build --release -p vak-tui --bin vakcoder-tui
+install -m 755 target/release/vakcoder-tui "$HOME/.local/bin/vakcoder-tui"
+vakcoder-tui
+```
 
 ### 2. Add a provider key
 
@@ -71,9 +96,10 @@ Secrets are never forwarded as ambient Bash or MCP subprocess state. Project `.e
 ### 3. Start coding
 
 ```bash
-vakcoder                         # opens the TUI
 vakcoder exec "fix the failing test"
 vakcoder plan "add rate limiting to the API"
+vakcoder admin                   # opens the browser admin console
+vakcoder-tui                     # optional terminal client
 vakcoder config dump             # inspect the effective configuration
 ```
 
@@ -140,9 +166,7 @@ vakcoder asks the provider for the models available to your key and caches the r
 ### Terminal UI
 
 ```bash
-vakcoder
-# or explicitly
-vakcoder tui
+vakcoder-tui
 ```
 
 Use `/help` inside the TUI to discover commands, `/doctor` to inspect the runtime, `/resume` and `/rewind` for session recovery, and `/keymap` to view or rebind controls.
@@ -174,7 +198,7 @@ cargo run -p vak-desktop
 On macOS, the project installer can create and install a release bundle:
 
 ```bash
-cargo install tauri-cli --version '^2'
+cargo install tauri-cli --version 2.11.4 --locked
 ./build-install.sh
 ```
 

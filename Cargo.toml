@@ -24,7 +24,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/vakcoder/vakcoder"
@@ -79,6 +79,8 @@ globset = "0.4"
 similar = { version = "2", features = ["text"] }
 libc = "0.2"
 tempfile = "3"
+# Release artifact integrity; updater rejects bytes that do not match the signed feed.
+sha2 = "=0.10.9"
 async-stream = "0.3"
 # Linux filesystem containment: safe wrapper over the Landlock LSM syscalls
 landlock = "0.4"

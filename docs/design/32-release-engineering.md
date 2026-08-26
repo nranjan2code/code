@@ -3,6 +3,28 @@
 One version, one install location, one lifecycle. No hand-synced stamps,
 no plists pointing into build trees, no spot-fixing deploys.
 
+Use `scripts/bump-version.sh` for every release and
+`scripts/check-release-version.sh` to reject crate, changelog, tag, binary, or
+Tauri drift. A compatible fix is a patch; new install or runtime behavior is a
+minor release while the project is pre-1.0; a stable breaking contract is a
+major release. The base+addons install redesign is therefore 0.9.0, not another
+0.8.0 rebuild.
+
+Build provenance is the exact commit SHA for a clean tree and `<sha>-dirty`
+when local changes are present. A dirty local candidate can be tested but must
+never be tagged or published.
+
+For local development, `scripts/build-install.sh` is the sole orchestration
+entry point. For distributable candidates, use `scripts/release.sh`. Opening a
+generated DMG does not make it the local installer: the local script already
+places the desktop app, and replacing a running copy from Finder can produce an
+“item is in use” dialog.
+
+The local desktop helper builds only an `.app` and applies an ad-hoc bundle
+signature so macOS can validate its resources. It does not produce or open a
+DMG. DMGs belong to the release-candidate path and require Developer ID signing
+and notarization before public distribution.
+
 ## Invariants
 
 1. **Version singularity.** `[workspace.package] version` is THE version.
@@ -11,12 +33,12 @@ no plists pointing into build trees, no spot-fixing deploys.
    back to the package version); frontend package.json carries no
    authoritative stamp. Any second place that needs a number derives it
    at build/run time from the binary (`--version`, `env!("CARGO_PKG_VERSION")`).
-2. **Installed ≠ built.** Services never execute from `target/`.
-   `self install` copies release artifacts into a managed prefix
-   (`/Applications/vakcoder.app/Contents/MacOS/` on macOS,
-   `~/.local/share/vakcoder/bin/` on Linux) plus an `install.json` manifest
-   {version, git_sha, installed_at, binaries}. The build tree may be
-   cleaned at any time without touching a running deployment.
+2. **Installed ≠ built.** Services never execute from `target/` or from a
+   desktop app bundle. `self install` stages the headless base under
+   `<data_home>/runtime-bin/versions/<version>/`, atomically switches the
+   `current` entry, writes an `install.json` manifest and `install-root.json`
+   pointer, and exposes `~/.local/bin/vakcoder`. The build tree and all UI
+   addons may be removed without touching the running base.
 3. **Services are generated, never hand-edited.** `self services sync`
    renders launchd/systemd units from templates (vak-ops) referencing the
    *installed* path, unloads stale units, loads the new ones. Sync is
@@ -27,10 +49,15 @@ no plists pointing into build trees, no spot-fixing deploys.
 5. **Lifecycle is symmetric.** `self uninstall` reverses install exactly
    (stop → unload → remove units → remove binaries+manifest), preserving
    user data unless `--purge`.
-6. **Updates are opt-in and atomic.** Passive `[update] url` check only
-   notifies. `self update --url <manifest.json>` downloads to temp,
-   verifies, renames over the installed binary, re-syncs services —
-   never in-place writes, never auto-run.
+6. **Updates are opt-in and staged.** Passive `[update] url` check only
+   notifies. `self update --url <manifest.json>` requires the platform entry's
+   SHA-256 to match, writes a new version directory, atomically switches
+   `current`, and re-syncs services. Feed signing and automatic rollback remain
+   release blockers in doc 35; this command is not yet the public GA updater.
+7. **Base and addons are separate artifacts.** The base is built with
+   `cargo build -p vakcoder --no-default-features`; `vakcoder-tui` and
+   `VakCoder.app` install and update independently and only speak HTTP+SSE to
+   the base.
 
 ## Command surface
 
@@ -40,14 +67,21 @@ vakcoder self services sync [NAME…]       regenerate + reload units
 vakcoder self status                      drift matrix (exit ≠0 on drift)
 vakcoder self uninstall [-y] [--purge]    exact reverse of install
 vakcoder self update --url URL            opt-in pull-and-replace
+vakcoder admin [--print]                   open/print the live admin URL
 ```
 
 ## Release runbook (scripts/release.sh)
 
-gate (fmt/clippy/test) → `cargo build --workspace --release` →
-desktop bundle → `self install` → `self services sync` →
-smoke (doctor parity, gateway port, bridge alive) → tag + GitHub release.
+gate (fmt/clippy/test) → build headless base + standalone TUI →
+optional desktop bundle → checksum → artifact install smoke →
+platform scenarios → tag + GitHub release. `scripts/release.sh` builds a
+local candidate; publication remains gated on doc 35's signing work.
 Humans and agents run the script; nobody replays steps from memory.
+
+For developer installs, `scripts/build-install.sh` is the single scenario
+entrypoint: base-only is the default; `--with-tui`, `--with-desktop`, and
+`--with-telegram` are explicit addons; `--no-service` guarantees that artifact
+tests do not touch the host service-manager namespace.
 
 ## Canonical filesystem layout
 
@@ -65,7 +99,9 @@ paths directly.
 | **User secrets** | `<data_home>/.env` |
 | **Config state** | `<data_home>/` (sessions, memory, tasks, inbox) |
 | **Store DB** | `<cache>/store.db` (rebuildable from JSONL) |
-| **Binary bundle** | `/Applications/vakcoder.app/Contents/MacOS/` |
+| **Base program files** | `<data_home>/runtime-bin/` |
+| **CLI launcher** | `~/.local/bin/vakcoder` |
+| **Desktop addon** | `/Applications/VakCoder.app` or `~/Applications/VakCoder.app` |
 
 ### Linux (default)
 
@@ -75,7 +111,8 @@ paths directly.
 | **Cache** | `~/.cache/vakcoder` |
 | **Logs** | `~/.local/state/vakcoder/logs` |
 | **User secrets** | `<data_home>/.env` |
-| **Installed binaries** | `~/.local/share/vakcoder/bin/` |
+| **Base program files** | `<data_home>/runtime-bin/` |
+| **CLI launcher** | `~/.local/bin/vakcoder` |
 
 ### VAKCODER_HOME override
 

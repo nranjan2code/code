@@ -4,11 +4,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "vakcoder-tui"
+path = "src/main.rs"
+
 [dependencies]
 async-stream = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 chrono = { workspace = true }
+clap = { workspace = true }
 crossterm = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

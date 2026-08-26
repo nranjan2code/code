@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v0.8.0+ — base+addons architecture (M0–M3 delivered).**
+**Status: v0.9.0+ — base+addons architecture (M0–M3 delivered).**
 See `docs/design/34-base-addons.md` for the base+addons architecture,
 `docs/design/00-roadmap.md` for the phase history and
 `docs/design/15-reliability.md` for the failure-handling matrix. Security work
@@ -268,10 +268,50 @@ docs/design/         architecture decisions — update with behavior changes;
 scripts/             dev utilities (mock servers, PTY/HTTP smoke drivers)
 ```
 
+## Release, version, and local-install contract
+
+- `Cargo.toml` `[workspace.package].version` is the only handwritten version.
+  Every workspace crate inherits it and Tauri derives it; never add another
+  version to `tauri.conf.json` or an artifact name.
+- Choose bumps semantically: patch for compatible fixes, minor for new or
+  changed behavior while major is zero, and major for a stable breaking
+  contract. Run `scripts/bump-version.sh patch|minor|major|X.Y.Z`, edit its new
+  changelog section, and tag only `vX.Y.Z`. Run
+  `scripts/check-release-version.sh` before committing or tagging.
+- The supported local entry point is `scripts/build-install.sh`. Its default is
+  the headless base plus gateway. TUI, desktop, Telegram, and tray are explicit
+  `--with-*` choices and may be installed later. The tray owns no agent state.
+  Do not use `cargo install`,
+  copy binaries by hand, or point services at `target/`, `.cargo/bin`, a DMG,
+  or an app-bundle executable.
+- The base lives in `data_home()/runtime-bin/versions/<version>` with a managed
+  `current` link; `~/.local/bin/vakcoder` is only a launcher. The standalone TUI
+  is `~/.local/bin/vakcoder-tui`. The optional tray is
+  `runtime-bin/current/bin/vakcoder-tray` under `com.vakcoder.tray`. Desktop
+  and tray do not own the gateway. Admin opens with `vakcoder admin`.
+- Tests, containers, and disposable homes must use `self install --no-service`
+  or `scripts/build-install.sh --no-service`; launchd label namespaces are not
+  isolated by a fake `HOME`. Never load/unload host services in an install
+  smoke test.
+- `--clean-stale` is an explicit, audited macOS migration. It moves known old
+  program paths and units to Trash, reconciles retained services, and never
+  removes sessions, configuration, secrets, memory, or other user data. Do not
+  broaden its targets without a fresh read-only audit.
+- `scripts/release.sh` builds a checked release candidate. A public release is
+  blocked until the relevant platform artifacts are signed/notarized and their
+  SHA-256 metadata is published. The DMG is a distribution artifact; the local
+  build script installs the app directly, so never drag the same open DMG over
+  a running local installation.
+- After any local install, require matching output from `vakcoder --version`,
+  `vakcoder-tui --version` when selected, the desktop bundle version when
+  selected, the tray process when selected, `vakcoder self status`, and a scan showing no retained service
+  points at a build tree or legacy install.
+
 ## Verification before every commit
 
 ```
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
+scripts/check-release-version.sh
 ```
 
 Live checks (needs API key in `.env`):

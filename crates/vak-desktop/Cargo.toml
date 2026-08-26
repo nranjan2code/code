@@ -11,20 +11,14 @@ tauri-build = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
-tokio-util = { workspace = true }
 uuid = { workspace = true }
-axum = { workspace = true }
 portable-pty = { workspace = true }
 tauri = { workspace = true }
 tauri-plugin-dialog = { workspace = true }
 tauri-plugin-notification = { workspace = true }
 tauri-plugin-single-instance = { workspace = true }
 vak-client = { workspace = true }
-vak-core = { workspace = true }
-vak-delivery = { workspace = true }
 vak-config = { workspace = true }
-vak-server = { workspace = true }
-vak-tools = { workspace = true }
 
 [lints]
 workspace = true

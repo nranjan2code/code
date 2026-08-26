@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["tui"]
+tui = ["dep:vak-tui"]
+
 [[bin]]
 name = "vakcoder"
 path = "src/main.rs"
@@ -18,7 +22,7 @@ vak-flow = { workspace = true }
 vak-llm = { workspace = true }
 vak-server = { workspace = true }
 vak-session = { workspace = true }
-vak-tui = { workspace = true }
+vak-tui = { workspace = true, optional = true }
 clap = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
@@ -32,6 +36,7 @@ vak-tools = { workspace = true }
 # Opt-in update check ([update] url, docs/design/29 P3); blocking client on
 # its own thread so startup never waits past the 2s timeout.
 reqwest = { workspace = true }
+sha2 = { workspace = true }
 
 [lints]
 workspace = true

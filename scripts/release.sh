@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -1)"
+GIT_SHA="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+if [[ -n "$(git -C "$ROOT_DIR" status --porcelain)" ]]; then
+  GIT_SHA+="-dirty"
+fi
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+case "$OS" in
+  darwin) PLATFORM="macos" ;;
+  linux) PLATFORM="linux" ;;
+  *) printf 'error: unsupported release host: %s\n' "$OS" >&2; exit 2 ;;
+esac
+case "$ARCH" in
+  arm64|aarch64) ARCH="aarch64" ;;
+  x86_64|amd64) ARCH="x86_64" ;;
+  *) printf 'error: unsupported release architecture: %s\n' "$ARCH" >&2; exit 2 ;;
+esac
+
+DIST="$ROOT_DIR/dist/v$VERSION/$PLATFORM-$ARCH"
+mkdir -p "$DIST"
+
+cd "$ROOT_DIR"
+"$ROOT_DIR/scripts/check-release-version.sh"
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+
+VAKCODER_GIT_SHA="$GIT_SHA" cargo build --release -p vakcoder --no-default-features
+cp target/release/vakcoder "$DIST/vakcoder"
+VAKCODER_GIT_SHA="$GIT_SHA" cargo build --release -p vak-tui --bin vakcoder-tui
+cp target/release/vakcoder-tui "$DIST/vakcoder-tui"
+VAKCODER_CHECK_BINARIES=vakcoder,vakcoder-tui "$ROOT_DIR/scripts/check-release-version.sh"
+
+if [[ "$PLATFORM" == "macos" ]] && command -v cargo-tauri >/dev/null 2>&1; then
+  (cd crates/vak-desktop && cargo tauri build)
+  ditto "target/release/bundle/macos/VakCoder.app" "$DIST/VakCoder.app"
+fi
+
+cp README.md LICENSE "$DIST/" 2>/dev/null || cp README.md "$DIST/"
+(
+  cd "$DIST"
+  shasum -a 256 vakcoder vakcoder-tui > SHA256SUMS
+)
+tar -C "$(dirname "$DIST")" -czf "$DIST.tar.gz" "$(basename "$DIST")"
+printf 'release candidate: %s\n' "$DIST.tar.gz"
+printf 'git sha: %s\n' "$GIT_SHA"

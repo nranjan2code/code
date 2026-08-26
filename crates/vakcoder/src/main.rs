@@ -8,6 +8,7 @@ use vak_agent::{AgentEvent, TurnOutcome};
 use vak_core::Core;
 use vak_llm::stream::StreamEvent;
 
+mod admin_open;
 mod backup;
 mod cli;
 mod connect;
@@ -18,6 +19,7 @@ mod memory;
 mod self_release;
 mod tasks;
 mod update_check;
+#[cfg(feature = "tui")]
 mod wizard;
 
 use cli::{CheckpointAction, Cli, Command, FlowAction, SkillsReviewAction};
@@ -184,13 +186,24 @@ async fn main() {
 
     let code = match cli.command {
         None => {
-            wizard::maybe_run_wizard(&cwd);
-            let trusted = resolve_trust(&cwd, false, true);
-            if trusted {
-                vak_config::load_env_file(std::path::Path::new(".env"));
+            #[cfg(feature = "tui")]
+            {
+                wizard::maybe_run_wizard(&cwd);
+                let trusted = resolve_trust(&cwd, false, true);
+                if trusted {
+                    vak_config::load_env_file(std::path::Path::new(".env"));
+                }
+                run_tui(cwd, trusted).await
             }
-            run_tui(cwd, trusted).await
+            #[cfg(not(feature = "tui"))]
+            {
+                eprintln!(
+                    "vakcoder base is installed. Use a subcommand such as `exec`, `admin`, or `doctor`; install `vakcoder-tui` for the terminal UI."
+                );
+                0
+            }
         }
+        #[cfg(feature = "tui")]
         Some(Command::Tui { trust }) => {
             wizard::maybe_run_wizard(&cwd);
             let trusted = resolve_trust(&cwd, trust, true);
@@ -243,10 +256,16 @@ async fn main() {
             0
         }
         Some(Command::Self_ { action }) => match action {
-            cli::SelfAction::Install { prefix } => self_release::run_install(prefix),
+            cli::SelfAction::Install { prefix, no_service } => {
+                self_release::run_install(prefix, no_service)
+            }
             cli::SelfAction::ServicesSync { names } => self_release::run_services_sync(names),
             cli::SelfAction::Status => self_release::run_status(),
-            cli::SelfAction::Uninstall { yes, purge } => self_release::run_uninstall(yes, purge),
+            cli::SelfAction::Uninstall {
+                yes,
+                purge,
+                no_service,
+            } => self_release::run_uninstall(yes, purge, no_service),
             cli::SelfAction::Update { url, yes } => self_release::run_update(&url, yes),
         },
         Some(Command::Memory { action }) => memory::run_memory(cwd, action),
@@ -323,6 +342,7 @@ async fn main() {
             }
             run_serve(cwd, port, gateway, trusted).await
         }
+        Some(Command::Admin { print }) => admin_open::run(print),
     };
     std::process::exit(code);
 }
@@ -824,6 +844,7 @@ fn load_state(state_path: &PathBuf, flow_name: &str, definition_toml: &str) -> v
     }
 }
 
+#[cfg(feature = "tui")]
 async fn run_tui(cwd: PathBuf, _trusted: bool) -> i32 {
     let resolved = match connect::discover(None, None, None) {
         Ok(r) => r,
@@ -857,7 +878,35 @@ fn exec_edit_diff(args_json: &str) -> Option<String> {
             v.get("new_string")?.as_str()?,
         )
     };
-    Some(vak_tui::events::edit_diff_text(old, new, None))
+    let mut diff = String::from("--- before\n+++ after\n");
+    for line in old.lines() {
+        diff.push('-');
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    for line in new.lines() {
+        diff.push('+');
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    Some(diff)
+}
+
+fn summarize_args(args_json: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(args_json) else {
+        return String::new();
+    };
+    for key in ["path", "command", "query", "pattern", "url", "prompt"] {
+        if let Some(text) = value.get(key).and_then(serde_json::Value::as_str) {
+            let summary: String = text.chars().take(100).collect();
+            return if text.chars().count() > 100 {
+                format!("{summary}…")
+            } else {
+                summary
+            };
+        }
+    }
+    String::new()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1007,7 +1056,7 @@ async fn run_exec(
                 args_json,
             } => {
                 tool_args.insert(id, (name.clone(), args_json.clone()));
-                eprintln!("▸ {} {}", name, vak_tui::events::summarize_args(&args_json));
+                eprintln!("▸ {} {}", name, summarize_args(&args_json));
             }
             AgentEvent::ToolCallEnd {
                 id,
@@ -1022,7 +1071,7 @@ async fn run_exec(
                     && let Some((_, args)) = &stored
                     && let Some(diff) = exec_edit_diff(args)
                 {
-                    for line in vak_tui::markdown::strip_ansi(&diff).lines() {
+                    for line in diff.lines() {
                         eprintln!("  {line}");
                     }
                 } else if is_error

@@ -1,9 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 //! vak-desktop: native shell around the same HTTP+SSE contract every other
-//! surface (tui/exec/serve) speaks. The webview gets a loopback bearer token
-//! for the embedded `vak-server` router; nothing about the agent protocol is
-//! re-implemented here.
+//! surface (tui/exec/serve) speaks. It discovers a local base runtime or saved
+//! remote connection and never starts a competing server or state owner.
 
 mod pty;
 
@@ -13,11 +12,6 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-#[derive(Clone)]
-struct Backend {
-    shutdown: tokio::sync::watch::Sender<bool>,
-}
-
 struct BackendState {
     running: Mutex<Option<Running>>,
     switching: tokio::sync::Mutex<()>,
@@ -25,7 +19,6 @@ struct BackendState {
 
 struct Running {
     info: BackendInfo,
-    backend: Backend,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -97,52 +90,54 @@ fn save_project(cwd: &str) {
     }
 }
 
-fn load_workspace_env(cwd: &std::path::Path) {
-    let user = vak_home().join(".env");
-    let project = cwd.join(".env");
-    vak_config::replace_env_files(&[user.as_path(), project.as_path()]);
+fn runtime_connection() -> Option<(String, String)> {
+    let raw = std::fs::read_to_string(vak_home().join("runtime/gateway.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let addr = value.get("addr")?.as_str()?;
+    let token = value.get("token")?.as_str()?;
+    let url = if addr.starts_with("http://") || addr.starts_with("https://") {
+        addr.to_string()
+    } else {
+        format!("http://{addr}")
+    };
+    Some((url, token.to_string()))
 }
 
-/// Boot the embedded agent server on an ephemeral loopback port.
-///
-/// Trust note: the user picked this folder explicitly in-app, so its project
-/// config is trusted — mirroring an interactive CLI session.
+fn configured_connection() -> Option<(String, String)> {
+    let settings = vak_config::load_connect_settings();
+    Some((settings.url?, settings.token?))
+}
+
+/// Connect the desktop addon to the installed or configured base. The desktop
+/// owns no server, scheduler, session store, or tool worker.
 async fn boot_backend(cwd: PathBuf) -> Result<Running, String> {
-    let core = vak_core::Core::new_with_trust(cwd.clone(), true).map_err(|e| e.to_string())?;
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+    let (base_url, token) = runtime_connection()
+        .or_else(configured_connection)
+        .ok_or_else(|| {
+            "no vakcoder base found; install/start the base or configure [connect]".to_string()
+        })?;
+    let client =
+        vak_client::Client::connect(base_url.clone(), token.clone()).map_err(|e| e.to_string())?;
+    let server = client
+        .server_version()
         .await
-        .map_err(|e| format!("bind failed: {e}"))?;
-    let addr = listener.local_addr().map_err(|e| e.to_string())?;
-    let (router, token) = vak_server::secured_router(core);
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
-
-    let join = tauri::async_runtime::spawn(async move {
-        let _ = axum::serve(listener, router)
-            .with_graceful_shutdown(async move {
-                let _ = shutdown_rx.changed().await;
-            })
-            .await;
-    });
-    // Keep the handle alive without blocking state access.
-    tauri::async_runtime::spawn(async move {
-        let _ = join.await;
-    });
+        .map_err(|e| format!("base is unavailable: {e}"))?;
+    if server.protocol != 1 {
+        return Err(format!(
+            "base protocol {} is incompatible with desktop protocol 1",
+            server.protocol
+        ));
+    }
 
     let info = BackendInfo {
         ready: true,
-        base_url: Some(format!("http://{addr}")),
+        base_url: Some(base_url),
         token: Some(token),
         cwd: Some(cwd.to_string_lossy().into_owned()),
         boot_error: None,
         recent_projects: Vec::new(),
     };
-    Ok(Running {
-        info,
-        backend: Backend {
-            shutdown: shutdown_tx,
-        },
-    })
+    Ok(Running { info })
 }
 
 fn install_backend(
@@ -157,14 +152,11 @@ fn install_backend(
     }
     running.info.recent_projects = recent_projects();
     let info = running.info.clone();
-    let previous = state
+    state
         .running
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .replace(running);
-    if let Some(previous) = previous {
-        let _ = previous.backend.shutdown.send(true);
-    }
     let _ = app.emit("backend-ready", &info);
     info
 }
@@ -196,15 +188,6 @@ async fn start_backend(
     {
         return Ok(info);
     }
-    let previous_cwd = state
-        .running
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .as_ref()
-        .and_then(|running| running.info.cwd.clone());
-    // The freshly picked workspace is trusted; its .env joins the process
-    // env table (real environment variables keep precedence).
-    load_workspace_env(&path);
     match boot_backend(path).await {
         Ok(running) => {
             let info = install_backend(&app, &state, running, true);
@@ -212,11 +195,6 @@ async fn start_backend(
             Ok(info)
         }
         Err(e) => {
-            if let Some(previous_cwd) = previous_cwd {
-                load_workspace_env(std::path::Path::new(&previous_cwd));
-            } else {
-                vak_config::replace_env_files(&[vak_home().join(".env").as_path()]);
-            }
             set_boot_error(&state, Some(e.clone()));
             Err(e)
         }
@@ -239,16 +217,13 @@ fn set_boot_error(state: &State<'_, BackendState>, error: Option<String>) {
                     boot_error: Some(err),
                     ..BackendInfo::default()
                 },
-                backend: Backend {
-                    shutdown: tokio::sync::watch::channel(true).0,
-                },
             });
         }
     }
 }
 
 /// Thin proxy for appending to the global USER.md memory tier. Writes go
-/// through the embedded router (`POST /memory`, scope=profile) like every
+/// through the connected base (`POST /memory`, scope=profile) like every
 /// other surface — the desktop never touches memory stores directly
 /// (docs/design/34-base-addons.md ownership contract).
 #[derive(Deserialize)]
@@ -334,36 +309,6 @@ fn backend_info(state: State<'_, BackendState>) -> BackendInfo {
 }
 
 fn main() {
-    let internal = std::env::args_os().nth(1);
-    #[cfg(target_os = "linux")]
-    {
-        if internal.as_deref()
-            == Some(std::ffi::OsStr::new(
-                vak_tools::landlock::SANDBOX_SUBCOMMAND,
-            ))
-        {
-            std::process::exit(vak_tools::landlock::runner_main(
-                std::env::args_os().skip(2),
-            ));
-        }
-    }
-    if internal.as_deref() == Some(std::ffi::OsStr::new(vak_tools::broker::WORKER_SUBCOMMAND)) {
-        let runtime = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(runtime) => runtime,
-            Err(_) => std::process::exit(125),
-        };
-        std::process::exit(runtime.block_on(vak_tools::broker::worker_main()));
-    }
-    if internal.as_deref()
-        == Some(std::ffi::OsStr::new(
-            vak_delivery::worker::WORKER_SUBCOMMAND,
-        ))
-    {
-        std::process::exit(vak_delivery::worker::run_stdio());
-    }
     tauri::Builder::default()
         // Exactly one instance ever runs: a second launch hands its argv to
         // the live process and refocuses that window instead of starting a
@@ -387,10 +332,6 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                // Same secret-loading contract as the CLI: user-level
-                // .env always; the picked workspace's own .env too (the
-                // folder was explicitly chosen, so it is trusted).
-                vak_config::replace_env_files(&[vak_home().join(".env").as_path()]);
                 if let Some(cwd) = last_project() {
                     let state = handle.state::<BackendState>();
                     let _switch = state.switching.lock().await;
@@ -402,7 +343,6 @@ fn main() {
                     {
                         return;
                     }
-                    load_workspace_env(&cwd);
                     if let Err(e) = boot_backend(cwd)
                         .await
                         .map(|running| install_backend(&handle, &state, running, false))

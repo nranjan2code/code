@@ -242,6 +242,11 @@ mod platform {
     use super::CommandRunner;
     use std::path::Path;
 
+    #[cfg(not(target_os = "macos"))]
+    fn systemd_unit(name: &str) -> String {
+        format!("vakcoder-{}.service", super::short_name(name))
+    }
+
     #[cfg(target_os = "macos")]
     fn uid(runner: &dyn CommandRunner) -> String {
         runner
@@ -445,18 +450,58 @@ fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| format!("rename into {}: {e}", path.display()))
 }
 
-/// True when the installed binary changed after the unit was last written:
-/// a live service synced against the older image is executing stale code.
-/// Missing files never count as stale (handled by other branches).
-fn binary_newer_than_unit(bin_path: &Path, unit_path: &Path) -> bool {
-    let (Ok(bin_meta), Ok(unit_meta)) = (std::fs::metadata(bin_path), std::fs::metadata(unit_path))
+fn parse_elapsed(raw: &str) -> Option<std::time::Duration> {
+    let raw = raw.trim();
+    let (days, clock) = if let Some((days, clock)) = raw.split_once('-') {
+        (days.parse::<u64>().ok()?, clock)
+    } else {
+        (0, raw)
+    };
+    let fields: Vec<u64> = clock
+        .split(':')
+        .map(str::parse)
+        .collect::<Result<_, _>>()
+        .ok()?;
+    let seconds = match fields.as_slice() {
+        [minutes, seconds] => minutes.checked_mul(60)?.checked_add(*seconds)?,
+        [hours, minutes, seconds] => hours
+            .checked_mul(3600)?
+            .checked_add(minutes.checked_mul(60)?)?
+            .checked_add(*seconds)?,
+        _ => return None,
+    };
+    Some(std::time::Duration::from_secs(
+        days.checked_mul(86_400)?.checked_add(seconds)?,
+    ))
+}
+
+/// True only when the live process started before the installed binary was
+/// replaced. Unit mtimes cannot answer this: a perfectly current process may
+/// have been restarted long after an unchanged plist or systemd unit was
+/// written.
+fn binary_newer_than_process(bin_path: &Path, pid: u32, runner: &dyn CommandRunner) -> bool {
+    const PS_ELAPSED_PRECISION_MARGIN: std::time::Duration = std::time::Duration::from_secs(2);
+    let Ok(bin_mtime) = std::fs::metadata(bin_path).and_then(|m| m.modified()) else {
+        return false;
+    };
+    let Some(elapsed) = runner
+        .text(
+            "ps",
+            &[
+                "-o".to_string(),
+                "etime=".to_string(),
+                "-p".to_string(),
+                pid.to_string(),
+            ],
+        )
+        .and_then(|text| parse_elapsed(&text))
     else {
         return false;
     };
-    let (Ok(bin_mtime), Ok(unit_mtime)) = (bin_meta.modified(), unit_meta.modified()) else {
-        return false;
-    };
-    bin_mtime > unit_mtime
+    std::time::SystemTime::now()
+        .checked_sub(elapsed)
+        .and_then(|started| started.checked_add(PS_ELAPSED_PRECISION_MARGIN))
+        .is_some_and(|latest_possible_start| bin_mtime > latest_possible_start)
 }
 
 fn sync_one(spec: &ServiceSpec, paths: &Paths, runner: &dyn CommandRunner) -> SyncOutcome {
@@ -478,16 +523,18 @@ fn sync_one_inner(
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
     let previous = std::fs::read_to_string(&unit_path).ok();
-    let was_running = running_pid(spec.name, runner).is_some();
+    let running_pid = running_pid(spec.name, runner);
 
     if previous.as_deref() == Some(rendered.as_str()) {
-        return if !was_running {
+        return if running_pid.is_none() {
             if start(spec.name, runner) {
                 Ok(SyncAction::Restarted)
             } else {
                 Err(format!("start {} failed", spec.name))
             }
-        } else if binary_newer_than_unit(&spec.bin_path, &unit_path) {
+        } else if running_pid
+            .is_some_and(|pid| binary_newer_than_process(&spec.bin_path, pid, runner))
+        {
             // The live process predates the installed binary. Bounce it and
             // re-stamp the unit so staleness converges — without the stamp,
             // every later sync would bounce again forever.
@@ -564,9 +611,9 @@ pub fn status_specs(
                 // Stale-image drift: a live process synced against an
                 // older binary. Only meaningful when the unit itself is
                 // current, otherwise the legacy-path flag covers it.
-                binary_stale: pid.is_some()
-                    && points_at_installed
-                    && binary_newer_than_unit(&spec.bin_path, &unit_path),
+                binary_stale: pid.is_some_and(|pid| {
+                    points_at_installed && binary_newer_than_process(&spec.bin_path, pid, runner)
+                }),
                 unit_path,
                 running_pid: pid,
             }
@@ -661,6 +708,7 @@ mod tests {
     struct Fake {
         cmds: Mutex<Vec<(String, Vec<String>)>>,
         pid_text: Option<String>,
+        elapsed_text: Mutex<String>,
         fail_load: bool,
     }
     impl Fake {
@@ -668,6 +716,7 @@ mod tests {
             Fake {
                 cmds: Mutex::new(Vec::new()),
                 pid_text: None,
+                elapsed_text: Mutex::new("00:00".to_string()),
                 fail_load: false,
             }
         }
@@ -677,6 +726,11 @@ mod tests {
                 ..Self::new()
             }
         }
+        fn with_stale_pid(pid: u32) -> Self {
+            let fake = Self::with_pid(pid);
+            *fake.elapsed_text.lock().unwrap() = "00:20".to_string();
+            fake
+        }
     }
     impl CommandRunner for Fake {
         fn success(&self, program: &str, args: &[String]) -> bool {
@@ -684,6 +738,11 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((program.to_string(), args.to_vec()));
+            if (program == "launchctl" || program == "systemctl")
+                && args.iter().any(|arg| arg == "-k" || arg == "restart")
+            {
+                *self.elapsed_text.lock().unwrap() = "00:00".to_string();
+            }
             !(self.fail_load
                 && program == "launchctl"
                 && args.first().map(String::as_str) == Some("bootstrap"))
@@ -691,6 +750,10 @@ mod tests {
         fn text(&self, program: &str, args: &[String]) -> Option<String> {
             if program == "id" {
                 return Some("501".to_string());
+            }
+            if program == "ps" {
+                self.success(program, args);
+                return Some(self.elapsed_text.lock().unwrap().clone());
             }
             self.success(program, args);
             self.pid_text.clone()
@@ -744,7 +807,9 @@ mod tests {
     #[test]
     fn resolved_specs_never_reference_legacy_dotdir_or_build_trees() {
         let specs: Vec<ServiceSpec> = resolve_specs(
-            Path::new("/Applications/vakcoder.app/Contents/MacOS/vakcoder"),
+            Path::new(
+                "/Users/x/Library/Application Support/vakcoder/runtime-bin/current/bin/vakcoder",
+            ),
             &[],
         )
         .into_iter()
@@ -762,8 +827,8 @@ mod tests {
                 "binaries must come from the managed install, got {bin}"
             );
             assert!(
-                bin.starts_with("/Applications/vakcoder.app/"),
-                "binaries must live inside the installed bundle, got {bin}"
+                bin.contains("/runtime-bin/current/bin/"),
+                "binaries must live inside the active base version, got {bin}"
             );
             assert!(
                 log.contains("Library/Logs/vakcoder"),
@@ -836,7 +901,7 @@ mod tests {
         let bin = dir.path().join("vakcoder");
         std::fs::write(&bin, b"binary").unwrap();
         let (_d, paths) = tmp_paths("sync3");
-        let fake = Fake::with_pid(99);
+        let fake = Fake::with_stale_pid(99);
         let specs: Vec<ServiceSpec> = SERVICES
             .iter()
             .map(|d| spec_for(d, dir.path(), Path::new("/tmp/logs")))
@@ -846,19 +911,6 @@ mod tests {
             sync_specs(&specs, &paths, &fake)[0].action,
             SyncAction::Created
         ));
-
-        // Simulate `self install` replacing the binary AFTER the unit was
-        // written: push the unit's mtime into the past relative to the
-        // binary so the running pid predates the current image.
-        let now = std::time::SystemTime::now();
-        let unit_path = unit_file_path(SERVICES[0].name, &paths);
-        // Unit 10s in the past, binary at now → running pid predates image.
-        for (path, age) in [(&unit_path, 10u64), (&bin, 0u64)] {
-            let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
-            f.set_modified(now - std::time::Duration::from_secs(age))
-                .unwrap();
-            drop(f);
-        }
 
         let second = sync_specs(&specs, &paths, &fake);
         assert!(
@@ -903,19 +955,18 @@ mod tests {
         let fresh = status_specs(&specs, &paths, &fake)[0].clone();
         assert!(!fresh.binary_stale);
 
-        // Binary replaced after the unit landed → running pid is stale.
-        let now = std::time::SystemTime::now();
-        let unit_path = unit_file_path(SERVICES[0].name, &paths);
-        let f = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&unit_path)
-            .unwrap();
-        f.set_modified(now - std::time::Duration::from_secs(10))
-            .unwrap();
-        drop(f);
+        *fake.elapsed_text.lock().unwrap() = "00:20".to_string();
         let stale = status_specs(&specs, &paths, &fake)[0].clone();
         assert!(stale.binary_stale, "{stale:?}");
         assert!(stale.running_pid.is_some());
+    }
+
+    #[test]
+    fn elapsed_parser_handles_ps_shapes() {
+        assert_eq!(parse_elapsed("12:34").unwrap().as_secs(), 754);
+        assert_eq!(parse_elapsed("01:02:03").unwrap().as_secs(), 3_723);
+        assert_eq!(parse_elapsed("2-01:02:03").unwrap().as_secs(), 176_523);
+        assert!(parse_elapsed("not-a-duration").is_none());
     }
 
     #[test]

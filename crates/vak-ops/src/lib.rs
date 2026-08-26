@@ -17,6 +17,7 @@
 use std::fmt;
 use std::path::PathBuf;
 use std::process::Command;
+#[cfg(target_os = "macos")]
 use std::sync::OnceLock;
 
 pub mod services;
@@ -118,7 +119,7 @@ pub(crate) fn home() -> PathBuf {
 /// Register the service with the platform manager and start it. On macOS
 /// this requires the plist produced by
 /// `scripts/install_gateway_service.sh`; on Linux it enables the unit.
-pub fn install(service: Service, cfg: &OpsConfig) -> Result<(), String> {
+pub fn install(service: Service, _cfg: &OpsConfig) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let plist = home()
@@ -137,7 +138,7 @@ pub fn install(service: Service, cfg: &OpsConfig) -> Result<(), String> {
         ])) {
             // Already bootstrapped is fine.
         }
-        start(service, cfg);
+        start(service, _cfg);
         Ok(())
     }
     #[cfg(not(target_os = "macos"))]
