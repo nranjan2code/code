@@ -267,7 +267,6 @@ fn states_now() -> [vak_ops::State; 2] {
     ]
 }
 
-
 /// Launch the desktop app: prefer the installed bundle so Dock behaviour is
 /// normal, fall back to a sibling binary for dev checkouts.
 fn open_desktop() {
@@ -283,7 +282,8 @@ fn open_desktop() {
             return;
         }
     }
-    if let Some(exe) = std::env::current_exe().ok()
+    if let Some(exe) = std::env::current_exe()
+        .ok()
         .and_then(|p| p.parent().map(|d| d.join("vak-desktop")))
     {
         let _ = std::process::Command::new(exe).spawn();
@@ -296,8 +296,8 @@ fn open_desktop() {
 /// for a non-technical user, no plaintext token in any server log.
 fn open_admin_console() {
     let home = vak_config::paths::data_home();
-    let raw = std::fs::read_to_string(home.join("runtime").join("gateway.json"))
-        .unwrap_or_default();
+    let raw =
+        std::fs::read_to_string(home.join("runtime").join("gateway.json")).unwrap_or_default();
     open_url(&admin_url(&raw, &|pid| {
         std::process::Command::new("kill")
             .args(["-0", &pid.to_string()])
@@ -350,8 +350,7 @@ fn open_url(url: &str) {
 
 fn build_menu(states: &[vak_ops::State; 2], watchdog_on: bool) -> Menu {
     let menu = Menu::new();
-    let open_app =
-        MenuItem::with_id(ACT_OPEN_DESKTOP.to_string(), "Open VakCoder", true, None);
+    let open_app = MenuItem::with_id(ACT_OPEN_DESKTOP.to_string(), "Open VakCoder", true, None);
     let _ = menu.append(&open_app);
     let admin = MenuItem::with_id(
         ACT_OPEN_ADMIN.to_string(),

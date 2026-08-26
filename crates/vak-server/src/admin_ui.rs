@@ -10,6 +10,20 @@ use include_dir::{Dir, include_dir};
 
 static ADMIN_UI: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../vak-admin-ui/dist");
 
+/// Recursively collect all file paths in the embedded dist tree.
+/// `Dir::files()` in include_dir 0.7 only returns immediate children;
+/// assets live in `assets/` subdirectories and must be walked.
+/// `File::path()` already returns root-relative paths, so we use them
+/// directly.
+fn collect_all_files(dir: &Dir<'_>, out: &mut Vec<String>) {
+    for file in dir.files() {
+        out.push(file.path().to_string_lossy().into_owned());
+    }
+    for sub in dir.dirs() {
+        collect_all_files(sub, out);
+    }
+}
+
 fn mime_for(path: &str) -> &'static str {
     match path.rsplit('.').next() {
         Some("html") => "text/html; charset=utf-8",
@@ -51,15 +65,29 @@ pub(crate) fn routes() -> axum::Router<crate::AppState> {
     let mut router = axum::Router::new()
         .route("/admin", get(index))
         .route("/admin/", get(index))
-        // dist/favicon.svg is served by the dynamic loop below at
-        // /admin/favicon.svg; the bare /favicon.svg alias is registered
-        // here since it lives outside that prefix.
         .route("/favicon.svg", get(|| async { serve_file("favicon.svg") }));
 
-    for file in ADMIN_UI.files() {
-        let path = file.path().to_string_lossy().to_string();
+    let mut all_files = Vec::new();
+    collect_all_files(&ADMIN_UI, &mut all_files);
+    for path in all_files {
         let uri = format!("/admin/{path}");
         router = router.route(&uri, get(move || async move { serve_file(&path) }));
     }
     router
+}
+
+#[cfg(test)]
+mod embed_tests {
+    use super::{ADMIN_UI, collect_all_files};
+
+    #[test]
+    fn dist_assets_are_embedded_and_routable() {
+        let mut names = Vec::new();
+        collect_all_files(&ADMIN_UI, &mut names);
+        assert!(
+            names.iter().any(|n| n.starts_with("assets/index-")),
+            "no hashed assets embedded; got: {names:?}"
+        );
+        assert!(names.iter().any(|n| n == "index.html"));
+    }
 }
