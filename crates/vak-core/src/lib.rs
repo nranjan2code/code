@@ -397,6 +397,46 @@ impl Core {
         }
     }
 
+    pub fn has_provider_override(&self) -> bool {
+        self.inner
+            .provider_override
+            .lock()
+            .map(|c| c.is_some())
+            .unwrap_or(false)
+    }
+
+    pub fn has_model_override(&self) -> bool {
+        self.inner
+            .model_override
+            .lock()
+            .map(|c| c.is_some())
+            .unwrap_or(false)
+    }
+
+    pub fn has_max_turns_override(&self) -> bool {
+        self.inner
+            .max_turns_override
+            .lock()
+            .map(|c| c.is_some())
+            .unwrap_or(false)
+    }
+
+    pub fn has_theme_override(&self) -> bool {
+        self.inner
+            .theme_override
+            .lock()
+            .map(|c| c.is_some())
+            .unwrap_or(false)
+    }
+
+    pub fn has_permission_mode_override(&self) -> bool {
+        self.inner
+            .mode_override
+            .lock()
+            .map(|c| c.is_some())
+            .unwrap_or(false)
+    }
+
     /// Persists a learned allow rule to `.vakcoder/permissions.local.toml`
     /// (and this process's in-memory engine inputs). Trusted workspaces only:
     /// an untrusted session must not be able to write grant files. Rules are
@@ -978,7 +1018,7 @@ impl Core {
                 route_annotations: plan.annotations,
                 system_prompt: self.system_prompt(),
                 tools: self.tool_names(),
-                permission_mode: format!("{:?}", self.inner.config.permission_mode)
+                permission_mode: format!("{:?}", self.effective_permission_mode())
                     .to_kebab_lowercase(),
                 skills: self.skills().iter().map(|s| s.name.clone()).collect(),
             },

@@ -181,22 +181,7 @@ pub fn provider_status(provider: &str, configured: bool) -> String {
     }
 }
 
-fn model_hint(value: &str, discovered_name: Option<&str>) -> String {
-    let hint = match value {
-        "claude-sonnet-4-5" => "balanced coding",
-        "claude-haiku-4-5" => "fast coding",
-        "claude-opus-4-1" | "gemini-2.5-pro" => "deep reasoning",
-        "gpt-5-codex" => "frontier coding",
-        "gpt-5" => "frontier general",
-        "o3" | "gpt-4.1" => "strong general",
-        "gpt-4o" => "fast general model",
-        "x-preview-f-free" => "free preview",
-        _ if value.contains('/') => "routed",
-        _ => "",
-    };
-    if !hint.is_empty() {
-        return hint.to_string();
-    }
+fn model_hint(_value: &str, discovered_name: Option<&str>) -> String {
     match discovered_name.map(str::trim).filter(|n| !n.is_empty()) {
         Some(name) => name.to_string(),
         None => "suggested by core".to_string(),
@@ -601,9 +586,9 @@ mod tests {
     }
 
     #[test]
-    fn model_hint_prefers_known_labels_then_discovered_names() {
-        assert_eq!(model_hint("claude-haiku-4-5", None), "fast coding");
-        assert_eq!(model_hint("team/model-x", None), "routed");
+    fn model_hint_prefers_discovered_names_then_fallback() {
+        assert_eq!(model_hint("claude-haiku-4-5", None), "suggested by core");
+        assert_eq!(model_hint("team/model-x", None), "suggested by core");
         assert_eq!(
             model_hint("brand-new-model", Some("Brand New")),
             "Brand New"

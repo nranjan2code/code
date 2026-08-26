@@ -73,7 +73,8 @@ async fn mcp_servers_get_put_roundtrip_and_persist() {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let app = vak_server::router(core);
+    let config_path = project.join("config.toml");
+    let app = vak_server::router_with_config_path(core, config_path);
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });

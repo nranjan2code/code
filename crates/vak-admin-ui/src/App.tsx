@@ -867,14 +867,20 @@ function SettingsAgent() {
   const [keyRemoving, setKeyRemoving] = createSignal(false);
 
   // Load providers on mount
+  const [providersLoading, setProvidersLoading] = createSignal(true);
   createEffect(() => {
-    void api.listProviders().then(setProviders).catch(() => {});
+    setProvidersLoading(true);
+    void api
+      .listProviders()
+      .then(setProviders)
+      .catch(() => {})
+      .finally(() => setProvidersLoading(false));
   });
 
-  // Seed editable fields from config
+  // Seed editable fields from config (only after providers have loaded)
   createEffect(() => {
     const c = config();
-    if (c) {
+    if (c && !providersLoading()) {
       setProvider(c.provider);
       setModel(c.model);
       setMaxTurns(c.max_turns);
@@ -976,7 +982,7 @@ function SettingsAgent() {
     <div class="two-col">
       <section class="panel">
         <h2>Provider &amp; model</h2>
-        <Show when={!config.loading} fallback={<div class="empty">Loading…</div>}>
+        <Show when={!config.loading && !providersLoading()} fallback={<div class="empty">Loading…</div>}>
           <div class="form-row">
             <label>provider</label>
             <select value={provider()} onChange={(e) => setProvider(e.currentTarget.value)}>

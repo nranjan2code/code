@@ -124,6 +124,8 @@ pub struct AppState {
     pub(crate) store: Option<vak_store::Store>,
     /// Expected auth token (login endpoint compares against it).
     pub(crate) auth_token: Arc<String>,
+    /// Central config file path for all admin-panel writes.
+    pub(crate) config_path: std::path::PathBuf,
 }
 
 #[derive(Clone)]
@@ -131,6 +133,68 @@ pub struct BestRunMeta {
     pub repo: PathBuf,
     pub wt_path: PathBuf,
     pub branch: String,
+}
+
+/// Read the central server config file and apply saved values as
+/// in-memory overrides on the given Core. This keeps `load_with_trust()`
+/// hermetic for tests while making persisted admin-panel writes visible
+/// to the running server through `effective_*()` methods.
+fn apply_server_config_overrides(core: &Core, path: &std::path::Path) {
+    let Some(raw) = std::fs::read_to_string(path).ok() else {
+        return;
+    };
+    let Ok(root): Result<toml::Value, _> = toml::from_str(&raw) else {
+        return;
+    };
+    // Only apply overrides when the Core doesn't already have one set
+    // (e.g. from set_provider / set_model in a test fixture).
+    if let Some(s) = root.get("provider").and_then(|v| v.as_str())
+        && !core.has_provider_override()
+    {
+        core.set_provider(s.to_string());
+    }
+    if let Some(s) = root.get("model").and_then(|v| v.as_str())
+        && !core.has_model_override()
+    {
+        core.set_model(s.to_string());
+    }
+    if let Some(n) = root.get("max_turns").and_then(|v| v.as_integer())
+        && !core.has_max_turns_override()
+    {
+        core.set_max_turns(n as usize);
+    }
+    if let Some(s) = root.get("theme").and_then(|v| v.as_str())
+        && !core.has_theme_override()
+    {
+        core.set_theme(s.to_string());
+    }
+    if let Some(s) = root.get("permission_mode").and_then(|v| v.as_str())
+        && !core.has_permission_mode_override()
+    {
+        let mode = match s {
+            "full-access" => vak_config::PermissionMode::FullAccess,
+            "workspace-write" => vak_config::PermissionMode::WorkspaceWrite,
+            _ => vak_config::PermissionMode::ReadOnly,
+        };
+        core.set_permission_mode(mode);
+    }
+    // MCP and hooks always apply (server is authoritative).
+    if let Ok(mcp) = toml::from_str::<vak_config::McpConfig>(&raw)
+        && !mcp.servers.is_empty()
+    {
+        core.set_mcp_servers(mcp);
+    }
+    // Hooks live under [hooks] as an array of tables.
+    #[derive(serde::Deserialize)]
+    struct HooksFile {
+        #[serde(default)]
+        hooks: Vec<vak_config::HookConfig>,
+    }
+    if let Ok(hf) = toml::from_str::<HooksFile>(&raw)
+        && !hf.hooks.is_empty()
+    {
+        core.set_hooks(hf.hooks);
+    }
 }
 
 impl AppState {
@@ -143,6 +207,11 @@ impl AppState {
         if store.is_none() {
             eprintln!("[warn] store open failed, search will use fallback");
         }
+        // Apply central server config as in-memory overrides so the
+        // loaded config stays clean (tests stay hermetic) but the
+        // server sees persisted provider/model/mcp/hooks/theme/max_turns.
+        let config_path = vak_config::server_config_path();
+        apply_server_config_overrides(&core, &config_path);
         // Token selection lives here so every router flavor (plain,
         // gateway, secured) shares one identity for auth + login.
         let auth_token = Arc::new(
@@ -166,6 +235,7 @@ impl AppState {
             hub,
             store,
             auth_token,
+            config_path,
         }
     }
 
@@ -175,6 +245,11 @@ impl AppState {
         if let Some(gw) = Arc::get_mut(&mut self.gateway) {
             gw.set_enabled(true);
         }
+    }
+
+    /// Override the central config path (for tests).
+    pub fn set_config_path(&mut self, path: std::path::PathBuf) {
+        self.config_path = path;
     }
 
     fn get(&self, id: &str) -> Option<Arc<SessionHandle>> {
@@ -285,6 +360,13 @@ impl Approver for HttpApprover {
 
 pub fn router(core: Core) -> Router {
     router_with_state(AppState::new(core))
+}
+
+/// Router with a custom config path override (for tests).
+pub fn router_with_config_path(core: Core, config_path: std::path::PathBuf) -> Router {
+    let mut state = AppState::new(core);
+    state.set_config_path(config_path);
+    router_with_state(state)
 }
 
 /// Unauthenticated router with the gateway force-enabled and no background
@@ -3038,12 +3120,13 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
             "quality_hints": cfg.route.quality_hints,
         },
         "integrations": {
-            "mcp_servers": cfg.mcp.servers.keys().collect::<Vec<_>>(),
-            "hooks": cfg.hooks.len(),
+            "mcp_servers": state.core.effective_mcp().servers.keys().collect::<Vec<_>>(),
+            "hooks": state.core.effective_hooks().len(),
             "skills": state.core.skills().iter().map(|skill| skill.name.clone()).collect::<Vec<_>>(),
         },
         "paths": {
             "project_config": project_path,
+            "server_config": vak_config::server_config_path(),
             "global_config": vak_config::global_path(),
             "sessions_home": state.core.sessions_home(),
             "cwd": state.core.cwd(),
@@ -3061,16 +3144,55 @@ struct ConfigPatch {
     theme: Option<String>,
 }
 
+fn persist_config_patch(path: &std::path::Path, patch: &ConfigPatch) -> Result<(), String> {
+    let mut root: toml::Value = if path.exists() {
+        let raw =
+            std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        toml::from_str(&raw).map_err(|e| format!("parse {}: {e}", path.display()))?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let table = root.as_table_mut().ok_or("config root is not a table")?;
+    if let Some(ref p) = patch.provider {
+        table.insert("provider".into(), toml::Value::String(p.trim().to_string()));
+    }
+    if let Some(ref m) = patch.model {
+        table.insert("model".into(), toml::Value::String(m.trim().to_string()));
+    }
+    if let Some(t) = patch.max_turns {
+        table.insert("max_turns".into(), toml::Value::Integer(t as i64));
+    }
+    if let Some(ref mode) = patch.permission_mode {
+        table.insert(
+            "permission_mode".into(),
+            toml::Value::String(mode.trim().to_string()),
+        );
+    }
+    if let Some(ref theme) = patch.theme {
+        let ui = table
+            .entry(String::from("ui"))
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+        if let Some(ui_table) = ui.as_table_mut() {
+            ui_table.insert("theme".into(), toml::Value::String(theme.clone()));
+        }
+    }
+    let out = toml::to_string_pretty(&root).map_err(|e| format!("serialize config: {e}"))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+    }
+    std::fs::write(path, out).map_err(|e| format!("write {}: {e}", path.display()))
+}
+
 async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatch>) -> StatusCode {
     let mut changes = Vec::new();
-    if let Some(provider) = body.provider {
+    if let Some(ref provider) = body.provider {
         if provider.trim().is_empty() {
             return StatusCode::BAD_REQUEST;
         }
         state.core.set_provider(provider.trim().to_string());
         changes.push(format!("provider={}", provider.trim()));
     }
-    if let Some(model) = body.model {
+    if let Some(ref model) = body.model {
         if model.trim().is_empty() {
             return StatusCode::BAD_REQUEST;
         }
@@ -3084,21 +3206,24 @@ async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatc
         state.core.set_max_turns(max_turns);
         changes.push(format!("max_turns={max_turns}"));
     }
-    if let Some(mode) = body.permission_mode {
-        let Some(mode) = parse_mode(&mode) else {
+    if let Some(ref mode) = body.permission_mode {
+        let Some(parsed) = parse_mode(mode) else {
             return StatusCode::BAD_REQUEST;
         };
-        apply_permission_mode(&state, mode);
-        changes.push(format!("permission_mode={mode:?}"));
+        apply_permission_mode(&state, parsed);
+        changes.push(format!("permission_mode={parsed:?}"));
     }
-    if let Some(theme) = body.theme {
+    if let Some(ref theme) = body.theme {
         if !matches!(theme.as_str(), "dark" | "light" | "plain") {
             return StatusCode::BAD_REQUEST;
         }
         changes.push(format!("theme={theme}"));
-        state.core.set_theme(theme);
+        state.core.set_theme(theme.clone());
     }
     if !changes.is_empty() {
+        if let Err(e) = persist_config_patch(&state.config_path, &body) {
+            eprintln!("[config] persist failed: {e}");
+        }
         vak_core::security_events::record(
             &state.core.sessions_home(),
             vak_core::security_events::EventKind::ConfigChange,
@@ -3151,8 +3276,7 @@ struct HooksPutBody {
 async fn get_hooks(State(state): State<AppState>) -> Json<serde_json::Value> {
     let hooks = state
         .core
-        .config()
-        .hooks
+        .effective_hooks()
         .iter()
         .map(|h| {
             serde_json::json!({
@@ -3206,7 +3330,7 @@ async fn put_hooks(
                 .into_response();
         }
     }
-    let path = state.core.cwd().join(".vakcoder/config.toml");
+    let path = state.config_path.clone();
     let mut root: toml::Value = if path.exists() {
         match std::fs::read_to_string(&path)
             .ok()
@@ -3329,13 +3453,12 @@ fn valid_server_name(name: &str) -> bool {
 }
 
 fn persist_mcp_to_project_config(
-    cwd: &std::path::Path,
+    path: &std::path::Path,
     servers: &std::collections::BTreeMap<String, McpServerInput>,
 ) -> Result<std::path::PathBuf, String> {
-    let path = cwd.join(".vakcoder/config.toml");
     let mut root: toml::Value = if path.exists() {
         let raw =
-            std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+            std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
         // A config we cannot parse is never silently replaced.
         toml::from_str(&raw).map_err(|e| format!("parse {}: {e}", path.display()))?
     } else {
@@ -3374,8 +3497,8 @@ fn persist_mcp_to_project_config(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }
-    std::fs::write(&path, out).map_err(|e| format!("write {}: {e}", path.display()))?;
-    Ok(path)
+    std::fs::write(path, out).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path.to_path_buf())
 }
 
 async fn put_mcp_servers(
@@ -3401,7 +3524,7 @@ async fn put_mcp_servers(
                 .into_response();
         }
     }
-    match persist_mcp_to_project_config(state.core.cwd(), &body.servers) {
+    match persist_mcp_to_project_config(&state.config_path, &body.servers) {
         Ok(_) => {}
         Err(e) => {
             return (

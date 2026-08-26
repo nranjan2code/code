@@ -702,6 +702,13 @@ pub fn global_path() -> Option<PathBuf> {
     dirs_home().map(|h| h.join(".config/vakcoder/config.toml"))
 }
 
+/// The server-level config file in data_home. All admin-panel writes
+/// (provider, model, max_turns, theme, mcp, hooks) persist here so
+/// every surface reads the same source of truth regardless of cwd.
+pub fn server_config_path() -> PathBuf {
+    crate::paths::data_home().join("config.toml")
+}
+
 /// Load just the `[connect]` section from the user-level global config.
 /// Returns default (empty) if the file or section doesn't exist.
 pub fn load_connect_settings() -> ConnectSettings {
