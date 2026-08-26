@@ -175,6 +175,41 @@ fn basename(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+/// Kill any chrome-headless-shell processes still using `profile_dir`.
+/// Chrome on macOS re-execs into a fresh process group, so the parent's
+/// group-kill misses descendants. This sweeps by the unique profile path
+/// that every orphan still holds open.
+fn reap_chrome_orphans(profile_dir: &Path) {
+    let profile_str = match profile_dir.to_str() {
+        Some(s) => s,
+        None => return,
+    };
+    // `ps` + `grep` is portable and avoids platform-specific procfs.
+    let Ok(output) = std::process::Command::new("ps")
+        .args(["-eo", "pid=,args="])
+        .output()
+    else {
+        return;
+    };
+    let Ok(stdout) = String::from_utf8(output.stdout) else {
+        return;
+    };
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if !trimmed.contains("chrome-headless-shell") || !trimmed.contains(profile_str) {
+            continue;
+        }
+        // First token is the PID.
+        let pid_str = trimmed.split_whitespace().next().unwrap_or("");
+        if let Ok(pid) = pid_str.parse::<u32>() {
+            #[allow(unsafe_code)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl Tool for WebBrowseTool {
     fn name(&self) -> &str {
@@ -297,6 +332,7 @@ impl WebBrowseTool {
                 // direct-pid SIGKILL cannot.
                 let _ = child.start_kill();
                 let _ = child.wait().await;
+                reap_chrome_orphans(&profile.0);
                 let elapsed_ms = started_at.elapsed().as_millis();
                 return ToolOutput::error(format!(
                     "{header_base} ({elapsed_ms} ms): exceeded its {TOTAL_TIMEOUT_SECS}s total timeout"
@@ -313,6 +349,7 @@ impl WebBrowseTool {
                     // Direct-pid SIGKILL: see re-exec note above.
                     let _ = child.start_kill();
                     let _ = child.wait().await;
+                    reap_chrome_orphans(&profile.0);
                     return ToolOutput::error(format!("{header_base}: browse cancelled"));
                 }
                 _ = tokio::time::sleep(wait) => {
@@ -333,6 +370,9 @@ impl WebBrowseTool {
         // Direct-pid SIGKILL: see re-exec note above.
         let _ = child.start_kill();
         let _ = child.wait().await;
+        // macOS Chrome re-execs into a new process group, orphaning
+        // descendant processes. Sweep by profile dir to reap them.
+        reap_chrome_orphans(&profile.0);
 
         let dom = std::fs::read_to_string(&out_path).unwrap_or_default();
         let err = std::fs::read_to_string(&err_path).unwrap_or_default();

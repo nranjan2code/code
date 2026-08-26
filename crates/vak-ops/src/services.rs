@@ -2,9 +2,9 @@
 //!
 //! Units are rendered from [`SERVICES`] and diffed onto disk by
 //! [`services_sync`]; nothing here is hand-edited. Templates embed zero
-//! credentials: the binary self-sources `~/.vakcoder/.env`, so regenerating
+//! credentials: the binary self-sources the user `.env`, so regenerating
 //! units can never strand auth. Logs stay at stable
-//! `~/.vakcoder/logs/<service>.log`; user data under `~/.vakcoder` is only
+//! `<logs_dir>/<service>.log`; user data under the data home is only
 //! ever appended to by the running services themselves.
 //!
 //! All manager interaction goes through [`CommandRunner`], so tests inject a

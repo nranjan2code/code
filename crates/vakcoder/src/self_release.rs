@@ -215,7 +215,30 @@ pub(crate) fn run_install(prefix: Option<PathBuf>) -> i32 {
     for (name, path) in &manifest.binaries {
         println!("  {name}: {}", path.display());
     }
-    println!("next: vakcoder self services-sync");
+
+    // Auto-sync background services (gateway + telegram).
+    // Tray is opt-in: `vakcoder self services-sync com.vakcoder.tray`.
+    let svc_names = ["com.vakcoder.gateway", "com.vakcoder.telegram"];
+    let outcomes = vak_ops::services::services_sync(
+        &bin_dir.join("vakcoder"),
+        &svc_names,
+        &vak_ops::services::Paths::default(),
+        &vak_ops::services::SystemRunner,
+    );
+    for o in &outcomes {
+        match &o.action {
+            vak_ops::services::SyncAction::Failed(e) => {
+                eprintln!("  warning: {}: {e}", o.name);
+            }
+            action => println!("  service: {} — {action:?}", o.name),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        println!();
+        println!("open VakCoder from Applications to launch the desktop app.");
+    }
     0
 }
 
@@ -230,21 +253,19 @@ fn info_plist() -> String {
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>vakcoder</string>
+	<string>VakCoder</string>
 	<key>CFBundleDisplayName</key>
-	<string>vakcoder</string>
+	<string>VakCoder</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.vakcoder.tray</string>
+	<string>dev.vakcoder.desktop</string>
 	<key>CFBundleExecutable</key>
-	<string>vakcoder-tray</string>
+	<string>vak-desktop</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>{version}</string>
 	<key>CFBundleVersion</key>
 	<string>{version}</string>
-	<key>LSUIElement</key>
-	<true/>
 	<key>LSMinimumSystemVersion</key>
 	<string>11.0</string>
 	<key>NSHumanReadableCopyright</key>
@@ -467,20 +488,41 @@ pub(crate) fn run_uninstall(yes: bool, purge: bool) -> i32 {
     }
     if purge {
         if !yes && std::io::stdin().is_terminal() {
-            print!("ALSO delete the data home (sessions, memory, tasks)? [y/N] ");
+            print!(
+                "ALSO delete data home, cache, and logs? (sessions, memory, tasks, store) [y/N] "
+            );
             let _ = std::io::stdout().flush();
             let mut line = String::new();
             let _ = std::io::stdin().read_line(&mut line);
             if !line.trim().eq_ignore_ascii_case("y") {
-                println!("kept data home at {}", home().display());
+                println!("kept data at {}", home().display());
                 return 0;
             }
         }
+        // Data home: sessions, memory, tasks, .env
         let data = home();
         if let Err(e) = std::fs::remove_dir_all(&data) {
-            eprintln!("warning: purge {}: {e}", data.display());
+            eprintln!("warning: purge data {}: {e}", data.display());
         } else {
-            println!("purged {}", data.display());
+            println!("purged data {}", data.display());
+        }
+        // Cache home: store.db, store.db-wal, store.db-shm
+        let cache = vak_config::paths::cache_home();
+        if cache != data {
+            if let Err(e) = std::fs::remove_dir_all(&cache) {
+                eprintln!("warning: purge cache {}: {e}", cache.display());
+            } else {
+                println!("purged cache {}", cache.display());
+            }
+        }
+        // Logs home: gateway.log, telegram.log, tray.log
+        let logs = vak_config::paths::logs_dir();
+        if logs != data {
+            if let Err(e) = std::fs::remove_dir_all(&logs) {
+                eprintln!("warning: purge logs {}: {e}", logs.display());
+            } else {
+                println!("purged logs {}", logs.display());
+            }
         }
     }
     0
@@ -488,6 +530,7 @@ pub(crate) fn run_uninstall(yes: bool, purge: bool) -> i32 {
 
 pub(crate) fn run_update(url: &str, yes: bool) -> i32 {
     let prefix = prefix_default();
+    let bin_dir = bin_dir_of(&prefix);
     let target = match installed_bin(&prefix) {
         Ok(p) => p,
         Err(e) => {
@@ -573,6 +616,39 @@ pub(crate) fn run_update(url: &str, yes: bool) -> i32 {
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755));
+    }
+    // Companion binaries live beside the main binary in release trees.
+    // Replace each one that shipped with this build.
+    let companions = ["vakcoder-tray", "vak-desktop", "vak-delivery-worker"];
+    for name in companions {
+        let in_bundle = bin_dir.join(name);
+        if !in_bundle.exists() {
+            continue;
+        }
+        if let Some(src) = target
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.join(name))
+        {
+            // When running from the build tree, the sibling is beside the
+            // build output; when running from the bundle, it's in the same
+            // directory.  Try the build-tree path first.
+            let src = if src.exists() {
+                src
+            } else {
+                bin_dir.join(name)
+            };
+            if let Err(e) = copy_executable(&src, &in_bundle) {
+                eprintln!("warning: update {name}: {e}");
+            } else {
+                println!("  updated {name}");
+            }
+        }
+    }
+    // Re-write bundle plist so version stays current.
+    #[cfg(target_os = "macos")]
+    if is_bundle(&prefix) && let Err(e) = write_bundle_metadata(&prefix) {
+        eprintln!("warning: bundle refresh: {e}");
     }
     // Manifest version moves with the artifact so status stays truthful.
     if let Ok(mut m) = read_manifest(&prefix) {

@@ -149,7 +149,7 @@ const ACT_WATCHDOG_TOGGLE: u32 = 7;
 const ACT_QUIT: u32 = 8;
 
 fn persist_watchdog(on: bool) {
-    let path = home().join(".vakcoder").join("tray.json");
+    let path = home().join("tray.json");
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
@@ -157,7 +157,7 @@ fn persist_watchdog(on: bool) {
 }
 
 fn load_watchdog() -> bool {
-    std::fs::read_to_string(home().join(".vakcoder/tray.json"))
+    std::fs::read_to_string(home().join("tray.json"))
         .ok()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|v| v["auto_restart"].as_bool())

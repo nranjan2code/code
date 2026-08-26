@@ -52,10 +52,7 @@ struct DesktopPrefs {
 }
 
 fn vak_home() -> PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".vakcoder")
+    vak_config::paths::data_home()
 }
 
 fn prefs_path() -> PathBuf {

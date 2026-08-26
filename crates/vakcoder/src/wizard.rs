@@ -1,7 +1,7 @@
 //! First-run provider wizard (docs/design/29-personal-os.md P3): tty-only,
 //! once (marker file), skippable. Saves through `Core::set_provider_key`,
 //! the same path the TUI's `/key` command uses, so the key lands in
-//! ~/.vakcoder/.env (0600) and takes effect immediately. Every gate fails
+//! the user `.env` (0600) and takes effect immediately. Every gate fails
 //! toward silence — a non-interactive launch must never see this.
 
 use std::io::Write as _;
@@ -47,9 +47,11 @@ fn wizard_gates_open(core: &Core) -> bool {
 }
 
 fn vakcoder_home() -> Option<PathBuf> {
-    std::env::var_os("VAKCODER_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".vakcoder")))
+    // VAKCODER_HOME override nests everything under one directory (doc 32).
+    if let Some(vh) = std::env::var_os("VAKCODER_HOME") {
+        return Some(PathBuf::from(vh));
+    }
+    Some(vak_config::paths::data_home())
 }
 
 fn run_wizard(core: &Core) {
