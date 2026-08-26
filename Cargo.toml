@@ -19,6 +19,7 @@ members = [
     "crates/vak-tray",
     "crates/vak-tui",
     "crates/vak-desktop",
+    "crates/vak-client",
     "crates/vakcoder",
 ]
 
@@ -45,6 +46,7 @@ vak-delivery = { path = "crates/vak-delivery" }
 vak-eval = { path = "crates/vak-eval" }
 vak-hooks = { path = "crates/vak-hooks" }
 vak-tui = { path = "crates/vak-tui" }
+vak-client = { path = "crates/vak-client" }
 
 crossterm = { version = "0.28", features = ["event-stream"] }
 # HTTP+SSE server for the headless agent (tokio-native standard)
@@ -77,6 +79,7 @@ globset = "0.4"
 similar = { version = "2", features = ["text"] }
 libc = "0.2"
 tempfile = "3"
+async-stream = "0.3"
 # Linux filesystem containment: safe wrapper over the Landlock LSM syscalls
 landlock = "0.4"
 # Desktop shell (docs/design/20-tauri-desktop.md): native webview + Rust host
