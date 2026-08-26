@@ -46,8 +46,14 @@ The web admin console follows `docs/design/33-admin-console.md`:
 vak-store FTS5 index (rebuildable, JSONL stays source of truth), global
 event hub + SSE, cookie login on the secured router, and an embedded
 SolidJS console at `/admin` covering observation (overview/search/
-security/inbox), operation (approvals/config/cancel), and interaction
-(prompts/steering/best-of-N fan-out) — shipped through Phase 3.
+security/inbox), operation (approvals/config/cancel), interaction
+(prompts/steering/best-of-N fan-out), and full desktop-parity settings:
+provider dropdown (discovered), model discovery (live), API key
+add/replace/remove, max turns, MCP server CRUD, hooks CRUD, skills
+and proposals, two-tier memory (workspace/profile), scheduled tasks,
+runtime diagnostics, spend/budget/finops, usage digest, doctor checks,
+backup export/import, reliability/route-ladder display, and path
+management — shipped through Phase 3 and expanded to full parity.
 
 ## Non-negotiable invariants
 
