@@ -955,8 +955,45 @@ pub async fn serve_with(
     // reach an unauthenticated agent and drive arbitrary tool execution
     // plus self-approval. Every serve() instance gets a per-process
     // bearer token; /health stays open.
+    let data_home = core.sessions_home();
     let (app, token) = secured_router_with(core, force_gateway);
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    // Token bootstrap: on first gateway boot, if no VAKCODER_GATEWAY_TOKEN
+    // was provided via env or .env, persist the auto-generated one so clients
+    // can discover it via get_var(). Only the gateway writes; clients only
+    // read.
+    if force_gateway && token.starts_with("vk_") {
+        let env_set = std::env::var("VAKCODER_GATEWAY_TOKEN")
+            .ok()
+            .filter(|t| !t.is_empty())
+            .is_some();
+        let dotenv_set = vak_config::get_var("VAKCODER_GATEWAY_TOKEN").is_some();
+        if !env_set
+            && !dotenv_set
+            && let Some(env_path) = vak_config::user_env_path()
+        {
+            let _ = vak_config::upsert_env_file(&env_path, "VAKCODER_GATEWAY_TOKEN", &token);
+            eprintln!("gateway token persisted to {}", env_path.display());
+        }
+    }
+
+    // Runtime file: write gateway.json on startup so clients can discover the
+    // running instance; remove it on shutdown.
+    let runtime_path = data_home.join("runtime").join("gateway.json");
+    if force_gateway {
+        if let Some(parent) = runtime_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let runtime = serde_json::json!({
+            "pid": std::process::id(),
+            "token": token,
+            "addr": addr.to_string(),
+            "started_at": chrono::Utc::now().to_rfc3339(),
+            "gateway": true,
+        });
+        let _ = std::fs::write(&runtime_path, runtime.to_string());
+    }
+
     eprintln!("VakCoder server listening on http://{addr}");
     if std::env::var("VAKCODER_GATEWAY_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
         eprintln!("auth token: (pinned via VAKCODER_GATEWAY_TOKEN)");
@@ -967,12 +1004,30 @@ pub async fn serve_with(
     if force_gateway {
         eprintln!("gateway: ENABLED (--gateway overrides config)");
     }
-    axum::serve(listener, app)
+    let result = axum::serve(listener, app)
         .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+            #[cfg(unix)]
+            {
+                use tokio::signal::unix::{SignalKind, signal};
+                let mut term =
+                    signal(SignalKind::terminate()).expect("failed to listen for SIGTERM");
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = tokio::signal::ctrl_c().await;
+            }
             eprintln!("\n[shutting down: draining connections]");
         })
-        .await
+        .await;
+    // Cleanup: remove runtime file on shutdown.
+    if force_gateway {
+        let _ = std::fs::remove_file(&runtime_path);
+    }
+    result
 }
 
 /// Paths that must be reachable without a token: health probe, the SPA

@@ -103,6 +103,50 @@ pub fn version_parity_check(home: &Path) -> HealthCheck {
     }
 }
 
+/// Gateway liveness probe: reads `runtime/gateway.json` (written by the
+/// gateway process on startup, removed on shutdown) and reports topology.
+fn gateway_topology_check(home: &Path) -> HealthCheck {
+    let label = "gateway topology".to_string();
+    let runtime_path = home.join("runtime").join("gateway.json");
+    let Ok(text) = std::fs::read_to_string(&runtime_path) else {
+        return HealthCheck {
+            label,
+            detail: Ok("no gateway running locally".into()),
+        };
+    };
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return HealthCheck {
+            label,
+            detail: Err("unreadable runtime file".into()),
+        };
+    };
+    let pid = val.get("pid").and_then(|v| v.as_u64()).unwrap_or(0);
+    let addr = val
+        .get("addr")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    // Verify the PID is still alive (signal 0 = existence check, no kill).
+    let alive = std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if alive {
+        HealthCheck {
+            label,
+            detail: Ok(format!("gateway running (pid {pid}, {addr})")),
+        }
+    } else {
+        HealthCheck {
+            label,
+            detail: Err(format!("stale runtime file (pid {pid} not alive)")),
+        }
+    }
+}
+
 /// Collect everything `/doctor` reports. `session` optionally adds the
 /// frozen-ladder section for the active session. Never panics; every
 /// failure mode lands as a failed check or an empty fact.
@@ -139,6 +183,7 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
     });
     checks.push(layout_check());
     checks.push(version_parity_check(&user_home()));
+    checks.push(gateway_topology_check(&core.sessions_home()));
     let failures = checks.iter().filter(|c| c.failed()).count();
 
     let mut facts = vec![
@@ -242,7 +287,8 @@ mod tests {
                 "sessions home",
                 "config warnings",
                 "install layout",
-                "self version parity"
+                "self version parity",
+                "gateway topology"
             ]
         );
         assert_eq!(
