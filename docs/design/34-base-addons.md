@@ -151,10 +151,9 @@ Server additions for parity: `GET /config/commands`, `GET /tools`,
 
 ## Status
 
-M0–M3, M4.2, and M4.3 delivered. Remaining milestones:
+M0–M3, M4.2, and M4.3 delivered. M4 is complete; M5 hardening items are
+done (TLS guard, version handshake, fan-out tests, docs sweep).
 
 | Milestone | Scope |
 |---|---|
-| M4 remainder | Desktop SPA audit against `vak-client` types |
-| M5 | Hardening: version handshake ✅, TLS guard ✅, fan-out tests ✅ — remaining: docs sweep |
-| M5 | Hardening: TLS guard (http:// non-loopback), version handshake, fan-out tests, docs |
+| M5 ✅ | Hardening: TLS guard (`Client::connect` refuses plaintext http off-loopback), `GET /version` handshake with TUI drift marker, SSE fan-out e2e (which caught and fixed terminal-frame ordering), desktop SPA contract audit + fixes (header-carried SSE with reconnect replacing query-token EventSource — 401s since the admin-hardening commit — lowercase role casing, mid-run transcript envelope guard), stale-doc sweep |

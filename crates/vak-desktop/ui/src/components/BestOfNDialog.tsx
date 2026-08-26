@@ -17,7 +17,7 @@ import { openEventStream } from "../api";
 import * as api from "../api";
 import { Markdown } from "./ChatPane";
 
-const streams = new Map<string, EventSource>();
+const streams = new Map<string, import("../api").EventStream>();
 
 function RunCard(props: { run: { session_id: string; branch: string } }) {
   const [verdict, setVerdict] = createSignal<"kept" | "discarded" | null>(null);

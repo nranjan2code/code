@@ -30,7 +30,12 @@ accessibility surfaces live there and in 05-config.md).
 | `width.rs` | display-width table (CJK wide=2, combining=0) |
 | `complete.rs` | pure completion engine: slash commands + bounded `@path` walk |
 
-## App spine (app.rs / render.rs / commands.rs)
+## App spine
+
+> M4.2 note: the single `app.rs` + `commands.rs` files referenced below
+> were split into the module tree in doc 34 (app/state/events/data/
+> commands/{session,config,memory,system}/modals/pickers/transcript/
+> prefs/inbox/tasks); behavior contracts here remain accurate.
 
 - **Markdown streaming**: text deltas buffer until newline, then flush through
   `LineStyler`; fences persist across deltas; remainder flushed at turn end.

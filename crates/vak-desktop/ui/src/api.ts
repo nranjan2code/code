@@ -213,12 +213,19 @@ export function attachSession(id: string): Promise<{ session_id: string }> {
   });
 }
 
-export function transcript(id: string): Promise<{
+export async function transcript(id: string): Promise<{
   count: number;
   usage: Record<string, number>;
   messages: Message[];
 }> {
-  return req(`/sessions/${id}/transcript`);
+  const body = await req<
+    | { count: number; usage: Record<string, number>; messages: Message[] }
+    | { error: string }
+  >(`/sessions/${id}/transcript`);
+  // Mid-run reads return 200 {"error":"run in progress"} — surface an
+  // empty snapshot instead of throwing on missing fields.
+  if ("error" in body) return { count: 0, usage: {}, messages: [] };
+  return body;
 }
 
 /** Markdown export (shared renderer with the TUI); text, not JSON. */
@@ -475,38 +482,86 @@ export function mergePr(
 
 // ---- SSE ---------------------------------------------------------------------
 
+/**
+ * Minimal stream handle: callers only ever close(). Implemented over fetch
+ * so the bearer token travels in a header — EventSource cannot set headers
+ * and the server (correctly) accepts no query-string tokens.
+ */
+export interface EventStream {
+  close(): void;
+}
+
+function openSse(
+  url: string,
+  onEvent: (ev: AgentEvent) => void,
+  onError?: () => void,
+): EventStream {
+  const ctrl = new AbortController();
+  let attempts = 0;
+
+  async function run() {
+    for (;;) {
+      if (ctrl.signal.aborted) return;
+      try {
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: ctrl.signal,
+        });
+        if (!res.ok || !res.body) {
+          onError?.();
+          return;
+        }
+        attempts = 0;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx: number;
+          while ((idx = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, idx).replace(/\r$/, "");
+            buf = buf.slice(idx + 1);
+            if (line.startsWith("data:")) {
+              const data = line.slice(5).trim();
+              if (data) {
+                try {
+                  onEvent(JSON.parse(data) as AgentEvent);
+                } catch {
+                  // ignore keep-alive/comment frames
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        if (!ctrl.signal.aborted) onError?.();
+      }
+      // Crash-only channels: reconnect with capped backoff until closed.
+      if (ctrl.signal.aborted) return;
+      const delay = Math.min(5000, 500 * 2 ** attempts++);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+
+  void run();
+  return { close: () => ctrl.abort() };
+}
+
 export function openEventStream(
   id: string,
   onEvent: (ev: AgentEvent) => void,
   onError?: () => void,
-): EventSource {
-  const es = new EventSource(`${base}/sessions/${id}/events?token=${encodeURIComponent(token)}`);
-  es.onmessage = (m) => {
-    try {
-      onEvent(JSON.parse(m.data) as AgentEvent);
-    } catch {
-      // ignore keep-alive/comment frames
-    }
-  };
-  es.onerror = () => onError?.();
-  return es;
+): EventStream {
+  return openSse(`${base}/sessions/${id}/events`, onEvent, onError);
 }
 
 export function openSideStream(
   id: string,
   onEvent: (ev: AgentEvent) => void,
-): EventSource {
-  const es = new EventSource(
-    `${base}/sessions/${id}/side/events?token=${encodeURIComponent(token)}`,
-  );
-  es.onmessage = (m) => {
-    try {
-      onEvent(JSON.parse(m.data) as AgentEvent);
-    } catch {
-      // ignore keep-alive frames
-    }
-  };
-  return es;
+): EventStream {
+  return openSse(`${base}/sessions/${id}/side/events`, onEvent);
 }
 
 export function listTasks(): Promise<{ tasks: import("./types").TaskDef[] }> {

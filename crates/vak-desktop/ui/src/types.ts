@@ -1,7 +1,7 @@
 // Mirrors the serde serialization of vak-agent's AgentEvent and vak-llm
 // types. Any drift here is a contract bug — the JSONL ledger is truth.
 
-export type Role = "User" | "Assistant";
+export type Role = "user" | "assistant";
 
 export type ContentBlock =
   | { type: "text"; text: string }
@@ -61,7 +61,13 @@ export type AgentEvent =
     }
   | { ContextCompacting: { estimated_tokens: number } }
   | {
-      ContextCompacted: { before_tokens: number; after_tokens: number; summarized_messages: number };
+      ContextCompacted: {
+        before_tokens: number;
+        after_tokens: number;
+        summarized_messages: number;
+        selected_messages?: number;
+        dropped_messages?: number;
+      };
     }
   | { StreamOpened: Record<string, never> }
   | { ApprovalRequested: { id: string; tool: string; args_json: string; reason: string } }
@@ -69,7 +75,8 @@ export type AgentEvent =
   | { SubagentToolCall: { label: string; name: string; is_error: boolean } }
   | { SubagentUsage: { label: string; input_tokens: number; output_tokens: number } }
   | { SubagentFinished: { label: string; is_error: boolean; elapsed_ms: number } }
-  | { RunFinished: { summary: string; is_error: boolean } };
+  | { RunFinished: { summary: string; is_error: boolean } }
+  | { HandoffReset: { before_tokens: number } };
 
 export interface SessionSummary {
   session_id: string;

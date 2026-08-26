@@ -67,6 +67,7 @@ import {
 } from "./store";
 import type { SessionSummary } from "./types";
 import * as api from "./api";
+import type { EventStream } from "./api";
 
 // Armed goal consumed by the next prompt (docs/design/27 Phase H).
 let armedGoal: { objective: string; criteria: string[] } | null = null;
@@ -98,8 +99,8 @@ import SetupCard from "./components/SetupCard";
 import TranscriptModal from "./components/TranscriptModal";
 import InboxPage from "./components/InboxPage";
 
-const streams = new Map<string, EventSource>();
-const sideStreams = new Map<string, EventSource>();
+const streams = new Map<string, EventStream>();
+const sideStreams = new Map<string, EventStream>();
 
 export async function refreshSessions() {
   const source = api.backendUrl();

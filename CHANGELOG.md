@@ -2,6 +2,15 @@
 
 ## Unreleased — M4.2/M4.3 thin-client completion
 
+- **Desktop live-streaming fixed**: the SPA still attached SSE with
+  `?token=` query strings via `EventSource`, which the server stopped
+  accepting in the admin-hardening pass — every desktop stream 401'd.
+  Streams now ride `fetch` with the bearer header, line-buffered SSE
+  parsing, and capped-backoff reconnect; role casing matches the
+  lowercase wire (`"user"`), transcript reads tolerate the mid-run
+  `{error}` envelope, and the event union gained `HandoffReset` plus
+  optional `ContextCompacted` counters.
+
 - **SSE terminal-frame ordering fix**: `RunFinished` was sent directly to
   the session broadcast channel while deltas drained through the async
   bridge, so the terminal frame could overtake un-delivered events.

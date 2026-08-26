@@ -1012,7 +1012,7 @@ pub async fn serve_with(
         eprintln!("auth token: (pinned via VAKCODER_GATEWAY_TOKEN)");
     } else {
         eprintln!("auth token: {token}");
-        eprintln!("clients must send 'Authorization: Bearer {token}' (or ?token=)");
+        eprintln!("clients must send 'Authorization: Bearer {token}'");
     }
     if force_gateway {
         eprintln!("gateway: ENABLED (--gateway overrides config)");
