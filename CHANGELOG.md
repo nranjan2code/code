@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.2 — release candidate
+
 ## 0.9.1 — admin console full parity
 
 ### Admin console: desktop-parity settings
