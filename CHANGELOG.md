@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.10 — 2026-08-27
+
+### Workspace-aware durable services
+
+Generated launchd/systemd units now retain the workspace directory captured by
+`self services-sync`. Gateway and Telegram deployments therefore load the
+selected workspace's provider/model config and project `.env` instead of
+starting from the service manager's root directory and incorrectly returning
+503 for a missing provider credential.
+
 ## 0.8.9 — 2026-08-27
 
 ### Configuration audit follow-up

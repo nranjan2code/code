@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v0.8.9 — all roadmap phases implemented and live-tested.**
+**Status: v0.8.10 — all roadmap phases implemented and live-tested.**
 See `docs/design/00-roadmap.md` for the phase history and
 `docs/design/15-reliability.md` for the failure-handling matrix. Security work
 must also follow the threat model and priority order in
@@ -141,6 +141,10 @@ security/inbox), operation (approvals/config/cancel), and interaction
     overrides and must remain visibly non-global. Session provider/model
     contracts freeze at session creation; changing workspace defaults never
     rewrites an existing session or silently changes its dispatch.
+18. **Durable services retain workspace identity.** Generated launchd/systemd
+    units must execute from the workspace captured by `self services-sync` so
+    gateway and Telegram runs load that workspace's config and project `.env`,
+    rather than the service manager's default directory.
 
 ## Code rules
 

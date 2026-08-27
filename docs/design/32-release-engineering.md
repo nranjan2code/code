@@ -19,8 +19,11 @@ no plists pointing into build trees, no spot-fixing deploys.
    cleaned at any time without touching a running deployment.
 3. **Services are generated, never hand-edited.** `self services sync`
    renders launchd/systemd units from templates (vak-ops) referencing the
-   *installed* path, unloads stale units, loads the new ones. Sync is
-   idempotent: identical content + healthy process ⇒ no-op.
+   *installed* path and the workspace directory from which sync was run,
+   unloads stale units, loads the new ones. Sync is idempotent: identical
+   content + healthy process ⇒ no-op. The working directory is part of the
+   service contract so gateway config and project `.env` are not replaced by
+   the service manager's `/` default.
 4. **Drift is detectable.** `self status` prints build vs manifest vs
    per-service versions and exits non-zero on mismatch; `/doctor`
    surfaces the same check so any surface reveals drift.
@@ -40,6 +43,7 @@ vakcoder self reinstall [--prefix DIR] [-y]        clear the prefix, place fresh
 vakcoder self verify    [--prefix DIR]             components vs recorded digests
 vakcoder self status    [--prefix DIR]             drift matrix (exit != 0 on drift)
 vakcoder self services-sync [--prefix DIR] [NAME…] regenerate + reload units
+                                      (using the invoking workspace)
 vakcoder self uninstall [--prefix DIR] [-y] [--purge]  exact reverse of install
 vakcoder self update    [--prefix DIR] [--url URL] [-y] [--dry-run]
 ```

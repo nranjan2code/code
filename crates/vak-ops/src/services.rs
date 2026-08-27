@@ -6,6 +6,8 @@
 //! units can never strand auth. Logs stay at stable
 //! `~/.vakcoder/logs/<service>.log`; user data under `~/.vakcoder` is only
 //! ever appended to by the running services themselves.
+//! The unit working directory is captured when `self services-sync` runs, so
+//! the gateway loads the selected workspace's config and project `.env`.
 //!
 //! All manager interaction goes through [`CommandRunner`], so tests inject a
 //! recorder instead of shelling out to launchctl/systemctl.
@@ -40,6 +42,8 @@ pub struct ServiceSpec {
     pub args: Vec<String>,
     /// Stable log destination under `~/.vakcoder/logs`.
     pub log_path: PathBuf,
+    /// Workspace the service must load for config and project-local `.env`.
+    pub working_dir: PathBuf,
 }
 
 /// Static template table behind [`ServiceSpec`].
@@ -57,7 +61,7 @@ pub const SERVICES: &[ServiceDef] = &[
     ServiceDef {
         name: "com.vakcoder.gateway",
         bin_file: "vakcoder",
-        args: &["serve", "--gateway"],
+        args: &["serve", "--gateway", "--trust"],
         log_file: "gateway.log",
     },
     ServiceDef {
@@ -77,12 +81,13 @@ impl ServiceDef {
     /// Resolve against an install prefix: `bin_dir` holds the release
     /// binaries; logs land in the canonical platform logs dir
     /// (`~/Library/Logs/vakcoder` / XDG state) — never inside data.
-    pub fn spec(&self, bin_dir: &Path, _vak_home: &Path) -> ServiceSpec {
+    pub fn spec(&self, bin_dir: &Path, _vak_home: &Path, working_dir: &Path) -> ServiceSpec {
         ServiceSpec {
             name: self.name,
             bin_path: bin_dir.join(self.bin_file),
             args: self.args.iter().map(|a| (*a).to_string()).collect(),
             log_path: vak_config::paths::logs_dir().join(self.log_file),
+            working_dir: working_dir.to_path_buf(),
         }
     }
 
@@ -145,6 +150,8 @@ pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
+	<key>WorkingDirectory</key>
+	<string>{}</string>
 	<key>StandardErrorPath</key>
 	<string>{}</string>
 	<key>StandardOutPath</key>
@@ -154,6 +161,7 @@ pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
 "#,
         xml_escape(spec.name),
         prog_args,
+        xml_escape(&spec.working_dir.to_string_lossy()),
         log,
         log
     )
@@ -177,6 +185,7 @@ pub fn render_systemd_unit(spec: &ServiceSpec) -> String {
          \n\
          [Service]\n\
          ExecStart={exec}\n\
+         WorkingDirectory={}\n\
          Restart=always\n\
          StandardOutput=append:{log}\n\
          StandardError=append:{log}\n\
@@ -184,6 +193,7 @@ pub fn render_systemd_unit(spec: &ServiceSpec) -> String {
          [Install]\n\
          WantedBy=default.target\n",
         short_name(spec.name),
+        spec.working_dir.display(),
     )
 }
 
@@ -610,6 +620,7 @@ pub fn services_uninstall(
 /// as Err entries so callers can report them individually.
 pub fn resolve_specs(bin_path: &Path, names: &[&str]) -> Vec<Result<ServiceSpec, String>> {
     let bin_dir = bin_path.parent().unwrap_or(Path::new("/"));
+    let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
     // Canonical data home (doc 32) — service logs live under the
     // platform logs dir; specs only need a base for their log paths.
     let vak_home = vak_config::paths::data_home();
@@ -619,7 +630,7 @@ pub fn resolve_specs(bin_path: &Path, names: &[&str]) -> Vec<Result<ServiceSpec,
             SERVICES
                 .iter()
                 .find(|def| def.name == *name)
-                .map(|def| def.spec(bin_dir, &vak_home))
+                .map(|def| def.spec(bin_dir, &vak_home, &working_dir))
                 .ok_or_else(|| format!("unknown service: {name}"))
         })
         .collect()
@@ -720,6 +731,7 @@ mod tests {
             bin_path: bin_dir.join(def.bin_file),
             args: def.args.iter().map(|a| (*a).to_string()).collect(),
             log_path: log_dir.join(def.log_file),
+            working_dir: PathBuf::from("/workspace"),
         }
     }
 
