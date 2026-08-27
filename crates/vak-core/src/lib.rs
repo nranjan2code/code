@@ -272,6 +272,24 @@ impl Core {
             .unwrap_or_else(|| self.inner.config.model.clone())
     }
 
+    pub fn model_source(&self) -> &'static str {
+        if Self::read_override(&self.inner.model_override).is_some() {
+            "runtime_override"
+        } else if std::env::var("VAKCODER_MODEL").is_ok() {
+            "environment"
+        } else if vak_config::project_path(&self.inner.cwd).is_file()
+            && project_config_has_key(&self.inner.cwd, "model")
+        {
+            "project_config"
+        } else if vak_config::global_path().is_some_and(|path| path.is_file())
+            && global_config_has_key("model")
+        {
+            "global_config"
+        } else {
+            "built_in_default"
+        }
+    }
+
     pub fn set_provider(&self, provider: String) {
         Self::write_override(&self.inner.provider_override, Some(provider));
     }
@@ -279,6 +297,24 @@ impl Core {
     pub fn effective_provider(&self) -> String {
         Self::read_override(&self.inner.provider_override)
             .unwrap_or_else(|| self.inner.config.provider.clone())
+    }
+
+    pub fn provider_source(&self) -> &'static str {
+        if Self::read_override(&self.inner.provider_override).is_some() {
+            "runtime_override"
+        } else if std::env::var("VAKCODER_PROVIDER").is_ok() {
+            "environment"
+        } else if vak_config::project_path(&self.inner.cwd).is_file()
+            && project_config_has_key(&self.inner.cwd, "provider")
+        {
+            "project_config"
+        } else if vak_config::global_path().is_some_and(|path| path.is_file())
+            && global_config_has_key("provider")
+        {
+            "global_config"
+        } else {
+            "built_in_default"
+        }
     }
 
     /// Whether project-owned privileged configuration was admitted when this
@@ -1102,9 +1138,27 @@ impl Core {
         events: tokio::sync::mpsc::Sender<AgentEvent>,
         goal: Option<(String, Vec<String>)>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
-        let provider = self.provider()?;
+        let session_contract = session.header().map(|header| header.contract.clone());
+        let (provider, model) = match session_contract.as_ref() {
+            Some(contract) => {
+                let injected = self
+                    .inner
+                    .provider_instance
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                let provider = if let Some(provider) = injected {
+                    provider
+                } else {
+                    let auth = self.provider_auth_for(&contract.provider)?;
+                    self.inner.registry.get(&contract.provider, &auth)?
+                };
+                (provider, contract.model.clone())
+            }
+            None => (self.provider()?, self.effective_model()),
+        };
         let mut cfg = AgentConfig::new(self.system_prompt());
-        cfg.model = self.effective_model();
+        cfg.model = model.clone();
         cfg.tools = self.agent_tools();
         cfg.max_turns = self.effective_max_turns();
         cfg.parallel_tools = true;
@@ -1183,11 +1237,11 @@ impl Core {
         // Phase B: materialize fallback legs beyond the primary provider.
         // Unresolvable legs (missing key/registry) skip silently --
         // receipts record whatever actually walked.
-        if let Some(h) = session.header()
-            && h.contract.route_ladder.len() > 1
+        if let Some(contract) = session_contract.as_ref()
+            && contract.route_ladder.len() > 1
         {
-            for leg in h.contract.route_ladder.iter().skip(1) {
-                if leg.provider == h.contract.provider {
+            for leg in contract.route_ladder.iter().skip(1) {
+                if leg.provider == contract.provider {
                     continue;
                 }
                 if let Ok(auth) = self.provider_auth_for(&leg.provider)
@@ -1205,7 +1259,7 @@ impl Core {
             tools.push(Arc::new(vak_agent::TaskTool::new(vak_agent::TaskDeps {
                 provider: provider.clone(),
                 system_prompt: self.system_prompt(),
-                model: self.effective_model(),
+                model: model.clone(),
                 tools: self.agent_tools(),
                 read_only_tools: self.agent_read_only_tools(),
                 max_turns: self.effective_max_turns(),
@@ -1874,6 +1928,22 @@ fn load_permissions_local(cwd: &std::path::Path) -> Vec<String> {
         Ok(p) => p.allow,
         Err(_) => Vec::new(),
     }
+}
+
+fn project_config_has_key(cwd: &std::path::Path, key: &str) -> bool {
+    std::fs::read_to_string(vak_config::project_path(cwd))
+        .ok()
+        .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
+        .and_then(|value| value.as_table().map(|table| table.contains_key(key)))
+        .unwrap_or(false)
+}
+
+fn global_config_has_key(key: &str) -> bool {
+    vak_config::global_path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
+        .and_then(|value| value.as_table().map(|table| table.contains_key(key)))
+        .unwrap_or(false)
 }
 
 fn self_path() -> std::path::PathBuf {

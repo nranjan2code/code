@@ -1063,6 +1063,8 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
         "status": "ok",
         "provider": state.core.effective_provider(),
         "model": state.core.effective_model(),
+        "provider_source": state.core.provider_source(),
+        "model_source": state.core.model_source(),
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
         "sandbox": state.core.effective_sandbox_name(),
         "context_window": state.core.config().context_window,
@@ -1893,9 +1895,15 @@ async fn transcript(
             return Json(serde_json::json!({ "error": "run in progress" })).into_response();
         };
         let msgs = s.derive_messages();
+        let contract = s.header().map(|header| header.contract.clone());
         return Json(serde_json::json!({
             "count": msgs.len(),
             "usage": s.total_usage(),
+            "contract": contract,
+            "configuration_mismatch": s.header().is_some_and(|header| {
+                header.contract.provider != state.core.effective_provider()
+                    || header.contract.model != state.core.effective_model()
+            }),
             "messages": msgs,
         }))
         .into_response();
@@ -1903,9 +1911,15 @@ async fn transcript(
     match open_historical_session(&state, &id) {
         Some(s) => {
             let msgs = s.derive_messages();
+            let contract = s.header().map(|header| header.contract.clone());
             Json(serde_json::json!({
                 "count": msgs.len(),
                 "usage": s.total_usage(),
+                "contract": contract,
+                "configuration_mismatch": s.header().is_some_and(|header| {
+                    header.contract.provider != state.core.effective_provider()
+                        || header.contract.model != state.core.effective_model()
+                }),
                 "messages": msgs,
             }))
             .into_response()
@@ -2645,6 +2659,18 @@ async fn set_permission_mode(
     match parse_mode(&body.mode) {
         Some(mode) => {
             let old = state.core.effective_permission_mode();
+            if vak_config::persist_project_preferences(
+                state.core.cwd(),
+                None,
+                None,
+                None,
+                Some(mode),
+                None,
+            )
+            .is_err()
+            {
+                return StatusCode::INTERNAL_SERVER_ERROR;
+            }
             apply_permission_mode(&state, mode);
             if old != mode {
                 vak_core::security_events::record(
@@ -2708,6 +2734,8 @@ async fn list_providers(State(state): State<AppState>) -> Json<serde_json::Value
     Json(serde_json::json!({
         "current": state.core.effective_provider(),
         "current_model": state.core.effective_model(),
+        "current_provider_source": state.core.provider_source(),
+        "current_model_source": state.core.model_source(),
         "current_configured": state.core.provider_configured(&state.core.effective_provider()),
         "providers": providers,
     }))
@@ -2910,6 +2938,8 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "provider": state.core.effective_provider(),
         "model": state.core.effective_model(),
+        "provider_source": state.core.provider_source(),
+        "model_source": state.core.model_source(),
         "max_tokens": cfg.max_tokens,
         "max_turns": state.core.effective_max_turns(),
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
@@ -2965,6 +2995,46 @@ struct ConfigPatch {
 }
 
 async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatch>) -> StatusCode {
+    if body
+        .provider
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+        || body
+            .model
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        || body
+            .max_turns
+            .is_some_and(|value| !(1..=1000).contains(&value))
+        || body
+            .theme
+            .as_deref()
+            .is_some_and(|value| !matches!(value, "dark" | "light" | "plain"))
+        || body
+            .permission_mode
+            .as_deref()
+            .is_some_and(|value| parse_mode(value).is_none())
+    {
+        return StatusCode::BAD_REQUEST;
+    }
+    let permission_mode = body.permission_mode.as_deref().and_then(parse_mode);
+    if (body.provider.is_some()
+        || body.model.is_some()
+        || body.max_turns.is_some()
+        || permission_mode.is_some()
+        || body.theme.is_some())
+        && vak_config::persist_project_preferences(
+            state.core.cwd(),
+            body.provider.as_deref().map(str::trim),
+            body.model.as_deref().map(str::trim),
+            body.max_turns,
+            permission_mode,
+            body.theme.as_deref(),
+        )
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
     let mut changes = Vec::new();
     if let Some(provider) = body.provider {
         if provider.trim().is_empty() {

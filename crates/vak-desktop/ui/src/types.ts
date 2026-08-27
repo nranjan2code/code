@@ -131,6 +131,8 @@ export interface BackendInfo {
 export interface ConfigSnapshot {
   provider: string;
   model: string;
+  provider_source?: string;
+  model_source?: string;
   max_tokens: number;
   max_turns: number;
   permission_mode: "ReadOnly" | "WorkspaceWrite" | "FullAccess";

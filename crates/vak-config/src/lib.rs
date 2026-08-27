@@ -7,6 +7,7 @@ pub mod paths;
 pub use finops::{estimate_cost_usd, resolve_usd_per_mtok, usd_per_mtok_heuristic};
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -661,6 +662,11 @@ pub enum ConfigError {
         path: PathBuf,
         source: toml::de::Error,
     },
+    #[error("cannot write config file {path}: {source}")]
+    Write {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 pub fn global_path() -> Option<PathBuf> {
@@ -669,6 +675,95 @@ pub fn global_path() -> Option<PathBuf> {
 
 pub fn project_path(cwd: &Path) -> PathBuf {
     cwd.join(".vakcoder/config.toml")
+}
+
+/// Persist user-selected agent preferences without disturbing unrelated
+/// project configuration. The write is atomic so every client sees either
+/// the old or the new complete document, never a partial TOML file.
+pub fn persist_project_preferences(
+    cwd: &Path,
+    provider: Option<&str>,
+    model: Option<&str>,
+    max_turns: Option<usize>,
+    permission_mode: Option<PermissionMode>,
+    theme: Option<&str>,
+) -> Result<(), ConfigError> {
+    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = WRITE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let path = project_path(cwd);
+    let mut root = if path.is_file() {
+        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
+            path: path.clone(),
+            source,
+        })?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let Some(table) = root.as_table_mut() else {
+        return Err(ConfigError::Write {
+            path,
+            source: std::io::Error::other("top-level config must be a TOML table"),
+        });
+    };
+    if let Some(value) = provider {
+        table.insert("provider".into(), toml::Value::String(value.into()));
+    }
+    if let Some(value) = model {
+        table.insert("model".into(), toml::Value::String(value.into()));
+    }
+    if let Some(value) = max_turns {
+        table.insert("max_turns".into(), toml::Value::Integer(value as i64));
+    }
+    if let Some(value) = permission_mode {
+        table.insert(
+            "permission_mode".into(),
+            toml::Value::String(
+                match value {
+                    PermissionMode::ReadOnly => "read-only",
+                    PermissionMode::WorkspaceWrite => "workspace-write",
+                    PermissionMode::FullAccess => "full-access",
+                }
+                .into(),
+            ),
+        );
+    }
+    if let Some(value) = theme {
+        let ui = table
+            .entry("ui")
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+        let Some(ui) = ui.as_table_mut() else {
+            return Err(ConfigError::Write {
+                path,
+                source: std::io::Error::other("ui config must be a TOML table"),
+            });
+        };
+        ui.insert("theme".into(), toml::Value::String(value.into()));
+    }
+    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other(error.to_string()),
+    })?;
+    let parent = path.parent().ok_or_else(|| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other("config has no parent directory"),
+    })?;
+    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
+    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
 }
 
 fn dirs_home() -> Option<PathBuf> {
@@ -1950,5 +2045,31 @@ mod tests {
             cfg.warnings
         );
         assert!(!cfg.heartbeat.enabled);
+    }
+
+    #[test]
+    fn persisted_preferences_preserve_unrelated_project_config() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "deny = [\"bash\"]\n[route]\nobjective = \"quality-critical\"\n",
+        );
+        persist_project_preferences(
+            dir.path(),
+            Some("google"),
+            Some("gemini-test"),
+            Some(17),
+            Some(PermissionMode::WorkspaceWrite),
+            Some("dark"),
+        )
+        .unwrap();
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.provider, "google");
+        assert_eq!(cfg.model, "gemini-test");
+        assert_eq!(cfg.max_turns, 17);
+        assert_eq!(cfg.permission_mode, PermissionMode::WorkspaceWrite);
+        assert_eq!(cfg.ui.theme, "dark");
+        assert_eq!(cfg.deny, vec!["bash"]);
+        assert_eq!(cfg.route.objective, "quality-critical");
     }
 }

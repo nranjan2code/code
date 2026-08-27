@@ -341,7 +341,7 @@ async fn fs_endpoints_are_confined_to_workspace() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn mode_switch_and_diff_endpoint() {
-    let (base, token, _cwd, _server) = spawn_secured(Arc::new(Scripted {
+    let (base, token, cwd, _server) = spawn_secured(Arc::new(Scripted {
         responses: Mutex::new(VecDeque::new()),
     }))
     .await;
@@ -419,6 +419,16 @@ async fn mode_switch_and_diff_endpoint() {
     assert_eq!(updated["model"], "gemini-test");
     assert_eq!(updated["max_turns"], 17);
     assert_eq!(updated["permission_mode"], "WorkspaceWrite");
+    assert_eq!(updated["provider_source"], "runtime_override");
+    assert_eq!(updated["model_source"], "runtime_override");
+    let persisted = tokio::fs::read_to_string(cwd.join(".vakcoder/config.toml"))
+        .await
+        .unwrap();
+    assert!(persisted.contains("provider = \"google\""));
+    assert!(persisted.contains("model = \"gemini-test\""));
+    let restarted = Core::new_with_trust(cwd, true).unwrap();
+    assert_eq!(restarted.effective_provider(), "google");
+    assert_eq!(restarted.effective_model(), "gemini-test");
 
     // Tempdir is not a git repo: diff endpoint reports that as a value.
     let diff: serde_json::Value = client

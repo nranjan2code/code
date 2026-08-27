@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.8 — 2026-08-27
+
+### System-wide configuration authority
+
+Provider/model settings saved through the secured configuration API now
+persist atomically in the workspace configuration, report their effective
+source across health, provider, and admin endpoints, and survive process
+restart. Existing sessions continue to use their immutable frozen provider
+and model contract, with transcript metadata exposing mismatches against
+current workspace defaults. Desktop settings now describe the saved-workspace
+behavior instead of implying that changes are runtime-only.
+
 ## 0.8.7 — 2026-08-27
 
 ### Desktop tray lifecycle

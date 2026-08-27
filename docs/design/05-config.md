@@ -58,3 +58,14 @@ non-string entry warns instead of failing the whole config. `osc52`
 defaults false — clipboard mutation stays opt-in even though every use is
 an explicit Alt-Y / `/copy`. Accessibility flags render-only; they never
 alter protocol behavior or session content.
+
+## Diff note — persisted runtime preferences and frozen sessions
+
+Authenticated `/config` mutations for provider, model, max turns, permission
+mode, and theme now persist changed fields atomically in the workspace
+`.vakcoder/config.toml` before applying the live Core override. Health,
+provider discovery, and admin snapshots expose the effective source. CLI and
+task-scoped overrides remain intentionally transient. Sessions continue to
+freeze their provider/model contract at creation; runs on an existing session
+dispatch that frozen contract, so changing workspace defaults cannot silently
+rewrite historical session behavior.

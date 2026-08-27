@@ -668,9 +668,9 @@ export default function Settings() {
 
             <Show when={page() === "agent"}>
               <header><h1>Agent</h1><p>Configure the model used when starting new tasks.</p></header>
-              <div class="settings-callout"><Icon name="spark" /><div><strong>Runtime defaults</strong><span>Applied changes take effect on the next task. Add them to the project config to keep them across restarts.</span></div></div>
+              <div class="settings-callout"><Icon name="spark" /><div><strong>Saved workspace defaults</strong><span>Applied changes are persisted to this workspace and take effect for new tasks. Existing tasks retain their frozen provider/model contract.</span></div></div>
               <Group title="Model">
-                <Row title="Provider" description={currentProviderInfo()?.env_var ? `Authenticated via ${currentProviderInfo()?.env_var}` : "The API provider used for new sessions."}>
+                <Row title="Provider" description={`${currentProviderInfo()?.env_var ? `Authenticated via ${currentProviderInfo()?.env_var}` : "The API provider used for new sessions."} · saved source: ${config()?.provider_source ?? "unknown"}`}>
                   <select
                     class="settings-input"
                     value={provider()}
@@ -688,7 +688,7 @@ export default function Settings() {
                 </Row>
                 <Row
                   title="Model"
-                  description={catalogNote() ?? `${catalog().length} models available for this key.`}
+                  description={catalogNote() ?? `${catalog().length} models available for this key. Saved source: ${config()?.model_source ?? "unknown"}.`}
                 >
                   <Show
                     when={!customModel()}

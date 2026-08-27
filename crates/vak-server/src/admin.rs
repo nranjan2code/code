@@ -452,6 +452,8 @@ pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serd
     Json(serde_json::json!({
         "provider": state.core.effective_provider(),
         "model": state.core.effective_model(),
+        "provider_source": state.core.provider_source(),
+        "model_source": state.core.model_source(),
         "max_turns": state.core.effective_max_turns(),
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
         "theme": state.core.effective_theme(),

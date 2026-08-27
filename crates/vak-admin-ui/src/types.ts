@@ -52,6 +52,8 @@ export interface HealthInfo {
 export interface ConfigInfo {
   provider: string;
   model: string;
+  provider_source?: string;
+  model_source?: string;
   max_turns: number;
   permission_mode: string;
   theme: string;
