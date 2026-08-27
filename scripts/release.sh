@@ -7,7 +7,7 @@
 #   release.json                the update feed (schema 2)
 #
 # Usage: scripts/release.sh [--base-url URL] [--allow-dirty] [--no-build]
-#                          [--skip-checks]
+#                          [--skip-checks] [--test-timeout SECONDS]
 #
 # --base-url is where the artifacts will be served from; the feed records
 # <base-url>/<version>/<component>. It defaults to a localhost URL so the
@@ -22,6 +22,7 @@ BASE_URL=""
 ALLOW_DIRTY=false
 BUILD=true
 SKIP_CHECKS=false
+TEST_TIMEOUT="${VAKCODER_TEST_TIMEOUT:-900}"
 
 while (($# > 0)); do
     case "$1" in
@@ -29,6 +30,7 @@ while (($# > 0)); do
         --allow-dirty) ALLOW_DIRTY=true ;;
         --no-build) BUILD=false ;;
         --skip-checks) SKIP_CHECKS=true ;;
+        --test-timeout) TEST_TIMEOUT="${2:-900}"; shift ;;
         -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) printf 'unknown option: %s\n' "$1" >&2; exit 2 ;;
     esac
@@ -44,12 +46,35 @@ VERSION="$(workspace_version)"
 printf '== gates ==\n'
 "$ROOT_DIR/scripts/check-version.sh"
 
+# Bound the test gate. crates/vak-server/tests/gateway.rs currently
+# deadlocks (every test in it blocks on one mutex), so an unbounded
+# `cargo test --workspace` never returns. A release must fail loudly on
+# that rather than hang a terminal overnight.
+run_bounded() {
+    local seconds="$1" label="$2"; shift 2
+    "$@" &
+    local pid=$! waited=0
+    while kill -0 "$pid" 2>/dev/null; do
+        if ((waited >= seconds)); then
+            kill -9 "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            printf '\nerror: %s exceeded %ss and was killed.\n' "$label" "$seconds" >&2
+            printf 'If it hung rather than ran slow, that is a defect to fix, not to wait out.\n' >&2
+            return 1
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    wait "$pid"
+}
+
 if [[ "$SKIP_CHECKS" != true ]]; then
     cargo fmt --all -- --check
     printf '  ✓ %-44s clean\n' "cargo fmt"
     cargo clippy --workspace --all-targets -- -D warnings
     printf '  ✓ %-44s clean\n' "cargo clippy"
-    cargo test --workspace --quiet
+    run_bounded "$TEST_TIMEOUT" "cargo test --workspace" \
+        cargo test --workspace --quiet
     printf '  ✓ %-44s passing\n' "cargo test"
 fi
 
