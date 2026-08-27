@@ -154,7 +154,7 @@ pub fn install(service: Service, _cfg: &OpsConfig) -> Result<(), String> {
     }
 }
 
-/// Stop and deregister. Files under ~/.vakcoder are never touched.
+/// Stop and deregister. Runtime data under the data home is never touched.
 pub fn uninstall(service: Service, cfg: &OpsConfig) -> Result<(), String> {
     stop(service, cfg);
     #[cfg(target_os = "macos")]

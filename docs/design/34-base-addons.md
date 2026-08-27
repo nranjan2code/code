@@ -13,7 +13,7 @@ architectures.
 | `vak-tui` | terminal input and rendering | `vak-client` HTTP/SSE |
 | `vak-desktop` | native shell and rendering | secured Runtime router |
 | admin SPA | browser presentation | `/admin/api` on `vak-server` |
-| channel adapters | transport ingress/egress | Runtime commands and delivery |
+| external channel adapters | transport ingress/egress | Runtime commands and delivery |
 
 No client opens SQLite, session JSONL, blobs, or secrets. No client constructs
 an agent or invokes a tool. The Runtime admits runs, freezes their contract,
@@ -56,5 +56,5 @@ scripts/build-install.sh --with-tui --with-desktop
 `--no-service` keeps artifact tests isolated. All clients must complete the
 authenticated `/version` handshake and use the same project/session/run IDs.
 The release gate exercises CRUD, streaming, cancellation, approval revocation,
-backup/restore, and clean shutdown across CLI, TUI, desktop, admin, and channel
-adapters.
+backup/restore, and clean shutdown across CLI, TUI, desktop, admin, and
+external delivery adapters.

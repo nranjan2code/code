@@ -21,15 +21,8 @@ conditionals only. It cannot execute code, read files, call tools, or access a
 secret. User and trusted-project template files are layered by ID; untrusted
 project files are ignored.
 
-```toml
-[templates.compact-result]
-revision = 2
-format = "{title}\n\n{body}"
-
-[channels.webhook]
-template = "compact-result"
-max_chars = 3500
-```
+External adapters may choose a `DeliveryProfile` and template when they
+consume a packet. Those adapter settings are not Runtime configuration.
 
 Allowed slots are `{title}`, `{body}`, `{source_markdown}`, `{block_count}`,
 and `{metadata.KEY}`. The source ledger remains the complete answer; a

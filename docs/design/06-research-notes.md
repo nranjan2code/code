@@ -3,6 +3,10 @@
 Distilled 2026-08 from deep study of Claude Code, Codex CLI, OpenCode, pi,
 vakyartha (sibling project), and DeepSeek Harness.
 
+The systems named here are research inputs, not vakcoder modules. Their
+historical features do not create Runtime entry points or alternate state
+owners; the current implementation is defined by docs 00 and 36.
+
 ## Claude Code — lifecycle control plane
 - ~30 hook events with matcher syntax; 5 handler types. Runtime keeps the
   supported lifecycle surface intentionally small and explicit.

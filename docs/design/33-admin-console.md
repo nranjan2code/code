@@ -1,7 +1,8 @@
 # 33 — Admin console
 
 The admin console is the browser presentation of the same authenticated
-Runtime API used by CLI, TUI, desktop, and channels. It is embedded in
+Runtime API used by CLI, TUI, and desktop. External delivery adapters consume
+Runtime packets separately. The console is embedded in
 `vak-server`; it does not add a data store or privileged execution path.
 
 ## Architecture
@@ -22,10 +23,11 @@ the server; the Runtime validates and audits each one before dispatch.
 
 ## Authentication
 
-Browser login posts the gateway token to `/admin/login`; the server sets an
-HttpOnly, SameSite=Strict `vak_session` cookie. CLI and native clients use the
+Browser login posts the gateway token to `/auth/login`; the server sets an
+HttpOnly, SameSite=Strict `vakcoder_session` cookie. CLI and native clients use the
 same token as a bearer credential. `/health`, static assets, and login are the
-only unauthenticated routes. Failed authentication is rate limited and audited.
+only unauthenticated routes. Authentication failures return an error and do
+not create Runtime state.
 
 ## Views and commands
 

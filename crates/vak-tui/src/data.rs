@@ -16,6 +16,7 @@ impl ClientData {
     pub async fn connect(url: &str, token: &str, root: String) -> Result<Self, String> {
         let client = Client::new(url, token).map_err(error)?;
         client.health().await.map_err(error)?;
+        client.version().await.map_err(error)?;
         let project = client
             .projects()
             .await

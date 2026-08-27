@@ -38,7 +38,7 @@ pub struct ServiceSpec {
     pub name: &'static str,
     pub bin_path: PathBuf,
     pub args: Vec<String>,
-    /// Stable log destination under `~/.vakcoder/logs`.
+    /// Stable log destination under the platform logs directory.
     pub log_path: PathBuf,
 }
 
@@ -117,7 +117,7 @@ fn xml_escape(s: &str) -> String {
 
 /// launchd property list: RunAtLoad + KeepAlive, stdout/stderr to the stable
 /// log, and deliberately no EnvironmentVariables block (secrets come from
-/// `~/.vakcoder/.env`, loaded by the binary itself).
+/// `<data_home>/.env`, loaded by the binary itself).
 pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
     let mut prog_args = String::new();
     let bin = xml_escape(&spec.bin_path.to_string_lossy());
@@ -615,7 +615,7 @@ pub fn status_specs(
 }
 
 /// Stop + unload + delete the named units. Missing units are already
-/// uninstalled; nothing under `~/.vakcoder` is touched.
+/// uninstalled; nothing under the Runtime data home is touched.
 pub fn services_uninstall(
     names: &[&str],
     paths: &Paths,

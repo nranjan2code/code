@@ -13,8 +13,8 @@ result is typed data with an `is_error` flag and is recorded in the run path.
 ## Flows
 
 Project flow definitions live under `.vakcoder/flows`. Runtime discovers and
-validates them, then admits each run with the same session contract and
-authorizes every effectful node through the broker.
+validates them, then admits a normal run with the same session contract. Any
+effect requested by that run still goes through the broker.
 
 ## Skills and templates
 

@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 0.8.x   | Yes       |
-| < 0.8   | No        |
+| 0.9.x   | Yes       |
+| < 0.9   | No        |
 
 ## Reporting a Vulnerability
 
@@ -15,7 +15,7 @@ responsibly:
 1. **Do not** open a public GitHub issue for security vulnerabilities.
 2. Email the maintainers at the address listed in `Cargo.toml` or open a
    **private** security advisory at
-   <https://github.com/anomalyco/vakcoder/security/advisories/new>.
+   <https://github.com/vakcoder/vakcoder/security/advisories/new>.
 3. Include: description, steps to reproduce, potential impact, and any
    suggested fix.
 4. You will receive an initial acknowledgement within 72 hours.
@@ -36,8 +36,9 @@ responsibly:
 5. **Abort preserves partial output.** Cancellation tokens thread through
    every async call.
 6. **Unsafe is denied** workspace-wide except process-group kill.
-7. **Transient provider failures retry within the frozen route ladder.**
-   Retries honor `Retry-After`; never retry user aborts.
+7. **Provider failures are typed and durable.** Network, overload, parse, and
+   abort outcomes remain attached to the run; user aborts never become a new
+   provider request.
 8. **Secrets never enter git.** API keys live in `.env` (project) or
    the user `.env` at `data_home()/.env` (gitignored).
 9. **Model catalogues are discovered, never hardcoded.** The set of models
@@ -49,7 +50,7 @@ responsibly:
 12. **Secrets are not ambient tool state.** Bash subprocesses
     receive a small operational environment allowlist.
 13. **FullAccess is an explicit human trust decision.** Never selected
-    automatically after a denial or retry.
+    automatically after a denial or failure.
 14. **Model tools cross a broker boundary.** Built-in tools execute through
     a versioned broker protocol in a disposable process group.
 15. **Unattended surfaces fail closed.** Gateway ships disabled; auto-denies
@@ -65,56 +66,23 @@ responsibly:
   workspace and explicit temp paths.
 - Every built-in model tool crosses a versioned JSON broker protocol into a
   disposable child process group.
-- Docker backend: no network, read-only root, bounded tmpfs, CPU/memory/PID
-  ceilings, dropped capabilities, `no-new-privileges`.
-
-### Rate Limiting
-
-HTTP inbound requests are rate-limited per source IP:
-
-| Endpoint                    | Default Limit |
-|-----------------------------|---------------|
-| `POST /gateway/inbound`     | 30 req/min    |
-| `POST /sessions`            | 5 req/min     |
-| `POST /sessions/{id}/run`   | 10 req/min    |
-| `POST /admin/login`         | 20 req/min    |
-| All other POST endpoints    | 20 req/min    |
-
-Limits are configurable via `[gateway.rate_limit]` in TOML config.
-Exceeded limits return `429 Too Many Requests` with `Retry-After`.
+- Docker is not a Runtime backend in this release; selecting it fails closed
+  with a typed sandbox error rather than executing outside containment.
 
 ### Gateway Security
 
-- Gateway ships disabled; enable via `[gateway] enabled = true` (trusted
-  config) or `serve --gateway` (CLI override).
-- `chat_allowlist` restricts which `surface:chat` pairs can send inbound
-  messages. Empty list means all messages are permitted.
-- Approval gates auto-deny on unattended turns unless `[gateway] approvals`
-  is set to `"forward"` with a configured approver surface.
-- Constant-time token comparison prevents timing attacks on bearer tokens.
-- Token values are masked in stderr (only first/last 4 characters shown).
-- Browser surfaces authenticate once via `POST /admin/login`, which sets an
-  HttpOnly, SameSite=Strict session cookie; the same constant-time check
-  applies. No `Secure` flag by design (loopback/LAN-first server); do not
-  expose the port to untrusted networks without a TLS-terminating proxy.
+- Gateway is enabled explicitly with `vakcoder serve --gateway`.
+- Bearer authentication is required for every API route other than `/health`,
+  the static `/admin` assets, and `POST /auth/login`.
+- Browser surfaces authenticate via `POST /auth/login`, which sets an
+  HttpOnly, SameSite=Strict `vakcoder_session` cookie. No `Secure` flag is set
+  because the supported default is loopback; use a TLS-terminating proxy before
+  exposing the listener to an untrusted network.
 - The `/admin` SPA shell and static assets are auth-exempt but carry no
   data; every `/admin/api/*` route requires the token or cookie.
-- Mutating admin operations are POST-only so crawlers/prefetchers cannot
-  trigger them via GET.
-
-### Security Events
-
-Security-relevant events are logged to `<home>/security-events.jsonl`:
-
-- Auth failures (wrong/missing bearer token, failed logins)
-- Rate limit triggers
-- Chat allowlist rejections
-- Config changes (permission mode, provider keys, and sandbox settings)
-- FullAccess grants/revocations
-
-The log is append-only, structured JSONL, and lives alongside session data.
-The admin console surfaces it live (`GET /admin/api/security`) and the
-event hub pushes auth-failure/rate-limit alerts to connected browsers.
+- Runtime mutations and run outcomes are recorded in the append-only
+  `<data_home>/audit/operations.jsonl` stream. The server does not create a
+  second security-event store.
 
 ## Dependency Policy
 

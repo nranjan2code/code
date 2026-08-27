@@ -73,5 +73,5 @@ The client/UI smoke path proves that CLI, TUI, desktop, and admin observe one
 session and one run, including cancellation, approval resolution,
 memory/tasks CRUD, checkpoint/backup operations, and diagnostics.
 
-Detailed contracts live in docs 01–35. Those documents describe the current
+Detailed contracts live in docs 01–36. Those documents describe the current
 Runtime implementation and must not introduce a second ownership model.

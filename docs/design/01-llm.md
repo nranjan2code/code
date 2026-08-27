@@ -55,8 +55,8 @@ OPENCODE_ZEN}_BASE_URL`.
 
 There is no hardcoded model catalogue. Which models exist is a property of
 the user's key, so `models.rs` asks the provider and
-`Runtime::discover_models` memoises the answer for 5 minutes (invalidated
-whenever a key is stored or revoked).
+`Runtime::discover_models` returns the live result. Discovery is an explicit
+query; callers must not substitute a static list when it fails.
 
 | shape | providers | request | response |
 |---|---|---|---|
@@ -81,7 +81,8 @@ Keys are user-supplied and user-revocable. `Runtime::set_provider_key` writes
 runtime override and the loaded-dotenv copy, and reports `shadowed_by_env`
 when the variable is *also* exported in the real environment — that copy
 cannot be unset from inside the app, and the provider stays authenticated.
-Both paths drop the cached provider client and the discovered-model cache.
+Both paths update the secret source used by subsequent provider and discovery
+requests.
 
 Secrets live in `.env` (project) or `data_home()/.env` (user) — both are
 gitignored by convention and loaded at startup; real environment variables

@@ -1,7 +1,8 @@
 # Hosting vakcoder
 
 `vakcoder serve --gateway` runs the single Runtime authority. The CLI, TUI,
-desktop, admin console, and channel adapters are clients of that process; none
+desktop, and admin console are clients of that process; external channel
+adapters consume its authenticated delivery contract; none
 of them owns sessions, configuration, credentials, schedules, or tool
 execution.
 
@@ -10,7 +11,7 @@ execution.
 ```text
                     ┌──────────────────────────────┐
  CLI / TUI / desktop ─▶ authenticated vak-server  │
- admin / channels ────▶        │                   │
+ admin / adapters ────▶        │                  │
                               ▼                   │
                          vak-runtime              │
                     state.db + sessions + blobs    │
@@ -63,18 +64,20 @@ environment. They are injected only into the intended provider/channel worker;
 they are never ambient Bash subprocess state, configuration output, logs, or session
 content.
 
-Every request is authenticated except `/health`. Every effectful command is
+Every API request is authenticated except `/health` and the public admin
+assets/login route. Every effectful command is
 authorized by the Runtime before broker dispatch. Restricted filesystem access
 is rooted at the registered project; cancellation and capability-epoch changes
 revoke in-flight work and stale approvals.
 
-## Channels
+## External delivery adapters
 
-Channels submit inbound messages to the Runtime and receive ordered delivery
-packets from it. Delivery retries use the durable outbox; an outage does not
-create a second session or a second state owner. Configure a channel binding
-and its credential before enabling it. Silence, timeout, missing credentials,
-or an unhandled approval always fails closed.
+`vak-delivery` emits ordered packets for external adapters. The Runtime stores
+delivery jobs and their status; an adapter acknowledges delivery and owns any
+destination-specific retry policy through its transport boundary. An outage
+cannot create a second session or state owner.
+Transport credentials remain outside Runtime state and are supplied only to the
+adapter that owns the destination.
 
 ## Backups and upgrades
 

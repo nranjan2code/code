@@ -32,24 +32,16 @@ export default function OperationsPanel(props: { onNotice?: (text: string) => vo
     <Show when={error()}><div class="settings-warning"><Icon name="shield" /> {error()} <button class="settings-button" onClick={() => void refresh()}>Retry</button></div></Show>
     <Show when={loading() && !data()}><div class="operations-empty">Loading operational status…</div></Show>
     <Show when={data()}>
-      <section class="operations-hero"><div><h2>Operations</h2><p>Live health, background services, gateway bindings, flows, and spend controls.</p></div><button class="settings-button" onClick={() => void refresh()}>Refresh</button></section>
+      <section class="operations-hero"><div><h2>Operations</h2><p>Live Runtime health and managed service status.</p></div><button class="settings-button" onClick={() => void refresh()}>Refresh</button></section>
       <div class="operations-grid">
         <section class="operation-card"><header><div><h3>Runtime health</h3><p>Current execution environment</p></div><Status value={data()!.health.status} /></header>
-          <div class="operation-facts"><span><b>Provider</b>{data()!.health.provider || "—"}</span><span><b>Model</b>{data()!.health.model || "—"}</span><span><b>Sandbox</b>{data()!.health.sandbox || "—"}</span><span><b>Permission</b>{data()!.health.permission_mode || "—"}</span></div>
           <Show when={data()!.health.warnings.length}><div class="settings-warning">{data()!.health.warnings.length} configuration warning(s) need attention.</div></Show>
         </section>
         <section class="operation-card"><header><div><h3>Background services</h3><p>Managed by vak-ops</p></div><Status value={data()!.services.gateway_healthy ? "healthy" : "unreachable"} /></header>
           <div class="operation-service"><div><strong>Gateway</strong><small>{data()!.services.gateway.state}</small></div><div><button class="settings-button" onClick={() => void action("gateway", "restart")}>Restart</button><button class="settings-button" onClick={() => void action("gateway", data()!.services.gateway.state === "running" ? "stop" : "start")}>{data()!.services.gateway.state === "running" ? "Stop" : "Start"}</button></div></div>
         </section>
-        <section class="operation-card"><header><div><h3>Gateway</h3><p>Surfaces and approvals</p></div><Status value={data()!.gateway.enabled ? "enabled" : "disabled"} /></header>
-          <div class="operation-facts"><span><b>Approvals</b>{data()!.gateway.approvals.mode}</span><span><b>Pending</b>{data()!.gateway.approvals.pending}</span><span><b>Bindings</b>{data()!.gateway.bindings.length}</span></div>
-          <Show when={data()!.gateway.bindings.length} fallback={<p class="operation-muted">No surfaces are currently bound.</p>}><div class="operation-list"><For each={data()!.gateway.bindings}>{(binding) => <div><code>{binding.target}</code><small>{binding.session_id.slice(0, 8)}</small></div>}</For></div></Show>
-        </section>
-        <section class="operation-card"><header><div><h3>Flows</h3><p>Persisted run ledgers</p></div><span class="metric">{data()!.flows.reduce((sum, flow) => sum + flow.runs, 0)} runs</span></header>
-          <Show when={data()!.flows.length} fallback={<p class="operation-muted">No flow runs discovered yet.</p>}><div class="operation-list"><For each={data()!.flows}>{(flow) => <div><strong>{flow.name}</strong><small>{flow.runs} {flow.runs === 1 ? "run" : "runs"}</small></div>}</For></div></Show>
-        </section>
         <section class="operation-card doctor-card">
-          <header><div><h3>Diagnostics</h3><p>Doctor parity: health checks, runtime facts, frozen ladder</p></div>
+          <header><div><h3>Diagnostics</h3><p>Runtime health checks and facts</p></div>
             <Status value={doctor() ? (doctor()!.failures === 0 ? "ok" : `${doctor()!.failures} failing`) : "unknown"} />
           </header>
           <Show when={doctor()}>
@@ -65,17 +57,6 @@ export default function OperationsPanel(props: { onNotice?: (text: string) => vo
               </For>
             </div>
             <div class="operation-facts doctor-facts"><For each={doctor()!.facts}>{(fact) => <span title={fact}>{fact}</span>}</For></div>
-            <Show when={doctor()!.ladder}>
-              {(ladder) => (
-                <div class="doctor-ladder">
-                  <b>Frozen ladder · {ladder().objective} · {ladder().fallback_legs} fallback leg{ladder().fallback_legs === 1 ? "" : "s"}</b>
-                  <code>{ladder().rendered}</code>
-                  <Show when={ladder().annotations.length}>
-                    <For each={ladder().annotations}>{(note) => <small>{note}</small>}</For>
-                  </Show>
-                </div>
-              )}
-            </Show>
           </Show>
         </section>
       </div>

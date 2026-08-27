@@ -314,8 +314,6 @@ button.danger { background: transparent; border: 1px solid var(--red); color: va
 .feed-time { color: var(--text-faint); font-family: var(--mono); font-size: 11px; flex-shrink: 0; }
 .feed-kind { color: var(--accent); font-size: 11px; font-weight: 600; flex-shrink: 0; min-width: 90px; }
 .feed-text { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.feed li[data-type="SecurityEvent"] .feed-kind,
-.feed li[data-type="ProviderError"] .feed-kind { color: var(--red); }
 .feed li[data-type="SessionCreated"] .feed-kind { color: var(--green); }
 
 /* ---- tables ---- */
@@ -346,12 +344,6 @@ button.danger { background: transparent; border: 1px solid var(--red); color: va
 .table tbody tr:last-child td { border-bottom: none; }
 .table tbody tr { cursor: pointer; transition: background 0.1s; }
 .table tbody tr:hover { background: var(--bg-hover); }
-tr[data-kind="auth_failure"] td:nth-child(2) .chip,
-.chip[data-kind="auth_failure"] { background: rgba(239, 107, 115, 0.12); color: var(--red); }
-.chip[data-kind="rate_limit"] { background: rgba(229, 181, 103, 0.12); color: var(--amber); }
-.chip[data-kind="chat_allowlist"] { background: rgba(229, 181, 103, 0.12); color: var(--amber); }
-.chip[data-kind="config_change"],
-.chip[data-kind="provider_key_change"] { background: var(--accent-soft); color: var(--accent); }
 
 /* ---- chips ---- */
 

@@ -6,23 +6,23 @@ second roadmap or an alternate architecture.
 ## Runtime acceptance
 
 - projects, sessions, runs, tasks, approvals, memory, skills, checkpoints,
-  backups, flows, and evaluations use Runtime-owned IDs and CRUD;
+  backups, flow definitions, and evaluations use Runtime-owned IDs and CRUD;
 - session ledgers are append-only and reconstruct every model-visible input;
 - provider streams emit delta plus snapshot and preserve partial output on
   cancellation;
 - route ladders, budgets, permission modes, sandboxes, and capability epochs are
   frozen at admission;
 - every effect is brokered, authorized, leased, audited, and cancel-aware;
-- gateway singleton, channel delivery, approval forwarding, and outbox replay
-  share the same Runtime authority.
+- gateway singleton, delivery jobs, and approval handling share the same
+  Runtime authority; external adapters keep only transport-local state.
 
 ## Surface acceptance
 
-CLI, TUI, desktop, admin, and channels authenticate to the same
-`vak-server` contract. Each can observe a common project/session/run, submit a
-prompt, render streaming output, cancel a run, resolve an approval, inspect
-memory/tasks/config, and report typed errors. None creates local state when the
-Runtime is unavailable.
+CLI, TUI, desktop, and admin authenticate to the same `vak-server` contract.
+Each can observe a common project/session/run, submit a prompt, render
+streaming output, cancel a run, and report typed errors. The interactive TUI and
+desktop also resolve approval requests. External delivery adapters consume
+Runtime packets and never create local state when the Runtime is unavailable.
 
 ## Release gate
 

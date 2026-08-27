@@ -13,7 +13,7 @@ program files, state directories, or protocols.
 | `vakcoder` | Runtime process, CLI, gateway, embedded admin assets | a second state store or UI agent loop |
 | `vak-tui` | terminal presentation and user input | sessions, config, credentials, or effects |
 | `vak-desktop` | native shell and desktop presentation | an embedded Runtime or shell executor |
-| channel adapters | inbound/outbound transport | session state or approval policy |
+| external channel adapters | inbound/outbound transport | session state or approval policy |
 
 Every client authenticates, performs the `/version` handshake, and sends typed
 commands through the Runtime API. The Runtime is the only component allowed to

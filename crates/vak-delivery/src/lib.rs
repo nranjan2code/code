@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod client;
-pub mod outbox;
 pub mod telegram;
 pub mod templates;
 

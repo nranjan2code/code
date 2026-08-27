@@ -1,15 +1,16 @@
 # 27 — Runtime governance
 
 This document records the governance contracts implemented by the greenfield
-Runtime. Runtime owns admission, frozen provider routing, budget checks,
-capability epochs, cancellation, terminal status, and append-only operational
-receipts.
+Runtime. Runtime owns admission, the frozen provider/model contract, budget
+checks, capability epochs, cancellation, terminal status, and append-only
+operational receipts.
 
 Every run is admitted once with a complete immutable session contract. The
-provider/model ladder is discovered from configured credentials and frozen
-into that contract. Retries may walk only that ladder. Permission changes
-revoke the old capability epoch before new work is admitted. Cancellation
-preserves partial output and persists exactly one terminal result.
+provider/model selection supplied by the caller is frozen into that contract;
+provider model discovery is a separate explicit Runtime query and is never a
+fallback catalogue. Permission changes revoke the old capability epoch before
+new work is admitted. Cancellation preserves partial output and persists
+exactly one terminal result.
 
 The CLI, TUI, desktop, admin console, HTTP gateway, and delivery adapters
 submit the same typed commands and consume the same event stream. No surface

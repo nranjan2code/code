@@ -87,14 +87,12 @@ export function opsAction(
 }
 
 export interface OpsDiagnostics {
-  health: { status: string; provider: string; model: string; sandbox: string; permission_mode: string; warnings: string[] };
+  health: { status: string; warnings: string[] };
   services: OpsStatusShape;
-  gateway: { enabled: boolean; bindings: { target: string; session_id: string }[]; approvals: { mode: string; approver?: string | null; pending: number } };
-  flows: { name: string; runs: number }[];
 }
 
 export function opsDiagnostics(): Promise<OpsDiagnostics> {
-  return Promise.all([health(), opsStatus(), listTasks()]).then(([h, services, tasks]) => ({ health: h, services, gateway: { enabled: services.gateway_healthy, bindings: [], approvals: { mode: "runtime", pending: 0 } }, flows: tasks.tasks.map((task) => ({ name: task.name, runs: 0 })) }));
+  return Promise.all([health(), opsStatus()]).then(([h, services]) => ({ health: h, services }));
 }
 
 // ---- learning (memory notes + skill proposals) -------------------------------
@@ -260,8 +258,24 @@ export function answerApproval(
 }
 
 export function health(): Promise<Health> {
-  // /health is intentionally open; still send the header for consistency.
-  return req<{ status: string }>("/health").then((h) => ({ status: h.status, provider: "", model: "", permission_mode: "ReadOnly", sandbox: "seatbelt", context_window: 0, cwd: "", warnings: [] }));
+  // /health is intentionally open; configuration is read separately because
+  // the health endpoint must not become a second configuration authority.
+  const config = projectId ? getConfig().catch(() => null) : Promise.resolve(null);
+  return Promise.all([req<{ status: string }>("/health"), config]).then(([h, c]) => ({
+    status: h.status,
+    provider: c?.provider,
+    model: c?.model,
+    permission_mode: c?.permission_mode,
+    sandbox: c?.sandbox,
+    context_window: c?.context_tokens,
+    cwd: projectRoot || undefined,
+    warnings: c?.warnings,
+  }));
+}
+
+/** Complete the Runtime protocol handshake before any desktop data request. */
+export function version(): Promise<{ version: string }> {
+  return req<{ version: string }>("/version");
 }
 
 export function setPermissionMode(mode: string): Promise<void> {
@@ -271,7 +285,7 @@ export function setPermissionMode(mode: string): Promise<void> {
 
 export function getConfig(): Promise<ConfigSnapshot> {
   return req<{ revision: number; config: any; warnings: string[] }>(`/config?project_id=${encodeURIComponent(projectId)}`).then((r) => { configRevision = r.revision; rawConfig = r.config; return ({
-    provider: r.config.provider.name ?? "", model: r.config.model.name ?? "", max_tokens: 0, max_turns: r.config.limits.max_turns ?? 0, permission_mode: r.config.permission.mode === "workspace_write" ? "WorkspaceWrite" : r.config.permission.mode === "full_access" ? "FullAccess" : "ReadOnly", max_retries: 0, retry_base_backoff_ms: 0, request_timeout_secs: 0, run_retry_attempts: 0, run_retry_base_backoff_ms: 0, circuit_breaker_threshold: 0, circuit_breaker_cooldown_secs: 0, context_window: 0, theme: "", bell: true, stop_policy: { enabled: false, marker_gate: false, verify_gate: false, max_blocks: 0 }, route: { objective: "", fallback_models: [], max_fallbacks: 0, quality_hints: [] }, paths: { project_config: "", sessions_home: "", cwd: projectRoot }, warnings: r.warnings,
+    provider: r.config.provider.name ?? "", model: r.config.model.name ?? "", max_turns: r.config.limits.max_turns ?? 0, permission_mode: r.config.permission.mode === "workspace_write" ? "WorkspaceWrite" : r.config.permission.mode === "full_access" ? "FullAccess" : "ReadOnly", sandbox: r.config.sandbox.backend ?? "seatbelt", context_tokens: r.config.limits.context_tokens ?? 0, budget_cents: r.config.limits.budget_cents ?? 0, warnings: r.warnings,
   }); });
 }
 
@@ -508,10 +522,6 @@ export function patchTask(id: string, patch: TaskPatch): Promise<import("./types
 
 export function deleteTask(id: string): Promise<unknown> {
   return req(`/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
-}
-
-export function runTaskNow(id: string): Promise<unknown> {
-  return req(`/tasks/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ status: "enabled" }) });
 }
 
 // ---- personal-os surfaces (docs/design/29-personal-os.md) ---------------------

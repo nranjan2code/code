@@ -227,7 +227,7 @@ export default function InboxPage() {
                             </button>
                           </Show>
                           <Show when={entry.task_id}>
-                            <button class="chip sm" title="Open scheduled tasks" onClick={() => setTasksOpen(true)}>
+                            <button class="chip sm" title="Open task definitions" onClick={() => setTasksOpen(true)}>
                               task · {entry.task_id!.slice(0, 8)}
                             </button>
                           </Show>

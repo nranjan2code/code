@@ -25,7 +25,7 @@ teardown. A second cancellation is idempotent.
 
 ## Admission contract
 
-The Runtime freezes provider/model route ladder, permission, sandbox, budget,
-system prompt, and tool catalogue in the session contract. Retries stay inside
-that frozen contract. The engine never switches providers or permissions on its
-own.
+The Runtime freezes provider/model selection, permission, sandbox, budget,
+system prompt, and tool catalogue in the session contract. The engine never
+switches providers or permissions on its own and does not create a second
+configuration path.

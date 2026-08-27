@@ -289,6 +289,7 @@ export async function loadHealth() {
   const source = api.backendUrl();
   if (!source) return;
   try {
+    await api.version();
     const next = await api.health();
     if (source === api.backendUrl()) setHealth(next);
   } catch {

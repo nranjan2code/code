@@ -1,4 +1,4 @@
-# 11 — Runtime flow execution
+# 11 — Runtime flow admission
 
 The greenfield CLI exposes only flows registered with Runtime. A surface never
 constructs or executes a private plan graph.
@@ -7,16 +7,16 @@ constructs or executes a private plan graph.
 vakcoder flow list
         │
         ├── flow check <name>  ──► Runtime validation
-        └── flow run <name>    ──► Runtime admission → brokered execution
+        └── flow run <name>    ──► Runtime validation → normal run admission
 ```
 
-Runtime validates the flow, freezes the session contract, authorizes every
-effectful node, persists node and run outcomes, and streams the same delta plus
-snapshot events used by normal prompts. A failed node is a typed terminal
-outcome; no alternate plan is silently substituted. Resume requests identify
-the existing session and are checked against the stored project and capability
-epoch before dispatch.
+Runtime validates the flow definition, then submits a normal prompt run. The
+run freezes the session contract, authorizes effects through the broker, and
+streams the same delta plus snapshot events used by normal prompts. There is no
+parallel planner or node executor. Resume requests identify the existing
+session and are checked against the stored project and capability epoch before
+dispatch.
 
 Flow definitions are read from registered project configuration. Runtime is the
-only read/write path, so CLI, TUI, desktop, admin, and channel surfaces observe
-identical flow state and audit records.
+only read/write path, so CLI, TUI, desktop, admin, and external adapters observe
+identical flow-definition state and audit records.

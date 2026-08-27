@@ -16,11 +16,15 @@ state.
 | POST | `/runs` | run admission and prompt submission |
 | POST | `/runs/:id/cancel` | cancellation by live run ID |
 | GET | `/events?run_id=:id` | ordered delta/snapshot SSE |
-| GET/POST | `/approvals` | pending gates and verdicts |
+| GET | `/approvals` | pending gates |
+| POST | `/approvals/:id/resolve` | approval verdict |
 | GET/PATCH | `/config` | effective config and revision-checked updates |
-| GET/POST/PATCH | `/memory`, `/tasks`, `/skills` | Runtime CRUD |
-| GET/POST | `/checkpoints`, `/backup` | checkpoint and backup operations |
-| GET/POST | `/flows`, `/eval` | validated flow and deterministic evaluation |
+| GET/POST/PATCH/DELETE | `/memory`, `/tasks` | Runtime CRUD |
+| GET/POST | `/skills` and `/skills/:id/{promote,reject}` | skill review operations |
+| GET/POST | `/sessions/:id/checkpoints` | checkpoint operations |
+| POST | `/backup/{export,import}` | backup operations |
+| GET | `/flows`, `/flows/:name/check` | flow discovery and validation |
+| POST | `/flows/:name/run`, `/eval` | Runtime run admission and evaluation |
 
 Every mutating route is authenticated, validated, authorized, and audited by
 Runtime. HTTP errors are typed responses; a route never silently edits local

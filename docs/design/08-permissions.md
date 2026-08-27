@@ -66,12 +66,9 @@ constrains *what the process can touch* even when allowed.
   `WorkspaceWrite` adds file-write under the **canonicalized** cwd plus
   `/private/tmp`, `/private/var/tmp`, `/dev/null`, `/dev/urandom`.
   `ReadOnly` grants no write paths at all.
-- The optional Docker backend is command-scoped: the broker rewrites the
-  validated Bash command inside its worker request, and that shell command runs
-  with no network, a read-only root, bounded tmpfs, CPU/memory/PID limits,
-  dropped capabilities, and `no-new-privileges`. File tools still use local
-  workers; a pinned Linux worker image is required before the full protocol can
-  move into the container. See `25-docker-sandbox.md`.
+- A configured Docker backend is rejected by the broker with a typed,
+  fail-closed sandbox error. This build provides no Docker execution path; the
+  supported containment backends are Seatbelt on macOS and Landlock on Linux.
 - Derived automatically from the effective permission mode
   (`full-access` ⇒ off); visible via `vakcoder config dump`
   (`sandbox = seatbelt | landlock | off`).
@@ -96,9 +93,10 @@ constrains *what the process can touch* even when allowed.
 - Structured Runtime operations (tasks, memory, checkpoints, and session
   search) are broker-owned capabilities rather than worker code and receive
   only their fixed project/session scope.
-- Static and dynamically planned Bash flow nodes evaluate the same permission
-  engine and approver before dispatching through the brokered registry. A flow
-  cannot treat a model-generated command as implicitly approved.
+- Bash requested by a normal run is evaluated by the same permission engine and
+  approver before dispatching through the brokered registry. A project flow
+  definition is validated before it admits that normal run; it cannot treat a
+  model-generated command as implicitly approved.
 - Changing permission mode through the server revokes every in-flight main and
   side run and rejects pending approvals before the new mode is reported. A
   running agent never continues with a stale, more-permissive snapshot.
@@ -111,9 +109,9 @@ constrains *what the process can touch* even when allowed.
 
 ## Enforcement boundary
 
-The local broker plus Seatbelt/Landlock path is the default boundary. Docker
-provides command-scoped containment for Bash. Missing or unverified containment
-fails closed; no effect is dispatched outside the selected policy.
+The local broker plus Seatbelt/Landlock path is the default boundary. Missing
+or unverified containment fails closed; no effect is dispatched outside the
+selected policy.
 
 ## Diff note — severity aggregation + opaque commands (this change)
 

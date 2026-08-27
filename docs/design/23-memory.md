@@ -2,14 +2,14 @@
 
 Memory is Runtime-owned data, not a client-side note system. `vak-services`
 stores memory records in `state.db`; `vak-runtime` applies scope, project, and
-deletion rules; every client uses the same CRUD and search endpoints.
+deletion rules; every client uses the same CRUD endpoints.
 
 ## Scopes and layout
 
 Each record has an ID, scope (`workspace` or `profile`), optional project ID,
 kind, tag, text, timestamps, and a soft-deletion timestamp. The authoritative
-record is in SQLite and its mutation is audited. Search indexes are projections
-and may be rebuilt without changing memory.
+record is in SQLite and its mutation is audited. Document indexes are separate
+projections and may be rebuilt without changing memory.
 
 ## Model-visible recall
 
@@ -28,6 +28,6 @@ Runtime.
 ## Safety and verification
 
 Memory text is data, never executable instruction. It cannot grant permission,
-change the route ladder, alter credentials, or bypass the broker. Tests verify
-scope isolation, deletion, search ranking, ledger logging, and consistent
-results across all clients.
+change the provider contract, alter credentials, or bypass the broker. Tests
+verify scope isolation, deletion, ledger logging, and consistent results across
+all clients.

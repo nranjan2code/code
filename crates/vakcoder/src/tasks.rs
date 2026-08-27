@@ -161,7 +161,7 @@ pub async fn run_tasks(cwd: PathBuf, action: crate::cli::TasksAction) -> i32 {
 
 fn list_remote(tasks: &[vak_client::Task]) {
     if tasks.is_empty() {
-        println!("no scheduled tasks");
+        println!("no task definitions");
         return;
     }
     for task in tasks {
@@ -333,7 +333,7 @@ fn shell_quote(path: &Path) -> String {
 }
 
 #[cfg(test)]
-fn next_fire_preview(task: &TaskDef, _now: chrono::DateTime<chrono::Local>) -> String {
+fn schedule_preview(task: &TaskDef) -> String {
     let Some(expr) = &task.schedule else {
         return "—".into();
     };
@@ -341,7 +341,7 @@ fn next_fire_preview(task: &TaskDef, _now: chrono::DateTime<chrono::Local>) -> S
         return "(disabled)".into();
     }
     if valid_cron(expr) {
-        "next scheduled run unavailable without the scheduler".into()
+        format!("cron {expr}")
     } else {
         "invalid: cron requires five fields".into()
     }
@@ -548,26 +548,26 @@ mod tests {
     }
 
     #[test]
-    fn next_fire_preview_states() {
+    fn schedule_preview_states() {
         let mut t = base_task();
         t.schedule = Some("0 7 * * 1-5".into());
         t.enabled = false;
-        assert_eq!(next_fire_preview(&t, chrono::Local::now()), "(disabled)");
+        assert_eq!(schedule_preview(&t), "(disabled)");
 
         t.enabled = true;
-        let fired = next_fire_preview(&t, chrono::Local::now());
-        assert!(fired.contains("scheduler"), "{fired}");
+        let fired = schedule_preview(&t);
+        assert_eq!(fired, "cron 0 7 * * 1-5");
 
         t.schedule = Some("0 0 31 2 *".into());
-        assert!(next_fire_preview(&t, chrono::Local::now()).starts_with("invalid"));
+        assert!(schedule_preview(&t).starts_with("invalid"));
 
         t.schedule = None;
-        assert_eq!(next_fire_preview(&t, chrono::Local::now()), "—");
+        assert_eq!(schedule_preview(&t), "—");
     }
 
     fn base_task() -> TaskDef {
         build_task_def(
-            "watchdog",
+            "metadata-task",
             None,
             Some("true"),
             None,
@@ -630,10 +630,10 @@ mod tests {
     }
 
     #[test]
-    fn weekly_digest_next_fire_lands_on_monday() {
+    fn weekly_digest_schedule_is_preserved() {
         let task = weekly_digest_task(Path::new("/opt/bin/vakcoder"));
-        let preview = next_fire_preview(&task, chrono::Local::now());
-        assert!(preview.contains("scheduler"), "{preview}");
+        let preview = schedule_preview(&task);
+        assert_eq!(preview, "cron 0 9 * * 1");
     }
 
     #[test]

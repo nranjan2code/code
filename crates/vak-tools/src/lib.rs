@@ -55,7 +55,7 @@ pub trait Tool: Send + Sync {
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput;
 
     /// What this call needs from the world while it runs. The default is
-    /// unclaimed: schedulers may run it alongside anything.
+    /// unclaimed: independent workers may run it alongside anything.
     fn claims(&self, _args: &Value) -> ResourceClaims {
         ResourceClaims::default()
     }

@@ -2,7 +2,8 @@
 
 Flows are project-local TOML definitions discovered by Runtime. The current
 contract supports listing and validating definitions, then starting a normal
-Runtime run associated with the selected flow.
+Runtime run after validation. The definition is metadata for admission; its
+nodes are not a second execution engine.
 
 ## Format
 
@@ -16,8 +17,7 @@ command = "cargo test"
 ```
 
 Runtime reports the flow name, source path, validity, and node count. A missing
-or malformed TOML file is returned as invalid data; it is not silently
-executed.
+or malformed TOML file is returned as invalid data and cannot be run.
 
 ## Interfaces
 
@@ -28,5 +28,7 @@ vakcoder flow run <name>
 ```
 
 All three commands use `vak-client` and the authenticated server. `flow run`
-reuses normal session/run admission, cancellation, event streaming, and audit;
-it cannot create a private state owner or bypass the broker.
+validates the named definition and submits the ordinary Runtime prompt
+`run flow <name>`, reusing normal session/run admission, cancellation, event
+streaming, and audit. It cannot create a private state owner or bypass the
+broker.

@@ -55,7 +55,7 @@ pub(crate) enum Command {
     },
     /// List recorded sessions for this project
     Sessions,
-    /// Static flow DAGs: list, check, run
+    /// Project flow definitions: list, check, run
     Flow {
         #[command(subcommand)]
         action: FlowAction,
@@ -117,7 +117,7 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: BackupAction,
     },
-    /// Scheduled tasks stored in ~/.vakcoder/tasks.json: CRUD without the server
+    /// Task definitions stored in Runtime SQLite state: CRUD through the server
     Tasks {
         #[command(subcommand)]
         action: TasksAction,
@@ -182,7 +182,7 @@ pub(crate) enum BackupAction {
     Export {
         /// Destination directory (must not be the vakcoder home itself)
         dir: PathBuf,
-        /// Include ~/.vakcoder/.env secrets (a WARNING.txt travels beside them)
+        /// Include <data_home>/.env secrets (a WARNING.txt travels beside them)
         #[arg(long)]
         include_secrets: bool,
     },

@@ -17,7 +17,7 @@
 
 ![An editorial illustration of vakcoder moving a coding task through an auditable ledger, permission gate, sandboxed execution, and verified patch](docs/assets/vakcoder-hero.webp)
 
-vakcoder is an open-source coding-agent runtime for people who want powerful automation **and** a system they can reason about. It combines a full-screen terminal experience, a native desktop app, a headless CLI, flows, an HTTP/SSE server, and chat gateways on top of one auditable Runtime.
+vakcoder is an open-source coding-agent runtime for people who want powerful automation **and** a system they can reason about. It combines a full-screen terminal experience, a native desktop app, a headless CLI, flows, an HTTP/SSE server, and channel-neutral delivery packets on top of one auditable Runtime.
 
 Its thesis is simple: **Codex-grade safety, pi-grade transparency, Claude Code-grade extensibility, and opencode-grade simplicity.**
 
@@ -32,9 +32,9 @@ Most coding agents make you choose between capability and legibility. vakcoder i
 | Principle | What it means in practice |
 |---|---|
 | **Model-visible means logged** | Anything sent to a model can be reconstructed from the session JSONL. |
-| **Permission before dispatch** | Agent turns, tools, flows, evals, server runs, and desktop runs all pass through the same Runtime policy engine. |
+| **Permission before dispatch** | Every effectful agent turn, tool, flow run, server run, and desktop run passes through the same Runtime policy engine. |
 | **Append-only by default** | Branching and compaction create entries; they do not rewrite history. |
-| **Failure is part of the contract** | Typed errors, bounded retries, watchdogs, circuit breakers, frozen route ladders, and preserved partial output. |
+| **Failure is part of the contract** | Typed errors, explicit cancellation, terminal outcomes, and preserved partial output. |
 | **Extensions stay extensions** | Skills, provider traits, tool workers, and flows add capability without creating another state owner. |
 | **Your models, your machine** | Use Anthropic, OpenAI, OpenRouter, OpenCode Zen, Gemini, or Ollama; model catalogues are discovered from the provider. |
 
@@ -119,7 +119,7 @@ vakcoder exec "explain this workspace" \
 - Streaming model output with both deltas and snapshots
 - Parallel tool calls scheduled in conflict-free resource waves
 - Steering while a run is active, cancellable work, and preserved partial output
-- Runtime-registered flow DAGs with typed validation and execution
+- Runtime-registered flow definitions with typed validation and Runtime-backed runs
 
 ### Safety that is architectural
 
@@ -127,7 +127,8 @@ vakcoder exec "explain this workspace" \
 - Composable `allow`, `ask`, and `deny` rules with deny taking precedence
 - Canonical workspace confinement and symlink-escape protection in restricted modes
 - Disposable built-in tool workers with bounded operational environments
-- Seatbelt on macOS, Landlock on Linux, and an opt-in no-network Docker Bash backend
+- Seatbelt on macOS and Landlock on Linux, with fail-closed behavior when the
+  selected containment backend is unavailable
 - Permission changes cancel in-flight work and reject stale approvals
 
 ### Sessions with receipts
@@ -145,7 +146,7 @@ vakcoder exec "explain this workspace" \
 - **Web admin console** at `/admin` on the secured server — Runtime-owned project, session, run, task, memory, inbox, diagnostics, cancellation, and live-event views (cookie login; see `docs/design/33-admin-console.md`)
 - Headless `exec` and `flow` commands for scripts and CI
 - HTTP + SSE server for custom clients
-- Always-on authenticated gateway with durable task and approval handling
+- Authenticated gateway with durable task and approval handling
 
 ### Multi-provider without a static catalogue
 
@@ -215,7 +216,7 @@ systemd user service, follow the [hosting guide](docs/hosting.md).
 
 ## One Runtime, many surfaces
 
-![A flat editorial diagram showing a shared auditable vakcoder core connected to terminal, desktop, server, and chat interfaces](docs/assets/vakcoder-surfaces.webp)
+![A flat editorial diagram showing a shared auditable vakcoder core connected to terminal, desktop, server, and delivery adapters](docs/assets/vakcoder-surfaces.webp)
 
 ```text
 vakcoder CLI / TUI        Tauri desktop        HTTP + SSE / gateway
@@ -246,9 +247,9 @@ and data-flow contract.
 | `workspace-write` | Reads and writes inside the canonical workspace | Sandboxed and policy-gated | Everyday coding; the default |
 | `full-access` | Unrestricted host access | Unsandboxed, still rule-gated | Explicitly trusted, supervised work |
 
-`full-access` is never selected automatically after a denial, failure, retry, prompt request, or model recommendation. Missing containment fails closed. Unattended gateway turns deny escalations unless an explicitly configured approver surface answers in time.
+`full-access` is never selected automatically after a denial, failure, prompt request, or model recommendation. Missing containment fails closed. Unattended gateway turns deny escalations unless an explicitly configured approver surface answers in time.
 
-See the [threat model](docs/design/24-agent-security.md), [permission design](docs/design/08-permissions.md), and [Docker sandbox design](docs/design/25-docker-sandbox.md) before changing security-sensitive behavior.
+See the [threat model](docs/design/24-agent-security.md), [permission design](docs/design/08-permissions.md), and [sandbox design](docs/design/25-sandbox.md) before changing security-sensitive behavior.
 
 ## Everyday commands
 
@@ -295,14 +296,16 @@ model, permission, sandbox, limits, and Runtime connection settings.
 
 ## Reliability and cost control
 
-- Transient failures retry within a route ladder frozen when the run is admitted
-- `Retry-After`, watchdog deadlines, circuit breaking, and cancel-aware endurance are built into the loop
-- A shared dispatch ceiling prevents retry multiplication across nested mechanisms
-- FinOps admission can enforce per-run, daily, and monthly spend caps
-- Every attempt is receipted, including route fallback, cancellation, and typed failure domain
-- Deterministic evals cover the loop, context integrity, broker boundary, routing, spend gates, and completion
+- Provider and tool failures remain typed values and are persisted with the run
+- Cancellation is propagated through provider and broker calls with bounded teardown
+- A single terminal run outcome is persisted even when completion and cancellation race
+- Runtime records operational mutations and run outcomes in append-only audit
+- Delivery jobs retain their source payload while an external adapter is unavailable
+- Deterministic Runtime evals provide a typed, auditable evaluation boundary;
+  the workspace test suite covers loop, context, broker, routing, spend, and
+  completion behavior
 
-The expected behavior for overloads, network loss, malformed streams, cancellation, open circuits, and other failures is documented in the [failure-handling matrix](docs/design/15-reliability.md).
+The expected behavior for overloads, network loss, malformed streams, cancellation, and other failures is documented in the [reliability contract](docs/design/15-reliability.md).
 
 ## Extending vakcoder
 
@@ -311,7 +314,8 @@ Keep the core small; add specialized behavior at the edges:
 - **Skills** load instructions progressively when relevant
 - **Tool workers** expose filesystem, shell, web, claims, and sandbox capabilities through the broker
 - **Commands** add project, plugin, or user Markdown templates
-- **Flows** define validated, resumable DAGs with typed failure policy
+- **Flows** define project-local TOML metadata that is validated before a
+  Runtime-backed run
 
 Start with the [extensibility design](docs/design/09-extensibility.md) and [flow design](docs/design/10-flows.md).
 
@@ -347,10 +351,10 @@ Read [AGENTS.md](AGENTS.md) before changing the agent loop, tool boundary, sessi
 | [Agent loop](docs/design/03-agent-loop.md) | Turns, tools, steering, scheduling, and outcomes |
 | [Sessions](docs/design/02-sessions.md) | Append-only trees, projection, compaction, and contracts |
 | [Security](docs/design/24-agent-security.md) | Threat model, trust boundaries, and priority order |
-| [Reliability](docs/design/15-reliability.md) | Retries, watchdogs, circuit breaking, and recovery |
+| [Reliability](docs/design/15-reliability.md) | Failures, cancellation, durable state, and recovery |
 | [TUI](docs/design/21-world-class-tui.md) | Interaction model, themes, keymaps, and accessibility |
 | [Desktop](docs/design/20-tauri-desktop.md) | Native client architecture and workflows |
-| [Gateway](docs/design/22-gateway.md) | Chat routing, approvals, transports, and unattended safety |
+| [Gateway](docs/design/22-gateway.md) | Authenticated transport, approvals, delivery, and unattended safety |
 | [Memory](docs/design/23-memory.md) | Cross-session recall and model-visible search |
 | [Learning loop](docs/design/26-learning.md) | Durable notes and human-reviewed skill proposals |
 | [Hosting](docs/hosting.md) | Durable local or VPS deployment |

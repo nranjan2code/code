@@ -7,9 +7,9 @@ an instruction merely by being stored.
 ## Memory
 
 The `remember` operation creates a scoped memory record through the Runtime.
-It records project/session provenance, is audited, and becomes searchable only
-according to its scope. Amend and forget use the same revision-checked CRUD
-path; forgetting creates a tombstone rather than rewriting history.
+It records project/session provenance, is audited, and is recalled only
+according to its scope. Amend and forget use the same Runtime CRUD path;
+forgetting creates a tombstone rather than rewriting history.
 
 ## Skills
 

@@ -33,11 +33,11 @@ const pages: { id: Page; label: string; icon: IconName; hint: string }[] = [
   { id: "appearance", label: "Appearance", icon: "palette", hint: "theme text density motion" },
   { id: "agent", label: "Agent", icon: "spark", hint: "provider model turns" },
   { id: "permissions", label: "Permissions", icon: "shield", hint: "access sandbox approvals" },
-  { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker" },
+  { id: "reliability", label: "Reliability", icon: "timer", hint: "failures cancellation guarantees" },
   { id: "skills", label: "Skills", icon: "spark", hint: "discovered skills proposals" },
   { id: "services", label: "Services", icon: "grid", hint: "gateway bridge tray watchdog background" },
   { id: "learning", label: "Learning", icon: "history", hint: "memory notes skill proposals review promote" },
-  { id: "advanced", label: "Advanced", icon: "tune", hint: "paths context configuration" },
+  { id: "advanced", label: "Advanced", icon: "tune", hint: "context configuration" },
 ];
 
 function Switch(props: { checked: boolean; onChange: (next: boolean) => void; label: string }) {
@@ -450,7 +450,7 @@ export default function Settings() {
                 <Row title="Keyboard shortcuts" description="See every shortcut for navigation, tasks, and workspace tools."><button class="settings-button" onClick={() => { setSettingsOpen(false); setShowShortcuts(true); }}>View shortcuts</button></Row>
               </Group>
               <Group title="Project">
-                <Row title="Current workspace" description={config()?.paths.cwd ?? ""}><span class="settings-value">Local</span></Row>
+                <Row title="Current workspace" description="The registered project selected by this desktop session."><span class="settings-value">Local</span></Row>
                 <Row title="Project configuration" description="Persistent agent and tool settings for this repository."><button class="settings-button" onClick={() => void openProjectConfig()}>Open config</button></Row>
               </Group>
             </Show>
@@ -532,7 +532,7 @@ export default function Settings() {
                   title={`${keyProvider()} — ${currentProviderInfo()?.env_var ?? "no key needed"}`}
                   description={
                     currentProviderInfo()?.requires_key
-                      ? `${currentProviderInfo()?.configured ? "Saved on this device" : "Not set yet"} · stored in ~/.vakcoder/.env with owner-only permissions. A real environment variable takes precedence.`
+                      ? `${currentProviderInfo()?.configured ? "Saved on this device" : "Not set yet"} · stored in <data_home>/.env with owner-only permissions. A real environment variable takes precedence.`
                       : `${keyProvider()} runs locally and needs no key.`
                   }
                 >
@@ -578,30 +578,13 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "reliability"}>
-              <header><h1>Reliability</h1><p>Understand how VakCoder recovers from provider and task failures.</p></header>
-              <Group title="Request recovery">
-                <Row title="Provider retries" description={`Initial backoff ${fmt(config()?.retry_base_backoff_ms ?? 0)} ms.`}><span class="metric">{config()?.max_retries}</span></Row>
-                <Row title="Request watchdog" description="Maximum time for a single provider step."><span class="metric">{config()?.request_timeout_secs}s</span></Row>
-                <Row title="Run endurance" description={`Backoff starts at ${fmt(config()?.run_retry_base_backoff_ms ?? 0)} ms.`}><span class="metric">{config()?.run_retry_attempts} attempts</span></Row>
+              <header><h1>Reliability</h1><p>Runtime keeps failures typed, cancellation explicit, and terminal outcomes durable.</p></header>
+              <Group title="Run guarantees">
+                <Row title="Provider and tool failures" description="Errors stay typed and do not become implicit permission grants."><span class="settings-status good">Fail closed</span></Row>
+                <Row title="Cancellation" description="Provider and broker calls receive the run cancellation token; partial output is retained."><span class="settings-status good">Propagated</span></Row>
+                <Row title="Terminal outcome" description="Runtime persists one terminal status even when completion and cancellation race."><span class="settings-status good">Exactly one</span></Row>
+                <Row title="Capability revocation" description="Permission or sandbox changes cancel old-epoch work and reject stale approvals."><span class="settings-status good">Enforced</span></Row>
               </Group>
-              <Group title="Circuit breaker">
-                <Row title="Failure threshold" description="Blind failures before new requests fail fast."><span class="metric">{config()?.circuit_breaker_threshold}</span></Row>
-                <Row title="Cooldown" description="Time before a half-close probe is allowed."><span class="metric">{config()?.circuit_breaker_cooldown_secs}s</span></Row>
-                <Row title="Completion guard" description="Blocks premature completion and asks the agent to verify work."><span class="settings-status good">{config()?.stop_policy.enabled ? "Enabled" : "Disabled"}</span></Row>
-              </Group>
-              <Group title="Route ladder">
-                <Row title="Objective" description={`How fallback legs are ordered: ${config()?.route.objective === "auto" ? "derived from request demand (utility / balanced / quality-critical)." : `fixed to ${config()?.route.objective}.`}`}><span class="metric">{config()?.route.objective}</span></Row>
-                <Row
-                  title="Cross-model fallbacks"
-                  description={config()?.route.fallback_models.length
-                    ? `Allowed models, admitted only when discovery reaches them: ${config()!.route.fallback_models.join(", ")}.`
-                    : "Same model on other providers only. Add route.fallback_models in project config to allow named alternates."}
-                >
-                  <span class="metric">{config()?.route.fallback_models.length ?? 0}</span>
-                </Row>
-                <Row title="Ladder length cap" description="Maximum frozen legs per session, including your primary choice — the primary never loses its head position."><span class="metric">{config()?.route.max_fallbacks}</span></Row>
-              </Group>
-              <button class="settings-button" onClick={() => void openProjectConfig()}>Tune in project config</button>
             </Show>
 
             <Show when={page() === "services"}>
@@ -684,7 +667,7 @@ export default function Settings() {
                 </Show>
                 <Show
                   when={tierNotes().length > 0}
-                  fallback={<Row title={tier() === "profile" ? "No profile notes yet" : "No notes yet"} description={tier() === "profile" ? "Add a preference once and every workspace benefits." : "Chat with reflection enabled — durable decisions land here as plain markdown you can edit in ~/.vakcoder/memory/."}><span class="settings-status good">{tier() === "profile" ? "Ready" : "Ready"}</span></Row>}
+                  fallback={<Row title={tier() === "profile" ? "No profile notes yet" : "No notes yet"} description={tier() === "profile" ? "Add a preference once and every workspace benefits." : "Chat with reflection enabled — durable decisions are stored by Runtime and remain editable through this surface."}><span class="settings-status good">{tier() === "profile" ? "Ready" : "Ready"}</span></Row>}
                 >
                   <div class="memory-list" aria-label="Memory notes">
                     <For each={tierNotes().slice().reverse()}>
@@ -744,15 +727,15 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "advanced"}>
-              <header><h1>Advanced</h1><p>Inspect effective limits, paths, and configuration diagnostics.</p></header>
+              <header><h1>Advanced</h1><p>Inspect effective limits and configuration diagnostics.</p></header>
               <Group title="Context">
-                <Row title="Context window" description="Maximum model input budget before compaction."><span class="metric">{fmt(config()?.context_window ?? 0)} tokens</span></Row>
-                <Row title="Maximum output" description="Provider output-token ceiling."><span class="metric">{fmt(config()?.max_tokens ?? 0)} tokens</span></Row>
+                <Row title="Context limit" description="Maximum model input tokens configured for a run."><span class="metric">{fmt(config()?.context_tokens ?? 0)} tokens</span></Row>
+                <Row title="Turn limit" description="Maximum agent turns configured for a run."><span class="metric">{fmt(config()?.max_turns ?? 0)}</span></Row>
+                <Row title="Budget ceiling" description="Configured run budget in cents; zero means unset."><span class="metric">{fmt(config()?.budget_cents ?? 0)}¢</span></Row>
               </Group>
-              <Group title="Paths">
-                <Row title="Project config" description={config()?.paths.project_config ?? ""}><button class="settings-button" onClick={() => void openProjectConfig()}>Open</button></Row>
-                <Row title="Global config" description={config()?.paths.global_config ?? "Not configured"}><button class="settings-button" onClick={() => void navigator.clipboard.writeText(config()?.paths.global_config ?? "")}>Copy path</button></Row>
-                <Row title="Session store" description={config()?.paths.sessions_home ?? ""}><button class="settings-button" onClick={() => void navigator.clipboard.writeText(config()?.paths.sessions_home ?? "")}>Copy path</button></Row>
+              <Group title="Configuration">
+                <Row title="Sandbox" description="The effective containment backend is recorded in each session contract."><span class="settings-value">{config()?.sandbox}</span></Row>
+                <Row title="Project config" description="Edit the registered project's .vakcoder/project.toml through the Runtime boundary."><button class="settings-button" onClick={() => void openProjectConfig()}>Open</button></Row>
               </Group>
               <Group title="Data & backup">
                 <div class="settings-callout"><Icon name="shield" /><div><strong>Backups copy your VakCoder home.</strong><span>Sessions, memory, config, and checkpoints go to a plain folder you choose. Secrets are excluded unless you explicitly opt in below.</span></div></div>

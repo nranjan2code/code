@@ -1,8 +1,8 @@
 # 31 — Network resilience
 
 Network behavior is separated by ownership. Local clients use the loopback
-gateway; provider calls use the LLM retry/breaker contract; delivery records
-are persisted before an external adapter is invoked.
+gateway; provider calls return typed failures; delivery records are persisted
+before an external adapter is invoked.
 
 ## Local plane
 
@@ -14,11 +14,10 @@ the Runtime process.
 
 ## Inference plane
 
-`vak-llm` classifies provider failures, retries only within the route ladder
-captured in the session contract, honors retry delays under a watchdog, and
-records attempt receipts. Blind network failures feed the circuit breaker;
-informed overload responses are paced by the retry policy. Cancellation stops
-the attempt and preserves the partial result.
+`vak-llm` classifies provider failures into typed values. Runtime records the
+failure and preserves partial output; the current request path does not add a
+hidden retry or provider-switching loop. Cancellation stops the attempt and
+preserves the partial result.
 
 ## Delivery plane
 
@@ -26,10 +25,11 @@ the attempt and preserves the partial result.
 projection or external adapter can claim a pending job, mark it delivered, or
 schedule a retry with an error and next-attempt timestamp. The source payload
 is retained for deterministic replay and the inbox record remains available
-when no external adapter accepts the packet.
+when no external adapter accepts the packet. Delivery retry decisions belong to
+the adapter that owns the destination.
 
 ## Failure contract
 
-No network failure mutates session history outside an append-only event, changes
-the committed route ladder, or silently drops an answer. Every failed request
-returns a typed error and leaves enough state for inspection or retry.
+No network failure mutates session history outside an append-only event or
+silently drops an answer. Every failed request returns a typed error and leaves
+enough state for inspection by the owning Runtime or adapter.

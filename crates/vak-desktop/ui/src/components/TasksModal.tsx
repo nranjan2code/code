@@ -1,15 +1,11 @@
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   activeId,
-  isRunning,
   setTasksOpen,
-  setTranscriptViewId,
   tasksOpen,
 } from "../store";
 import * as api from "../api";
 import type { TaskDef } from "../types";
-import { relAgo } from "../time";
-import Icon from "./Icon";
 
 function fmtInterval(s: number): string {
   if (s % 3600 === 0) return `${s / 3600}h`;
@@ -28,8 +24,8 @@ const INTERVALS: [number, string][] = [
 ];
 
 /**
- * Scheduled tasks (docs/design/29-personal-os.md P2): interval or 5-field
- * cron ticks, watchdog `script:` XOR agent `prompt`, optional model pin.
+ * Runtime task definitions (docs/design/29-personal-os.md): interval or
+ * 5-field cron metadata, shell body XOR agent prompt, optional model pin.
  * Server-side `TaskDef::validate` rejections arrive as `{error}` payloads
  * and surface verbatim in the error strip.
  */
@@ -118,16 +114,6 @@ export default function TasksModal() {
     await refresh();
   };
 
-  const runNow = async (t: TaskDef) => {
-    try {
-      await api.runTaskNow(t.id);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-    await refresh();
-  };
-
   const cadence = (t: TaskDef): string =>
     t.schedule ? `cron ${t.schedule}` : fmtInterval(t.interval_secs);
 
@@ -135,7 +121,7 @@ export default function TasksModal() {
     <Show when={tasksOpen()}>
       <div class="modal-back" onClick={() => setTasksOpen(false)}>
         <div class="modal tasks-modal" role="dialog" aria-modal="true" aria-labelledby="tasks-title" onClick={(e) => e.stopPropagation()}>
-          <h3 id="tasks-title">Scheduled tasks — recurring runs in isolated worktrees</h3>
+          <h3 id="tasks-title">Task definitions</h3>
           <Show when={error()}>
             <div class="gate-err">{error()}</div>
           </Show>
@@ -145,17 +131,14 @@ export default function TasksModal() {
               <div class="task-row">
                 <span
                   class="dot"
-                  classList={{
-                    run: !!t.last_session_id && isRunning(t.last_session_id),
-                    idle: !t.enabled,
-                  }}
+                  classList={{ idle: !t.enabled }}
                 />
                 <div class="task-main">
                   <div class="task-name">
                     {t.name}
                     <span class="badge">{cadence(t)}</span>
                     <Show when={t.script}>
-                      <span class="badge" title="Watchdog script task — runs shell, not the model">script</span>
+                      <span class="badge" title="Shell task definition">script</span>
                     </Show>
                     <Show when={t.model_pin}>
                       <span class="badge" title={`Pinned model — never escalates`}>{t.model_pin}</span>
@@ -163,35 +146,8 @@ export default function TasksModal() {
                     {!t.enabled && <span class="badge">off</span>}
                   </div>
                   <div class="task-prompt" title={t.script ?? t.prompt}>{t.script ?? t.prompt}</div>
-                  <Show when={t.last_run_at || t.last_summary || t.last_session_id}>
-                    <details class="task-run">
-                      <summary>
-                        <Icon name="history" size={12} />
-                        <span>last run</span>
-                        <Show when={t.last_run_at}>{(at) => <span class="task-run-when">{relAgo(at())}</span>}</Show>
-                      </summary>
-                      <div class="task-run-body">
-                        <Show when={t.last_run_at} fallback={<Show when={!t.last_summary}><span class="task-run-none">never run</span></Show>}>
-                          <div class="task-run-line">ran {relAgo(t.last_run_at)} · {new Date(t.last_run_at!).toLocaleString()}</div>
-                        </Show>
-                        <Show when={t.last_summary}>
-                          <p class="task-run-summary">{t.last_summary}</p>
-                        </Show>
-                        <Show when={t.last_session_id}>
-                          <button
-                            class="chip sm"
-                            title={`Open the transcript of run ${t.last_session_id!.slice(0, 8)}`}
-                            onClick={() => setTranscriptViewId(t.last_session_id!)}
-                          >
-                            open transcript · {t.last_session_id!.slice(0, 8)}
-                          </button>
-                        </Show>
-                      </div>
-                    </details>
-                  </Show>
                 </div>
                 <div class="task-actions">
-                  <button class="chip sm" onClick={() => void runNow(t)}>run now</button>
                   <button class="chip sm" onClick={() => void toggle(t)}>
                     {t.enabled ? "pause" : "resume"}
                   </button>
@@ -213,11 +169,11 @@ export default function TasksModal() {
                   value={prompt()}
                   onInput={(e) => setPrompt(e.currentTarget.value)}
                 />
-                <label class="watchdog-row">
+                <label class="task-script-row">
                   <textarea
                     rows={2}
-                    class="watchdog-script"
-                    placeholder="or a watchdog script (shell; empty output = silent tick, zero tokens)…"
+                    class="task-script"
+                    placeholder="or a shell task body (stored as task metadata)…"
                     disabled={!!prompt().trim()}
                     value={script()}
                     onInput={(e) => setScript(e.currentTarget.value)}
@@ -263,7 +219,7 @@ export default function TasksModal() {
           </Show>
 
           <div class="bo-foot" style="margin-top:10px">
-            <span class="hint">runs fire while the app is open · cron uses local time · latest worktree kept for review</span>
+            <span class="hint">Stored in Runtime SQLite state · enable or disable definitions from any client</span>
             <button class="btn primary" onClick={() => setTasksOpen(false)}>Close</button>
           </div>
         </div>

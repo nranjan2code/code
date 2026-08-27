@@ -1,130 +1,63 @@
-# 15 — Reliability: QoS, crash, recovery, start/stop/resume
+# 15 — Reliability and recovery
 
-The standard failure matrix and where each case is handled.
+Reliability is a Runtime contract: state transitions are durable, cancellation
+is explicit, and every failure is returned as typed data. The Runtime does not
+hide provider retries or create a second recovery state machine.
 
-## Transient failures (QoS)
+## Provider and tool failures
 
-- **Retry with backoff**: every model step (connect + stream + collect) is
-  retried up to `max_retries` (default 3) when the error is retryable
-  (429 / 529 / network). Delay = `retry_base_backoff_ms * 2^(n-1)` with ±50%
-  jitter, capped at 30s; server-advised `Retry-After` overrides. User aborts
-  and partial-output aborts are never retried.
-- **Watchdog**: each step runs under `request_timeout` (default 600s,
-  `request_timeout_secs = 0` disables). A hung stream becomes a retryable
-  deadline error instead of hanging forever.
-- Surfaced as `AgentEvent::RetryScheduled{attempt, delay_ms, reason}` so all
-  UIs show the wait; config keys `max_retries`, `retry_base_backoff_ms`,
-  `request_timeout_secs`.
-- **Run-level endurance** (`run_retry_attempts`, default 6;
-  `run_retry_base_backoff_ms`, default 2s): a fault window can outlast one
-  step's retry budget — a sustained 429 window or slow/hung upstream used to
-  kill the whole run on first step exhaustion (found in the live chaos
-  campaign). Now, when a step exhausts its retries with a *transient* error
-  (429/529/network/truncated stream), the loop backs off cancel-aware and
-  re-attempts the same turn: nothing was committed to the ledger, so the
-  re-attempt is exact and turn budgets are not consumed by infrastructure
-  pain. An OPEN circuit breaker still fails fast — fresh evidence of a dead
-  provider must not cost the user minutes of waiting. Permanent errors
-  (auth/bad request/api) are never endured.
-- **Truncated SSE streams on OpenAI-compatible proxies**: some endpoints
-  (OpenCode Zen free tier) end the body after the last content chunk without
-  `[DONE]`/`finish_reason`. The openai-completions adapter treats a clean
-  close *with content* as de facto completion (`EndTurn`); a close with no
-  content still fails closed as `Parse`.
+`vak-llm` maps transport, authentication, rate-limit, overload, parse, and
+abort conditions to `LlmError`. `vak-agent` returns those errors to Runtime;
+the session retains any output already recorded. Brokered tools return a typed
+error result and never turn a failure into an implicit allow.
 
-## Crash & recovery
+Provider retry and route selection are not performed by the current Runtime
+request path. A failed provider step therefore produces one failed run with
+its recorded error; cancellation is never retried or replaced with another
+provider.
 
-- **Session ledgers are append-only JSONL** — a crash mid-write loses at most
-  the trailing partial line, which `SessionLog::open` skips; nothing else is
-  rewritten. Model context is always *derived* from the log, so a crashed run
-  resumes with full history.
-- **Checkpoint ledgers** write via tmp-file + rename (atomic).
-- **Flow state ledgers** persist after every node completion; `flow run
-  --resume` replays only non-completed nodes.
-- **Terminal restore**: TUI raw mode is restored by a Drop guard even on
-  panic.
+## Durable state and crash recovery
 
-## Start / stop / resume
+- Session JSONL is append-only. A complete line is either present or absent;
+  Runtime reconstructs model context from the ledger rather than a live cache.
+- SQLite transactions protect control-plane records and enforce one terminal
+  run transition. Duplicate completion or cancellation is idempotent.
+- Checkpoint manifests are stored as content-addressed blobs and restored only
+  through Runtime after project and permission checks.
+- Delivery jobs retain their source payload and status in Runtime state so an
+  external adapter can inspect and acknowledge them without mutating a session.
 
-| operation | path |
+## Start, stop, and resume
+
+| Operation | Contract |
 |---|---|
-| start | `exec`, TUI, `serve`, `flow run` |
-| stop (user) | Ctrl-C → cancel token → `Aborted{partial}`; partial assistant output is persisted |
-| stop (server) | `POST /sessions/:id/cancel` → same path + `RunFinished{cancelled}` |
-| resume (session) | `exec --session <id>` reopens the ledger; projection includes all history |
-| resume (flow) | a Runtime flow run resumes from its persisted run state |
-| shutdown (server) | ctrl_c → graceful drain (`with_graceful_shutdown`) |
+| start | `exec`, TUI, desktop, or `flow run` submits a Runtime run |
+| stop (user) | cancellation token reaches the provider and broker; partial output is retained |
+| stop (server) | `POST /runs/:id/cancel` targets the live run ID |
+| resume (session) | `exec --session <id>` reuses the existing append-only ledger |
+| flow run | validates a project definition, then submits a normal run |
+| shutdown | gateway performs graceful shutdown and removes its runtime receipt |
 
-## Circuit breaker (cross-run QoS)
+Cancellation is scoped to an admitted run, not an idle session. Runtime emits
+one terminal status and persists one terminal outcome even when cancellation
+and completion race.
 
-Per-step retries protect one run; the **circuit breaker** protects every run
-from a dead provider. Shared via Runtime across all runs of a process:
+## Capability revocation
 
-- Only **blind failures** count: network loss, watchdog deadlines, truncated
-  or malformed streams. Informed transience — 429 with `Retry-After`,
-  explicit 503/529 overload — is the server saying "try again within its retry window"; it
-  feeds endurance and must not open the circuit mid-window (found in the
-  live chaos campaign: an opened breaker killed runs the window would have
-  released after cooldown).
-- `circuit_breaker_threshold` consecutive failures (default 5) open the
-  circuit; while open, steps fail fast with the remaining cooldown instead
-  of burning their retry budget.
-- After `circuit_breaker_cooldown_secs` (default 60) the circuit half-closes:
-  one probe gets through, and any success resets the counter.
-- Run-level endurance paces its waits to the breaker's remaining cooldown,
-  so a run caught on the wrong side of an open circuit waits for the probe
-  instead of exhausting its budget on instant no-op failures.
+Changing permission or sandbox policy advances the capability epoch, cancels
+old-epoch work, waits for the revocation barrier, rejects stale approvals, and
+only then admits new work. A worker that presents a stale epoch is denied by
+the broker.
 
-Config keys: `circuit_breaker_threshold`,
-`circuit_breaker_cooldown_secs` (`0` cooldown disables opening).
+## Network boundary
 
-## Frozen route ladder
+The gateway writes its authenticated loopback endpoint to
+`runtime/gateway.json`; clients reconnect and reload Runtime snapshots after a
+disconnect. Provider network errors remain typed failures. Delivery outages
+leave the durable job pending or retryable for the owning external adapter.
 
-At session admission an ordered candidate ladder is computed (primary +
-warm-discovery fallbacks
-only — no invented ids, no network) and frozen INTO the contract header.
-Dispatch walks legs top-down on typed failure domains; the first dispatch
-of each next leg is receipted `route-fallback` and surfaced as a
-`RouteFallback` event. Ceiling, receipts, and endurance budget are shared
-across all legs, so walking the ladder is contract execution, never
-mid-contract switching (invariant 7 above carries the new wording).
+## Verification
 
-The ordering machinery provides:
-
-- **Attribution is real**: every attempt records the `(provider, model)`
-  leg that actually served or failed; evidence rows land keyed correctly
-  in `routing-evidence.jsonl` with true p50 latency.
-- **Demand-scored objectives** (`order_ladder_v2`): request difficulty
-  picks utility/balanced/quality-critical ordering; `[route].objective`
-  overrides; `[route].quality_hints` replaces hardcoded model-name bands
-  (invariant 9). The selected ordering is recorded in the contract.
-- **Cross-model fallbacks are opt-in**: `[route].fallback_models` allowlist
-  ∩ warm discovery; the user's primary never loses the head position.
-- **Diversity caps + annotations**: ⌈max_total/3⌉ seats per provider;
-  thin-chain/dominant-domain/unreachable warnings frozen into the header,
-  visible in TUI introspection.
-- **Beliefs**: domain-weighted doubt demotes flaky legs below trusted
-  peers until one success clears them; governance failures are not
-  evidence.
-
-Evidence rows land in `routing-evidence.jsonl`; unknown settlements shrink
-confidence without punishing direction. FinOps attribution follows the
-serving leg per dispatch (`CostRow.provider`).
-
-## Invariants
-
-- Retry never changes the frozen contract: same model, same request body.
-- Retries are unbounded by wall-clock but bounded by count and cancel token.
-- A denied/failed tool result is data, not an exception — the loop continues;
-  only provider-step exhaustion or required-node failure ends a run.
-
-## Network events (docs/design/31-network-resilience.md)
-
-| Event | Handling | Proof |
-|---|---|---|
-| DHCP change / network switch | local plane loopback-immune; provider reconnect logic owns recovery | Runtime/network fault tests |
-| Multi-minute provider outage | ladder retries remain bounded and auditable; breaker state is explicit | LLM stream fault tests |
-| Inference outage window | ladder legs + endurance ride it; breaker paces the half-close probe | fault_proxy scenario (`scripts/fault_proxy.py`) |
-| Hibernation / wake | bounded request watchdogs and cancellation surface a typed outcome | Runtime request tests |
-| Full restart | sessions append-only; Runtime state and task records persist | storage/runtime suites |
-| Delivery while an adapter is unavailable | delivery job remains pending/retryable with its source payload | delivery service tests |
+The workspace tests cover stream parsing, typed provider failures, cancellation
+with partial output, idempotent terminal transitions, capability revocation,
+broker containment, checkpoint/blob integrity, and delivery state transitions.

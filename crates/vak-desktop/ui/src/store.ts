@@ -76,26 +76,6 @@ export function paneSessions(): { left: string | null; right: string | null } {
 export type Notice = { kind: "error" | "info"; text: string };
 export const [notice, setNotice] = createSignal<Notice | null>(null);
 
-/**
- * Live retry state per session.
- *
- * RetryScheduled is emitted once, before the backoff sleep, and the attempt
- * itself is silent — so a transcript line saying "retrying in 0.6s" was the
- * last thing a user ever saw. Holding the state lets the header keep saying
- * "retrying" until real progress (a delta, a tool call, an end) arrives.
- */
-export interface RetryState {
-  attempt: number;
-  reason: string;
-}
-const [retryMap, setRetryMap] = createStore<Record<string, RetryState | null>>({});
-export function retryOf(id: string | null): RetryState | null {
-  return id ? (retryMap[id] ?? null) : null;
-}
-function noteRetry(id: string, state: RetryState | null) {
-  setRetryMap(id, state);
-}
-
 export interface UiPreferences {
   theme: "warm" | "dark" | "contrast";
   textScale: number;
@@ -396,36 +376,6 @@ export function applyEvent(
       reason: ev.ApprovalRequested.reason,
       resolved: null,
     });
-  } else if ("RetryScheduled" in ev) {
-    noteRetry(id, {
-      attempt: ev.RetryScheduled.attempt,
-      reason: ev.RetryScheduled.reason,
-    });
-    note(
-      b,
-      id,
-      `retrying (attempt ${ev.RetryScheduled.attempt}) in ${Math.round(ev.RetryScheduled.delay_ms / 100) / 10}s — ${ev.RetryScheduled.reason}`,
-    );
-  } else if ("RouteFallback" in ev) {
-    // The leg changed: whatever backoff the previous leg scheduled no
-    // longer describes this moment. Clear the header banner and show the
-    // frozen-contract step instead.
-    noteRetry(id, null);
-    note(
-      b,
-      id,
-      `route fallback → ${ev.RouteFallback.to_provider}/${ev.RouteFallback.to_model} (frozen ladder leg)`,
-    );
-  } else if ("ContextCompacting" in ev) {
-    note(b, id, "compacting context…");
-  } else if ("ContextCompacted" in ev) {
-    note(
-      b,
-      id,
-      `context compacted ${ev.ContextCompacted.before_tokens} → ${ev.ContextCompacted.after_tokens} tokens`,
-    );
-  } else if ("StopHookContinuation" in ev) {
-    note(b, id, `stop gate: continuing (${ev.StopHookContinuation.reason})`);
   } else if ("TurnEnd" in ev) {
     setUsageBySession(id, ev.TurnEnd.usage);
   } else if ("RunFinished" in ev) {

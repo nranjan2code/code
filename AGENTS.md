@@ -61,11 +61,11 @@ secrets; secrets never enter logs, git, prompts, or worker environments.
    `derive_messages()`; new visible input requires a ledger entry.
 2. Sessions are append-only. Branching adds a parent-linked entry; compaction
    adds an entry and never deletes history.
-3. Errors are values. Providers, tools, hooks, MCP, flows, and Runtime return
+3. Errors are values. Providers, tools, flows, delivery, and Runtime return
    typed errors/results. Production library code must not panic or use
    `unwrap`/`expect`.
 4. Every streaming event contains both delta and snapshot state.
-5. Cancellation tokens reach every async provider/tool/hook/MCP call; partial
+5. Cancellation tokens reach every async provider/tool/delivery call; partial
    output is retained and exactly one terminal run outcome is persisted.
 6. Every effectful dispatch passes permission, capability-epoch, workspace
    lease, and broker authorization immediately before execution.
@@ -78,9 +78,10 @@ secrets; secrets never enter logs, git, prompts, or worker environments.
 10. Restricted workers receive an explicit operational environment allowlist;
     provider, gateway, and connector credentials are recipient-scoped.
 11. FullAccess is explicit human authorization and is never selected by a
-    retry, denial, failure, or model suggestion.
-12. Gateway, scheduler, replay, rebuild, outbox, and delivery duties are
-    singleton-controlled and never run from a plain request-only process.
+    denial, failure, or model suggestion.
+12. Gateway ownership is singleton-controlled by the Runtime lock. Delivery
+    records and rebuildable projections are Runtime state; they never create a
+    second application authority or run from a plain request-only process.
 
 ## Surface contracts
 
@@ -88,12 +89,12 @@ secrets; secrets never enter logs, git, prompts, or worker environments.
 - `vak-client` is the typed client used by TUI, desktop, admin, and CLI.
 - `vak-tui` is a thin terminal adapter; it does not open Runtime files.
 - `vak-desktop` is a Tauri shell over the same secured Runtime API. It does
-  not start a competing server, shell, scheduler, or session store.
+  not start a competing server, shell, or session store.
 - `vak-admin-ui` is the embedded SolidJS observation/operation console.
 - `vakcoder` is the command-line adapter. CRUD/config/task/memory/checkpoint/
   backup/flow/eval operations must resolve through Runtime contracts.
-- Channels, delivery, tray, and service-control code may transport or manage
-  the Runtime process but must not own agent state.
+- External channel adapters, delivery, tray, and service-control code may
+  transport or manage the Runtime process but must not own agent state.
 
 ## Code rules
 

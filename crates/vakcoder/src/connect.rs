@@ -3,7 +3,7 @@
 //! Resolution order:
 //! 1. Explicit `--url` + `--token` flags
 //! 2. `--profile` (selects from `[connect.profiles]` in user config)
-//! 3. `[connect]` section in user config (`~/.config/vakcoder/config.toml`)
+//! 3. `[connect]` section in the Runtime config (`<data_home>/config.toml`)
 //! 4. Local `runtime/gateway.json` (pid liveness check)
 //! 5. Interactive prompt (tty only) or typed error (non-tty)
 
@@ -70,7 +70,7 @@ pub(crate) fn discover(
         prompt_onboarding()
     } else {
         Err("no connection info found; pass --url and --token, \
-             configure [connect] in ~/.config/vakcoder/config.toml, \
+             configure [connect] in <data_home>/config.toml, \
              or start a gateway with `vakcoder serve --gateway`"
             .into())
     }
@@ -124,9 +124,7 @@ fn try_local_runtime() -> Option<Resolved> {
 fn prompt_onboarding() -> Result<Resolved, String> {
     eprintln!("No connection to a vakcoder base found.");
     eprintln!("Enter the base URL and auth token to connect.");
-    eprintln!(
-        "(Find the token in the base's startup output or in ~/.config/vakcoder/config.toml)\n"
-    );
+    eprintln!("(Find the token in the base's startup output or in <data_home>/config.toml)\n");
 
     eprint!("Base URL (e.g. http://127.0.0.1:8901): ");
     let _ = std::io::Write::flush(&mut std::io::stderr());
