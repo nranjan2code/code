@@ -16,12 +16,6 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: SelfAction,
     },
-    /// Interactive terminal UI (default when no subcommand given)
-    Tui {
-        /// Trust this workspace's project config and .env without prompting
-        #[arg(long)]
-        trust: bool,
-    },
     /// Run one prompt headless and print the result
     Exec {
         prompt: String,

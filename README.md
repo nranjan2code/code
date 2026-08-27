@@ -17,7 +17,7 @@
 
 ![An editorial illustration of vakcoder moving a coding task through an auditable ledger, permission gate, sandboxed execution, and verified patch](docs/assets/vakcoder-hero.webp)
 
-vakcoder is an open-source coding-agent runtime for people who want powerful automation **and** a system they can reason about. It combines a full-screen terminal experience, a native desktop app, a headless CLI, flows, an HTTP/SSE server, and chat gateways on top of one auditable core.
+vakcoder is an open-source coding-agent runtime for people who want powerful automation **and** a system they can reason about. It combines a native desktop app, a headless CLI, flows, an HTTP/SSE server, and chat gateways on top of one auditable core.
 
 Its thesis is simple: **Codex-grade safety, pi-grade transparency, Claude Code-grade extensibility, and opencode-grade simplicity.**
 
@@ -71,13 +71,12 @@ Secrets are never forwarded as ambient Bash or MCP subprocess state. Project `.e
 ### 3. Start coding
 
 ```bash
-vakcoder                         # opens the TUI
 vakcoder exec "fix the failing test"
 vakcoder plan "add rate limiting to the API"
 vakcoder config dump             # inspect the effective configuration
 ```
 
-The default provider is Anthropic. Select another provider and one of the models discovered for your key in the TUI, through configuration, environment variables, or command flags:
+The default provider is Anthropic. Select another provider and one of the models discovered for your key through configuration, environment variables, or command flags:
 
 ```bash
 vakcoder exec "explain this workspace" \
@@ -114,7 +113,6 @@ vakcoder exec "explain this workspace" \
 
 ### An interface for every context
 
-- Retained-render TUI with Markdown, diffs, approvals, themes, Vim/Emacs editing, accessibility modes, and live subagent control
 - Tauri 2 desktop app with isolated worktrees, streaming chat, diff review, editor, PTY terminal, previews, side chats, and best-of-N comparison
 - **Web admin console** at `/admin` on the secured server — live activity feed, session transcripts with search, approval gates, config editing, prompt/steering/best-of-N from any browser (cookie login; see `docs/design/33-admin-console.md`)
 - Headless `exec` and `plan` commands for scripts and CI
@@ -136,16 +134,6 @@ vakcoder exec "explain this workspace" \
 vakcoder asks the provider for the models available to your key and caches the result briefly. It does not bake yesterday's model list into the binary.
 
 ## Choose your surface
-
-### Terminal UI
-
-```bash
-vakcoder
-# or explicitly
-vakcoder tui
-```
-
-Use `/help` inside the TUI to discover commands, `/doctor` to inspect the runtime, `/resume` and `/rewind` for session recovery, and `/keymap` to view or rebind controls.
 
 ### Headless and goal mode
 
@@ -224,7 +212,7 @@ The server exposes the same session, run, approval, transcript, diff, and steeri
 ![A flat editorial diagram showing a shared auditable vakcoder core connected to terminal, desktop, server, and chat interfaces](docs/assets/vakcoder-surfaces.webp)
 
 ```text
-vakcoder CLI / TUI        Tauri desktop        HTTP + SSE / gateway
+vakcoder CLI              Tauri desktop        HTTP + SSE / gateway
          \                    |                    /
           └──────────────── vak-core ─────────────┘
                                |
@@ -352,7 +340,6 @@ Read [AGENTS.md](AGENTS.md) before changing the agent loop, tool boundary, sessi
 | [Sessions](docs/design/02-sessions.md) | Append-only trees, projection, compaction, and contracts |
 | [Security](docs/design/24-agent-security.md) | Threat model, trust boundaries, and priority order |
 | [Reliability](docs/design/15-reliability.md) | Retries, watchdogs, circuit breaking, and recovery |
-| [TUI](docs/design/21-world-class-tui.md) | Interaction model, themes, keymaps, and accessibility |
 | [Desktop](docs/design/20-tauri-desktop.md) | Native client architecture and workflows |
 | [Gateway](docs/design/22-gateway.md) | Chat routing, approvals, transports, and unattended safety |
 | [Memory](docs/design/23-memory.md) | Cross-session recall and model-visible search |

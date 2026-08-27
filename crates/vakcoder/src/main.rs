@@ -12,12 +12,12 @@ mod backup;
 mod cli;
 mod digest;
 mod doctor;
+mod format;
 mod inbox;
 mod install;
 mod memory;
 mod tasks;
 mod update_check;
-mod wizard;
 
 use cli::{CheckpointAction, Cli, Command, FlowAction, SkillsReviewAction};
 
@@ -188,20 +188,14 @@ async fn main() {
 
     let code = match cli.command {
         None => {
-            wizard::maybe_run_wizard(&cwd);
-            let trusted = resolve_trust(&cwd, false, true);
-            if trusted {
-                vak_config::load_env_file(std::path::Path::new(".env"));
-            }
-            run_tui(cwd, trusted).await
-        }
-        Some(Command::Tui { trust }) => {
-            wizard::maybe_run_wizard(&cwd);
-            let trusted = resolve_trust(&cwd, trust, true);
-            if trusted {
-                vak_config::load_env_file(std::path::Path::new(".env"));
-            }
-            run_tui(cwd, trusted).await
+            use clap::CommandFactory as _;
+            cli::Cli::command().print_help().ok();
+            println!();
+            println!(
+                "vakcoder is a headless CLI/automation runtime. Try `vakcoder exec \"<prompt>\"` \
+                 or `vakcoder plan` — for an interactive GUI use the vak-desktop app."
+            );
+            0
         }
         Some(Command::Exec {
             prompt,
@@ -829,19 +823,6 @@ fn load_state(state_path: &PathBuf, flow_name: &str, definition_toml: &str) -> v
     }
 }
 
-async fn run_tui(cwd: PathBuf, trusted: bool) -> i32 {
-    let core = match Core::new_with_trust(cwd.clone(), trusted) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return 2;
-        }
-    };
-    print_config_warnings(&core);
-    update_check::maybe_check_update(core.config());
-    vak_tui::run(core, vak_tui::UiConfig { cwd }).await
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn run_exec(
     cwd: PathBuf,
@@ -992,7 +973,7 @@ async fn run_exec(
                 eprintln!(
                     "▸ {} {}",
                     name,
-                    vak_tui::app::summarize_args(&name, &args_json)
+                    format::summarize_args(&name, &args_json)
                 );
             }
             AgentEvent::ToolCallEnd {
@@ -1006,13 +987,9 @@ async fn run_exec(
                 if name == "edit"
                     && !is_error
                     && let Some((_, args)) = &stored
-                    && let Some(diff) = vak_tui::app::edit_diff_text(
-                        args,
-                        &vak_tui::theme::Theme::from_name("plain"),
-                        10,
-                    )
+                    && let Some(diff) = format::edit_diff_text(args, 10)
                 {
-                    for line in vak_tui::markdown::strip_ansi(&diff).lines() {
+                    for line in format::strip_ansi(&diff).lines() {
                         eprintln!("  {line}");
                     }
                 } else if is_error
