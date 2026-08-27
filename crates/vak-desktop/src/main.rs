@@ -51,11 +51,21 @@ struct DesktopPrefs {
     recent_projects: Vec<String>,
 }
 
+/// The same canonical data home the CLI, TUI, and wizard use
+/// (`vak_config::paths::data_home`, doc 32) — never a hand-rolled path.
+///
+/// This used to hardcode `~/.vakcoder`, the pre-canonical-layout location.
+/// `Core::set_provider_key` — the wizard, and the TUI's `/key` command —
+/// write credentials through `Core::user_env_file()`, which resolves to
+/// the canonical home. A desktop launch reading `.env` from the old
+/// dotdir could therefore never see a key saved anywhere else: every run
+/// failed `Core::provider()`, and with the silent-503 bug this fix's
+/// sibling change addresses, that failure was invisible. It also
+/// explains the "home migration skipped: both ... exist" warning — this
+/// function kept writing `desktop.json` and profile notes into the
+/// legacy dir, so it could never go away.
 fn vak_home() -> PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".vakcoder")
+    vak_config::paths::data_home()
 }
 
 fn prefs_path() -> PathBuf {

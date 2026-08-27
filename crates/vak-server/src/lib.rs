@@ -1323,13 +1323,100 @@ pub(crate) fn mpsc_to_broadcast(tx: broadcast::Sender<AgentEvent>) -> mpsc::Send
     tx_in
 }
 
+/// A run cannot start without a working provider credential.
+///
+/// Every one of these three call sites used to return a bare 503 with no
+/// body and nothing logged, which made "the agent never replied" a
+/// symptom with no server-side trail: a client saw an empty response, an
+/// operator reading gateway.log saw nothing at all, and diagnosing it
+/// meant reading this file. `Core::provider()` already carries a precise
+/// `CoreError::MissingAuth { env, provider }` — this puts it where an
+/// operator and a client can both actually see it.
+///
+/// The body is `{"error": <message>}`, matching every other handler in
+/// this file. A `{"error": <code>, "detail": <message>}` shape was tried
+/// first and reverted: the desktop frontend's error handling already
+/// reads `.error` as the human-readable string every other endpoint puts
+/// there, so a two-field body would have shown the user the machine code
+/// ("provider_unavailable") instead of the message that says what to fix.
+fn provider_unavailable(err: vak_core::CoreError) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let detail = err.to_string();
+    eprintln!("[run] refused: {detail}");
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        axum::Json(serde_json::json!({ "error": detail })),
+    )
+        .into_response()
+}
+
+/// `run_prompt`, `side_chat`, and `start_bestofn` all fall back to
+/// `provider_unavailable` when `Core::provider()` fails; this pins the
+/// response it produces so a regression — an empty body, or the
+/// `{"error": <code>, "detail": <message>}` shape tried and reverted
+/// above — fails a fast unit test instead of surfacing as "the agent
+/// never replied" with nothing in gateway.log to explain why.
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod provider_unavailable_tests {
+    use super::provider_unavailable;
+    use axum::response::IntoResponse as _;
+    use http_body_util::BodyExt as _;
+
+    #[tokio::test]
+    async fn reports_status_and_a_body_naming_the_missing_credential() {
+        let err = vak_core::CoreError::MissingAuth {
+            env: "ANTHROPIC_API_KEY".into(),
+            provider: "anthropic".into(),
+        };
+        let response = provider_unavailable(err).into_response();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body readable")
+            .to_bytes();
+        assert!(
+            !bytes.is_empty(),
+            "body must not be empty — that was the original bug"
+        );
+
+        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("body is JSON");
+        // Single `error` field carrying the human-readable message, same
+        // shape as every other handler in this file — not a machine code
+        // in `error` with the message hidden in a `detail` the frontend
+        // never reads.
+        let fields: Vec<&String> = body.as_object().expect("object body").keys().collect();
+        assert_eq!(
+            fields,
+            vec!["error"],
+            "body must have exactly the `error` field"
+        );
+        let message = body["error"].as_str().expect("error is a string");
+        assert!(
+            message.contains("ANTHROPIC_API_KEY"),
+            "message must name the env var to set, got: {message}"
+        );
+        assert!(
+            message.contains("anthropic"),
+            "message must name the provider, got: {message}"
+        );
+    }
+}
+
 async fn run_prompt(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<RunBody>,
-) -> StatusCode {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
     let Some(handle) = state.get(&id) else {
-        return StatusCode::NOT_FOUND;
+        return StatusCode::NOT_FOUND.into_response();
     };
     let Some(taken) = handle
         .session
@@ -1337,14 +1424,14 @@ async fn run_prompt(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .take()
     else {
-        return StatusCode::CONFLICT; // run already active
+        return StatusCode::CONFLICT.into_response(); // run already active
     };
-    if state.core.provider().is_err() {
+    if let Err(e) = state.core.provider() {
         *handle
             .session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        return StatusCode::SERVICE_UNAVAILABLE;
+        return provider_unavailable(e);
     }
 
     // Give SSE consumers a moment to attach so terminal events are seen.
@@ -1391,7 +1478,7 @@ async fn run_prompt(
             summary: "failed: goal runs do not support attachments".into(),
             is_error: true,
         });
-        return StatusCode::BAD_REQUEST;
+        return StatusCode::BAD_REQUEST.into_response();
     }
     // Goal mode (Phase H): captured before the spawn consumes `body`.
     let goal_pair = body.goal.clone().map(|g| (g, body.criteria.clone()));
@@ -1492,7 +1579,7 @@ async fn run_prompt(
         drop(steering);
     });
 
-    StatusCode::ACCEPTED
+    StatusCode::ACCEPTED.into_response()
 }
 
 #[derive(serde::Deserialize)]
@@ -3231,9 +3318,10 @@ async fn side_chat(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<SideBody>,
-) -> StatusCode {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
     let Some(handle) = state.get(&id) else {
-        return StatusCode::NOT_FOUND;
+        return StatusCode::NOT_FOUND.into_response();
     };
     let Some(mut taken) = handle
         .session
@@ -3241,14 +3329,14 @@ async fn side_chat(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .take()
     else {
-        return StatusCode::CONFLICT; // main run active
+        return StatusCode::CONFLICT.into_response(); // main run active
     };
-    if state.core.provider().is_err() {
+    if let Err(e) = state.core.provider() {
         *handle
             .session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        return StatusCode::SERVICE_UNAVAILABLE;
+        return provider_unavailable(e);
     }
 
     let tail_main = taken.tail_id().cloned();
@@ -3260,7 +3348,7 @@ async fn side_chat(
             .session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        return StatusCode::INTERNAL_SERVER_ERROR;
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let side_tx = handle.side_events_tx.clone();
     let approver: Arc<dyn Approver> = Arc::new(HttpApprover {
@@ -3321,7 +3409,7 @@ async fn side_chat(
         }
     });
 
-    StatusCode::ACCEPTED
+    StatusCode::ACCEPTED.into_response()
 }
 
 async fn side_events_sse(
@@ -3396,8 +3484,9 @@ async fn start_bestofn(
     {
         return StatusCode::CONFLICT.into_response();
     }
-    let Ok(provider) = state.core.provider() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    let provider = match state.core.provider() {
+        Ok(p) => p,
+        Err(e) => return provider_unavailable(e),
     };
 
     let n = body.n.unwrap_or(2).clamp(1, 4);

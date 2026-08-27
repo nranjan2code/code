@@ -6,6 +6,38 @@ Rebuilt the install, update, and release lifecycle around one owner, one
 version, and verifiable artifacts. Found by exercising every command
 against a real prefix rather than reading the code.
 
+### Desktop credential visibility and silent run failures
+
+Found by installing fresh, launching the desktop app, sending a message,
+and getting nothing back — then reproducing the exact request against the
+live gateway instead of guessing.
+
+- Fixed the desktop app being unable to see a provider credential saved
+  anywhere else. `vak-desktop` hardcoded its own data home as
+  `~/.vakcoder`; the wizard and the TUI's `/key` command save through
+  `Core::set_provider_key`, which writes to the canonical home
+  (`vak_config::paths::data_home()`, doc 32). Those are different
+  directories, so a key saved through either path was invisible to a
+  desktop launch — every run failed `Core::provider()` regardless of
+  whether the user had ever configured a key. This is also why "home
+  migration skipped: both ... exist" kept appearing: the desktop was
+  actively writing into the legacy dir, so migration could never
+  complete. `vak_home()` now resolves the same canonical home as every
+  other surface.
+- Fixed `/sessions/{id}/run`, `/side`, and `/bestofn` returning a bare
+  503 with an empty body and nothing logged when no provider credential
+  is configured. A client saw an empty response and an operator reading
+  gateway.log saw nothing at all — "the agent never replied" was a
+  symptom with no server-side trail. All three now return
+  `{"error": "provider auth missing: set ANTHROPIC_API_KEY for provider
+  'anthropic'"}` and log `[run] refused: ...` server-side. The message
+  reuses `CoreError::MissingAuth`'s existing text and is deliberately a
+  single `error` field, matching every other handler in this file — a
+  `{"error": <code>, "detail": <message>}` shape was tried first and
+  reverted because the desktop frontend's existing error handling reads
+  `.error` as the human-readable string, and would have shown the user a
+  machine code instead of the fix.
+
 ### Concurrency
 
 - Fixed a self-deadlock in `Core::cache_home` that hung `cargo test

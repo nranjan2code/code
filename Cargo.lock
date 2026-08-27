@@ -5880,6 +5880,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "futures",
+ "http-body-util",
  "include_dir",
  "libc",
  "reqwest 0.12.28",
