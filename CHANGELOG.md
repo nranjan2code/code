@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — Telegram document attachments and inline-keyboard approvals
+
+Telegram messages can now include a `document` (code, logs, CSVs, ...) up
+to 256 KiB; it's inlined into the prompt as a fenced text block (capped
+at 64 KiB decoded) rather than silently dropped or truncated. Forwarded
+approval gates (`[gateway] approver = "telegram:<chat>"`) now render as
+tappable inline-keyboard buttons instead of requiring a typed `yes`/`no`
+— a new `TelegramAdapter` gives the gateway's async delivery path an
+actual route to Telegram, which it never had before (a forwarded gate to
+a Telegram approver previously failed the push and denied closed with no
+adapter registered for that scheme). Button taps resolve through the
+same verdict-parsing path a typed reply already used.
+
 ## Unreleased — gateway chat allowlist fails closed
 
 `gateway.chat_allowlist` now fails closed: an empty list rejects every

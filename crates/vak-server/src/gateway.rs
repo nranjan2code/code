@@ -356,14 +356,32 @@ struct InboundAttachment {
     #[serde(default = "default_image_mime")]
     mime: String,
     data: String,
+    /// Original filename, when the channel knows it (documents only).
+    #[serde(default)]
+    filename: Option<String>,
+    /// "image" (default, vision content) or "document" (inlined as text —
+    /// there is no generic-file content block, so a document is either
+    /// text the model can read directly or it isn't included at all).
+    #[serde(default = "default_attachment_kind")]
+    kind: String,
 }
 
 fn default_image_mime() -> String {
     "image/png".into()
 }
 
-/// Compose the prompt message: text plus any vision blocks. The ledger
-/// stores exactly what the model will see (invariant 1).
+fn default_attachment_kind() -> String {
+    "image".into()
+}
+
+/// A document attachment inlined as text is capped well under typical
+/// context budgets — large uploads are meant to be summarized by the
+/// sender or excerpted, not dumped whole into every turn's prompt.
+const DOCUMENT_INLINE_MAX_BYTES: usize = 64 * 1024;
+
+/// Compose the prompt message: text, vision blocks, and inlined document
+/// attachments. The ledger stores exactly what the model will see
+/// (invariant 1).
 fn compose_prompt(text: &str, attachments: &[InboundAttachment]) -> vak_llm::Message {
     let mut blocks = Vec::new();
     if !text.is_empty() {
@@ -371,6 +389,31 @@ fn compose_prompt(text: &str, attachments: &[InboundAttachment]) -> vak_llm::Mes
     }
     for a in attachments {
         if a.data.trim().is_empty() {
+            continue;
+        }
+        if a.kind == "document" {
+            let filename = a.filename.as_deref().unwrap_or("file");
+            use base64::Engine as _;
+            let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(a.data.trim())
+            else {
+                blocks.push(vak_llm::ContentBlock::text(format!(
+                    "[attached file '{filename}' could not be decoded; not included]"
+                )));
+                continue;
+            };
+            if bytes.len() > DOCUMENT_INLINE_MAX_BYTES {
+                blocks.push(vak_llm::ContentBlock::text(format!(
+                    "[attached file '{filename}' ({} bytes) exceeds the {} KiB inline limit; \
+                     not included — send an excerpt instead]",
+                    bytes.len(),
+                    DOCUMENT_INLINE_MAX_BYTES / 1024
+                )));
+                continue;
+            }
+            let content = String::from_utf8_lossy(&bytes);
+            blocks.push(vak_llm::ContentBlock::text(format!(
+                "Attached file `{filename}`:\n```\n{content}\n```"
+            )));
             continue;
         }
         blocks.push(vak_llm::ContentBlock::image_base64(
@@ -502,10 +545,10 @@ async fn gateway_inbound(
             .into_response();
     }
     let text = body.text.trim().to_string();
-    let has_image = body.attachments.iter().any(|a| !a.data.trim().is_empty());
+    let has_attachment = body.attachments.iter().any(|a| !a.data.trim().is_empty());
     if body.surface.trim().is_empty()
         || body.chat.trim().is_empty()
-        || (text.is_empty() && !has_image)
+        || (text.is_empty() && !has_attachment)
     {
         return (
             StatusCode::BAD_REQUEST,
@@ -1186,6 +1229,57 @@ mod tests {
         assert_eq!(parse_verdict("sure thing"), None);
         assert_eq!(parse_verdict(""), None);
         assert_eq!(parse_verdict("approved!"), None);
+    }
+
+    fn document_attachment(data: &str) -> InboundAttachment {
+        InboundAttachment {
+            mime: "text/plain".into(),
+            data: data.into(),
+            filename: Some("notes.py".into()),
+            kind: "document".into(),
+        }
+    }
+
+    #[test]
+    fn small_document_is_inlined_as_a_fenced_text_block() {
+        use base64::Engine as _;
+        let encoded = base64::engine::general_purpose::STANDARD.encode("print('hi')");
+        let msg = compose_prompt("check this", &[document_attachment(&encoded)]);
+        let vak_llm::ContentBlock::Text { text } = &msg.content[1] else {
+            unreachable!("expected a text block for a document attachment");
+        };
+        assert!(text.contains("Attached file `notes.py`"));
+        assert!(text.contains("print('hi')"));
+    }
+
+    #[test]
+    fn oversized_document_is_not_inlined() {
+        use base64::Engine as _;
+        let huge = "x".repeat(DOCUMENT_INLINE_MAX_BYTES + 1);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(huge);
+        let msg = compose_prompt("check this", &[document_attachment(&encoded)]);
+        let vak_llm::ContentBlock::Text { text } = &msg.content[1] else {
+            unreachable!("expected a text block noting the oversized document");
+        };
+        assert!(text.contains("exceeds"));
+        assert!(!text.contains("xxxx"), "the raw content must not be inlined");
+    }
+
+    #[test]
+    fn image_attachment_still_becomes_vision_content() {
+        let msg = compose_prompt(
+            "look",
+            &[InboundAttachment {
+                mime: "image/png".into(),
+                data: "aGVsbG8=".into(),
+                filename: None,
+                kind: "image".into(),
+            }],
+        );
+        assert!(matches!(
+            msg.content[1],
+            vak_llm::ContentBlock::Image { .. }
+        ));
     }
 
     #[test]

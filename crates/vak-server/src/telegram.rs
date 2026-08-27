@@ -166,11 +166,47 @@ struct TelegramUpdate {
     text: String,
     /// Largest-photo file id when the message carries an image.
     photo_file_id: Option<String>,
+    /// A non-photo file attachment (code, logs, CSVs, ...).
+    document: Option<TelegramDocument>,
+    /// Set instead of the fields above when this update is an
+    /// inline-keyboard button tap rather than a message.
+    callback: Option<TelegramCallback>,
+}
+
+struct TelegramDocument {
+    file_id: String,
+    file_name: String,
+    mime_type: String,
+}
+
+/// One inline-keyboard tap: `data` is the `callback_data` set when the
+/// button was built (`"approve:<request_id>"` / `"deny:<request_id>"`).
+struct TelegramCallback {
+    callback_id: String,
+    data: String,
+    chat_id: i64,
+    sender_id: i64,
 }
 
 struct GatewayReply {
     text: String,
     delivery: Option<vak_delivery::DeliveryPacket>,
+}
+
+/// A tapped button's `callback_data` ("approve:<id>" / "deny:<id>"),
+/// translated to the verdict text a typed chat reply would produce ("yes
+/// <id>" / "no <id>") so `parse_verdict` in `gateway.rs` resolves it
+/// through the one existing path. `None` for anything else — a stale or
+/// tampered-with callback should be rejected, not guessed at.
+fn callback_data_to_verdict_text(data: &str) -> (&str, Option<String>) {
+    let mut parts = data.splitn(2, ':');
+    let verb = parts.next().unwrap_or_default();
+    let request_id = parts.next().unwrap_or_default();
+    match verb {
+        "approve" => (verb, Some(format!("yes {request_id}"))),
+        "deny" => (verb, Some(format!("no {request_id}"))),
+        _ => (verb, None),
+    }
 }
 
 fn http() -> reqwest::Client {
@@ -186,26 +222,61 @@ fn http() -> reqwest::Client {
 }
 
 impl TelegramBridge {
+    /// Documents larger than this aren't inlined into the prompt (the
+    /// gateway would have to reject or truncate them anyway); the sender
+    /// is told rather than the upload silently vanishing.
+    const DOCUMENT_MAX_BYTES: usize = 256 * 1024;
+
     /// Long-poll once, route every text through the gateway, deliver each
     /// reply. Returns the next offset even when nothing arrived.
     pub async fn tick(&self, offset: i64) -> Result<i64, String> {
         let updates = self.get_updates(offset).await?;
         let mut next = offset;
         for u in updates {
-            if u.text.trim().is_empty() && u.photo_file_id.is_none() {
+            if let Some(cb) = &u.callback {
+                if let Err(e) = self.handle_callback(cb).await {
+                    eprintln!("[telegram] callback handling failed: {e}");
+                }
+                // Resolving a gate twice is a no-op on the server side, so
+                // this is safe to advance unconditionally — unlike a text
+                // turn, replaying a button tap can't re-run a tool.
+                next = next.max(u.update_id + 1);
+                continue;
+            }
+            if u.text.trim().is_empty() && u.photo_file_id.is_none() && u.document.is_none() {
                 continue;
             }
             let mut attachments = Vec::new();
+            let mut text = u.text.clone();
             if let Some(file_id) = &u.photo_file_id {
                 match self.fetch_photo_base64(file_id).await {
                     Ok((mime, data)) => attachments.push(serde_json::json!({
-                        "mime": mime, "data": data
+                        "mime": mime, "data": data, "kind": "image"
                     })),
                     Err(e) => eprintln!("[telegram] photo download failed: {e}"),
                 }
             }
+            if let Some(doc) = &u.document {
+                match self.fetch_document_base64(doc).await {
+                    Ok(Some(data)) => attachments.push(serde_json::json!({
+                        "mime": doc.mime_type,
+                        "data": data,
+                        "filename": doc.file_name,
+                        "kind": "document",
+                    })),
+                    Ok(None) => {
+                        text = format!(
+                            "{text}\n\n[attached file '{}' exceeds the {} KiB inline limit; \
+                             not attached]",
+                            doc.file_name,
+                            Self::DOCUMENT_MAX_BYTES / 1024
+                        );
+                    }
+                    Err(e) => eprintln!("[telegram] document download failed: {e}"),
+                }
+            }
             let reply = self
-                .process(u.chat_id, u.sender_id, &u.text, &attachments)
+                .process(u.chat_id, u.sender_id, &text, &attachments)
                 .await;
             // Deliver whatever we got — an error notice beats silence, but a
             // failed send must not lose our offset progress either way.
@@ -215,6 +286,61 @@ impl TelegramBridge {
             next = next.max(u.update_id + 1);
         }
         Ok(next)
+    }
+
+    /// A tapped approval button, translated into the same verdict text the
+    /// yes/no chat flow already understands (`parse_verdict` in
+    /// `gateway.rs`) — reuses all existing gate-resolution logic instead of
+    /// adding a second path. `answerCallbackQuery` is mandatory: without it
+    /// Telegram leaves the button showing a permanent loading spinner.
+    async fn handle_callback(&self, cb: &TelegramCallback) -> Result<(), String> {
+        let (verb, Some(text)) = callback_data_to_verdict_text(&cb.data) else {
+            return self
+                .answer_callback(&cb.callback_id, "Unknown action")
+                .await;
+        };
+        let req =
+            InboundRequest::new(self, cb.chat_id.to_string(), cb.sender_id.to_string(), text)?;
+        let res = http()
+            .post(format!("{}/gateway/inbound", self.gateway_url))
+            .bearer_auth(&self.gateway_token)
+            .json(&req)
+            .send()
+            .await;
+        let toast = match res {
+            Ok(r) if r.status().is_success() => {
+                if verb == "approve" {
+                    "Approved"
+                } else {
+                    "Denied"
+                }
+            }
+            Ok(r) => {
+                eprintln!("[telegram] callback resolve returned {}", r.status());
+                "Could not resolve (see server logs)"
+            }
+            Err(e) => {
+                eprintln!("[telegram] callback resolve failed: {e}");
+                "Could not reach gateway"
+            }
+        };
+        self.answer_callback(&cb.callback_id, toast).await
+    }
+
+    async fn answer_callback(&self, callback_id: &str, text: &str) -> Result<(), String> {
+        let resp = http()
+            .post(format!(
+                "{}/bot{}/answerCallbackQuery",
+                self.api_base, self.bot_token
+            ))
+            .json(&serde_json::json!({ "callback_query_id": callback_id, "text": text }))
+            .send()
+            .await
+            .map_err(|e| format!("answerCallbackQuery: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("answerCallbackQuery returned {}", resp.status()));
+        }
+        Ok(())
     }
 
     /// One message through the gateway contract; wait for the final text.
@@ -304,7 +430,32 @@ impl TelegramBridge {
                 let Some(update_id) = item["update_id"].as_i64() else {
                     continue;
                 };
-                // Text and photo messages are routed; edits, callbacks and
+                // An inline-keyboard tap arrives as callback_query, not
+                // message; route it separately and skip straight to the
+                // next update.
+                if let Some(cq) = item.get("callback_query").filter(|v| !v.is_null()) {
+                    let Some(callback_id) = cq["id"].as_str() else {
+                        continue;
+                    };
+                    let chat_id = cq["message"]["chat"]["id"].as_i64().unwrap_or(0);
+                    let sender_id = cq["from"]["id"].as_i64().unwrap_or(chat_id);
+                    out.push(TelegramUpdate {
+                        update_id,
+                        chat_id,
+                        sender_id,
+                        text: String::new(),
+                        photo_file_id: None,
+                        document: None,
+                        callback: Some(TelegramCallback {
+                            callback_id: callback_id.to_string(),
+                            data: cq["data"].as_str().unwrap_or_default().to_string(),
+                            chat_id,
+                            sender_id,
+                        }),
+                    });
+                    continue;
+                }
+                // Text, photo, and document messages are routed; edits and
                 // other media advance the offset so they are never replayed.
                 let msg = &item["message"];
                 let chat_id = msg["chat"]["id"].as_i64();
@@ -315,7 +466,22 @@ impl TelegramBridge {
                     .and_then(|sizes| sizes.last())
                     .and_then(|largest| largest["file_id"].as_str())
                     .map(String::from);
-                let routable = chat_id.is_some() && (text.is_some() || photo_file_id.is_some());
+                let document =
+                    msg["document"]["file_id"]
+                        .as_str()
+                        .map(|file_id| TelegramDocument {
+                            file_id: file_id.to_string(),
+                            file_name: msg["document"]["file_name"]
+                                .as_str()
+                                .unwrap_or("file")
+                                .to_string(),
+                            mime_type: msg["document"]["mime_type"]
+                                .as_str()
+                                .unwrap_or("application/octet-stream")
+                                .to_string(),
+                        });
+                let routable = chat_id.is_some()
+                    && (text.is_some() || photo_file_id.is_some() || document.is_some());
                 match (chat_id, routable) {
                     (Some(chat_id), true) => out.push(TelegramUpdate {
                         update_id,
@@ -323,6 +489,8 @@ impl TelegramBridge {
                         sender_id: sender_id.unwrap_or(chat_id),
                         text: text.unwrap_or_default(),
                         photo_file_id,
+                        document,
+                        callback: None,
                     }),
                     _ => out.push(TelegramUpdate {
                         update_id,
@@ -330,6 +498,8 @@ impl TelegramBridge {
                         sender_id: 0,
                         text: String::new(),
                         photo_file_id: None,
+                        document: None,
+                        callback: None,
                     }),
                 }
             }
@@ -391,11 +561,10 @@ impl TelegramBridge {
         Ok(())
     }
 
-    /// getFile → two-step download of the largest photo variant, returned
-    /// as (mime, base64). Telegram serves files at
-    /// `{api_base}/file/bot{token}/{path}` with a 1 MiB bot-API cap — well
-    /// inside vision budgets after downscale on the sender side.
-    async fn fetch_photo_base64(&self, file_id: &str) -> Result<(String, String), String> {
+    /// getFile → two-step download of a Telegram-hosted file, returned as
+    /// raw bytes plus the `file_path` Telegram reported (its extension is
+    /// how photo mime type gets inferred below). 1 MiB bot-API cap.
+    async fn download_file(&self, file_id: &str) -> Result<(String, Vec<u8>), String> {
         #[derive(serde::Deserialize)]
         struct FileResp {
             ok: bool,
@@ -418,13 +587,6 @@ impl TelegramBridge {
             return Err("getFile not ok".into());
         }
         let path = meta.result.file_path.ok_or("getFile missing file_path")?;
-        let mime = if path.ends_with(".jpg") || path.ends_with(".jpeg") {
-            "image/jpeg"
-        } else if path.ends_with(".webp") {
-            "image/webp"
-        } else {
-            "image/png"
-        };
         let bytes = http()
             .get(format!(
                 "{}/file/bot{}/{}",
@@ -438,9 +600,40 @@ impl TelegramBridge {
             .bytes()
             .await
             .map_err(|e| format!("download body: {e}"))?;
+        Ok((path, bytes.to_vec()))
+    }
+
+    /// Largest-photo variant, downscaled by Telegram on the sender side —
+    /// well inside vision budgets. Returned as (mime, base64).
+    async fn fetch_photo_base64(&self, file_id: &str) -> Result<(String, String), String> {
+        let (path, bytes) = self.download_file(file_id).await?;
+        let mime = if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+            "image/jpeg"
+        } else if path.ends_with(".webp") {
+            "image/webp"
+        } else {
+            "image/png"
+        };
         use base64::Engine as _;
         Ok((
             mime.to_string(),
+            base64::engine::general_purpose::STANDARD.encode(bytes),
+        ))
+    }
+
+    /// A non-photo attachment (code, logs, CSVs, ...). `Ok(None)` means the
+    /// file was over `DOCUMENT_MAX_BYTES` and deliberately wasn't inlined —
+    /// the caller tells the sender rather than truncating it silently.
+    async fn fetch_document_base64(
+        &self,
+        doc: &TelegramDocument,
+    ) -> Result<Option<String>, String> {
+        let (_, bytes) = self.download_file(&doc.file_id).await?;
+        if bytes.len() > Self::DOCUMENT_MAX_BYTES {
+            return Ok(None);
+        }
+        use base64::Engine as _;
+        Ok(Some(
             base64::engine::general_purpose::STANDARD.encode(bytes),
         ))
     }
@@ -557,6 +750,31 @@ impl TelegramBridge {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn approve_button_maps_to_a_yes_verdict_with_the_request_id() {
+        assert_eq!(
+            callback_data_to_verdict_text("approve:ab12cd34"),
+            ("approve", Some("yes ab12cd34".into()))
+        );
+    }
+
+    #[test]
+    fn deny_button_maps_to_a_no_verdict_with_the_request_id() {
+        assert_eq!(
+            callback_data_to_verdict_text("deny:ab12cd34"),
+            ("deny", Some("no ab12cd34".into()))
+        );
+    }
+
+    #[test]
+    fn unknown_callback_data_is_rejected_not_guessed() {
+        assert_eq!(
+            callback_data_to_verdict_text("something-else"),
+            ("something-else", None)
+        );
+        assert_eq!(callback_data_to_verdict_text(""), ("", None));
+    }
 
     #[test]
     fn classify_maps_conflict_vs_transient() {

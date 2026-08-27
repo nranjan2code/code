@@ -9,8 +9,8 @@ use vak_delivery::client::WorkerClient;
 use vak_delivery::outbox::{Outbox, OutboxRecord};
 use vak_delivery::templates::{ChannelPreference, load_layers};
 use vak_delivery::{
-    AnswerDraft, DeliveryContent, DeliveryJob, DeliveryKind, DeliveryPacket, DeliveryProfile,
-    Markup,
+    AnswerDraft, DeliveryAction, DeliveryContent, DeliveryJob, DeliveryKind, DeliveryPacket,
+    DeliveryProfile, Markup,
 };
 
 const WORKER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -45,6 +45,20 @@ impl AdapterRegistry {
         };
         registry.register(LogAdapter);
         registry.register(WebhookAdapter);
+        // `[gateway] approver = "telegram:<chat>"` needs a real push path,
+        // not just the reply to whichever message happens to be in flight
+        // — an approval gate can open while the approver isn't the one
+        // currently talking. Registered only when a bot token is
+        // configured so an unconfigured deployment fails with the same
+        // clear "unsupported gateway surface" error as before.
+        if let Some(bot_token) = vak_config::get_var("TELEGRAM_BOT_TOKEN") {
+            let api_base = vak_config::get_var("TELEGRAM_API_BASE")
+                .unwrap_or_else(|| "https://api.telegram.org".into());
+            registry.register(TelegramAdapter {
+                bot_token,
+                api_base,
+            });
+        }
         registry
     }
 
@@ -405,5 +419,144 @@ impl ChannelAdapter for WebhookAdapter {
             .split_once(':')
             .ok_or_else(|| "webhook target has no name".to_string())?;
         super::gateway::deliver_webhook_packet(core, name, packet).await
+    }
+}
+
+/// Telegram's `reply_markup.inline_keyboard`: one row, one button per
+/// action. `callback_data` is `"<verb>:<request_id>"` — the bridge's
+/// `handle_callback` splits on the first `:` and maps `verb` straight onto
+/// the same "yes"/"no" verdict text a typed chat reply would produce.
+fn inline_keyboard_markup(actions: &[DeliveryAction]) -> serde_json::Value {
+    let buttons: Vec<serde_json::Value> = actions
+        .iter()
+        .map(|action| {
+            let request_id = action
+                .data
+                .get("request_id")
+                .map(String::as_str)
+                .unwrap_or_default();
+            serde_json::json!({
+                "text": action.label,
+                "callback_data": format!("{}:{request_id}", action.verb),
+            })
+        })
+        .collect();
+    serde_json::json!({ "inline_keyboard": [buttons] })
+}
+
+/// Proactive push to a Telegram chat: the async counterpart to the
+/// bridge's own `sendMessage` reply. Used for anything that isn't a direct
+/// reply to the message currently in flight — chiefly forwarded approval
+/// gates (`[gateway] approver = "telegram:<chat>"`), which can open while
+/// the approver chat isn't the one that triggered the turn.
+struct TelegramAdapter {
+    bot_token: String,
+    api_base: String,
+}
+
+#[async_trait]
+impl ChannelAdapter for TelegramAdapter {
+    fn scheme(&self) -> &'static str {
+        "telegram"
+    }
+
+    fn profile(&self) -> DeliveryProfile {
+        DeliveryProfile {
+            surface: "telegram".into(),
+            markup: Markup::TelegramHtml,
+            max_chars: Some(4000),
+            supports_tables: false,
+            supports_code_blocks: true,
+            supports_links: true,
+            // Unlike the synchronous per-turn reply profile, this adapter
+            // renders `packet.actions` as inline-keyboard buttons below.
+            supports_actions: true,
+            template: None,
+        }
+    }
+
+    async fn send(&self, _core: &Core, packet: &DeliveryPacket) -> Result<(), String> {
+        let (_, chat_id) = packet
+            .target
+            .split_once(':')
+            .ok_or_else(|| "telegram target has no chat id".to_string())?;
+        let chunks: Vec<&str> = if packet.chunks.is_empty() {
+            vec![packet.fallback_markdown.as_str()]
+        } else {
+            packet.chunks.iter().map(String::as_str).collect()
+        };
+        let client = reqwest::Client::new();
+        let last = chunks.len().saturating_sub(1);
+        for (i, chunk) in chunks.iter().enumerate() {
+            let mut body = serde_json::json!({
+                "chat_id": chat_id,
+                "text": chunk,
+                "parse_mode": "HTML",
+                "link_preview_options": { "is_disabled": true },
+            });
+            // Buttons ride on the last chunk so they land under the final
+            // line of text, matching where a human reader expects them.
+            if i == last && !packet.actions.is_empty() {
+                body["reply_markup"] = inline_keyboard_markup(&packet.actions);
+            }
+            let resp = client
+                .post(format!(
+                    "{}/bot{}/sendMessage",
+                    self.api_base, self.bot_token
+                ))
+                .json(&body)
+                .send()
+                .await
+                .map_err(|error| format!("telegram sendMessage: {error}"))?;
+            if !resp.status().is_success() {
+                return Err(format!("telegram sendMessage returned {}", resp.status()));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    fn approval_actions() -> Vec<DeliveryAction> {
+        vec![
+            DeliveryAction {
+                id: "approve".into(),
+                label: "Approve".into(),
+                verb: "approve".into(),
+                data: [("request_id".into(), "abc123".into())]
+                    .into_iter()
+                    .collect(),
+            },
+            DeliveryAction {
+                id: "deny".into(),
+                label: "Deny".into(),
+                verb: "deny".into(),
+                data: [("request_id".into(), "abc123".into())]
+                    .into_iter()
+                    .collect(),
+            },
+        ]
+    }
+
+    #[test]
+    fn inline_keyboard_carries_verb_and_request_id_in_callback_data() {
+        let markup = inline_keyboard_markup(&approval_actions());
+        let row = markup["inline_keyboard"][0].as_array().unwrap();
+        assert_eq!(row.len(), 2);
+        assert_eq!(row[0]["text"], "Approve");
+        assert_eq!(row[0]["callback_data"], "approve:abc123");
+        assert_eq!(row[1]["text"], "Deny");
+        assert_eq!(row[1]["callback_data"], "deny:abc123");
+    }
+
+    #[test]
+    fn inline_keyboard_is_empty_row_when_no_actions() {
+        let markup = inline_keyboard_markup(&[]);
+        let row = markup["inline_keyboard"][0].as_array().unwrap();
+        assert!(row.is_empty());
     }
 }

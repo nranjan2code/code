@@ -219,13 +219,44 @@ TELEGRAM_BOT_TOKEN=123:abc \
 vakcoder telegram --server http://10.0.0.5:8901 --token vk_...   # process 2
 ```
 
-The Telegram bridge long-polls `getUpdates`, routes each text through
-`/gateway/inbound` with `wait`, and answers via `sendMessage` (chunked at
-Telegram's 4096-char cap on newline-safe boundaries). Non-text updates
-advance the offset without routing so they are never replayed. Transient
-failures back off 3s; ten consecutive failures give up with a clear error.
-`TELEGRAM_API_BASE` overrides the API host for self-hosted relays and tests.
-Tokens live in `.env` / the user `.env`, never in config or flags.
+The Telegram bridge long-polls `getUpdates`, routes each text/photo/document
+message through `/gateway/inbound` with `wait`, and answers via `sendMessage`
+(chunked at Telegram's 4096-char cap on newline-safe boundaries). Edits and
+other unrouted update kinds advance the offset without routing so they are
+never replayed. Transient failures back off 3s; ten consecutive failures give
+up with a clear error. `TELEGRAM_API_BASE` overrides the API host for
+self-hosted relays and tests. Tokens live in `.env` / the user `.env`, never
+in config or flags.
+
+### Document attachments
+
+A Telegram `document` (code, logs, CSVs, ...) up to 256 KiB downloads and
+rides alongside the text as an `InboundAttachment` with `kind = "document"`.
+The gateway has no generic-file content block, so a document is either text
+the model can read directly or it isn't included: `compose_prompt` decodes it
+and inlines it as a fenced text block (capped at a further 64 KiB — the
+inline-limit is deliberately smaller than the download cap, since a document
+that decodes to more than that is better excerpted by the sender than dumped
+whole into every turn's context) or, past either cap, appends a note telling
+the sender it wasn't attached rather than truncating it silently. Photos keep
+using the existing `kind = "image"` vision-content path.
+
+### Inline-keyboard approvals
+
+`[gateway] approver = "telegram:<chat>"` previously had no way to actually
+reach Telegram: `deliver()` only had `log`/`webhook` adapters registered, so
+a forwarded gate to a Telegram approver failed the async push and denied
+closed. A `TelegramAdapter` (`crates/vak-server/src/delivery.rs`) now
+registers under the `telegram` scheme whenever `TELEGRAM_BOT_TOKEN` is
+configured, rendering `DeliveryPacket.actions` (the existing
+approve/deny `ApprovalPayload` actions) as a Telegram
+`reply_markup.inline_keyboard` instead of requiring a typed `yes`/`no`.
+Button taps arrive as `callback_query` updates; the bridge's
+`callback_data_to_verdict_text` maps `"approve:<id>"` / `"deny:<id>"`
+straight onto the same `"yes <id>"` / `"no <id>"` verdict text a typed
+reply produces, so gate resolution runs through the one existing
+`parse_verdict` path rather than a second one. `answerCallbackQuery` is
+called either way so the button never shows a stuck loading spinner.
 
 ### Inbound channel identity (0c-03)
 
