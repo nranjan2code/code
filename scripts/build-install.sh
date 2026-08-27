@@ -107,7 +107,9 @@ if [[ "$WITH_TRAY" == true ]]; then
   # Under `set -o pipefail` that status would abort the install, so read the
   # output first and let awk answer separately.
   TRAY_STATUS="$(target/release/vakcoder self status 2>/dev/null || true)"
-  TRAY_BIN_DIR="$(printf '%s\n' "$TRAY_STATUS" | awk '$1 == "bin" { print $2 }')"
+  # Everything after the label, not field 2: the macOS data home is under
+  # "Application Support", so the path contains spaces.
+  TRAY_BIN_DIR="$(printf '%s\n' "$TRAY_STATUS" | sed -n 's/^bin[[:space:]]\{1,\}//p')"
   [[ -d "$TRAY_BIN_DIR" ]] || { printf 'error: managed bin dir not found: %s\n' "$TRAY_BIN_DIR" >&2; exit 1; }
   TRAY_DEST="$TRAY_BIN_DIR/vakcoder-tray"
   install -m 755 target/release/vakcoder-tray "$TRAY_DEST"
