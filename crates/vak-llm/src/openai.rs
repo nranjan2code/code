@@ -439,6 +439,23 @@ impl Provider for OpenAiCompletionsProvider {
                                 return;
                             }
                             None => {
+                                // The body can end right after the final
+                                // `data:` line, leaving that frame unterminated
+                                // in the decoder. It carries the last of the
+                                // answer, so drain it before closing.
+                                if let Some(frame) = decoder.finish() {
+                                    let data = frame.data.trim();
+                                    if data != "[DONE]"
+                                        && let Err(e) = acc.convert(data).map(|event| {
+                                            if let Some(event) = event {
+                                                sink.push(event);
+                                            }
+                                        })
+                                    {
+                                        sink.close_error(e).await;
+                                        return;
+                                    }
+                                }
                                 // OpenAI-compatible proxies sometimes end the
                                 // body after the last content chunk without
                                 // [DONE]/finish_reason. A clean close with

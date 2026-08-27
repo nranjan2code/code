@@ -395,6 +395,20 @@ impl Provider for OpenAiResponsesProvider {
                                 return;
                             }
                             None => {
+                                // The body can end right after the final
+                                // `data:` line, leaving that frame unterminated
+                                // in the decoder. It carries the last of the
+                                // answer, so drain it before closing.
+                                if let Some(frame) = decoder.finish() {
+                                    match acc.convert(&frame.data) {
+                                        Ok(Some(event)) => sink.push(event),
+                                        Ok(None) => {}
+                                        Err(e) => {
+                                            sink.close_error(e).await;
+                                            return;
+                                        }
+                                    }
+                                }
                                 if acc.saw_completed {
                                     sink.close_message(acc.message.clone()).await;
                                 } else {
