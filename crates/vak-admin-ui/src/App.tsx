@@ -5,8 +5,13 @@ import type { Run } from "./types";
 export default function App() {
   const runtime = useRuntime(); const [selected, setSelected] = createSignal<Run>(); const [messages, setMessages] = createSignal<string[]>([]); let closeEvents: (() => void) | undefined;
   const subscribe = (run: Run) => { closeEvents?.(); setSelected(run); setMessages([]); closeEvents = api.events(run.run_id, (event) => setMessages((current) => [...current, JSON.stringify(event)])); };
+  const runtimeError = () => [runtime.projects.error, runtime.sessions.error, runtime.runs.error, runtime.tasks.error, runtime.memory.error, runtime.inbox.error, runtime.diagnostics.error].find(Boolean) as Error | undefined;
   return <main class="shell"><header><div><p class="eyebrow">VAKCODER RUNTIME</p><h1>Control plane</h1></div><span class="status-dot">{runtime.diagnostics()?.status ?? "connecting"}</span></header>
-    <Show when={!runtime.projects.loading && !runtime.sessions.loading && !runtime.runs.loading && !runtime.tasks.loading && !runtime.inbox.loading} fallback={<p class="empty">Connecting to the authenticated Runtime…</p>}>
+    <Show when={runtimeError()}>
+      <section class="panel"><h2>Runtime connection failed</h2><p class="empty">{runtimeError()!.message}</p><button onClick={() => location.reload()}>Try again</button></section>
+    </Show>
+    <Show when={!runtimeError()} fallback={<></>}>
+      <Show when={!runtime.projects.loading && !runtime.sessions.loading && !runtime.runs.loading && !runtime.tasks.loading && !runtime.inbox.loading} fallback={<p class="empty">Connecting to the authenticated Runtime…</p>}>
       <section class="stats"><For each={[["Projects", runtime.projects()?.items.length ?? 0], ["Sessions", runtime.sessions()?.items.length ?? 0], ["Runs", runtime.runs()?.items.length ?? 0], ["Tasks", runtime.tasks()?.items.length ?? 0], ["Inbox", runtime.inbox()?.items.length ?? 0], ["Capability epoch", String(runtime.diagnostics()?.details.capability_epoch ?? "—")]]}>{(stat) => <article><small>{stat[0]}</small><strong>{stat[1]}</strong></article>}</For></section>
       <section class="panel"><div class="panel-heading"><h2>Projects</h2><span>Runtime-owned</span></div><For each={runtime.projects()?.items}>{(project) => <div class="row"><div><strong>{project.display_name || project.root}</strong><small>{project.root}</small></div><code>{project.id}</code></div>}</For></section>
       <section class="panel"><div class="panel-heading"><h2>Sessions</h2><span>Append-only ledgers</span></div><For each={runtime.sessions()?.items}>{(session) => <div class="row"><div><strong>{session.id}</strong><small>Project {session.project_id} · {session.created_at}</small></div><span class={`badge ${session.status}`}>{session.status}</span></div>}</For></section>
@@ -15,5 +20,6 @@ export default function App() {
       <section class="panel"><div class="panel-heading"><h2>Tasks</h2><span>Durable Runtime records</span></div><For each={runtime.tasks()?.items}>{(task) => <div class="row"><div><strong>{task.id}</strong><small>{JSON.stringify(task.spec)}</small></div><span class="badge">{task.status}</span></div>}</For></section>
       <section class="panel"><div class="panel-heading"><h2>Workspace memory</h2><span>Runtime-owned notes</span></div><For each={runtime.memory()?.items}>{(note) => <div class="row"><div><strong>{note.tag || note.kind}</strong><small>{note.text}</small></div><code>{note.scope}</code></div>}</For></section>
       <section class="panel"><div class="panel-heading"><h2>Inbox</h2><span>Attention records</span></div><For each={runtime.inbox()?.items}>{(item) => <div class="row"><div><strong>{item.channel}</strong><small>{JSON.stringify(item.payload)}</small></div><code>{item.acknowledged_at ? "acknowledged" : "unread"}</code></div>}</For></section>
+      </Show>
     </Show></main>;
 }
