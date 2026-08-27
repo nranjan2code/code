@@ -723,6 +723,10 @@ fn main() {
             running: Mutex::new(None),
             switching: tokio::sync::Mutex::new(()),
         })
+        .manage(TrayState {
+            watchdog: Arc::new(AtomicBool::new(load_watchdog())),
+            last_rendered: Mutex::new(None),
+        })
         .manage(pty::PtyMap::default())
         .setup(|app| {
             install_tray(app)?;

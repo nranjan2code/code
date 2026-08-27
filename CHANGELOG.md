@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.7 — 2026-08-27
+
+### Desktop tray lifecycle
+
+The macOS desktop app now owns the menu-bar tray and its full service
+controls in one process. Finder/Dock activation, tray Open, and repeated
+launches reveal the same window; Gateway and Telegram controls, logs, Admin
+Console, watchdog, and Quit remain available from the tray.
+
 ## Unreleased
 
 ### The desktop app could never receive a single agent event
