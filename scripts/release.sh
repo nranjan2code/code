@@ -25,6 +25,10 @@ DIST="$ROOT_DIR/dist/v$VERSION/$PLATFORM-$ARCH"
 mkdir -p "$DIST"
 
 cd "$ROOT_DIR"
+if [[ -n "$(git status --porcelain)" ]]; then
+  printf 'error: release tree is dirty; commit all changes before packaging\n' >&2
+  exit 1
+fi
 "$ROOT_DIR/scripts/check-release-version.sh"
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings

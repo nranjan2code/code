@@ -54,6 +54,10 @@ if [[ "$WITH_DESKTOP" == true && "$(uname -s)" != "Darwin" ]]; then
 fi
 
 cd "$ROOT_DIR"
+if [[ -n "$(git status --porcelain)" ]]; then
+  printf 'error: install tree is dirty; commit all changes before deployment\n' >&2
+  exit 1
+fi
 "$ROOT_DIR/scripts/check-release-version.sh"
 
 if [[ "$CLEAN_BUILD" == true ]]; then

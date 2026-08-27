@@ -5,6 +5,11 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -1)"
 
+if [[ -n "$(git -C "$ROOT_DIR" status --porcelain)" ]]; then
+  printf 'error: release tree is dirty; commit all changes before building v%s\n' "$VERSION" >&2
+  exit 1
+fi
+
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
   printf 'error: invalid workspace version: %s\n' "$VERSION" >&2
   exit 1

@@ -8,10 +8,10 @@ protocol.
 ## Version and provenance
 
 `[workspace.package].version` in the root `Cargo.toml` is the only handwritten
-version. Crates and Tauri derive their version from it. `scripts/check-release-
-version.sh` rejects drift in manifests, bundles, binaries, and changelog data.
-Release binaries record the commit SHA; a dirty tree is testable but cannot be
-tagged or published.
+version. Crates and Tauri derive their version from it. Release and install
+scripts require a clean commit; `scripts/check-release-version.sh` rejects
+dirty trees and drift in manifests, bundles, binaries, and changelog data.
+Release binaries record the exact commit SHA.
 
 ## Build and install
 
