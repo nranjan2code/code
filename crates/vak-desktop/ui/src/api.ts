@@ -14,6 +14,8 @@ let base = "";
 let token = "";
 let projectId = "";
 let projectRoot = "";
+let configRevision = 0;
+let rawConfig: Record<string, any> | null = null;
 const activeRuns = new Map<string, string>();
 
 function unavailable<T>(feature: string): Promise<T> {
@@ -193,7 +195,7 @@ export function putHooks(hooks: HookConfig[]): Promise<{ saved: boolean; count: 
 }
 
 export function listMemory(): Promise<{ notes: NoteBlock[] }> {
-  return unavailable("memory management");
+  return req<{ items: Array<{ id: string; created_at: string; kind: string; tag: string; text: string; project_id?: string | null; scope: string }> }>(`/memory?project_id=${encodeURIComponent(projectId)}&scope=workspace`).then((r) => ({ notes: r.items.map((n) => ({ id: n.id, ts: n.created_at, kind: n.kind, tag: n.tag, session_id: "", text: n.text, scope: n.scope as MemoryScope })) }));
 }
 
 export function listProposals(): Promise<{ proposals: SkillProposal[] }> {
@@ -218,15 +220,14 @@ export function listSessions(): Promise<{ sessions: SessionSummary[] }> {
   }));
 }
 
-export function createSession(): Promise<{ session_id: string }> {
+export async function createSession(): Promise<{ session_id: string }> {
   if (!projectId) return Promise.reject(new Error("no project selected"));
-  return req<{ session_id: string }>("/sessions", { method: "POST", body: JSON.stringify({ project_id: projectId, contract: { provider: "", model: "", route_ladder: [], system_prompt: "", permission_mode: "ReadOnly", sandbox: "seatbelt", tool_catalogue_revision: "desktop", context_limit: 128000 } })
-  });
+  const configured = await req<{ config: { provider: { name?: string }; model: { name?: string }; permission: { mode: string }; sandbox: { backend: string } } }>(`/config?project_id=${encodeURIComponent(projectId)}`);
+  return req<{ session_id: string }>("/sessions", { method: "POST", body: JSON.stringify({ project_id: projectId, contract: { provider: configured.config.provider.name ?? "", model: configured.config.model.name ?? "", route_ladder: [], system_prompt: "", permission_mode: configured.config.permission.mode === "workspace_write" ? "WorkspaceWrite" : configured.config.permission.mode === "full_access" ? "FullAccess" : "ReadOnly", sandbox: configured.config.sandbox.backend === "landlock" ? "Landlock" : configured.config.sandbox.backend === "docker" ? "Docker" : configured.config.sandbox.backend === "none" ? "None" : "Seatbelt", tool_catalogue_revision: "desktop", context_limit: 128000 } }) });
 }
 
 export function attachSession(id: string): Promise<{ session_id: string }> {
-  void id;
-  return unavailable("session attachment");
+  return req<{ messages: Message[] }>(`/sessions/${encodeURIComponent(id)}/transcript`).then(() => ({ session_id: id }));
 }
 
 export async function transcript(id: string): Promise<{
@@ -234,21 +235,17 @@ export async function transcript(id: string): Promise<{
   usage: Record<string, number>;
   messages: Message[];
 }> {
-  void id;
-  const body = await unavailable<
-    | { count: number; usage: Record<string, number>; messages: Message[] }
-    | { error: string }
-  >("transcripts");
-  // Mid-run reads return 200 {"error":"run in progress"} — surface an
-  // empty snapshot instead of throwing on missing fields.
-  if ("error" in body) return { count: 0, usage: {}, messages: [] };
-  return body;
+  const body = await req<{ messages: Message[] }>(`/sessions/${encodeURIComponent(id)}/transcript`);
+  return { count: body.messages.length, usage: {}, messages: body.messages };
 }
 
 /** Markdown export (shared renderer with the TUI); text, not JSON. */
 export async function transcriptMarkdown(id: string): Promise<string> {
-  void id;
-  return unavailable("transcript export");
+  const transcript = await transcript(id);
+  return transcript.messages.map((message) => {
+    const text = message.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
+    return `## ${message.role}\n\n${text}`;
+  }).join("\n\n");
 }
 
 export function runPrompt(
@@ -335,13 +332,13 @@ export function health(): Promise<Health> {
 
 export function setPermissionMode(mode: string): Promise<void> {
   const wire = mode === "read-only" ? "ReadOnly" : mode === "workspace-write" ? "WorkspaceWrite" : "FullAccess";
-  return req(`/config/permission-mode`, { method: "POST", body: JSON.stringify({ project_root: projectRoot, mode: wire }) }).then(() => undefined);
+  return req<{ revision: number }>(`/config?project_id=${encodeURIComponent(projectId)}`).then((snapshot) => req(`/config/permission-mode`, { method: "POST", body: JSON.stringify({ project_id: projectId, revision: snapshot.revision, mode: wire }) })).then(() => undefined);
 }
 
 export function getConfig(): Promise<ConfigSnapshot> {
-  return req<{ revision: number; config: { provider: { name?: string }; model: { name?: string }; limits: { max_turns?: number }; permission: { mode: ConfigSnapshot["permission_mode"] }; sandbox: { backend: string } }; warnings: string[] }>(`/config?project_root=${encodeURIComponent(projectRoot)}`).then((r) => ({
-    provider: r.config.provider.name ?? "", model: r.config.model.name ?? "", max_tokens: 0, max_turns: r.config.limits.max_turns ?? 0, permission_mode: r.config.permission.mode, subagents: false, max_retries: 0, retry_base_backoff_ms: 0, request_timeout_secs: 0, run_retry_attempts: 0, run_retry_base_backoff_ms: 0, circuit_breaker_threshold: 0, circuit_breaker_cooldown_secs: 0, context_window: 0, theme: "", bell: true, stop_policy: { enabled: false, marker_gate: false, verify_gate: false, max_blocks: 0 }, route: { objective: "", fallback_models: [], max_fallbacks: 0, quality_hints: [] }, integrations: { mcp_servers: [], hooks: 0, skills: [] }, paths: { project_config: "", sessions_home: "", cwd: projectRoot }, warnings: r.warnings,
-  }));
+  return req<{ revision: number; config: any; warnings: string[] }>(`/config?project_id=${encodeURIComponent(projectId)}`).then((r) => { configRevision = r.revision; rawConfig = r.config; return ({
+    provider: r.config.provider.name ?? "", model: r.config.model.name ?? "", max_tokens: 0, max_turns: r.config.limits.max_turns ?? 0, permission_mode: r.config.permission.mode === "workspace_write" ? "WorkspaceWrite" : r.config.permission.mode === "full_access" ? "FullAccess" : "ReadOnly", subagents: false, max_retries: 0, retry_base_backoff_ms: 0, request_timeout_secs: 0, run_retry_attempts: 0, run_retry_base_backoff_ms: 0, circuit_breaker_threshold: 0, circuit_breaker_cooldown_secs: 0, context_window: 0, theme: "", bell: true, stop_policy: { enabled: false, marker_gate: false, verify_gate: false, max_blocks: 0 }, route: { objective: "", fallback_models: [], max_fallbacks: 0, quality_hints: [] }, integrations: { mcp_servers: [], hooks: 0, skills: [] }, paths: { project_config: "", sessions_home: "", cwd: projectRoot }, warnings: r.warnings,
+  }); });
 }
 
 export function listProviders(): Promise<import("./types").ProvidersResponse> {
@@ -371,7 +368,14 @@ export function removeProviderKey(
 }
 
 export function patchConfig(patch: { provider?: string; model?: string; max_turns?: number; permission_mode?: string; theme?: string }): Promise<void> {
-  return Promise.reject(new Error("partial config editing is unavailable; use the Runtime config snapshot"));
+  if (!rawConfig) return Promise.reject(new Error("config is not loaded"));
+  const config = structuredClone(rawConfig) as Record<string, any>;
+  if (patch.provider !== undefined) config.provider = { ...(config.provider ?? {}), name: patch.provider };
+  if (patch.model !== undefined) config.model = { ...(config.model ?? {}), name: patch.model };
+  if (patch.max_turns !== undefined) config.limits = { ...(config.limits ?? {}), max_turns: patch.max_turns };
+  if (patch.permission_mode !== undefined) config.permission = { ...(config.permission ?? {}), mode: patch.permission_mode };
+  if (patch.theme !== undefined) config.ui = { ...(config.ui ?? {}), theme: patch.theme };
+  return req("/config", { method: "PATCH", body: JSON.stringify({ project_id: projectId, revision: configRevision, config }) }).then(() => undefined);
 }
 
 // ---- MCP server management ----------------------------------------------------
@@ -508,6 +512,7 @@ function openSse(
   url: string,
   onEvent: (ev: AgentEvent) => void,
   onError?: () => void,
+  sessionId?: string,
 ): EventStream {
   const ctrl = new AbortController();
   let attempts = 0;
@@ -541,7 +546,7 @@ function openSse(
               if (data) {
                 try {
                   const value = JSON.parse(data) as unknown;
-                  const event = adaptServerEvent(value);
+                  const event = adaptServerEvent(value, sessionId);
                   if (event) onEvent(event);
                 } catch {
                   // ignore keep-alive/comment frames
@@ -564,12 +569,13 @@ function openSse(
   return { close: () => ctrl.abort() };
 }
 
-function adaptServerEvent(value: unknown): AgentEvent | null {
+function adaptServerEvent(value: unknown, sessionId?: string): AgentEvent | null {
   if (!value || typeof value !== "object") return null;
   const event = value as Record<string, unknown>;
   const output = event.RunOutput;
   if (output && typeof output === "object") {
     const item = output as Record<string, unknown>;
+    if (sessionId && activeRuns.get(sessionId) !== String(item.run_id ?? "")) return null;
     const delta = typeof item.delta === "string" ? item.delta : "";
     const snapshot = typeof item.snapshot === "string" ? item.snapshot : delta;
     const message: Message = { role: "assistant", content: [{ type: "text", text: snapshot }] };
@@ -579,6 +585,7 @@ function adaptServerEvent(value: unknown): AgentEvent | null {
   const finished = event.RunFinished;
   if (finished && typeof finished === "object") {
     const item = finished as Record<string, unknown>;
+    if (sessionId && activeRuns.get(sessionId) !== String(item.run_id ?? "")) return null;
     const status = String(item.status ?? "failed");
     return { RunFinished: { summary: typeof item.output === "string" ? item.output : status, is_error: status !== "Completed" } };
   }
@@ -590,9 +597,7 @@ export function openEventStream(
   onEvent: (ev: AgentEvent) => void,
   onError?: () => void,
 ): EventStream {
-  // server2 exposes one authenticated stream; the reducer filters by run/session.
-  void id;
-  return openSse(`${base}/events`, onEvent, onError);
+  return openSse(`${base}/events`, onEvent, onError, id);
 }
 
 export function openSideStream(
@@ -604,7 +609,7 @@ export function openSideStream(
 }
 
 export function listTasks(): Promise<{ tasks: import("./types").TaskDef[] }> {
-  return unavailable("scheduled tasks");
+  return req<{ items: Array<{ id: string; spec: any; status: string; updated_at: string }> }>(`/tasks?project_id=${encodeURIComponent(projectId)}`).then((r) => ({ tasks: r.items.map((t) => ({ id: t.id, name: t.spec.name ?? t.id, prompt: t.spec.prompt ?? "", interval_secs: t.spec.interval_secs ?? 0, enabled: t.status === "enabled" || t.spec.enabled !== false, cwd: projectRoot, created_at: t.updated_at, schedule: t.spec.schedule ?? null, script: t.spec.script ?? null, model_pin: t.spec.model_pin ?? null })) }));
 }
 
 export interface TaskDraft {
@@ -617,8 +622,7 @@ export interface TaskDraft {
 }
 
 export function createTask(draft: TaskDraft): Promise<unknown> {
-  void draft;
-  return unavailable("scheduled tasks");
+  return req("/tasks", { method: "POST", body: JSON.stringify({ project_id: projectId, spec: draft }) });
 }
 
 /**
@@ -637,13 +641,11 @@ export type TaskPatch = Partial<{
 }>;
 
 export function patchTask(id: string, patch: TaskPatch): Promise<import("./types").TaskDef> {
-  void id; void patch;
-  return unavailable("scheduled tasks");
+  return req(`/tasks/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ spec: patch, status: patch.enabled === undefined ? undefined : patch.enabled ? "enabled" : "disabled" }) });
 }
 
 export function deleteTask(id: string): Promise<unknown> {
-  void id;
-  return unavailable("scheduled tasks");
+  return req(`/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export function runTaskNow(id: string): Promise<unknown> {
@@ -700,7 +702,7 @@ export interface DoctorReport {
 /** `?session=` optionally adds that session's frozen-ladder section. */
 export function doctor(session?: string): Promise<DoctorReport> {
   void session;
-  return unavailable("doctor diagnostics");
+  return req<{ status: string; details: { [key: string]: unknown } }>("/diagnostics").then((r) => ({ failures: r.status === "ok" ? 0 : 1, checks: [{ label: "Runtime", ok: r.status === "ok", detail: r.status }], facts: Object.entries(r.details).map(([key, value]) => `${key}: ${String(value)}`) }));
 }
 
 export interface BackupManifest {
@@ -776,16 +778,15 @@ export function listInbox(
   limit: number,
   unreadOnly: boolean,
 ): Promise<{ entries: InboxEntry[]; unread_count: number }> {
-  void limit; void unreadOnly;
-  return unavailable("inbox");
+  void limit;
+  return req<{ items: Array<{ id: string; payload: any; created_at: string; acknowledged_at?: string | null }> }>(`/inbox?unread=${unreadOnly}`).then((r) => ({ entries: r.items.map((e) => ({ id: e.id, ts: e.created_at, kind: e.payload.kind ?? "notice", title: e.payload.title ?? "Runtime notice", body: e.payload.body ?? JSON.stringify(e.payload), session_id: e.payload.session_id ?? null, task_id: e.payload.task_id ?? null })), unread_count: r.items.filter((e) => !e.acknowledged_at).length }));
 }
 
 /** Idempotent read-state tombstone; unknown ids come back as a 404 error. */
 export function ackInbox(id: string): Promise<{ acked: boolean }> {
-  void id;
-  return unavailable("inbox");
+  return req(`/inbox/${encodeURIComponent(id)}/ack`, { method: "POST", body: "{}" }).then(() => ({ acked: true }));
 }
 
 export function inboxUnreadCount(): Promise<{ count: number }> {
-  return unavailable("inbox");
+  return listInbox(0, true).then((r) => ({ count: r.unread_count }));
 }
