@@ -11,9 +11,13 @@ SolidJS UI → Tauri commands → vak-client → vak-server → vak-runtime
                                       state + broker + audit
 ```
 
-The desktop receives the Runtime URL and bearer token from the connection
-configuration. It performs `/version` before loading data and fails visibly if
-the endpoint is absent, unauthenticated, or incompatible.
+The desktop receives its Runtime URL and bearer token only through
+`vak-client`'s canonical gateway receipt resolver. That resolver verifies the
+gateway process plus authenticated `/version` and `/health` before the UI is
+marked ready. The shell retains the selected project, not a durable copy of
+connection credentials: while the Runtime is unavailable it shows a visible
+disconnected state, clears webview credentials, and retries the shared
+handshake. A fresh receipt is adopted automatically when the gateway returns.
 
 ## Desktop responsibilities
 

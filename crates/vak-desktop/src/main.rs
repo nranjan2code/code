@@ -4,8 +4,9 @@
 //! surface (tui/exec/serve) speaks. It discovers a local base runtime or saved
 //! remote connection and never starts a competing server or state owner.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -13,6 +14,10 @@ use vak_domain::{ProjectContext, ProjectId};
 
 struct BackendState {
     running: Mutex<Option<Running>>,
+    /// The workspace the shell should attach to once the Runtime is ready.
+    /// This intentionally survives a transport failure: a Runtime restart
+    /// must not make the user pick the same project again.
+    desired_project: Mutex<Option<PathBuf>>,
     switching: tokio::sync::Mutex<()>,
 }
 
@@ -108,41 +113,19 @@ fn save_project(cwd: &str) {
     }
 }
 
-fn runtime_connection() -> Option<(String, String)> {
-    let raw = std::fs::read_to_string(vak_home().join("runtime/gateway.json")).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    let addr = value.get("addr")?.as_str()?;
-    let token = value.get("token")?.as_str()?;
-    let url = if addr.starts_with("http://") || addr.starts_with("https://") {
-        addr.to_string()
-    } else {
-        format!("http://{addr}")
-    };
-    Some((url, token.to_string()))
-}
-
-fn configured_connection() -> Option<(String, String)> {
-    let root = vak_home();
-    let snapshot = vak_config::ConfigService::new(root, std::env::current_dir().ok()?)
-        .load()
-        .ok()?;
-    Some((snapshot.config.connect.url?, snapshot.config.connect.token?))
-}
-
 /// Connect the desktop addon to the installed or configured base. The desktop
 /// owns no server, scheduler, session store, or tool worker.
 async fn boot_backend(cwd: PathBuf) -> Result<Running, String> {
-    let (base_url, token) = runtime_connection()
-        .or_else(configured_connection)
-        .ok_or_else(|| {
-            "no vakcoder base found; install/start the base or configure [connect]".to_string()
-        })?;
-    let client =
-        vak_client::Client::new(base_url.clone(), token.clone()).map_err(|e| e.to_string())?;
-    client
-        .health()
+    // Never parse or retain the gateway receipt here. `vak-client` performs
+    // one authenticated, versioned handshake for every native surface. A
+    // retry therefore picks up a changed address/token after a gateway
+    // restart instead of replaying desktop-startup credentials.
+    let connection = vak_client::GatewayConnection::discover_local_ready()
         .await
-        .map_err(|e| format!("base is unavailable: {e}"))?;
+        .map_err(|error| format!("Runtime is unavailable: {error}"))?;
+    let base_url = connection.base_url().to_owned();
+    let token = connection.token().to_owned();
+    let client = connection.client().map_err(|error| error.to_string())?;
     let project_id = client
         .projects()
         .await
@@ -183,7 +166,7 @@ async fn boot_backend(cwd: PathBuf) -> Result<Running, String> {
 
 fn install_backend(
     app: &AppHandle,
-    state: &State<'_, BackendState>,
+    state: &BackendState,
     mut running: Running,
     persist: bool,
 ) -> BackendInfo {
@@ -202,6 +185,78 @@ fn install_backend(
     info
 }
 
+fn desired_project(state: &BackendState) -> Option<PathBuf> {
+    state
+        .desired_project
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+fn set_desired_project(state: &BackendState, cwd: PathBuf) {
+    *state
+        .desired_project
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cwd);
+}
+
+fn same_backend(left: &BackendInfo, right: &BackendInfo) -> bool {
+    left.ready
+        && right.ready
+        && left.base_url == right.base_url
+        && left.token == right.token
+        && left.cwd == right.cwd
+        && left.project_id == right.project_id
+}
+
+/// Drop stale webview credentials as soon as the native Runtime handshake
+/// fails. The next retry rediscovers the receipt through `vak-client`; it does
+/// not reuse the endpoint/token that happened to work at desktop launch.
+fn install_unavailable(app: &AppHandle, state: &BackendState, cwd: &Path, error: String) {
+    let info = BackendInfo {
+        ready: false,
+        cwd: Some(cwd.to_string_lossy().into_owned()),
+        boot_error: Some(error),
+        recent_projects: recent_projects(),
+        ..BackendInfo::default()
+    };
+    let changed = {
+        let mut guard = state
+            .running
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let changed = guard.as_ref().is_none_or(|current| {
+            !same_backend(&current.info, &info) || current.info.boot_error != info.boot_error
+        });
+        *guard = Some(Running { info: info.clone() });
+        changed
+    };
+    if changed {
+        let _ = app.emit("backend-ready", &info);
+    }
+}
+
+async fn reconcile_backend(app: &AppHandle, state: &BackendState) {
+    let Some(cwd) = desired_project(state) else {
+        return;
+    };
+    let _switch = state.switching.lock().await;
+    match boot_backend(cwd.clone()).await {
+        Ok(running) => {
+            let unchanged = state
+                .running
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_ref()
+                .is_some_and(|current| same_backend(&current.info, &running.info));
+            if !unchanged {
+                install_backend(app, state, running, false);
+            }
+        }
+        Err(error) => install_unavailable(app, state, &cwd, error),
+    }
+}
+
 #[tauri::command]
 async fn start_backend(
     app: AppHandle,
@@ -218,6 +273,7 @@ async fn start_backend(
         }
     };
     let _switch = state.switching.lock().await;
+    set_desired_project(&state, path.clone());
     let canonical = path.to_string_lossy().into_owned();
     if let Some(info) = state
         .running
@@ -229,14 +285,14 @@ async fn start_backend(
     {
         return Ok(info);
     }
-    match boot_backend(path).await {
+    match boot_backend(path.clone()).await {
         Ok(running) => {
             let info = install_backend(&app, &state, running, true);
             set_boot_error(&state, None);
             Ok(info)
         }
         Err(e) => {
-            set_boot_error(&state, Some(e.clone()));
+            install_unavailable(&app, &state, &path, e.clone());
             Err(e)
         }
     }
@@ -376,31 +432,18 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .manage(BackendState {
             running: Mutex::new(None),
+            desired_project: Mutex::new(last_project()),
             switching: tokio::sync::Mutex::new(()),
         })
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Some(cwd) = last_project() {
+                let mut retry = tokio::time::interval(Duration::from_secs(2));
+                retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    retry.tick().await;
                     let state = handle.state::<BackendState>();
-                    let _switch = state.switching.lock().await;
-                    if state
-                        .running
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .is_some()
-                    {
-                        return;
-                    }
-                    if let Err(e) = boot_backend(cwd)
-                        .await
-                        .map(|running| install_backend(&handle, &state, running, false))
-                    {
-                        eprintln!("backend boot failed: {e}");
-                        // Surface it to the project gate; a bundled app has
-                        // no stderr to show.
-                        set_boot_error(&state, Some(e));
-                    }
+                    reconcile_backend(&handle, &state).await;
                 }
             });
             Ok(())
