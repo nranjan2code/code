@@ -32,6 +32,15 @@ against a real prefix rather than reading the code.
 
 ### Install and uninstall
 
+- Fixed `self status` telling a freshly installed machine its service
+  units "exec outside the managed prefix" when no unit files existed at
+  all. `ServiceRow::unit_points_at_installed` is false both for a missing
+  unit and for one pointing at the wrong binary, and status collapsed the
+  two into the misconfiguration message — which every first install hits,
+  and which sends the operator after a problem they do not have. A
+  `unit_present` flag now separates them, so an unsynced install reads
+  "not registered — run `self services-sync`".
+
 - Removed the second installer. `build-install.sh` copied a Tauri bundle
   to `~/Applications/VakCoder.app` while `self install` managed
   `vakcoder.app` — the same directory on a case-insensitive volume, which

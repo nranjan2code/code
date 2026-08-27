@@ -310,8 +310,13 @@ pub fn run_status(prefix: Option<PathBuf>) -> i32 {
             Some(pid) => format!("running (pid {pid})"),
             None => "down".to_string(),
         };
-        let flag = if !r.unit_points_at_installed {
-            "✗ execs outside the managed prefix"
+        // "never synced" and "synced against the wrong binary" both leave
+        // unit_points_at_installed false, but they need different
+        // instructions — and a fresh install is always the former.
+        let flag = if !r.unit_present {
+            "not registered — run `self services-sync`"
+        } else if !r.unit_points_at_installed {
+            "✗ execs outside the managed prefix — run `self services-sync`"
         } else if r.binary_stale {
             "⚠ stale process — run `self services-sync`"
         } else {

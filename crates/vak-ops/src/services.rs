@@ -430,8 +430,15 @@ pub struct SyncOutcome {
 pub struct ServiceRow {
     pub name: String,
     pub unit_path: PathBuf,
+    /// Whether a unit file exists at all. Distinguishes "never synced"
+    /// from "synced against the wrong binary": both leave
+    /// `unit_points_at_installed` false, but only the second is a
+    /// misconfiguration. A fresh install is the first, and reporting it
+    /// as the second sends the operator after a problem they do not have.
+    pub unit_present: bool,
     /// False for missing units and for legacy units exec'ing outside the
     /// install prefix (e.g. anything under `target/`) — the drift flag.
+    /// Read together with `unit_present` to tell the two cases apart.
     pub unit_points_at_installed: bool,
     /// True when a live process predates the installed binary (started
     /// before the last install touched it) — stale-image drift.
@@ -557,9 +564,11 @@ pub fn status_specs(
             let on_disk = std::fs::read_to_string(&unit_path).ok();
             let wanted = spec.bin_path.to_string_lossy().into_owned();
             let pid = running_pid(spec.name, runner);
+            let unit_present = on_disk.is_some();
             let points_at_installed = on_disk.is_some_and(|t| t.contains(wanted.as_str()));
             ServiceRow {
                 name: spec.name.to_string(),
+                unit_present,
                 unit_points_at_installed: points_at_installed,
                 // Stale-image drift: a live process synced against an
                 // older binary. Only meaningful when the unit itself is
