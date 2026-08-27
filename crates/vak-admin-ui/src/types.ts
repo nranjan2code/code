@@ -63,6 +63,7 @@ export interface GatewayStatus {
   enabled: boolean;
   bindings: string[];
   chat_allowlist: string[];
+  chat_allowlist_open: boolean;
 }
 
 export type SystemEvent =

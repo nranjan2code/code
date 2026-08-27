@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — gateway chat allowlist fails closed
+
+`gateway.chat_allowlist` now fails closed: an empty list rejects every
+inbound chat with `403` instead of allowing all of them, unless the
+operator explicitly sets `chat_allowlist_open = true`. Inbound channel
+bridges (Telegram today; Slack/Discord later) now build their
+`/gateway/inbound` payload through a new `InboundChannel` trait and
+`InboundRequest::new` constructor, which rejects an empty or
+placeholder-equal `chat`/`sender` so a careless new bridge cannot
+silently collapse every remote user into one session. The Telegram
+bridge now sends the message sender's real Telegram user id instead of
+a fixed `"telegram"` placeholder.
+
 ## 0.8.10 — 2026-08-27
 
 ### Workspace-aware durable services

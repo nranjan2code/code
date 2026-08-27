@@ -493,6 +493,7 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
         "enabled": gw.enabled,
         "bindings": bindings,
         "chat_allowlist": state.core.config().gateway.chat_allowlist,
+        "chat_allowlist_open": state.core.config().gateway.chat_allowlist_open,
     }))
 }
 

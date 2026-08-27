@@ -144,9 +144,14 @@ pub struct GatewaySettings {
     /// Inbound rate limiting (0a-06). None uses sensible defaults.
     pub rate_limit: Option<RateLimitSettings>,
     /// Allowed inbound chat keys: `["telegram:12345", "log:ops"]`.
-    /// Empty list = all chats allowed (backward compatible).
+    /// Empty list fails closed (0c-02): every inbound chat is rejected
+    /// until either this is populated or `chat_allowlist_open` is set.
     #[serde(default)]
     pub chat_allowlist: Vec<String>,
+    /// Explicit opt-out of the allowlist: any chat may reach the gateway.
+    /// Only takes effect when `chat_allowlist` is empty; ignored otherwise.
+    /// Default false — an operator must opt in to open access.
+    pub chat_allowlist_open: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -510,8 +515,10 @@ pub struct GatewayResolved {
     pub approval_timeout_secs: u64,
     pub webhooks: std::collections::BTreeMap<String, WebhookResolved>,
     pub rate_limit: Option<RateLimitSettings>,
-    /// Allowed inbound chat keys. Empty = all chats permitted.
+    /// Allowed inbound chat keys. Empty fails closed unless `chat_allowlist_open`.
     pub chat_allowlist: Vec<String>,
+    /// Empty `chat_allowlist` was explicitly opted into staying open.
+    pub chat_allowlist_open: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -634,6 +641,7 @@ impl Default for Config {
                 webhooks: std::collections::BTreeMap::new(),
                 rate_limit: None,
                 chat_allowlist: Vec::new(),
+                chat_allowlist_open: false,
             },
             memory: MemoryResolved {
                 search_enabled: true,
@@ -1026,6 +1034,17 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     }
     cfg.gateway.rate_limit = merged.gateway.rate_limit.clone();
     cfg.gateway.chat_allowlist = merged.gateway.chat_allowlist.clone();
+    cfg.gateway.chat_allowlist_open = merged.gateway.chat_allowlist_open.unwrap_or(false);
+    if cfg.gateway.enabled
+        && cfg.gateway.chat_allowlist.is_empty()
+        && cfg.gateway.chat_allowlist_open
+    {
+        cfg.warnings.push(
+            "gateway.chat_allowlist is empty and gateway.chat_allowlist_open = true: \
+             every inbound chat is accepted. Set gateway.chat_allowlist to restrict access."
+                .into(),
+        );
+    }
     cfg.memory.search_enabled = merged.memory.search_enabled.unwrap_or(true);
     cfg.memory.write_enabled = merged.memory.write_enabled.unwrap_or(true);
     cfg.memory.skill_proposals = merged.memory.skill_proposals.unwrap_or(true);
@@ -1208,6 +1227,7 @@ const KNOWN_GATEWAY_KEYS: &[&str] = &[
     "outbound",
     "rate_limit",
     "chat_allowlist",
+    "chat_allowlist_open",
 ];
 const KNOWN_MEMORY_KEYS: &[&str] = &[
     "search_enabled",
@@ -1578,6 +1598,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if !over.gateway.chat_allowlist.is_empty() {
         base.gateway.chat_allowlist = over.gateway.chat_allowlist;
+    }
+    if over.gateway.chat_allowlist_open.is_some() {
+        base.gateway.chat_allowlist_open = over.gateway.chat_allowlist_open;
     }
     if over.memory.search_enabled.is_some() {
         base.memory.search_enabled = over.memory.search_enabled;

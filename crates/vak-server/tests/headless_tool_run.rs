@@ -86,7 +86,7 @@ async fn headless_tool_turn_survives_without_subscribers() {
     let _ = std::fs::create_dir_all(cwd.join(".vakcoder"));
     let _ = std::fs::write(
         cwd.join(".vakcoder/config.toml"),
-        "[memory]\nreflection = false\n",
+        "[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
     );
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));

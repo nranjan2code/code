@@ -126,7 +126,14 @@ security/inbox), operation (approvals/config/cancel), and interaction
     forwarded gate inside its window — silence, timeout, or missing delivery
     credential always means no, and a late reply resolves nothing. Never turn
     a denial into permission, forward gates through ambient state, or let
-    verdict-shaped chatter from non-approver chats resolve anything.
+    verdict-shaped chatter from non-approver chats resolve anything. An empty
+    `gateway.chat_allowlist` fails closed (rejects every chat) unless the
+    operator explicitly sets `chat_allowlist_open = true`; never restore
+    "empty means allow all" for compatibility. Inbound channel bridges build
+    their payload through `InboundChannel` + `InboundRequest::new`
+    (`vak-server/src/gateway.rs`), which rejects an empty or placeholder
+    `chat`/`sender` — a bridge that reuses one fixed identity for every
+    remote user would otherwise defeat the allowlist silently.
 16. **Every execution path authorizes before dispatch.** Agent turns, task
     children, static flows, dynamic plans, evals, server runs, and desktop runs
     must use the same permission decision and brokered registry. A direct flow

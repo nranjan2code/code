@@ -10,6 +10,8 @@
 use serde_json::Value;
 use std::path::PathBuf;
 
+use crate::gateway::{InboundChannel, InboundRequest};
+
 pub struct TelegramBridge {
     /// Bot API base, e.g. `https://api.telegram.org`. Overridable for
     /// self-hosted relays and tests via `TELEGRAM_API_BASE`.
@@ -20,6 +22,12 @@ pub struct TelegramBridge {
     /// Directory for the per-token single-instance lock
     /// (`$VAKCODER_HOME/locks`). None skips locking (tests only).
     pub locks_dir: Option<PathBuf>,
+}
+
+impl InboundChannel for TelegramBridge {
+    fn surface(&self) -> &'static str {
+        "telegram"
+    }
 }
 
 /// Why a poll failed -- recovery differs by kind.
@@ -150,6 +158,11 @@ impl InstanceLock {
 struct TelegramUpdate {
     update_id: i64,
     chat_id: i64,
+    /// Telegram's own numeric user id for whoever sent the message. Falls
+    /// back to the chat id (never empty/placeholder) when Telegram omits
+    /// `from` (rare, e.g. channel posts) so `InboundRequest::new` never
+    /// sees a blank sender.
+    sender_id: i64,
     text: String,
     /// Largest-photo file id when the message carries an image.
     photo_file_id: Option<String>,
@@ -191,7 +204,9 @@ impl TelegramBridge {
                     Err(e) => eprintln!("[telegram] photo download failed: {e}"),
                 }
             }
-            let reply = self.process(u.chat_id, &u.text, &attachments).await;
+            let reply = self
+                .process(u.chat_id, u.sender_id, &u.text, &attachments)
+                .await;
             // Deliver whatever we got — an error notice beats silence, but a
             // failed send must not lose our offset progress either way.
             self.send_message(u.chat_id, &reply)
@@ -207,20 +222,30 @@ impl TelegramBridge {
     async fn process(
         &self,
         chat_id: i64,
+        sender_id: i64,
         text: &str,
         attachments: &[serde_json::Value],
     ) -> GatewayReply {
+        // 0c-03: real per-user chat/sender, not a fixed placeholder — see
+        // InboundRequest::new for why that distinction is enforced here.
+        let req = match InboundRequest::new(
+            self,
+            chat_id.to_string(),
+            sender_id.to_string(),
+            text.to_string(),
+        ) {
+            Ok(req) => req.with_attachments(attachments.to_vec()).waiting(),
+            Err(e) => {
+                return GatewayReply {
+                    text: format!("(bridge refused to send: {e})"),
+                    delivery: None,
+                };
+            }
+        };
         let res = http()
             .post(format!("{}/gateway/inbound", self.gateway_url))
             .bearer_auth(&self.gateway_token)
-            .json(&serde_json::json!({
-                "surface": "telegram",
-                "chat": chat_id.to_string(),
-                "text": text,
-                "wait": true,
-                "sender": "telegram",
-                "attachments": attachments,
-            }))
+            .json(&req)
             .send()
             .await;
         match res {
@@ -283,6 +308,7 @@ impl TelegramBridge {
                 // other media advance the offset so they are never replayed.
                 let msg = &item["message"];
                 let chat_id = msg["chat"]["id"].as_i64();
+                let sender_id = msg["from"]["id"].as_i64();
                 let text = msg["text"].as_str().map(String::from);
                 let photo_file_id = msg["photo"]
                     .as_array()
@@ -294,12 +320,14 @@ impl TelegramBridge {
                     (Some(chat_id), true) => out.push(TelegramUpdate {
                         update_id,
                         chat_id,
+                        sender_id: sender_id.unwrap_or(chat_id),
                         text: text.unwrap_or_default(),
                         photo_file_id,
                     }),
                     _ => out.push(TelegramUpdate {
                         update_id,
                         chat_id: 0,
+                        sender_id: 0,
                         text: String::new(),
                         photo_file_id: None,
                     }),

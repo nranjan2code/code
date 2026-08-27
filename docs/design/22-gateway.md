@@ -190,6 +190,9 @@ approval_timeout_secs = 300    # min 5
 [gateway.outbound.webhooks.ci]
 url       = "https://ci.example.com/vakcoder"
 token_env = "CI_HOOK_TOKEN"   # name only; value resolved per delivery
+
+chat_allowlist = ["telegram:48211", "log:ops"]  # empty fails closed (0c-02)
+# chat_allowlist_open = true   # explicit opt-out: accept any chat instead
 ```
 
 - Unknown keys warn-not-fail per house convention (`KNOWN_GATEWAY_KEYS`,
@@ -198,6 +201,12 @@ token_env = "CI_HOOK_TOKEN"   # name only; value resolved per delivery
   project config (enabled gates remote execution; outbound URLs are exfil
   targets).
 - `serve --gateway` forces `enabled` regardless of config (CLI override).
+- `chat_allowlist` fails closed: an empty list rejects every inbound chat
+  with `403` until the operator either lists chats or sets
+  `chat_allowlist_open = true` to explicitly accept all of them (0c-02).
+  Earlier revisions treated empty as "allow all" by default; that default
+  meant any user who found a deployed bot got a full agent session, so it
+  was inverted rather than kept for compatibility.
 
 ## Channel bridges
 
@@ -217,6 +226,21 @@ advance the offset without routing so they are never replayed. Transient
 failures back off 3s; ten consecutive failures give up with a clear error.
 `TELEGRAM_API_BASE` overrides the API host for self-hosted relays and tests.
 Tokens live in `.env` / the user `.env`, never in config or flags.
+
+### Inbound channel identity (0c-03)
+
+`chat_allowlist` and the per-conversation session binding are only as
+strong as `chat`/`sender` being the bridge's real remote identity — a
+bridge that reuses one fixed value for every user would silently merge
+every stranger into one session and defeat the allowlist outright. Bridges
+build their `/gateway/inbound` payload through `vak_server::gateway::
+InboundChannel` + `InboundRequest::new` rather than hand-rolling the JSON:
+the constructor rejects an empty `chat`/`sender` and rejects either being
+left as a copy-pasted placeholder equal to the surface name, so a new
+bridge (Slack, Discord, ...) that hasn't wired up real per-user identity
+fails loudly at send time instead of shipping a silent allowlist bypass.
+The Telegram bridge implements `InboundChannel` and maps `chat` to the
+Telegram chat id and `sender` to Telegram's own numeric `from.id`.
 
 ## Security posture
 

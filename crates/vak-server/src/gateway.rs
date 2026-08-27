@@ -30,6 +30,79 @@ use vak_delivery::{
 
 use crate::{AppState, SessionHandle};
 
+/// Contract every inbound channel bridge (Telegram today; Slack, Discord,
+/// ... later) must satisfy before calling `POST /gateway/inbound` (0c-03).
+/// `gateway.chat_allowlist` and the per-conversation session binding are
+/// only as strong as `chat`/`sender` being the real remote identity — a
+/// bridge that reuses one fixed value for every user would silently merge
+/// every stranger into one session and defeat the allowlist outright.
+/// Route new bridges through `InboundRequest::new` rather than hand-rolling
+/// the JSON body so that mistake fails loudly instead of shipping quietly.
+pub trait InboundChannel {
+    /// Stable lowercase surface name ("telegram", "slack", ...) — the
+    /// first half of the `surface:chat` allowlist key.
+    fn surface(&self) -> &'static str;
+}
+
+/// Validated `{surface, chat, sender, text}` payload for one inbound
+/// message, built via [`InboundRequest::new`].
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InboundRequest {
+    pub surface: String,
+    pub chat: String,
+    pub sender: String,
+    pub text: String,
+    #[serde(default)]
+    pub attachments: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub wait: bool,
+}
+
+impl InboundRequest {
+    /// Rejects the two shapes a careless bridge tends to produce before it
+    /// has wired up real per-user identity: an empty `chat`/`sender`, or
+    /// one that is literally the surface name (a copy-pasted placeholder).
+    pub fn new(
+        channel: &impl InboundChannel,
+        chat: impl Into<String>,
+        sender: impl Into<String>,
+        text: impl Into<String>,
+    ) -> Result<Self, String> {
+        let surface = channel.surface().to_string();
+        let chat = chat.into();
+        let sender = sender.into();
+        if chat.trim().is_empty() {
+            return Err(format!("{surface} bridge: chat key must not be empty"));
+        }
+        if sender.trim().is_empty() {
+            return Err(format!("{surface} bridge: sender id must not be empty"));
+        }
+        if chat.trim() == surface || sender.trim() == surface {
+            return Err(format!(
+                "{surface} bridge: chat/sender must be the remote identity, not the surface name itself"
+            ));
+        }
+        Ok(Self {
+            surface,
+            chat,
+            sender,
+            text: text.into(),
+            attachments: Vec::new(),
+            wait: false,
+        })
+    }
+
+    pub fn with_attachments(mut self, attachments: Vec<serde_json::Value>) -> Self {
+        self.attachments = attachments;
+        self
+    }
+
+    pub fn waiting(mut self) -> Self {
+        self.wait = true;
+        self
+    }
+}
+
 /// Long-poll ceiling for `wait: true` inbound messages.
 const WAIT_TIMEOUT: Duration = Duration::from_secs(240);
 
@@ -51,8 +124,10 @@ pub struct GatewayState {
     /// Forwarded gates awaiting a yes/no from the approver surface,
     /// oldest first (uuidv7 keys sort by insertion time).
     pending_approvals: Mutex<std::collections::BTreeMap<String, PendingGate>>,
-    /// Allowed inbound chat keys. Empty = all chats permitted.
+    /// Allowed inbound chat keys. Empty fails closed unless
+    /// `chat_allowlist_open` was explicitly set (0c-02).
     chat_allowlist: Vec<String>,
+    chat_allowlist_open: bool,
 }
 
 struct PendingGate {
@@ -96,6 +171,7 @@ impl GatewayState {
             approval_timeout: Duration::from_secs(gw.approval_timeout_secs),
             pending_approvals: Mutex::new(std::collections::BTreeMap::new()),
             chat_allowlist: gw.chat_allowlist.clone(),
+            chat_allowlist_open: gw.chat_allowlist_open,
         }
     }
 
@@ -132,6 +208,12 @@ impl GatewayState {
 
     pub(crate) fn chat_allowlist(&self) -> &[String] {
         &self.chat_allowlist
+    }
+
+    /// True when an empty `chat_allowlist` was explicitly opted into
+    /// staying open. Defaults to false: fail closed (0c-02).
+    pub(crate) fn chat_allowlist_open(&self) -> bool {
+        self.chat_allowlist_open
     }
 
     pub(crate) fn pending_approval_count(&self) -> usize {
@@ -432,10 +514,18 @@ async fn gateway_inbound(
             .into_response();
     }
     let key = format!("{}:{}", body.surface.trim(), body.chat.trim());
-    // 0c-01: chat allowlist — reject messages from unknown chats.
-    // An empty list means all chats are permitted (backward compatible).
-    if !state.gateway.chat_allowlist().is_empty() && !state.gateway.chat_allowlist().contains(&key)
-    {
+    // 0c-01/0c-02: chat allowlist — reject messages from unknown chats.
+    // An empty list fails closed by default: every chat is rejected until
+    // the operator either populates chat_allowlist or explicitly opts
+    // into open access via chat_allowlist_open. This is deliberately the
+    // opposite of "backward compatible" — a bot anyone can DM into a full
+    // agent session is not a safe default.
+    let allowed = if state.gateway.chat_allowlist().is_empty() {
+        state.gateway.chat_allowlist_open()
+    } else {
+        state.gateway.chat_allowlist().contains(&key)
+    };
+    if !allowed {
         vak_core::security_events::record(
             &state.core.sessions_home(),
             vak_core::security_events::EventKind::ChatAllowlist,
@@ -443,10 +533,15 @@ async fn gateway_inbound(
             &format!("key={key}"),
             None,
         );
+        let hint = if state.gateway.chat_allowlist().is_empty() {
+            "gateway.chat_allowlist is empty; add this chat key or set gateway.chat_allowlist_open = true to allow all"
+        } else {
+            "chat not in gateway.chat_allowlist"
+        };
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({
-                "error": format!("chat '{key}' not in gateway.chat_allowlist")
+                "error": format!("chat '{key}' rejected: {hint}")
             })),
         )
             .into_response();

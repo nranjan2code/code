@@ -82,7 +82,7 @@ async fn spawn_gateway(
     let _ = std::fs::create_dir_all(cwd.join(".vakcoder"));
     let _ = std::fs::write(
         cwd.join(".vakcoder/config.toml"),
-        "[memory]\nreflection = false\n",
+        "[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
     );
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
@@ -113,7 +113,7 @@ async fn spawn_gateway_bare(
     let _ = std::fs::create_dir_all(cwd.join(".vakcoder"));
     let _ = std::fs::write(
         cwd.join(".vakcoder/config.toml"),
-        "[memory]\nreflection = false\n",
+        "[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
     );
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
@@ -546,6 +546,52 @@ async fn gateway_disabled_by_default_returns_conflict() {
             .as_str()
             .unwrap_or_default()
             .contains("gateway disabled")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn empty_chat_allowlist_denies_by_default() {
+    // 0c-02: an empty chat_allowlist must fail closed, not open — no
+    // `chat_allowlist_open = true` here, unlike the shared test helpers.
+    let provider = Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::from(vec![text("should never run")])),
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let _ = std::fs::create_dir_all(cwd.join(".vakcoder"));
+    let _ = std::fs::write(
+        cwd.join(".vakcoder/config.toml"),
+        "[memory]\nreflection = false\n",
+    );
+    let core = Core::new_with_trust(cwd.clone(), true).unwrap();
+    core.set_sessions_home(dir.path().join("home"));
+    core.set_permission_mode(vak_config::PermissionMode::FullAccess);
+    core.set_provider_instance(provider);
+    std::mem::forget(dir);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = vak_server::gateway_router(core);
+    let _server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let base = format!("http://{addr}");
+    let client = reqwest::Client::new();
+
+    let res = inbound(
+        &client,
+        &base,
+        serde_json::json!({"surface":"telegram","chat":"999","sender":"999","text":"hi"}),
+    )
+    .await;
+    assert_eq!(res.status(), 403);
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("chat_allowlist_open"),
+        "expected the open-access hint in: {body}"
     );
 }
 
