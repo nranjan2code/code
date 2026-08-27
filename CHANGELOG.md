@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.4 — install correctness and Runtime ownership
+
 - Made a fresh install actually run. `self install` now mints the gateway
   bearer token into `<data_home>/.env`, and the Runtime opens without a
   provider credential instead of refusing to start — previously the managed
