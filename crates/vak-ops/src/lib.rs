@@ -231,11 +231,32 @@ fn manager_state(service: Service) -> State {
 pub fn health_ok(cfg: &OpsConfig) -> bool {
     // Blocking call by design: callers are UI threads that want a quick,
     // bounded answer.
+    let receipt = vak_config::paths::data_home()
+        .join("runtime")
+        .join("gateway.json");
+    let token = std::fs::read_to_string(receipt)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|value| {
+            value
+                .get("token")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .filter(|token| !token.is_empty());
+    let Some(token) = token else {
+        return false;
+    };
     let url = format!("{}/health", cfg.base_url());
     reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()
-        .and_then(|c| c.get(&url).send().and_then(|r| r.error_for_status()))
+        .and_then(|c| {
+            c.get(&url)
+                .bearer_auth(token)
+                .send()
+                .and_then(|r| r.error_for_status())
+        })
         .is_ok()
 }
 
