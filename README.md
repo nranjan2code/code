@@ -53,6 +53,22 @@ For a local build and managed installation, use the scenario-driven installer:
 Add `--no-service` for packaging/container tests or `--gates` to run the full
 release gate before installation.
 
+### Release versioning
+
+The workspace version in `Cargo.toml` is the single release version. Bump it
+with the checked-in helper, review the generated changelog entry, commit the
+result, and run the consistency gate before creating the matching tag:
+
+```bash
+./scripts/bump-version.sh patch   # or minor, major, or an explicit X.Y.Z
+./scripts/check-release-version.sh
+./scripts/release.sh
+git tag vX.Y.Z
+```
+
+Release and install scripts require a clean commit, and the gate rejects reuse
+of a version tag on a different commit.
+
 ### 1. Build the base from source
 
 You need a [stable Rust toolchain](https://www.rust-lang.org/tools/install) and Git.

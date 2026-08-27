@@ -49,6 +49,16 @@ if [[ -n "$TAG" && "$TAG" != "v$VERSION" ]]; then
   exit 1
 fi
 
+VERSION_TAG="$(git -C "$ROOT_DIR" tag --list "v$VERSION" | head -1)"
+if [[ -n "$VERSION_TAG" ]]; then
+  TAG_COMMIT="$(git -C "$ROOT_DIR" rev-parse "$VERSION_TAG^{commit}")"
+  HEAD_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+  if [[ "$TAG_COMMIT" != "$HEAD_COMMIT" ]]; then
+    printf 'error: version v%s is already tagged at %s; bump the workspace version before releasing\n' "$VERSION" "$TAG_COMMIT" >&2
+    exit 1
+  fi
+fi
+
 if [[ -n "${VAKCODER_CHECK_BINARIES:-}" ]]; then
   binary_list="${VAKCODER_CHECK_BINARIES//,/ }"
   for binary in $binary_list; do

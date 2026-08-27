@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.3 — deployment and release hardening
+
+- Routed OpenCode Zen credentials through the canonical provider configuration
+  and server catalogue.
+- Added clean-tree, provenance, and unique-tag checks to release and install
+  gates, with a usable version bump workflow.
+- Rebuilt and verified the managed Runtime, TUI, tray, and desktop installation
+  from the committed release tree.
+
 ## 0.9.2 — greenfield Runtime cut-over
 
 - Consolidated the workspace on one canonical Runtime authority graph:

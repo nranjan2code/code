@@ -21,14 +21,30 @@ esac
 [[ "$NEXT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { printf 'error: invalid version: %s\n' "$NEXT" >&2; exit 2; }
 [[ "$NEXT" != "$CURRENT" ]] || { printf 'error: version is already %s\n' "$CURRENT" >&2; exit 1; }
 
+CHANGELOG="$ROOT_DIR/CHANGELOG.md"
+rg -q '^# Changelog$' "$CHANGELOG" || {
+  printf 'error: CHANGELOG.md is missing its canonical title\n' >&2
+  exit 1
+}
+rg -q '^version = "' "$ROOT_DIR/Cargo.toml" || {
+  printf 'error: workspace version is missing from Cargo.toml\n' >&2
+  exit 1
+}
+
 VAKCODER_CURRENT="$CURRENT" VAKCODER_NEXT="$NEXT" perl -0pi -e '
   $old = quotemeta($ENV{"VAKCODER_CURRENT"});
   die "workspace version not found\n" unless s/version = "$old"/version = "$ENV{"VAKCODER_NEXT"}"/;
 ' "$ROOT_DIR/Cargo.toml"
 VAKCODER_NEXT="$NEXT" perl -0pi -e '
-  die "canonical Unreleased heading not found\n" unless s/## Unreleased\n/## Unreleased\n\n## $ENV{"VAKCODER_NEXT"} — release candidate\n/;
-' "$ROOT_DIR/CHANGELOG.md"
+  $next = quotemeta($ENV{"VAKCODER_NEXT"});
+  if (/^## Unreleased\n/m) {
+    s/^## Unreleased\n/## Unreleased\n\n## $ENV{"VAKCODER_NEXT"} — release candidate\n/m;
+  } elsif (!/^## $next(?: |$)/m) {
+    s/\A(# Changelog\n)/$1\n## $ENV{"VAKCODER_NEXT"} — release candidate\n\n/;
+  } else {
+    die "release heading already exists\n";
+  }
+' "$CHANGELOG"
 
 cargo metadata --manifest-path "$ROOT_DIR/Cargo.toml" --no-deps --format-version 1 >/dev/null
-"$ROOT_DIR/scripts/check-release-version.sh"
-printf 'bumped %s -> %s; edit the new changelog heading before tagging v%s\n' "$CURRENT" "$NEXT" "$NEXT"
+printf 'bumped %s -> %s; review CHANGELOG.md, commit the release, then run scripts/check-release-version.sh before tagging v%s\n' "$CURRENT" "$NEXT" "$NEXT"

@@ -10,7 +10,11 @@ protocol.
 `[workspace.package].version` in the root `Cargo.toml` is the only handwritten
 version. Crates and Tauri derive their version from it. Release and install
 scripts require a clean commit; `scripts/check-release-version.sh` rejects
-dirty trees and drift in manifests, bundles, binaries, and changelog data.
+dirty trees, drift in manifests, bundles, binaries, and changelog data, and a
+version that is already tagged on another commit. Start a release with
+`scripts/bump-version.sh patch|minor|major|X.Y.Z`, review the generated
+changelog heading, commit it, run the release gate, and only then create the
+matching `vX.Y.Z` tag.
 Release binaries record the exact commit SHA.
 
 ## Build and install
