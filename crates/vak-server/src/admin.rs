@@ -222,12 +222,32 @@ pub(crate) async fn session_transcript_admin(
                     })
                 })
                 .collect();
+            let contract = state
+                .get(&session_id)
+                .and_then(|handle| {
+                    handle
+                        .session
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .as_ref()
+                        .and_then(|session| session.header().map(|header| header.contract.clone()))
+                })
+                .or_else(|| {
+                    crate::open_historical_session(&state, &session_id)
+                        .and_then(|session| session.header().map(|header| header.contract.clone()))
+                });
+            let configuration_mismatch = contract.as_ref().is_some_and(|contract| {
+                contract.provider != state.core.effective_provider()
+                    || contract.model != state.core.effective_model()
+            });
             Json(serde_json::json!({
                 "session_id": session_id,
                 "entries": page,
                 "offset": offset,
                 "total": total,
                 "has_more": has_more,
+                "contract": contract,
+                "configuration_mismatch": configuration_mismatch,
             }))
         }
         Err(e) => Json(serde_json::json!({ "error": e.to_string() })),

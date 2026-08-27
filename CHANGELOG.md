@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.9 — 2026-08-27
+
+### Configuration audit follow-up
+
+Profile-derived provider/model settings now report accurate provenance, and
+the admin transcript projection exposes the same frozen session contract and
+configuration-mismatch status as the normal session endpoint.
+
 ## 0.8.8 — 2026-08-27
 
 ### System-wide configuration authority
@@ -11,6 +19,9 @@ restart. Existing sessions continue to use their immutable frozen provider
 and model contract, with transcript metadata exposing mismatches against
 current workspace defaults. Desktop settings now describe the saved-workspace
 behavior instead of implying that changes are runtime-only.
+
+The follow-up audit also aligned the admin transcript projection with the
+normal transcript contract and added profile-aware provenance reporting.
 
 ## 0.8.7 — 2026-08-27
 

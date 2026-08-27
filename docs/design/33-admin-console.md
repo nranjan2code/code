@@ -90,11 +90,15 @@ is bounded by `[gateway.rate_limit]`.
 | `/security` | GET | Security-events audit log, kind-filterable |
 | `/store/rebuild` | POST | Full index rebuild (mutation ⇒ POST) |
 | `/store/import/:id` | POST | Import one session's JSONL |
-| `/config` | GET | Effective config snapshot |
+| `/config` | GET | Effective config snapshot, including provider/model provenance |
 | `/gateway/status` | GET | Gateway enablement, bindings, chat allowlist |
 
 Answering approvals, running prompts, steering, cancelling, mode changes,
-config patches, inbox acks reuse the EXISTING secured routes
+config patches, inbox acks reuse the EXISTING secured routes. Config patches
+are durable workspace mutations: the server writes the selected fields
+atomically before applying the live Core override, and returns source metadata
+so clients can distinguish project config, global config, environment, and
+runtime/scoped overrides.
 (`/sessions/:id/approvals/:req`, `/sessions/:id/run`, `/sessions/:id/
 steering`, `/sessions/:id/cancel`, `/config/mode`, `PATCH /config`,
 `/inbox/:id/ack`). The console is just another client of the same contract.

@@ -277,10 +277,14 @@ impl Core {
             "runtime_override"
         } else if std::env::var("VAKCODER_MODEL").is_ok() {
             "environment"
+        } else if project_profile_has_key(&self.inner.cwd, "model") {
+            "project_profile"
         } else if vak_config::project_path(&self.inner.cwd).is_file()
             && project_config_has_key(&self.inner.cwd, "model")
         {
             "project_config"
+        } else if global_profile_has_key("model") {
+            "global_profile"
         } else if vak_config::global_path().is_some_and(|path| path.is_file())
             && global_config_has_key("model")
         {
@@ -291,7 +295,14 @@ impl Core {
     }
 
     pub fn set_provider(&self, provider: String) {
-        Self::write_override(&self.inner.provider_override, Some(provider));
+        Self::write_override(&self.inner.provider_override, Some(provider.clone()));
+        if let Ok(mut injected) = self.inner.provider_instance.lock()
+            && injected
+                .as_ref()
+                .is_some_and(|current| current.name() != provider)
+        {
+            *injected = None;
+        }
     }
 
     pub fn effective_provider(&self) -> String {
@@ -304,10 +315,14 @@ impl Core {
             "runtime_override"
         } else if std::env::var("VAKCODER_PROVIDER").is_ok() {
             "environment"
+        } else if project_profile_has_key(&self.inner.cwd, "provider") {
+            "project_profile"
         } else if vak_config::project_path(&self.inner.cwd).is_file()
             && project_config_has_key(&self.inner.cwd, "provider")
         {
             "project_config"
+        } else if global_profile_has_key("provider") {
+            "global_profile"
         } else if vak_config::global_path().is_some_and(|path| path.is_file())
             && global_config_has_key("provider")
         {
@@ -621,14 +636,18 @@ impl Core {
     /// provider the user is inspecting.
     fn provider_auth_for(&self, provider: &str) -> Result<ProviderAuth, CoreError> {
         let provider = provider.to_string();
+        let required_key = |env: &str, provider: &str| {
+            vak_config::get_var(env)
+                .filter(|key| !key.trim().is_empty())
+                .map(|key| key.trim().to_string())
+                .ok_or_else(|| CoreError::MissingAuth {
+                    env: env.into(),
+                    provider: provider.into(),
+                })
+        };
         match provider.as_str() {
             "anthropic" => {
-                let api_key = vak_config::get_var("ANTHROPIC_API_KEY").ok_or_else(|| {
-                    CoreError::MissingAuth {
-                        env: "ANTHROPIC_API_KEY".into(),
-                        provider: "anthropic".into(),
-                    }
-                })?;
+                let api_key = required_key("ANTHROPIC_API_KEY", "anthropic")?;
                 Ok(ProviderAuth {
                     api_key,
                     base_url: self
@@ -642,9 +661,11 @@ impl Core {
             "google" => {
                 let api_key = vak_config::get_var("GEMINI_API_KEY")
                     .or_else(|| vak_config::get_var("GOOGLE_API_KEY"))
+                    .filter(|key| !key.trim().is_empty())
+                    .map(|key| key.trim().to_string())
                     .ok_or_else(|| CoreError::MissingAuth {
                         env: "GEMINI_API_KEY".into(),
-                        provider,
+                        provider: provider.clone(),
                     })?;
                 Ok(ProviderAuth {
                     api_key,
@@ -654,12 +675,7 @@ impl Core {
                 })
             }
             "openai-responses" => {
-                let api_key = vak_config::get_var("OPENAI_API_KEY").ok_or_else(|| {
-                    CoreError::MissingAuth {
-                        env: "OPENAI_API_KEY".into(),
-                        provider,
-                    }
-                })?;
+                let api_key = required_key("OPENAI_API_KEY", "openai-responses")?;
                 Ok(ProviderAuth {
                     api_key,
                     base_url: vak_config::get_var("VAKCODER_OPENAI_BASE_URL")
@@ -682,10 +698,7 @@ impl Core {
                         "VAKCODER_OPENROUTER_BASE_URL",
                     )
                 };
-                let api_key = vak_config::get_var(env).ok_or_else(|| CoreError::MissingAuth {
-                    env: env.into(),
-                    provider,
-                })?;
+                let api_key = required_key(env, &provider)?;
                 Ok(ProviderAuth {
                     api_key,
                     base_url: vak_config::get_var(override_env)
@@ -693,12 +706,7 @@ impl Core {
                 })
             }
             "opencode-zen" => {
-                let api_key = vak_config::get_var("OPENCODE_API_KEY").ok_or_else(|| {
-                    CoreError::MissingAuth {
-                        env: "OPENCODE_API_KEY".into(),
-                        provider,
-                    }
-                })?;
+                let api_key = required_key("OPENCODE_API_KEY", "opencode-zen")?;
                 Ok(ProviderAuth {
                     api_key,
                     base_url: vak_config::get_var("VAKCODER_OPENCODE_ZEN_BASE_URL")
@@ -758,11 +766,11 @@ impl Core {
     pub fn provider_configured(&self, provider: &str) -> bool {
         match provider {
             "ollama" => true,
-            "google" => {
-                vak_config::get_var("GEMINI_API_KEY").is_some()
-                    || vak_config::get_var("GOOGLE_API_KEY").is_some()
-            }
-            other => vak_config::get_var(Self::provider_env_var(other).unwrap_or("")).is_some(),
+            "google" => ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+                .iter()
+                .any(|env| vak_config::get_var(env).is_some_and(|key| !key.trim().is_empty())),
+            other => vak_config::get_var(Self::provider_env_var(other).unwrap_or(""))
+                .is_some_and(|key| !key.trim().is_empty()),
         }
     }
 
@@ -1944,6 +1952,31 @@ fn global_config_has_key(key: &str) -> bool {
         .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
         .and_then(|value| value.as_table().map(|table| table.contains_key(key)))
         .unwrap_or(false)
+}
+
+fn project_profile_has_key(cwd: &std::path::Path, key: &str) -> bool {
+    config_profile_has_key(&vak_config::project_path(cwd), key)
+}
+
+fn global_profile_has_key(key: &str) -> bool {
+    vak_config::global_path().is_some_and(|path| config_profile_has_key(&path, key))
+}
+
+fn config_profile_has_key(path: &std::path::Path, key: &str) -> bool {
+    let Some(value) = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
+    else {
+        return false;
+    };
+    let Some(profile) = value.get("profile").and_then(toml::Value::as_str) else {
+        return false;
+    };
+    value
+        .get("profiles")
+        .and_then(|profiles| profiles.get(profile))
+        .and_then(|profile| profile.get(key))
+        .is_some()
 }
 
 fn self_path() -> std::path::PathBuf {

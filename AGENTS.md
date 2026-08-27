@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v0.3.0+ — all roadmap phases implemented and live-tested.**
+**Status: v0.8.9 — all roadmap phases implemented and live-tested.**
 See `docs/design/00-roadmap.md` for the phase history and
 `docs/design/15-reliability.md` for the failure-handling matrix. Security work
 must also follow the threat model and priority order in
@@ -132,6 +132,15 @@ security/inbox), operation (approvals/config/cancel), and interaction
     must use the same permission decision and brokered registry. A direct flow
     node or convenience SDK path may not call an effectful tool before
     evaluating `PermissionEngine` and resolving `Ask` through its approver.
+17. **Configuration has one contract across every surface.** Persistent
+    workspace preferences changed through authenticated `/config` are written
+    atomically to `.vakcoder/config.toml` before the live Core override is
+    applied. `/health`, `/config`, `/providers`, admin snapshots, and session
+    transcripts must report effective values and their source where relevant.
+    CLI flags, task pins, heartbeat pins, and subagent pins are scoped
+    overrides and must remain visibly non-global. Session provider/model
+    contracts freeze at session creation; changing workspace defaults never
+    rewrites an existing session or silently changes its dispatch.
 
 ## Code rules
 
@@ -188,8 +197,9 @@ crates/vak-agent     loop, steering queues (full user messages: text +
 crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode +
                      context-quality scorecard (docs/design/27 Phase C)
- crates/vak-config    layered TOML config + .env secret loading + canonical
-                     filesystem paths (paths.rs: data_home, cache_home,
+crates/vak-config    layered TOML config + atomic persisted workspace
+                     preferences + .env secret loading + canonical filesystem
+                     paths (paths.rs: data_home, cache_home,
                      logs_dir, migrate_legacy_home) + [finops]
                      caps/pricing + [goal] policy + [route] ladder
                      preferences (docs/design/27 Phases D+H+R) +

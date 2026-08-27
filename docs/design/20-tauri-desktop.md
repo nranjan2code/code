@@ -342,7 +342,11 @@ density, transcript detail, prompt suggestions, notifications, and reduced
 motion. Agent defaults and permission mode update the live Core through the
 authenticated `GET|PATCH /config` endpoint. Changing the mode revokes active
 main and side runs plus pending approvals so no task retains a stale security
-snapshot; the next run starts under the selected mode. The endpoint
+snapshot; the next run starts under the selected mode. Agent defaults and
+the permission mode are persisted in the workspace config before the live
+Core is updated, so a restart does not lose an applied choice. Existing
+sessions retain their immutable provider/model contract and the transcript
+API reports when it differs from current workspace defaults. The endpoint
 deliberately returns only a safe, secret-free configuration projection.
 Reliability, integration, context, and path pages expose the effective runtime
 configuration without
