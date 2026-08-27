@@ -526,6 +526,27 @@ fn binary_newer_than_process(bin_path: &Path, pid: u32, runner: &dyn CommandRunn
         .is_some_and(|latest_possible_start| bin_mtime > latest_possible_start)
 }
 
+/// Register a unit that was just unloaded, tolerating the teardown race.
+///
+/// `launchctl bootout` returns before launchd has finished retiring the job,
+/// so an immediate `bootstrap` of the same label fails with "Operation already
+/// in progress". Every unit rewrite hits this, and the caller's rollback then
+/// restores the *old* unit — leaving a service that silently never picks up
+/// its new definition. Retry briefly instead of treating the race as failure.
+fn load_after_unload(name: &str, unit_path: &Path, runner: &dyn CommandRunner) -> bool {
+    const ATTEMPTS: u32 = 5;
+    const SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+    for attempt in 0..ATTEMPTS {
+        if load(name, unit_path, runner) {
+            return true;
+        }
+        if attempt + 1 < ATTEMPTS {
+            std::thread::sleep(SETTLE);
+        }
+    }
+    false
+}
+
 fn sync_one(spec: &ServiceSpec, paths: &Paths, runner: &dyn CommandRunner) -> SyncOutcome {
     let action = sync_one_inner(spec, paths, runner).unwrap_or_else(SyncAction::Failed);
     SyncOutcome {
@@ -579,7 +600,7 @@ fn sync_one_inner(
     // "already bootstrapped" and roll back a perfectly good unit.
     unload(spec.name, runner);
     write_atomic(&unit_path, &rendered)?;
-    if load(spec.name, &unit_path, runner) {
+    if load_after_unload(spec.name, &unit_path, runner) {
         Ok(if previous.is_some() {
             SyncAction::Updated
         } else {
