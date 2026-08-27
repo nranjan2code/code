@@ -8,7 +8,7 @@ export default function App() {
   const runtimeError = () => [runtime.projects.error, runtime.sessions.error, runtime.runs.error, runtime.tasks.error, runtime.memory.error, runtime.inbox.error, runtime.diagnostics.error].find(Boolean) as Error | undefined;
   return <main class="shell"><header><div><p class="eyebrow">VAKCODER RUNTIME</p><h1>Control plane</h1></div><span class="status-dot">{runtime.diagnostics()?.status ?? "connecting"}</span></header>
     <Show when={runtimeError()}>
-      <section class="panel"><h2>Runtime connection failed</h2><p class="empty">{runtimeError()!.message}</p><button onClick={() => location.reload()}>Try again</button></section>
+      <section class="panel connection-error"><h2>Runtime connection unavailable</h2><p class="empty">{runtimeError()!.message}</p><div class="connection-actions"><button onClick={runtime.retry}>Retry connection</button></div></section>
     </Show>
     <Show when={!runtimeError()} fallback={<></>}>
       <Show when={!runtime.projects.loading && !runtime.sessions.loading && !runtime.runs.loading && !runtime.tasks.loading && !runtime.inbox.loading} fallback={<p class="empty">Connecting to the authenticated Runtime…</p>}>
