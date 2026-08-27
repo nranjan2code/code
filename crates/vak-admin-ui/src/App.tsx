@@ -12,6 +12,17 @@ import type {
   SkillItem, SkillProposal, TaskItem, TranscriptEntry, WorkReceipt,
 } from "./types";
 
+// Theme state: initialized from localStorage and synchronized to document root dataset
+const [theme, setTheme] = createSignal<"warm" | "dark" | "contrast">(
+  (localStorage.getItem("vak_admin_theme") as "warm" | "dark" | "contrast") || "warm"
+);
+
+createEffect(() => {
+  const t = theme();
+  localStorage.setItem("vak_admin_theme", t);
+  document.documentElement.dataset.theme = t === "warm" ? "" : t;
+});
+
 // Unread inbox badge: polled lightly while signed in.
 const [unread, setUnread] = createSignal(0);
 
@@ -1727,6 +1738,35 @@ function Settings() {
               {doctorReport()}
             </pre>
           </Show>
+
+          <h2 style="margin-top:20px">Appearance &amp; Theme</h2>
+          <div class="theme-grid">
+            <For
+              each={[
+                { id: "warm", label: "Warm dark (craft)", class: "" },
+                { id: "dark", label: "Midnight (slate)", class: "dark" },
+                { id: "contrast", label: "High contrast", class: "contrast" },
+              ] as const}
+            >
+              {(t) => (
+                <button
+                  class="theme-choice"
+                  classList={{ active: theme() === t.id }}
+                  onClick={() => setTheme(t.id)}
+                >
+                  <span class={`theme-preview ${t.class}`}>
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                  <strong>{t.label}</strong>
+                  <Show when={theme() === t.id}>
+                    <span class="chip-ok mono" style="font-size:10px; padding:1px 5px; border-radius:4px">active</span>
+                  </Show>
+                </button>
+              )}
+            </For>
+          </div>
 
           <h2 style="margin-top:20px">Gateway &amp; Security</h2>
           <Show when={!gateway.loading}>
