@@ -778,6 +778,10 @@ function IntegrationsView() {
 
   // Hooks State
   const [hooksData, { refetch: refetchHooks }] = createResource(() => api.hooks().catch(() => ({ hooks: [] })));
+  const [newHookEvent, setNewHookEvent] = createSignal("pre_tool_use");
+  const [newHookMatcher, setNewHookMatcher] = createSignal("");
+  const [newHookCmd, setNewHookCmd] = createSignal("");
+  const [newHookTimeout, setNewHookTimeout] = createSignal("10000");
 
   // Skills & Proposals State
   const [skillsData, { refetch: refetchSkills }] = createResource(() => api.skills().catch(() => ({ skills: [] })));
@@ -785,6 +789,10 @@ function IntegrationsView() {
 
   // Tasks State
   const [tasksData, { refetch: refetchTasks }] = createResource(() => api.tasks().catch(() => ({ tasks: [] })));
+  const [newTaskName, setNewTaskName] = createSignal("");
+  const [newTaskPrompt, setNewTaskPrompt] = createSignal("");
+  const [newTaskSchedule, setNewTaskSchedule] = createSignal("");
+  const [newTaskModelPin, setNewTaskModelPin] = createSignal("");
 
   // MCP Save
   const addMcpServer = async () => {
@@ -823,6 +831,41 @@ function IntegrationsView() {
     }
   };
 
+  // Hooks CRUD
+  const addHook = async () => {
+    const cmd = newHookCmd().trim();
+    if (!cmd) return;
+    const current = hooksData()?.hooks ?? [];
+    const newHook: HookConfig = {
+      event: newHookEvent(),
+      matcher: newHookMatcher().trim() || null,
+      command: cmd,
+      timeout_ms: parseInt(newHookTimeout()) || 10000,
+      enabled: true,
+    };
+    try {
+      await api.putHooks([...current, newHook]);
+      pushToast("info", `Added ${newHookEvent()} hook`);
+      setNewHookCmd("");
+      setNewHookMatcher("");
+      refetchHooks();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    }
+  };
+
+  const deleteHook = async (index: number) => {
+    const current = [...(hooksData()?.hooks ?? [])];
+    current.splice(index, 1);
+    try {
+      await api.putHooks(current);
+      pushToast("info", "Hook removed");
+      refetchHooks();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    }
+  };
+
   // Proposals
   const promoteSkill = async (id: string) => {
     try {
@@ -845,11 +888,53 @@ function IntegrationsView() {
     }
   };
 
-  // Tasks
+  // Tasks CRUD
   const runTask = async (id: string) => {
     try {
       await api.runTaskNow(id);
       pushToast("info", "Task executed");
+      refetchTasks();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    }
+  };
+
+  const createNewTask = async () => {
+    const name = newTaskName().trim();
+    const prompt = newTaskPrompt().trim();
+    if (!name || !prompt) return;
+    try {
+      await api.createTask({
+        name,
+        prompt,
+        schedule: newTaskSchedule().trim() || undefined,
+        model_pin: newTaskModelPin().trim() || undefined,
+      });
+      pushToast("info", `Task '${name}' created`);
+      setNewTaskName("");
+      setNewTaskPrompt("");
+      setNewTaskSchedule("");
+      setNewTaskModelPin("");
+      refetchTasks();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    }
+  };
+
+  const toggleTask = async (id: string, enabled: boolean) => {
+    try {
+      await api.patchTask(id, { enabled });
+      pushToast("info", enabled ? "Task enabled" : "Task disabled");
+      refetchTasks();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    }
+  };
+
+  const removeTask = async (id: string) => {
+    try {
+      await api.deleteTask(id);
+      pushToast("info", "Task deleted");
       refetchTasks();
     } catch (err) {
       pushToast("alert", `${err}`);
@@ -924,29 +1009,59 @@ function IntegrationsView() {
 
         {/* Hooks Tab */}
         <Match when={subTab() === "hooks"}>
-          <section class="panel">
-            <h2>Configured Lifecycle Hooks</h2>
-            <Show when={!hooksData.loading} fallback={<div class="empty">Loading hooks…</div>}>
-              <Show when={(hooksData()?.hooks?.length ?? 0) > 0} fallback={<div class="empty">No lifecycle hooks defined in config.toml.</div>}>
-                <table class="table">
-                  <thead><tr><th>event</th><th>matcher</th><th>command</th><th>timeout</th><th>status</th></tr></thead>
-                  <tbody>
-                    <For each={hooksData()?.hooks ?? []}>
-                      {(h: HookConfig) => (
-                        <tr>
-                          <td><span class="chip chip-mode mono">{h.event}</span></td>
-                          <td class="mono dim">{h.matcher ?? "—"}</td>
-                          <td class="mono">{h.command}</td>
-                          <td>{h.timeout_ms}ms</td>
-                          <td><span class="chip chip-ok">enabled</span></td>
-                        </tr>
-                      )}
-                    </For>
-                  </tbody>
-                </table>
+          <div class="two-col">
+            <section class="panel">
+              <h2>Configured Lifecycle Hooks</h2>
+              <Show when={!hooksData.loading} fallback={<div class="empty">Loading hooks…</div>}>
+                <Show when={(hooksData()?.hooks?.length ?? 0) > 0} fallback={<div class="empty">No lifecycle hooks defined in config.toml.</div>}>
+                  <table class="table">
+                    <thead><tr><th>event</th><th>matcher</th><th>command</th><th>timeout</th><th /></tr></thead>
+                    <tbody>
+                      <For each={hooksData()?.hooks ?? []}>
+                        {(h: HookConfig, i) => (
+                          <tr>
+                            <td><span class="chip chip-mode mono">{h.event}</span></td>
+                            <td class="mono dim">{h.matcher ?? "—"}</td>
+                            <td class="mono">{h.command}</td>
+                            <td>{h.timeout_ms}ms</td>
+                            <td><button class="danger small" onClick={() => deleteHook(i())}>Remove</button></td>
+                          </tr>
+                        )}
+                      </For>
+                    </tbody>
+                  </table>
+                </Show>
               </Show>
-            </Show>
-          </section>
+            </section>
+
+            <section class="panel">
+              <h2>Add Lifecycle Hook</h2>
+              <div class="form-row">
+                <label>event</label>
+                <select value={newHookEvent()} onChange={(e) => setNewHookEvent(e.currentTarget.value)}>
+                  <option value="pre_tool_use">pre_tool_use</option>
+                  <option value="post_tool_use">post_tool_use</option>
+                  <option value="session_start">session_start</option>
+                  <option value="stop">stop</option>
+                </select>
+              </div>
+              <div class="form-row">
+                <label>matcher</label>
+                <input class="mono" placeholder="Optional tool name pattern" value={newHookMatcher()} onInput={(e) => setNewHookMatcher(e.currentTarget.value)} />
+              </div>
+              <div class="form-row">
+                <label>command</label>
+                <input class="mono" placeholder="/path/to/script.sh" value={newHookCmd()} onInput={(e) => setNewHookCmd(e.currentTarget.value)} />
+              </div>
+              <div class="form-row">
+                <label>timeout (ms)</label>
+                <input type="number" value={newHookTimeout()} onInput={(e) => setNewHookTimeout(e.currentTarget.value)} />
+              </div>
+              <div class="row-gap" style="margin-top:12px">
+                <button disabled={!newHookCmd().trim()} onClick={addHook}>Add Hook</button>
+              </div>
+            </section>
+          </div>
         </Match>
 
         {/* Skills & Proposals Tab */}
@@ -1001,33 +1116,67 @@ function IntegrationsView() {
 
         {/* Tasks Tab */}
         <Match when={subTab() === "tasks"}>
-          <section class="panel">
-            <h2>Scheduled Tasks &amp; Automations</h2>
-            <Show when={!tasksData.loading} fallback={<div class="empty">Loading tasks…</div>}>
-              <Show when={(tasksData()?.tasks?.length ?? 0) > 0} fallback={<div class="empty">No scheduled tasks or cron jobs configured.</div>}>
-                <table class="table">
-                  <thead><tr><th>name</th><th>type</th><th>schedule / interval</th><th>model pin</th><th>last run</th><th>status</th><th /></tr></thead>
-                  <tbody>
-                    <For each={tasksData()?.tasks ?? []}>
-                      {(t: TaskItem) => (
-                        <tr>
-                          <td class="bold">{t.name}</td>
-                          <td><span class={`chip ${t.script ? "chip-tool" : "chip-mode"}`}>{t.script ? "script" : "prompt"}</span></td>
-                          <td class="mono">{t.schedule ?? `${t.interval_secs ?? 3600}s`}</td>
-                          <td class="mono dim">{t.model_pin ?? "default"}</td>
-                          <td title={t.last_run_at ?? ""}>{t.last_run_at ? timeAgo(t.last_run_at) : "never"}</td>
-                          <td><span class={`chip ${t.enabled ? "chip-ok" : "chip-warn"}`}>{t.enabled ? "enabled" : "disabled"}</span></td>
-                          <td>
-                            <button class="ghost small" onClick={() => runTask(t.id)}>Run now</button>
-                          </td>
-                        </tr>
-                      )}
-                    </For>
-                  </tbody>
-                </table>
+          <div class="two-col">
+            <section class="panel">
+              <h2>Scheduled Tasks &amp; Automations</h2>
+              <Show when={!tasksData.loading} fallback={<div class="empty">Loading tasks…</div>}>
+                <Show when={(tasksData()?.tasks?.length ?? 0) > 0} fallback={<div class="empty">No scheduled tasks or cron jobs configured.</div>}>
+                  <table class="table">
+                    <thead><tr><th>name</th><th>type</th><th>schedule</th><th>model</th><th>last run</th><th>status</th><th /></tr></thead>
+                    <tbody>
+                      <For each={tasksData()?.tasks ?? []}>
+                        {(t: TaskItem) => (
+                          <tr>
+                            <td class="bold">{t.name}</td>
+                            <td><span class={`chip ${t.script ? "chip-tool" : "chip-mode"}`}>{t.script ? "script" : "prompt"}</span></td>
+                            <td class="mono">{t.schedule ?? `${t.interval_secs ?? 3600}s`}</td>
+                            <td class="mono dim">{t.model_pin ?? "default"}</td>
+                            <td title={t.last_run_at ?? ""}>{t.last_run_at ? timeAgo(t.last_run_at) : "never"}</td>
+                            <td>
+                              <button class={`small ${t.enabled ? "chip-ok" : "chip-warn"}`} onClick={() => toggleTask(t.id, !t.enabled)}>
+                                {t.enabled ? "enabled" : "disabled"}
+                              </button>
+                            </td>
+                            <td>
+                              <div class="row-gap">
+                                <button class="ghost small" onClick={() => runTask(t.id)}>Run now</button>
+                                <button class="danger small" onClick={() => removeTask(t.id)}>Delete</button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </For>
+                    </tbody>
+                  </table>
+                </Show>
               </Show>
-            </Show>
-          </section>
+            </section>
+
+            <section class="panel">
+              <h2>Create Scheduled Task</h2>
+              <div class="form-row">
+                <label>name</label>
+                <input placeholder="e.g. daily-digest, health-check" value={newTaskName()} onInput={(e) => setNewTaskName(e.currentTarget.value)} />
+              </div>
+              <div class="form-row">
+                <label>prompt</label>
+                <textarea rows={3} class="mono" placeholder="LLM instruction for the task…" value={newTaskPrompt()} onInput={(e) => setNewTaskPrompt(e.currentTarget.value)} />
+              </div>
+              <div class="form-row">
+                <label>schedule</label>
+                <input class="mono" placeholder="Optional cron: */30 * * * * or leave blank for 1h interval" value={newTaskSchedule()} onInput={(e) => setNewTaskSchedule(e.currentTarget.value)} />
+              </div>
+              <div class="form-row">
+                <label>model pin</label>
+                <input class="mono" placeholder="Optional model id to pin" value={newTaskModelPin()} onInput={(e) => setNewTaskModelPin(e.currentTarget.value)} />
+              </div>
+              <div class="row-gap" style="margin-top:12px">
+                <button disabled={!newTaskName().trim() || !newTaskPrompt().trim()} onClick={createNewTask}>
+                  Create Task
+                </button>
+              </div>
+            </section>
+          </div>
         </Match>
       </Switch>
     </div>

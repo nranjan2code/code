@@ -259,6 +259,13 @@ export const api = {
   tasks: (): Promise<{ tasks: TaskItem[] }> =>
     fetch("/tasks").then((r) => handle(r)),
 
+  createTask: (body: { name: string; prompt?: string; script?: string; interval_secs?: number; schedule?: string; model_pin?: string; deliver_to?: string }): Promise<TaskItem> =>
+    fetch("/tasks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => handle(r)),
+
   runTaskNow: (id: string): Promise<void> =>
     fetch(`/tasks/${encodeURIComponent(id)}/run-now`, { method: "POST" }).then((r) => void handle(r)),
 
