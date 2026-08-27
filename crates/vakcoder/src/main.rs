@@ -970,11 +970,7 @@ async fn run_exec(
                 args_json,
             } => {
                 tool_args.insert(id, (name.clone(), args_json.clone()));
-                eprintln!(
-                    "▸ {} {}",
-                    name,
-                    format::summarize_args(&name, &args_json)
-                );
+                eprintln!("▸ {} {}", name, format::summarize_args(&name, &args_json));
             }
             AgentEvent::ToolCallEnd {
                 id,

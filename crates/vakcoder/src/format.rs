@@ -123,20 +123,21 @@ fn is_wide(cp: u32) -> bool {
 /// the CLI's plain output has no use for it.
 pub fn edit_diff_text(args_json: &str, max_lines: usize) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(args_json).ok()?;
-    let pairs: Vec<(String, String)> = if let Some(edits) = v.get("edits").and_then(|e| e.as_array()) {
-        edits
-            .iter()
-            .filter_map(|e| {
-                let old = e.get("old_string").and_then(|x| x.as_str())?;
-                let new = e.get("new_string").and_then(|x| x.as_str())?;
-                Some((old.to_string(), new.to_string()))
-            })
-            .collect()
-    } else {
-        let old = v.get("old_string").and_then(|x| x.as_str())?;
-        let new = v.get("new_string").and_then(|x| x.as_str())?;
-        vec![(old.to_string(), new.to_string())]
-    };
+    let pairs: Vec<(String, String)> =
+        if let Some(edits) = v.get("edits").and_then(|e| e.as_array()) {
+            edits
+                .iter()
+                .filter_map(|e| {
+                    let old = e.get("old_string").and_then(|x| x.as_str())?;
+                    let new = e.get("new_string").and_then(|x| x.as_str())?;
+                    Some((old.to_string(), new.to_string()))
+                })
+                .collect()
+        } else {
+            let old = v.get("old_string").and_then(|x| x.as_str())?;
+            let new = v.get("new_string").and_then(|x| x.as_str())?;
+            vec![(old.to_string(), new.to_string())]
+        };
     let mut out = String::new();
     let mut any = false;
     for (old, new) in pairs {

@@ -953,14 +953,40 @@ const NAV = [
 ];
 
 export default function App() {
-  // Probe auth once: any authenticated endpoint answering 200 means we're in.
-  createEffect(() => {
+  // Any authenticated endpoint answering 200 means an existing session
+  // cookie is still good.
+  const probeAuth = () => {
     api.config()
       .then(() => {
         setAuthed(true);
         connectEvents();
       })
       .catch(() => setAuthed(false));
+  };
+
+  // One-click login from a tray-opened link: /admin?token=<t>. A query
+  // param, not a #token= hash — the router below treats the entire
+  // location.hash as the route (store.ts reads it verbatim as "#/overview"
+  // etc.), so a #token= fragment would collide with routing instead of
+  // composing with it. The token is scrubbed from the URL immediately,
+  // whether login succeeds or fails, so it never lingers in the address
+  // bar, browser history, or a copy-pasted link.
+  createEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const linkToken = params.get("token");
+    if (!linkToken) {
+      probeAuth();
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.delete("token");
+    window.history.replaceState(null, "", url.toString());
+    api.login(linkToken)
+      .then(() => {
+        setAuthed(true);
+        connectEvents();
+      })
+      .catch(() => probeAuth());
   });
 
   // Light unread-count poll while signed in.

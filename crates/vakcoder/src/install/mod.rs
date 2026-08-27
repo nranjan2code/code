@@ -175,6 +175,19 @@ fn install_into(root: &InstallRoot, force: bool) -> Result<Manifest, String> {
 
     tx.commit()?;
 
+    // Pin the gateway's bearer token into the canonical .env, once,
+    // rather than letting it re-mint on every boot (the un-pinned
+    // fallback in vak-server::AppState::new). A token that changes every
+    // restart invalidates every admin-console session cookie and any
+    // saved one-click login link on each restart; it also means nothing
+    // outside the running process -- the tray's "Open Admin Console",
+    // in particular -- can know the current token to build a URL with.
+    // Loaded automatically on every future boot: main.rs always sources
+    // this file via `vak_config::user_env_path()` before dispatching to
+    // `serve`. Idempotent: an existing token is left alone so a
+    // reinstall or update never invalidates a link already in use.
+    ensure_gateway_token()?;
+
     let version = manifest::build_version().to_string();
     bundle::write_metadata(root, &version, bundle::locate_frontend_assets().as_deref())?;
 
@@ -194,6 +207,27 @@ fn install_into(root: &InstallRoot, force: bool) -> Result<Manifest, String> {
         ));
     }
     Ok(m)
+}
+
+/// Ensure `VAKCODER_GATEWAY_TOKEN` is set in the canonical `.env`,
+/// generating one only if the key is entirely absent (an existing empty
+/// value is left as-is too -- that is an explicit "unpinned" choice, not
+/// something install should override).
+fn ensure_gateway_token() -> Result<(), String> {
+    let Some(env_path) = vak_config::user_env_path() else {
+        return Ok(());
+    };
+    let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
+    let already_set = existing.lines().any(|line| {
+        line.split_once('=')
+            .is_some_and(|(k, _)| k.trim() == "VAKCODER_GATEWAY_TOKEN")
+    });
+    if already_set {
+        return Ok(());
+    }
+    let token = format!("vk_{}", uuid::Uuid::now_v7());
+    vak_config::upsert_env_file(&env_path, "VAKCODER_GATEWAY_TOKEN", &token)
+        .map_err(|e| format!("writing {}: {e}", env_path.display()))
 }
 
 fn report_next_steps(root: &InstallRoot) {

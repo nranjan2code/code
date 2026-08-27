@@ -11,3 +11,6 @@ dist/
 !crates/vak-admin-ui/dist/
 node_modules/
 # tools belong in the session cwd
+
+# Claude Code session/worktree artifacts — never project content.
+.claude/
