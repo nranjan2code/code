@@ -570,7 +570,12 @@ fn sync_one_inner(
 
     if previous.as_deref() == Some(rendered.as_str()) {
         return if running_pid.is_none() {
-            if start(spec.name, runner) {
+            // A current unit with no live process is either registered and
+            // stopped, or not registered at all (booted out by hand, or a
+            // manager that lost it across a reboot). `kickstart` only works on
+            // the former, so fall back to registering the unit we already have
+            // rather than reporting a service that is merely absent as failed.
+            if start(spec.name, runner) || load_after_unload(spec.name, &unit_path, runner) {
                 Ok(SyncAction::Restarted)
             } else {
                 Err(format!("start {} failed", spec.name))
@@ -823,6 +828,53 @@ mod tests {
                 "/Users/x/.vakcoder".to_string(),
             )],
         }
+    }
+
+    /// A booted-out service still has a current unit on disk. `kickstart`
+    /// cannot start an unregistered job, so sync must fall back to
+    /// bootstrapping the unit it already has.
+    #[test]
+    fn current_unit_with_no_process_is_registered_when_start_cannot_reach_it() {
+        struct StartRefuses {
+            inner: Fake,
+        }
+        impl CommandRunner for StartRefuses {
+            fn success(&self, program: &str, args: &[String]) -> bool {
+                let is_start = program == "launchctl"
+                    && args.first().map(String::as_str) == Some("kickstart")
+                    || program == "systemctl" && args.iter().any(|a| a == "start");
+                if is_start {
+                    self.inner.success(program, args);
+                    return false;
+                }
+                self.inner.success(program, args)
+            }
+            fn text(&self, program: &str, args: &[String]) -> Option<String> {
+                self.inner.text(program, args)
+            }
+        }
+
+        let (_dir, paths) = tmp_paths("unregistered");
+        let spec = spec_for(
+            &SERVICES[0],
+            Path::new("/opt/vak/bin"),
+            Path::new("/Users/x/.vakcoder/logs"),
+        );
+        let unit_path = unit_file_path(spec.name, &paths);
+        std::fs::create_dir_all(unit_path.parent().unwrap()).unwrap();
+        std::fs::write(&unit_path, render(&spec)).unwrap();
+
+        let runner = StartRefuses { inner: Fake::new() };
+        let outcome = sync_one(&spec, &paths, &runner);
+        assert_eq!(outcome.action, SyncAction::Restarted);
+        let commands = runner.inner.cmds.lock().unwrap();
+        let bootstrapped = commands.iter().any(|(program, args)| {
+            (program == "launchctl" && args.first().map(String::as_str) == Some("bootstrap"))
+                || (program == "systemctl" && args.iter().any(|a| a == "enable"))
+        });
+        assert!(bootstrapped, "an unregistered job must be registered");
+        // The current unit must survive: nothing was rewritten or rolled back.
+        assert_eq!(std::fs::read_to_string(&unit_path).unwrap(), render(&spec));
     }
 
     #[test]
