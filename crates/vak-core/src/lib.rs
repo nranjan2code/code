@@ -239,34 +239,46 @@ impl Core {
         &self.inner.beliefs
     }
 
+    /// Read a session-scoped override, releasing the lock before returning.
+    ///
+    /// Every `Option`-shaped override on `Inner` is read through here. The
+    /// idiom this replaces — `if let Ok(g) = self.inner.slot.lock() && …`
+    /// — keeps the guard alive for the whole body, so a `self.` call
+    /// inside that body which locks the same slot deadlocks the thread:
+    /// `std::sync::Mutex` is not reentrant. `cache_home` did exactly that
+    /// against `sessions_home`, wedging any process that set the override.
+    /// Cloning out under a minimal scope makes the hazard unreachable.
+    fn read_override<T: Clone>(slot: &std::sync::Mutex<Option<T>>) -> Option<T> {
+        slot.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Set a session-scoped override. Poisoning is recovered rather than
+    /// propagated: an override is a preference, and losing one to an
+    /// unrelated panic elsewhere should not take down this call.
+    fn write_override<T>(slot: &std::sync::Mutex<Option<T>>, value: Option<T>) {
+        *slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
+    }
+
     pub fn set_model(&self, model: String) {
-        if let Ok(mut c) = self.inner.model_override.lock() {
-            *c = Some(model);
-        }
+        Self::write_override(&self.inner.model_override, Some(model));
     }
 
     pub fn effective_model(&self) -> String {
-        if let Ok(c) = self.inner.model_override.lock()
-            && let Some(m) = c.as_ref()
-        {
-            return m.clone();
-        }
-        self.inner.config.model.clone()
+        Self::read_override(&self.inner.model_override)
+            .unwrap_or_else(|| self.inner.config.model.clone())
     }
 
     pub fn set_provider(&self, provider: String) {
-        if let Ok(mut c) = self.inner.provider_override.lock() {
-            *c = Some(provider);
-        }
+        Self::write_override(&self.inner.provider_override, Some(provider));
     }
 
     pub fn effective_provider(&self) -> String {
-        if let Ok(c) = self.inner.provider_override.lock()
-            && let Some(p) = c.as_ref()
-        {
-            return p.clone();
-        }
-        self.inner.config.provider.clone()
+        Self::read_override(&self.inner.provider_override)
+            .unwrap_or_else(|| self.inner.config.provider.clone())
     }
 
     /// Whether project-owned privileged configuration was admitted when this
@@ -318,35 +330,22 @@ impl Core {
     }
 
     pub fn effective_max_turns(&self) -> usize {
-        if let Ok(c) = self.inner.max_turns_override.lock()
-            && let Some(t) = *c
-        {
-            return t;
-        }
-        self.inner.config.max_turns
+        Self::read_override(&self.inner.max_turns_override).unwrap_or(self.inner.config.max_turns)
     }
 
     pub fn set_permission_mode(&self, mode: vak_config::PermissionMode) {
-        if let Ok(mut c) = self.inner.mode_override.lock() {
-            *c = Some(mode);
-        }
+        Self::write_override(&self.inner.mode_override, Some(mode));
     }
 
     /// Runtime sandbox-backend selection ("os", "docker", or config default
     /// via None). Session-scoped like every other override; never persisted.
     pub fn set_sandbox_backend(&self, backend: Option<String>) {
-        if let Ok(mut c) = self.inner.sandbox_backend_override.lock() {
-            *c = backend;
-        }
+        Self::write_override(&self.inner.sandbox_backend_override, backend);
     }
 
     pub fn effective_sandbox_backend(&self) -> String {
-        if let Ok(c) = self.inner.sandbox_backend_override.lock()
-            && let Some(b) = c.as_ref()
-        {
-            return b.clone();
-        }
-        self.inner.config.sandbox.backend.clone()
+        Self::read_override(&self.inner.sandbox_backend_override)
+            .unwrap_or_else(|| self.inner.config.sandbox.backend.clone())
     }
 
     pub fn breaker(&self) -> Arc<vak_agent::CircuitBreaker> {
@@ -457,21 +456,12 @@ impl Core {
     }
 
     pub fn effective_theme(&self) -> String {
-        if let Ok(t) = self.inner.theme_override.lock()
-            && let Some(name) = t.as_ref()
-        {
-            return name.clone();
-        }
-        self.inner.config.ui.theme.clone()
+        Self::read_override(&self.inner.theme_override)
+            .unwrap_or_else(|| self.inner.config.ui.theme.clone())
     }
 
     pub fn effective_permission_mode(&self) -> vak_config::PermissionMode {
-        if let Ok(c) = self.inner.mode_override.lock()
-            && let Some(m) = *c
-        {
-            return m;
-        }
-        self.inner.config.permission_mode
+        Self::read_override(&self.inner.mode_override).unwrap_or(self.inner.config.permission_mode)
     }
 
     pub fn cwd(&self) -> &PathBuf {
@@ -490,24 +480,16 @@ impl Core {
 
     /// SDK seam: relocate session storage (tests, embedded runtimes).
     pub fn set_sessions_home(&self, path: PathBuf) {
-        if let Ok(mut c) = self.inner.sessions_home_override.lock() {
-            *c = Some(path);
-        }
+        Self::write_override(&self.inner.sessions_home_override, Some(path));
     }
 
     /// Redirects the user-level secret store (tests, portable installs).
     pub fn set_user_env_path(&self, path: PathBuf) {
-        if let Ok(mut c) = self.inner.user_env_override.lock() {
-            *c = Some(path);
-        }
+        Self::write_override(&self.inner.user_env_override, Some(path));
     }
 
     fn user_env_file(&self) -> PathBuf {
-        self.inner
-            .user_env_override
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        Self::read_override(&self.inner.user_env_override)
             .or_else(vak_config::user_env_path)
             .unwrap_or_else(|| self.sessions_home().join(".env"))
     }
@@ -520,25 +502,22 @@ impl Core {
     }
 
     pub fn sessions_home(&self) -> PathBuf {
-        if let Ok(h) = self.inner.sessions_home_override.lock()
-            && let Some(p) = h.as_ref()
-        {
-            return p.clone();
-        }
-        self.inner.sessions_home.clone()
+        Self::read_override(&self.inner.sessions_home_override)
+            .unwrap_or_else(|| self.inner.sessions_home.clone())
     }
 
     /// Rebuildable-artifact directory (SQLite FTS index + WAL sidecars).
     /// Canonical layout (doc 32): Library/Caches on macOS, XDG cache on
     /// Linux — deleting it must always be safe.
     pub fn cache_home(&self) -> PathBuf {
-        if let Ok(h) = self.inner.sessions_home_override.lock()
-            && h.is_some()
-        {
-            // Overridden homes are self-contained sandboxes.
-            return self.sessions_home().join("cache");
+        // Overridden homes are self-contained sandboxes, so the cache
+        // lives inside them. Resolved from the cloned override rather
+        // than by calling `sessions_home()` under the guard, which
+        // re-locked the same non-reentrant mutex and hung the thread.
+        match Self::read_override(&self.inner.sessions_home_override) {
+            Some(home) => home.join("cache"),
+            None => vak_config::paths::cache_home(),
         }
-        vak_config::paths::cache_home()
     }
 
     pub fn system_prompt(&self) -> String {
@@ -2177,5 +2156,138 @@ mod webfetch_classification_tests {
         assert!(has_blanket_rule_for(&["+BROWSE".into()], "browse"));
         assert!(!has_blanket_rule_for(&["browse(x)".into()], "browse"));
         assert!(!has_blanket_rule_for(&["browser".into()], "browse"));
+    }
+}
+
+/// Every `Core` accessor must terminate while session-scoped overrides are
+/// set. `cache_home` once locked `sessions_home_override` and then called
+/// `sessions_home()`, which locks the same non-reentrant mutex — the
+/// thread wedged forever. It surfaced only in tests, because production
+/// leaves the override unset and never entered the branch, and it made
+/// `cargo test --workspace` hang rather than fail.
+///
+/// These run each accessor on a worker thread with a deadline, so a
+/// reintroduced deadlock fails the suite instead of hanging it. A test
+/// that hangs reports nothing and blocks every gate behind it.
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod override_deadlock {
+    use super::*;
+
+    /// Run `f` on its own thread, failing if it has not returned in time.
+    fn within<T: Send + 'static>(label: &str, f: impl FnOnce() -> T + Send + 'static) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let out = f();
+            // Send may fail if the receiver already gave up; the timeout
+            // below is what reports that, so ignore the error here.
+            let _ = tx.send(());
+            out
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+            Ok(()) => handle.join().expect("accessor thread panicked"),
+            Err(_) => panic!(
+                "{label} did not return within 10s — an accessor is deadlocked \
+                 (a guard held across a call that re-locks the same mutex)"
+            ),
+        }
+    }
+
+    /// One accessor to exercise, boxed so a heterogeneous set can share
+    /// a list.
+    type AccessorCheck = Box<dyn FnOnce(Arc<Core>) + Send>;
+
+    fn core_with_override() -> (tempfile::TempDir, Core) {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        (dir, core)
+    }
+
+    #[test]
+    fn cache_home_returns_while_the_sessions_home_override_is_set() {
+        let (dir, core) = core_with_override();
+        let expected = dir.path().join("home").join("cache");
+        let got = within("cache_home", move || core.cache_home());
+        assert_eq!(
+            got, expected,
+            "an overridden home is a self-contained sandbox"
+        );
+    }
+
+    #[test]
+    fn cache_home_falls_back_to_the_platform_directory_without_an_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let got = within("cache_home (no override)", move || core.cache_home());
+        assert_eq!(got, vak_config::paths::cache_home());
+    }
+
+    #[test]
+    fn every_override_backed_accessor_terminates() {
+        // Breadth matters more than depth here: the hazard is the
+        // locking idiom, so each accessor that reads an override is
+        // exercised with one set.
+        let (_dir, core) = core_with_override();
+        let core = Arc::new(core);
+        core.set_model("m".into());
+        core.set_provider("p".into());
+        core.set_permission_mode(vak_config::PermissionMode::FullAccess);
+        core.set_sandbox_backend(Some("os".into()));
+
+        let checks: Vec<(&str, AccessorCheck)> = vec![
+            (
+                "sessions_home",
+                Box::new(|c: Arc<Core>| {
+                    c.sessions_home();
+                }),
+            ),
+            (
+                "cache_home",
+                Box::new(|c: Arc<Core>| {
+                    c.cache_home();
+                }),
+            ),
+            (
+                "effective_model",
+                Box::new(|c: Arc<Core>| {
+                    c.effective_model();
+                }),
+            ),
+            (
+                "effective_provider",
+                Box::new(|c: Arc<Core>| {
+                    c.effective_provider();
+                }),
+            ),
+            (
+                "effective_max_turns",
+                Box::new(|c: Arc<Core>| {
+                    c.effective_max_turns();
+                }),
+            ),
+            (
+                "effective_theme",
+                Box::new(|c: Arc<Core>| {
+                    c.effective_theme();
+                }),
+            ),
+            (
+                "effective_permission_mode",
+                Box::new(|c: Arc<Core>| {
+                    c.effective_permission_mode();
+                }),
+            ),
+            (
+                "effective_sandbox_backend",
+                Box::new(|c: Arc<Core>| {
+                    c.effective_sandbox_backend();
+                }),
+            ),
+        ];
+        for (label, check) in checks {
+            let c = Arc::clone(&core);
+            within(label, move || check(c));
+        }
     }
 }

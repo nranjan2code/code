@@ -6,6 +6,25 @@ Rebuilt the install, update, and release lifecycle around one owner, one
 version, and verifiable artifacts. Found by exercising every command
 against a real prefix rather than reading the code.
 
+### Concurrency
+
+- Fixed a self-deadlock in `Core::cache_home` that hung `cargo test
+  --workspace` indefinitely. It locked `sessions_home_override` and then,
+  still holding the guard, called `sessions_home()` — which locks the same
+  mutex. `std::sync::Mutex` is not reentrant, so the thread wedged. The
+  branch is only reached when the override is set, which production never
+  does and every test fixture does; all seven tests in
+  `crates/vak-server/tests/gateway.rs` blocked on it and now run in 0.35s.
+- Removed the idiom that made this possible. `if let Ok(g) =
+  slot.lock() && …` keeps the guard alive for the whole body, so the
+  hazard is invisible at the call site. All fifteen override accessors now
+  go through `Core::read_override` / `write_override`, which clone out
+  under a minimal scope, so no guard is ever held across another call.
+- Added regression coverage that runs each accessor on a worker thread
+  with a deadline. A reintroduced deadlock fails the suite in 10s with a
+  message naming the cause, rather than hanging it — a test that hangs
+  reports nothing and blocks every gate behind it.
+
 ### Install and uninstall
 
 - Removed the second installer. `build-install.sh` copied a Tauri bundle
