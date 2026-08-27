@@ -46,5 +46,12 @@ VAKCODER_NEXT="$NEXT" perl -0pi -e '
   }
 ' "$CHANGELOG"
 
-cargo metadata --manifest-path "$ROOT_DIR/Cargo.toml" --no-deps --format-version 1 >/dev/null
+# Resolve with dependencies so Cargo.lock records the new workspace version.
+# --no-deps validates the manifest but never rewrites the lock, which left the
+# tree dirty and failed the clean-tree gate on the next release run.
+cargo metadata --manifest-path "$ROOT_DIR/Cargo.toml" --format-version 1 >/dev/null
+git -C "$ROOT_DIR" diff --quiet -- Cargo.lock && {
+  printf 'error: Cargo.lock did not pick up %s; resolve it manually\n' "$NEXT" >&2
+  exit 1
+}
 printf 'bumped %s -> %s; review CHANGELOG.md, commit the release, then run scripts/check-release-version.sh before tagging v%s\n' "$CURRENT" "$NEXT" "$NEXT"
