@@ -18,10 +18,49 @@ struct Args {
 }
 
 fn runtime_connection() -> Option<(String, String)> {
-    Some((
-        std::env::var("VAKCODER_URL").ok()?,
-        std::env::var("VAKCODER_TOKEN").ok()?,
-    ))
+    if let (Ok(url), Ok(token)) = (
+        std::env::var("VAKCODER_URL"),
+        std::env::var("VAKCODER_TOKEN"),
+    ) {
+        if !url.is_empty() && !token.is_empty() {
+            return Some((url, token));
+        }
+    }
+
+    // The managed gateway publishes its authenticated loopback endpoint in
+    // this receipt. Keep the standalone TUI on the same discovery path as
+    // the CLI and desktop; it still talks only to vak-client after this
+    // connection metadata read.
+    let raw = std::fs::read_to_string(
+        vak_config::paths::data_home()
+            .join("runtime")
+            .join("gateway.json"),
+    )
+    .ok()?;
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let pid = value.get("pid")?.as_u64()?;
+    let addr = value.get("addr")?.as_str()?;
+    let token = value.get("token")?.as_str()?;
+    if addr.is_empty() || token.is_empty() {
+        return None;
+    }
+    let alive = std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if !alive {
+        return None;
+    }
+    let url = if addr.starts_with("http://") || addr.starts_with("https://") {
+        addr.to_owned()
+    } else {
+        format!("http://{addr}")
+    };
+    Some((url, token.to_owned()))
 }
 
 fn connection(args: &Args) -> Result<(String, String), String> {

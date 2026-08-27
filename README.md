@@ -90,7 +90,7 @@ Install the TUI client:
 ```bash
 cargo build --release -p vak-tui --bin vakcoder-tui
 install -m 755 target/release/vakcoder-tui "$HOME/.local/bin/vakcoder-tui"
-vakcoder-tui
+vakcoder-tui                    # discovers the managed gateway receipt
 ```
 
 ### 2. Add a provider key

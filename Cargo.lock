@@ -5802,6 +5802,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "vak-client",
+ "vak-config",
  "vak-domain",
 ]
 
