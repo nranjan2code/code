@@ -985,7 +985,39 @@ pub(crate) async fn require_bearer(
                     .map(|v| v.trim().to_string())
             })
         });
-    let provided = header_token.or(cookie_token);
+    // `EventSource` cannot set request headers, and the desktop app never
+    // performs the `/admin/login` cookie exchange -- that is the admin
+    // console's browser flow, not the desktop's. The query parameter is
+    // therefore the ONLY channel the desktop's SSE streams can
+    // authenticate on, and `openEventStream`/`openSideStream` have always
+    // used it. It was never accepted here, so every desktop event stream
+    // was rejected 401: the agent completed turns and durably logged them
+    // while the UI received not one event -- no reply, "Working" forever,
+    // usage stuck at 0 in / 0 out, and nothing in the console, because a
+    // 401 on an EventSource surfaces only as a bare `onerror`.
+    //
+    // The startup banner has advertised `?token=` since before this
+    // middleware existed; this makes the implementation match the
+    // contract rather than narrowing the contract to the implementation.
+    // A token in a query string is a real (if bounded) exposure -- it can
+    // reach access logs and `Referer` headers -- but this server is
+    // loopback-only with a token that is either ephemeral per boot or
+    // pinned into a 0600 `.env`, and no other channel exists for the one
+    // client that needs it.
+    let query_token = req.uri().query().and_then(|q| {
+        q.split('&').find_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            if key != "token" {
+                return None;
+            }
+            Some(
+                percent_encoding::percent_decode_str(value)
+                    .decode_utf8_lossy()
+                    .into_owned(),
+            )
+        })
+    });
+    let provided = header_token.or(cookie_token).or(query_token);
     let ok = provided
         .as_deref()
         .map(|p| p.as_bytes().ct_eq(token.as_bytes()).into())

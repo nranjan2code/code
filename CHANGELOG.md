@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+### The desktop app could never receive a single agent event
+
+Every desktop SSE connection had always been rejected with 401, so the
+chat window never received one event: runs completed and were durably
+logged while the UI showed no reply, "Working" that never cleared, and
+`0 in / 0 out`. Nothing appeared in the console either, because a 401 on
+an `EventSource` surfaces only as a bare `onerror`.
+
+`require_bearer` accepted an `Authorization` header or the `vak_session`
+cookie. `EventSource` cannot set headers, and the desktop never performs
+the `/admin/login` cookie exchange -- that is the browser console's flow.
+`?token=` was the only channel it had, `openEventStream` and
+`openSideStream` have always used it, and the startup banner has always
+advertised it -- but the middleware never accepted it. The middleware now
+matches the contract it advertises.
+
+Found by opening the real SSE endpoint with curl and getting zero bytes
+back. Three earlier releases shipped fixes for this symptom -- a
+swallowed exception in the message handler, a dead stream with no
+reconnect, and missing server-state reconciliation. All three were real
+defects and are worth keeping, but none of them was the cause, because
+none of them was ever tested against the actual event stream.
+
+### Two menu-bar icons, and an app that opened nothing
+
+The bundle's `CFBundleExecutable` is `vakcoder-tray`, and
+`com.vakcoder.tray` also runs it as a launchd service with `RunAtLoad`.
+Nothing guarded against both. The ordinary path -- install,
+`services-sync`, then open VakCoder from Finder or Spotlight -- produced
+two identical menu-bar icons; and once macOS began merely re-activating
+the already-running app rather than spawning a new process, launching it
+did nothing visible at all, because the tray only opens the chat window
+once at startup.
+
+The tray now takes a single-instance lock. A launch that finds a live
+holder opens the chat window -- what launching the app actually asks for
+-- and exits. Same mechanism `vak_server::telegram::InstanceLock`
+already used: an O_EXCL marker plus a liveness probe on the recorded pid,
+so a crashed holder leaves a marker the next launch reclaims rather than
+one that wedges the menu bar until reboot. Not flock, which would need
+`unsafe`; the workspace denies it. Verified all three behaviours against
+real processes: a second launch adds no icon and opens the window, and a
+`kill -9`'d holder's lock is reclaimed.
+
 ### Install bloat
 
 `self install`'s bundle-asset copy (`copy_dir`) only ever adds files; it

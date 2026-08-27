@@ -397,12 +397,97 @@ fn open_desktop() {
     }
 }
 
+/// Exclusive ownership of the menu-bar icon, held for the process's
+/// lifetime by whichever tray started first.
+///
+/// The bundle's `CFBundleExecutable` is this binary, and
+/// `com.vakcoder.tray` also runs it as a launchd service with
+/// `RunAtLoad`. So the ordinary path -- install, `services-sync`, then
+/// open VakCoder from Finder, Spotlight, or the Dock -- started a
+/// *second* tray and put two identical icons in the menu bar, with no
+/// guard anywhere against it.
+///
+/// `None` means another live tray already owns the menu bar. The caller
+/// then does what launching the app actually asked for -- open the chat
+/// window -- and exits, instead of duplicating an icon or (worse, once
+/// macOS starts merely re-activating the running app rather than
+/// spawning a new one) doing nothing visible at all.
+///
+/// Same mechanism as `vak_server::telegram::InstanceLock`: an O_EXCL
+/// marker plus a liveness probe on the recorded pid, so a crashed holder
+/// leaves a marker the next launch reclaims rather than a lock that
+/// wedges the menu bar until a reboot. Deliberately not flock, which
+/// would need `unsafe` -- the workspace denies it.
+struct MenuBarLock {
+    path: std::path::PathBuf,
+}
+
+impl Drop for MenuBarLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn claim_menu_bar() -> Option<MenuBarLock> {
+    let dir = home().join("locks");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join("tray.lock");
+
+    if try_claim(&path) {
+        return Some(MenuBarLock { path });
+    }
+    // Marker present: only yield to a holder that is actually alive.
+    let holder = std::fs::read_to_string(&path).unwrap_or_default();
+    let pid = holder
+        .split_whitespace()
+        .find_map(|t| t.parse::<u32>().ok());
+    if pid.is_some_and(pid_alive) {
+        return None;
+    }
+    let _ = std::fs::remove_file(&path);
+    try_claim(&path).then(|| MenuBarLock { path })
+}
+
+fn try_claim(path: &std::path::Path) -> bool {
+    if std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .is_err()
+    {
+        return false;
+    }
+    std::fs::write(path, format!("pid {}\n", std::process::id())).is_ok()
+}
+
+/// Liveness probe without libc: `kill -0` via a subprocess, matching
+/// how `vak_server::telegram::InstanceLock` does it.
+fn pid_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|st| st.success())
+        .unwrap_or(false)
+}
+
 fn main() {
     // Canonical layout migration (doc 32); tray has no config override
     // path of its own — a failed migration only degrades to old paths.
     if let Err(e) = vak_config::paths::migrate_legacy_home() {
         eprintln!("[warn] home migration skipped: {e}");
     }
+
+    // Held for the whole process lifetime: dropping it early would
+    // release the lock and let a later launch add a second icon.
+    let Some(_menu_bar) = claim_menu_bar() else {
+        // Another tray owns the menu bar. Launching the app is a request
+        // to see the app, so honour that and get out of the way.
+        open_desktop();
+        return;
+    };
     let watchdog = Arc::new(AtomicBool::new(load_watchdog()));
 
     let event_loop: EventLoop<TrayEvent> =

@@ -674,6 +674,54 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
+    /// `EventSource` cannot set request headers, and the desktop app
+    /// never performs the `/admin/login` cookie exchange -- that is the
+    /// browser console's flow. `?token=` is the only channel its SSE
+    /// streams can authenticate on, and `openEventStream` /
+    /// `openSideStream` have always used it. The middleware accepted
+    /// only the header and the cookie, so every desktop event stream
+    /// was rejected 401 and the app received not one agent event: runs
+    /// completed and were durably logged while the UI showed no reply,
+    /// "Working" forever, and `0 in / 0 out`. Nothing surfaced in the
+    /// console either, because a 401 on an EventSource is just a bare
+    /// `onerror`.
+    ///
+    /// Found by opening the real SSE endpoint with curl and getting
+    /// zero bytes back, after three unrelated "fixes" shipped on
+    /// theory without ever testing this path.
+    #[tokio::test]
+    async fn sse_authenticates_with_the_token_query_parameter() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let req = Request::builder()
+            .uri(format!("/sessions/does-not-exist/events?token={token}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        // The session id is bogus, so any status is acceptable EXCEPT
+        // 401: this asserts the request got past authentication, which
+        // is the thing that was broken. Asserting 200 would instead
+        // pin unrelated session-lookup behaviour.
+        assert_ne!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "?token= must authenticate -- it is the only channel EventSource has"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_wrong_token_query_parameter_is_still_rejected() {
+        let state = test_state();
+        let app = authed_app(&state);
+        let req = Request::builder()
+            .uri("/sessions/does-not-exist/events?token=vk_not-the-real-token")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
     #[tokio::test]
     async fn pending_approvals_lists_empty_without_gates() {
         let state = test_state();
