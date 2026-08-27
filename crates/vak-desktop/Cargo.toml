@@ -23,6 +23,7 @@ notify-rust = { workspace = true }
 vak-core = { workspace = true }
 vak-delivery = { workspace = true }
 vak-config = { workspace = true }
+vak-ops = { workspace = true }
 vak-server = { workspace = true }
 vak-tools = { workspace = true }
 

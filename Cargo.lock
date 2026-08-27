@@ -5753,6 +5753,7 @@ dependencies = [
  "vak-config",
  "vak-core",
  "vak-delivery",
+ "vak-ops",
  "vak-server",
  "vak-tools",
 ]
