@@ -76,6 +76,33 @@ pub mod paths {
     }
 }
 
+/// True when `pid` names a live process.
+///
+/// The one implementation shared by every owner of a pid-bearing artifact —
+/// the gateway receipt and the Runtime singleton lock — so a stale record is
+/// judged identically wherever it is read. Shells out because `unsafe_code`
+/// is denied workspace-wide and `kill(2)` has no safe binding here.
+#[cfg(unix)]
+pub fn process_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Platforms without POSIX process probing defer to the authenticated
+/// handshake, which is authoritative anyway.
+#[cfg(not(unix))]
+pub fn process_alive(_pid: u32) -> bool {
+    true
+}
+
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 const LOCK_WAIT: Duration = Duration::from_millis(20);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(5);

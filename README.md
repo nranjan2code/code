@@ -53,6 +53,13 @@ For a local build and managed installation, use the scenario-driven installer:
 Add `--no-service` for packaging/container tests or `--gates` to run the full
 release gate before installation.
 
+Installation is self-contained: it mints the gateway bearer token, pins the
+data home into the generated service unit, starts the service, and waits for
+the authenticated handshake before reporting success. You do not need a
+provider API key to get a running Runtime — add one afterwards through
+`vakcoder admin`. Run `vakcoder doctor` at any point for a check-by-check
+report with the exact command that fixes each finding.
+
 ### Release versioning
 
 The workspace version in `Cargo.toml` is the single release version. Bump it
@@ -81,9 +88,10 @@ target/release/vakcoder self install
 ```
 
 This installs the Runtime service, gateway, embedded browser admin, and a
-`~/.local/bin/vakcoder` launcher. Add the TUI, desktop, or tray surface
-explicitly when that surface is needed. All surfaces connect to the same
-authenticated Runtime and data home.
+`~/.local/bin/vakcoder` launcher, and provisions the gateway token in
+`<data_home>/.env`. Add the TUI, desktop, or tray surface explicitly when that
+surface is needed. All surfaces connect to the same authenticated Runtime and
+data home, which they resolve from one receipt — never from a guessed port.
 
 Install the TUI client:
 
@@ -214,10 +222,10 @@ On macOS, the project installer can create and install a release bundle:
 
 ```bash
 cargo install tauri-cli --version 2.11.4 --locked
-./build-install.sh
+./scripts/build-desktop.sh --install
 ```
 
-Use `./build-install.sh --no-clean` for an incremental build or `--no-install` to produce the bundle without installing it.
+The bundle is built but not installed unless you pass `--install`; add `--clean` to rebuild from scratch. Set `VAKCODER_INSTALL_DIR` to choose the destination (default `~/Applications`).
 
 ### Server and gateway
 

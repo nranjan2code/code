@@ -98,7 +98,13 @@ fi
 if [[ "$WITH_TRAY" == true ]]; then
   printf 'Building tray addon\n'
   VAKCODER_GIT_SHA="$GIT_SHA" cargo build --release -p vak-tray --bin vakcoder-tray
-  TRAY_DEST="$(dirname -- "$(readlink "$HOME/.local/bin/vakcoder")")/vakcoder-tray"
+  # The tray lives beside the installed base so its service unit resolves the
+  # same managed prefix. Ask the installed base where that is rather than
+  # reading the launcher symlink: an unreadable symlink silently yields "/",
+  # and the tray would be installed at the filesystem root.
+  TRAY_BIN_DIR="$(target/release/vakcoder self status | awk '$1 == "bin" { print $2 }')"
+  [[ -d "$TRAY_BIN_DIR" ]] || { printf 'error: managed bin dir not found: %s\n' "$TRAY_BIN_DIR" >&2; exit 1; }
+  TRAY_DEST="$TRAY_BIN_DIR/vakcoder-tray"
   install -m 755 target/release/vakcoder-tray "$TRAY_DEST"
   printf 'Installed tray: %s\n' "$TRAY_DEST"
   if [[ "$NO_SERVICE" != true ]]; then
@@ -113,9 +119,9 @@ if [[ "$WITH_DESKTOP" == true ]]; then
     DESKTOP_INSTALL_DIR=/Applications
   fi
   if [[ -n "$DESKTOP_INSTALL_DIR" ]]; then
-    VAKCODER_INSTALL_DIR="$DESKTOP_INSTALL_DIR" "$ROOT_DIR/build-install.sh" --install
+    VAKCODER_INSTALL_DIR="$DESKTOP_INSTALL_DIR" "$ROOT_DIR/scripts/build-desktop.sh" --install
   else
-    "$ROOT_DIR/build-install.sh" --install
+    "$ROOT_DIR/scripts/build-desktop.sh" --install
   fi
 fi
 

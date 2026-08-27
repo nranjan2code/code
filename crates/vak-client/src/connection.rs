@@ -88,7 +88,7 @@ impl GatewayConnection {
         if receipt.addr.trim().is_empty() || receipt.token.trim().is_empty() || receipt.pid == 0 {
             return Err(ConnectionError::InvalidEndpoint);
         }
-        if !process_alive(receipt.pid) {
+        if !vak_config::process_alive(receipt.pid) {
             return Err(ConnectionError::ProcessNotAlive(receipt.pid));
         }
         let base_url =
@@ -161,24 +161,6 @@ impl GatewayConnection {
         connection.handshake().await?;
         Ok(connection)
     }
-}
-
-#[cfg(unix)]
-fn process_alive(pid: u32) -> bool {
-    std::process::Command::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
-#[cfg(not(unix))]
-fn process_alive(_pid: u32) -> bool {
-    // The authenticated handshake below is authoritative on platforms without
-    // POSIX process probing.
-    true
 }
 
 #[cfg(test)]

@@ -25,32 +25,44 @@ env = {
     "VAKCODER_MODEL": "claude-sonnet-4-5",
     "VAKCODER_ANTHROPIC_BASE_URL": f"http://127.0.0.1:{MOCK_PORT}",
     "VAKCODER_HOME": "/tmp/vak-smoke/home",
+    # `serve` takes its bearer token from <data_home>/.env or this variable and
+    # refuses to start without one. It has never printed a token to stderr.
+    "VAKCODER_GATEWAY_TOKEN": "server-smoke-token",
 }
+token = env["VAKCODER_GATEWAY_TOKEN"]
 
 mock = subprocess.Popen(
     ["python3", f"{REPO}/mock_anthropic.py", MOCK_PORT],
 )
-# serve prints its bearer token to stderr; capture it for auth.
+# Deliberately not --gateway: this smoke drives an explicit URL and token, and
+# a non-gateway listener must not claim the singleton lock or publish a receipt
+# that would redirect the developer's real surfaces at this throwaway process.
 server = subprocess.Popen(
     [BIN, "serve", "--port", "8903"],
     env=env,
     stdout=subprocess.DEVNULL,
     stderr=subprocess.PIPE,
 )
-token = None
-for _ in range(50):
-    line = server.stderr.readline().decode(errors="replace")
-    if "auth token:" in line:
-        token = line.split("auth token:")[1].strip()
+
+HDR = {"Authorization": f"Bearer {token}"}
+
+for attempt in range(50):
+    if server.poll() is not None:
+        print("FAIL: serve exited early:", server.stderr.read().decode(errors="replace"))
+        mock.terminate()
+        sys.exit(1)
+    try:
+        urllib.request.urlopen(
+            urllib.request.Request(f"{BASE}/health", headers=HDR), timeout=1
+        )
         break
-if not token:
-    print("FAIL: no auth token from serve")
+    except Exception:
+        time.sleep(0.1)
+else:
+    print("FAIL: serve never became healthy")
     server.terminate()
     mock.terminate()
     sys.exit(1)
-
-HDR = {"Authorization": f"Bearer {token}"}
-time.sleep(0.5)
 
 events = []
 finish = threading.Event()

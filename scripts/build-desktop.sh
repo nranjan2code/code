@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 DESKTOP_DIR="$ROOT_DIR/crates/vak-desktop"
 UI_DIR="$DESKTOP_DIR/ui"
 APP_NAME="VakCoder.app"
@@ -10,7 +10,8 @@ INSTALL_DIR="${VAKCODER_INSTALL_DIR:-$HOME/Applications}"
 
 usage() {
     printf 'Usage: %s [--clean] [--install]\n' "$(basename "$0")"
-    printf '\nDeveloper helper: builds the optional macOS desktop addon.\n'
+    printf '\nBuilds the optional macOS desktop addon (Tauri bundle).\n'
+    printf 'For the base install use scripts/build-install.sh --with-desktop.\n'
     printf '\nEnvironment:\n'
     printf '  VAKCODER_INSTALL_DIR  Installation directory (default: ~/Applications)\n'
 }

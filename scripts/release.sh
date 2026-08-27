@@ -45,11 +45,32 @@ if [[ "$PLATFORM" == "macos" ]] && command -v cargo-tauri >/dev/null 2>&1; then
   ditto "target/release/bundle/macos/VakCoder.app" "$DIST/VakCoder.app"
 fi
 
-cp README.md LICENSE "$DIST/" 2>/dev/null || cp README.md "$DIST/"
+cp README.md "$DIST/"
+if [[ -f LICENSE ]]; then
+  cp LICENSE "$DIST/"
+else
+  printf 'warning: no LICENSE file to package; Cargo.toml declares MIT\n' >&2
+fi
 (
   cd "$DIST"
   shasum -a 256 vakcoder vakcoder-tui > SHA256SUMS
 )
 tar -C "$(dirname "$DIST")" -czf "$DIST.tar.gz" "$(basename "$DIST")"
+
+# Update feed consumed by `vakcoder self update <url>`. It points at the bare
+# base binary, because the updater stages downloaded bytes directly as the
+# executable -- a tarball URL here would install an unrunnable archive. Each
+# host contributes its own platform key, so the file is merged rather than
+# overwritten by whichever machine happens to build last.
+RELEASE_BASE_URL="${VAKCODER_RELEASE_BASE_URL:-https://github.com/vakcoder/vakcoder/releases/download/v$VERSION}"
+FEED="$ROOT_DIR/dist/v$VERSION/release.json"
+VAKCODER_FEED="$FEED" \
+VAKCODER_VERSION="$VERSION" \
+VAKCODER_KEY="$PLATFORM/$ARCH" \
+VAKCODER_URL="$RELEASE_BASE_URL/$PLATFORM-$ARCH/vakcoder" \
+VAKCODER_SHA256="$(shasum -a 256 "$DIST/vakcoder" | awk '{print $1}')" \
+python3 "$ROOT_DIR/scripts/write_release_feed.py"
+
 printf 'release candidate: %s\n' "$DIST.tar.gz"
+printf 'update feed:       %s\n' "$FEED"
 printf 'git sha: %s\n' "$GIT_SHA"

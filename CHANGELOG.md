@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+- Made a fresh install actually run. `self install` now mints the gateway
+  bearer token into `<data_home>/.env`, and the Runtime opens without a
+  provider credential instead of refusing to start — previously the managed
+  gateway crash-looped on every clean machine, and the console that supplies
+  the provider key could not start without the key.
+- Generated service units pin `VAKCODER_HOME`, so a service manager resolves
+  the same data home the installer used instead of a different one.
+- Install verifies the authenticated handshake before reporting success.
+- Implemented the Runtime singleton lock (`<data_home>/locks/runtime.lock`).
+  A second gateway is refused, a lock left by a killed process is reclaimed,
+  and `--gateway` now selects lock and receipt ownership instead of being
+  parsed and discarded.
+- SIGTERM runs graceful shutdown. Managed service stops now cancel in-flight
+  runs and release the receipt and lock rather than leaving debris.
+- Rewrote `vakcoder doctor` to diagnose an install without assuming any of it
+  works, naming the one command that fixes each finding.
+- Fixed updater version precedence: build metadata is ignored rather than
+  rejected, and prereleases order against each other. `scripts/release.sh` now
+  emits the `release.json` feed that `self update` consumes, which previously
+  had no producer.
+- Auth token comparison is constant-time.
+- `self uninstall` reports separately-installed addons it cannot remove.
+- Renamed the root `build-install.sh` to `scripts/build-desktop.sh`, fixed the
+  README flags that never existed, repaired `scripts/server_smoke.py`, and
+  removed the redundant `install_gateway_service.sh`.
+
 ## 0.9.3 — deployment and release hardening
 
 - Routed OpenCode Zen credentials through the canonical provider configuration

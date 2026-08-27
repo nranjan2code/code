@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 const BIN_DIR: &str = "bin";
 const INSTALL_POINTER: &str = "install-root.json";
+const GATEWAY_TOKEN_KEY: &str = "VAKCODER_GATEWAY_TOKEN";
 
 fn home() -> PathBuf {
     // Canonical data home (doc 32) is the anchor for the managed release prefix.
@@ -70,6 +71,39 @@ fn copy_executable(src: &Path, dst: &Path) -> Result<(), String> {
             .map_err(|e| format!("chmod {}: {e}", dst.display()))?;
     }
     Ok(())
+}
+
+/// Mint a 256-bit bearer token from the OS CSPRNG, hex-encoded.
+fn mint_gateway_token() -> Result<String, String> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|e| format!("system CSPRNG unavailable: {e}"))?;
+    Ok(bytes.iter().fold(String::with_capacity(64), |mut acc, b| {
+        use std::fmt::Write as _;
+        let _ = write!(acc, "{b:02x}");
+        acc
+    }))
+}
+
+/// The managed gateway refuses to start without a bearer token, and a service
+/// manager cannot prompt for one. Provisioning is therefore part of install,
+/// and is idempotent: an existing user secret is never rewritten.
+///
+/// Returns whether a new token was minted.
+fn ensure_gateway_token() -> Result<bool, String> {
+    ensure_gateway_token_in(&vak_config::SecretService::new(home()))
+}
+
+fn ensure_gateway_token_in(secrets: &vak_config::SecretService) -> Result<bool, String> {
+    match secrets.get(GATEWAY_TOKEN_KEY) {
+        Ok(Some(existing)) if !existing.trim().is_empty() => return Ok(false),
+        Ok(_) => {}
+        Err(e) => return Err(format!("read {}: {e}", secrets.path().display())),
+    }
+    let token = mint_gateway_token()?;
+    secrets
+        .set(GATEWAY_TOKEN_KEY, &token)
+        .map_err(|e| format!("write {}: {e}", secrets.path().display()))?;
+    Ok(true)
 }
 
 fn current_git_sha() -> String {
@@ -236,29 +270,88 @@ pub(crate) fn run_install(prefix: Option<PathBuf>, no_service: bool) -> i32 {
         Err(e) => eprintln!("warning: CLI launcher not installed: {e}"),
     }
 
+    // The gateway service starts unattended and cannot prompt, so its bearer
+    // token must exist before the unit is loaded.
+    match ensure_gateway_token() {
+        Ok(true) => println!(
+            "  gateway token: minted in {}",
+            home().join(".env").display()
+        ),
+        Ok(false) => println!("  gateway token: already provisioned"),
+        Err(e) => {
+            eprintln!("error: gateway token not provisioned: {e}");
+            return 1;
+        }
+    }
+
     // A base install owns only the base service. Optional channel bridges and
     // presentation addons must be enabled explicitly after their credentials
     // or binaries exist.
-    if !no_service {
-        let svc_names = ["com.vakcoder.gateway"];
-        let outcomes = vak_ops::services::services_sync(
-            &stable_bin.join("vakcoder"),
-            &svc_names,
-            &vak_ops::services::Paths::default(),
-            &vak_ops::services::SystemRunner,
-        );
-        for o in &outcomes {
-            match &o.action {
-                vak_ops::services::SyncAction::Failed(e) => {
-                    eprintln!("  warning: {}: {e}", o.name);
-                }
-                action => println!("  service: {} — {action:?}", o.name),
+    if no_service {
+        println!("start the Runtime with `vakcoder serve --gateway`.");
+        return 0;
+    }
+
+    let svc_names = ["com.vakcoder.gateway"];
+    let outcomes = vak_ops::services::services_sync(
+        &stable_bin.join("vakcoder"),
+        &svc_names,
+        &vak_ops::services::Paths::default(),
+        &vak_ops::services::SystemRunner,
+    );
+    let mut service_failed = false;
+    for o in &outcomes {
+        match &o.action {
+            vak_ops::services::SyncAction::Failed(e) => {
+                service_failed = true;
+                eprintln!("  warning: {}: {e}", o.name);
             }
+            action => println!("  service: {} — {action:?}", o.name),
+        }
+    }
+    if service_failed {
+        eprintln!("install incomplete: the gateway service did not load");
+        return 1;
+    }
+
+    // An install that reports success without a reachable Runtime is the
+    // worst possible outcome: every surface fails later with no explanation.
+    match await_gateway_ready() {
+        Ok(connection) => println!("  gateway: ready at {}", connection.base_url()),
+        Err(e) => {
+            eprintln!("  warning: gateway did not become ready: {e}");
+            eprintln!(
+                "  diagnose with `vakcoder doctor`; logs: {}",
+                vak_config::paths::logs_dir().join("gateway.log").display()
+            );
+            return 1;
         }
     }
 
     println!("open the admin console with `vakcoder admin`.");
     0
+}
+
+/// Poll the canonical receipt until the freshly loaded gateway answers its
+/// authenticated handshake. Service managers return as soon as the unit is
+/// loaded, which is strictly before the listener exists.
+fn await_gateway_ready() -> Result<vak_client::GatewayConnection, String> {
+    const ATTEMPTS: u32 = 40;
+    const INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+    let mut last = "the gateway never published a receipt".to_string();
+    for _ in 0..ATTEMPTS {
+        match vak_client::GatewayConnection::discover_local() {
+            Ok(connection) => {
+                if vak_ops::health_ok(&vak_ops::OpsConfig::default()) {
+                    return Ok(connection);
+                }
+                last = "the gateway published a receipt but failed its handshake".to_string();
+            }
+            Err(e) => last = e.to_string(),
+        }
+        std::thread::sleep(INTERVAL);
+    }
+    Err(last)
 }
 
 fn read_manifest(prefix: &Path) -> Result<Manifest, String> {
@@ -349,6 +442,10 @@ pub(crate) fn run_status() -> i32 {
     };
 
     println!("build     {} ({})", build_version, current_git_sha());
+    // Machine-readable: scripts that place addons beside the base binary read
+    // this instead of guessing at the launcher symlink.
+    println!("prefix    {}", prefix.display());
+    println!("bin       {}", bin_dir_of(&prefix).display());
     match &manifest {
         Ok(m) => println!("manifest  {} installed {}", m.version, m.installed_at),
         Err(e) => println!("manifest  — ({e})"),
@@ -400,6 +497,318 @@ pub(crate) fn run_status() -> i32 {
     if drifted { 1 } else { 0 }
 }
 
+/// One diagnostic line: what was checked, what was found, and — when it is
+/// wrong — the single command that fixes it.
+struct Check {
+    label: &'static str,
+    state: CheckState,
+    detail: String,
+    remedy: Option<&'static str>,
+}
+
+enum CheckState {
+    Ok,
+    Warn,
+    Fail,
+}
+
+impl Check {
+    fn ok(label: &'static str, detail: impl Into<String>) -> Self {
+        Check {
+            label,
+            state: CheckState::Ok,
+            detail: detail.into(),
+            remedy: None,
+        }
+    }
+    fn warn(label: &'static str, detail: impl Into<String>, remedy: &'static str) -> Self {
+        Check {
+            label,
+            state: CheckState::Warn,
+            detail: detail.into(),
+            remedy: Some(remedy),
+        }
+    }
+    fn fail(label: &'static str, detail: impl Into<String>, remedy: &'static str) -> Self {
+        Check {
+            label,
+            state: CheckState::Fail,
+            detail: detail.into(),
+            remedy: Some(remedy),
+        }
+    }
+    fn glyph(&self) -> &'static str {
+        match self.state {
+            CheckState::Ok => "\u{2713}",
+            CheckState::Warn => "\u{26a0}",
+            CheckState::Fail => "\u{2717}",
+        }
+    }
+}
+
+/// The configured provider and whether its credential is resolvable, using the
+/// same environment-key mapping Runtime admission uses.
+fn configured_provider_credential(
+    data: &Path,
+    secrets: &vak_config::SecretService,
+) -> Result<(String, Option<&'static str>), String> {
+    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+    let snapshot = vak_config::ConfigService::new(data, cwd)
+        .load()
+        .map_err(|e| format!("configuration unreadable: {e}"))?;
+    let provider = snapshot
+        .config
+        .provider
+        .name
+        .unwrap_or_else(|| "anthropic".to_owned());
+    let key_name = match provider.as_str() {
+        "anthropic" => "ANTHROPIC_API_KEY",
+        "google" => "GOOGLE_API_KEY",
+        // Local models authenticate by reachability, not by credential.
+        "ollama" => return Ok((provider, Some("no key required"))),
+        "opencode-zen" => "OPENCODE_API_KEY",
+        _ => "OPENAI_API_KEY",
+    };
+    let present = secrets
+        .get(key_name)
+        .ok()
+        .flatten()
+        .filter(|value| !value.trim().is_empty())
+        .is_some()
+        || std::env::var(key_name).is_ok_and(|value| !value.trim().is_empty());
+    Ok((provider, present.then_some(key_name)))
+}
+
+/// Diagnose the installation without assuming any of it works.
+///
+/// A doctor that needs a healthy gateway to say anything cannot diagnose the
+/// only situations worth diagnosing, so every check here degrades to a
+/// finding instead of an early exit.
+pub(crate) fn run_doctor() -> i32 {
+    let mut checks = Vec::new();
+    let data = home();
+    let prefix = active_prefix();
+
+    checks.push(Check::ok(
+        "build",
+        format!("{} ({})", env!("CARGO_PKG_VERSION"), current_git_sha()),
+    ));
+    checks.push(Check::ok("data home", data.display().to_string()));
+
+    let manifest = read_manifest(&prefix);
+    match &manifest {
+        Ok(m) if m.version == env!("CARGO_PKG_VERSION") => checks.push(Check::ok(
+            "install",
+            format!(
+                "{} at {} (installed {})",
+                m.version,
+                prefix.display(),
+                m.installed_at
+            ),
+        )),
+        Ok(m) => checks.push(Check::warn(
+            "install",
+            format!(
+                "manifest {} but this binary is {}",
+                m.version,
+                env!("CARGO_PKG_VERSION")
+            ),
+            "vakcoder self install",
+        )),
+        Err(e) => checks.push(Check::fail("install", e.clone(), "vakcoder self install")),
+    }
+
+    #[cfg(unix)]
+    if let Some(user_home) = std::env::var_os("HOME") {
+        let launcher = PathBuf::from(user_home).join(".local/bin/vakcoder");
+        match std::fs::read_link(&launcher) {
+            Ok(target) if target.starts_with(&prefix) => {
+                checks.push(Check::ok("launcher", launcher.display().to_string()));
+            }
+            Ok(target) => checks.push(Check::warn(
+                "launcher",
+                format!(
+                    "{} points outside the managed prefix ({})",
+                    launcher.display(),
+                    target.display()
+                ),
+                "vakcoder self install",
+            )),
+            Err(_) => checks.push(Check::warn(
+                "launcher",
+                format!("{} is missing or not a managed symlink", launcher.display()),
+                "vakcoder self install",
+            )),
+        }
+    }
+
+    let secrets = vak_config::SecretService::new(&data);
+    match secrets.get(GATEWAY_TOKEN_KEY) {
+        Ok(Some(token)) if !token.trim().is_empty() => {
+            checks.push(Check::ok(
+                "gateway token",
+                format!("present in {}", secrets.path().display()),
+            ));
+        }
+        Ok(_) => checks.push(Check::fail(
+            "gateway token",
+            format!("absent from {}", secrets.path().display()),
+            "vakcoder self install",
+        )),
+        Err(e) => checks.push(Check::fail(
+            "gateway token",
+            format!("{} is unreadable: {e}", secrets.path().display()),
+            "vakcoder self install",
+        )),
+    }
+
+    // The gateway now opens without one, so an absent provider key is a
+    // degraded state rather than a startup failure — but it is still the
+    // reason runs will not start, so it must be visible here.
+    match configured_provider_credential(&data, &secrets) {
+        Ok((provider, Some(key))) => {
+            checks.push(Check::ok("provider", format!("{provider} ({key} present)")));
+        }
+        Ok((provider, None)) => checks.push(Check::warn(
+            "provider",
+            format!("{provider} has no API key; runs will not start"),
+            "vakcoder admin",
+        )),
+        Err(e) => checks.push(Check::warn("provider", e, "vakcoder admin")),
+    }
+
+    match installed_bin(&prefix) {
+        Ok(bin) => {
+            let rows = vak_ops::services::services_status(
+                &bin,
+                &vak_ops::services::SERVICES
+                    .iter()
+                    .map(|d| d.name)
+                    .collect::<Vec<_>>(),
+                &vak_ops::services::Paths::default(),
+                &vak_ops::services::SystemRunner,
+            );
+            for row in rows {
+                let label: &'static str = if row.name.ends_with("gateway") {
+                    "service gateway"
+                } else {
+                    "service tray"
+                };
+                if !row.unit_path.exists() {
+                    // The tray is an opt-in addon; only the gateway is required.
+                    if label == "service gateway" {
+                        checks.push(Check::fail(
+                            label,
+                            "no unit installed",
+                            "vakcoder self install",
+                        ));
+                    } else {
+                        checks.push(Check::ok(label, "not installed (optional addon)"));
+                    }
+                } else if !row.unit_points_at_installed {
+                    checks.push(Check::fail(
+                        label,
+                        format!(
+                            "{} execs outside the managed prefix",
+                            row.unit_path.display()
+                        ),
+                        "vakcoder self services-sync",
+                    ));
+                } else if row.binary_stale {
+                    checks.push(Check::warn(
+                        label,
+                        "running process predates the installed binary",
+                        "vakcoder self services-sync",
+                    ));
+                } else {
+                    match row.running_pid {
+                        Some(pid) => checks.push(Check::ok(label, format!("running (pid {pid})"))),
+                        None => {
+                            checks.push(Check::fail(label, "down", "vakcoder self services-sync"))
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => checks.push(Check::fail("services", e, "vakcoder self install")),
+    }
+
+    match vak_client::GatewayConnection::discover_local() {
+        Ok(connection) => {
+            checks.push(Check::ok(
+                "runtime receipt",
+                format!(
+                    "{} (pid {})",
+                    connection.base_url(),
+                    connection.process_id()
+                ),
+            ));
+            if vak_ops::health_ok(&vak_ops::OpsConfig::default()) {
+                checks.push(Check::ok(
+                    "handshake",
+                    "authenticated /version and /health agree",
+                ));
+            } else {
+                checks.push(Check::fail(
+                    "handshake",
+                    "the gateway is listening but failed the authenticated handshake",
+                    "vakcoder self services-sync",
+                ));
+            }
+        }
+        Err(e) => {
+            checks.push(Check::fail(
+                "runtime receipt",
+                e.to_string(),
+                "vakcoder self services-sync",
+            ));
+            checks.push(Check::warn(
+                "handshake",
+                "skipped: no reachable gateway",
+                "vakcoder self services-sync",
+            ));
+        }
+    }
+
+    let log = vak_config::paths::logs_dir().join("gateway.log");
+    checks.push(Check::ok("gateway log", log.display().to_string()));
+
+    let width = checks.iter().map(|c| c.label.len()).max().unwrap_or(0);
+    let mut failed = 0usize;
+    let mut warned = 0usize;
+    for check in &checks {
+        println!("{} {:width$}  {}", check.glyph(), check.label, check.detail);
+        match check.state {
+            CheckState::Fail => failed += 1,
+            CheckState::Warn => warned += 1,
+            CheckState::Ok => {}
+        }
+    }
+    let mut remedies: Vec<&'static str> = checks
+        .iter()
+        .filter(|c| !matches!(c.state, CheckState::Ok))
+        .filter_map(|c| c.remedy)
+        .collect();
+    remedies.dedup();
+    if !remedies.is_empty() {
+        println!();
+        println!("next:");
+        for remedy in remedies {
+            println!("  {remedy}");
+        }
+    }
+    if failed > 0 {
+        eprintln!("\n{failed} failing, {warned} degraded");
+        1
+    } else if warned > 0 {
+        println!("\nhealthy with {warned} degraded");
+        0
+    } else {
+        println!("\nhealthy");
+        0
+    }
+}
+
 pub(crate) fn run_uninstall(yes: bool, purge: bool, no_service: bool) -> i32 {
     if !yes && std::io::stdin().is_terminal() {
         if no_service {
@@ -440,6 +849,7 @@ pub(crate) fn run_uninstall(yes: bool, purge: bool, no_service: bool) -> i32 {
         }
     }
     let _ = std::fs::remove_file(pointer_path());
+    report_unmanaged_leftovers();
     if purge {
         if !yes && std::io::stdin().is_terminal() {
             print!(
@@ -480,6 +890,40 @@ pub(crate) fn run_uninstall(yes: bool, purge: bool, no_service: bool) -> i32 {
         }
     }
     0
+}
+
+/// Addons installed outside the managed prefix cannot be removed on the
+/// user's behalf — they are plain copies with no provenance record, and
+/// deleting an arbitrary file at a conventional path is not ours to do. Name
+/// them instead, so an uninstall never leaves silent orphans behind.
+fn report_unmanaged_leftovers() {
+    let mut leftovers: Vec<PathBuf> = Vec::new();
+    #[cfg(unix)]
+    if let Some(user_home) = std::env::var_os("HOME") {
+        let user_home = PathBuf::from(user_home);
+        let tui = std::env::var_os("VAKCODER_TUI_INSTALL_DIR")
+            .map_or_else(|| user_home.join(".local/bin"), PathBuf::from)
+            .join("vakcoder-tui");
+        if tui.exists() {
+            leftovers.push(tui);
+        }
+        for app in [
+            user_home.join("Applications/VakCoder.app"),
+            PathBuf::from("/Applications/VakCoder.app"),
+        ] {
+            if app.exists() {
+                leftovers.push(app);
+            }
+        }
+    }
+    if leftovers.is_empty() {
+        return;
+    }
+    println!("\nseparately installed addons were left in place:");
+    for path in leftovers {
+        println!("  {}", path.display());
+    }
+    println!("remove them yourself if you no longer want them.");
 }
 
 pub(crate) fn run_update(url: &str, yes: bool) -> i32 {
@@ -633,8 +1077,16 @@ struct ReleaseArtifact {
     sha256: String,
 }
 
+/// Semver precedence, enough of it for a release feed.
+///
+/// Build metadata is ignored (semver §10) rather than rejected: the release
+/// gate accepts `X.Y.Z+meta`, so an updater that cannot parse it would refuse
+/// every artifact the project is allowed to ship. Prereleases rank below their
+/// release and against each other by identifier, so `1.0.0-rc.2` supersedes
+/// `1.0.0-rc.1` instead of looking identical to it.
 fn version_is_newer(candidate: &str, current: &str) -> Result<bool, String> {
     fn parse(value: &str) -> Result<(Vec<u64>, Option<&str>), String> {
+        let value = value.split_once('+').map_or(value, |(head, _)| head);
         let (numbers, prerelease) = value
             .split_once('-')
             .map_or((value, None), |(numbers, suffix)| (numbers, Some(suffix)));
@@ -648,13 +1100,45 @@ fn version_is_newer(candidate: &str, current: &str) -> Result<bool, String> {
         if numbers.len() != 3 {
             return Err(format!("{value:?} must contain major.minor.patch"));
         }
-        Ok((numbers, prerelease))
+        Ok((numbers, prerelease.filter(|suffix| !suffix.is_empty())))
     }
 
-    let candidate = parse(candidate)?;
-    let current = parse(current)?;
-    Ok(candidate.0 > current.0
-        || (candidate.0 == current.0 && candidate.1.is_none() && current.1.is_some()))
+    /// Numeric identifiers compare numerically and rank below alphanumeric
+    /// ones; a longer identifier list wins when all shared fields tie.
+    fn prerelease_is_greater(candidate: &str, current: &str) -> bool {
+        let mut left = candidate.split('.');
+        let mut right = current.split('.');
+        loop {
+            match (left.next(), right.next()) {
+                (None, None) => return false,
+                (None, Some(_)) => return false,
+                (Some(_), None) => return true,
+                (Some(a), Some(b)) => {
+                    if a == b {
+                        continue;
+                    }
+                    return match (a.parse::<u64>(), b.parse::<u64>()) {
+                        (Ok(a), Ok(b)) => a > b,
+                        (Ok(_), Err(_)) => false,
+                        (Err(_), Ok(_)) => true,
+                        (Err(_), Err(_)) => a > b,
+                    };
+                }
+            }
+        }
+    }
+
+    let (candidate_numbers, candidate_pre) = parse(candidate)?;
+    let (current_numbers, current_pre) = parse(current)?;
+    if candidate_numbers != current_numbers {
+        return Ok(candidate_numbers > current_numbers);
+    }
+    Ok(match (candidate_pre, current_pre) {
+        (None, None) => false,
+        (None, Some(_)) => true,
+        (Some(_), None) => false,
+        (Some(candidate), Some(current)) => prerelease_is_greater(candidate, current),
+    })
 }
 
 #[cfg(test)]
@@ -711,6 +1195,36 @@ mod tests {
     }
 
     #[test]
+    fn minted_gateway_tokens_are_full_entropy_and_distinct() {
+        let first = mint_gateway_token().unwrap();
+        let second = mint_gateway_token().unwrap();
+        assert_eq!(first.len(), 64, "256 bits, hex-encoded");
+        assert!(first.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn gateway_token_provisioning_never_overwrites_an_existing_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let secrets = vak_config::SecretService::new(dir.path());
+
+        assert!(
+            ensure_gateway_token_in(&secrets).unwrap(),
+            "first install mints"
+        );
+        let minted = secrets.get(GATEWAY_TOKEN_KEY).unwrap().unwrap();
+        assert_eq!(minted.len(), 64);
+
+        // Reinstall must not rotate a credential that live surfaces are
+        // already holding: it would revoke every one of them mid-session.
+        assert!(
+            !ensure_gateway_token_in(&secrets).unwrap(),
+            "reinstall reuses"
+        );
+        assert_eq!(secrets.get(GATEWAY_TOKEN_KEY).unwrap().unwrap(), minted);
+    }
+
+    #[test]
     fn update_manifest_deserializes_artifact_map() {
         let raw = br#"{"version":"9.9.9","artifacts":{"macos/aarch64":{"url":"https://x/vak","sha256":"abc"}}} "#;
         let m: ReleaseManifest = serde_json::from_slice(raw).unwrap();
@@ -723,6 +1237,25 @@ mod tests {
         assert!(version_is_newer("0.10.0", "0.9.0").unwrap());
         assert!(!version_is_newer("0.8.0", "0.8.0").unwrap());
         assert!(version_is_newer("1.0.0", "1.0.0-rc.1").unwrap());
+        assert!(!version_is_newer("1.0.0-rc.1", "1.0.0").unwrap());
         assert!(version_is_newer("not-a-version", "0.8.0").is_err());
+    }
+
+    #[test]
+    fn update_orders_prereleases_against_each_other() {
+        assert!(version_is_newer("1.0.0-rc.2", "1.0.0-rc.1").unwrap());
+        assert!(!version_is_newer("1.0.0-rc.1", "1.0.0-rc.2").unwrap());
+        // Numeric identifiers rank below alphanumeric ones (semver §11).
+        assert!(version_is_newer("1.0.0-rc", "1.0.0-1").unwrap());
+        // A longer identifier list wins when every shared field ties.
+        assert!(version_is_newer("1.0.0-rc.1.1", "1.0.0-rc.1").unwrap());
+    }
+
+    #[test]
+    fn update_ignores_build_metadata_the_release_gate_permits() {
+        // check-release-version.sh accepts X.Y.Z+meta; refusing to parse it
+        // would strand every such build with an unusable updater.
+        assert!(version_is_newer("0.9.4+ci.7", "0.9.3").unwrap());
+        assert!(!version_is_newer("0.9.3+ci.8", "0.9.3+ci.7").unwrap());
     }
 }

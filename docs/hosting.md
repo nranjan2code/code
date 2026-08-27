@@ -26,13 +26,21 @@ tunnel or an explicitly protected network endpoint.
 ## Start
 
 ```bash
-export VAKCODER_GATEWAY_TOKEN="use-a-random-secret"
+vakcoder self install          # mints VAKCODER_GATEWAY_TOKEN into <data_home>/.env
 vakcoder serve --gateway --port 8901
 ```
 
+`self install` provisions the bearer token and the service unit; run `serve`
+by hand only when managing the process yourself. To supply the token out of
+band instead, export `VAKCODER_GATEWAY_TOKEN` before starting. Without
+`--gateway` the process serves the API but claims no lock and publishes no
+receipt, so it cannot redirect installed surfaces away from the managed
+Runtime.
+
 The service creates the canonical data home and writes its runtime status to
-`<data_home>/runtime/gateway.json`. Stop it with SIGTERM or Ctrl-C so the
-runtime receipt and lock are released. Use the managed installer for launchd or
+`<data_home>/runtime/gateway.json`. Stop it with SIGTERM or Ctrl-C; both run
+graceful shutdown, cancelling in-flight runs and releasing the runtime receipt
+and lock. A lock left by a killed process is reclaimed on the next start. Use the managed installer for launchd or
 systemd integration; service units must execute the installed `vakcoder`
 launcher, never a Cargo build directory.
 

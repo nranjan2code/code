@@ -40,6 +40,26 @@ scripts/build-install.sh --no-service
 
 `--no-service` is mandatory for disposable tests. Service installation is
 explicit and owns the gateway process; the tray is an optional client addon.
+`scripts/build-desktop.sh` builds the macOS bundle on its own and is what
+`--with-desktop` delegates to.
+
+## First run
+
+Install provisions everything the gateway needs to start unattended, because a
+service manager cannot prompt:
+
+- a 256-bit `VAKCODER_GATEWAY_TOKEN` is minted into `<data_home>/.env` (0600)
+  when absent, and is never rotated by a reinstall;
+- generated units pin `VAKCODER_HOME` so the service resolves the same data
+  home the installer used — a service manager inherits none of the installing
+  shell's environment;
+- install waits for the authenticated handshake and fails loudly rather than
+  reporting success over an unreachable Runtime.
+
+A provider API key is *not* required to start. The Runtime opens without a
+provider and runs return a typed error until a key exists, because the console
+that sets that key is served by the gateway itself. `vakcoder doctor` reports
+the missing credential as a degraded state.
 
 ## Canonical filesystem
 
@@ -72,7 +92,13 @@ self-contained test root, not an alternate compatibility layout.
 5. Sessions and operation audit are append-only. SQLite projections and caches
    may be rebuilt from their authoritative records.
 6. Secrets never appear in service units, command arguments, logs, receipts, or
-   release archives.
+   release archives. Units carry operational paths only.
+7. Exactly one gateway owns `<data_home>/locks/runtime.lock` and the receipt. A
+   second gateway is refused; a non-gateway `serve` publishes neither. A lock
+   whose recorded pid is dead is reclaimed, so a killed process cannot wedge
+   the install.
+8. SIGTERM and SIGINT both run graceful shutdown: in-flight runs are cancelled
+   and the receipt and lock are released.
 
 ## Release gate
 
@@ -85,9 +111,22 @@ cargo test --workspace
 scripts/check-release-version.sh
 ```
 
-The artifact lane then installs into a disposable data home, starts one
-gateway, registers a project, creates a session, runs and cancels a turn,
-exercises TUI/desktop/admin clients, verifies backup/restore, and confirms
-that no service points to a build tree. The same checks run with no provider
-credential using deterministic Runtime tests; live provider checks are
-separate and require a user-supplied key.
+`scripts/release_install_smoke.sh <binary>` then exercises the whole managed
+lifecycle in a disposable data home: install, token provisioning, idempotent
+reinstall, gateway startup with no provider credential, receipt and lock
+publication, doctor, admin URL, singleton refusal, SIGTERM cleanup, and an
+uninstall that leaves Runtime state intact.
+
+The artifact lane additionally registers a project, creates a session, runs and
+cancels a turn, exercises TUI/desktop/admin clients, verifies backup/restore,
+and confirms that no service points to a build tree. The same checks run with
+no provider credential using deterministic Runtime tests; live provider checks
+are separate and require a user-supplied key.
+
+## Update feed
+
+`scripts/release.sh` writes `dist/v<version>/release.json`, the feed consumed by
+`vakcoder self update <url>`. Each host merges its own `<os>/<arch>` key, and
+the entry points at the bare base binary — the updater stages downloaded bytes
+directly as the executable and rejects any that do not match the recorded
+SHA-256. Set `VAKCODER_RELEASE_BASE_URL` to control where the feed points.

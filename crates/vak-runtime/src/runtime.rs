@@ -135,10 +135,13 @@ impl Runtime {
             .get(key_name)?
             .or_else(|| std::env::var(key_name).ok())
             .unwrap_or_default();
+        // A missing provider credential is a configuration gap, not a reason
+        // to refuse to open. The console that sets the key is served by this
+        // very process, so failing here is a deadlock: the only supported way
+        // to supply the credential would require the credential. Runs already
+        // return a typed error while no provider is attached.
         if api_key.is_empty() && provider_name != "ollama" {
-            return Err(RuntimeError::Provider(format!(
-                "missing credential {key_name} for provider {provider_name}"
-            )));
+            return Self::open_with_ports(data_home, None, Some(tools));
         }
         let registry = vak_llm::registry::default_registry();
         let provider = registry
@@ -585,10 +588,14 @@ impl Runtime {
         session_id: &SessionId,
         input: &str,
     ) -> Result<String, EngineError> {
-        let provider = self
-            .provider
-            .clone()
-            .ok_or_else(|| EngineError::Provider("runtime has no provider configured".into()))?;
+        let provider = self.provider.clone().ok_or_else(|| {
+            EngineError::Provider(
+                "no provider credential is configured; set one with \
+                     `vakcoder admin` or add the provider API key to \
+                     <data_home>/.env, then restart the gateway"
+                    .into(),
+            )
+        })?;
         let tools = self.tools.clone().ok_or_else(|| {
             EngineError::Provider("runtime has no tool dispatcher configured".into())
         })?;

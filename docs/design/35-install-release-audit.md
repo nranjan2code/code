@@ -25,8 +25,15 @@ Run the release gate in a disposable data home:
 
 ```bash
 scripts/build-install.sh --no-service --gates
+scripts/release_install_smoke.sh target/release/vakcoder
 VAKCODER_HOME="$TMPDIR/vakcoder-clean" vakcoder doctor
 ```
+
+`doctor` diagnoses the install without assuming any of it works: it reports
+build, data home, manifest, launcher, gateway token, provider credential,
+service units, receipt, and the authenticated handshake, and names the one
+command that fixes each finding. It exits non-zero on any failing check, so it
+is usable as a gate.
 
 Then verify, with one gateway process:
 

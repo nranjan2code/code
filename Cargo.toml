@@ -66,6 +66,8 @@ walkdir = "2"
 base64 = "0.22"
 # Constant-time token comparison for auth (timing-attack resistance)
 subtle = "2"
+# OS CSPRNG used to mint the local gateway bearer token during `self install`
+getrandom = "0.3"
 # Embeds the built admin SPA (crates/vak-admin-ui/dist) into the binary
 include_dir = "0.7"
 globset = "0.4"

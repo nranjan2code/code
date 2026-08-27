@@ -170,12 +170,108 @@ pub enum ServeError {
     Bind(std::io::Error),
     #[error("Runtime HTTP server failed: {0}")]
     Serve(std::io::Error),
+    #[error("another Runtime gateway (pid {pid}) already owns {home}")]
+    AlreadyRunning { pid: u32, home: std::path::PathBuf },
+    #[error("cannot acquire the Runtime lock at {path}: {source}")]
+    Lock {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
 }
 
+/// Exclusive ownership of the local Runtime for one data home.
+///
+/// Invariant 12: exactly one process may own the gateway, its receipt, and the
+/// projections behind it. The lock records the owning pid, so a lock left by a
+/// killed process is reclaimed instead of wedging the install forever — the
+/// pid, not the file's existence, is the authority.
+#[derive(Debug)]
+struct RuntimeLock {
+    path: std::path::PathBuf,
+}
+
+impl RuntimeLock {
+    fn acquire(data_home: &std::path::Path) -> Result<Self, ServeError> {
+        let path = data_home.join("locks").join("runtime.lock");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| ServeError::Lock {
+                path: path.clone(),
+                source,
+            })?;
+        }
+        for reclaim in [false, true] {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut file) => {
+                    use std::io::Write as _;
+                    let _ = writeln!(file, "{}", std::process::id());
+                    return Ok(Self { path });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let owner = std::fs::read_to_string(&path)
+                        .ok()
+                        .and_then(|raw| raw.trim().parse::<u32>().ok());
+                    match owner {
+                        Some(pid) if vak_config::process_alive(pid) => {
+                            return Err(ServeError::AlreadyRunning {
+                                pid,
+                                home: data_home.to_path_buf(),
+                            });
+                        }
+                        // Unreadable or dead owner: the lock is debris.
+                        _ if !reclaim => {
+                            let _ = std::fs::remove_file(&path);
+                        }
+                        _ => {
+                            return Err(ServeError::Lock {
+                                path: path.clone(),
+                                source: std::io::Error::new(
+                                    std::io::ErrorKind::AlreadyExists,
+                                    "the Runtime lock could not be reclaimed",
+                                ),
+                            });
+                        }
+                    }
+                }
+                Err(source) => {
+                    return Err(ServeError::Lock {
+                        path: path.clone(),
+                        source,
+                    });
+                }
+            }
+        }
+        Err(ServeError::Lock {
+            path: path.clone(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "the Runtime lock could not be reclaimed",
+            ),
+        })
+    }
+}
+
+impl Drop for RuntimeLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Serve the Runtime over authenticated HTTP+SSE.
+///
+/// `gateway` selects gateway mode (doc 22): the process claims the singleton
+/// Runtime lock and publishes `runtime/gateway.json` for the whole life of the
+/// listener. A non-gateway listener publishes nothing, so an ad-hoc `serve` in
+/// a build tree can never redirect the installed surfaces away from the
+/// managed Runtime.
 pub async fn serve(
     runtime: Arc<Runtime>,
     address: std::net::SocketAddr,
     token: impl Into<String>,
+    gateway: bool,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), ServeError> {
     let token = token.into();
@@ -183,23 +279,34 @@ pub async fn serve(
         return Err(RouterError::EmptyAuthToken.into());
     }
     let state = AppState::with_token(runtime, token.clone());
+    // Take ownership before binding: a losing second gateway must not publish
+    // a receipt that steals every surface away from the live Runtime.
+    let _lock = if gateway {
+        Some(RuntimeLock::acquire(state.runtime.data_home())?)
+    } else {
+        None
+    };
     let app = build_router(state.clone(), token.clone());
     let listener = tokio::net::TcpListener::bind(address)
         .await
         .map_err(ServeError::Bind)?;
-    let runtime_file = runtime_file_path(state.runtime.data_home());
-    write_runtime_file(
-        &runtime_file,
-        listener.local_addr().map_err(ServeError::Bind)?,
-        &token,
-    )
-    .map_err(ServeError::Bind)?;
+    let runtime_file = gateway.then(|| runtime_file_path(state.runtime.data_home()));
+    if let Some(runtime_file) = &runtime_file {
+        write_runtime_file(
+            runtime_file,
+            listener.local_addr().map_err(ServeError::Bind)?,
+            &token,
+        )
+        .map_err(ServeError::Bind)?;
+    }
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown)
         .await
         .map_err(ServeError::Serve)?;
     state.shutdown().await;
-    let _ = std::fs::remove_file(runtime_file);
+    if let Some(runtime_file) = runtime_file {
+        let _ = std::fs::remove_file(runtime_file);
+    }
     Ok(())
 }
 
@@ -230,6 +337,16 @@ fn write_runtime_file(
     std::fs::rename(temp, path)
 }
 
+/// Constant-time credential comparison.
+///
+/// A byte-by-byte `==` leaks the length of the shared prefix through timing,
+/// which is enough to recover a bearer token one byte at a time. Length is not
+/// secret, so an early length check is safe; the contents are not.
+fn token_matches(provided: &str, expected: &str) -> bool {
+    use subtle::ConstantTimeEq as _;
+    provided.as_bytes().ct_eq(expected.as_bytes()).into()
+}
+
 async fn require_bearer(
     axum::extract::State(token): axum::extract::State<String>,
     request: axum::http::Request<axum::body::Body>,
@@ -245,7 +362,7 @@ async fn require_bearer(
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some_and(|provided| provided == token)
+        .is_some_and(|provided| token_matches(provided, &token))
         || request
             .headers()
             .get(axum::http::header::COOKIE)
@@ -255,7 +372,7 @@ async fn require_bearer(
                     .split(';')
                     .find_map(|cookie| cookie.trim().strip_prefix("vakcoder_session="))
             })
-            .is_some_and(|provided| provided == token);
+            .is_some_and(|provided| token_matches(provided, &token));
     if valid {
         next.run(request).await
     } else {
@@ -276,7 +393,7 @@ async fn login(
     axum::extract::State(state): axum::extract::State<AppState>,
     Json(request): Json<LoginRequest>,
 ) -> impl IntoResponse {
-    if request.token != *state.auth_token {
+    if !token_matches(&request.token, &state.auth_token) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"error":"invalid token"})),
@@ -1504,6 +1621,72 @@ mod tests {
     use http_body_util::BodyExt;
     use tempfile::tempdir;
     use tower::ServiceExt;
+
+    #[test]
+    fn runtime_lock_is_exclusive_while_its_owner_lives() {
+        let home = tempdir().expect("tempdir");
+        let first = RuntimeLock::acquire(home.path()).expect("first lock");
+        match RuntimeLock::acquire(home.path()) {
+            Err(ServeError::AlreadyRunning { pid, .. }) => {
+                assert_eq!(pid, std::process::id());
+            }
+            other => panic!("a second gateway must be refused, got {other:?}"),
+        }
+        drop(first);
+        // Releasing the lock hands ownership to the next process.
+        RuntimeLock::acquire(home.path()).expect("relock after release");
+    }
+
+    #[test]
+    fn runtime_lock_reclaims_debris_from_a_dead_owner() {
+        let home = tempdir().expect("tempdir");
+        let path = home.path().join("locks").join("runtime.lock");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        // A killed gateway leaves its lock behind. Judging by file existence
+        // alone would wedge the install permanently; the pid is the authority.
+        std::fs::write(&path, "4294967294\n").expect("stale lock");
+        let reclaimed = RuntimeLock::acquire(home.path()).expect("reclaim");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("lock").trim(),
+            std::process::id().to_string()
+        );
+        drop(reclaimed);
+        assert!(!path.exists(), "release must remove the lock");
+    }
+
+    #[tokio::test]
+    async fn only_gateway_mode_publishes_a_receipt() {
+        let home = tempdir().expect("tempdir");
+        let runtime = Runtime::open(home.path()).expect("runtime");
+        let receipt = runtime_file_path(home.path());
+        let (stop, wait) = tokio::sync::oneshot::channel::<()>();
+        let serving = tokio::spawn(serve(
+            runtime,
+            ([127, 0, 0, 1], 0).into(),
+            "local-development",
+            false,
+            async move {
+                let _ = wait.await;
+            },
+        ));
+        // A plain `serve` in a build tree must never redirect the installed
+        // surfaces away from the managed gateway.
+        for _ in 0..20 {
+            assert!(!receipt.exists(), "non-gateway serve published a receipt");
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let _ = stop.send(());
+        serving.await.expect("join").expect("serve");
+        assert!(!home.path().join("locks/runtime.lock").exists());
+    }
+
+    #[test]
+    fn token_comparison_accepts_only_the_exact_credential() {
+        assert!(token_matches("s3cret", "s3cret"));
+        assert!(!token_matches("s3cre", "s3cret"));
+        assert!(!token_matches("s3cretx", "s3cret"));
+        assert!(!token_matches("", "s3cret"));
+    }
 
     #[tokio::test]
     async fn health_and_version_are_transport_only() {

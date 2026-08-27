@@ -66,7 +66,7 @@ async fn main() {
             token,
             save,
         }) => connect_cmd(profile, url, token, save).await,
-        Some(Command::Serve { port, .. }) => serve(port, cwd).await,
+        Some(Command::Serve { port, gateway, .. }) => serve(port, gateway, cwd).await,
         Some(Command::Admin { print }) => admin_open::run(print),
     };
     std::process::exit(code);
@@ -297,20 +297,58 @@ async fn serve_tui(cwd: PathBuf) -> i32 {
     }
     #[cfg(not(feature = "tui"))]
     {
-        eprintln!("connect to a Runtime server with `vakcoder serve`");
+        // The headless base is built with --no-default-features; without this
+        // the release build carries a permanent unused-variable warning that
+        // the default-feature CI lint never sees.
+        let _ = cwd;
+        eprintln!("no terminal client in this build; run `vakcoder-tui` or `vakcoder admin`");
         2
     }
 }
 
-async fn serve(port: u16, cwd: PathBuf) -> i32 {
-    let token = match vak_config::SecretService::new(vak_config::paths::data_home())
-        .get("VAKCODER_GATEWAY_TOKEN")
+/// Resolve when the process is asked to stop.
+///
+/// SIGTERM is what launchd and systemd send, so listening only for Ctrl-C
+/// meant every managed service stop skipped graceful shutdown: in-flight runs
+/// were killed rather than cancelled, and the receipt and Runtime lock were
+/// left behind as debris on each restart.
+async fn shutdown_signal() {
+    #[cfg(unix)]
     {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut terminate = match signal(SignalKind::terminate()) {
+            Ok(stream) => stream,
+            Err(e) => {
+                eprintln!("warning: SIGTERM handler unavailable: {e}");
+                let _ = tokio::signal::ctrl_c().await;
+                return;
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = terminate.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+async fn serve(port: u16, gateway: bool, cwd: PathBuf) -> i32 {
+    let data_home = vak_config::paths::data_home();
+    let token = match vak_config::SecretService::new(&data_home).get("VAKCODER_GATEWAY_TOKEN") {
         Ok(Some(t)) if !t.is_empty() => t,
         _ => match std::env::var("VAKCODER_GATEWAY_TOKEN") {
             Ok(t) if !t.is_empty() => t,
             _ => {
-                eprintln!("error: VAKCODER_GATEWAY_TOKEN must be set");
+                // A service manager cannot prompt, so say exactly what mints
+                // the credential instead of failing with a bare variable name.
+                eprintln!(
+                    "error: no gateway token in {} and VAKCODER_GATEWAY_TOKEN is unset",
+                    data_home.join(".env").display()
+                );
+                eprintln!("hint: run `vakcoder self install` to provision one");
                 return 2;
             }
         },
@@ -333,9 +371,13 @@ async fn serve(port: u16, cwd: PathBuf) -> i32 {
             return 2;
         }
     };
-    match vak_server::serve(runtime, ([127, 0, 0, 1], port).into(), token, async {
-        let _ = tokio::signal::ctrl_c().await;
-    })
+    match vak_server::serve(
+        runtime,
+        ([127, 0, 0, 1], port).into(),
+        token,
+        gateway,
+        shutdown_signal(),
+    )
     .await
     {
         Ok(()) => 0,
@@ -613,28 +655,20 @@ async fn eval(report: Option<PathBuf>, live: bool) -> i32 {
     }
 }
 
+/// Local installation diagnosis first, then Runtime-reported diagnostics when
+/// a gateway is actually reachable.
 async fn doctor() -> i32 {
-    let client = match client_for().await {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return 2;
-        }
+    let local = self_release::run_doctor();
+    let Ok(client) = client_for().await else {
+        return local;
     };
-    match (
-        client.health().await,
-        client.version().await,
-        client.diagnostics().await,
-    ) {
-        (Ok(h), Ok(v), Ok(d)) => {
-            println!(
-                "health: {:?}\nversion: {:?}\ndiagnostics: {}",
-                h, v, d.status
-            );
-            0
+    match client.diagnostics().await {
+        Ok(d) => {
+            println!("\nruntime diagnostics: {}", d.status);
+            local
         }
-        _ => {
-            eprintln!("Runtime health checks failed");
+        Err(e) => {
+            eprintln!("\nruntime diagnostics unavailable: {e}");
             1
         }
     }

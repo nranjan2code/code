@@ -32,6 +32,7 @@ vak-domain = { workspace = true }
 # its own thread so startup never waits past the 2s timeout.
 reqwest = { workspace = true }
 sha2 = { workspace = true }
+getrandom = { workspace = true }
 
 [lints]
 workspace = true
