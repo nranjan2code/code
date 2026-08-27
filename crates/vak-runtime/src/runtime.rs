@@ -661,7 +661,7 @@ impl Runtime {
         );
         let (events, mut rx) = mpsc::channel(64);
         let forward = self.events.clone();
-        let forward_task = tokio::spawn(async move {
+        let mut forward_task = tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
                 let _ = forward.send(event);
             }
@@ -675,7 +675,17 @@ impl Runtime {
                 Some(recorder),
             )
             .await;
-        forward_task.abort();
+        // Drain, do not abort. The engine's sender is dropped when the call
+        // above returns, so the forwarder ends on its own once the queue is
+        // empty. Aborting here raced that drain and discarded the RunOutput
+        // events still in flight — every surface that renders streaming
+        // output saw only run status and never the answer itself.
+        if tokio::time::timeout(std::time::Duration::from_secs(5), &mut forward_task)
+            .await
+            .is_err()
+        {
+            forward_task.abort();
+        }
         result.map(|r| r.output)
     }
 
