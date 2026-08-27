@@ -1,168 +1,89 @@
 # 32 — Release engineering
 
-One version, one install location, one lifecycle. No hand-synced stamps,
-no plists pointing into build trees, no spot-fixing deploys.
+Release artifacts ship one Runtime authority and its client surfaces. The
+release contract is intentionally greenfield: installation starts with an empty
+data home, and no release code reads, imports, or translates another layout or
+protocol.
 
-Use `scripts/bump-version.sh` for every release and
-`scripts/check-release-version.sh` to reject crate, changelog, tag, binary, or
-Tauri drift. A compatible fix is a patch; new install or runtime behavior is a
-minor release while the project is pre-1.0; a stable breaking contract is a
-major release. The base+addons install redesign is therefore 0.9.0, not another
-0.8.0 rebuild.
+## Version and provenance
 
-Build provenance is the exact commit SHA for a clean tree and `<sha>-dirty`
-when local changes are present. A dirty local candidate can be tested but must
-never be tagged or published.
+`[workspace.package].version` in the root `Cargo.toml` is the only handwritten
+version. Crates and Tauri derive their version from it. `scripts/check-release-
+version.sh` rejects drift in manifests, bundles, binaries, and changelog data.
+Release binaries record the commit SHA; a dirty tree is testable but cannot be
+tagged or published.
 
-For local development, `scripts/build-install.sh` is the sole orchestration
-entry point. For distributable candidates, use `scripts/release.sh`. Opening a
-generated DMG does not make it the local installer: the local script already
-places the desktop app, and replacing a running copy from Finder can produce an
-“item is in use” dialog.
+## Build and install
 
-The local desktop helper builds only an `.app` and applies an ad-hoc bundle
-signature so macOS can validate its resources. It does not produce or open a
-DMG. DMGs belong to the release-candidate path and require Developer ID signing
-and notarization before public distribution.
+Use `scripts/build-install.sh` for local installs and `scripts/release.sh` for a
+candidate artifact. The managed program root is:
 
-## Invariants
-
-1. **Version singularity.** `[workspace.package] version` is THE version.
-   Every crate inherits (`version.workspace = true`). Desktop bundles
-   derive it by *omitting* `version` from tauri.conf.json (Tauri falls
-   back to the package version); frontend package.json carries no
-   authoritative stamp. Any second place that needs a number derives it
-   at build/run time from the binary (`--version`, `env!("CARGO_PKG_VERSION")`).
-2. **Installed ≠ built.** Services never execute from `target/` or from a
-   desktop app bundle. `self install` stages the headless base under
-   `<data_home>/runtime-bin/versions/<version>/`, atomically switches the
-   `current` entry, writes an `install.json` manifest and `install-root.json`
-   pointer, and exposes `~/.local/bin/vakcoder`. The build tree and all UI
-   addons may be removed without touching the running base.
-3. **Services are generated, never hand-edited.** `self services sync`
-   renders launchd/systemd units from templates (vak-ops) referencing the
-   *installed* path, unloads stale units, loads the new ones. Sync is
-   idempotent: identical content + healthy process ⇒ no-op.
-4. **Drift is detectable.** `self status` prints build vs manifest vs
-   per-service versions and exits non-zero on mismatch; `/doctor`
-   surfaces the same check so any surface reveals drift.
-5. **Lifecycle is symmetric.** `self uninstall` reverses install exactly
-   (stop → unload → remove units → remove binaries+manifest), preserving
-   user data unless `--purge`.
-6. **Updates are opt-in and staged.** Passive `[update] url` check only
-   notifies. `self update --url <manifest.json>` requires the platform entry's
-   SHA-256 to match, writes a new version directory, atomically switches
-   `current`, and re-syncs services. Feed signing and automatic rollback remain
-   release blockers in doc 35; this command is not yet the public GA updater.
-7. **Base and addons are separate artifacts.** The base is built with
-   `cargo build -p vakcoder --no-default-features`; `vakcoder-tui` and
-   `VakCoder.app` install and update independently and only speak HTTP+SSE to
-   the base.
-
-## Command surface
-
-```
-vakcoder self install  [--prefix DIR]     copy release artifacts + manifest
-vakcoder self services sync [NAME…]       regenerate + reload units
-vakcoder self status                      drift matrix (exit ≠0 on drift)
-vakcoder self uninstall [-y] [--purge]    exact reverse of install
-vakcoder self update --url URL            opt-in pull-and-replace
-vakcoder admin [--print]                   open/print the live admin URL
+```text
+<data_home>/runtime-bin/versions/<version>/
+<data_home>/runtime-bin/current -> versions/<version>
 ```
 
-## Release runbook (scripts/release.sh)
+The launcher at `~/.local/bin/vakcoder` points to `current`. Service units
+execute that installed launcher, never `target/`, Cargo's bin directory, or an
+app bundle. The TUI and desktop are clients and connect to the authenticated
+Runtime; they do not embed a second server.
 
-gate (fmt/clippy/test) → build headless base + standalone TUI →
-optional desktop bundle → checksum → artifact install smoke →
-platform scenarios → tag + GitHub release. `scripts/release.sh` builds a
-local candidate; publication remains gated on doc 35's signing work.
-Humans and agents run the script; nobody replays steps from memory.
+```bash
+scripts/build-install.sh --gates
+scripts/build-install.sh --with-tui --with-desktop
+scripts/build-install.sh --no-service
+```
 
-For developer installs, `scripts/build-install.sh` is the single scenario
-entrypoint: base-only is the default; `--with-tui`, `--with-desktop`, and
-`--with-telegram` are explicit addons; `--no-service` guarantees that artifact
-tests do not touch the host service-manager namespace.
+`--no-service` is mandatory for disposable tests. Service installation is
+explicit and owns the gateway process; the tray is an optional client addon.
 
-## Canonical filesystem layout
+## Canonical filesystem
 
-`vak_config::paths` is the single source of truth. Every crate resolves
-homes through it; no crate hardcodes `~/.vakcoder` or platform-specific
-paths directly.
+Path resolution belongs to `vak-config` and is consumed by `vak-runtime`:
 
-### macOS (default)
+| Purpose | Location |
+|---|---|
+| Runtime state | `<data_home>/state.db` |
+| Secrets | `<data_home>/.env` |
+| Session ledgers | `<data_home>/sessions/<project>/<session>.jsonl` |
+| Blobs | `<data_home>/blobs/<sha256>` |
+| Operation audit | `<data_home>/audit/operations.jsonl` |
+| Runtime receipt | `<data_home>/runtime/gateway.json` |
+| Locks | `<data_home>/locks/runtime.lock` |
+| Logs | `<data_home>/logs/` |
+| Rebuildable cache | `<cache_home>/` |
 
-| Purpose | Path |
-|---------|------|
-| **Data home** | `~/Library/Application Support/vakcoder` |
-| **Cache** | `~/Library/Caches/vakcoder` |
-| **Logs** | `~/Library/Logs/vakcoder` |
-| **User secrets** | `<data_home>/.env` |
-| **Config state** | `<data_home>/` (sessions, memory, tasks, inbox) |
-| **Store DB** | `<cache>/store.db` (rebuildable from JSONL) |
-| **Base program files** | `<data_home>/runtime-bin/` |
-| **CLI launcher** | `~/.local/bin/vakcoder` |
-| **Desktop addon** | `/Applications/VakCoder.app` or `~/Applications/VakCoder.app` |
+On macOS, the default data home is `~/Library/Application Support/vakcoder`;
+on Linux it is `~/.local/share/vakcoder`. `VAKCODER_HOME` is a complete,
+self-contained test root, not an alternate compatibility layout.
 
-### Linux (default)
+## Lifecycle invariants
 
-| Purpose | Path |
-|---------|------|
-| **Data home** | `~/.local/share/vakcoder` |
-| **Cache** | `~/.cache/vakcoder` |
-| **Logs** | `~/.local/state/vakcoder/logs` |
-| **User secrets** | `<data_home>/.env` |
-| **Base program files** | `<data_home>/runtime-bin/` |
-| **CLI launcher** | `~/.local/bin/vakcoder` |
+1. Every installed program has one version and one managed path.
+2. Activation stages a version, checks `--version`, runs doctor/health checks,
+   then atomically switches `current`.
+3. Services are rendered from the installed path and are idempotent.
+4. Install, update, and uninstall never rewrite Runtime state. Purging state is
+   a separate, explicit operation.
+5. Sessions and operation audit are append-only. SQLite projections and caches
+   may be rebuilt from their authoritative records.
+6. Secrets never appear in service units, command arguments, logs, receipts, or
+   release archives.
 
-### VAKCODER_HOME override
+## Release gate
 
-Setting `VAKCODER_HOME=/some/path` nests everything under that directory:
-`/some/path/`, `/some/path/cache/`, `/some/path/logs/`. Used for
-self-contained sandboxes (tests, portable installs).
+Every candidate runs:
 
-## Update safety & data continuity
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+scripts/check-release-version.sh
+```
 
-Releases and updates must never lose data or credentials:
-
-- **No secrets in units.** Templates embed zero credentials. The binary
-  self-sources from the user `.env` at `data_home()/.env` (gateway token,
-  bot tokens, provider keys) — `secured_router_with` falls back to `.env`
-  when the process env is empty. Regenerating units on a new machine
-  therefore cannot strand auth.
-- **Logs live at stable paths** under `logs_dir()`, independent of
-  install location; upgrades append, never truncate.
-- **User data is out of scope for every lifecycle command.** Sessions,
-  memory, inbox, tasks, checkpoints under the data home are untouched by
-  install/update/sync/uninstall; only `self uninstall --purge` may remove
-  them, interactively confirmed.
-- **Atomic replacement.** Binaries are written temp-then-rename; units
-  are diffed before rewrite; a failed sync leaves the previous healthy
-  unit in place.
-- **Stale-process detection.** `self status` compares binary mtime vs
-  unit mtime; when the binary is newer and the process is still running
-  on the old version, a kickstart (`launchctl kickstart -k` on macOS,
-  `systemctl --user restart` on Linux) converges the process. Three
-  tests in vak-ops enforce this invariant.
-
-### Legacy migration (one-time, per machine)
-
-The pre-0.8 layout stored everything under `~/.vakcoder/`. On first run,
-`migrate_legacy_home()` performs a one-time rename:
-
-1. `~/.vakcoder` → the platform data home (atomic rename under `$HOME`).
-2. `store.db*` → relocated to the cache home (rebuildable, not user data).
-3. `logs/` contents → relocated to `logs_dir()` so Console.app / journald
-   keeps seeing them.
-4. When `VAKCODER_HOME` is set, migration is skipped (the override is
-   already self-contained).
-5. If both old and new locations exist, migration refuses to guess a merge
-   order and surfaces an error for manual resolution.
-
-All entry points (vakcoder binary, vak-tray, vak-desktop) call migration
-at startup before any other logic.
-
-## Migration of legacy deployments
-
-Plists pointing at `target/release/*` are legacy. `self services sync`
-rewrites them onto the installed path on first run; `self status` flags
-any unit still exec'ing from a build tree until migrated.
+The artifact lane then installs into a disposable data home, starts one
+gateway, registers a project, creates a session, runs and cancels a turn,
+exercises TUI/desktop/admin clients, verifies backup/restore, and confirms
+that no service points to a build tree. The same checks run with no provider
+credential using deterministic Runtime tests; live provider checks are
+separate and require a user-supplied key.

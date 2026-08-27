@@ -2,23 +2,20 @@
 resolver = "2"
 members = [
     "crates/vak-llm",
-    "crates/vak-session",
-    "crates/vak-store",
-    "crates/vak-tools",
-    "crates/vak-agent",
-    "crates/vak-config",
-    "crates/vak-permission",
-    "crates/vak-core",
-    "crates/vak-hooks",
-    "crates/vak-mcp",
-    "crates/vak-flow",
     "crates/vak-delivery",
-    "crates/vak-eval",
-    "crates/vak-server",
+    "crates/vak-tools",
     "crates/vak-ops",
     "crates/vak-tray",
     "crates/vak-tui",
     "crates/vak-desktop",
+    "crates/vak-domain",
+    "crates/vak-storage",
+    "crates/vak-services",
+    "crates/vak-runtime",
+    "crates/vak-config",
+    "crates/vak-session",
+    "crates/vak-agent",
+    "crates/vak-server",
     "crates/vak-client",
     "crates/vakcoder",
 ]
@@ -31,21 +28,17 @@ repository = "https://github.com/vakcoder/vakcoder"
 
 [workspace.dependencies]
 vak-llm = { path = "crates/vak-llm" }
-vak-ops = { path = "crates/vak-ops" }
-vak-server = { path = "crates/vak-server" }
-vak-session = { path = "crates/vak-session" }
-vak-store = { path = "crates/vak-store" }
 vak-tools = { path = "crates/vak-tools" }
-vak-agent = { path = "crates/vak-agent" }
-vak-config = { path = "crates/vak-config" }
-vak-core = { path = "crates/vak-core" }
-vak-mcp = { path = "crates/vak-mcp" }
-vak-permission = { path = "crates/vak-permission" }
-vak-flow = { path = "crates/vak-flow" }
-vak-delivery = { path = "crates/vak-delivery" }
-vak-eval = { path = "crates/vak-eval" }
-vak-hooks = { path = "crates/vak-hooks" }
+vak-ops = { path = "crates/vak-ops" }
 vak-tui = { path = "crates/vak-tui" }
+vak-domain = { path = "crates/vak-domain" }
+vak-storage = { path = "crates/vak-storage" }
+vak-services = { path = "crates/vak-services" }
+vak-runtime = { path = "crates/vak-runtime" }
+vak-config = { path = "crates/vak-config" }
+vak-session = { path = "crates/vak-session" }
+vak-agent = { path = "crates/vak-agent" }
+vak-server = { path = "crates/vak-server" }
 vak-client = { path = "crates/vak-client" }
 
 crossterm = { version = "0.28", features = ["event-stream"] }
@@ -79,6 +72,9 @@ globset = "0.4"
 similar = { version = "2", features = ["text"] }
 libc = "0.2"
 tempfile = "3"
+rusqlite = { version = "0.32", features = ["bundled"] }
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
 # Release artifact integrity; updater rejects bytes that do not match the signed feed.
 sha2 = "=0.10.9"
 async-stream = "0.3"
@@ -92,8 +88,6 @@ tauri-plugin-dialog = "2.7"
 tauri-plugin-notification = "2.3"
 # Enforces one running instance; a second launch refocuses the first window
 tauri-plugin-single-instance = "2.3"
-# Real PTY for the integrated terminal pane
-portable-pty = "0.9"
 # Menu-bar controller (vak-tray): native tray icon + event loop
 tray-icon = "0.21"
 winit = "0.30"

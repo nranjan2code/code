@@ -8,21 +8,24 @@ function Status(props: { value: string; good?: boolean }) {
 
 export default function OperationsPanel(props: { onNotice?: (text: string) => void }) {
   const [data, setData] = createSignal<api.OpsDiagnostics | null>(null);
-  const [finops, setFinops] = createSignal<api.FinopsStatus | null>(null);
   const [doctor, setDoctor] = createSignal<api.DoctorReport | null>(null);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
   const refresh = async () => {
     setLoading(true);
     try {
-      const [next, spend, doc] = await Promise.all([api.opsDiagnostics(), api.finopsStatus(), api.doctor()]);
-      setData(next); setFinops(spend); setDoctor(doc); setError(null);
+      const [next, doc] = await Promise.all([api.opsDiagnostics(), api.doctor()]);
+      setData(next); setDoctor(doc); setError(null);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
   };
   createEffect(() => { void refresh(); const timer = setInterval(() => void refresh(), 8000); return () => clearInterval(timer); });
-  const action = async (service: "gateway" | "telegram", verb: "start" | "stop" | "restart") => {
-    try { await api.opsAction(service, verb); await refresh(); }
+  const action = async (service: "gateway", verb: "start" | "stop" | "restart") => {
+    try {
+      const result = await api.opsAction(service, verb);
+      if (!result.ok) throw new Error(result.error ?? "service action failed");
+      await refresh();
+    }
     catch (e) { props.onNotice?.(e instanceof Error ? e.message : String(e)); }
   };
   return <div class="operations-panel">
@@ -36,7 +39,7 @@ export default function OperationsPanel(props: { onNotice?: (text: string) => vo
           <Show when={data()!.health.warnings.length}><div class="settings-warning">{data()!.health.warnings.length} configuration warning(s) need attention.</div></Show>
         </section>
         <section class="operation-card"><header><div><h3>Background services</h3><p>Managed by vak-ops</p></div><Status value={data()!.services.gateway_healthy ? "healthy" : "unreachable"} /></header>
-          <For each={["gateway", "telegram"] as const}>{(service) => <div class="operation-service"><div><strong>{service === "gateway" ? "Gateway" : "Telegram bridge"}</strong><small>{data()!.services[service].state}</small></div><div><button class="settings-button" onClick={() => void action(service, "restart")}>Restart</button><button class="settings-button" onClick={() => void action(service, data()!.services[service].state === "running" ? "stop" : "start")}>{data()!.services[service].state === "running" ? "Stop" : "Start"}</button></div></div>}</For>
+          <div class="operation-service"><div><strong>Gateway</strong><small>{data()!.services.gateway.state}</small></div><div><button class="settings-button" onClick={() => void action("gateway", "restart")}>Restart</button><button class="settings-button" onClick={() => void action("gateway", data()!.services.gateway.state === "running" ? "stop" : "start")}>{data()!.services.gateway.state === "running" ? "Stop" : "Start"}</button></div></div>
         </section>
         <section class="operation-card"><header><div><h3>Gateway</h3><p>Surfaces and approvals</p></div><Status value={data()!.gateway.enabled ? "enabled" : "disabled"} /></header>
           <div class="operation-facts"><span><b>Approvals</b>{data()!.gateway.approvals.mode}</span><span><b>Pending</b>{data()!.gateway.approvals.pending}</span><span><b>Bindings</b>{data()!.gateway.bindings.length}</span></div>
@@ -74,10 +77,6 @@ export default function OperationsPanel(props: { onNotice?: (text: string) => vo
               )}
             </Show>
           </Show>
-        </section>
-        <section class="operation-card finops-card"><header><div><h3>Spend & budget</h3><p>Estimated local ledger, today</p></div><strong class="operation-cost">${finops()?.day_usd.toFixed(2) ?? "0.00"}</strong></header>
-          <div class="operation-facts"><span><b>Day cap</b>{finops()?.day_cap_usd == null ? "Not set" : `$${finops()!.day_cap_usd!.toFixed(2)}`}</span><span><b>Run cap</b>{finops()?.run_cap_usd == null ? "Not set" : `$${finops()!.run_cap_usd!.toFixed(2)}`}</span><span><b>Calls</b>{finops()?.total_rows ?? 0}</span><span><b>Unknown price</b>{finops()?.unknown_rows ?? 0}</span></div>
-          <div class="operation-rollups"><For each={finops()?.by_provider ?? []}>{(item) => <div><span>{item.name || "Unknown provider"}</span><small>${item.usd.toFixed(2)} · {item.calls} calls</small></div>}</For></div>
         </section>
       </div>
     </Show>

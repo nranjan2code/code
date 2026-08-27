@@ -47,7 +47,7 @@ export default function EditorPane() {
   const save = async () => {
     const p = path();
     if (!p || saving()) return;
-    // Conflict check: someone (agent or terminal) may have written the file
+    // Conflict check: the agent may have written the file
     // since we opened it. Refetch and warn instead of clobbering.
     try {
       const fresh = await api.readFile(p);
@@ -114,7 +114,7 @@ export default function EditorPane() {
         </Show>
       </div>
       <Show when={!error()} fallback={<div class="dock-empty">{error()}</div>}>
-        <Show when={path()} fallback={<div class="dock-empty">Open a file from chat or the diff pane.</div>}>
+        <Show when={path()} fallback={<div class="dock-empty">Open a file from a tool result.</div>}>
           <Switch>
             <Match when={file()?.kind === "image"}>
               <div class="ep-image">

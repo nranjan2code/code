@@ -93,16 +93,10 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
     bash: "Run command",
     grep: "Search files",
     glob: "Find files",
-    mcp: "Use connected tool",
   } as Record<string, string>)[props.item.name] ?? props.item.name.replaceAll("_", " ");
   const summary = createMemo(() => {
     const a = args();
     if (!a) return null;
-    if (props.item.name === "mcp") {
-      const server = typeof a.server === "string" ? a.server : "connected service";
-      const tool = typeof a.tool === "string" ? a.tool : "tool";
-      return `${server} · ${tool}`;
-    }
     if (props.item.name === "bash" && typeof a.command === "string") {
       return a.command.replace(/\s+/g, " ").trim().slice(0, 120);
     }
@@ -130,8 +124,7 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
       <Show when={filePath()}>
         {(path) => (
           <div class="tool-actions">
-            {/* One action, routed for you: a changed file opens as a diff,
-                a new one opens in the editor. Inline dumps do not scale
+            {/* Keep file inspection in the editor; inline dumps do not scale
                 past the first file. */}
             <button class="tool-open" onClick={() => void openFileSmart(path())} title={path()}>
               <Icon name="code" size={12} /> View file
@@ -302,17 +295,6 @@ export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.
   }
   if (item.kind === "approval") {
     return <ApprovalCard item={item} sessionId={props.sessionId} />;
-  }
-  if (item.kind === "subagent") {
-    return (
-      <details class="subagent">
-        <summary>
-          subagent · {item.label}
-          {item.isError ? " ✗" : ""}
-        </summary>
-        <pre>{item.lines.join("\n")}</pre>
-      </details>
-    );
   }
   return <div class="sysnote">{item.text}</div>;
 };

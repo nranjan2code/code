@@ -1,0 +1,20 @@
+[package]
+name = "vak-domain"
+version = "0.9.2"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/vakcoder/vakcoder"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+dbg_macro = "deny"

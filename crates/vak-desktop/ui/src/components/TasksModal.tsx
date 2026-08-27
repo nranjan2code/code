@@ -1,10 +1,7 @@
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   activeId,
-  diffTarget,
   isRunning,
-  setDiffTarget,
-  setDockTab,
   setTasksOpen,
   setTranscriptViewId,
   tasksOpen,
@@ -118,7 +115,6 @@ export default function TasksModal() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-    if (diffTarget() && t.last_session_id === diffTarget()) setDiffTarget(null);
     await refresh();
   };
 
@@ -130,12 +126,6 @@ export default function TasksModal() {
       setError(e instanceof Error ? e.message : String(e));
     }
     await refresh();
-  };
-
-  const openDiff = (t: TaskDef) => {
-    if (!t.last_session_id) return;
-    setDiffTarget(t.last_session_id);
-    setDockTab("diff");
   };
 
   const cadence = (t: TaskDef): string =>
@@ -202,9 +192,6 @@ export default function TasksModal() {
                 </div>
                 <div class="task-actions">
                   <button class="chip sm" onClick={() => void runNow(t)}>run now</button>
-                  <Show when={t.last_session_id}>
-                    <button class="chip sm" onClick={() => openDiff(t)}>diff</button>
-                  </Show>
                   <button class="chip sm" onClick={() => void toggle(t)}>
                     {t.enabled ? "pause" : "resume"}
                   </button>

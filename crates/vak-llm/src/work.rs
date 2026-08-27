@@ -1,11 +1,11 @@
-//! Work receipts: typed audit records for provider dispatches (doc 27
-//! Phase A). Receipts are ledger data, never model-visible input.
+//! Work receipts: typed audit records for provider dispatches. Receipts are
+//! ledger data, never model-visible input.
 
 use crate::{LlmError, Usage};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
-/// Why this work exists. Extends as call sites adopt receipts; every
+/// Why this work exists. Every
 /// variant must map to a caller-visible purpose, never a hidden retry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -14,19 +14,19 @@ pub enum WorkPurpose {
     Execute,
     /// The compaction summarizer call.
     Summarize,
-    /// Completion-audit judge call (Phase H).
+    /// Completion-audit judge call.
     Verify,
 }
 
 /// Why a dispatch was made. `Retry` covers same-candidate transient
-/// retries; route-level reasons arrive with the frozen ladder (Phase B).
+/// retries; route-level reasons arrive with the frozen ladder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AttemptReason {
     Initial,
     Retry,
     /// First dispatch of the NEXT frozen-ladder candidate after typed
-    // failure of the previous one (Phase B).
+    // failure of the previous one.
     RouteFallback,
     EnduranceRetry,
 }
@@ -78,7 +78,7 @@ pub struct DispatchAttempt {
     /// frozen-ladder legs, so the receipt-level provider/model names only
     /// the FINAL leg; fallback legs must be attributed to what actually
     /// failed over FROM. None ⇒ attribute to the receipt-level fields
-    /// (single-leg receipts and legacy entries).
+    /// (single-leg receipts and entries without an override).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -190,8 +190,7 @@ pub fn classify_error(e: &LlmError) -> (FailureDomain, Settlement) {
 /// Hard cap on provider dispatches for one unit of work. Exhaustion fails
 /// closed before another paid call goes out. Single-ladder default in the
 /// agent codifies today's worst case:
-/// `(max_retries + 1) * (run_retry_attempts + 1)`; Phase B tightens the
-/// formula to `ladder.len() + repair_allowance` once ladders exist.
+/// `(max_retries + 1) * (run_retry_attempts + 1)` across the frozen ladder.
 #[derive(Debug, Clone)]
 pub struct DispatchBudget {
     limit: u32,
@@ -457,23 +456,5 @@ mod tests {
         assert_eq!((p0, m0), ("anthropic", "claude-x"));
         let (p1, m1) = r.attempt_leg(&r.attempts[1]);
         assert_eq!((p1, m1), ("openai", "gpt-x"));
-    }
-
-    #[test]
-    fn legacy_receipt_without_provider_deserializes() {
-        let legacy = serde_json::json!({
-            "purpose": "execute",
-            "model": "m",
-            "attempts": [{
-                "ordinal": 0,
-                "reason": "initial",
-                "domain": "network",
-                "settlement": "unknown",
-                "latency_ms": 5
-            }]
-        });
-        let back: WorkReceipt = serde_json::from_value(legacy).unwrap();
-        assert_eq!(back.provider, "");
-        assert_eq!(back.attempt_leg(&back.attempts[0]), ("", "m"));
     }
 }

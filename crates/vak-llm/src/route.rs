@@ -1,4 +1,4 @@
-//! Frozen-ladder routing primitives (docs/design/27 Phase B).
+//! Frozen-ladder routing primitives used by Runtime admission.
 //!
 //! The candidate SET is chosen by constraint satisfaction upstream (key
 //! present, model actually discovered on that provider); THIS module owns
@@ -11,7 +11,7 @@
 //! nothing about answer quality. Absent evidence is a neutral prior,
 //! never zero.
 //!
-//! Phase R (vakrouter adoption): v2 adds request-demand scoring (the
+//! Router ordering v2 adds request-demand scoring (the
 //! difficulty of the work selects utility/balanced/quality-critical
 //! ordering instead of hardcoded model-name bands), belief demotion
 //! (domain-weighted doubt ranks a doubted leg below fully-trusted peers),
@@ -81,10 +81,8 @@ fn reliability(e: &ModelEvidence) -> f64 {
     (e.success as f64 + 0.5 * e.unknown as f64 + 1.0) / (trials as f64 + 2.0)
 }
 
-/// LEGACY band table, retained ONLY so replaying a v1-frozen contract
-/// reproduces its original ordering byte-for-byte. New admissions use
-/// order_ladder_v2, which takes caller-declared quality hints instead —
-/// model ids must not be hardcoded into routing knowledge.
+/// Stable quality-hint band table used by the baseline ordering function.
+/// Model ids are not hardcoded; these are caller-visible quality hints.
 const FRONTIER_BANDS: [&str; 6] = ["opus", "gpt-5", "o3", "pro", "claude-4", "qwen3-max"];
 
 fn frontier_band(model: &str) -> bool {
@@ -139,7 +137,7 @@ pub fn order_ladder_v1(
     candidates
 }
 
-/// How hard the work is (Phase R demand scoring). Weights mirror the
+/// How hard the work is. Weights mirror the
 /// vakrouter study: context and output dominate because those are what a
 /// small model physically cannot do. Unavailable factors read as 0 —
 /// never fabricated.
@@ -264,7 +262,7 @@ impl QualityObjective {
     }
 }
 
-/// Versioned ordering function v2 (Phase R). Differences from v1:
+/// Versioned ordering function v2. Differences from v1:
 /// - objective-driven instead of hardcoded frontier bands; `hints` are
 ///   CALLER-declared model-id substrings treated as frontier tier.
 /// - belief demotion: a doubted leg ranks below every fully-trusted peer,

@@ -13,15 +13,6 @@ name = "vakcoder"
 path = "src/main.rs"
 
 [dependencies]
-vak-agent = { workspace = true }
-vak-config = { workspace = true }
-vak-core = { workspace = true }
-vak-delivery = { workspace = true }
-vak-eval = { workspace = true }
-vak-flow = { workspace = true }
-vak-llm = { workspace = true }
-vak-server = { workspace = true }
-vak-session = { workspace = true }
 vak-tui = { workspace = true, optional = true }
 clap = { workspace = true }
 futures = { workspace = true }
@@ -31,8 +22,12 @@ serde_json = { workspace = true }
 serde = { workspace = true }
 vak-ops = { workspace = true }
 chrono = { workspace = true }
-vak-permission = { workspace = true }
 vak-tools = { workspace = true }
+vak-runtime = { workspace = true }
+vak-config = { workspace = true }
+vak-server = { workspace = true }
+vak-client = { workspace = true }
+vak-domain = { workspace = true }
 # Opt-in update check ([update] url, docs/design/29 P3); blocking client on
 # its own thread so startup never waits past the 2s timeout.
 reqwest = { workspace = true }

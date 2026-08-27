@@ -11,3 +11,4 @@ dist/
 !crates/vak-admin-ui/dist/
 node_modules/
 # tools belong in the session cwd
+crates/*/target/

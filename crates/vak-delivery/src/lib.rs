@@ -892,7 +892,7 @@ fn chunk_text(text: &str, max_chars: Option<usize>) -> Vec<String> {
 }
 
 pub mod worker {
-    //! Line-oriented worker protocol used by the future server outbox.
+    //! Line-oriented worker protocol used by the Runtime delivery boundary.
 
     use super::{DeliveryJob, DeliveryPacket, render};
     use serde::{Deserialize, Serialize};

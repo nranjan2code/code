@@ -10,33 +10,23 @@ import {
   setTranscriptViewId,
   setShowShortcuts,
   setSidebarOpen,
-  setNotice,
   setSettingsOpen,
   setTasksOpen,
   workspaceSwitching,
 } from "../store";
-import { activate, newSession, refreshSessions, switchProject } from "../App";
-import * as api from "../api";
+import { activate, newSession, switchProject } from "../App";
 import type { SessionSummary } from "../types";
 import { relTime } from "../time";
 import Icon from "./Icon";
 
-type Filter = "all" | "archived";
-
 type WorkspaceGroup = { cwd: string; name: string; sessions: SessionSummary[] };
 
 export default function Sidebar() {
-  const [filter, setFilter] = createSignal<Filter>("all");
   const [query, setQuery] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
 
   const visible = createMemo(() => {
     let list = sessions();
-    if (filter() === "archived") {
-      list = list.filter((session) => session.archived);
-    } else {
-      list = list.filter((session) => !session.archived);
-    }
     const needle = query().trim().toLowerCase();
     if (needle) {
       list = list.filter(
@@ -50,15 +40,13 @@ export default function Sidebar() {
 
   const groups = createMemo<WorkspaceGroup[]>(() => {
     const grouped = new Map<string, SessionSummary[]>();
-    if (filter() !== "archived") {
-      const projects = [backend().cwd, ...(backend().recent_projects ?? [])].filter(
-        (cwd, index, items): cwd is string => !!cwd && items.indexOf(cwd) === index,
-      );
-      const needle = query().trim().toLowerCase();
-      for (const cwd of projects) {
-        const name = cwd.split(/[\\/]/).filter(Boolean).pop() || "Current workspace";
-        if (!needle || name.toLowerCase().includes(needle)) grouped.set(cwd, []);
-      }
+    const projects = [backend().cwd, ...(backend().recent_projects ?? [])].filter(
+      (cwd, index, items): cwd is string => !!cwd && items.indexOf(cwd) === index,
+    );
+    const needle = query().trim().toLowerCase();
+    for (const cwd of projects) {
+      const name = cwd.split(/[\\/]/).filter(Boolean).pop() || "Current workspace";
+      if (!needle || name.toLowerCase().includes(needle)) grouped.set(cwd, []);
     }
     for (const session of visible()) {
       const cwd = backend().cwd || session.cwd || "";
@@ -72,15 +60,6 @@ export default function Sidebar() {
       sessions: items,
     }));
   });
-
-  const toggleArchive = async (session: SessionSummary, next: boolean) => {
-    try {
-      await api.setArchived(session.session_id, next);
-      await refreshSessions();
-    } catch (error) {
-      setNotice({ kind: "error", text: `Could not ${next ? "archive" : "restore"} that task: ${error instanceof Error ? error.message : String(error)}` });
-    }
-  };
 
   return (
     <aside class="sidebar">
@@ -124,10 +103,6 @@ export default function Sidebar() {
             <small class="sb-nav-count">{inboxUnread() > 99 ? "99+" : inboxUnread()}</small>
           </Show>
         </button>
-        <button class="sb-nav-item" classList={{ active: filter() === "archived" }} onClick={() => setFilter(filter() === "archived" ? "all" : "archived")}>
-          <Icon name="archive" />
-          <span>Archived tasks</span>
-        </button>
       </nav>
 
       <Show when={searchOpen()}>
@@ -146,21 +121,16 @@ export default function Sidebar() {
       </Show>
 
       <div class="sb-section-row">
-        <span class="sb-section-title">{filter() === "archived" ? "Archived" : "Projects"}</span>
-        <Show when={filter() === "archived"}>
-          <button class="sb-section-action" onClick={() => setFilter("all")}>Done</button>
-        </Show>
-        <Show when={filter() !== "archived"}>
-          <button class="sb-section-add has-tooltip" data-tooltip="Open project" aria-label="Open project" disabled={workspaceSwitching()} onClick={() => void switchProject()}><Icon name="add" size={14} /></button>
-        </Show>
+        <span class="sb-section-title">Projects</span>
+        <button class="sb-section-add has-tooltip" data-tooltip="Open project" aria-label="Open project" disabled={workspaceSwitching()} onClick={() => void switchProject()}><Icon name="add" size={14} /></button>
       </div>
 
       <div class="sb-list">
-        <Show when={groups().length} fallback={<div class="sb-empty"><Icon name="folder" size={20} /><span>{filter() === "archived" ? "Nothing archived" : "No projects yet"}</span><small>{filter() === "archived" ? "Archived tasks stay in the ledger and can be restored anytime." : "Open a project to start a task with its files and history."}</small></div>}>
+        <Show when={groups().length} fallback={<div class="sb-empty"><Icon name="folder" size={20} /><span>No projects yet</span><small>Open a project to start a task with its files and history.</small></div>}>
           <For each={groups()}>
             {(group) => (
               <section class="workspace-group">
-                <button class="workspace-group-head" classList={{ active: backend().cwd === group.cwd && filter() !== "archived" }} title={group.cwd} disabled={workspaceSwitching()} onClick={() => void switchProject(group.cwd)}>
+                  <button class="workspace-group-head" classList={{ active: backend().cwd === group.cwd }} title={group.cwd} disabled={workspaceSwitching()} onClick={() => void switchProject(group.cwd)}>
                   <Icon name="folder" size={14} />
                   <span>{group.name}</span>
                   <Show when={group.sessions.length}><small>{group.sessions.length}</small></Show>
@@ -172,17 +142,12 @@ export default function Sidebar() {
                       <span class="sb-item-copy">
                         <span class="sb-title">{session.title || "Untitled task"}</span>
                         <span class="sb-item-meta">
-                          <Show when={!session.archived} fallback={<span>archived</span>}>
-                            <span class="dot" classList={{ run: session.running || isRunning(session.session_id) }} />
-                            {session.running || isRunning(session.session_id) ? "Working" : `${session.entries ?? 0} events`}
-                          </Show>
+                          <span class="dot" classList={{ run: session.running || isRunning(session.session_id) }} />
+                          {session.running || isRunning(session.session_id) ? "Working" : `${session.entries ?? 0} events`}
                         </span>
                       </span>
                       <span role="button" class="sb-view has-tooltip" data-tooltip="Read-only history" aria-label={`View transcript of ${session.title || "untitled task"}`} onClick={(e) => { e.stopPropagation(); setTranscriptViewId(session.session_id); }}>
                         <Icon name="history" size={13} />
-                      </span>
-                      <span role="button" class="sb-archive has-tooltip" data-tooltip={session.archived ? "Restore task" : "Archive task"} aria-label={session.archived ? "Restore task" : "Archive task"} onClick={(e) => { e.stopPropagation(); void toggleArchive(session, !session.archived); }}>
-                        <Icon name={session.archived ? "restore" : "archive"} size={13} />
                       </span>
                       <span class="sb-time">{relTime(session.updated_at)}</span>
                     </button>

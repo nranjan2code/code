@@ -1,60 +1,39 @@
-# 05 — Config (vak-config)
+# 05 — Configuration and secrets
 
-## Layering
+`vak-config` is the only configuration authority. `vak-runtime` is the only
+caller allowed to apply configuration to a run or mutate it on disk.
 
+## Layers
+
+```text
+<data_home>/config.toml
+        < <project>/.vakcoder/project.toml
+        < process environment
+        < explicit CLI/client command
 ```
-defaults  <  ~/.config/vakcoder/config.toml  <  .vakcoder/config.toml  <  env
-```
 
-Env: `VAKCODER_MODEL`, `VAKCODER_PROVIDER` (CLI flags override all).
-Profiles: named override blocks selected via `profile = "ci"` — for dev/CI
-splits without duplicating files.
+Project configuration is accepted only after the project root is registered.
+Unknown keys are reported as warnings and ignored. Writes use a revision and
+atomic replacement, so concurrent clients receive a conflict instead of
+silently overwriting one another.
 
-## Rules
+## Stored values
 
-- Unknown keys are ignored with a warning, never fatal (forward compatibility).
-- ~15 keys total to know; everything else is discoverable via
-  `vakcoder config dump` (boot-tree introspection, DeepSeek-Harness pattern).
-- `VAKCODER_HOME` relocates the data home and nests `cache/` and `logs/` under it (default: `~/Library/Application Support/vakcoder` on macOS, `~/.local/share/vakcoder` on Linux).
+Runtime configuration covers provider endpoint/name, discovered model choice,
+permission mode, sandbox, limits, and connection profiles. Provider credentials
+live in `<data_home>/.env` (0600) or the process environment. Secrets
+are never stored in TOML, passed as ambient worker environment, logged, or
+written to session entries.
 
-## Current keys
+## Admission
 
-provider, model, max_tokens, max_turns, permission_mode, profile, profiles.*,
-anthropic_base_url, allow/ask/deny, subagents, hooks.*, mcp.servers.*,
-max_retries, retry_base_backoff_ms, request_timeout_secs,
-circuit_breaker_threshold, circuit_breaker_cooldown_secs, context_window
-(min 16384; smaller values warn and fall back to the default),
-ui.theme, ui.bell, ui.keymap.*, ui.composer ("emacs"|"vim"), ui.osc52,
-ui.accessibility.plain/reduced_motion/screen_reader, ui.themes.<name>.<color>
-(#rgb/#rrggbb hex or named colors over the dark base; theme = any custom
-name resolves without warning), stop_policy.enabled/marker_gate/
-verify_gate/max_blocks.
+When a session or run is created, Runtime resolves effective configuration and
+records an immutable `SessionContract`. Changing configuration affects new
+admissions only. A permission or sandbox change also advances the capability
+epoch, cancels old-epoch work, and rejects old approvals before reopening
+admission.
 
-## Later
+## Inspection
 
-- permission rules block (Phase 3)
-- hooks/skills/MCP registration blocks (Phase 5)
-- minimal|standard runtime profiles as eval baseline (Phase 7)
-- headless surface for extension status: `config dump` omits skills/hooks;
-  `/doctor` is TUI-only — add a `vakcoder doctor` subcommand
-
-## Diff note — workspace trust + unknown keys (this change)
-
-Project-layer privileged keys (`permission_mode`, `allow`, `hooks`,
-`anthropic_base_url`, `mcp.servers`) are ignored unless the workspace is
-trusted: `Core::new_with_trust(cwd, trust)` / CLI `--trust` / per-directory
-prompt marker under `<data_home>/trusted/`. The project `.env` is likewise
-only loaded when trusted (it can inject `VAKCODER_*_BASE_URL`). Restrictive
-keys (`deny`, `ask`) still apply from untrusted projects. Unknown config
-keys are diffed against the schema and surfaced as warnings — a typo'd key
-is visible, never silently dead.
-
-## Diff note — interface keys (doc 21 close-out)
-
-New `[ui]` surfaces, all cosmetic-tier: unknown values warn and fall back
-(`composer` → emacs; `theme` → dark unless defined under `[ui.themes]`),
-never fatal. `ui.themes` color tables deserialize through raw TOML so a
-non-string entry warns instead of failing the whole config. `osc52`
-defaults false — clipboard mutation stays opt-in even though every use is
-an explicit Alt-Y / `/copy`. Accessibility flags render-only; they never
-alter protocol behavior or session content.
+`vakcoder config dump` and the admin/TUI/desktop settings views call the Runtime
+query endpoint. They show effective non-secret values and redact credentials.

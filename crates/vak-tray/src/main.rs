@@ -1,9 +1,8 @@
-//! vakcoder-tray: a native menu-bar controller for the vakcoder background
-//! services (gateway + Telegram bridge).
+//! vakcoder-tray: a native menu-bar controller for the vakcoder gateway.
 //!
 //! One glance answers "is my agent alive?" — the icon is green when both
-//! services run, amber when one is down, red when none are, grey when they
-//! are not installed as services at all. The menu starts/stops/restarts,
+//! service runs, red when it is down, grey when it is not installed. The menu
+//! starts/stops/restarts,
 //! installs/uninstalls, opens logs, and toggles a watchdog that restarts a
 //! crashed service automatically and posts a system notification when it
 //! does. See docs/design/28-operations.md.
@@ -24,20 +23,16 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 
 #[derive(Debug, Clone)]
 enum TrayEvent {
-    Refresh([vak_ops::State; 2]),
+    Refresh([vak_ops::State; 1]),
     Command(u32),
 }
 
-const SVC_COUNT: usize = 2;
+const SVC_COUNT: usize = 1;
 const GATEWAY: usize = 0;
-const TELEGRAM: usize = 1;
 
 fn service(idx: usize) -> vak_ops::Service {
-    if idx == GATEWAY {
-        vak_ops::Service::Gateway
-    } else {
-        vak_ops::Service::Telegram
-    }
+    let _ = idx;
+    vak_ops::Service::Gateway
 }
 
 /// 16x16 RGBA dot used as the tray glyph; colour encodes aggregate state.
@@ -67,7 +62,7 @@ fn icon_dot(rgb: [u8; 3]) -> Icon {
 struct Ui {
     tray: TrayIcon,
     watchdog: Arc<AtomicBool>,
-    states: [vak_ops::State; 2],
+    states: [vak_ops::State; 1],
 }
 
 impl ApplicationHandler<TrayEvent> for Ui {
@@ -84,15 +79,10 @@ impl ApplicationHandler<TrayEvent> for Ui {
                     &states,
                     self.watchdog.load(Ordering::SeqCst),
                 ))));
-                let green = [76u8, 175, 80];
-                let amber = [255u8, 193, 7];
-                let red = [244u8, 67, 54];
-                let grey = [158u8, 158, 158];
-                let rgb = match (states[GATEWAY], states[TELEGRAM]) {
-                    (vak_ops::State::Running, vak_ops::State::Running) => green,
-                    (vak_ops::State::Running, _) | (_, vak_ops::State::Running) => amber,
-                    (vak_ops::State::NotInstalled, vak_ops::State::NotInstalled) => grey,
-                    _ => red,
+                let rgb = match states[GATEWAY] {
+                    vak_ops::State::Running => [76u8, 175, 80],
+                    vak_ops::State::NotInstalled => [158u8, 158, 158],
+                    _ => [244u8, 67, 54],
                 };
                 let _ = self.tray.set_icon(Some(icon_dot(rgb)));
             }
@@ -239,7 +229,7 @@ fn main() {
     let mut ui = Ui {
         tray,
         watchdog,
-        states: [vak_ops::State::Unknown; 2],
+        states: [vak_ops::State::Unknown; 1],
     };
 
     // Menu clicks arrive on a global channel; forward them as user events so
@@ -259,12 +249,9 @@ fn main() {
 
 // ---- menu construction ------------------------------------------------------
 
-fn states_now() -> [vak_ops::State; 2] {
+fn states_now() -> [vak_ops::State; 1] {
     let cfg = vak_ops::OpsConfig::detect();
-    [
-        vak_ops::status(vak_ops::Service::Gateway, &cfg),
-        vak_ops::status(vak_ops::Service::Telegram, &cfg),
-    ]
+    [vak_ops::status(vak_ops::Service::Gateway, &cfg)]
 }
 
 /// Launch the desktop app: prefer the installed bundle so Dock behaviour is
@@ -348,7 +335,7 @@ fn open_url(url: &str) {
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
 }
 
-fn build_menu(states: &[vak_ops::State; 2], watchdog_on: bool) -> Menu {
+fn build_menu(states: &[vak_ops::State; 1], watchdog_on: bool) -> Menu {
     let menu = Menu::new();
     let open_app = MenuItem::with_id(ACT_OPEN_DESKTOP.to_string(), "Open VakCoder", true, None);
     let _ = menu.append(&open_app);

@@ -30,28 +30,24 @@ pub use services::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Service {
     Gateway,
-    Telegram,
 }
 
 impl Service {
     pub fn label(self) -> &'static str {
         match self {
             Service::Gateway => "Gateway",
-            Service::Telegram => "Telegram bridge",
         }
     }
 
     pub fn launchd_label(self) -> &'static str {
         match self {
             Service::Gateway => "com.vakcoder.gateway",
-            Service::Telegram => "com.vakcoder.telegram",
         }
     }
 
     pub fn systemd_unit(self) -> &'static str {
         match self {
             Service::Gateway => "vakcoder-gateway.service",
-            Service::Telegram => "vakcoder-telegram.service",
         }
     }
 }
@@ -285,7 +281,6 @@ pub fn open_log(service: Service) {
         // Console.app-visible. Overridden homes keep self-contained logs.
         let log = vak_config::paths::logs_dir().join(match service {
             Service::Gateway => "gateway.log",
-            Service::Telegram => "telegram.log",
         });
         if let Some(parent) = log.parent() {
             std::fs::create_dir_all(parent).ok();
@@ -299,7 +294,6 @@ pub fn open_log(service: Service) {
     {
         let unit = match service {
             Service::Gateway => "vakcoder-gateway",
-            Service::Telegram => "vakcoder-telegram",
         };
         run(Command::new("sh").arg("-c").arg(format!(
             "journalctl --user -u {unit} -n 200 --no-pager 2>/dev/null || true"

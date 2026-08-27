@@ -122,7 +122,7 @@ pub fn default_tools() -> Vec<std::sync::Arc<dyn Tool>> {
     ]
 }
 
-/// Read/glob/grep subset for explore-style subagents.
+/// Read/glob/grep subset for read-only exploration workers.
 pub fn read_only_tools() -> Vec<std::sync::Arc<dyn Tool>> {
     vec![
         std::sync::Arc::new(read::ReadTool),

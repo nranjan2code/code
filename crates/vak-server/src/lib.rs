@@ -1,5488 +1,1697 @@
-//! vak-server: HTTP+SSE wrapper around vak-core. The TUI, web clients,
-//! IDE extensions, and the desktop shell are all just consumers of these
-//! endpoints — one headless agent core, many surfaces.
+//! Greenfield HTTP/SSE adapter.
 //!
-//! Endpoints:
-//! - `GET  /health`
-//! - `POST /sessions`                     → {session_id}
-//! - `GET  /sessions`                     → persisted session summaries (sidebar)
-//! - `POST /sessions/:id/attach`          → resume a persisted session into memory
-//! - `POST /sessions/:id/run` {prompt}    → 202 (events stream on SSE)
-//! - `POST /sessions/:id/steering` {text} → 202
-//! - `POST /sessions/:id/approvals/:rid` {approve} → resolve a pending gate
-//! - `GET  /sessions/:id/events`          → SSE of AgentEvent JSON
-//! - `GET  /sessions/:id/transcript`      → derived messages + usage
-//! - `GET  /sessions/:id/transcript.md`   → markdown export (shared renderer)
-//! - `GET  /sessions/:id/diff`            → git diff + status of the workspace
-//! - `GET  /sessions/:id/checkpoints`     → workspace snapshots (time travel)
-//! - `POST /sessions/:id/checkpoints/:seq/restore` → rewind the workspace
-//! - `POST /sessions/:id/archive` {archived} → toggle sidebar visibility
-//! - `GET  /skills`                       → discovered skills (name + description)
-//! - `GET  /fs/file?path=`                → read a file confined to cwd
-//! - `PUT  /fs/file` {path, content}      → write a file confined to cwd
-//! - `POST /config/mode` {mode}           → switch permission mode at runtime
-//! - `PUT  /config/key` {provider, key}   → store a provider credential (0600)
-//! - `DELETE /config/key` {provider}      → revoke a stored credential
-//! - `GET  /providers`                    → provider picker data (no secrets)
-//! - `GET  /providers/:name/models`   → models the stored key can reach
-//! - `PATCH/DELETE /memory/:note_id`  → amend / forget one memory note
-//! - `GET  /search?all=true`          → cross-project recall (23-memory)
-//! - `GET  /doctor?session=`          → HealthReport JSON (29-personal-os P3)
-//! - `POST /backup/export`            → directory backup of the home dir
-//! - `POST /backup/import`            → restore with skip-or-rename conflicts
-//! - `GET  /digest?days=N`            → usage digest over the trailing window
-//! - `GET  /inbox?limit=&unread=true` → inbox entries + unread count (29-personal-os P6)
-//! - `POST /inbox/:id/ack`            → idempotent read-state tombstone
-//! - `GET  /inbox/unread_count`       → live unread total
-//! - `POST /gateway/inbound`          → surface message routed to its bound session (22-gateway)
-//! - `GET  /gateway/status`           → gateway enabled flag + binding table
-//! - `DELETE /gateway/bindings/:key`  → unbind a surface from its session
+//! This crate is deliberately a transport adapter. It owns no sessions,
+//! runs, configuration or filesystem state; those operations are delegated
+//! to [`vak_runtime::Runtime`].
 
-mod admin;
-mod admin_ui;
-mod channels;
-mod delivery;
-mod events;
-mod gateway;
-mod heartbeat;
-mod rate_limit;
-pub mod telegram;
-
-use std::collections::HashMap;
-use std::os::unix::io::AsRawFd;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-
-use chrono::Utc;
-
-use axum::extract::{Path, State};
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::routing::{delete, get, post, put};
-use axum::{Json, Router};
-use tokio::sync::{broadcast, mpsc, oneshot};
-use tokio_util::sync::CancellationToken;
-
-use vak_agent::{AgentEvent, Approver, SteeringQueues};
-use vak_core::Core;
-pub use vak_core::tasks::{TaskDef, WtMeta};
-use vak_llm::Provider;
-use vak_session::SessionLog;
-
-pub(crate) struct SessionHandle {
-    pub(crate) id: String,
-    /// Workspace this session's tools/diffs operate in (main cwd, or a
-    /// best-of-N worktree).
-    pub(crate) cwd: PathBuf,
-    pub(crate) session: Arc<Mutex<Option<SessionLog>>>,
-    pub(crate) steering: Arc<SteeringQueues>,
-    /// Cancel for the CURRENT run only; replaced with a fresh token when a
-    /// run ends so one `/cancel` doesn't poison every later run.
-    pub(crate) cancel: Arc<std::sync::Mutex<CancellationToken>>,
-    pub(crate) events_tx: broadcast::Sender<AgentEvent>,
-    /// Pending approval gates scoped to THIS session — a client holding
-    /// session A can never resolve session B's approvals.
-    pub(crate) pending: Arc<Mutex<HashMap<String, ApprovalRequest>>>,
-    /// Notified when an SSE consumer attaches, so runs don't start (and
-    /// finish) before anyone is listening.
-    pub(crate) subscribed: Arc<tokio::sync::Notify>,
-    /// Side-chat stream + cancel: branched turns that read the session
-    /// context but never land on the main chain.
-    pub(crate) side_events_tx: broadcast::Sender<AgentEvent>,
-    pub(crate) side_cancel: Arc<std::sync::Mutex<CancellationToken>>,
-    /// Per-run ordered event bridge (mpsc front). Terminal frames for the
-    /// CURRENT run go through it so they can never overtake deltas still
-    /// draining behind the same pump. None between runs.
-    pub(crate) run_events: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::Sender<AgentEvent>>>>,
-}
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, SET_COOKIE};
+use axum::{
+    Json, Router,
+    extract::{Path, Query, State},
+    http::StatusCode,
+    middleware,
+    response::IntoResponse,
+    response::sse::{Event as SseEvent, KeepAlive, Sse},
+    routing::{get, post},
+};
+use futures::{Stream, StreamExt};
+use include_dir::{Dir, include_dir};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    convert::Infallible,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+use tokio_stream::wrappers::BroadcastStream;
+use vak_domain::{Event, ProjectContext, ProjectId, RunId, SessionContract, SessionId, TaskId};
+use vak_runtime::{RunSnapshot, Runtime, RuntimeError};
 
 #[derive(Clone)]
 pub struct AppState {
-    pub core: Core,
-    sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
-    /// Live best-of-N runs keyed by child session id.
-    pub(crate) best_runs: Arc<Mutex<HashMap<String, BestRunMeta>>>,
-    /// Scheduled tasks for this workspace (store shape owned by vak-core).
-    tasks: Arc<Mutex<HashMap<String, TaskDef>>>,
-    /// In-memory cron markers: task id → next scheduled local fire. Interval
-    /// tasks keep using `last_run_at`; only `schedule:` tasks appear here.
-    next_fire: Arc<Mutex<HashMap<String, chrono::DateTime<chrono::Local>>>>,
-    /// Script tasks currently executing (no child session to inspect, so
-    /// this stands in for the busy-check that prompt tasks get).
-    script_inflight: Arc<Mutex<std::collections::HashSet<String>>>,
-    /// Managed dev servers (preview pane), keyed by session::name.
-    procs: Arc<Mutex<HashMap<String, ManagedProc>>>,
-    /// Gateway surface bindings + enable gate (docs/design/22-gateway.md).
-    pub(crate) gateway: Arc<gateway::GatewayState>,
-    /// Proactive heartbeat runtime (docs/design/29-personal-os.md P7).
-    pub(crate) heartbeat: Arc<heartbeat::HeartbeatRuntime>,
-    /// Global event hub for admin console SSE streaming.
-    pub(crate) hub: events::EventHub,
-    /// SQLite FTS5 session index (rebuildable from JSONL).
-    pub(crate) store: Option<vak_store::Store>,
-    /// Expected auth token (login endpoint compares against it).
-    pub(crate) auth_token: Arc<String>,
-    /// Central config file path for all admin-panel writes.
-    pub(crate) config_path: std::path::PathBuf,
+    pub runtime: Arc<Runtime>,
+    auth_token: Arc<String>,
+    tasks: Arc<Mutex<HashMap<RunId, JoinHandle<()>>>>,
+    event_ids: Arc<AtomicU64>,
 }
 
-#[derive(Clone)]
-pub struct BestRunMeta {
-    pub repo: PathBuf,
-    pub wt_path: PathBuf,
-    pub branch: String,
-}
-
-/// Read the central server config file and apply saved values as
-/// in-memory overrides on the given Core. This keeps `load_with_trust()`
-/// hermetic for tests while making persisted admin-panel writes visible
-/// to the running server through `effective_*()` methods.
-fn apply_server_config_overrides(core: &Core, path: &std::path::Path) {
-    let Some(raw) = std::fs::read_to_string(path).ok() else {
-        return;
-    };
-    let Ok(root): Result<toml::Value, _> = toml::from_str(&raw) else {
-        return;
-    };
-    // Only apply overrides when the Core doesn't already have one set
-    // (e.g. from set_provider / set_model in a test fixture).
-    if let Some(s) = root.get("provider").and_then(|v| v.as_str())
-        && !core.has_provider_override()
-    {
-        core.set_provider(s.to_string());
-    }
-    if let Some(s) = root.get("model").and_then(|v| v.as_str())
-        && !core.has_model_override()
-    {
-        core.set_model(s.to_string());
-    }
-    if let Some(n) = root.get("max_turns").and_then(|v| v.as_integer())
-        && !core.has_max_turns_override()
-    {
-        core.set_max_turns(n as usize);
-    }
-    if let Some(s) = root.get("theme").and_then(|v| v.as_str())
-        && !core.has_theme_override()
-    {
-        core.set_theme(s.to_string());
-    }
-    if let Some(s) = root.get("permission_mode").and_then(|v| v.as_str())
-        && !core.has_permission_mode_override()
-    {
-        let mode = match s {
-            "full-access" => vak_config::PermissionMode::FullAccess,
-            "workspace-write" => vak_config::PermissionMode::WorkspaceWrite,
-            _ => vak_config::PermissionMode::ReadOnly,
-        };
-        core.set_permission_mode(mode);
-    }
-    // MCP and hooks always apply (server is authoritative).
-    if let Ok(mcp) = toml::from_str::<vak_config::McpConfig>(&raw)
-        && !mcp.servers.is_empty()
-    {
-        core.set_mcp_servers(mcp);
-    }
-    // Hooks live under [hooks] as an array of tables.
-    #[derive(serde::Deserialize)]
-    struct HooksFile {
-        #[serde(default)]
-        hooks: Vec<vak_config::HookConfig>,
-    }
-    if let Ok(hf) = toml::from_str::<HooksFile>(&raw)
-        && !hf.hooks.is_empty()
-    {
-        core.set_hooks(hf.hooks);
-    }
+#[derive(Debug, thiserror::Error)]
+pub enum RouterError {
+    #[error("Runtime HTTP authentication token must not be empty")]
+    EmptyAuthToken,
 }
 
 impl AppState {
-    pub fn new(core: Core) -> Self {
-        let gateway = Arc::new(gateway::GatewayState::load(&core, false));
-        let hub = events::init_global();
-        // Canonical layout (doc 32): the FTS index is a rebuildable cache,
-        // never user data — it lives under Library/Caches / XDG_CACHE_HOME.
-        let store = vak_store::Store::open(&core.cache_home()).ok();
-        if store.is_none() {
-            eprintln!("[warn] store open failed, search will use fallback");
-        }
-        // Apply central server config as in-memory overrides so the
-        // loaded config stays clean (tests stay hermetic) but the
-        // server sees persisted provider/model/mcp/hooks/theme/max_turns.
-        let config_path = vak_config::server_config_path();
-        apply_server_config_overrides(&core, &config_path);
-        // Token selection lives here so every router flavor (plain,
-        // gateway, secured) shares one identity for auth + login.
-        let auth_token = Arc::new(
-            std::env::var("VAKCODER_GATEWAY_TOKEN")
-                .ok()
-                .filter(|t| !t.trim().is_empty())
-                .or_else(|| vak_config::get_var("VAKCODER_GATEWAY_TOKEN"))
-                .filter(|t| !t.trim().is_empty())
-                .unwrap_or_else(|| format!("vk_{}", uuid::Uuid::now_v7())),
-        );
-        AppState {
-            core,
-            sessions: Arc::new(Mutex::new(HashMap::new())),
-            best_runs: Arc::new(Mutex::new(HashMap::new())),
+    pub fn new(runtime: Arc<Runtime>) -> Self {
+        Self::with_token(runtime, String::new())
+    }
+
+    fn with_token(runtime: Arc<Runtime>, token: String) -> Self {
+        Self {
+            runtime,
+            auth_token: Arc::new(token),
             tasks: Arc::new(Mutex::new(HashMap::new())),
-            next_fire: Arc::new(Mutex::new(HashMap::new())),
-            script_inflight: Arc::new(Mutex::new(std::collections::HashSet::new())),
-            procs: Arc::new(Mutex::new(HashMap::new())),
-            gateway,
-            heartbeat: Arc::new(heartbeat::HeartbeatRuntime::new()),
-            hub,
-            store,
-            auth_token,
-            config_path,
+            event_ids: Arc::new(AtomicU64::new(0)),
         }
     }
 
-    /// Force-enable the gateway (`serve --gateway`) before the state is
-    /// shared; the config gate alone governs every other entry point.
-    pub fn enable_gateway(&mut self) {
-        if let Some(gw) = Arc::get_mut(&mut self.gateway) {
-            gw.set_enabled(true);
-        }
-    }
-
-    /// Override the central config path (for tests).
-    pub fn set_config_path(&mut self, path: std::path::PathBuf) {
-        self.config_path = path;
-    }
-
-    fn get(&self, id: &str) -> Option<Arc<SessionHandle>> {
-        self.sessions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(id)
-            .cloned()
-    }
-
-    /// Snapshot of every live session handle (admin surfaces aggregate
-    /// across sessions; nothing here crosses a session's approval scope —
-    /// answering still goes through the per-session endpoint).
-    pub(crate) fn live_handles(&self) -> Vec<Arc<SessionHandle>> {
-        self.sessions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .values()
-            .cloned()
-            .collect()
-    }
-}
-
-#[derive(Clone)]
-pub struct ApprovalRequest {
-    pub id: String,
-    pub tool: String,
-    pub args_json: String,
-    pub reason: String,
-    pub requested_at: chrono::DateTime<chrono::Utc>,
-    respond: Arc<Mutex<Option<oneshot::Sender<bool>>>>,
-}
-
-impl ApprovalRequest {
-    pub fn respond(&self, approve: bool) {
-        if let Some(tx) = self
-            .respond
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-        {
-            let _ = tx.send(approve);
+    pub async fn shutdown(&self) {
+        let mut tasks = self.tasks.lock().await;
+        for (_, task) in tasks.drain() {
+            task.abort();
         }
     }
 }
 
-struct HttpApprover {
-    events_tx: broadcast::Sender<AgentEvent>,
-    pending: Arc<Mutex<HashMap<String, ApprovalRequest>>>,
-    /// Owning session, so admin-console surfaces can attribute gates.
-    session_id: String,
+pub fn router(runtime: Arc<Runtime>) -> Result<Router, RouterError> {
+    let token = std::env::var("VAKCODER_GATEWAY_TOKEN")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .ok_or(RouterError::EmptyAuthToken)?;
+    router_with_token(runtime, token)
 }
 
-#[async_trait::async_trait]
-impl Approver for HttpApprover {
-    async fn approve(&self, tool: &str, args_json: &str, reason: &str) -> bool {
-        let id = uuid::Uuid::now_v7().to_string();
-        let (respond, rx) = oneshot::channel();
-        self.pending
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(
-                id.clone(),
-                ApprovalRequest {
-                    id: id.clone(),
-                    tool: tool.to_string(),
-                    args_json: args_json.to_string(),
-                    reason: reason.to_string(),
-                    requested_at: chrono::Utc::now(),
-                    respond: Arc::new(Mutex::new(Some(respond))),
-                },
-            );
-        let _ = self.events_tx.send(AgentEvent::ApprovalRequested {
-            id: id.clone(),
-            tool: tool.to_string(),
-            args_json: args_json.to_string(),
-            reason: reason.to_string(),
-        });
-        if let Some(hub) = events::global() {
-            hub.emit(events::SystemEvent::ApprovalRequested {
-                id: id.clone(),
-                session_id: self.session_id.clone(),
-                tool: tool.to_string(),
-                reason: reason.to_string(),
-            });
-        }
-        let approved = rx.await.unwrap_or(false);
-        self.pending
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&id);
-        if let Some(hub) = events::global() {
-            hub.emit(if approved {
-                events::SystemEvent::ApprovalGranted {
-                    id: id.clone(),
-                    tool: tool.to_string(),
-                }
-            } else {
-                events::SystemEvent::ApprovalDenied {
-                    id,
-                    tool: tool.to_string(),
-                }
-            });
-        }
-        approved
+pub fn router_with_token(
+    runtime: Arc<Runtime>,
+    token: impl Into<String>,
+) -> Result<Router, RouterError> {
+    let token = token.into();
+    if token.is_empty() {
+        return Err(RouterError::EmptyAuthToken);
     }
+    Ok(build_router(
+        AppState::with_token(runtime, token.clone()),
+        token,
+    ))
 }
 
-pub fn router(core: Core) -> Router {
-    router_with_state(AppState::new(core))
-}
-
-/// Router with a custom config path override (for tests).
-pub fn router_with_config_path(core: Core, config_path: std::path::PathBuf) -> Router {
-    let mut state = AppState::new(core);
-    state.set_config_path(config_path);
-    router_with_state(state)
-}
-
-/// Unauthenticated router with the gateway force-enabled and no background
-/// scheduler. For embedders that run their own supervision loop and need
-/// clean teardown: dropping this router releases every session lock,
-/// whereas `secured_router`'s scheduler pins handles until process exit.
-pub fn gateway_router(core: Core) -> Router {
-    let mut state = AppState::new(core);
-    state.enable_gateway();
-    router_with_state(state)
-}
-
-fn router_with_state(state: AppState) -> Router {
-    Router::new()
+fn build_router(state: AppState, token: String) -> Router {
+    let api = Router::new()
         .route("/health", get(health))
-        .route("/sessions", get(list_sessions).post(create_session))
-        .route("/sessions/{id}/attach", post(attach_session))
-        .route("/sessions/{id}/diff", get(session_diff))
-        .route("/sessions/{id}/receipts", get(session_receipts))
-        .route("/flows", get(flows_list))
-        .route("/flows/{name}/runs", get(flow_runs_list))
-        .route("/flows/{name}/runs/{run}/graph", get(flow_run_graph))
-        .route("/sessions/{id}/checkpoints", get(list_checkpoints))
-        .route(
-            "/sessions/{id}/checkpoints/{seq}/restore",
-            post(restore_checkpoint),
-        )
-        .route("/sessions/{id}/archive", post(set_archived))
-        .route("/sessions/archived", delete(delete_all_archived))
-        .route("/sessions/{id}", delete(delete_session))
-        .route("/skills", get(list_skills))
-        .route("/sessions/{id}/pr", get(session_pr))
-        .route("/sessions/{id}/pr/merge", post(pr_merge))
+        .route("/version", get(version))
+        .route("/projects", get(list_projects).post(register_project))
+        .route("/sessions", post(create_session))
+        .route("/sessions", get(list_sessions))
+        .route("/sessions/{session_id}/transcript", get(transcript))
+        .route("/runs", post(start_run))
+        .route("/runs", get(list_runs))
+        .route("/runs/{run_id}", get(get_run))
+        .route("/runs/{run_id}/cancel", post(cancel_run))
+        .route("/events", get(events))
+        .route("/config", get(get_config).patch(update_config))
+        .route("/config/permission-mode", post(update_permission_mode))
         .route("/tasks", get(list_tasks).post(create_task))
         .route(
-            "/tasks/{id}",
-            axum::routing::patch(patch_task).delete(delete_task),
+            "/tasks/{task_id}",
+            axum::routing::patch(update_task).delete(delete_task),
         )
-        .route("/tasks/{id}/run-now", post(run_task_now))
-        .route("/sessions/{id}/launch", get(get_launch))
-        .route("/sessions/{id}/launch/start", post(start_launch))
-        .route("/sessions/{id}/launch/stop", post(stop_launch))
-        .route("/sessions/{id}/launch/logs", get(launch_logs))
-        .route("/sessions/{id}/run", post(run_prompt))
-        .route("/sessions/{id}/steering", post(send_steering))
-        .route("/sessions/{id}/cancel", post(cancel_run))
-        .route("/sessions/{id}/subagents", get(list_subagents))
+        .route("/inbox", get(list_inbox))
+        .route("/inbox/{id}/ack", post(ack_inbox))
+        .route("/approvals", get(list_approvals))
+        .route("/approvals/{id}/resolve", post(resolve_approval))
+        .route("/memory", get(list_memory).post(create_memory))
         .route(
-            "/sessions/{id}/subagents/{child}/steer",
-            post(steer_subagent),
+            "/memory/{id}",
+            axum::routing::patch(amend_memory).delete(forget_memory),
         )
-        .route("/sessions/{id}/subagents/{child}/stop", post(stop_subagent))
-        .route("/sessions/{id}/approvals/{req_id}", post(answer_approval))
-        .route("/sessions/{id}/events", get(events_sse))
-        .route("/sessions/{id}/transcript", get(transcript))
-        .route("/sessions/{id}/transcript.md", get(transcript_markdown))
-        .route("/sessions/{id}/side", post(side_chat))
-        .route("/sessions/{id}/side/events", get(side_events_sse))
-        .route("/sessions/{id}/side/cancel", post(side_cancel_run))
-        .route("/sessions/{id}/bestofn", post(start_bestofn))
-        .route("/sessions/{id}/keep", post(keep_best_run))
-        .route("/sessions/{id}/discard", post(discard_best_run))
-        .route("/sessions/{id}/compact", post(compact_session))
-        .route("/fs/file", get(read_file).put(write_file))
-        .route("/fs/tree", get(fs_tree))
-        .route("/version", get(server_version))
-        .route("/config", get(get_config).patch(patch_config))
-        .route("/config/mode", post(set_permission_mode))
+        .route("/skills", get(list_skills))
+        .route("/skills/{id}/promote", post(promote_skill))
+        .route("/skills/{id}/reject", post(reject_skill))
         .route(
-            "/config/sandbox",
-            post(set_sandbox_backend).get(get_sandbox),
+            "/sessions/{session_id}/checkpoints",
+            get(list_checkpoints).post(create_checkpoint),
         )
-        .route("/config/mcp", get(get_mcp_servers).put(put_mcp_servers))
-        .route("/config/hooks", get(get_hooks).put(put_hooks))
         .route(
-            "/config/key",
-            put(put_provider_key).delete(delete_provider_key),
+            "/sessions/{session_id}/checkpoints/{checkpoint_id}",
+            get(get_checkpoint),
         )
-        .route("/config/commands", get(list_custom_commands))
-        .route("/providers", get(list_providers))
-        .route("/providers/{name}/models", get(discover_models))
-        .route("/tools", get(list_tools))
-        .route("/breaker", get(breaker_status))
-        .route("/search", get(search_sessions))
-        .route("/ops/status", get(ops_status))
-        .route("/ops/{service}/{action}", post(ops_action))
-        .route("/ops/diagnostics", get(ops_diagnostics))
-        .route("/finops", get(finops_status))
-        .route("/memory", get(list_memory).post(append_memory))
         .route(
-            "/memory/{note_id}",
-            axum::routing::patch(amend_memory_note).delete(forget_memory_note),
+            "/sessions/{session_id}/checkpoints/{checkpoint_id}/restore",
+            post(restore_checkpoint),
         )
-        .route("/doctor", get(doctor_report))
         .route("/backup/export", post(backup_export))
         .route("/backup/import", post(backup_import))
-        .route("/digest", get(digest_report))
-        .route("/inbox", get(inbox_list))
-        .route("/inbox/unread_count", get(inbox_unread_count))
-        .route("/inbox/{id}/ack", post(inbox_ack))
-        .route("/skills/proposals", get(list_proposals_route))
-        .route("/skills/proposals/{id}/promote", post(promote_proposal))
-        .route("/skills/proposals/{id}/reject", post(reject_proposal))
-        .merge(gateway::routes())
-        .merge(admin::routes())
-        .merge(admin_ui::routes())
+        .route("/flows", get(list_flows))
+        .route("/flows/{name}/check", get(check_flow).post(check_flow))
+        .route("/flows/{name}/run", post(run_flow))
+        .route("/eval", post(run_eval))
+        .route("/exec", post(exec_run))
+        .route("/diagnostics", get(diagnostics));
+    let api = api
+        .route("/providers", get(list_providers))
+        .route("/providers/{provider}/models", get(discover_models))
+        .route(
+            "/providers/{provider}/key",
+            post(set_provider_key).delete(remove_provider_key),
+        )
+        .route("/fs/tree", get(fs_tree))
+        .route("/fs/file", get(read_file).put(write_file));
+    let public = Router::new()
+        .route("/auth/login", post(login))
+        .route("/admin", get(admin_index))
+        .route("/admin/", get(admin_index))
+        .route("/admin/{*path}", get(admin_asset));
+    Router::new()
+        .merge(public)
+        .merge(api)
         .with_state(state)
+        .layer(middleware::from_fn_with_state(token, require_bearer))
 }
 
-/// Service-control plane over vak-ops: lets TUI/desktop/tray agree on the
-/// same truth (docs/design/28-operations.md).
-fn ops_payload(cfg: &vak_ops::OpsConfig) -> serde_json::Value {
-    let st = |svc| vak_ops::status(svc, cfg);
-    serde_json::json!({
-        "gateway": { "state": st(vak_ops::Service::Gateway).to_string() },
-        "telegram": { "state": st(vak_ops::Service::Telegram).to_string() },
-        "gateway_healthy": vak_ops::health_ok(cfg),
-    })
+#[derive(Debug, thiserror::Error)]
+pub enum ServeError {
+    #[error(transparent)]
+    Router(#[from] RouterError),
+    #[error("cannot bind Runtime HTTP listener: {0}")]
+    Bind(std::io::Error),
+    #[error("Runtime HTTP server failed: {0}")]
+    Serve(std::io::Error),
 }
 
-async fn ops_status(State(_state): State<AppState>) -> Json<serde_json::Value> {
-    let cfg = vak_ops::OpsConfig::detect();
-    Json(ops_payload(&cfg))
-}
-
-/// Read-only operational projection for desktop/TUI surfaces. This keeps
-/// service, gateway, flow and health state in one refreshable payload without
-/// exposing credentials or implementation paths.
-async fn ops_diagnostics(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let cfg = vak_ops::OpsConfig::detect();
-    let root = state.core.sessions_home().join("flow-runs");
-    let mut flows = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&root) {
-        for entry in entries.flatten().filter(|e| e.path().is_dir()) {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let runs = std::fs::read_dir(entry.path())
-                .map(|items| {
-                    items
-                        .flatten()
-                        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
-                        .count()
-                })
-                .unwrap_or(0);
-            flows.push(serde_json::json!({ "name": name, "runs": runs }));
-        }
+pub async fn serve(
+    runtime: Arc<Runtime>,
+    address: std::net::SocketAddr,
+    token: impl Into<String>,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> Result<(), ServeError> {
+    let token = token.into();
+    if token.is_empty() {
+        return Err(RouterError::EmptyAuthToken.into());
     }
-    flows.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
-    let gateway = state.gateway.snapshot();
-    Json(serde_json::json!({
-        "health": {
-            "status": "ok",
-            "provider": state.core.effective_provider(),
-            "model": state.core.effective_model(),
-            "sandbox": state.core.effective_sandbox_name(),
-            "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
-            "warnings": state.core.config().warnings,
-        },
-        "services": ops_payload(&cfg),
-        "gateway": {
-            "enabled": state.gateway.enabled,
-            "bindings": gateway.into_iter().map(|(target, session_id)| serde_json::json!({ "target": target, "session_id": session_id })).collect::<Vec<_>>(),
-            "approvals": {
-                "mode": state.gateway.approvals_mode(),
-                "approver": state.gateway.approver_target(),
-                "pending": state.gateway.pending_approval_count(),
-            },
-        },
-        "flows": flows,
-    }))
+    let state = AppState::with_token(runtime, token.clone());
+    let app = build_router(state.clone(), token.clone());
+    let listener = tokio::net::TcpListener::bind(address)
+        .await
+        .map_err(ServeError::Bind)?;
+    let runtime_file = runtime_file_path(state.runtime.data_home());
+    write_runtime_file(
+        &runtime_file,
+        listener.local_addr().map_err(ServeError::Bind)?,
+        &token,
+    )
+    .map_err(ServeError::Bind)?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown)
+        .await
+        .map_err(ServeError::Serve)?;
+    state.shutdown().await;
+    let _ = std::fs::remove_file(runtime_file);
+    Ok(())
 }
 
-/// FinOps projection from the append-only cost ledger. Unknown-priced rows are
-/// retained as `unknown_rows`; they are never reported as zero spend.
-async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let cfg = &state.core.config().finops;
-    let path = state.core.sessions_home().join("cost-log.jsonl");
-    let mut rows = Vec::new();
-    if let Ok(body) = std::fs::read_to_string(path) {
-        for line in body.lines() {
-            if let Ok(row) = serde_json::from_str::<vak_core::finops::CostRow>(line) {
-                rows.push(row);
-            }
-        }
+fn runtime_file_path(data_home: &std::path::Path) -> std::path::PathBuf {
+    data_home.join("runtime/gateway.json")
+}
+
+fn write_runtime_file(
+    path: &std::path::Path,
+    address: std::net::SocketAddr,
+    token: &str,
+) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
     }
-    let now = chrono::Utc::now();
-    let day_start = now
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .and_then(|t| t.and_local_timezone(chrono::Utc).single());
-    let day_rows = rows
-        .iter()
-        .filter(|r| day_start.is_some_and(|start| r.ts >= start));
-    let day_usd: f64 = day_rows.clone().filter_map(|r| r.usd).sum();
-    let unknown_rows = day_rows.filter(|r| r.usd.is_none()).count();
-    let mut by_provider = std::collections::BTreeMap::<String, (f64, u64)>::new();
-    let mut by_model = std::collections::BTreeMap::<String, (f64, u64)>::new();
-    for row in rows
-        .iter()
-        .filter(|r| day_start.is_some_and(|start| r.ts >= start))
+    let temp = path.with_extension(format!("tmp.{}", std::process::id()));
+    let value =
+        serde_json::json!({"pid": std::process::id(), "addr": address.to_string(), "token": token});
+    std::fs::write(
+        &temp,
+        serde_json::to_vec(&value).map_err(std::io::Error::other)?,
+    )?;
+    #[cfg(unix)]
     {
-        let usd = row.usd.unwrap_or(0.0);
-        let p = by_provider.entry(row.provider.clone()).or_default();
-        p.0 += usd;
-        p.1 += 1;
-        let m = by_model.entry(row.model.clone()).or_default();
-        m.0 += usd;
-        m.1 += 1;
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600))?;
     }
-    let rollup =
-        |source: std::collections::BTreeMap<String, (f64, u64)>| -> Vec<serde_json::Value> {
-            source.into_iter().map(|(name, (usd, calls))| serde_json::json!({ "name": name, "usd": usd, "calls": calls })).collect()
-        };
-    Json(serde_json::json!({
-        "day_usd": day_usd,
-        "run_cap_usd": cfg.max_run_usd,
-        "day_cap_usd": cfg.max_day_usd,
-        "unknown_rows": unknown_rows,
-        "total_rows": rows.len(),
-        "by_provider": rollup(by_provider),
-        "by_model": rollup(by_model),
-    }))
+    std::fs::rename(temp, path)
 }
 
-#[derive(serde::Deserialize)]
-struct OpsActionQuery {
-    #[serde(default)]
-    port: Option<u16>,
-}
-
-async fn ops_action(
-    Path((service, action)): Path<(String, String)>,
-    axum::extract::Query(q): axum::extract::Query<OpsActionQuery>,
+async fn require_bearer(
+    axum::extract::State(token): axum::extract::State<String>,
+    request: axum::http::Request<axum::body::Body>,
+    next: middleware::Next,
 ) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let svc = match service.as_str() {
-        "gateway" => Some(vak_ops::Service::Gateway),
-        "telegram" => Some(vak_ops::Service::Telegram),
-        _ => None,
-    };
-    let Some(svc) = svc else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": format!("unknown service '{service}'") })),
-        )
-            .into_response();
-    };
-    let mut cfg = vak_ops::OpsConfig::detect();
-    if let Some(port) = q.port {
-        cfg.port = port;
-    }
-    let result = match action.as_str() {
-        "start" => {
-            vak_ops::start(svc, &cfg);
-            serde_json::json!({ "ok": true, "action": "start" })
-        }
-        "stop" => {
-            vak_ops::stop(svc, &cfg);
-            serde_json::json!({ "ok": true, "action": "stop" })
-        }
-        "restart" => {
-            vak_ops::restart(svc, &cfg);
-            serde_json::json!({ "ok": true, "action": "restart" })
-        }
-        "install" => match vak_ops::install(svc, &cfg) {
-            Ok(()) => serde_json::json!({ "ok": true, "action": "install" }),
-            Err(e) => serde_json::json!({ "ok": false, "error": e }),
-        },
-        "uninstall" => match vak_ops::uninstall(svc, &cfg) {
-            Ok(()) => serde_json::json!({ "ok": true, "action": "uninstall" }),
-            Err(e) => serde_json::json!({ "ok": false, "error": e }),
-        },
-        other => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": format!("unknown action '{other}'") })),
-            )
-                .into_response();
-        }
-    };
-    (StatusCode::OK, Json(result)).into_response()
-}
-
-fn note_payload(n: &vak_core::memory::NoteBlock, scope: &str) -> serde_json::Value {
-    serde_json::json!({
-        "id": n.id,
-        "ts": n.ts.to_rfc3339(),
-        "kind": n.kind,
-        "tag": n.tag,
-        "session_id": n.session_id,
-        "text": n.text,
-        "scope": scope,
-    })
-}
-
-async fn list_memory(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let home = state.core.sessions_home();
-    let mut blocks: Vec<serde_json::Value> = vak_core::memory::list_notes(&home, state.core.cwd())
-        .iter()
-        .map(|n| note_payload(n, "workspace"))
-        .collect();
-    blocks.extend(
-        vak_core::memory::list_profile_notes(&home)
-            .iter()
-            .map(|n| note_payload(n, "profile")),
-    );
-    Json(serde_json::json!({ "notes": blocks }))
-}
-
-/// Resolve a note id to the markdown store it lives in. The workspace tier/// is per-cwd; the profile tier is global (`<home>/memory/user/USER.md`).
-#[derive(serde::Deserialize)]
-struct AppendMemoryBody {
-    text: String,
-    #[serde(default)]
-    kind: Option<String>,
-    #[serde(default)]
-    tag: Option<String>,
-    #[serde(default)]
-    scope: Option<MemoryScope>,
-    #[serde(default)]
-    session_id: Option<String>,
-}
-
-/// Append a note to either tier. Keeps gateway/desktop/CLI symmetric —
-/// every surface writes through the same validated core API.
-async fn append_memory(
-    State(state): State<AppState>,
-    Json(body): Json<AppendMemoryBody>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let home = state.core.sessions_home();
-    let scope = body.scope.unwrap_or(MemoryScope::Workspace);
-    let kind = body.kind.unwrap_or_else(|| "fact".to_string());
-    let tag = body.tag.unwrap_or_default();
-    let session = body.session_id.unwrap_or_else(|| "http".to_string());
-    let result = match scope {
-        MemoryScope::Workspace => vak_core::memory::append_note(
-            &home,
-            state.core.cwd(),
-            &kind,
-            &tag,
-            &session,
-            &body.text,
-        ),
-        MemoryScope::Profile => {
-            vak_core::memory::append_profile_note(&home, &kind, &tag, &body.text, &session)
-        }
-    };
-    match result {
-        Ok(note) => {
-            let scope_str = match scope {
-                MemoryScope::Workspace => "workspace",
-                MemoryScope::Profile => "profile",
-            };
-            (StatusCode::CREATED, Json(note_payload(&note, scope_str))).into_response()
-        }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e })),
-        )
-            .into_response(),
-    }
-}
-
-fn memory_store_path(state: &AppState, scope: MemoryScope) -> PathBuf {
-    let home = state.core.sessions_home();
-    match scope {
-        MemoryScope::Workspace => home
-            .join("memory")
-            .join(vak_core::memory::hash_cwd(state.core.cwd()))
-            .join("MEMORY.md"),
-        MemoryScope::Profile => vak_core::memory::profile_path(&home),
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-enum MemoryScope {
-    #[default]
-    Workspace,
-    Profile,
-}
-
-async fn forget_memory_note(
-    State(state): State<AppState>,
-    Path(note_id): Path<String>,
-    axum::extract::Query(q): axum::extract::Query<MemoryScopeQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let path = memory_store_path(&state, q.scope.unwrap_or_default());
-    match vak_core::memory::forget_note(&path, &note_id) {
-        Ok(bytes) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "forgotten": note_id, "bytes": bytes })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": e })),
-        )
-            .into_response(),
-    }
-}
-
-#[derive(serde::Deserialize)]
-struct MemoryAmendBody {
-    text: String,
-    #[serde(default)]
-    scope: Option<MemoryScope>,
-}
-
-#[derive(serde::Deserialize, Default)]
-struct MemoryScopeQuery {
-    #[serde(default)]
-    scope: Option<MemoryScope>,
-}
-
-async fn amend_memory_note(
-    State(state): State<AppState>,
-    Path(note_id): Path<String>,
-    Json(body): Json<MemoryAmendBody>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    if body.text.trim().is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "note must not be empty" })),
-        )
-            .into_response();
-    }
-    let path = memory_store_path(&state, body.scope.unwrap_or_default());
-    match vak_core::memory::amend_note(&path, &note_id, &body.text) {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "amended": note_id })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": e })),
-        )
-            .into_response(),
-    }
-}
-
-fn proposals_payload(core: &Core) -> Vec<serde_json::Value> {
-    vak_core::learning::list_proposals(&core.sessions_home(), core.cwd())
-        .iter()
-        .map(|p| {
-            serde_json::json!({
-                "id": p.id,
-                "name": p.name,
-                "description": p.description,
-            })
-        })
-        .collect()
-}
-
-async fn list_proposals_route(State(state): State<AppState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "proposals": proposals_payload(&state.core) }))
-}
-
-async fn promote_proposal(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    match vak_core::learning::promote(&state.core.sessions_home(), state.core.cwd(), &id) {
-        Ok(name) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "promoted": name })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": e })),
-        )
-            .into_response(),
-    }
-}
-
-async fn reject_proposal(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    match vak_core::learning::reject(&state.core.sessions_home(), state.core.cwd(), &id) {
-        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "rejected": id }))).into_response(),
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": e })),
-        )
-            .into_response(),
-    }
-}
-
-#[derive(serde::Deserialize)]
-struct SearchQuery {
-    q: String,
-    #[serde(default)]
-    limit: Option<usize>,
-    /// Session id whose (already-in-context) content should be skipped.
-    #[serde(default)]
-    exclude: Option<String>,
-    /// Cross-project recall: search every project's ledgers under the
-    /// sessions home (docs/design/29-personal-os.md P1), not just this cwd.
-    #[serde(default)]
-    all: bool,
-}
-
-async fn search_sessions(
-    State(state): State<AppState>,
-    axum::extract::Query(q): axum::extract::Query<SearchQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let home = state.core.sessions_home();
-    let cwd = state.core.cwd().clone();
-    let query = q.q.clone();
-    let limit = q.limit.unwrap_or(vak_session::DEFAULT_LIMIT);
-    let exclude = q.exclude.clone();
-    let all = q.all;
-    match tokio::task::spawn_blocking(move || {
-        // Both hit shapes are Serialize; the workspace path keeps its flat
-        // SessionHit wire shape, cross-project adds the project_hash wrapper.
-        let searched = if all {
-            vak_session::search_all(&home, &query, limit, exclude.as_deref())
-                .map(|hits| serde_json::to_value(&hits).map_err(|e| e.to_string()))
-        } else {
-            vak_session::search(&home, &cwd, &query, limit, exclude.as_deref())
-                .map(|hits| serde_json::to_value(&hits).map_err(|e| e.to_string()))
-        };
-        match searched {
-            Ok(inner) => inner,
-            Err(e) => Err(e.to_string()),
-        }
-    })
-    .await
+    let path = request.uri().path();
+    if path == "/auth/login" || path == "/admin" || path == "/admin/" || path.starts_with("/admin/")
     {
-        Ok(Ok(hits)) => Json(serde_json::json!({ "all": all, "hits": hits })).into_response(),
-        Ok(Err(e)) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+        return next.run(request).await;
     }
-}
-
-/// The bearer token lives for the life of the process; embedders (desktop
-/// shell, tests) need it to hand to their webview, so build the secured
-/// stack here instead of inside `serve()`.
-pub fn secured_router(core: Core) -> (Router, String) {
-    secured_router_with(core, false)
-}
-
-/// Same stack with a CLI-level gateway override (`serve --gateway`).
-///
-/// Token selection: when `VAKCODER_GATEWAY_TOKEN` is set in the
-/// environment, it is used verbatim so service-managed bridges and other
-/// long-lived clients can survive process restarts. Otherwise a fresh
-/// per-process token is minted as before. The variable is never logged.
-pub fn secured_router_with(core: Core, force_gateway: bool) -> (Router, String) {
-    // Webview origins: tauri://localhost (macOS/Linux), https://tauri.localhost
-    // (Windows), plus vite dev servers.
-    let origins = [
-        "tauri://localhost",
-        "https://tauri.localhost",
-        "http://localhost:1420",
-        "http://127.0.0.1:1420",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ]
-    .into_iter()
-    .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
-    .collect::<Vec<_>>();
-    let cors = tower_http::cors::CorsLayer::new()
-        .allow_origin(origins)
-        // Must cover every method the router exposes: PATCH (/config,
-        // /sessions/:id/config) and DELETE are preflighted, so omitting them
-        // makes the browser reject the request before it is ever sent.
-        .allow_methods([
-            axum::http::Method::GET,
-            axum::http::Method::POST,
-            axum::http::Method::PUT,
-            axum::http::Method::PATCH,
-            axum::http::Method::DELETE,
-        ])
-        .allow_headers([
-            axum::http::header::AUTHORIZATION,
-            axum::http::header::CONTENT_TYPE,
-        ]);
-    let mut state = AppState::new(core);
-    if force_gateway {
-        state.enable_gateway();
-    }
-    let token = (*state.auth_token).clone();
-    let rl_settings = state.core.config().gateway.rate_limit.clone();
-    let rl_config = rate_limit::RateLimitConfig::from_settings(rl_settings);
-    let limiter = rate_limit::RateLimiter::new(rl_config, state.core.sessions_home());
-    let app = router_with_state(state.clone())
-        .layer(axum::middleware::from_fn_with_state(
-            limiter,
-            rate_limit::rate_limit_layer,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            (token.clone(), state.core.sessions_home()),
-            require_bearer,
-        ))
-        .layer(cors);
-    // Singleton duties: scheduler, delivery replay, and destructive index
-    // rebuild run *only* in gateway mode.  Clients (TUI, desktop, exec)
-    // embed this router without single-owner conflicts.
-    if force_gateway {
-        start_scheduler(&state);
-        delivery::start_replay(&state.core);
-        // Background index sync: keeps the admin console populated from the
-        // very first boot.  Idempotent; never blocks request handling.
-        if let Some(store) = state.store.clone() {
-            let home = state.core.sessions_home();
-            tokio::spawn(async move {
-                match store.rebuild(&home) {
-                    Ok(s) if s.files_scanned > 0 => eprintln!(
-                        "[store] indexed {} files / {} entries",
-                        s.files_scanned, s.entries_indexed
-                    ),
-                    Ok(_) => {}
-                    Err(e) => eprintln!("[store] startup rebuild failed: {e}"),
-                }
-            });
-        }
-    }
-    (app, token)
-}
-
-pub async fn serve(core: Core, addr: std::net::SocketAddr) -> std::io::Result<()> {
-    serve_with(core, addr, false).await
-}
-
-/// `force_gateway` mirrors `serve --gateway`: enable routing regardless of
-/// the (untrusted-stripped) project config.
-pub async fn serve_with(
-    core: Core,
-    addr: std::net::SocketAddr,
-    force_gateway: bool,
-) -> std::io::Result<()> {
-    // Singleton flock: prevent two gateway processes on the same data_home.
-    let _flock_guard = if force_gateway {
-        let data_home = core.sessions_home();
-        let lock_path = data_home.join("locks").join("gateway.lock");
-        if let Some(parent) = lock_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let lock_file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&lock_path)?;
-        #[allow(unsafe_code)]
-        let acquired =
-            unsafe { ::libc::flock(lock_file.as_raw_fd(), ::libc::LOCK_EX | ::libc::LOCK_NB) };
-        if acquired != 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::WouldBlock,
-                format!(
-                    "another gateway is already running (lock: {}). \
-                     Stop it before starting a new instance.",
-                    lock_path.display()
-                ),
-            ));
-        }
-        Some(lock_file)
-    } else {
-        None
-    };
-
-    // Local-only does not mean safe-by-default: any local process could
-    // reach an unauthenticated agent and drive arbitrary tool execution
-    // plus self-approval. Every serve() instance gets a per-process
-    // bearer token; /health stays open.
-    let data_home = core.sessions_home();
-    let (app, token) = secured_router_with(core, force_gateway);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    // Token bootstrap: on first gateway boot, if no VAKCODER_GATEWAY_TOKEN
-    // was provided via env or .env, persist the auto-generated one so clients
-    // can discover it via get_var(). Only the gateway writes; clients only
-    // read.
-    if force_gateway && token.starts_with("vk_") {
-        let env_set = std::env::var("VAKCODER_GATEWAY_TOKEN")
-            .ok()
-            .filter(|t| !t.is_empty())
-            .is_some();
-        let dotenv_set = vak_config::get_var("VAKCODER_GATEWAY_TOKEN").is_some();
-        if !env_set
-            && !dotenv_set
-            && let Some(env_path) = vak_config::user_env_path()
-        {
-            let _ = vak_config::upsert_env_file(&env_path, "VAKCODER_GATEWAY_TOKEN", &token);
-            eprintln!("gateway token persisted to {}", env_path.display());
-        }
-    }
-
-    // Runtime file: write gateway.json on startup so clients can discover the
-    // running instance; remove it on shutdown.
-    let runtime_path = data_home.join("runtime").join("gateway.json");
-    if force_gateway {
-        if let Some(parent) = runtime_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let runtime = serde_json::json!({
-            "pid": std::process::id(),
-            "token": token,
-            "addr": addr.to_string(),
-            "started_at": chrono::Utc::now().to_rfc3339(),
-            "gateway": true,
-        });
-        let _ = std::fs::write(&runtime_path, runtime.to_string());
-    }
-
-    eprintln!("VakCoder server listening on http://{addr}");
-    if std::env::var("VAKCODER_GATEWAY_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
-        eprintln!("auth token: (pinned via VAKCODER_GATEWAY_TOKEN)");
-    } else {
-        eprintln!("auth token: {token}");
-        eprintln!("clients must send 'Authorization: Bearer {token}'");
-    }
-    if force_gateway {
-        eprintln!("gateway: ENABLED (--gateway overrides config)");
-    }
-    let result = axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            #[cfg(unix)]
-            {
-                use tokio::signal::unix::{SignalKind, signal};
-                if let Ok(mut term) = signal(SignalKind::terminate()) {
-                    tokio::select! {
-                        _ = tokio::signal::ctrl_c() => {}
-                        _ = term.recv() => {}
-                    }
-                } else {
-                    let _ = tokio::signal::ctrl_c().await;
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = tokio::signal::ctrl_c().await;
-            }
-            eprintln!("\n[shutting down: draining connections]");
-        })
-        .await;
-    // Cleanup: remove runtime file on shutdown.
-    if force_gateway {
-        let _ = std::fs::remove_file(&runtime_path);
-    }
-    result
-}
-
-/// Paths that must be reachable without a token: health probe, the SPA
-/// shell (static assets carry no data), and the login endpoint itself.
-fn auth_exempt_path(path: &str) -> bool {
-    path == "/health"
-        || path == "/admin"
-        || path == "/admin/"
-        || path == "/admin/login"
-        || path == "/admin/favicon.svg"
-        || path.starts_with("/admin/assets/")
-        || path == "/favicon.ico"
-        || path == "/favicon.svg"
-}
-
-pub(crate) async fn require_bearer(
-    State((token, home)): State<(String, std::path::PathBuf)>,
-    req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    if auth_exempt_path(req.uri().path()) {
-        return next.run(req).await;
-    }
-    use subtle::ConstantTimeEq;
-    let header_token = req
+    let valid = request
         .headers()
         .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(String::from);
-    // Browser surfaces authenticate once via /admin/login which sets an
-    // HttpOnly cookie; EventSource cannot send Authorization headers, so
-    // the cookie is the only workable channel for SSE.
-    let cookie_token = req
-        .headers()
-        .get(axum::http::header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|pair| {
-                let pair = pair.trim();
-                pair.strip_prefix("vak_session=")
-                    .map(|v| v.trim().to_string())
-            })
-        });
-    let provided = header_token.or(cookie_token);
-    let ok = provided
-        .as_deref()
-        .map(|p| p.as_bytes().ct_eq(token.as_bytes()).into())
-        .unwrap_or(false);
-    if ok {
-        next.run(req).await
-    } else {
-        let ip = req
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .is_some_and(|provided| provided == token)
+        || request
             .headers()
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').next())
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        let detail = format!(
-            "path={} provided={}",
-            req.uri().path(),
-            provided
-                .as_deref()
-                .map(|p| format!(
-                    "{}...{}",
-                    &p[..4.min(p.len())],
-                    &p[p.len().saturating_sub(4)..]
-                ))
-                .unwrap_or_else(|| "<none>".into())
-        );
-        vak_core::security_events::record(
-            &home,
-            vak_core::security_events::EventKind::AuthFailure,
-            "auth_failure",
-            &detail,
-            ip,
-        );
-        if let Some(hub) = events::global() {
-            hub.emit_security("AuthFailure", req.uri().path());
-        }
-        StatusCode::UNAUTHORIZED.into_response()
+            .get(axum::http::header::COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|cookies| {
+                cookies
+                    .split(';')
+                    .find_map(|cookie| cookie.trim().strip_prefix("vakcoder_session="))
+            })
+            .is_some_and(|provided| provided == token);
+    if valid {
+        next.run(request).await
+    } else {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"authentication required"})),
+        )
+            .into_response()
     }
 }
 
-async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "status": "ok",
-        "provider": state.core.effective_provider(),
-        "model": state.core.effective_model(),
-        "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
-        "sandbox": state.core.effective_sandbox_name(),
-        "context_window": state.core.config().context_window,
-        "cwd": state.core.cwd(),
-        "warnings": state.core.config().warnings,
+#[derive(Deserialize)]
+struct LoginRequest {
+    token: String,
+}
+
+async fn login(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    Json(request): Json<LoginRequest>,
+) -> impl IntoResponse {
+    if request.token != *state.auth_token {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"invalid token"})),
+        )
+            .into_response();
+    }
+    let cookie = format!(
+        "vakcoder_session={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
+        state.auth_token
+    );
+    (
+        StatusCode::OK,
+        [(SET_COOKIE, cookie)],
+        Json(serde_json::json!({"authenticated":true})),
+    )
+        .into_response()
+}
+
+static ADMIN_UI: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../vak-admin-ui/dist");
+
+fn admin_file(path: &str) -> axum::response::Response {
+    let path = if path.is_empty() { "index.html" } else { path };
+    let Some(file) = ADMIN_UI.get_file(path) else {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    };
+    let mime = match path.rsplit('.').next() {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("svg") => "image/svg+xml",
+        _ => "application/octet-stream",
+    };
+    let cache = if path.starts_with("assets/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
+    (
+        [(CONTENT_TYPE, mime), (CACHE_CONTROL, cache)],
+        file.contents(),
+    )
+        .into_response()
+}
+
+async fn admin_index() -> axum::response::Response {
+    admin_file("index.html")
+}
+
+async fn admin_asset(Path(path): Path<String>) -> axum::response::Response {
+    admin_file(&path)
+}
+
+#[derive(Serialize)]
+struct Health {
+    status: &'static str,
+    protocol: u32,
+    runtime_id: &'static str,
+}
+
+async fn health() -> Json<Health> {
+    Json(Health {
+        status: "ok",
+        protocol: 1,
+        runtime_id: env!("CARGO_PKG_VERSION"),
+    })
+}
+
+#[derive(Serialize)]
+struct Version {
+    version: &'static str,
+}
+
+async fn version() -> Json<Version> {
+    Json(Version {
+        version: env!("CARGO_PKG_VERSION"),
+    })
+}
+
+#[derive(Serialize)]
+struct EmptyList<T> {
+    items: Vec<T>,
+}
+
+async fn list_projects(
+    State(state): State<AppState>,
+) -> Result<Json<EmptyList<ProjectContext>>, ApiError> {
+    Ok(Json(EmptyList {
+        items: state.runtime.list_projects().await?,
     }))
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn register_handle(
-    state: &AppState,
-    id: String,
-    session: SessionLog,
-    cwd: PathBuf,
-) -> Arc<SessionHandle> {
-    let (events_tx, _) = broadcast::channel(1024);
-    let (side_events_tx, _) = broadcast::channel(1024);
-    let handle = Arc::new(SessionHandle {
-        id: id.clone(),
-        cwd,
-        session: Arc::new(Mutex::new(Some(session))),
-        steering: Arc::new(SteeringQueues::new()),
-        cancel: Arc::new(std::sync::Mutex::new(CancellationToken::new())),
-        events_tx,
-        pending: Arc::new(Mutex::new(HashMap::new())),
-        subscribed: Arc::new(tokio::sync::Notify::new()),
-        side_events_tx,
-        side_cancel: Arc::new(std::sync::Mutex::new(CancellationToken::new())),
-        run_events: Arc::new(std::sync::Mutex::new(None)),
-    });
-    state
-        .sessions
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(id, handle.clone());
-    handle
+async fn register_project(
+    State(state): State<AppState>,
+    Json(project): Json<ProjectContext>,
+) -> Result<(StatusCode, Json<ProjectContext>), ApiError> {
+    state.runtime.register_project(project.clone()).await?;
+    Ok((StatusCode::CREATED, Json(project)))
 }
 
-#[derive(serde::Deserialize, Default)]
-struct CreateSessionBody {
-    /// Optional project directory. When provided, the session operates in
-    /// that workspace (frozen into the session header). When absent,
-    /// falls back to Core's default cwd.
-    cwd: Option<std::path::PathBuf>,
+#[derive(Deserialize, Serialize)]
+pub struct CreateSessionRequest {
+    pub session_id: Option<SessionId>,
+    pub project_id: ProjectId,
+    pub contract: SessionContract,
+}
+
+#[derive(Serialize)]
+pub struct SessionCreated {
+    pub session_id: SessionId,
+    pub project_id: ProjectId,
 }
 
 async fn create_session(
     State(state): State<AppState>,
-    body: Result<axum::extract::Json<CreateSessionBody>, axum::extract::rejection::JsonRejection>,
-) -> Json<serde_json::Value> {
-    // Empty or absent bodies are legal: cwd falls back to Core's default.
-    let session_cwd = body
-        .ok()
-        .and_then(|j| j.0.cwd)
-        .unwrap_or_else(|| state.core.cwd().clone());
-    let session = match state.core.start_session_in(&session_cwd).await {
-        Ok(s) => s,
-        Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
-    };
-    let id = session
-        .header()
-        .map(|h| h.session_id.clone())
-        .unwrap_or_default();
-    register_handle(&state, id.clone(), session, session_cwd);
-
-    state.hub.emit_session_created(&id, "");
-    index_session_later(state.store.clone(), state.core.sessions_home(), id.clone());
-
-    Json(serde_json::json!({ "session_id": id }))
-}
-
-/// Re-index one session's JSONL in the background. Reading does not
-/// conflict with the live handle's exclusive write lock.
-pub(crate) fn index_session_later(
-    store: Option<vak_store::Store>,
-    home: std::path::PathBuf,
-    session_id: String,
-) {
-    let Some(store) = store else {
-        return;
-    };
-    tokio::spawn(async move {
-        import_session_sync(&store, &home, &session_id);
-    });
-}
-
-/// Locate `<home>/sessions/<hash>/<session>.jsonl` and import it into the
-/// index synchronously. Idempotent; cheap when nothing changed.
-pub(crate) fn import_session_sync(
-    store: &vak_store::Store,
-    home: &std::path::Path,
-    session_id: &str,
-) -> bool {
-    let dir = home.join("sessions");
-    let Ok(read) = std::fs::read_dir(&dir) else {
-        return false;
-    };
-    for project in read.flatten() {
-        let candidate = project.path().join(format!("{session_id}.jsonl"));
-        if candidate.is_file()
-            && let Ok(stats) = store.import_session(home, &candidate)
-        {
-            return stats.entries_indexed > 0 || stats.skipped > 0;
-        }
-    }
-    false
-}
-
-#[derive(serde::Deserialize)]
-struct AttachBody {
-    session_id: String,
-}
-
-async fn attach_session(
-    State(state): State<AppState>,
-    Json(body): Json<AttachBody>,
-) -> axum::response::Response {
-    // Already attached? Return before touching the file.
-    //
-    // The live handle owns an exclusive lock on the session JSONL for its
-    // whole lifetime, and the lock is per open-file-description: opening the
-    // same path again from THIS process conflicts with our own handle just
-    // as it would with a stranger's. Re-attaching is routine — the desktop
-    // calls it on every task switch, and mid-run the handle's session is
-    // temporarily owned by the agent — so this must be a no-op, not a
-    // second open.
-    if state.get(&body.session_id).is_some() {
-        return (
-            StatusCode::OK,
-            Json(serde_json::json!({ "session_id": body.session_id })),
+    Json(request): Json<CreateSessionRequest>,
+) -> Result<(StatusCode, Json<SessionCreated>), ApiError> {
+    let session_id = request.session_id.unwrap_or_default();
+    state
+        .runtime
+        .create_session(
+            session_id.clone(),
+            request.project_id.clone(),
+            request.contract,
         )
-            .into_response();
-    }
-    match state.core.open_session(&body.session_id).await {
-        Ok(session) => {
-            let id = session
-                .header()
-                .map(|h| h.session_id.clone())
-                .unwrap_or_else(|| body.session_id.clone());
-            // The header id can differ from the requested one; if that handle
-            // is already live, keep it rather than replacing it.
-            if state.get(&id).is_none() {
-                register_handle(&state, id.clone(), session, state.core.cwd().clone());
-            }
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({ "session_id": id })),
-            )
-                .into_response()
-        }
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+        .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(SessionCreated {
+            session_id,
+            project_id: request.project_id,
+        }),
+    ))
 }
 
-/// Sidebar projection over the persisted store: one summary per JSONL file.
-async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let sessions_dir = state.core.sessions_home().join("sessions");
-    let archive_map = read_archive(&state.core);
-    let deleted_map = read_deleted(&state.core);
-    let mut sessions = Vec::new();
-    // Scan all project directories under sessions/ for multi-project support.
-    let Ok(sessions_base) = std::fs::read_dir(&sessions_dir) else {
-        return Json(serde_json::json!({ "sessions": sessions }));
-    };
-    for project_dir in sessions_base.flatten() {
-        if !project_dir.path().is_dir() {
-            continue;
-        }
-        let Ok(read) = std::fs::read_dir(project_dir.path()) else {
-            continue;
-        };
-        for entry in read.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                continue;
-            }
-            let Some(session_id) = path.file_stem().and_then(|s| s.to_str()).map(String::from)
-            else {
-                continue;
-            };
-            if deleted_map.get(&session_id).copied().unwrap_or(false) {
-                continue;
-            }
-            let updated_at = std::fs::metadata(&path)
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
-            let (created_at, title, entries, cwd) = summarize_jsonl(&path);
-            // Header-only sessions are abandoned drafts (for example, creating a
-            // task and immediately switching away). Keep the ledger append-only,
-            // but do not let empty drafts accumulate in the task switcher.
-            if entries <= 1 {
-                continue;
-            }
-            let running = state.get(&session_id).is_some_and(|handle| {
-                handle
-                    .session
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .is_none()
-            });
-            let archived = archive_map.get(&session_id).copied().unwrap_or(false);
-            sessions.push(serde_json::json!({
-                "session_id": session_id,
-                "cwd": cwd.unwrap_or_else(|| state.core.cwd().to_string_lossy().into_owned()),
-                "created_at": created_at,
-                "updated_at": updated_at,
-                "entries": entries,
-                "title": title,
-                "running": running,
-                "archived": archived,
-            }));
-        }
-    }
-    sessions.sort_by_key(|s| s["updated_at"].as_str().unwrap_or("").to_string());
-    sessions.reverse();
-    Json(serde_json::json!({ "sessions": sessions }))
-}
-
-/// Bounded scan: header line for created_at + first user message as title.
-fn summarize_jsonl(
-    path: &std::path::Path,
-) -> (Option<String>, Option<String>, u64, Option<String>) {
-    use std::io::BufRead;
-    let Ok(file) = std::fs::File::open(path) else {
-        return (None, None, 0, None);
-    };
-    let mut reader = std::io::BufReader::new(file);
-    let mut created_at = None;
-    let mut title = None;
-    let mut cwd = None;
-    let mut entries = 0u64;
-    let mut line = String::new();
-    loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {
-                entries += 1;
-                if let Ok(entry) = serde_json::from_str::<vak_session::Entry>(line.trim()) {
-                    match entry.payload {
-                        vak_session::EntryPayload::Header(h) => {
-                            created_at = Some(h.created_at.to_rfc3339());
-                            cwd = Some(h.cwd.to_string_lossy().into_owned());
-                        }
-                        vak_session::EntryPayload::Message(rec) => {
-                            if title.is_none() && rec.message.role == vak_llm::Role::User {
-                                let text = rec.message.text_content();
-                                let text = text.trim();
-                                if !text.is_empty() {
-                                    let first_line = text.lines().next().unwrap_or(text).trim();
-                                    let mut snippet: String = first_line.chars().take(72).collect();
-                                    if first_line.chars().count() > 72 {
-                                        snippet.push('…');
-                                    }
-                                    title = Some(snippet);
-                                }
-                            }
-                        }
-                        vak_session::EntryPayload::Compaction(_) => {}
-                        vak_session::EntryPayload::Receipt(_) => {}
-                        vak_session::EntryPayload::Goal(_) => {}
-                    }
-                }
-                if title.is_some() && entries > 400 {
-                    break;
-                }
-            }
-            Err(_) => break,
-        }
-    }
-    (created_at, title, entries, cwd)
-}
-
-#[derive(serde::Deserialize)]
-struct RunBody {
-    prompt: String,
-    /// Optional base64 images appended to the prompt as vision content
-    /// (docs/design/22-gateway.md media passthrough).
-    #[serde(default)]
-    attachments: Vec<RunAttachment>,
-    /// Goal mode (docs/design/27 Phase H): durable objective; completion
-    /// is audited against `criteria`, never self-reported.
-    #[serde(default)]
-    goal: Option<String>,
-    /// Acceptance criteria for goal mode (`verify:` prefixed criteria run
-    /// as brokered shell commands; others are judged from evidence).
-    #[serde(default)]
-    criteria: Vec<String>,
-}
-
-#[derive(serde::Deserialize)]
-struct RunAttachment {
-    #[serde(default = "default_image_mime")]
-    mime: String,
-    data: String,
-}
-
-fn default_image_mime() -> String {
-    "image/png".into()
-}
-
-pub(crate) fn mpsc_to_broadcast(tx: broadcast::Sender<AgentEvent>) -> mpsc::Sender<AgentEvent> {
-    let (tx_in, mut rx) = mpsc::channel::<AgentEvent>(512);
-    tokio::spawn(async move {
-        // Forward into the BROADCAST channel (sync send). Forwarding into
-        // tx_in would feed the channel back into itself.
-        //
-        // Headless consumers (gateway turns, cron routines) legitimately run
-        // with zero broadcast subscribers; send errors must NEVER tear the
-        // pump down — the agent treats a dropped mpsc receiver as a lost
-        // consumer and cancels the run mid-flight.
-        while let Some(ev) = rx.recv().await {
-            let _ = tx.send(ev);
-        }
-    });
-    tx_in
-}
-
-async fn run_prompt(
+async fn list_sessions(
     State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<RunBody>,
-) -> StatusCode {
-    let Some(handle) = state.get(&id) else {
-        return StatusCode::NOT_FOUND;
-    };
-    let Some(taken) = handle
-        .session
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take()
-    else {
-        return StatusCode::CONFLICT; // run already active
-    };
-    if state.core.provider().is_err() {
-        *handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        return StatusCode::SERVICE_UNAVAILABLE;
-    }
-
-    // Give SSE consumers a moment to attach so terminal events are seen.
-    let _ = tokio::time::timeout(Duration::from_secs(2), handle.subscribed.notified()).await;
-
-    let approver: Arc<dyn Approver> = Arc::new(HttpApprover {
-        events_tx: handle.events_tx.clone(),
-        pending: handle.pending.clone(),
-        session_id: handle.id.clone(),
-    });
-    let events = mpsc_to_broadcast(handle.events_tx.clone());
-    *handle
-        .run_events
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(events.clone());
-    let steering = handle.steering.clone();
-    let cancel = handle
-        .cancel
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
-    let core = state.core.clone();
-
-    let prompt_message = if body.attachments.is_empty() {
-        None
-    } else {
-        let mut blocks = vec![vak_llm::ContentBlock::text(body.prompt.clone())];
-        for a in &body.attachments {
-            if a.data.trim().is_empty() {
-                continue;
-            }
-            blocks.push(vak_llm::ContentBlock::image_base64(
-                a.mime.clone(),
-                a.data.trim().to_string(),
-            ));
-        }
-        Some(vak_llm::Message {
-            role: vak_llm::Role::User,
-            content: blocks,
+    Query(query): Query<SessionListQuery>,
+) -> Result<Json<EmptyList<SessionSummary>>, ApiError> {
+    let project_id = query
+        .project_id
+        .map(|value| value.parse())
+        .transpose()
+        .map_err(ApiError::domain)?;
+    let items = state
+        .runtime
+        .list_sessions(project_id)
+        .await?
+        .into_iter()
+        .map(|(id, project_id, created_at, status)| SessionSummary {
+            id,
+            project_id,
+            created_at,
+            status,
         })
-    };
-    if body.goal.is_some() && !body.attachments.is_empty() {
-        *handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        let _ = handle.events_tx.send(AgentEvent::RunFinished {
-            summary: "failed: goal runs do not support attachments".into(),
-            is_error: true,
-        });
-        return StatusCode::BAD_REQUEST;
-    }
-    // Goal mode (Phase H): captured before the spawn consumes `body`.
-    let goal_pair = body.goal.clone().map(|g| (g, body.criteria.clone()));
-    let run_id = id.clone();
-    let hub = state.hub.clone();
-    let admin_store = state.store.clone();
-    let sessions_home = state.core.sessions_home();
-
-    let finish_tx = events.clone();
-    tokio::spawn(async move {
-        let outcome = if let Some((objective, criteria)) = goal_pair {
-            core.run_goal_turn_with(
-                taken,
-                &body.prompt,
-                &objective,
-                criteria,
-                cancel.clone(),
-                Some(approver.clone()),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await
-        } else if let Some(msg) = prompt_message {
-            core.run_turn_with_message(
-                taken,
-                msg,
-                cancel,
-                Some(approver),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await
-        } else {
-            core.run_turn_with(
-                taken,
-                &body.prompt,
-                cancel,
-                Some(approver),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await
-        };
-        // Reset the token so the next run on this session is not born
-        // already-cancelled.
-        *handle
-            .cancel
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = CancellationToken::new();
-        match outcome {
-            Ok((o, session_log)) => {
-                let (summary, is_error) = match &o {
-                    vak_agent::TurnOutcome::Completed { .. } => ("completed".to_string(), false),
-                    vak_agent::TurnOutcome::Aborted { .. } => ("aborted".to_string(), false),
-                    vak_agent::TurnOutcome::Failed { error } => (format!("failed: {error}"), true),
-                    vak_agent::TurnOutcome::MaxTurnsReached => ("max_turns".to_string(), true),
-                };
-                hub.emit_agent_summary(&summary, Some(run_id.clone()));
-                // Ordered behind every delta still draining through the
-                // bridge — a direct broadcast send here could overtake them.
-                let _ = finish_tx
-                    .send(AgentEvent::RunFinished { summary, is_error })
-                    .await;
-                *handle
-                    .run_events
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-                index_session_later(admin_store.clone(), sessions_home.clone(), run_id.clone());
-                // Background reflection seam (docs/design/29 P1): after the
-                // summary is recorded and while this task still owns the
-                // ledger (a second in-process handle cannot take the file
-                // lock). Bounded; the result is deliberately ignored — a
-                // completed run never fails on reflection.
-                if !is_error && core.config().memory.reflection {
-                    let _ = tokio::time::timeout(
-                        REFLECTION_CALL_TIMEOUT,
-                        core.reflect_after_turn(&session_log, ""),
-                    )
-                    .await;
-                }
-                // Return the ledger so transcript stays available.
-                *handle
-                    .session
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session_log);
-            }
-            Err(e) => {
-                // Same leak class: restore from the durable ledger so the
-                // handle does not stay wedged on "run in progress".
-                if let Some(restored) = reopen_ledger(&core, &run_id) {
-                    *handle
-                        .session
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
-                }
-                let _ = finish_tx
-                    .send(AgentEvent::RunFinished {
-                        summary: format!("error: {e}"),
-                        is_error: true,
-                    })
-                    .await;
-            }
-        }
-        *handle
-            .run_events
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-        drop(steering);
-    });
-
-    StatusCode::ACCEPTED
-}
-
-#[derive(serde::Deserialize)]
-struct SteeringBody {
-    text: String,
-    /// Optional base64 images appended to the steered prompt, mirroring
-    /// /run so queued input is never degraded to bare text.
-    #[serde(default)]
-    attachments: Vec<RunAttachment>,
-}
-
-async fn send_steering(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<SteeringBody>,
-) -> StatusCode {
-    let Some(handle) = state.get(&id) else {
-        return StatusCode::NOT_FOUND;
-    };
-    let usable: Vec<&RunAttachment> = body
-        .attachments
-        .iter()
-        .filter(|a| !a.data.trim().is_empty())
         .collect();
-    if usable.is_empty() {
-        handle.steering.push_steering(body.text);
-    } else {
-        let mut blocks = vec![vak_llm::ContentBlock::text(body.text.clone())];
-        for a in usable {
-            blocks.push(vak_llm::ContentBlock::image_base64(
-                a.mime.clone(),
-                a.data.trim().to_string(),
-            ));
-        }
-        handle.steering.push_steering_message(vak_llm::Message {
-            role: vak_llm::Role::User,
-            content: blocks,
-        });
-    }
-    StatusCode::ACCEPTED
+    Ok(Json(EmptyList { items }))
 }
 
-async fn cancel_run(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
-    let Some(handle) = state.get(&id) else {
-        return StatusCode::NOT_FOUND;
-    };
-    handle
-        .cancel
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .cancel();
-    deny_pending_approvals(&handle);
-    // Route through the run's ordered bridge when one is live so the
-    // terminal cannot overtake deltas still in flight; fall back to a
-    // direct send between runs (nothing to overtake).
-    let bridge = handle
-        .run_events
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
-    let finished = AgentEvent::RunFinished {
-        summary: "cancelled by client".into(),
-        is_error: false,
-    };
-    match bridge {
-        Some(tx) => {
-            let _ = tx.send(finished).await;
-        }
-        None => {
-            let _ = handle.events_tx.send(finished);
-        }
-    }
-    StatusCode::ACCEPTED
+#[derive(Deserialize)]
+struct SessionListQuery {
+    project_id: Option<String>,
 }
 
-fn deny_pending_approvals(handle: &SessionHandle) {
-    let requests: Vec<ApprovalRequest> = handle
-        .pending
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .drain()
-        .map(|(_, request)| request)
-        .collect();
-    for request in requests {
-        request.respond(false);
-    }
+#[derive(Serialize)]
+struct SessionSummary {
+    id: SessionId,
+    project_id: ProjectId,
+    created_at: String,
+    status: String,
 }
 
-// ---- Subagent control plane -------------------------------------------------
-//
-// Children already stream lifecycle/tool events into the parent session's
-// SSE channel; these endpoints add the missing half: listing, steering, and
-// stopping from a remote surface. Scope-checked against the parent so one
-// session can never touch another's child.
-
-async fn list_subagents(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Json<serde_json::Value> {
-    let children = state.core.subagents().active_for(&id);
-    Json(serde_json::json!({ "subagents": children }))
-}
-
-#[derive(serde::Deserialize)]
-struct SubagentSteerBody {
-    text: String,
-}
-
-async fn steer_subagent(
-    State(state): State<AppState>,
-    Path((id, child)): Path<(String, String)>,
-    Json(body): Json<SubagentSteerBody>,
-) -> StatusCode {
-    if state.core.subagents().parent_of(&child).as_deref() != Some(id.as_str()) {
-        return StatusCode::NOT_FOUND;
-    }
-    if state.core.subagents().steer(&child, &body.text) {
-        StatusCode::ACCEPTED
-    } else {
-        StatusCode::CONFLICT
-    }
-}
-
-async fn stop_subagent(
-    State(state): State<AppState>,
-    Path((id, child)): Path<(String, String)>,
-) -> StatusCode {
-    if state.core.subagents().parent_of(&child).as_deref() != Some(id.as_str()) {
-        return StatusCode::NOT_FOUND;
-    }
-    if state.core.subagents().stop(&child) {
-        StatusCode::ACCEPTED
-    } else {
-        StatusCode::CONFLICT
-    }
-}
-
-#[derive(serde::Deserialize)]
-struct ApprovalBody {
-    approve: bool,
-}
-
-async fn answer_approval(
-    State(state): State<AppState>,
-    Path((id, req_id)): Path<(String, String)>,
-    Json(body): Json<ApprovalBody>,
-) -> StatusCode {
-    // Look the request up in THIS session's pending map only: approvals
-    // are never resolvable across sessions.
-    let Some(handle) = state.get(&id) else {
-        return StatusCode::NOT_FOUND;
-    };
-    match handle
-        .pending
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&req_id)
-    {
-        Some(req) => {
-            req.respond(body.approve);
-            StatusCode::OK
-        }
-        None => StatusCode::NOT_FOUND,
-    }
-}
-
-/// Dispatch forensics (docs/design/27 Phase A): the session's work
-/// receipts, newest last.
-async fn session_receipts(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<vak_llm::WorkReceipt>>, StatusCode> {
-    let Some(handle) = state.get(&id) else {
-        return Err(StatusCode::NOT_FOUND);
-    };
-    let Ok(session) = handle.session.lock() else {
-        return Err(StatusCode::NOT_FOUND);
-    };
-    match session.as_ref() {
-        Some(log) => Ok(Json(log.receipts().into_iter().cloned().collect())),
-        None => Err(StatusCode::NOT_FOUND),
-    }
-}
-
-/// Flow names discovered under `<sessions_home>/flow-runs` (doc 27 G).
-async fn flows_list(State(state): State<AppState>) -> Json<Vec<String>> {
-    let root = state.core.sessions_home().join("flow-runs");
-    let mut out = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&root) {
-        for e in entries.flatten() {
-            if e.path().is_dir() {
-                out.push(e.file_name().to_string_lossy().into_owned());
-            }
-        }
-    }
-    out.sort();
-    Json(out)
-}
-
-/// Run ledger filenames for one flow, oldest first.
-async fn flow_runs_list(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-) -> Result<Json<Vec<String>>, StatusCode> {
-    let dir = state.core.sessions_home().join("flow-runs").join(&name);
-    let mut out = Vec::new();
-    match std::fs::read_dir(&dir) {
-        Ok(entries) => {
-            for e in entries.flatten() {
-                if e.path().extension().map(|x| x == "json").unwrap_or(false) {
-                    out.push(e.file_name().to_string_lossy().into_owned());
-                }
-            }
-            out.sort();
-            Ok(Json(out))
-        }
-        Err(_) => Err(StatusCode::NOT_FOUND),
-    }
-}
-
-/// Typed run-graph snapshot (delta+snapshot invariant 4): projection of a
-/// single run ledger — statuses, layers, counts. No rendering opinions.
-async fn flow_run_graph(
-    State(state): State<AppState>,
-    Path((name, run)): Path<(String, String)>,
-) -> Result<Json<vak_flow::graph::RunGraph>, StatusCode> {
-    // `run` is either the ledger filename or its stem.
-    let run_file = if run.ends_with(".json") {
-        run.clone()
-    } else {
-        format!("{run}.json")
-    };
-    let path = state
-        .core
-        .sessions_home()
-        .join("flow-runs")
-        .join(&name)
-        .join(&run_file);
-    match std::fs::read_to_string(&path) {
-        Ok(body) => {
-            let state: vak_flow::FlowState =
-                serde_json::from_str(&body).map_err(|_| StatusCode::NOT_FOUND)?;
-            Ok(Json(vak_flow::graph::graph_snapshot(&state)))
-        }
-        Err(_) => Err(StatusCode::NOT_FOUND),
-    }
-}
-
-async fn events_sse(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    use tokio_stream::StreamExt;
-    use tokio_stream::wrappers::BroadcastStream;
-
-    let stream: std::pin::Pin<
-        Box<dyn tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
-    > = match state.get(&id) {
-        Some(h) => {
-            // Subscribe BEFORE notifying so no early events are missed,
-            // then mark the stream open so clients can safely trigger a run.
-            let mut rx = h.events_tx.subscribe();
-            let _ = rx.try_recv();
-            h.subscribed.notify_one();
-            let _ = h.events_tx.send(AgentEvent::StreamOpened);
-            Box::pin(BroadcastStream::new(rx).filter_map(|ev| match ev {
-                Ok(agent_event) => Some(Ok(
-                    Event::default().data(serde_json::to_string(&agent_event).unwrap_or_default()),
-                )),
-                Err(_) => Some(Ok(Event::default().data("{\"lagged\":true}"))),
-            }))
-        }
-        None => Box::pin(tokio_stream::once(Ok(
-            Event::default().data("{\"error\":\"unknown session\"}")
-        ))),
-    };
-    Sse::new(stream).keep_alive(KeepAlive::default())
+#[derive(Serialize)]
+struct TranscriptResponse {
+    messages: Vec<vak_llm::Message>,
 }
 
 async fn transcript(
     State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    if let Some(handle) = state.get(&id) {
-        let guard = handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let Some(s) = guard.as_ref() else {
-            return Json(serde_json::json!({ "error": "run in progress" })).into_response();
-        };
-        let msgs = s.derive_messages();
-        return Json(serde_json::json!({
-            "count": msgs.len(),
-            "usage": s.total_usage(),
-            "messages": msgs,
-        }))
-        .into_response();
-    }
-    match open_historical_session(&state, &id) {
-        Some(s) => {
-            let msgs = s.derive_messages();
-            Json(serde_json::json!({
-                "count": msgs.len(),
-                "usage": s.total_usage(),
-                "messages": msgs,
-            }))
-            .into_response()
-        }
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "unknown session" })),
-        )
-            .into_response(),
-    }
+    Path(session_id): Path<String>,
+) -> Result<Json<TranscriptResponse>, ApiError> {
+    let session_id = session_id.parse::<SessionId>().map_err(ApiError::domain)?;
+    Ok(Json(TranscriptResponse {
+        messages: state.runtime.session_messages(&session_id).await?,
+    }))
 }
 
-/// Markdown export over the same projection the JSON transcript serves.
-/// One shared renderer with the TUI export — byte-identical output for the
-/// same session (docs/design/29-personal-os.md P4).
-async fn transcript_markdown(
+#[derive(Deserialize)]
+pub struct StartRunRequest {
+    pub run_id: Option<RunId>,
+    pub session_id: SessionId,
+    pub project_id: ProjectId,
+    pub input: String,
+}
+
+#[derive(Serialize)]
+pub struct StartRunResponse {
+    pub run: RunSnapshot,
+    pub input: String,
+}
+
+async fn start_run(
     State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    if let Some(handle) = state.get(&id) {
-        let guard = handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let Some(s) = guard.as_ref() else {
-            return Json(serde_json::json!({ "error": "run in progress" })).into_response();
-        };
-        let md = vak_core::transcript_md::render_markdown(&s.derive_messages());
-        return markdown_response(md);
-    }
-    match open_historical_session(&state, &id) {
-        Some(s) => markdown_response(vak_core::transcript_md::render_markdown(
-            &s.derive_messages(),
-        )),
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "unknown session" })),
-        )
-            .into_response(),
-    }
-}
-
-fn markdown_response(md: String) -> axum::response::Response {
-    (
-        [(
-            axum::http::header::CONTENT_TYPE,
-            axum::http::HeaderValue::from_static("text/markdown; charset=utf-8"),
-        )],
-        md,
-    )
-        .into_response()
-}
-
-/// Historical sessions live on disk but not in the in-memory handle map
-/// (a fresh server process starts with an empty map). Open read-only for
-/// export/inspection without mutating run bookkeeping.
-fn open_historical_session(state: &AppState, id: &str) -> Option<vak_session::SessionLog> {
-    let path = state
-        .core
-        .sessions_home()
-        .join("sessions")
-        .join(vak_core::memory::hash_cwd(state.core.cwd()))
-        .join(format!("{id}.jsonl"));
-    vak_session::SessionLog::open(path).ok()
-}
-
-/// Reopen a session whose in-memory handle was consumed by a turn that
-/// then failed: `run_turn_with` returns `Err(CoreError)` without the log,
-/// but the append-only ledger file is durable — restore from it so the
-/// session does not stay wedged as "run in progress" forever.
-fn reopen_ledger(core: &vak_core::Core, id: &str) -> Option<vak_session::SessionLog> {
-    let path = core
-        .sessions_home()
-        .join("sessions")
-        .join(vak_core::memory::hash_cwd(core.cwd()))
-        .join(format!("{id}.jsonl"));
-    vak_session::SessionLog::open(path).ok()
-}
-
-// ---- Personal-OS surfaces (docs/design/29-personal-os.md P1–P4) -------------
-
-#[derive(serde::Deserialize)]
-struct DoctorQuery {
-    #[serde(default)]
-    session: Option<String>,
-}
-
-fn health_report_json(report: vak_core::health::HealthReport) -> serde_json::Value {
-    serde_json::json!({
-        "failures": report.failures,
-        "checks": report.checks.iter().map(|c| serde_json::json!({
-            "label": c.label,
-            "ok": c.detail.is_ok(),
-            "detail": match &c.detail { Ok(d) => d, Err(e) => e },
-        })).collect::<Vec<_>>(),
-        "facts": report.facts,
-        "ladder": report.ladder.map(|l| serde_json::json!({
-            "legs": l.legs,
-            "rendered": l.rendered,
-            "objective": l.objective,
-            "fallback_legs": l.fallback_legs,
-            "annotations": l.annotations,
-        })),
-    })
-}
-
-async fn doctor_report(
-    State(state): State<AppState>,
-    axum::extract::Query(q): axum::extract::Query<DoctorQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    // The optional session adds its frozen-ladder section; a live run owns
-    // the ledger, in which case doctor reports without that section rather
-    // than failing.
-    let session_handle = q.session.and_then(|sid| state.get(&sid));
-    let session_guard = session_handle.as_deref().map(|h| {
-        h.session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    Json(request): Json<StartRunRequest>,
+) -> Result<(StatusCode, Json<StartRunResponse>), ApiError> {
+    let run_id = request.run_id.unwrap_or_default();
+    let input = request.input.clone();
+    let session_id = request.session_id.clone();
+    let handle = state
+        .runtime
+        .start_run(run_id, request.session_id.clone(), request.project_id)
+        .await?;
+    let runtime = state.runtime.clone();
+    let run_handle = handle.clone_for_task();
+    let tasks = state.tasks.clone();
+    let task_run_id = handle.run_id().clone();
+    let task = tokio::spawn(async move {
+        runtime.execute_run(run_handle, session_id, input).await;
+        tasks.lock().await.remove(&task_run_id);
     });
-    let report =
-        vak_core::health::collect(&state.core, session_guard.as_ref().and_then(|g| g.as_ref()));
-    (StatusCode::OK, Json(health_report_json(report))).into_response()
-}
-
-#[derive(serde::Deserialize)]
-struct BackupExportBody {
-    dest_dir: String,
-    #[serde(default)]
-    include_secrets: bool,
-}
-
-#[derive(serde::Deserialize)]
-struct BackupImportBody {
-    src_dir: String,
-    #[serde(default)]
-    conflict: Option<String>,
-}
-
-/// Equality under canonicalization when both sides resolve; raw compare as
-/// a fallback for paths that do not exist yet.
-fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
-    match (a.canonicalize(), b.canonicalize()) {
-        (Ok(ca), Ok(cb)) => ca == cb,
-        _ => a == b,
-    }
-}
-
-async fn backup_export(
-    State(state): State<AppState>,
-    Json(body): Json<BackupExportBody>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let home = state.core.sessions_home();
-    let dest = std::path::PathBuf::from(body.dest_dir.trim());
-    if dest.as_os_str().is_empty() || same_path(&dest, &home) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "backup destination must differ from the vakcoder home itself"
-            })),
-        )
-            .into_response();
-    }
-    match tokio::task::spawn_blocking(move || {
-        vak_core::backup::export_to(&home, &dest, body.include_secrets)
-    })
-    .await
-    {
-        Ok(Ok(manifest)) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "manifest": manifest,
-                "included_secrets": body.include_secrets,
-            })),
-        )
-            .into_response(),
-        Ok(Err(e)) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-async fn backup_import(
-    State(state): State<AppState>,
-    Json(body): Json<BackupImportBody>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let home = state.core.sessions_home();
-    let src = std::path::PathBuf::from(body.src_dir.trim());
-    if src.as_os_str().is_empty() || same_path(&src, &home) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "backup source must differ from the vakcoder home itself"
-            })),
-        )
-            .into_response();
-    }
-    let conflict = match body.conflict.as_deref() {
-        None | Some("skip") => vak_core::backup::Conflict::Skip,
-        Some("rename") => vak_core::backup::Conflict::Rename,
-        Some(other) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": format!("unknown conflict policy '{other}': expected \"skip\" or \"rename\"")
-                })),
-            )
-                .into_response();
-        }
-    };
-    match tokio::task::spawn_blocking(move || vak_core::backup::import_from(&src, &home, conflict))
+    state
+        .tasks
+        .lock()
         .await
-    {
-        Ok(Ok(report)) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "copied": report.copied,
-                "renamed": report.renamed,
-                "skipped": report.skipped,
-            })),
-        )
-            .into_response(),
-        Ok(Err(e)) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+        .insert(handle.run_id().clone(), task);
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(StartRunResponse {
+            run: handle.snapshot().clone(),
+            input: request.input,
+        }),
+    ))
 }
 
-#[derive(serde::Deserialize)]
-struct DigestQuery {
-    #[serde(default)]
-    days: Option<u32>,
-}
-
-async fn digest_report(
+async fn list_runs(
     State(state): State<AppState>,
-    axum::extract::Query(q): axum::extract::Query<DigestQuery>,
-) -> Json<vak_core::digest::DigestReport> {
-    let days = q.days.unwrap_or(7).clamp(1, 90);
-    Json(vak_core::digest::digest(&state.core.sessions_home(), days))
-}
-
-// ---- Inbox (durable attention layer, docs/design/29-personal-os.md P6) ------
-
-const DEFAULT_INBOX_LIMIT: usize = 200;
-
-#[derive(serde::Deserialize)]
-struct InboxQuery {
-    #[serde(default)]
-    limit: Option<usize>,
-    /// Only entries without an ack tombstone.
-    #[serde(default)]
-    unread: bool,
-}
-
-/// Newest-first inbox entries plus the live unread total. The count always
-/// reflects the full unfiltered set; `limit` bounds the returned window only.
-async fn inbox_list(
-    State(state): State<AppState>,
-    axum::extract::Query(q): axum::extract::Query<InboxQuery>,
-) -> Json<serde_json::Value> {
-    let home = state.core.sessions_home();
-    let unread_count = vak_core::inbox::unread_count(&home);
-    let limit = q
-        .limit
-        .unwrap_or(DEFAULT_INBOX_LIMIT)
-        .clamp(1, vak_core::inbox::MAX_SCAN);
-    let entries = if q.unread {
-        vak_core::inbox::unread(&home)
-    } else {
-        vak_core::inbox::list(&home, limit)
-    }
-    .into_iter()
-    .take(limit)
-    .collect::<Vec<_>>();
-    Json(serde_json::json!({ "entries": entries, "unread_count": unread_count }))
-}
-
-async fn inbox_unread_count(State(state): State<AppState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "count": vak_core::inbox::unread_count(&state.core.sessions_home())
+    Query(query): Query<RunListQuery>,
+) -> Result<Json<EmptyList<RunSnapshot>>, ApiError> {
+    let session_id = query
+        .session_id
+        .map(|value| value.parse())
+        .transpose()
+        .map_err(ApiError::domain)?;
+    Ok(Json(EmptyList {
+        items: state.runtime.list_runs(session_id).await?,
     }))
 }
 
-/// Idempotent read-state: a tombstone append via `inbox::ack`. An unknown id
-/// is a 404; re-acking reports `{acked:false}` instead of writing twice.
-async fn inbox_ack(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let home = state.core.sessions_home();
-    if !vak_core::inbox::list(&home, vak_core::inbox::MAX_SCAN)
-        .iter()
-        .any(|e| e.id == id)
-    {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": format!("unknown inbox entry '{id}'") })),
-        )
-            .into_response();
-    }
-    match vak_core::inbox::ack(&home, &id) {
-        Ok(acked) => Json(serde_json::json!({ "acked": acked })).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+#[derive(Deserialize)]
+struct RunListQuery {
+    session_id: Option<String>,
 }
 
-async fn git_output(cwd: &std::path::Path, args: &[&str]) -> Option<String> {
-    let out = tokio::process::Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .await
-        .ok()?;
-    if !out.status.success() {
-        return None;
+async fn get_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<RunSnapshot>, ApiError> {
+    let run_id = run_id.parse::<RunId>().map_err(ApiError::domain)?;
+    if let Some(snapshot) = state.runtime.runs.snapshot(&run_id).await {
+        return Ok(Json(snapshot));
     }
-    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    state
+        .runtime
+        .list_runs(None)
+        .await?
+        .into_iter()
+        .find(|run| run.run_id == run_id)
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found("run", &run_id.to_string()))
 }
 
-/// Workspace diff for the review pane. Untracked files appear in `status`
-/// as `??` lines; patches are split per-file client-side.
-async fn session_diff(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Json<serde_json::Value> {
-    let Some(handle) = state.get(&id) else {
-        return Json(serde_json::json!({ "error": "unknown session" }));
-    };
-    let cwd = handle.cwd.clone();
-    let Some(status) = git_output(&cwd, &["status", "--porcelain"]).await else {
-        return Json(serde_json::json!({ "error": "not a git repository" }));
-    };
-    let diff = git_output(&cwd, &["--no-color", "diff", "--unified=3"])
-        .await
-        .unwrap_or_default();
-    let staged = git_output(&cwd, &["--no-color", "diff", "--cached", "--unified=3"])
-        .await
-        .unwrap_or_default();
-    Json(serde_json::json!({
-        "root": cwd,
-        "diff": diff,
-        "staged_diff": staged,
-        "status": status,
-    }))
+#[derive(Serialize)]
+struct CancelResponse {
+    cancelled: bool,
 }
 
-// ---- checkpoints (time travel) ----------------------------------------------
-
-async fn list_checkpoints(
+async fn cancel_run(
     State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> axum::response::Response {
-    // A session with no snapshots yet has no directory; that's an empty
-    // list, not an error.
-    let list = match vak_core::checkpoints::list(&state.core.sessions_home(), &id) {
-        Ok(list) => list,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-                .into_response();
+    Path(run_id): Path<String>,
+) -> Result<Json<CancelResponse>, ApiError> {
+    let run_id = run_id.parse::<RunId>().map_err(ApiError::domain)?;
+    let cancelled = state.runtime.cancel_run(&run_id).await?;
+    Ok(Json(CancelResponse { cancelled }))
+}
+
+async fn events(
+    State(state): State<AppState>,
+    Query(query): Query<EventQuery>,
+) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
+    let ids = state.event_ids.clone();
+    let stream = BroadcastStream::new(state.runtime.subscribe()).filter_map(move |event| {
+        let run_id = query.run_id.clone();
+        let ids = ids.clone();
+        async move {
+            match event {
+                Ok(event)
+                    if run_id
+                        .as_ref()
+                        .is_none_or(|id| event_run_id(&event).as_ref() == Some(id)) =>
+                {
+                    serde_json::to_string(&event).ok().map(|data| {
+                        Ok(SseEvent::default()
+                            .id((ids.fetch_add(1, Ordering::Relaxed).saturating_add(1)).to_string())
+                            .event(event_name(&event))
+                            .data(data))
+                    })
+                }
+                Err(_) => Some(Ok(SseEvent::default().event("resync").data(
+                    r#"{"reason":"event stream lagged; refetch authoritative state"}"#,
+                ))),
+                _ => None,
+            }
         }
-    };
-    let checkpoints: Vec<serde_json::Value> = list
-        .iter()
-        .map(|cp| {
-            serde_json::json!({
-                "seq": cp.seq,
-                "label": cp.label,
-                "created_at": cp.created_at.to_rfc3339(),
-                "files": cp.files.len(),
-            })
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+#[derive(Deserialize)]
+struct EventQuery {
+    run_id: Option<RunId>,
+}
+
+fn event_run_id(event: &Event) -> Option<RunId> {
+    match event {
+        Event::RunStatusChanged { run_id, .. }
+        | Event::RunOutput { run_id, .. }
+        | Event::RunFinished { run_id, .. } => Some(run_id.clone()),
+        _ => None,
+    }
+}
+
+fn event_name(event: &Event) -> &'static str {
+    match event {
+        Event::ProjectRegistered { .. } => "project.registered",
+        Event::SessionCreated { .. } => "session.created",
+        Event::RunStatusChanged { .. } => "run.status_changed",
+        Event::RunOutput { .. } => "run.output",
+        Event::ApprovalRequested { .. } => "approval.requested",
+        Event::RunFinished { .. } => "run.finished",
+        Event::ConfigChanged { .. } => "config.changed",
+        Event::DeliveryUpdated { .. } => "delivery.updated",
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ConfigQuery {
+    pub project_id: ProjectId,
+}
+
+async fn registered_root(
+    runtime: &Runtime,
+    project_id: &ProjectId,
+) -> Result<std::path::PathBuf, ApiError> {
+    runtime
+        .list_projects()
+        .await?
+        .into_iter()
+        .find(|project| &project.id == project_id)
+        .map(|project| std::path::PathBuf::from(project.root))
+        .ok_or_else(|| ApiError::not_found("project", &project_id.to_string()))
+}
+
+async fn get_config(
+    State(state): State<AppState>,
+    Query(query): Query<ConfigQuery>,
+) -> Result<Json<ConfigResponse>, ApiError> {
+    state
+        .runtime
+        .config_for(registered_root(&state.runtime, &query.project_id).await?)
+        .load()
+        .map(|snapshot| Json(ConfigResponse::from(snapshot)))
+        .map_err(ApiError::config)
+}
+
+#[derive(Deserialize)]
+pub struct ConfigPatch {
+    pub project_id: ProjectId,
+    pub revision: Option<u64>,
+    #[serde(alias = "patch")]
+    pub config: serde_json::Value,
+}
+
+async fn update_config(
+    State(state): State<AppState>,
+    Json(patch): Json<ConfigPatch>,
+) -> Result<Json<ConfigResponse>, ApiError> {
+    let config: vak_config::Config = serde_json::from_value(patch.config)
+        .map_err(|error| ApiError::message(StatusCode::BAD_REQUEST, error.to_string()))?;
+    let root = registered_root(&state.runtime, &patch.project_id).await?;
+    let revision = patch
+        .revision
+        .ok_or_else(|| ApiError::message(StatusCode::BAD_REQUEST, "revision is required"))?;
+    let current = state
+        .runtime
+        .config_for(root.clone())
+        .load()
+        .map_err(ApiError::config)?;
+    if current.revision != revision {
+        return Err(ApiError::config(
+            vak_config::ConfigError::RevisionConflict {
+                expected: revision,
+                actual: current.revision,
+            },
+        ));
+    }
+    let permission_changed = current.config.permission != config.permission;
+    if permission_changed {
+        state
+            .runtime
+            .revoke_capabilities_barrier(std::time::Duration::from_secs(5))
+            .await?;
+    }
+    state
+        .runtime
+        .config_for(root.clone())
+        .update_project(root, revision, |current| *current = config)
+        .map(|snapshot| {
+            let revision = snapshot.revision;
+            state
+                .runtime
+                .publish_event(vak_domain::Event::ConfigChanged { revision });
+            Json(ConfigResponse::from(snapshot))
         })
-        .collect();
-    Json(serde_json::json!({ "checkpoints": checkpoints })).into_response()
+        .map_err(ApiError::config)
 }
 
-async fn restore_checkpoint(
+async fn update_permission_mode(
     State(state): State<AppState>,
-    Path((id, seq)): Path<(String, u32)>,
-) -> axum::response::Response {
-    // A live run must never have its workspace mutated underneath it.
-    if let Some(handle) = state.get(&id)
-        && handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_none()
-    {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({ "error": "a run is active on this session" })),
-        )
-            .into_response();
+    Json(request): Json<PermissionModeRequest>,
+) -> Result<Json<ConfigResponse>, ApiError> {
+    let root = registered_root(&state.runtime, &request.project_id).await?;
+    let current = state
+        .runtime
+        .config_for(root.clone())
+        .load()
+        .map_err(ApiError::config)?;
+    if current.revision != request.revision {
+        return Err(ApiError::config(
+            vak_config::ConfigError::RevisionConflict {
+                expected: request.revision,
+                actual: current.revision,
+            },
+        ));
     }
-    // Best-of-N children captured inside their worktrees; attached handles
-    // know that cwd. Everything else restores into the workspace root.
-    let cwd = state
-        .get(&id)
-        .map(|h| h.cwd.clone())
-        .unwrap_or_else(|| state.core.cwd().clone());
-    let cp = match vak_core::checkpoints::load(&state.core.sessions_home(), &id, seq) {
-        Ok(cp) => cp,
-        Err(_) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": format!("checkpoint {seq} not found") })),
-            )
-                .into_response();
+    state
+        .runtime
+        .revoke_capabilities_barrier(std::time::Duration::from_secs(5))
+        .await?;
+    state
+        .runtime
+        .config_for(root.clone())
+        .update_project(root, request.revision, |config| {
+            config.permission.mode = match request.mode {
+                vak_domain::PermissionMode::ReadOnly => vak_config::PermissionMode::ReadOnly,
+                vak_domain::PermissionMode::WorkspaceWrite => {
+                    vak_config::PermissionMode::WorkspaceWrite
+                }
+                vak_domain::PermissionMode::FullAccess => vak_config::PermissionMode::FullAccess,
+            }
+        })
+        .map(|snapshot| {
+            let revision = snapshot.revision;
+            state
+                .runtime
+                .publish_event(vak_domain::Event::ConfigChanged { revision });
+            Json(ConfigResponse::from(snapshot))
+        })
+        .map_err(ApiError::config)
+}
+
+#[derive(Deserialize)]
+struct PermissionModeRequest {
+    project_id: ProjectId,
+    revision: u64,
+    mode: vak_domain::PermissionMode,
+}
+
+#[derive(Serialize)]
+struct ConfigResponse {
+    revision: u64,
+    config: vak_config::Config,
+    warnings: Vec<String>,
+}
+
+impl From<vak_config::ConfigSnapshot> for ConfigResponse {
+    fn from(snapshot: vak_config::ConfigSnapshot) -> Self {
+        Self {
+            revision: snapshot.revision,
+            config: snapshot.config,
+            warnings: snapshot.warnings,
         }
-    };
-    match tokio::task::spawn_blocking(move || vak_core::checkpoints::restore(&cwd, &cp)).await {
-        Ok(Ok((restored, deleted))) => Json(serde_json::json!({
-            "restored": restored,
-            "deleted": deleted,
-            "seq": seq,
-        }))
-        .into_response(),
-        Ok(Err(e)) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
     }
 }
 
-// ---- archive (sidebar visibility; ledgers stay untouched) --------------------
-
-fn archive_path(core: &Core) -> PathBuf {
-    core.sessions_home().join("archive.json")
+#[derive(Serialize)]
+struct Diagnostics {
+    status: &'static str,
+    details: serde_json::Value,
 }
 
-fn deleted_path(core: &Core) -> PathBuf {
-    core.sessions_home().join("deleted.json")
+#[derive(Serialize)]
+struct ProviderInfo {
+    name: String,
+    env_var: String,
+    requires_key: bool,
+    configured: bool,
 }
 
-fn read_archive(core: &Core) -> HashMap<String, bool> {
-    std::fs::read_to_string(archive_path(core))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
-}
-
-fn read_deleted(core: &Core) -> HashMap<String, bool> {
-    std::fs::read_to_string(deleted_path(core))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
-}
-
-fn write_deleted(core: &Core, map: &HashMap<String, bool>) {
-    if let Some(parent) = deleted_path(core).parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let tmp = deleted_path(core).with_extension("json.tmp");
-    if std::fs::write(&tmp, serde_json::to_string(map).unwrap_or_default()).is_ok() {
-        let _ = std::fs::rename(&tmp, deleted_path(core));
-    }
-}
-
-fn write_archive(core: &Core, map: &HashMap<String, bool>) {
-    if let Some(parent) = archive_path(core).parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let tmp = archive_path(core).with_extension("json.tmp");
-    if std::fs::write(&tmp, serde_json::to_string(map).unwrap_or_default()).is_ok() {
-        let _ = std::fs::rename(&tmp, archive_path(core));
-    }
-}
-
-#[derive(serde::Deserialize)]
-struct ArchiveBody {
-    archived: bool,
-}
-
-async fn set_archived(
+async fn list_providers(
     State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<ArchiveBody>,
-) -> axum::response::Response {
-    let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), state.core.cwd());
-    if !dir.join(format!("{id}.jsonl")).is_file() {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "unknown session" })),
-        )
-            .into_response();
-    }
-    let mut map = read_archive(&state.core);
-    map.insert(id, body.archived);
-    write_archive(&state.core, &map);
-    Json(serde_json::json!({ "archived": body.archived })).into_response()
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let projects = state.runtime.list_projects().await?;
+    let config = projects
+        .first()
+        .map(|p| state.runtime.config_for(&p.root).load())
+        .transpose()
+        .map_err(ApiError::config)?;
+    let current = config
+        .as_ref()
+        .and_then(|s| s.config.provider.name.clone())
+        .unwrap_or_else(|| "anthropic".into());
+    let current_model = config
+        .as_ref()
+        .and_then(|s| s.config.model.name.clone())
+        .unwrap_or_default();
+    let providers = ["anthropic", "openai", "google", "ollama"]
+        .into_iter()
+        .map(|name| {
+            let env = match name {
+                "anthropic" => "ANTHROPIC_API_KEY",
+                "google" => "GOOGLE_API_KEY",
+                "ollama" => "OLLAMA_API_KEY",
+                _ => "OPENAI_API_KEY",
+            };
+            let configured = state.runtime.secrets().get(env).ok().flatten().is_some()
+                || std::env::var(env).is_ok();
+            ProviderInfo {
+                name: name.into(),
+                env_var: env.into(),
+                requires_key: name != "ollama",
+                configured,
+            }
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(
+        serde_json::json!({"current": current, "current_model": current_model, "current_configured": providers.iter().any(|p| p.name == current && (p.configured || !p.requires_key)), "providers": providers}),
+    ))
 }
 
-async fn delete_session(
+async fn discover_models(
     State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> axum::response::Response {
-    let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), state.core.cwd());
-    if !dir.join(format!("{id}.jsonl")).is_file() {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "unknown session" })),
-        )
-            .into_response();
-    }
-    if state.get(&id).is_some_and(|handle| {
-        handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_none()
-    }) {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({ "error": "cannot delete a running task" })),
-        )
-            .into_response();
-    }
-    if !read_archive(&state.core).get(&id).copied().unwrap_or(false) {
-        return (
+    Path(provider): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(
+        serde_json::json!({"provider": provider, "models": state.runtime.discover_models(&provider).await?}),
+    ))
+}
+
+#[derive(Deserialize)]
+struct ProviderKeyRequest {
+    key: String,
+}
+
+async fn set_provider_key(
+    State(state): State<AppState>,
+    Path(provider): Path<String>,
+    Json(request): Json<ProviderKeyRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if request.key.trim().is_empty() {
+        return Err(ApiError::message(
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "only archived tasks can be deleted" })),
-        )
-            .into_response();
+            "provider key must not be empty",
+        ));
     }
-    let mut deleted = read_deleted(&state.core);
-    deleted.insert(id.clone(), true);
-    write_deleted(&state.core, &deleted);
-    Json(serde_json::json!({ "deleted": id })).into_response()
+    let env_var = state.runtime.set_provider_key(&provider, &request.key)?;
+    Ok(Json(
+        serde_json::json!({"provider": provider, "env_var": env_var, "configured": true}),
+    ))
 }
 
-async fn delete_all_archived(State(state): State<AppState>) -> axum::response::Response {
-    let archive = read_archive(&state.core);
-    let running_archived = archive.iter().any(|(id, archived)| {
-        *archived
-            && state.get(id).is_some_and(|handle| {
-                handle
-                    .session
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .is_none()
-            })
-    });
-    if running_archived {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({ "error": "stop running archived tasks before deleting all" })),
-        )
-            .into_response();
-    }
-    let mut deleted = read_deleted(&state.core);
-    let mut count = 0u64;
-    for (id, archived) in archive {
-        if archived && !deleted.get(&id).copied().unwrap_or(false) {
-            deleted.insert(id, true);
-            count += 1;
-        }
-    }
-    write_deleted(&state.core, &deleted);
-    Json(serde_json::json!({ "deleted": count })).into_response()
+async fn remove_provider_key(
+    State(state): State<AppState>,
+    Path(provider): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let (env_var, removed) = state.runtime.remove_provider_key(&provider)?;
+    Ok(Json(
+        serde_json::json!({"provider": provider, "env_var": env_var, "configured": false, "shadowed_by_env": !removed && std::env::var(&env_var).is_ok()}),
+    ))
 }
 
-async fn list_skills(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let skills: Vec<serde_json::Value> = state
-        .core
-        .skills()
-        .iter()
-        .map(|s| serde_json::json!({ "name": s.name, "description": s.description }))
-        .collect();
-    Json(serde_json::json!({ "skills": skills }))
+async fn diagnostics(State(state): State<AppState>) -> Json<Diagnostics> {
+    Json(Diagnostics {
+        status: "ok",
+        details: serde_json::json!({"data_home": state.runtime.data_home(), "capability_epoch": state.runtime.runs.current_epoch().0}),
+    })
 }
 
-#[derive(serde::Deserialize)]
-struct FileQuery {
+#[derive(Deserialize)]
+struct FsQuery {
+    project_id: ProjectId,
     path: String,
+    limit: Option<usize>,
 }
 
-/// Resolve `input` (absolute or cwd-relative) inside the workspace root.
-/// Symlinks are resolved for the existing portion; escapes are rejected.
-fn confined_path(cwd: &std::path::Path, input: &str) -> Option<std::path::PathBuf> {
-    let base = cwd.canonicalize().ok()?;
-    let raw = std::path::PathBuf::from(input);
-    let joined = if raw.is_absolute() {
-        raw
+fn safe_project_path(
+    root: &std::path::Path,
+    relative: &str,
+) -> Result<std::path::PathBuf, ApiError> {
+    let candidate = root.join(relative);
+    let canonical_root = std::fs::canonicalize(root)
+        .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let canonical = if candidate.exists() {
+        std::fs::canonicalize(&candidate)
+            .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, e.to_string()))?
     } else {
-        base.join(raw)
+        let parent = candidate
+            .parent()
+            .ok_or_else(|| ApiError::message(StatusCode::BAD_REQUEST, "invalid path"))?;
+        let parent = std::fs::canonicalize(parent)
+            .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, e.to_string()))?;
+        parent.join(
+            candidate
+                .file_name()
+                .ok_or_else(|| ApiError::message(StatusCode::BAD_REQUEST, "invalid path"))?,
+        )
     };
-    let mut ancestor = joined.as_path();
-    loop {
-        match ancestor.canonicalize() {
-            Ok(canonical) => {
-                let tail = joined
-                    .strip_prefix(ancestor)
-                    .unwrap_or(std::path::Path::new(""));
-                // join("") would append a trailing separator and break reads.
-                let resolved = if tail.as_os_str().is_empty() {
-                    canonical
-                } else {
-                    canonical.join(tail)
-                };
-                return if resolved.starts_with(&base) {
-                    Some(resolved)
-                } else {
-                    None
-                };
+    if !canonical.starts_with(&canonical_root) {
+        return Err(ApiError::message(
+            StatusCode::BAD_REQUEST,
+            "path escapes project root",
+        ));
+    }
+    Ok(canonical)
+}
+
+async fn fs_tree(
+    State(state): State<AppState>,
+    Query(query): Query<FsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let root = registered_root(&state.runtime, &query.project_id).await?;
+    let limit = query.limit.unwrap_or(400).min(10_000);
+    let mut files = Vec::new();
+    let mut stack = vec![root.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)
+            .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, e.to_string()))?
+        {
+            let entry =
+                entry.map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, e.to_string()))?;
+            let path = entry.path();
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n == ".git" || n == "target")
+            {
+                continue;
             }
-            Err(_) => {
-                ancestor = ancestor.parent()?;
+            if path.is_dir() {
+                stack.push(path);
+            } else if let Ok(rel) = path.strip_prefix(&root) {
+                files.push(rel.to_string_lossy().into_owned());
+                if files.len() >= limit {
+                    return Ok(Json(serde_json::json!({"files": files, "truncated": true})));
+                }
             }
         }
     }
+    files.sort();
+    Ok(Json(
+        serde_json::json!({"files": files, "truncated": false}),
+    ))
 }
 
 async fn read_file(
     State(state): State<AppState>,
-    axum::extract::Query(q): axum::extract::Query<FileQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let Some(path) = confined_path(state.core.cwd(), &q.path) else {
-        return (StatusCode::FORBIDDEN, "path outside workspace").into_response();
-    };
-    match tokio::fs::read(&path).await {
-        Ok(bytes) => {
-            // Never hand back lossily-decoded bytes: the editor can save what
-            // it was given, and a lossy round trip would destroy the file.
-            // Binary is reported as binary; images ride back as base64 so the
-            // UI can render them.
-            let kind = vak_core::files::classify(&path, &bytes);
-            let mut body = serde_json::json!({
-                "path": q.path,
-                "kind": kind.as_str(),
-                "bytes": bytes.len(),
-            });
-            match kind {
-                vak_core::files::FileKind::Text => {
-                    body["content"] = serde_json::json!(String::from_utf8_lossy(&bytes));
-                    body["editable"] = serde_json::json!(true);
-                }
-                vak_core::files::FileKind::Image => {
-                    use base64::Engine;
-                    body["data_url"] = serde_json::json!(format!(
-                        "data:{};base64,{}",
-                        vak_core::files::mime_for(&path),
-                        base64::engine::general_purpose::STANDARD.encode(&bytes)
-                    ));
-                    body["editable"] = serde_json::json!(false);
-                }
-                vak_core::files::FileKind::Binary => {
-                    body["editable"] = serde_json::json!(false);
-                }
-            }
-            (StatusCode::OK, Json(body)).into_response()
-        }
-        Err(_) => (StatusCode::NOT_FOUND, "file not found").into_response(),
-    }
+    Query(query): Query<FsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let root = registered_root(&state.runtime, &query.project_id).await?;
+    let path = safe_project_path(&root, &query.path)?;
+    let bytes = std::fs::read(&path)
+        .map_err(|e| ApiError::message(StatusCode::NOT_FOUND, e.to_string()))?;
+    let text = std::str::from_utf8(&bytes).ok().map(str::to_owned);
+    let kind = if text.is_some() { "text" } else { "binary" };
+    Ok(Json(
+        serde_json::json!({"path": query.path, "kind": kind, "bytes": bytes.len(), "editable": kind == "text", "content": text}),
+    ))
 }
 
-#[derive(serde::Deserialize)]
-struct WriteBody {
+#[derive(Deserialize)]
+struct FsWrite {
+    project_id: ProjectId,
     path: String,
     content: String,
 }
 
-async fn write_file(State(state): State<AppState>, Json(body): Json<WriteBody>) -> StatusCode {
-    let Some(path) = confined_path(state.core.cwd(), &body.path) else {
-        return StatusCode::FORBIDDEN;
-    };
-    // Refuse to overwrite a file this endpoint could never have rendered
-    // faithfully: saving text over an image or binary destroys it.
-    if let Ok(existing) = tokio::fs::read(&path).await
-        && !vak_core::files::classify(&path, &existing).editable()
-    {
-        return StatusCode::UNSUPPORTED_MEDIA_TYPE;
-    }
-    if let Some(parent) = path.parent()
-        && tokio::fs::create_dir_all(parent).await.is_err()
-    {
-        return StatusCode::INTERNAL_SERVER_ERROR;
-    }
-    match tokio::fs::write(&path, body.content.as_bytes()).await {
-        Ok(()) => StatusCode::OK,
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-    }
-}
-
-#[derive(serde::Deserialize)]
-struct ModeBody {
-    mode: String,
-}
-
-/// Accepts every spelling clients use: config kebab-case (`workspace-write`)
-/// and the Debug format surfaced by `/health` + `/config` (`WorkspaceWrite`).
-fn parse_mode(raw: &str) -> Option<vak_config::PermissionMode> {
-    vak_config::PermissionMode::deserialize_str(raw).or(match raw {
-        "ReadOnly" => Some(vak_config::PermissionMode::ReadOnly),
-        "WorkspaceWrite" => Some(vak_config::PermissionMode::WorkspaceWrite),
-        "FullAccess" => Some(vak_config::PermissionMode::FullAccess),
-        _ => None,
-    })
-}
-
-async fn set_permission_mode(
+async fn write_file(
     State(state): State<AppState>,
-    Json(body): Json<ModeBody>,
-) -> StatusCode {
-    match parse_mode(&body.mode) {
-        Some(mode) => {
-            let old = state.core.effective_permission_mode();
-            apply_permission_mode(&state, mode);
-            if old != mode {
-                vak_core::security_events::record(
-                    &state.core.sessions_home(),
-                    vak_core::security_events::EventKind::ConfigChange,
-                    "permission_mode_changed",
-                    &format!("{old:?} -> {mode:?}"),
-                    None,
-                );
-                state
-                    .hub
-                    .emit_config_changed("permission_mode", &format!("{mode:?}"));
-            }
-            StatusCode::OK
-        }
-        None => StatusCode::BAD_REQUEST,
-    }
-}
-
-/// M4.3 version handshake: lets clients verify they speak the same wire
-/// generation as the base before issuing commands.
-async fn server_version() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "name": "vakcoder",
-        "version": env!("CARGO_PKG_VERSION"),
-        "protocol": 1,
-    }))
-}
-
-async fn get_sandbox(State(state): State<AppState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "backend": state.core.effective_sandbox_backend(),
-        "name": state.core.effective_sandbox_name(),
-        "image": state.core.config().sandbox.image,
-    }))
-}
-
-#[derive(serde::Deserialize)]
-struct SandboxBody {
-    backend: Option<String>,
-}
-
-async fn set_sandbox_backend(
-    State(state): State<AppState>,
-    Json(body): Json<SandboxBody>,
-) -> StatusCode {
-    match body.backend.as_deref() {
-        None | Some("default") => {
-            state.core.set_sandbox_backend(None);
-        }
-        Some("os") | Some("docker") => {
-            state
-                .core
-                .set_sandbox_backend(Some(body.backend.unwrap_or_default()));
-        }
-        Some(_) => return StatusCode::BAD_REQUEST,
-    }
-    state
-        .hub
-        .emit_config_changed("sandbox_backend", &state.core.effective_sandbox_backend());
-    StatusCode::OK
-}
-
-async fn compact_session(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let Some(handle) = state.get(&id) else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "session not found" })),
-        )
-            .into_response();
-    };
-    // Compaction rewrites the ledger tail; a live run must never race it.
-    if handle
-        .session
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .is_none()
-    {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({ "error": "a run is active on this session" })),
-        )
-            .into_response();
-    }
-    let taken = handle
-        .session
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take();
-    let Some(session) = taken else {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({ "error": "a run is active on this session" })),
-        )
-            .into_response();
-    };
-    let cancel = tokio_util::sync::CancellationToken::new();
-    let (session, outcome) = state.core.compact_session_now(session, cancel).await;
-    *handle
-        .session
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session);
-    match (outcome.report, outcome.error) {
-        (Some(report), _) => Json(serde_json::json!({
-            "before_tokens": report.before_tokens,
-            "after_tokens": report.after_tokens,
-            "summarized_messages": report.summarized_messages,
-        }))
-        .into_response(),
-        (None, Some(error)) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": error })),
-        )
-            .into_response(),
-        (None, None) => Json(serde_json::json!({ "noop": true })).into_response(),
-    }
-}
-
-fn apply_permission_mode(state: &AppState, mode: vak_config::PermissionMode) {
-    if state.core.effective_permission_mode() == mode {
-        return;
-    }
-    state.core.set_permission_mode(mode);
-    let handles: Vec<Arc<SessionHandle>> = state
-        .sessions
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .values()
-        .cloned()
-        .collect();
-    for handle in handles {
-        handle
-            .cancel
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .cancel();
-        handle
-            .side_cancel
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .cancel();
-        deny_pending_approvals(&handle);
-    }
-}
-
-/// Picker data for provider/model UIs. Reports WHICH env var authenticates
-/// each provider and whether it resolves right now — never the value.
-async fn list_providers(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mut providers = Vec::new();
-    for name in state.core.provider_names() {
-        let requires_key = name != "ollama";
-        let configured = state.core.provider_configured(&name);
-        providers.push(serde_json::json!({
-            "name": name,
-            "env_var": Core::provider_env_var(&name),
-            "requires_key": requires_key,
-            "configured": configured,
-        }));
-    }
-    Json(serde_json::json!({
-        "current": state.core.effective_provider(),
-        "current_model": state.core.effective_model(),
-        "current_configured": state.core.provider_configured(&state.core.effective_provider()),
-        "providers": providers,
-    }))
-}
-
-#[derive(serde::Deserialize)]
-struct ProviderRef {
-    provider: String,
-}
-
-/// Revoke a provider key. Reports when the variable is still set in the
-/// real environment, since that keeps the provider authenticated and no
-/// app-level action can change it.
-async fn delete_provider_key(
-    State(state): State<AppState>,
-    Json(body): Json<ProviderRef>,
-) -> axum::response::Response {
-    match state.core.remove_provider_key(&body.provider) {
-        Ok(removed) => {
-            vak_core::security_events::record(
-                &state.core.sessions_home(),
-                vak_core::security_events::EventKind::ProviderKeyChange,
-                "provider_key_removed",
-                &format!(
-                    "provider={} shadowed={}",
-                    body.provider, removed.shadowed_by_env
-                ),
-                None,
-            );
-            state
-                .hub
-                .emit_config_changed("provider_key_removed", &body.provider);
-            Json(serde_json::json!({
-                "provider": body.provider,
-                "env_var": removed.env_var,
-                "configured": removed.shadowed_by_env,
-                "shadowed_by_env": removed.shadowed_by_env,
-            }))
-            .into_response()
-        }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-/// Live model list for one provider, straight from its API using the key
-/// currently configured for it. Reports the failure reason rather than
-/// substituting a stale hard-coded list.
-async fn discover_models(
-    State(state): State<AppState>,
-    axum::extract::Path(name): axum::extract::Path<String>,
-) -> axum::response::Response {
-    if !Core::provider_known(&name) {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": format!("unknown provider '{name}'") })),
-        )
-            .into_response();
-    }
-    match state.core.discover_models(&name).await {
-        Ok(models) => {
-            Json(serde_json::json!({ "provider": name, "models": models })).into_response()
-        }
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({ "provider": name, "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-#[derive(serde::Deserialize)]
-struct ProviderKeyBody {
-    provider: String,
-    key: String,
-}
-
-/// Persists a credential to the user-level secret store and makes it
-/// effective immediately. The key is accepted once and never echoed back.
-async fn put_provider_key(
-    State(state): State<AppState>,
-    Json(body): Json<ProviderKeyBody>,
-) -> axum::response::Response {
-    match state.core.set_provider_key(&body.provider, &body.key) {
-        Ok(env_var) => {
-            vak_core::security_events::record(
-                &state.core.sessions_home(),
-                vak_core::security_events::EventKind::ProviderKeyChange,
-                "provider_key_set",
-                &format!("provider={}", body.provider),
-                None,
-            );
-            state
-                .hub
-                .emit_config_changed("provider_key_set", &body.provider);
-            Json(serde_json::json!({
-                "provider": body.provider,
-                "env_var": env_var,
-                "configured": true,
-            }))
-            .into_response()
-        }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-async fn list_custom_commands(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let commands: Vec<serde_json::Value> = state
-        .core
-        .custom_commands()
-        .into_iter()
-        .map(|c| {
-            serde_json::json!({
-                "name": c.name,
-                "description": c.description,
-                "source": c.source,
-                "template": c.template,
-            })
-        })
-        .collect();
-    Json(serde_json::json!({ "commands": commands }))
-}
-
-async fn list_tools(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let names: Vec<String> = state
-        .core
-        .agent_tools()
-        .iter()
-        .map(|t| t.name().to_string())
-        .collect();
-    Json(serde_json::json!({ "tools": names }))
-}
-
-async fn breaker_status(State(state): State<AppState>) -> Json<serde_json::Value> {
-    match state.core.breaker().check() {
-        Ok(()) => Json(serde_json::json!({ "open": false })),
-        Err(open) => Json(serde_json::json!({
-            "open": true,
-            "remaining_secs": open.remaining_secs,
-            "failures": open.failures,
-        })),
-    }
-}
-
-async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let cfg = state.core.config();
-    let project_path = vak_config::project_path(state.core.cwd());
-    Json(serde_json::json!({
-        "provider": state.core.effective_provider(),
-        "model": state.core.effective_model(),
-        "max_tokens": cfg.max_tokens,
-        "max_turns": state.core.effective_max_turns(),
-        "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
-        "subagents": cfg.subagents,
-        "max_retries": cfg.max_retries,
-        "retry_base_backoff_ms": cfg.retry_base_backoff_ms,
-        "request_timeout_secs": cfg.request_timeout_secs,
-        "run_retry_attempts": cfg.run_retry_attempts,
-        "run_retry_base_backoff_ms": cfg.run_retry_base_backoff_ms,
-        "circuit_breaker_threshold": cfg.circuit_breaker_threshold,
-        "circuit_breaker_cooldown_secs": cfg.circuit_breaker_cooldown_secs,
-        "context_window": cfg.context_window,
-        "theme": state.core.effective_theme(),
-        "bell": cfg.ui.bell,
-        "stop_policy": {
-            "enabled": cfg.stop_policy.enabled,
-            "marker_gate": cfg.stop_policy.marker_gate,
-            "verify_gate": cfg.stop_policy.verify_gate,
-            "max_blocks": cfg.stop_policy.max_blocks,
-        },
-        "route": {
-            "objective": cfg.route.objective,
-            "fallback_models": cfg.route.fallback_models,
-            "max_fallbacks": cfg.route.max_fallbacks,
-            "quality_hints": cfg.route.quality_hints,
-        },
-        "integrations": {
-            "mcp_servers": state.core.effective_mcp().servers.keys().collect::<Vec<_>>(),
-            "hooks": state.core.effective_hooks().len(),
-            "skills": state.core.skills().iter().map(|skill| skill.name.clone()).collect::<Vec<_>>(),
-        },
-        "paths": {
-            "project_config": project_path,
-            "server_config": vak_config::server_config_path(),
-            "global_config": vak_config::global_path(),
-            "sessions_home": state.core.sessions_home(),
-            "cwd": state.core.cwd(),
-        },
-        "warnings": cfg.warnings,
-    }))
-}
-
-#[derive(serde::Deserialize, Default)]
-struct ConfigPatch {
-    provider: Option<String>,
-    model: Option<String>,
-    max_turns: Option<usize>,
-    permission_mode: Option<String>,
-    theme: Option<String>,
-}
-
-fn persist_config_patch(path: &std::path::Path, patch: &ConfigPatch) -> Result<(), String> {
-    let mut root: toml::Value = if path.exists() {
-        let raw =
-            std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-        toml::from_str(&raw).map_err(|e| format!("parse {}: {e}", path.display()))?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let table = root.as_table_mut().ok_or("config root is not a table")?;
-    if let Some(ref p) = patch.provider {
-        table.insert("provider".into(), toml::Value::String(p.trim().to_string()));
-    }
-    if let Some(ref m) = patch.model {
-        table.insert("model".into(), toml::Value::String(m.trim().to_string()));
-    }
-    if let Some(t) = patch.max_turns {
-        table.insert("max_turns".into(), toml::Value::Integer(t as i64));
-    }
-    if let Some(ref mode) = patch.permission_mode {
-        table.insert(
-            "permission_mode".into(),
-            toml::Value::String(mode.trim().to_string()),
-        );
-    }
-    if let Some(ref theme) = patch.theme {
-        let ui = table
-            .entry(String::from("ui"))
-            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-        if let Some(ui_table) = ui.as_table_mut() {
-            ui_table.insert("theme".into(), toml::Value::String(theme.clone()));
-        }
-    }
-    let out = toml::to_string_pretty(&root).map_err(|e| format!("serialize config: {e}"))?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
-    }
-    std::fs::write(path, out).map_err(|e| format!("write {}: {e}", path.display()))
-}
-
-async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatch>) -> StatusCode {
-    let mut changes = Vec::new();
-    if let Some(ref provider) = body.provider {
-        if provider.trim().is_empty() {
-            return StatusCode::BAD_REQUEST;
-        }
-        state.core.set_provider(provider.trim().to_string());
-        changes.push(format!("provider={}", provider.trim()));
-    }
-    if let Some(ref model) = body.model {
-        if model.trim().is_empty() {
-            return StatusCode::BAD_REQUEST;
-        }
-        state.core.set_model(model.trim().to_string());
-        changes.push(format!("model={}", model.trim()));
-    }
-    if let Some(max_turns) = body.max_turns {
-        if !(1..=1000).contains(&max_turns) {
-            return StatusCode::BAD_REQUEST;
-        }
-        state.core.set_max_turns(max_turns);
-        changes.push(format!("max_turns={max_turns}"));
-    }
-    if let Some(ref mode) = body.permission_mode {
-        let Some(parsed) = parse_mode(mode) else {
-            return StatusCode::BAD_REQUEST;
-        };
-        apply_permission_mode(&state, parsed);
-        changes.push(format!("permission_mode={parsed:?}"));
-    }
-    if let Some(ref theme) = body.theme {
-        if !matches!(theme.as_str(), "dark" | "light" | "plain") {
-            return StatusCode::BAD_REQUEST;
-        }
-        changes.push(format!("theme={theme}"));
-        state.core.set_theme(theme.clone());
-    }
-    if !changes.is_empty() {
-        if let Err(e) = persist_config_patch(&state.config_path, &body) {
-            eprintln!("[config] persist failed: {e}");
-        }
-        vak_core::security_events::record(
-            &state.core.sessions_home(),
-            vak_core::security_events::EventKind::ConfigChange,
-            "config_patched",
-            &changes.join(", "),
-            None,
-        );
-        state
-            .hub
-            .emit_config_changed("config_patched", &changes.join(", "));
-    }
-    StatusCode::OK
-}
-
-// ---- MCP server management --------------------------------------------------
-//
-// The desktop Settings page edits the MCP table here: GET reads the
-// effective table; PUT validates, persists to the project config.toml
-// ([mcp.servers]) and hot-applies into the running Core so the next turn
-// picks it up without a backend restart. mcp.servers is a privileged key:
-// this endpoint is only reachable through the bearer-token router of a
-// locally trusted surface.
-
-async fn get_mcp_servers(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mcp = state.core.effective_mcp();
-    Json(serde_json::json!({ "servers": mcp.servers }))
-}
-
-#[derive(serde::Deserialize, Clone)]
-struct HookInput {
-    event: String,
-    #[serde(default)]
-    matcher: Option<String>,
-    command: String,
-    #[serde(default)]
-    timeout_ms: Option<u64>,
-    #[serde(default = "default_hook_enabled")]
-    enabled: bool,
-}
-
-fn default_hook_enabled() -> bool {
-    true
-}
-
-#[derive(serde::Deserialize)]
-struct HooksPutBody {
-    hooks: Vec<HookInput>,
-}
-
-async fn get_hooks(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let hooks = state
-        .core
-        .effective_hooks()
-        .iter()
-        .map(|h| {
-            serde_json::json!({
-                "event": h.event,
-                "matcher": h.matcher,
-                "command": h.command,
-                "timeout_ms": h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS),
-                "enabled": true,
-            })
-        })
-        .collect::<Vec<_>>();
-    Json(serde_json::json!({ "hooks": hooks }))
-}
-
-async fn put_hooks(
-    State(state): State<AppState>,
-    Json(body): Json<HooksPutBody>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    for hook in &body.hooks {
-        if !matches!(
-            hook.event.as_str(),
-            "session_start"
-                | "session-start"
-                | "pre_tool_use"
-                | "pre-tool-use"
-                | "post_tool_use"
-                | "post-tool-use"
-                | "stop"
-        ) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(
-                    serde_json::json!({ "error": format!("unknown hook event '{}'", hook.event) }),
-                ),
-            )
-                .into_response();
-        }
-        if hook.enabled && hook.command.trim().is_empty() {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": "enabled hooks need a command" })),
-            )
-                .into_response();
-        }
-        if hook.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS) == 0 {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": "hook timeout must be greater than zero" })),
-            )
-                .into_response();
-        }
-    }
-    let path = state.config_path.clone();
-    let mut root: toml::Value = if path.exists() {
-        match std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|raw| toml::from_str(&raw).ok())
-        {
-            Some(v) => v,
-            None => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({ "error": "project config is invalid" })),
-                )
-                    .into_response();
-            }
-        }
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let values = body
-        .hooks
-        .iter()
-        .filter(|h| h.enabled)
-        .map(|h| {
-            let mut t = toml::map::Map::new();
-            t.insert("event".into(), toml::Value::String(h.event.clone()));
-            t.insert(
-                "command".into(),
-                toml::Value::String(h.command.trim().into()),
-            );
-            if let Some(m) = h.matcher.as_ref().filter(|m| !m.trim().is_empty()) {
-                t.insert("match".into(), toml::Value::String(m.clone()));
-            }
-            t.insert(
-                "timeout_ms".into(),
-                toml::Value::Integer(h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS) as i64),
-            );
-            toml::Value::Table(t)
-        })
-        .collect::<Vec<_>>();
-    let Some(table) = root.as_table_mut() else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "config root is not a table" })),
-        )
-            .into_response();
-    };
-    table.insert("hooks".into(), toml::Value::Array(values));
-    let out = match toml::to_string_pretty(&root) {
-        Ok(v) => v,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("serialize config: {e}") })),
-            )
-                .into_response();
-        }
-    };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Err(e) = std::fs::write(&path, out) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("write config: {e}") })),
-        )
-            .into_response();
-    }
-    state.core.set_hooks(
-        body.hooks
-            .iter()
-            .filter(|h| h.enabled)
-            .map(|h| vak_config::HookConfig {
-                event: h.event.clone(),
-                matcher: h.matcher.clone().filter(|m| !m.trim().is_empty()),
-                command: h.command.trim().to_string(),
-                timeout_ms: Some(h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS)),
-            })
-            .collect(),
-    );
-    let enabled_count = body.hooks.iter().filter(|h| h.enabled).count();
-    vak_core::security_events::record(
-        &state.core.sessions_home(),
-        vak_core::security_events::EventKind::ConfigChange,
-        "hooks_updated",
-        &format!("enabled={enabled_count} total={}", body.hooks.len()),
-        None,
-    );
-    state.hub.emit_config_changed(
-        "hooks_updated",
-        &format!("enabled={enabled_count} total={}", body.hooks.len()),
-    );
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({ "saved": true, "count": enabled_count })),
-    )
-        .into_response()
-}
-
-#[derive(serde::Deserialize, Clone)]
-struct McpServerInput {
-    command: String,
-    #[serde(default)]
-    args: Vec<String>,
-    #[serde(default)]
-    env: std::collections::BTreeMap<String, String>,
-    #[serde(default)]
-    network: bool,
-}
-
-#[derive(serde::Deserialize)]
-struct McpPutBody {
-    servers: std::collections::BTreeMap<String, McpServerInput>,
-}
-
-fn valid_server_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 64
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-}
-
-fn persist_mcp_to_project_config(
-    path: &std::path::Path,
-    servers: &std::collections::BTreeMap<String, McpServerInput>,
-) -> Result<std::path::PathBuf, String> {
-    let mut root: toml::Value = if path.exists() {
-        let raw =
-            std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-        // A config we cannot parse is never silently replaced.
-        toml::from_str(&raw).map_err(|e| format!("parse {}: {e}", path.display()))?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let mut servers_table = toml::map::Map::new();
-    for (name, s) in servers {
-        let mut entry = toml::map::Map::new();
-        entry.insert("command".into(), toml::Value::String(s.command.clone()));
-        entry.insert(
-            "args".into(),
-            toml::Value::Array(s.args.iter().cloned().map(toml::Value::String).collect()),
-        );
-        if !s.env.is_empty() {
-            entry.insert(
-                "env".into(),
-                toml::Value::Table(
-                    s.env
-                        .iter()
-                        .map(|(k, v)| (k.clone(), toml::Value::String(v.clone())))
-                        .collect(),
-                ),
-            );
-        }
-        if s.network {
-            entry.insert("network".into(), toml::Value::Boolean(true));
-        }
-        servers_table.insert(name.clone(), toml::Value::Table(entry));
-    }
-    let mut mcp_table = toml::map::Map::new();
-    mcp_table.insert("servers".into(), toml::Value::Table(servers_table));
-    root.as_table_mut()
-        .ok_or("config root is not a table")?
-        .insert("mcp".into(), toml::Value::Table(mcp_table));
-    let out = toml::to_string_pretty(&root).map_err(|e| format!("serialize config: {e}"))?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
-    }
-    std::fs::write(path, out).map_err(|e| format!("write {}: {e}", path.display()))?;
-    Ok(path.to_path_buf())
-}
-
-async fn put_mcp_servers(
-    State(state): State<AppState>,
-    Json(body): Json<McpPutBody>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    for name in body.servers.keys() {
-        if !valid_server_name(name) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": format!("invalid server name '{name}'") })),
-            )
-                .into_response();
-        }
-    }
-    for (name, s) in &body.servers {
-        if s.command.trim().is_empty() {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": format!("server '{name}' needs a command") })),
-            )
-                .into_response();
-        }
-    }
-    match persist_mcp_to_project_config(&state.config_path, &body.servers) {
-        Ok(_) => {}
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e })),
-            )
-                .into_response();
-        }
-    }
-    let cfg = vak_config::McpConfig {
-        servers: body
-            .servers
-            .iter()
-            .map(|(name, s)| {
-                (
-                    name.clone(),
-                    vak_config::McpServerConfig {
-                        command: s.command.trim().to_string(),
-                        args: s.args.clone(),
-                        env: s.env.clone(),
-                        network: s.network,
-                    },
-                )
-            })
-            .collect(),
-    };
-    state.core.set_mcp_servers(cfg);
-    vak_core::security_events::record(
-        &state.core.sessions_home(),
-        vak_core::security_events::EventKind::ConfigChange,
-        "mcp_servers_updated",
-        &format!("count={}", body.servers.len()),
-        None,
-    );
-    state.hub.emit_config_changed(
-        "mcp_servers_updated",
-        &format!("count={}", body.servers.len()),
-    );
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({ "saved": true, "count": body.servers.len() })),
-    )
-        .into_response()
-}
-
-#[derive(serde::Deserialize)]
-struct TreeQuery {
-    path: Option<String>,
-    limit: Option<usize>,
-}
-
-/// Bounded recursive listing for @-mention autocomplete. Vendored/build
-/// directories are skipped; results are cwd-relative and capped.
-async fn fs_tree(
-    State(state): State<AppState>,
-    axum::extract::Query(q): axum::extract::Query<TreeQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    use walkdir::WalkDir;
-
-    let limit = q.limit.unwrap_or(400).min(2000);
-    let base = match confined_path(state.core.cwd(), q.path.as_deref().unwrap_or(".")) {
-        Some(p) => p,
-        None => return (StatusCode::FORBIDDEN, "path outside workspace").into_response(),
-    };
-    const SKIP: &[&str] = &[
-        ".git",
-        "target",
-        "node_modules",
-        "dist",
-        "build",
-        ".venv",
-        "venv",
-        "__pycache__",
-        ".vakcoder",
-        ".next",
-        ".cache",
-        "coverage",
-    ];
-    let mut files: Vec<String> = Vec::new();
-    for entry in WalkDir::new(&base)
-        .max_depth(8)
-        .follow_links(false)
-        .into_iter()
-        .filter_entry(|e| {
-            e.file_name()
-                .to_str()
-                .map(|n| !SKIP.contains(&n) || e.depth() == 0)
-                .unwrap_or(true)
-        })
-    {
-        let Ok(entry) = entry else { continue };
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        // Strip against `base` (canonicalized): on macOS /var is a symlink
-        // to /private/var, so prefixes against raw cwd never match.
-        let Ok(rel) = entry.path().strip_prefix(&base) else {
-            continue;
-        };
-        let mut text = rel.to_string_lossy().replace('\\', "/");
-        if let Some(sub) = q
-            .path
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty() && *s != ".")
-        {
-            text = format!("{}/{}", sub.trim_end_matches('/'), text);
-        }
-        files.push(text);
-        if files.len() >= limit {
-            break;
-        }
-    }
-    files.sort_unstable();
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({ "files": files, "truncated": files.len() >= limit })),
-    )
-        .into_response()
-}
-
-#[derive(serde::Deserialize)]
-struct SideBody {
-    question: String,
-}
-
-/// `/btw`: ask a question using the session's context WITHOUT landing it on
-/// the main chain. Mechanics: append the Q + run the turn as a sibling
-/// branch (parent = current main tail), then restore the tail so future
-/// main turns continue exactly where they were. The side entries stay in
-/// the ledger — reconstructable, never deleted.
-async fn side_chat(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<SideBody>,
-) -> StatusCode {
-    let Some(handle) = state.get(&id) else {
-        return StatusCode::NOT_FOUND;
-    };
-    let Some(mut taken) = handle
-        .session
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take()
-    else {
-        return StatusCode::CONFLICT; // main run active
-    };
-    if state.core.provider().is_err() {
-        *handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        return StatusCode::SERVICE_UNAVAILABLE;
-    }
-
-    let tail_main = taken.tail_id().cloned();
-    if let Err(_e) = taken.append_message(vak_session::MessageRecord {
-        message: vak_llm::Message::user_text(body.question.clone()),
-        meta: None,
-    }) {
-        *handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-        return StatusCode::INTERNAL_SERVER_ERROR;
-    }
-    let side_tx = handle.side_events_tx.clone();
-    let approver: Arc<dyn Approver> = Arc::new(HttpApprover {
-        events_tx: handle.events_tx.clone(),
-        pending: handle.pending.clone(),
-        session_id: handle.id.clone(),
-    });
-    let events = mpsc_to_broadcast(side_tx.clone());
-    let cancel = handle
-        .side_cancel
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
-    let core = state.core.clone();
-
-    tokio::spawn(async move {
-        // No steering on side chats by design: they are read-only Q&A over
-        // the session context, not a second control surface.
-        let outcome = core
-            .run_turn_with(
-                taken,
-                &body.question,
-                cancel,
-                Some(approver),
-                None,
-                None,
-                events,
-            )
-            .await;
-        let (summary, is_error) = match &outcome {
-            Ok((vak_agent::TurnOutcome::Completed { .. }, _)) => ("completed".to_string(), false),
-            Ok((vak_agent::TurnOutcome::Aborted { .. }, _)) => ("aborted".to_string(), false),
-            Ok((_, _)) => ("ended".to_string(), false),
-            Err(e) => (format!("error: {e}"), true),
-        };
-        let turn_ok = matches!(&outcome, Ok((_, _)));
-        if let Ok((_, mut restored)) = outcome {
-            // Rewind the branch pointer to the main line: the side entries
-            // remain in the ledger as a sibling branch — reconstructable via
-            // their parent chain, invisible to derive_messages().
-            if let Some(main_tail) = &tail_main {
-                let _ = restored.branch_at(main_tail);
-            }
-            *handle
-                .session
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
-        }
-        let _ = side_tx.send(AgentEvent::RunFinished { summary, is_error });
-        // On a failed turn the taken log is gone with the Err — reopen the
-        // durable ledger so the session does not stay wedged as
-        // "run in progress" forever (found by the v0.6 deployment gate).
-        if !turn_ok && let Some(log) = reopen_ledger(&core, &id) {
-            *handle
-                .session
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
-        }
-    });
-
-    StatusCode::ACCEPTED
-}
-
-async fn side_events_sse(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    use tokio_stream::StreamExt;
-    use tokio_stream::wrappers::BroadcastStream;
-
-    let stream: std::pin::Pin<
-        Box<dyn tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
-    > = match state.get(&id) {
-        Some(h) => {
-            let mut rx = h.side_events_tx.subscribe();
-            let _ = rx.try_recv();
-            let _ = h.side_events_tx.send(AgentEvent::StreamOpened);
-            Box::pin(BroadcastStream::new(rx).filter_map(|ev| match ev {
-                Ok(agent_event) => Some(Ok(
-                    Event::default().data(serde_json::to_string(&agent_event).unwrap_or_default()),
-                )),
-                Err(_) => Some(Ok(Event::default().data("{\"lagged\":true}"))),
-            }))
-        }
-        None => Box::pin(tokio_stream::once(Ok(
-            Event::default().data("{\"error\":\"unknown session\"}")
-        ))),
-    };
-    Sse::new(stream).keep_alive(KeepAlive::default())
-}
-
-async fn side_cancel_run(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
-    let Some(handle) = state.get(&id) else {
-        return StatusCode::NOT_FOUND;
-    };
-    handle
-        .side_cancel
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .cancel();
-    let _ = handle.side_events_tx.send(AgentEvent::RunFinished {
-        summary: "cancelled by client".into(),
-        is_error: false,
-    });
-    StatusCode::ACCEPTED
-}
-
-#[derive(serde::Deserialize)]
-struct BestBody {
-    prompt: String,
-    n: Option<usize>,
-}
-
-/// Best-of-N: fan the same prompt across N isolated git worktrees, each with
-/// its own session + event stream. Candidates are compared by diff; `keep`
-/// merges a branch, `discard` drops it. Ledger-native: every run is a normal
-/// session under the shared store.
-async fn start_bestofn(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<BestBody>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-
-    let Some(anchor) = state.get(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    if anchor
-        .session
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .is_none()
-    {
-        return StatusCode::CONFLICT.into_response();
-    }
-    let Ok(provider) = state.core.provider() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
-
-    let n = body.n.unwrap_or(2).clamp(1, 4);
-    let repo = state.core.cwd().clone();
-    if !vak_core::worktree::is_git_repo(&repo) {
-        return StatusCode::CONFLICT.into_response();
-    }
-
-    // Create worktrees first; roll back everything on partial failure.
-    let mut created: Vec<(String, vak_core::worktree::Worktree)> = Vec::new();
-    for i in 0..n {
-        // v7 shares its leading chars within one millisecond; disambiguate.
-        let rid = format!("{}-{i}", &uuid::Uuid::now_v7().simple().to_string()[..12]);
-        match vak_core::worktree::create(&repo, &rid) {
-            Ok(wt) => created.push((rid, wt)),
-            Err(e) => {
-                for (_, wt) in &created {
-                    let _ = vak_core::worktree::remove(&repo, wt);
-                }
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": format!("worktree create failed: {e}") })),
-                )
-                    .into_response();
-            }
-        }
-    }
-
-    let mut runs = Vec::new();
-    for (rid, wt) in &created {
-        match spawn_isolated_run(&state, provider.clone(), rid, wt, &body.prompt, None).await {
-            Ok(child_id) => {
-                state
-                    .best_runs
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .insert(
-                        child_id.clone(),
-                        BestRunMeta {
-                            repo: repo.clone(),
-                            wt_path: wt.path.clone(),
-                            branch: wt.branch.clone(),
-                        },
-                    );
-                runs.push(serde_json::json!({
-                    "session_id": child_id,
-                    "branch": wt.branch,
-                    "path": wt.path,
-                }));
-            }
-            Err(e) => {
-                for (_, w) in &created {
-                    let _ = vak_core::worktree::remove(&repo, w);
-                }
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": e })),
-                )
-                    .into_response();
-            }
-        }
-    }
-
-    (StatusCode::OK, Json(serde_json::json!({ "runs": runs }))).into_response()
-}
-
-/// One isolated run inside `wt`: child Core + session + registered handle +
-/// fired turn. Shared by best-of-N and the task scheduler. `model_pin`
-/// (docs/design/29-personal-os.md P2) overrides the child's provider/model
-/// so BOTH main dispatches and any receipts carry the pinned id only — a
-/// pinned task never escalates to another model.
-async fn spawn_isolated_run(
-    state: &AppState,
-    provider: Arc<dyn Provider>,
-    rid: &str,
-    wt: &vak_core::worktree::Worktree,
-    prompt: &str,
-    model_pin: Option<&str>,
-) -> Result<String, String> {
-    let child_core = vak_core::Core::new_with_trust(wt.path.clone(), true)
-        .map_err(|e| format!("child core failed: {e}"))?;
-    child_core.set_provider_instance(provider);
-    child_core.set_sessions_home(state.core.sessions_home());
-    if let Some(pin) = model_pin.map(str::trim).filter(|p| !p.is_empty()) {
-        let (pin_provider, pin_model) = split_model_pin(pin, &child_core.effective_provider());
-        child_core.set_provider(pin_provider);
-        child_core.set_model(pin_model);
-    }
-
-    let child_log = child_core
-        .start_session()
-        .await
-        .map_err(|_| "child session failed to start".to_string())?;
-    let Some(child_header) = child_log.header() else {
-        return Err("child session has no header".to_string());
-    };
-    let child_id = format!("{}-{}", child_header.session_id, rid);
-    let handle = register_handle(state, child_id.clone(), child_log, wt.path.clone());
-    begin_turn(&handle, &child_core, prompt);
-    Ok(child_id)
-}
-
-/// Fire a single-turn agent run on a (usually fresh) session handle.
-fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str) {
-    let approver: Arc<dyn Approver> = Arc::new(HttpApprover {
-        events_tx: handle.events_tx.clone(),
-        pending: handle.pending.clone(),
-        session_id: handle.id.clone(),
-    });
-    let events = mpsc_to_broadcast(handle.events_tx.clone());
-    let steering = Arc::new(SteeringQueues::new());
-    let cancel = handle
-        .cancel
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
-    let Some(log) = handle
-        .session
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take()
-    else {
-        return; // busy — caller should have checked
-    };
-    let turn_session_id = log
-        .header()
-        .map(|h| h.session_id.clone())
-        .unwrap_or_default();
-    let core = core.clone();
-    let prompt = prompt.to_string();
-    let h2 = handle.clone();
-    tokio::spawn(async move {
-        let finish_tx = events.clone();
-        let outcome = core
-            .run_turn_with(
-                log,
-                &prompt,
-                cancel,
-                Some(approver),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await;
-        *h2.cancel
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = CancellationToken::new();
-        match outcome {
-            Ok((_, restored)) => {
-                *h2.session
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
-                let _ = finish_tx
-                    .send(AgentEvent::RunFinished {
-                        summary: "completed".into(),
-                        is_error: false,
-                    })
-                    .await;
-            }
-            Err(e) => {
-                // Same leak class as side chats: restore from the durable
-                // ledger so the handle is not wedged on "run in progress".
-                if let Some(log) = reopen_ledger(&core, &turn_session_id) {
-                    *h2.session
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
-                }
-                let _ = finish_tx
-                    .send(AgentEvent::RunFinished {
-                        summary: format!("error: {e}"),
-                        is_error: true,
-                    })
-                    .await;
-            }
-        }
-        drop(steering);
-    });
-}
-
-async fn keep_best_run(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let meta = state
-        .best_runs
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(&id)
-        .cloned();
-    let Some(meta) = meta else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    // Merge into the user's checkout. Conflicts/dirty trees surface as errors.
-    let out = tokio::process::Command::new("git")
-        .args([
-            "merge",
-            "--no-ff",
-            "-m",
-            &format!("best-of-n: merge {}", meta.branch),
-        ])
-        .arg(&meta.branch)
-        .current_dir(&meta.repo)
-        .output()
-        .await;
-    match out {
-        Ok(o) if o.status.success() => {
-            cleanup_worktree(&state, &id, &meta);
-            (StatusCode::OK, Json(serde_json::json!({"kept": id}))).into_response()
-        }
-        Ok(o) => {
-            // Abort any conflicted merge so the tree is not left dirty.
-            let _ = tokio::process::Command::new("git")
-                .args(["merge", "--abort"])
-                .current_dir(&meta.repo)
-                .output()
-                .await;
-            (
-                StatusCode::CONFLICT,
-                Json(serde_json::json!({
-                    "error": "merge failed",
-                    "stderr": String::from_utf8_lossy(&o.stderr),
-                })),
-            )
-                .into_response()
-        }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-async fn discard_best_run(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let meta = state
-        .best_runs
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(&id)
-        .cloned();
-    let Some(meta) = meta else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    cleanup_worktree(&state, &id, &meta);
-    (StatusCode::OK, Json(serde_json::json!({"discarded": id}))).into_response()
-}
-
-fn cleanup_worktree(state: &AppState, child_id: &str, meta: &BestRunMeta) {
-    let wt = vak_core::worktree::Worktree {
-        path: meta.wt_path.clone(),
-        branch: meta.branch.clone(),
-    };
-    let _ = vak_core::worktree::remove(&meta.repo, &wt);
-    state
-        .best_runs
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(child_id);
-}
-
-// ---- PR monitoring (gh-backed) ---------------------------------------------
-
-async fn gh_output(cwd: &std::path::Path, args: &[&str]) -> Result<String, String> {
-    let out = tokio::process::Command::new("gh")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .await
-        .map_err(|e| format!("gh not available: {e}"))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-}
-
-/// One-shot PR status for the session workspace: current branch, the PR
-/// attached to it (if any), and its check rollup. Tooling absence surfaces
-/// as `{error}` — never a hang, never a panic.
-async fn session_pr(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Json<serde_json::Value> {
-    let Some(handle) = state.get(&id) else {
-        return Json(serde_json::json!({ "error": "unknown session" }));
-    };
-    let cwd = handle.cwd.clone();
-    let Some(branch) = git_output(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"]).await else {
-        return Json(serde_json::json!({ "error": "not a git repository" }));
-    };
-    let branch = branch.trim().to_string();
-    if branch.is_empty() || branch == "HEAD" {
-        return Json(serde_json::json!({ "error": "detached HEAD" }));
-    }
-
-    let raw = match gh_output(
-        &cwd,
-        &[
-            "pr",
-            "view",
-            &branch,
-            "--json",
-            "number,title,url,state,mergeable,statusCheckRollup",
-        ],
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            // No PR for this branch vs no gh at all — distinguish for UX.
-            let msg = e.to_lowercase();
-            let kind = if msg.contains("no pull requests") || msg.contains("no merges requested") {
-                "no_pr"
-            } else {
-                "gh_unavailable"
-            };
-            return Json(serde_json::json!({
-                "branch": branch,
-                "pr": serde_json::Value::Null,
-                "reason": kind,
-                "error": e,
-            }));
-        }
-    };
-
-    let Ok(view) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return Json(serde_json::json!({ "error": "unparsable gh output", "branch": branch }));
-    };
-    let mut pass = 0u32;
-    let mut fail = 0u32;
-    let mut pending = 0u32;
-    if let Some(rollup) = view["statusCheckRollup"].as_array() {
-        for c in rollup {
-            let status = c["status"].as_str().unwrap_or("");
-            let conclusion = c["conclusion"].as_str().unwrap_or("");
-            match (status, conclusion) {
-                (_, "SUCCESS") => pass += 1,
-                (_, "FAILURE") | (_, "CANCELLED") | (_, "TIMED_OUT") => fail += 1,
-                ("COMPLETED", _) => {}
-                _ => pending += 1,
-            }
-        }
-    }
-    Json(serde_json::json!({
-        "branch": branch,
-        "pr": {
-            "number": view["number"],
-            "title": view["title"],
-            "url": view["url"],
-            "state": view["state"],
-            "mergeable": view["mergeable"],
-        },
-        "checks": view["statusCheckRollup"],
-        "summary": { "pass": pass, "fail": fail, "pending": pending },
-    }))
-}
-
-#[derive(serde::Deserialize)]
-struct PrMergeBody {
-    number: u64,
-    #[serde(default)]
-    method: Option<String>,
-}
-
-/// Merge an open PR via gh. `--auto` honors branch protection: gh merges
-/// when checks go green.
-async fn pr_merge(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<PrMergeBody>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let Some(handle) = state.get(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let method = body.method.unwrap_or_else(|| "squash".to_string());
-    let flag = match method.as_str() {
-        "merge" => "--merge",
-        "rebase" => "--rebase",
-        _ => "--squash",
-    };
-    let mut args = vec![
-        "pr".to_string(),
-        "merge".to_string(),
-        body.number.to_string(),
-        flag.to_string(),
-        "--auto".to_string(),
-    ];
-    if method == "squash" {
-        args.push("--delete-branch".to_string());
-    }
-    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    match gh_output(&handle.cwd, &arg_refs).await {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "merging": body.number })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({ "error": e })),
-        )
-            .into_response(),
-    }
-}
-
-// ---- Scheduled tasks (local routines) --------------------------------------
-
-/// Final assistant text of a session's active chain, if any. Used to give
-/// routine runs a real answer instead of a status word.
-fn last_assistant_text(handle: &SessionHandle) -> Option<String> {
-    let guard = handle
-        .session
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let log = guard.as_ref()?;
-    let text = log
-        .derive_messages()
-        .into_iter()
-        .rev()
-        .find(|m| m.role == vak_llm::Role::Assistant)
-        .map(|m| m.text_content())?;
-    if text.trim().is_empty() {
-        None
-    } else {
-        Some(text)
-    }
-}
-
-fn tasks_file(core: &Core) -> PathBuf {
-    vak_core::tasks::tasks_file(&core.sessions_home())
-}
-
-fn load_tasks(state: &AppState) {
-    match vak_core::tasks::TaskStore::load(&state.core.sessions_home()) {
-        Ok(store) => {
-            let mut map = state
-                .tasks
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            for t in store.all() {
-                map.insert(t.id.clone(), t);
-            }
-        }
-        // A corrupt tasks file is surfaced loudly, never silently dropped:
-        // those definitions represent real automation the user expects.
-        Err(e) => eprintln!("[scheduler] tasks file unreadable, ignoring: {e}"),
-    }
-}
-
-fn save_tasks(state: &AppState) {
-    // The in-memory map is authoritative; the persisted array is rewritten
-    // wholesale in the exact wire shape TaskStore uses.
-    let list: Vec<TaskDef> = state
-        .tasks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .values()
-        .cloned()
-        .collect();
-    let _ = std::fs::create_dir_all(state.core.sessions_home());
-    let target = tasks_file(&state.core);
-    let tmp = target.with_extension("json.tmp");
-    match serde_json::to_string_pretty(&list)
-        .ok()
-        .filter(|json| std::fs::write(&tmp, json).is_ok())
-    {
-        Some(_) => {
-            let _ = std::fs::rename(&tmp, &target);
-        }
-        None => eprintln!("[scheduler] tasks file save failed"),
-    }
-}
-
-async fn list_tasks(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let cwd = state.core.cwd().clone();
-    let mut mine: Vec<TaskDef> = state
-        .tasks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .values()
-        .filter(|t| t.cwd == cwd)
-        .cloned()
-        .collect();
-    mine.sort_by_key(|t| t.created_at);
-    Json(serde_json::json!({ "tasks": mine }))
-}
-
-#[derive(serde::Deserialize)]
-struct TaskCreateBody {
-    name: String,
-    /// LLM turn instruction. Optional only for `script:` watchdog tasks.
-    #[serde(default)]
-    prompt: String,
-    #[serde(default = "task_default_interval")]
-    interval_secs: u64,
-    #[serde(default)]
-    deliver_to: Option<String>,
-    /// 5-field cron (`m h dom mon dow`, local time) replacing interval ticks.
-    #[serde(default)]
-    schedule: Option<String>,
-    /// Watchdog shell one-liner; XOR with `prompt`, never touches the LLM.
-    #[serde(default)]
-    script: Option<String>,
-    /// Pin dispatches to one model id (`provider/model` or bare model id).
-    #[serde(default)]
-    model_pin: Option<String>,
-}
-
-fn task_default_interval() -> u64 {
-    3600
-}
-
-/// Structural validation shared by POST and PATCH: TaskDef::validate owns
-/// the prompt-XOR-script and cron-grammar rules; the server adds its
-/// transport-shape rules on top. Returns a typed 400 payload on failure.
-fn validate_task_fields(task: &TaskDef) -> Result<(), (StatusCode, serde_json::Value)> {
-    if task.deliver_to.as_deref().is_some_and(|t| !t.contains(':')) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            serde_json::json!({
-                "error": "deliver_to must be '<surface>:<chat>', e.g. 'log:ops'"
-            }),
+    Json(request): Json<FsWrite>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let root = registered_root(&state.runtime, &request.project_id).await?;
+    let path = safe_project_path(&root, &request.path)?;
+    let config = state
+        .runtime
+        .config_for(&root)
+        .load()
+        .map_err(ApiError::config)?;
+    if config.config.permission.mode == vak_config::PermissionMode::ReadOnly {
+        return Err(ApiError::message(
+            StatusCode::FORBIDDEN,
+            "workspace is read-only",
         ));
     }
-    task.validate().map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            serde_json::json!({ "error": e.to_string() }),
-        )
-    })
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, e.to_string()))?;
+    }
+    std::fs::write(&path, request.content.as_bytes())
+        .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, e.to_string()))?;
+    Ok(Json(
+        serde_json::json!({"path": request.path, "bytes": request.content.len()}),
+    ))
+}
+
+#[derive(Deserialize)]
+struct TaskQuery {
+    project_id: Option<ProjectId>,
+}
+
+async fn list_tasks(
+    State(state): State<AppState>,
+    Query(query): Query<TaskQuery>,
+) -> Result<Json<EmptyList<vak_runtime::TaskRecord>>, ApiError> {
+    Ok(Json(EmptyList {
+        items: state.runtime.tasks(query.project_id.as_ref()).await?,
+    }))
+}
+
+#[derive(Deserialize)]
+struct CreateTaskRequest {
+    id: Option<TaskId>,
+    project_id: Option<ProjectId>,
+    #[serde(default)]
+    spec: serde_json::Value,
 }
 
 async fn create_task(
     State(state): State<AppState>,
-    Json(body): Json<TaskCreateBody>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let scheduled = body.schedule.is_some();
-    if !scheduled && body.interval_secs < 60 {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "interval must be >= 60s" })),
+    Json(request): Json<CreateTaskRequest>,
+) -> Result<(StatusCode, Json<vak_runtime::TaskRecord>), ApiError> {
+    let task = state
+        .runtime
+        .create_task(
+            request.id.unwrap_or_default().to_string(),
+            request.project_id,
+            request.spec,
         )
-            .into_response();
-    }
-    let task = TaskDef {
-        id: uuid::Uuid::now_v7().to_string(),
-        name: body.name,
-        prompt: body.prompt,
-        interval_secs: body.interval_secs,
-        enabled: true,
-        cwd: state.core.cwd().clone(),
-        created_at: chrono::Utc::now(),
-        last_run_at: None,
-        last_session_id: None,
-        last_summary: None,
-        last_wt: None,
-        deliver_to: body.deliver_to,
-        schedule: body.schedule.filter(|s| !s.trim().is_empty()),
-        script: body.script.filter(|s| !s.trim().is_empty()),
-        model_pin: body.model_pin.filter(|m| !m.trim().is_empty()),
-    };
-    if let Err((status, payload)) = validate_task_fields(&task) {
-        return (status, Json(payload)).into_response();
-    }
-    state
-        .tasks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(task.id.clone(), task);
-    save_tasks(&state);
-    (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response()
+        .await?;
+    Ok((StatusCode::CREATED, Json(task)))
 }
 
-#[derive(serde::Deserialize)]
-struct TaskPatchBody {
-    enabled: Option<bool>,
-    name: Option<String>,
-    prompt: Option<String>,
-    interval_secs: Option<u64>,
-    deliver_to: Option<Option<String>>,
-    /// Tri-state: absent = keep, null/empty = clear, string = set.
-    #[serde(default)]
-    schedule: OptionalStr,
-    #[serde(default)]
-    script: OptionalStr,
-    #[serde(default)]
-    model_pin: OptionalStr,
+#[derive(Deserialize)]
+struct TaskPatch {
+    spec: Option<serde_json::Value>,
+    status: Option<String>,
 }
 
-/// Distinguishes an absent JSON field from an explicit `null` (which plain
-/// `Option<Option<T>>` cannot: both deserialize to outer `None`).
-#[derive(Debug, Clone, Default)]
-enum OptionalStr {
-    #[default]
-    Keep,
-    Clear,
-    Set(String),
+async fn update_task(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+    Json(patch): Json<TaskPatch>,
+) -> Result<Json<vak_runtime::TaskRecord>, ApiError> {
+    let task_id = task_id.parse::<TaskId>().map_err(ApiError::domain)?;
+    Ok(Json(
+        state
+            .runtime
+            .update_task(&task_id, patch.spec, patch.status)
+            .await?,
+    ))
 }
 
-impl<'de> serde::Deserialize<'de> for OptionalStr {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        // Only reached when the key is present; null → None here.
-        match Option::<String>::deserialize(deserializer)? {
-            None => Ok(OptionalStr::Clear),
-            Some(s) if s.trim().is_empty() => Ok(OptionalStr::Clear),
-            Some(s) => Ok(OptionalStr::Set(s)),
-        }
-    }
+async fn delete_task(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let task_id = task_id.parse::<TaskId>().map_err(ApiError::domain)?;
+    Ok(Json(
+        serde_json::json!({"deleted": state.runtime.delete_task(&task_id).await?}),
+    ))
 }
 
-async fn patch_task(
+#[derive(Deserialize)]
+struct InboxQuery {
+    unread: Option<bool>,
+}
+
+async fn list_inbox(
+    State(state): State<AppState>,
+    Query(query): Query<InboxQuery>,
+) -> Result<Json<EmptyList<vak_runtime::InboxRecord>>, ApiError> {
+    Ok(Json(EmptyList {
+        items: state.runtime.inbox(query.unread.unwrap_or(false)).await?,
+    }))
+}
+
+async fn ack_inbox(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(body): Json<TaskPatchBody>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    if let Some(Some(t)) = &body.deliver_to
-        && !t.contains(':')
-    {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "deliver_to must be '<surface>:<chat>', e.g. 'log:ops'"
-            })),
-        )
-            .into_response();
-    }
-    let updated = {
-        let mut map = state
-            .tasks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match map.get_mut(&id) {
-            Some(t) => {
-                // Apply to a candidate and validate BEFORE committing so a
-                // rejected patch never leaves half-mutated state behind.
-                let mut candidate = t.clone();
-                if let Some(v) = body.enabled {
-                    candidate.enabled = v;
-                }
-                if let Some(v) = body.name {
-                    candidate.name = v;
-                }
-                if let Some(v) = body.prompt {
-                    candidate.prompt = v;
-                }
-                if let Some(v) = body.interval_secs
-                    && v >= 60
-                {
-                    candidate.interval_secs = v;
-                }
-                if let Some(v) = body.deliver_to {
-                    candidate.deliver_to = v;
-                }
-                match body.schedule {
-                    OptionalStr::Keep => {}
-                    OptionalStr::Clear => candidate.schedule = None,
-                    OptionalStr::Set(ref s) => candidate.schedule = Some(s.clone()),
-                }
-                match body.script {
-                    OptionalStr::Keep => {}
-                    OptionalStr::Clear => candidate.script = None,
-                    OptionalStr::Set(ref s) => candidate.script = Some(s.clone()),
-                }
-                match body.model_pin {
-                    OptionalStr::Keep => {}
-                    OptionalStr::Clear => candidate.model_pin = None,
-                    OptionalStr::Set(ref s) => candidate.model_pin = Some(s.clone()),
-                }
-                if let Err((status, payload)) = validate_task_fields(&candidate) {
-                    return (status, Json(payload)).into_response();
-                }
-                *t = candidate.clone();
-                candidate
-            }
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({ "error": format!("no task '{id}'") })),
-                )
-                    .into_response();
-            }
-        }
-    };
-    // Re-enabling reschedules interval tasks from now; dropping the cron
-    // marker makes the next tick recompute the schedule from scratch.
-    if body.enabled == Some(true) {
-        let mut map = state
-            .tasks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(t) = map.get_mut(&id)
-            && t.schedule.is_none()
-        {
-            t.last_run_at = None;
-        }
-    }
-    state
-        .next_fire
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&id);
-    save_tasks(&state);
-    (StatusCode::OK, Json(serde_json::json!(updated))).into_response()
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(
+        serde_json::json!({"acknowledged": state.runtime.acknowledge_inbox(&id).await?}),
+    ))
 }
 
-async fn delete_task(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
-    let removed = state
-        .tasks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&id);
-    if let Some(task) = removed {
-        let idle = task.last_session_id.as_deref().is_none_or(|sid| {
-            state.get(sid).is_none_or(|h| {
-                h.session
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .is_some()
-            })
-        });
-        if idle && let Some(wt) = &task.last_wt {
-            let old = vak_core::worktree::Worktree {
-                path: wt.path.clone(),
-                branch: wt.branch.clone(),
-            };
-            let _ = vak_core::worktree::remove(&task.cwd, &old);
-        }
-        save_tasks(&state);
-        StatusCode::OK
-    } else {
-        StatusCode::NOT_FOUND
-    }
+async fn list_approvals(
+    State(state): State<AppState>,
+) -> Result<Json<EmptyList<vak_runtime::ApprovalRecord>>, ApiError> {
+    Ok(Json(EmptyList {
+        items: state.runtime.approvals().await?,
+    }))
 }
 
-/// Fire a task immediately (also resets its schedule).
-async fn run_task_now(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
-    if fire_task(&state, &id).await.is_some() {
-        return StatusCode::ACCEPTED;
-    }
-    // A scheduler tick may hold the one-shot inflight slot for this script
-    // task — the requested execution is happening at this very moment, so
-    // report accepted rather than conflict (found by the 0.7 suite: the
-    // tick raced run-now on freshly created interval tasks).
-    let busy_elsewhere = state
-        .tasks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(&id)
-        .map(|t| {
-            t.script
-                .as_deref()
-                .map(str::trim)
-                .is_some_and(|s| !s.is_empty())
-        })
-        .unwrap_or(false)
-        && state
-            .script_inflight
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains(&id);
-    if busy_elsewhere {
-        StatusCode::ACCEPTED
-    } else {
-        StatusCode::CONFLICT
-    }
+#[derive(Deserialize)]
+struct ApprovalResolution {
+    allow: bool,
+    #[serde(default)]
+    response: serde_json::Value,
 }
 
-/// Split a `model_pin` into (provider, model). A bare model id pins only
-/// the model and keeps this server's active provider.
-pub(crate) fn split_model_pin(pin: &str, current_provider: &str) -> (String, String) {
-    match pin.split_once('/') {
-        Some((provider, model)) if !provider.trim().is_empty() && !model.trim().is_empty() => {
-            (provider.trim().to_string(), model.trim().to_string())
-        }
-        _ => (current_provider.to_string(), pin.trim().to_string()),
-    }
+async fn resolve_approval(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<ApprovalResolution>,
+) -> Result<Json<vak_runtime::ApprovalRecord>, ApiError> {
+    Ok(Json(
+        state
+            .runtime
+            .resolve_approval(&id, request.allow, request.response)
+            .await?,
+    ))
 }
 
-/// Spawn one isolated run for `task` if its previous run is idle. Returns
-/// the child session id on success. Script tasks take the brokered-bash
-/// branch instead: no provider dispatch, no worktree, no child session.
-async fn fire_task(state: &AppState, id: &str) -> Option<String> {
-    let snapshot = state
-        .tasks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(id)
-        .cloned()?;
-    // Previous run still going?
-    if let Some(prev) = snapshot.last_session_id.as_deref()
-        && state.get(prev).is_some_and(|h| {
-            h.session
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_none()
-        })
-    {
-        return None;
-    }
-    let script = snapshot
-        .script
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-    if let Some(script) = script {
-        return fire_script_task(state, &snapshot, script).await;
-    }
-    let Ok(provider) = state.core.provider() else {
-        eprintln!(
-            "[scheduler] task '{}' skipped: no provider credential",
-            snapshot.name
-        );
-        return None;
-    };
-    // Drop the previous worktree (latest-only retention).
-    if let Some(wt) = &snapshot.last_wt {
-        let old = vak_core::worktree::Worktree {
-            path: wt.path.clone(),
-            branch: wt.branch.clone(),
-        };
-        let _ = vak_core::worktree::remove(&snapshot.cwd, &old);
-    }
-    let rid = format!("task-{}", &uuid::Uuid::now_v7().simple().to_string()[..8]);
-    let wt = vak_core::worktree::create(&snapshot.cwd, &rid).ok()?;
-    let child_id = spawn_isolated_run(
-        state,
-        provider.clone(),
-        &rid,
-        &wt,
-        &snapshot.prompt,
-        snapshot.model_pin.as_deref(),
-    )
-    .await
-    .ok()?;
-
-    let mut map = state
-        .tasks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(t) = map.get_mut(id) {
-        t.last_run_at = Some(chrono::Utc::now());
-        t.last_session_id = Some(child_id.clone());
-        t.last_summary = None;
-        t.last_wt = Some(WtMeta {
-            path: wt.path,
-            branch: wt.branch,
-        });
-    }
-    drop(map);
-    save_tasks(state);
-
-    // Watcher: record the run's final assistant text on the task when it
-    // finishes, and push it out through the gateway when a deliver target
-    // is set. The event's `summary` is a status word; the transcript holds
-    // the actual answer a phone user should receive.
-    if let Some(h) = state.get(&child_id) {
-        let st = state.clone();
-        let tid = id.to_string();
-        let child_handle = h.clone();
-        let child_session = child_id.clone();
-        let task_name = snapshot.name.clone();
-        let deliver_to = snapshot.deliver_to.clone();
-        let rx = h.events_tx.subscribe();
-        tokio::spawn(async move {
-            use tokio_stream::StreamExt;
-            use tokio_stream::wrappers::BroadcastStream;
-            let mut stream = BroadcastStream::new(rx);
-            while let Some(Ok(ev)) = stream.next().await {
-                if let AgentEvent::RunFinished { summary, .. } = ev {
-                    let text =
-                        last_assistant_text(&child_handle).unwrap_or_else(|| summary.clone());
-                    if let Some(t) = st
-                        .tasks
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .get_mut(&tid)
-                    {
-                        t.last_summary = Some(text.clone());
-                    }
-                    save_tasks(&st);
-                    if let Some(target) = &deliver_to {
-                        // Delivery failure must not lose the recorded summary;
-                        // it only means this transport could not be reached.
-                        let _ = gateway::deliver_and_record(
-                            &st.core,
-                            target,
-                            &format!("routine '{task_name}' finished:\n{text}"),
-                            vak_core::inbox::Kind::TaskSummary,
-                            format!("routine '{task_name}' finished"),
-                            Some(&child_session),
-                            Some(&tid),
-                        )
-                        .await;
-                    }
-                    check_budget_alert(&st, &tid).await;
-                    break;
-                }
-            }
-        });
-    }
-    Some(child_id)
+#[derive(Deserialize)]
+struct MemoryQuery {
+    project_id: Option<ProjectId>,
+    scope: Option<String>,
 }
 
-// ---- Watchdog script tasks (docs/design/29-personal-os.md P2) ---------------
-//
-// A `script:` task NEVER reaches the LLM. The shell line runs through the
-// exact brokered bash tool the agent loop uses (`Core::agent_tools()` →
-// BrokeredTool → `__tool_worker`), so sandboxing, environment scrubbing,
-// process-group isolation, and output caps are identical by construction.
-// Zero provider dispatch is a property of the call graph: nothing here can
-// name a Provider.
-
-const SCRIPT_TIMEOUT_MS: u64 = 120_000;
-/// Upper bound on one background reflection pass (docs/design/29 P1) so a
-/// stuck auxiliary stream cannot pin a session handle indefinitely.
-const REFLECTION_CALL_TIMEOUT: Duration = Duration::from_secs(120);
-/// Fallback delivery surface for error alerts when a watchdog has no
-/// `deliver_to`: failures are never silent.
-pub(crate) const FALLBACK_ALERT_TARGET: &str = "log:vakcoder";
-
-/// Extract the stdout section from BashTool's combined report
-/// ("[stdout]\n…\n[stderr]\n…" or "(no output)"). A literal "[stderr]"
-/// inside the script's own stdout ends the section early — watchdogs that
-/// print the marker get truncated delivery, never a misparse of stderr.
-fn stdout_section(content: &str) -> &str {
-    match content.strip_prefix("[stdout]\n") {
-        Some(rest) => match rest.find("\n[stderr]") {
-            Some(end) => &rest[..end],
-            None => rest,
-        },
-        None => "",
-    }
+async fn list_memory(
+    State(state): State<AppState>,
+    Query(query): Query<MemoryQuery>,
+) -> Result<Json<EmptyList<vak_services::MemoryRecord>>, ApiError> {
+    let scope = query.scope.as_deref().unwrap_or("workspace");
+    Ok(Json(EmptyList {
+        items: state
+            .runtime
+            .memory(query.project_id.as_ref(), scope)
+            .await?,
+    }))
 }
 
-struct ScriptOutcome {
-    /// True when the brokered command exited zero within its watchdog.
-    ok: bool,
-    /// Trimmed stdout on success; combined failure detail otherwise.
+#[derive(Deserialize)]
+struct CreateMemoryRequest {
+    id: Option<String>,
+    project_id: Option<ProjectId>,
+    #[serde(default = "default_memory_scope")]
+    scope: String,
+    #[serde(default = "default_memory_kind")]
+    kind: String,
+    #[serde(default)]
+    tag: String,
     text: String,
 }
 
-async fn execute_script(core: &Core, cwd: &std::path::Path, script: &str) -> ScriptOutcome {
-    let bash = core.agent_tools().into_iter().find(|t| t.name() == "bash");
-    let Some(bash) = bash else {
-        return ScriptOutcome {
-            ok: false,
-            text: "script task failed: no bash tool available".to_string(),
-        };
-    };
-    let ctx = vak_tools::ToolContext {
-        cwd: cwd.to_path_buf(),
-        cancel: CancellationToken::new(),
-        limits: vak_tools::OutputLimits::default(),
-        sandbox: core.agent_sandbox(),
-    };
-    let args = serde_json::json!({ "command": script, "timeout_ms": SCRIPT_TIMEOUT_MS });
-    let out = bash.execute(&args, &ctx).await;
-    if out.is_error {
-        ScriptOutcome {
-            ok: false,
-            text: format!("script failed: {}", out.content.trim()),
-        }
-    } else {
-        ScriptOutcome {
-            ok: true,
-            text: stdout_section(&out.content).trim().to_string(),
-        }
-    }
+fn default_memory_scope() -> String {
+    "workspace".to_owned()
+}
+fn default_memory_kind() -> String {
+    "note".to_owned()
 }
 
-/// Run one watchdog tick: execute, record, deliver. Empty stdout on
-/// success stays silent (zero tokens, zero noise); any failure delivers a
-/// typed error alert even without a configured target.
-async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Option<String> {
-    // One execution at a time per watchdog: a scheduler tick and run-now
-    // must never double-fire (or double-deliver) the same tick.
-    if !state
-        .script_inflight
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(task.id.clone())
-    {
-        return None;
-    }
-    let outcome = execute_script(&state.core, &task.cwd, script).await;
-    // Deliver FIRST: once the summary is visible on the task, its delivery
-    // attempt has already been made. With zero transports configured the
-    // inbox itself is the sink (docs/design/29 P6): a watchdog summary is
-    // never lost just because no chat channel exists.
-    if outcome.ok {
-        if !outcome.text.is_empty() {
-            let title = format!("watchdog '{}'", task.name);
-            match task.deliver_to.as_deref() {
-                Some(target) => {
-                    let _ = gateway::deliver_and_record(
-                        &state.core,
-                        target,
-                        &outcome.text,
-                        vak_core::inbox::Kind::TaskSummary,
-                        title,
-                        None,
-                        Some(&task.id),
-                    )
-                    .await;
-                }
-                None => {
-                    let _ = vak_core::inbox::record(
-                        &state.core.sessions_home(),
-                        vak_core::inbox::Kind::TaskSummary,
-                        &title,
-                        &outcome.text,
-                        None,
-                        Some(&task.id),
-                    );
-                }
-            }
-        }
-    } else {
-        eprintln!(
-            "[scheduler] watchdog '{}' failed: {}",
-            task.name, outcome.text
-        );
-        let target = task.deliver_to.as_deref().unwrap_or(FALLBACK_ALERT_TARGET);
-        let _ = gateway::deliver_and_record(
-            &state.core,
-            target,
-            &format!("watchdog '{}' alert:\n{}", task.name, outcome.text),
-            vak_core::inbox::Kind::TaskSummary,
-            format!("failure: watchdog '{}'", task.name),
-            None,
-            Some(&task.id),
+async fn create_memory(
+    State(state): State<AppState>,
+    Json(request): Json<CreateMemoryRequest>,
+) -> Result<(StatusCode, Json<vak_services::MemoryRecord>), ApiError> {
+    let id = request
+        .id
+        .unwrap_or_else(|| vak_domain::TaskId::new().to_string())
+        .to_string();
+    let memory = state
+        .runtime
+        .create_memory(
+            id,
+            request.project_id,
+            request.scope,
+            request.kind,
+            request.tag,
+            request.text,
         )
-        .await;
-    }
-    {
-        let mut map = state
-            .tasks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(t) = map.get_mut(&task.id) {
-            t.last_run_at = Some(chrono::Utc::now());
-            t.last_summary = Some(if outcome.ok && outcome.text.is_empty() {
-                "(silent tick)".to_string()
-            } else {
-                outcome.text.clone()
-            });
-        }
-    }
-    save_tasks(state);
-    check_budget_alert(state, &task.id).await;
-    state
-        .script_inflight
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&task.id);
-    Some(task.id.clone())
+        .await?;
+    Ok((StatusCode::CREATED, Json(memory)))
 }
 
-// ---- Scheduler (intervals + cron + catch-up, docs/design/29 P2) -------------
-
-/// True when the first scheduled slot STRICTLY AFTER `last_run_at` has
-/// already arrived by `now` — i.e. a fire was skipped (typically while the
-/// process was down). A run made after the latest slot (manual run-now)
-/// covers it, so nothing is missed. Never-run tasks are decided by the
-/// caller: without history there is nothing to catch up on, and a freshly
-/// created task waits for its first computed slot. Pure; unit-tested
-/// against fixed instants.
-fn cron_slot_missed(
-    expr: &str,
-    last_run_at: chrono::DateTime<Utc>,
-    now: chrono::DateTime<chrono::Local>,
-) -> bool {
-    let last_local = last_run_at.with_timezone(&chrono::Local);
-    match vak_core::tasks::cron_next_after(expr, last_local) {
-        // Instant comparison: correct across DST folds and gaps.
-        Ok(next_due) => next_due <= now,
-        Err(_) => false,
-    }
+#[derive(Deserialize)]
+struct AmendMemoryRequest {
+    text: String,
 }
 
-/// Park an unparseable schedule's marker far in the future: validation
-/// should have rejected it, so this only contains legacy/corrupt entries.
-fn park_marker() -> chrono::DateTime<chrono::Local> {
-    chrono::Local::now() + chrono::Duration::days(366)
-}
-
-/// One scheduler pass over enabled tasks for this cwd: interval tasks use
-/// their `last_run_at`; scheduled tasks consult their in-memory next-fire
-/// marker, initializing it to the first future slot when absent (so newly
-/// loaded/created tasks do not stampede on startup).
-async fn scheduler_tick(state: &AppState) {
-    let now_local = chrono::Local::now();
-    // Reload from disk every tick: tasks.json is shared with the CLI and
-    // desktop, so definitions added while the server runs must fire too
-    // (found by the v0.6 live battery — CLI-added cron tasks never fired).
-    load_tasks(state);
-    let due: Vec<String> = {
-        let tasks = state
-            .tasks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut markers = state
-            .next_fire
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        tasks
-            .values()
-            .filter(|t| t.enabled && t.cwd.as_path() == state.core.cwd().as_path())
-            .filter(|t| match t.schedule.as_deref() {
-                Some(expr) => {
-                    let marker = markers.entry(t.id.clone()).or_insert_with(|| {
-                        vak_core::tasks::cron_next_after(expr, now_local)
-                            .unwrap_or_else(|_| park_marker())
-                    });
-                    now_local >= *marker
-                }
-                None => t
-                    .last_run_at
-                    .map(|l| {
-                        (now_local.with_timezone(&Utc) - l).num_seconds() >= t.interval_secs as i64
-                    })
-                    .unwrap_or(true),
-            })
-            .map(|t| t.id.clone())
-            .collect()
-    };
-    for id in due {
-        let _ = fire_task(state, &id).await;
-        advance_marker(state, &id);
-    }
-}
-
-fn advance_marker(state: &AppState, id: &str) {
-    let expr = state
-        .tasks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(id)
-        .and_then(|t| t.schedule.clone());
-    if let Some(expr) = expr {
-        let next = vak_core::tasks::cron_next_after(&expr, chrono::Local::now())
-            .unwrap_or_else(|_| park_marker());
-        state
-            .next_fire
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(id.to_string(), next);
-    }
-}
-
-/// Startup catch-up (docs/design/29-personal-os.md P2): when enabled and a
-/// scheduled task's most recent slot happened after its last run — a slot
-/// missed while the process was down — fire it once immediately. Interval
-/// tasks keep their self-healing `>= interval` behavior and need nothing.
-async fn catch_up_missed_tasks(state: &AppState) {
-    if !state.core.config().automation.catch_up_missed {
-        return;
-    }
-    let now_local = chrono::Local::now();
-    let due: Vec<String> = {
-        let tasks = state
-            .tasks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        tasks
-            .values()
-            .filter(|t| t.enabled && t.cwd.as_path() == state.core.cwd().as_path())
-            .filter_map(|t| {
-                let expr = t.schedule.as_deref()?;
-                t.last_run_at
-                    .is_some_and(|l| cron_slot_missed(expr, l, now_local))
-                    .then(|| t.id.clone())
-            })
-            .collect()
-    };
-    for id in due {
-        eprintln!("[scheduler] catch-up: firing missed slot for task '{id}'");
-        let _ = fire_task(state, &id).await;
-        advance_marker(state, &id);
-    }
-}
-
-/// Background loop: evaluates due tasks every 20 seconds. Holds only weak
-/// state via `state` clones living inside the router — when the server
-/// shuts down the loop dies with the runtime.
-pub fn start_scheduler(state: &AppState) {
-    load_tasks(state);
-    let st = state.clone();
-    tokio::spawn(async move { catch_up_missed_tasks(&st).await });
-    let st = state.clone();
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(20));
-        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            tick.tick().await;
-            scheduler_tick(&st).await;
-        }
-    });
-    // Proactive heartbeat (docs/design/29-personal-os.md P7): its own
-    // per-process timer alongside the task tick; the pass itself re-checks
-    // the enabled flag every beat.
-    if state.core.config().heartbeat.enabled {
-        let st = state.clone();
-        tokio::spawn(async move {
-            let mut tick =
-                tokio::time::interval(std::time::Duration::from_secs(heartbeat::TICK_SECS));
-            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            loop {
-                tick.tick().await;
-                heartbeat::heartbeat_tick(&st).await;
-            }
-        });
-    }
-}
-
-// ---- Budget alerts (docs/design/29-personal-os.md P2) -----------------------
-
-/// Proactive day-cap alerting, called after every task fire and exposed for
-/// surfaces to invoke wherever day spend updates land. Fires at most once
-/// per (level, UTC-day window): the audit row recorded by `record_alert`
-/// doubles as the once-per-window marker. Delivery reuses the gateway
-/// transports (`log:` / `webhook:` / telegram bridge); with no configured
-/// targets it falls back to the log surface so an approaching cap is never
-/// discovered at denial time.
-pub async fn check_budget_alert(state: &AppState, session_id: &str) {
-    let Some(cap) = state.core.config().finops.max_day_usd else {
-        return;
-    };
-    // Read through the EFFECTIVE sessions home (an embedded server may
-    // have relocated it); Core::spend_day_usd pins the constructed path.
-    let day_total =
-        vak_core::finops::FinOpsLedger::new(&state.core.sessions_home()).day_total_usd(Utc::now());
-    let Some(level) = vak_core::finops::alert_level(day_total, cap) else {
-        return;
-    };
-    let home = state.core.sessions_home();
-    if let Some(last) = vak_core::finops::last_alert(&home, level)
-        && last.ts.with_timezone(&Utc).date_naive() == Utc::now().date_naive()
-    {
-        return; // this level already alerted inside the current day window
-    }
-    if let Err(e) = vak_core::finops::record_alert(&home, level, session_id) {
-        eprintln!("[finops] budget-alert ledger write failed: {e}");
-    }
-    let text = format!(
-        "budget alert [{}]: ${:.2} of ${:.2} daily cap",
-        level.as_str(),
-        day_total,
-        cap
-    );
-    let title = format!("budget alert [{}]", level.as_str());
-    let mut targets = configured_delivery_targets(state);
-    if targets.is_empty() {
-        targets.push(FALLBACK_ALERT_TARGET.to_string());
-    }
-    for target in targets {
-        let _ = gateway::deliver_and_record(
-            &state.core,
-            &target,
-            &text,
-            vak_core::inbox::Kind::BudgetAlert,
-            title.clone(),
-            Some(session_id),
-            None,
-        )
-        .await;
-    }
-}
-
-/// Every distinct `deliver_to` routing target configured across all known
-/// tasks — the server's vocabulary of delivery surfaces.
-pub(crate) fn configured_delivery_targets(state: &AppState) -> Vec<String> {
-    let mut targets: Vec<String> = state
-        .tasks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .values()
-        .filter_map(|t| t.deliver_to.clone())
-        .collect();
-    targets.sort();
-    targets.dedup();
-    targets
-}
-
-// ---- Dev-server lifecycle (preview pane) -----------------------------------
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct LaunchConfig {
-    pub name: String,
-    pub cmd: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[serde(default)]
-    pub port: Option<u16>,
-}
-
-struct ManagedProc {
-    child: tokio::process::Child,
-    logs: Arc<Mutex<std::collections::VecDeque<String>>>,
-}
-
-fn parse_launch_toml(cwd: &std::path::Path) -> Result<Vec<LaunchConfig>, String> {
-    let path = cwd.join(".vakcoder/launch.toml");
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    #[derive(serde::Deserialize)]
-    struct File {
-        #[serde(rename = "server", default)]
-        servers: Vec<LaunchConfig>,
-    }
-    let f: File = toml::from_str(&raw).map_err(|e| format!("launch.toml: {e}"))?;
-    Ok(f.servers)
-}
-
-/// Sensible fallback when no launch.toml exists: a package.json dev script.
-fn detect_launch(cwd: &std::path::Path) -> Vec<LaunchConfig> {
-    let pkg = cwd.join("package.json");
-    let Ok(raw) = std::fs::read_to_string(pkg) else {
-        return Vec::new();
-    };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return Vec::new();
-    };
-    if v["scripts"]["dev"].is_string() {
-        vec![LaunchConfig {
-            name: "dev".into(),
-            cmd: "npm".into(),
-            args: vec!["run".into(), "dev".into()],
-            port: None,
-        }]
-    } else {
-        Vec::new()
-    }
-}
-
-async fn get_launch(
+async fn amend_memory(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Json<serde_json::Value> {
-    let Some(handle) = state.get(&id) else {
-        return Json(serde_json::json!({ "error": "unknown session" }));
-    };
-    let mut servers = match parse_launch_toml(&handle.cwd) {
-        Ok(s) => s,
-        Err(e) => return Json(serde_json::json!({ "error": e })),
-    };
-    if servers.is_empty() {
-        servers = detect_launch(&handle.cwd);
+    Json(request): Json<AmendMemoryRequest>,
+) -> Result<Json<vak_services::MemoryRecord>, ApiError> {
+    Ok(Json(state.runtime.amend_memory(&id, &request.text).await?))
+}
+
+async fn forget_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(
+        serde_json::json!({"forgotten": state.runtime.forget_memory(&id).await?}),
+    ))
+}
+
+#[derive(Deserialize)]
+struct SkillQuery {
+    project_id: Option<ProjectId>,
+    status: Option<String>,
+}
+
+async fn list_skills(
+    State(state): State<AppState>,
+    Query(query): Query<SkillQuery>,
+) -> Result<Json<EmptyList<vak_runtime::SkillRecord>>, ApiError> {
+    Ok(Json(EmptyList {
+        items: state
+            .runtime
+            .skills(query.project_id.as_ref(), query.status.as_deref())
+            .await?,
+    }))
+}
+
+async fn promote_skill(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<vak_runtime::SkillRecord>, ApiError> {
+    Ok(Json(state.runtime.promote_skill(&id).await?))
+}
+
+async fn reject_skill(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<vak_runtime::SkillRecord>, ApiError> {
+    Ok(Json(state.runtime.reject_skill(&id).await?))
+}
+
+#[derive(Deserialize)]
+struct CheckpointQuery {
+    #[serde(default)]
+    include_manifest: bool,
+}
+
+fn checkpoint_json(
+    record: vak_runtime::CheckpointRecord,
+    session_id: SessionId,
+    manifest: Option<serde_json::Value>,
+) -> vak_client::Checkpoint {
+    vak_client::Checkpoint {
+        id: record.id,
+        session_id,
+        manifest_digest: record.manifest_digest,
+        created_at: record.created_at,
+        label: record.label,
+        manifest,
     }
-    let procs = state
-        .procs
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let list: Vec<serde_json::Value> = servers
+}
+
+async fn list_checkpoints(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Query(query): Query<CheckpointQuery>,
+) -> Result<Json<EmptyList<vak_client::Checkpoint>>, ApiError> {
+    let session_id = session_id.parse::<SessionId>().map_err(ApiError::domain)?;
+    let mut items = Vec::new();
+    for record in state.runtime.checkpoints(&session_id).await? {
+        let manifest = if query.include_manifest {
+            state.runtime.checkpoint_manifest(&record.id).await?
+        } else {
+            None
+        };
+        items.push(checkpoint_json(record, session_id.clone(), manifest));
+    }
+    Ok(Json(EmptyList { items }))
+}
+
+async fn create_checkpoint(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(request): Json<vak_client::CheckpointCreate>,
+) -> Result<(StatusCode, Json<vak_client::Checkpoint>), ApiError> {
+    let session_id = session_id.parse::<SessionId>().map_err(ApiError::domain)?;
+    let record = state
+        .runtime
+        .create_checkpoint(&session_id, &request.label, &request.manifest)
+        .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(checkpoint_json(record, session_id, Some(request.manifest))),
+    ))
+}
+
+async fn get_checkpoint(
+    State(state): State<AppState>,
+    Path((session_id, checkpoint_id)): Path<(String, String)>,
+) -> Result<Json<vak_client::Checkpoint>, ApiError> {
+    let session_id = session_id.parse::<SessionId>().map_err(ApiError::domain)?;
+    let record = state
+        .runtime
+        .checkpoints(&session_id)
+        .await?
         .into_iter()
-        .map(|mut s| {
-            let key = proc_key(&id, &s.name);
-            let running = procs.contains_key(&key);
-            if running && s.port.is_none() {
-                s.port = None;
+        .find(|x| x.id == checkpoint_id)
+        .ok_or_else(|| ApiError::not_found("checkpoint", &checkpoint_id))?;
+    let manifest = state.runtime.checkpoint_manifest(&record.id).await?;
+    Ok(Json(checkpoint_json(record, session_id, manifest)))
+}
+
+async fn restore_checkpoint(
+    State(state): State<AppState>,
+    Path((session_id, checkpoint_id)): Path<(String, String)>,
+) -> Result<Json<vak_client::RestoreResponse>, ApiError> {
+    let session_id = session_id.parse::<SessionId>().map_err(ApiError::domain)?;
+    state
+        .runtime
+        .restore_checkpoint(&session_id, &checkpoint_id)
+        .await
+        .map_err(|error| {
+            if error.to_string().contains("not found") {
+                ApiError::not_found("checkpoint", &checkpoint_id)
+            } else {
+                ApiError::from(error)
             }
-            serde_json::json!({
-                "name": s.name,
-                "cmd": s.cmd,
-                "args": s.args,
-                "port": s.port,
-                "running": running,
-            })
+        })?;
+    Ok(Json(vak_client::RestoreResponse {
+        restored: true,
+        checkpoint_id,
+    }))
+}
+
+#[derive(Deserialize)]
+struct BackupRequest {
+    directory: String,
+    #[serde(default)]
+    include_secrets: bool,
+    #[serde(default = "default_conflict")]
+    conflict: String,
+}
+fn default_conflict() -> String {
+    "skip".to_owned()
+}
+
+async fn backup_export(
+    State(state): State<AppState>,
+    Json(request): Json<BackupRequest>,
+) -> Result<Json<vak_runtime::BackupReport>, ApiError> {
+    Ok(Json(
+        state
+            .runtime
+            .backup_export(request.directory, request.include_secrets)
+            .await?,
+    ))
+}
+async fn backup_import(
+    State(state): State<AppState>,
+    Json(request): Json<BackupRequest>,
+) -> Result<Json<vak_runtime::BackupReport>, ApiError> {
+    Ok(Json(
+        state
+            .runtime
+            .backup_import(request.directory, &request.conflict)
+            .await?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct FlowQuery {
+    project_id: ProjectId,
+}
+async fn list_flows(
+    State(state): State<AppState>,
+    Query(query): Query<FlowQuery>,
+) -> Result<Json<EmptyList<vak_client::FlowDefinition>>, ApiError> {
+    let items = state
+        .runtime
+        .flows(&query.project_id)
+        .await?
+        .into_iter()
+        .map(|flow| vak_client::FlowDefinition {
+            name: flow.name,
+            path: flow.path.display().to_string(),
+            valid: flow.valid,
+            nodes: flow.nodes,
         })
         .collect();
-    Json(serde_json::json!({ "servers": list }))
+    Ok(Json(EmptyList { items }))
 }
-
-fn proc_key(session: &str, name: &str) -> String {
-    format!("{session}::{name}")
-}
-
-async fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
-    let deadline = tokio::time::Instant::now() + timeout;
-    while tokio::time::Instant::now() < deadline {
-        if tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .is_ok()
-        {
-            return true;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    }
-    false
-}
-
-#[derive(serde::Deserialize)]
-struct LaunchNameBody {
-    name: String,
-}
-
-async fn start_launch(
+async fn check_flow(
     State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<LaunchNameBody>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-
-    let Some(handle) = state.get(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let mut servers = match parse_launch_toml(&handle.cwd) {
-        Ok(s) => s,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": e })),
-            )
-                .into_response();
-        }
-    };
-    if servers.is_empty() {
-        servers = detect_launch(&handle.cwd);
+    Path(name): Path<String>,
+    Query(query): Query<FlowQuery>,
+) -> Result<Json<vak_client::FlowDefinition>, ApiError> {
+    let flow = state.runtime.check_flow(&query.project_id, &name).await?;
+    Ok(Json(vak_client::FlowDefinition {
+        name: flow.name,
+        path: flow.path.display().to_string(),
+        valid: flow.valid,
+        nodes: flow.nodes,
+    }))
+}
+async fn run_flow(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(request): Json<vak_client::FlowRunRequest>,
+) -> Result<(StatusCode, Json<StartRunResponse>), ApiError> {
+    let flow = state.runtime.check_flow(&request.project_id, &name).await?;
+    if !flow.valid {
+        return Err(ApiError::message(
+            StatusCode::BAD_REQUEST,
+            "flow definition is invalid",
+        ));
     }
-    let Some(cfg) = servers.iter().find(|s| s.name == body.name) else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "unknown server name" })),
-        )
-            .into_response();
-    };
-
-    let key = proc_key(&id, &cfg.name);
-    {
-        let procs = state
-            .procs
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if procs.contains_key(&key) {
-            return (
-                StatusCode::CONFLICT,
-                Json(serde_json::json!({ "error": "already running" })),
-            )
-                .into_response();
-        }
-    }
-
-    let child = tokio::process::Command::new(&cfg.cmd)
-        .args(&cfg.args)
-        .current_dir(&handle.cwd)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn();
-
-    let mut child = match child {
-        Ok(c) => c,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("spawn failed: {e}") })),
-            )
-                .into_response();
-        }
-    };
-
-    let logs: Arc<Mutex<std::collections::VecDeque<String>>> =
-        Arc::new(Mutex::new(std::collections::VecDeque::with_capacity(500)));
-    // Drain stdout+stderr into a bounded ring.
-    if let Some(out) = child.stdout.take() {
-        let logs_out = logs.clone();
-        tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
-            let mut reader = out;
-            let mut buf = [0u8; 1024];
-            let mut line = String::new();
-            loop {
-                match reader.read(&mut buf).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        line.push_str(&String::from_utf8_lossy(&buf[..n]));
-                        while let Some(pos) = line.find('\n') {
-                            let l: String = line.drain(..=pos).collect();
-                            let mut g = logs_out
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            if g.len() >= 500 {
-                                g.pop_front();
-                            }
-                            g.push_back(l.trim_end().to_string());
-                        }
-                    }
-                }
-            }
-        });
-    }
-    if let Some(err) = child.stderr.take() {
-        let logs_err = logs.clone();
-        tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
-            let mut reader = err;
-            let mut buf = [0u8; 1024];
-            let mut line = String::new();
-            loop {
-                match reader.read(&mut buf).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        line.push_str(&String::from_utf8_lossy(&buf[..n]));
-                        while let Some(pos) = line.find('\n') {
-                            let l: String = line.drain(..=pos).collect();
-                            let mut g = logs_err
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            if g.len() >= 500 {
-                                g.pop_front();
-                            }
-                            g.push_back(l.trim_end().to_string());
-                        }
-                    }
-                }
-            }
-        });
-    }
-
-    state
-        .procs
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(key, ManagedProc { child, logs });
-
-    // Give the server a moment to bind its port so the preview iframe works
-    // immediately after start.
-    let listening = match cfg.port {
-        Some(p) => wait_for_port(p, std::time::Duration::from_secs(15)).await,
-        None => false,
-    };
-    let _ = logs;
-
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({ "started": true, "listening": listening })),
+    start_run(
+        State(state),
+        Json(StartRunRequest {
+            run_id: None,
+            session_id: request.session_id,
+            project_id: request.project_id,
+            input: request.input,
+        }),
     )
-        .into_response()
+    .await
+}
+async fn exec_run(
+    State(state): State<AppState>,
+    Json(request): Json<StartRunRequest>,
+) -> Result<(StatusCode, Json<StartRunResponse>), ApiError> {
+    start_run(State(state), Json(request)).await
 }
 
-async fn stop_launch(
+async fn run_eval(
     State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<LaunchNameBody>,
-) -> StatusCode {
-    let removed = state
-        .procs
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&proc_key(&id, &body.name));
-    match removed {
-        Some(mut p) => {
-            let _ = p.child.kill().await;
-            StatusCode::OK
+    Json(request): Json<vak_client::EvalRequest>,
+) -> Result<Json<vak_client::EvalReport>, ApiError> {
+    let total = request.cases.len();
+    let (passed, failed) = state.runtime.eval(&request.cases).await?;
+    Ok(Json(vak_client::EvalReport {
+        total,
+        passed,
+        failed,
+    }))
+}
+
+pub struct ApiError {
+    status: StatusCode,
+    message: String,
+}
+
+impl ApiError {
+    fn domain(error: vak_domain::DomainError) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: error.to_string(),
         }
-        None => StatusCode::NOT_FOUND,
+    }
+    fn not_found(resource: &str, id: &str) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: format!("{resource} not found: {id}"),
+        }
+    }
+    fn config(error: vak_config::ConfigError) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: error.to_string(),
+        }
+    }
+    fn message(status: StatusCode, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            message: message.into(),
+        }
     }
 }
 
-async fn launch_logs(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    axum::extract::Query(q): axum::extract::Query<LaunchNameBody>,
-) -> Json<serde_json::Value> {
-    let procs = state
-        .procs
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    match procs.get(&proc_key(&id, &q.name)) {
-        Some(p) => {
-            let lines: Vec<String> = p
-                .logs
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .iter()
-                .cloned()
-                .collect();
-            Json(serde_json::json!({ "lines": lines }))
+impl From<RuntimeError> for ApiError {
+    fn from(error: RuntimeError) -> Self {
+        let status = match &error {
+            RuntimeError::Run(vak_runtime::RunError::NotFound(_)) => StatusCode::NOT_FOUND,
+            RuntimeError::Run(vak_runtime::RunError::AlreadyExists(_))
+            | RuntimeError::Run(vak_runtime::RunError::Terminal(_)) => StatusCode::CONFLICT,
+            _ => StatusCode::BAD_REQUEST,
+        };
+        Self {
+            status,
+            message: error.to_string(),
         }
-        None => Json(serde_json::json!({ "lines": [], "error": "not running" })),
+    }
+}
+
+impl axum::response::IntoResponse for ApiError {
+    fn into_response(self) -> axum::response::Response {
+        (
+            self.status,
+            Json(serde_json::json!({"error": self.message})),
+        )
+            .into_response()
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-mod scheduler_pure_tests {
-    use super::{cron_slot_missed, stdout_section};
-    use chrono::TimeZone;
-    use chrono::Utc;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, http::Request};
+    use http_body_util::BodyExt;
+    use tempfile::tempdir;
+    use tower::ServiceExt;
 
-    fn local(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> chrono::DateTime<chrono::Local> {
-        chrono::Local
-            .with_ymd_and_hms(y, mo, d, h, mi, 0)
-            .single()
-            .unwrap()
-    }
-
-    fn utc(dt: chrono::DateTime<chrono::Local>) -> chrono::DateTime<Utc> {
-        dt.with_timezone(&Utc)
-    }
-
-    #[test]
-    fn missed_slot_matrix() {
-        let every_min = "* * * * *";
-        // Ran at the current slot → its next slot is in the future.
-        assert!(!cron_slot_missed(
-            every_min,
-            utc(local(2026, 8, 24, 10, 30)),
-            local(2026, 8, 24, 10, 30),
-        ));
-        // Ran yesterday; today's slot already passed → missed.
-        assert!(cron_slot_missed(
-            "0 12 * * *",
-            utc(local(2026, 8, 23, 12, 0)),
-            local(2026, 8, 24, 13, 0),
-        ));
-        // Ran after the latest slot (manual run-now covers it) → not missed.
-        assert!(!cron_slot_missed(
-            "0 12 * * *",
-            utc(local(2026, 8, 24, 12, 30)),
-            local(2026, 8, 24, 13, 0),
-        ));
-        // The slot exactly one step after the last run is due right now.
-        assert!(cron_slot_missed(
-            "*/15 * * * *",
-            utc(local(2026, 8, 24, 10, 30)),
-            local(2026, 8, 24, 10, 45),
-        ));
-        // Bad expression never reports a miss (parked markers handle it).
-        assert!(!cron_slot_missed(
-            "99 * * * *",
-            utc(local(2026, 8, 23, 12, 0)),
-            local(2026, 8, 24, 13, 0),
-        ));
-    }
-
-    #[test]
-    fn stdout_section_extracts_only_stdout() {
+    #[tokio::test]
+    async fn health_and_version_are_transport_only() {
+        let home = tempdir().expect("tempdir");
+        let app = router_with_token(
+            Runtime::open(home.path()).expect("runtime"),
+            "local-development",
+        )
+        .expect("router");
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .header("authorization", "Bearer local-development")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
         assert_eq!(
-            stdout_section("[stdout]\nhello\nworld\n\n[stderr]\noops\n"),
-            "hello\nworld\n"
+            &body[..],
+            br#"{"status":"ok","protocol":1,"runtime_id":"0.9.2"}"#
         );
-        assert_eq!(stdout_section("(no output)"), "");
-        assert_eq!(stdout_section(""), "");
+    }
+
+    #[tokio::test]
+    async fn register_project_and_create_session_delegate_to_runtime() {
+        let home = tempdir().expect("tempdir");
+        let project = tempdir().expect("project");
+        let runtime = Runtime::open(home.path()).expect("runtime");
+        let app = router_with_token(runtime.clone(), "local-development").expect("router");
+        let project_id = ProjectId::new();
+        let project_body = serde_json::to_vec(&ProjectContext {
+            id: project_id.clone(),
+            root: project.path().display().to_string(),
+            display_name: None,
+        })
+        .expect("json");
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/projects")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer local-development")
+                    .body(Body::from(project_body))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let contract = SessionContract {
+            provider: "test".into(),
+            model: "test".into(),
+            route_ladder: vec![],
+            system_prompt: "system".into(),
+            permission_mode: vak_domain::PermissionMode::ReadOnly,
+            sandbox: vak_domain::SandboxMode::None,
+            tool_catalogue_revision: "test".into(),
+            context_limit: 100,
+            budget_ceiling: None,
+        };
+        let body = serde_json::to_vec(&CreateSessionRequest {
+            session_id: None,
+            project_id,
+            contract,
+        })
+        .expect("json");
+        let response = app
+            .oneshot(
+                Request::post("/sessions")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer local-development")
+                    .body(Body::from(body))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn every_endpoint_requires_bearer_authentication() {
+        let home = tempdir().expect("tempdir");
+        let app = router_with_token(Runtime::open(home.path()).expect("runtime"), "secret")
+            .expect("router");
+        let response = app
+            .oneshot(
+                Request::get("/health")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn admin_bootstrap_uses_http_only_cookie_without_exposing_data_routes() {
+        let home = tempdir().expect("tempdir");
+        let app = router_with_token(Runtime::open(home.path()).expect("runtime"), "secret")
+            .expect("router");
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/auth/login")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"token":"secret"}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let cookie = response
+            .headers()
+            .get(axum::http::header::SET_COOKIE)
+            .expect("cookie")
+            .to_str()
+            .expect("cookie text")
+            .to_owned();
+        assert!(cookie.contains("HttpOnly"));
+        let response = app
+            .oneshot(
+                Request::get("/projects")
+                    .header(axum::http::header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn config_requires_a_registered_project_id() {
+        let home = tempdir().expect("tempdir");
+        let project = ProjectId::new();
+        let app = router_with_token(Runtime::open(home.path()).expect("runtime"), "secret")
+            .expect("router");
+        let response = app
+            .oneshot(
+                Request::get(format!("/config?project_id={project}"))
+                    .header("authorization", "Bearer secret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn permission_change_revokes_the_current_capability_epoch() {
+        let home = tempdir().expect("tempdir");
+        let project_dir = tempdir().expect("project");
+        let runtime = Runtime::open(home.path()).expect("runtime");
+        let project_id = ProjectId::new();
+        runtime
+            .register_project(ProjectContext {
+                id: project_id.clone(),
+                root: project_dir.path().display().to_string(),
+                display_name: None,
+            })
+            .await
+            .expect("project");
+        let before = runtime.runs.current_epoch();
+        let app = router_with_token(runtime.clone(), "secret").expect("router");
+        let body = serde_json::json!({
+            "project_id": project_id,
+            "revision": 0,
+            "mode": "WorkspaceWrite"
+        });
+        let response = app
+            .oneshot(
+                Request::post("/config/permission-mode")
+                    .header("authorization", "Bearer secret")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(runtime.runs.current_epoch().0 > before.0);
     }
 }

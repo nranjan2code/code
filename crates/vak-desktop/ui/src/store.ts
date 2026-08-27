@@ -34,7 +34,6 @@ export type Item =
       reason: string;
       resolved: null | "allowed" | "denied" | "gone";
     }
-  | { kind: "subagent"; label: string; lines: string[]; open: boolean; isError: boolean }
   | { kind: "system"; text: string };
 
 export const [backend, setBackend] = createSignal<BackendInfo>({ ready: false, recent_projects: [] });
@@ -47,7 +46,7 @@ export const [health, setHealth] = createSignal<Health | null>(null);
 export const [providers, setProviders] = createSignal<import("./types").ProvidersResponse | null>(null);
 export const [setupNeeded, setSetupNeeded] = createSignal(false);
 export const [density, setDensity] = createSignal<Density>("normal");
-export const [dockTab, setDockTab] = createSignal<"preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | null>(null);
+export const [dockTab, setDockTab] = createSignal<"editor" | null>(null);
 export const [showShortcuts, setShowShortcuts] = createSignal(false);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 export const [hydratingId, setHydratingId] = createSignal<string | null>(null);
@@ -131,7 +130,7 @@ export function updateUiPreference<K extends keyof UiPreferences>(key: K, value:
   setUiPreferences(key, value);
   localStorage.setItem("vakcoder.uiPreferences", JSON.stringify({ ...uiPreferences, [key]: value }));
 }
-// File-editor pane target; set from anywhere (chat links, diff headers…).
+// File-editor pane target; set from tool-result links.
 export const [editorPath, setEditorPath] = createSignal<string | null>(null);
 // `/btw` side chat panel.
 export const [sideOpen, setSideOpen] = createSignal(false);
@@ -150,31 +149,16 @@ export type SettingsPageId =
   | "agent"
   | "permissions"
   | "reliability"
-  | "integrations"
+  | "skills"
   | "services"
   | "learning"
-  | "advanced"
-  | "archived";
+  | "advanced";
 export const [pendingSettingsPage, setPendingSettingsPage] = createSignal<SettingsPageId | null>(null);
 // Read-only historical transcript viewer (docs/design/29): any session by id,
 // served from disk — no attach, no stream, never touches live view state.
 export const [transcriptViewId, setTranscriptViewId] = createSignal<string | null>(null);
 // Time-travel (checkpoints) modal.
 export const [historyOpen, setHistoryOpen] = createSignal(false);
-// Dispatch-forensics (receipts) modal.
-export const [receiptsOpen, setReceiptsOpen] = createSignal(false);
-// Diff pane binding: which session's changes are shown (best-of-N override).
-export const [diffTarget, setDiffTarget] = createSignal<string | null>(null);
-
-export interface BestRun {
-  session_id: string;
-  branch: string;
-  path: string;
-}
-// Dialog lifecycle: closed → config form → starting ([] pending) → runs.
-export const [bestOfOpen, setBestOfOpen] = createSignal(false);
-export const [bestOfRuns, setBestOfRuns] = createSignal<BestRun[] | null>(null);
-
 export function openInEditor(path: string) {
   setEditorPath(path);
   setDockTab("editor");
@@ -228,19 +212,6 @@ function patchById(bucket: Bucket, id: string, itemId: string, patch: (draft: It
       return it;
     }),
   );
-}
-
-function patchLast(bucket: Bucket, id: string, pred: (it: Item) => boolean, patch: (draft: Item) => Item) {
-  updateList(bucket, id, (list) => {
-    for (let i = list.length - 1; i >= 0; i--) {
-      if (pred(list[i])) {
-        const next = [...list];
-        next[i] = patch(list[i]);
-        return next;
-      }
-    }
-    return list;
-  });
 }
 
 // ---- transcript hydration --------------------------------------------------
@@ -425,52 +396,6 @@ export function applyEvent(
       reason: ev.ApprovalRequested.reason,
       resolved: null,
     });
-  } else if ("SubagentStarted" in ev) {
-    pushItem(b, id, {
-      kind: "subagent",
-      label: ev.SubagentStarted.label,
-      lines: [],
-      open: false,
-      isError: false,
-    });
-  } else if ("SubagentToolCall" in ev) {
-    patchLast(
-      b,
-      id,
-      (it) => it.kind === "subagent",
-      (it) => {
-        if (it.kind !== "subagent") return it;
-        const lines = [...it.lines, `${ev.SubagentToolCall.name}${ev.SubagentToolCall.is_error ? " ✗" : ""}`];
-        return { ...it, lines: lines.slice(-12) };
-      },
-    );
-  } else if ("SubagentUsage" in ev) {
-    patchLast(
-      b,
-      id,
-      (it) => it.kind === "subagent",
-      (it) =>
-        it.kind === "subagent"
-          ? {
-              ...it,
-              lines: [...it.lines, `tokens ↑${ev.SubagentUsage.input_tokens} ↓${ev.SubagentUsage.output_tokens}`],
-            }
-          : it,
-    );
-  } else if ("SubagentFinished" in ev) {
-    patchLast(
-      b,
-      id,
-      (it) => it.kind === "subagent",
-      (it) =>
-        it.kind === "subagent"
-          ? {
-              ...it,
-              isError: ev.SubagentFinished.is_error,
-              lines: [...it.lines, `done in ${(ev.SubagentFinished.elapsed_ms / 1000).toFixed(1)}s`],
-            }
-          : it,
-    );
   } else if ("RetryScheduled" in ev) {
     noteRetry(id, {
       attempt: ev.RetryScheduled.attempt,

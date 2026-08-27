@@ -1,808 +1,469 @@
 use crate::types::*;
-use futures::stream::{Stream, StreamExt};
-use reqwest::StatusCode;
-use std::time::Duration;
+use async_stream::try_stream;
+use futures::{Stream, StreamExt};
+use reqwest::{StatusCode, Url, header};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value;
+use std::{pin::Pin, time::Duration};
+use vak_domain::{ProjectContext, ProjectId, RunId, SessionId};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
+    #[error("invalid base URL")]
+    Url,
+    #[error("invalid authorization token")]
+    InvalidToken,
     #[error("HTTP {status}: {body}")]
     Http { status: StatusCode, body: String },
-
     #[error("request failed: {0}")]
-    Reqwest(#[from] reqwest::Error),
-
-    #[error("JSON: {0}")]
+    Request(#[from] reqwest::Error),
+    #[error("invalid JSON: {0}")]
     Json(#[from] serde_json::Error),
-
     #[error("SSE stream ended unexpectedly")]
     StreamEnded,
-
-    #[error("connection refused — is the base running?")]
-    ConnectionRefused,
-
-    #[error(
-        "refusing plaintext http:// to non-loopback host \"{host}\" — use https:// or a loopback address"
-    )]
-    InsecureUrl { host: String },
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;
+pub type EventStream = Pin<Box<dyn Stream<Item = Result<ServerEvent>> + Send>>;
 
-/// Wire identity of a vakcoder base, served at `GET /version`.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ServerVersion {
-    pub name: String,
-    pub version: String,
-    pub protocol: u32,
-}
-
-/// True when `url` is `http://` pointed at a host other than loopback.
-/// Plaintext to anything off-machine leaks the bearer token; the guard
-/// fails closed (docs/design/34-base-addons.md M4.3).
-fn is_insecure_http(url: &str) -> Option<String> {
-    let parsed = reqwest::Url::parse(url).ok()?;
-    if parsed.scheme() != "http" {
-        return None;
-    }
-    let host = parsed.host_str()?.to_string();
-    let loopback =
-        matches!(host.as_str(), "localhost" | "::1" | "[::1]") || host.starts_with("127.");
-    (!loopback).then_some(host)
-}
-
-/// Typed HTTP + SSE client for a vakcoder base.
-///
-/// Construct via `Client::new(url, token)`. All methods are async and
-/// return typed responses. SSE streaming is exposed as a `futures::Stream`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
-    base_url: String,
+    base: Url,
     token: String,
 }
 
-impl Client {
-    /// Validated constructor for real surfaces: refuses plaintext http://
-    /// to non-loopback hosts. Tests and embedded routers may use `new`.
-    pub fn connect(base_url: impl Into<String>, token: impl Into<String>) -> Result<Self> {
-        let base_url = base_url.into();
-        if let Some(host) = is_insecure_http(&base_url) {
-            return Err(ClientError::InsecureUrl { host });
-        }
-        Ok(Self::new(base_url, token))
-    }
-
-    pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
-        Self {
-            http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()
-                .expect("reqwest client"),
-            base_url: base_url.into(),
-            token: token.into(),
-        }
-    }
-
-    /// Identity of the connected base; also the M4.3 version handshake.
-    pub async fn server_version(&self) -> Result<ServerVersion> {
-        self.get("/version").await
-    }
-
-    fn url(&self, path: &str) -> String {
-        format!("{}{path}", self.base_url)
-    }
-
-    fn auth(&self) -> reqwest::header::HeaderValue {
-        reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.token))
-            .expect("valid header value")
-    }
-
-    async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T> {
-        let resp = self
-            .http
-            .get(self.url(path))
-            .header("authorization", self.auth())
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() {
-                    ClientError::ConnectionRefused
-                } else {
-                    ClientError::Reqwest(e)
-                }
-            })?;
-        let status = resp.status();
-        let text = resp.text().await?;
-        if !status.is_success() {
-            return Err(ClientError::Http { status, body: text });
-        }
-        Ok(serde_json::from_str(&text)?)
-    }
-
-    pub async fn get_raw(&self, path: &str) -> Result<(StatusCode, String)> {
-        let resp = self
-            .http
-            .get(self.url(path))
-            .header("authorization", self.auth())
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() {
-                    ClientError::ConnectionRefused
-                } else {
-                    ClientError::Reqwest(e)
-                }
-            })?;
-        let status = resp.status();
-        let text = resp.text().await?;
-        Ok((status, text))
-    }
-
-    pub async fn post_empty(&self, path: &str) -> Result<StatusCode> {
-        let resp = self
-            .http
-            .post(self.url(path))
-            .header("authorization", self.auth())
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() {
-                    ClientError::ConnectionRefused
-                } else {
-                    ClientError::Reqwest(e)
-                }
-            })?;
-        Ok(resp.status())
-    }
-
-    pub async fn post_json<B: serde::Serialize, T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-        body: &B,
-    ) -> Result<T> {
-        let resp = self
-            .http
-            .post(self.url(path))
-            .header("authorization", self.auth())
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() {
-                    ClientError::ConnectionRefused
-                } else {
-                    ClientError::Reqwest(e)
-                }
-            })?;
-        let status = resp.status();
-        let text = resp.text().await?;
-        if !status.is_success() {
-            return Err(ClientError::Http { status, body: text });
-        }
-        Ok(serde_json::from_str(&text)?)
-    }
-
-    pub async fn post_json_status<B: serde::Serialize>(
-        &self,
-        path: &str,
-        body: &B,
-    ) -> Result<StatusCode> {
-        let resp = self
-            .http
-            .post(self.url(path))
-            .header("authorization", self.auth())
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() {
-                    ClientError::ConnectionRefused
-                } else {
-                    ClientError::Reqwest(e)
-                }
-            })?;
-        Ok(resp.status())
-    }
-
-    pub async fn patch_json<B: serde::Serialize>(
-        &self,
-        path: &str,
-        body: &B,
-    ) -> Result<StatusCode> {
-        let resp = self
-            .http
-            .patch(self.url(path))
-            .header("authorization", self.auth())
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() {
-                    ClientError::ConnectionRefused
-                } else {
-                    ClientError::Reqwest(e)
-                }
-            })?;
-        Ok(resp.status())
-    }
-
-    pub async fn delete(&self, path: &str) -> Result<StatusCode> {
-        let resp = self
-            .http
-            .delete(self.url(path))
-            .header("authorization", self.auth())
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() {
-                    ClientError::ConnectionRefused
-                } else {
-                    ClientError::Reqwest(e)
-                }
-            })?;
-        Ok(resp.status())
-    }
-
-    pub async fn put_json<B: serde::Serialize, T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-        body: &B,
-    ) -> Result<T> {
-        let resp = self
-            .http
-            .put(self.url(path))
-            .header("authorization", self.auth())
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() {
-                    ClientError::ConnectionRefused
-                } else {
-                    ClientError::Reqwest(e)
-                }
-            })?;
-        let status = resp.status();
-        let text = resp.text().await?;
-        if !status.is_success() {
-            return Err(ClientError::Http { status, body: text });
-        }
-        Ok(serde_json::from_str(&text)?)
-    }
-
-    pub async fn put_json_status<B: serde::Serialize>(
-        &self,
-        path: &str,
-        body: &B,
-    ) -> Result<StatusCode> {
-        let resp = self
-            .http
-            .put(self.url(path))
-            .header("authorization", self.auth())
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() {
-                    ClientError::ConnectionRefused
-                } else {
-                    ClientError::Reqwest(e)
-                }
-            })?;
-        Ok(resp.status())
-    }
-
-    pub async fn delete_json<B: serde::Serialize, T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-        body: &B,
-    ) -> Result<T> {
-        let resp = self
-            .http
-            .delete(self.url(path))
-            .header("authorization", self.auth())
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() {
-                    ClientError::ConnectionRefused
-                } else {
-                    ClientError::Reqwest(e)
-                }
-            })?;
-        let status = resp.status();
-        let text = resp.text().await?;
-        if !status.is_success() {
-            return Err(ClientError::Http { status, body: text });
-        }
-        Ok(serde_json::from_str(&text)?)
-    }
-
-    // ── Health ───────────────────────────────────────────────────
-
-    pub async fn health(&self) -> Result<HealthResponse> {
-        self.get("/health").await
-    }
-
-    // ── Sessions ─────────────────────────────────────────────────
-
-    pub async fn list_sessions(&self) -> Result<SessionListResponse> {
-        self.get("/sessions").await
-    }
-
-    pub async fn create_session(&self, cwd: Option<&str>) -> Result<CreateSessionResponse> {
-        self.post_json(
-            "/sessions",
-            &CreateSessionRequest {
-                cwd: cwd.map(String::from),
-            },
-        )
-        .await
-    }
-
-    pub async fn delete_session(&self, id: &str) -> Result<StatusCode> {
-        self.delete(&format!("/sessions/{id}")).await
-    }
-
-    /// Resume a persisted session into the base's live-handle map. Returns
-    /// the canonical session id (the header id can differ from the request).
-    pub async fn attach_session(&self, id: &str) -> Result<String> {
-        let resp: CreateSessionResponse = self
-            .post_json(&format!("/sessions/{id}/attach"), &serde_json::json!({}))
-            .await?;
-        Ok(resp.session_id)
-    }
-
-    // ── Run / Steering ───────────────────────────────────────────
-
-    pub async fn run_prompt(&self, session_id: &str, req: &RunRequest) -> Result<StatusCode> {
-        self.post_json_status(&format!("/sessions/{session_id}/run"), req)
-            .await
-    }
-
-    pub async fn steer(&self, session_id: &str, text: &str) -> Result<StatusCode> {
-        self.post_json_status(
-            &format!("/sessions/{session_id}/steering"),
-            &SteeringRequest {
-                text: text.to_string(),
-            },
-        )
-        .await
-    }
-
-    pub async fn cancel_run(&self, session_id: &str) -> Result<StatusCode> {
-        self.post_empty(&format!("/sessions/{session_id}/cancel"))
-            .await
-    }
-
-    // ── SSE streaming ────────────────────────────────────────────
-
-    pub fn events(&self, session_id: &str) -> impl Stream<Item = Result<AgentEvent>> + '_ {
-        let url = self.url(&format!("/sessions/{session_id}/events"));
-        let token = self.token.clone();
-        let client = self.http.clone();
-
-        async_stream::stream! {
-            let resp = client
-                .get(&url)
-                .header("authorization", format!("Bearer {token}"))
-                .send()
-                .await;
-
-            let resp = match resp {
-                Ok(r) => r,
-                Err(e) => {
-                    if e.is_connect() {
-                        yield Err(ClientError::ConnectionRefused);
-                    } else {
-                        yield Err(ClientError::Reqwest(e));
-                    }
-                    return;
-                }
-            };
-
-            let mut buffer = String::new();
-            let mut bytes_stream = resp.bytes_stream();
-
-            while let Some(chunk) = bytes_stream.next().await {
-                let chunk = match chunk {
-                    Ok(c) => c,
-                    Err(e) => {
-                        yield Err(ClientError::Reqwest(e));
-                        return;
-                    }
-                };
-
-                buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-                while let Some(newline_pos) = buffer.find('\n') {
-                    let line = buffer[..newline_pos].trim().to_string();
-                    buffer = buffer[newline_pos + 1..].to_string();
-
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        if data == "[DONE]" {
-                            return;
-                        }
-                        match serde_json::from_str::<AgentEvent>(data) {
-                            Ok(event) => yield Ok(event),
-                            Err(e) => {
-                                yield Err(ClientError::Json(e));
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // ── Transcript ───────────────────────────────────────────────
-
-    pub async fn transcript(&self, session_id: &str) -> Result<TranscriptResponse> {
-        self.get(&format!("/sessions/{session_id}/transcript"))
-            .await
-    }
-
-    // ── Config ───────────────────────────────────────────────────
-
-    pub async fn config(&self) -> Result<ConfigResponse> {
-        self.get("/config").await
-    }
-
-    pub async fn patch_config(&self, patch: &PatchConfigRequest) -> Result<StatusCode> {
-        self.patch_json("/config", patch).await
-    }
-
-    // ── Search ───────────────────────────────────────────────────
-
-    pub async fn search(
-        &self,
-        query: &str,
-        limit: u32,
-        all: bool,
-        exclude: Option<&str>,
-    ) -> Result<SearchResponse> {
-        let mut url = format!("/search?q={query}&limit={limit}&all={all}");
-        if let Some(ex) = exclude {
-            url.push_str(&format!("&exclude={ex}"));
-        }
-        self.get(&url).await
-    }
-
-    // ── FinOps ───────────────────────────────────────────────────
-
-    pub async fn finops(&self) -> Result<FinopsResponse> {
-        self.get("/finops").await
-    }
-
-    // ── Checkpoints ──────────────────────────────────────────────
-
-    pub async fn checkpoints(&self, session_id: &str) -> Result<Vec<Checkpoint>> {
-        self.get(&format!("/sessions/{session_id}/checkpoints"))
-            .await
-    }
-
-    // ── Skills ───────────────────────────────────────────────────
-
-    pub async fn skills(&self) -> Result<Vec<Skill>> {
-        self.get("/skills").await
-    }
-
-    // ── Custom commands ──────────────────────────────────────────
-
-    pub async fn custom_commands(&self) -> Result<Vec<CustomCommandInfo>> {
-        let resp: CustomCommandsResponse = self.get("/config/commands").await?;
-        Ok(resp.commands)
-    }
-
-    // ── Tools / breaker introspection ────────────────────────────
-
-    pub async fn tools(&self) -> Result<Vec<String>> {
-        let resp: serde_json::Value = self.get("/tools").await?;
-        Ok(resp
-            .get("tools")
-            .and_then(|t| t.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default())
-    }
-
-    pub async fn breaker(&self) -> Result<serde_json::Value> {
-        self.get("/breaker").await
-    }
-
-    // ── Memory ───────────────────────────────────────────────────
-
-    pub async fn memory(&self) -> Result<Vec<MemoryNote>> {
-        #[derive(serde::Deserialize)]
-        struct Notes {
-            notes: Vec<MemoryNote>,
-        }
-        let notes: Notes = self.get("/memory").await?;
-        Ok(notes.notes)
-    }
-
-    /// Appends a note to the `workspace` or `profile` tier via `POST /memory`.
-    pub async fn append_memory(
-        &self,
-        text: &str,
-        scope: &str,
-        kind: &str,
-        tag: &str,
-        session_id: &str,
-    ) -> Result<MemoryNote> {
-        self.post_json(
-            "/memory",
-            &serde_json::json!({
-                "text": text,
-                "kind": kind,
-                "tag": tag,
-                "scope": scope,
-                "session_id": session_id,
-            }),
-        )
-        .await
-    }
-
-    // ── Tasks ────────────────────────────────────────────────────
-
-    pub async fn tasks(&self) -> Result<Vec<Task>> {
-        self.get("/tasks").await
-    }
-
-    // ── Providers ────────────────────────────────────────────────
-
-    pub async fn providers(&self) -> Result<Vec<ProviderInfo>> {
-        self.get("/providers").await
-    }
-
-    pub async fn discover_models(&self, provider: &str) -> Result<Vec<ModelInfo>> {
-        self.get(&format!("/providers/{provider}/models")).await
-    }
-
-    // ── Approvals ────────────────────────────────────────────────
-
-    pub async fn answer_approval(
-        &self,
-        session_id: &str,
-        approval_id: &str,
-        approve: bool,
-    ) -> Result<StatusCode> {
-        let path = format!("/sessions/{session_id}/approvals/{approval_id}");
-        let body = serde_json::json!({ "approve": approve });
-        let resp = self
-            .http
-            .post(self.url(&path))
-            .header("authorization", self.auth())
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() {
-                    ClientError::ConnectionRefused
-                } else {
-                    ClientError::Reqwest(e)
-                }
-            })?;
-        Ok(resp.status())
-    }
-
-    // ── Doctor ───────────────────────────────────────────────────
-
-    pub async fn doctor(&self) -> Result<serde_json::Value> {
-        self.get("/doctor").await
-    }
-
-    // ── Ops ──────────────────────────────────────────────────────
-
-    pub async fn ops_status(&self) -> Result<serde_json::Value> {
-        self.get("/ops/status").await
-    }
-
-    // ── Backup ───────────────────────────────────────────────────
-
-    pub async fn backup_export(&self) -> Result<serde_json::Value> {
-        self.post_json("/backup/export", &serde_json::json!({}))
-            .await
-    }
-
-    // ── Inbox ────────────────────────────────────────────────────
-
-    pub async fn inbox_list(&self, limit: u32, unread_only: bool) -> Result<InboxResponse> {
-        let mut url = format!("/inbox?limit={limit}");
-        if unread_only {
-            url.push_str("&unread=true");
-        }
-        self.get(&url).await
-    }
-
-    pub async fn inbox_ack(&self, id: &str) -> Result<InboxAckResponse> {
-        self.post_json(&format!("/inbox/{id}/ack"), &serde_json::json!({}))
-            .await
-    }
-
-    pub async fn inbox_unread_count(&self) -> Result<UnreadCountResponse> {
-        self.get("/inbox/unread_count").await
-    }
-
-    // ── Task management ──────────────────────────────────────────
-
-    pub async fn task_enable(&self, id: &str) -> Result<StatusCode> {
-        self.patch_json(
-            &format!("/tasks/{id}"),
-            &serde_json::json!({ "enabled": true }),
-        )
-        .await
-    }
-
-    pub async fn task_disable(&self, id: &str) -> Result<StatusCode> {
-        self.patch_json(
-            &format!("/tasks/{id}"),
-            &serde_json::json!({ "enabled": false }),
-        )
-        .await
-    }
-
-    pub async fn task_run_now(&self, id: &str) -> Result<StatusCode> {
-        self.post_empty(&format!("/tasks/{id}/run-now")).await
-    }
-
-    pub async fn proposals_list(&self) -> Result<ProposalsResponse> {
-        self.get("/skills/proposals").await
-    }
-
-    pub async fn proposal_promote(&self, id: &str) -> Result<serde_json::Value> {
-        self.post_json(
-            &format!("/skills/proposals/{id}/promote"),
-            &serde_json::json!({}),
-        )
-        .await
-    }
-
-    pub async fn proposal_reject(&self, id: &str) -> Result<serde_json::Value> {
-        self.post_json(
-            &format!("/skills/proposals/{id}/reject"),
-            &serde_json::json!({}),
-        )
-        .await
-    }
-
-    // ── Provider key management ──────────────────────────────────
-
-    pub async fn set_provider_key(&self, provider: &str, key: &str) -> Result<ProviderKeyResponse> {
-        self.put_json(
-            "/config/key",
-            &ProviderKeyRequest {
-                provider: provider.to_string(),
-                key: key.to_string(),
-            },
-        )
-        .await
-    }
-
-    pub async fn remove_provider_key(&self, provider: &str) -> Result<ProviderRemoveResponse> {
-        self.delete_json(
-            "/config/key",
-            &ProviderRef {
-                provider: provider.to_string(),
-            },
-        )
-        .await
-    }
-
-    // ── Subagents ────────────────────────────────────────────────
-
-    pub async fn subagents_list(&self, session_id: &str) -> Result<SubagentsResponse> {
-        self.get(&format!("/sessions/{session_id}/subagents")).await
-    }
-
-    pub async fn subagent_steer(
-        &self,
-        session_id: &str,
-        child: &str,
-        text: &str,
-    ) -> Result<StatusCode> {
-        self.post_json_status(
-            &format!("/sessions/{session_id}/subagents/{child}/steer"),
-            &SteeringRequest {
-                text: text.to_string(),
-            },
-        )
-        .await
-    }
-
-    pub async fn subagent_stop(&self, session_id: &str, child: &str) -> Result<StatusCode> {
-        self.post_empty(&format!("/sessions/{session_id}/subagents/{child}/stop"))
-            .await
-    }
-
-    // ── Checkpoint restore ───────────────────────────────────────
-
-    pub async fn checkpoint_restore(
-        &self,
-        session_id: &str,
-        seq: u32,
-    ) -> Result<CheckpointRestoreResponse> {
-        self.post_json(
-            &format!("/sessions/{session_id}/checkpoints/{seq}/restore"),
-            &serde_json::json!({}),
-        )
-        .await
-    }
-
-    // ── Compaction ───────────────────────────────────────────────
-
-    pub async fn compact(&self, session_id: &str) -> Result<serde_json::Value> {
-        self.post_json(
-            &format!("/sessions/{session_id}/compact"),
-            &serde_json::json!({}),
-        )
-        .await
-    }
-
-    pub async fn set_permission_mode(&self, mode: &str) -> Result<StatusCode> {
-        self.post_json_status("/config/mode", &serde_json::json!({ "mode": mode }))
-            .await
-    }
-
-    // ── Sandbox backend ──────────────────────────────────────────
-
-    pub async fn sandbox_info(&self) -> Result<serde_json::Value> {
-        self.get("/config/sandbox").await
-    }
-
-    pub async fn set_sandbox_backend(&self, backend: Option<&str>) -> Result<StatusCode> {
-        self.post_json_status(
-            "/config/sandbox",
-            &serde_json::json!({ "backend": backend }),
-        )
-        .await
-    }
-
-    // ── MCP hot-apply ────────────────────────────────────────────
-
-    pub async fn mcp_apply(&self, servers: &serde_json::Value) -> Result<StatusCode> {
-        self.put_json_status("/config/mcp", servers).await
+impl std::fmt::Debug for Client {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Client")
+            .field("base", &self.base)
+            .field("token", &"[REDACTED]")
+            .finish()
     }
 }
 
+#[derive(Debug, Default)]
+pub struct ClientBuilder {
+    base: Option<String>,
+    token: Option<String>,
+    timeout: Option<Duration>,
+}
+
+impl ClientBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn base_url(mut self, url: impl Into<String>) -> Self {
+        self.base = Some(url.into());
+        self
+    }
+    pub fn token(mut self, token: impl Into<String>) -> Self {
+        self.token = Some(token.into());
+        self
+    }
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+    pub fn build(self) -> Result<Client> {
+        let raw = self.base.unwrap_or_else(|| "http://127.0.0.1:7420".into());
+        let base = Url::parse(&raw).map_err(|_| ClientError::Url)?;
+        let token = self.token.unwrap_or_default();
+        if token.is_empty() {
+            return Err(ClientError::InvalidToken);
+        }
+        let mut builder = reqwest::Client::builder();
+        if let Some(timeout) = self.timeout {
+            builder = builder.timeout(timeout);
+        }
+        let http = builder.build()?;
+        Ok(Client { http, base, token })
+    }
+}
+
+impl Client {
+    pub fn new(base: impl Into<String>, token: impl Into<String>) -> Result<Self> {
+        ClientBuilder::new().base_url(base).token(token).build()
+    }
+
+    fn endpoint(&self, path: &str) -> Result<Url> {
+        self.base
+            .join(path.trim_start_matches('/'))
+            .map_err(|_| ClientError::Url)
+    }
+
+    fn request(&self, method: reqwest::Method, path: &str) -> Result<reqwest::RequestBuilder> {
+        let mut req = self.http.request(method, self.endpoint(path)?);
+        if !self.token.is_empty() {
+            let value = header::HeaderValue::from_str(&format!("Bearer {}", self.token))
+                .map_err(|_| ClientError::InvalidToken)?;
+            req = req.header(header::AUTHORIZATION, value);
+        }
+        Ok(req)
+    }
+
+    async fn decode<T: DeserializeOwned>(&self, response: reqwest::Response) -> Result<T> {
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            return Err(ClientError::Http { status, body });
+        }
+        Ok(serde_json::from_str(&body)?)
+    }
+
+    async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        self.decode(self.request(reqwest::Method::GET, path)?.send().await?)
+            .await
+    }
+
+    async fn json<T: DeserializeOwned, B: Serialize>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        let response = self.request(method, path)?.json(body).send().await?;
+        self.decode(response).await
+    }
+
+    pub async fn health(&self) -> Result<Health> {
+        self.get("/health").await
+    }
+    pub async fn version(&self) -> Result<Version> {
+        self.get("/version").await
+    }
+    pub async fn projects(&self) -> Result<Vec<ProjectContext>> {
+        Ok(self.get::<ProjectList>("/projects").await?.items)
+    }
+    pub async fn register_project(&self, project: &ProjectContext) -> Result<ProjectContext> {
+        self.json(reqwest::Method::POST, "/projects", project).await
+    }
+    pub async fn sessions(&self, project_id: Option<&ProjectId>) -> Result<Vec<Session>> {
+        let path = project_id.map_or_else(
+            || "/sessions".into(),
+            |id| format!("/sessions?project_id={id}"),
+        );
+        self.get(&path).await
+    }
+    pub async fn create_session(&self, request: &CreateSession) -> Result<SessionCreated> {
+        self.json(reqwest::Method::POST, "/sessions", request).await
+    }
+    pub async fn transcript(&self, session_id: &SessionId) -> Result<Transcript> {
+        self.get(&format!("/sessions/{session_id}/transcript"))
+            .await
+    }
+    pub async fn start_run(&self, request: &StartRun) -> Result<StartRunResponse> {
+        self.json(reqwest::Method::POST, "/runs", request).await
+    }
+    pub async fn run(&self, id: &RunId) -> Result<RunSnapshot> {
+        self.get(&format!("/runs/{id}")).await
+    }
+    pub async fn cancel_run(&self, id: &RunId, reason: Option<&str>) -> Result<CancelResponse> {
+        self.json(
+            reqwest::Method::POST,
+            &format!("/runs/{id}/cancel"),
+            &serde_json::json!({"reason": reason}),
+        )
+        .await
+    }
+    pub async fn events(&self, _id: &RunId) -> Result<EventStream> {
+        let id = _id;
+        let response = self
+            .request(reqwest::Method::GET, &format!("/events?run_id={id}"))?
+            .header(header::ACCEPT, "text/event-stream")
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await?;
+            return Err(ClientError::Http { status, body });
+        }
+        let mut bytes = response.bytes_stream();
+        let stream = try_stream! {
+            let mut buffer = String::new();
+            while let Some(chunk) = bytes.next().await {
+                buffer.push_str(&String::from_utf8_lossy(&chunk?));
+                while let Some(pos) = buffer.find("\n\n") {
+                    let frame = buffer[..pos].replace('\r', "");
+                    buffer.drain(..pos + 2);
+                    let data = frame.lines().filter_map(|line| line.strip_prefix("data:")).map(str::trim).collect::<Vec<_>>().join("\n");
+                    if data.is_empty() { continue; }
+                    if data == "[DONE]" { return; }
+                    yield serde_json::from_str::<ServerEvent>(&data)?;
+                }
+            }
+        };
+        Ok(Box::pin(stream))
+    }
+    pub async fn config(&self, project_id: &ProjectId) -> Result<Config> {
+        self.get(&format!("/config?project_id={project_id}")).await
+    }
+    pub async fn patch_config(&self, patch: &ConfigPatch) -> Result<Config> {
+        self.json(reqwest::Method::PATCH, "/config", patch).await
+    }
+    pub async fn diagnostics(&self) -> Result<Diagnostics> {
+        self.get("/diagnostics").await
+    }
+    pub async fn tasks(&self, project_id: Option<&ProjectId>) -> Result<Vec<Task>> {
+        let path = project_id.map_or_else(
+            || "/tasks".to_owned(),
+            |id| format!("/tasks?project_id={id}"),
+        );
+        Ok(self.get::<TaskList>(&path).await?.items)
+    }
+    pub async fn create_task(&self, task: &serde_json::Value) -> Result<Task> {
+        self.json(reqwest::Method::POST, "/tasks", task).await
+    }
+    pub async fn update_task(&self, id: &str, patch: &serde_json::Value) -> Result<Task> {
+        self.json(reqwest::Method::PATCH, &format!("/tasks/{id}"), patch)
+            .await
+    }
+    pub async fn delete_task(&self, id: &str) -> Result<bool> {
+        Ok(self
+            .json::<serde_json::Value, _>(
+                reqwest::Method::DELETE,
+                &format!("/tasks/{id}"),
+                &serde_json::json!({}),
+            )
+            .await?
+            .get("deleted")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false))
+    }
+    pub async fn memory(&self, project_id: Option<&ProjectId>, scope: &str) -> Result<Vec<Memory>> {
+        let mut path = format!("/memory?scope={scope}");
+        if let Some(id) = project_id {
+            path.push_str(&format!("&project_id={id}"));
+        }
+        Ok(self.get::<MemoryList>(&path).await?.items)
+    }
+    pub async fn create_memory<B: Serialize>(&self, request: &B) -> Result<Memory> {
+        self.json(reqwest::Method::POST, "/memory", request).await
+    }
+    pub async fn amend_memory(&self, id: &str, text: &str) -> Result<Memory> {
+        self.json(
+            reqwest::Method::PATCH,
+            &format!("/memory/{id}"),
+            &serde_json::json!({"text": text}),
+        )
+        .await
+    }
+    pub async fn forget_memory(&self, id: &str) -> Result<bool> {
+        Ok(self
+            .json::<serde_json::Value, _>(
+                reqwest::Method::DELETE,
+                &format!("/memory/{id}"),
+                &serde_json::json!({}),
+            )
+            .await?
+            .get("forgotten")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false))
+    }
+    pub async fn approvals(&self) -> Result<Vec<Approval>> {
+        Ok(self.get::<ApprovalList>("/approvals").await?.items)
+    }
+    pub async fn resolve_approval(
+        &self,
+        id: &str,
+        allow: bool,
+        response: Value,
+    ) -> Result<Approval> {
+        self.json(
+            reqwest::Method::POST,
+            &format!("/approvals/{id}/resolve"),
+            &serde_json::json!({"allow": allow, "response": response}),
+        )
+        .await
+    }
+    pub async fn skills(
+        &self,
+        project_id: Option<&ProjectId>,
+        status: Option<&str>,
+    ) -> Result<Vec<Skill>> {
+        let mut path = "/skills".to_owned();
+        let mut query = Vec::new();
+        if let Some(id) = project_id {
+            query.push(format!("project_id={id}"));
+        }
+        if let Some(status) = status {
+            query.push(format!("status={status}"));
+        }
+        if !query.is_empty() {
+            path.push('?');
+            path.push_str(&query.join("&"));
+        }
+        Ok(self.get::<SkillList>(&path).await?.items)
+    }
+    pub async fn promote_skill(&self, id: &str) -> Result<Skill> {
+        self.json(
+            reqwest::Method::POST,
+            &format!("/skills/{id}/promote"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+    pub async fn reject_skill(&self, id: &str) -> Result<Skill> {
+        self.json(
+            reqwest::Method::POST,
+            &format!("/skills/{id}/reject"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+    pub async fn change_permission_mode(&self, request: &PermissionModeRequest) -> Result<Config> {
+        self.json(reqwest::Method::POST, "/config/permission-mode", request)
+            .await
+    }
+    pub async fn checkpoints(&self, session_id: &SessionId) -> Result<Vec<Checkpoint>> {
+        Ok(self
+            .get::<CheckpointList>(&format!(
+                "/sessions/{session_id}/checkpoints?include_manifest=true"
+            ))
+            .await?
+            .items)
+    }
+    pub async fn create_checkpoint(
+        &self,
+        session_id: &SessionId,
+        request: &CheckpointCreate,
+    ) -> Result<Checkpoint> {
+        self.json(
+            reqwest::Method::POST,
+            &format!("/sessions/{session_id}/checkpoints"),
+            request,
+        )
+        .await
+    }
+    pub async fn checkpoint(&self, session_id: &SessionId, id: &str) -> Result<Checkpoint> {
+        self.get(&format!("/sessions/{session_id}/checkpoints/{id}"))
+            .await
+    }
+    pub async fn restore_checkpoint(
+        &self,
+        session_id: &SessionId,
+        id: &str,
+    ) -> Result<RestoreResponse> {
+        self.json(
+            reqwest::Method::POST,
+            &format!("/sessions/{session_id}/checkpoints/{id}/restore"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+    pub async fn backup_export(&self, request: &BackupExportRequest) -> Result<BackupReport> {
+        self.json(reqwest::Method::POST, "/backup/export", request)
+            .await
+    }
+    pub async fn backup_import(&self, request: &BackupImportRequest) -> Result<BackupReport> {
+        self.json(reqwest::Method::POST, "/backup/import", request)
+            .await
+    }
+    pub async fn flows(&self, project_id: &ProjectId) -> Result<Vec<FlowDefinition>> {
+        Ok(self
+            .get::<FlowList>(&format!("/flows?project_id={project_id}"))
+            .await?
+            .items)
+    }
+    pub async fn check_flow(&self, name: &str, project_id: &ProjectId) -> Result<FlowDefinition> {
+        self.json(
+            reqwest::Method::POST,
+            &format!("/flows/{name}/check?project_id={project_id}"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+    pub async fn run_flow(&self, name: &str, request: &FlowRunRequest) -> Result<StartRunResponse> {
+        self.json(
+            reqwest::Method::POST,
+            &format!("/flows/{name}/run"),
+            request,
+        )
+        .await
+    }
+    pub async fn exec(&self, request: &StartRun) -> Result<StartRunResponse> {
+        self.json(reqwest::Method::POST, "/exec", request).await
+    }
+    pub async fn eval(&self, request: &EvalRequest) -> Result<EvalReport> {
+        self.json(reqwest::Method::POST, "/eval", request).await
+    }
+}
+
+#[derive(Deserialize)]
+struct TaskList {
+    items: Vec<Task>,
+}
+
+#[derive(Deserialize)]
+struct MemoryList {
+    items: Vec<Memory>,
+}
+
+#[derive(Deserialize)]
+struct ApprovalList {
+    items: Vec<Approval>,
+}
+
+#[derive(Deserialize)]
+struct SkillList {
+    items: Vec<Skill>,
+}
+
+#[derive(Deserialize)]
+struct CheckpointList {
+    items: Vec<Checkpoint>,
+}
+
+#[derive(Deserialize)]
+struct FlowList {
+    items: Vec<FlowDefinition>,
+}
+
 #[cfg(test)]
-mod tls_guard_tests {
-    use super::is_insecure_http;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use axum::{Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
+    use std::net::SocketAddr;
 
-    #[test]
-    fn loopback_http_is_allowed() {
-        assert_eq!(is_insecure_http("http://127.0.0.1:8901"), None);
-        assert_eq!(is_insecure_http("http://127.9.9.9"), None);
-        assert_eq!(is_insecure_http("http://localhost"), None);
-        assert_eq!(is_insecure_http("http://localhost:1234/x"), None);
-        assert_eq!(is_insecure_http("http://[::1]:8901"), None);
+    #[tokio::test]
+    async fn health_is_typed_and_authorized() {
+        async fn route(
+            State(_token): State<String>,
+            headers: axum::http::HeaderMap,
+        ) -> impl IntoResponse {
+            assert_eq!(
+                headers
+                    .get(header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok()),
+                Some("Bearer secret")
+            );
+            (
+                StatusCode::OK,
+                serde_json::json!({"status":"ok","protocol":1,"runtime_id":"r"}).to_string(),
+            )
+        }
+        let app = Router::new()
+            .route("/health", get(route))
+            .with_state("secret".to_string());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let health = Client::new(format!("http://{addr}"), "secret")
+            .unwrap()
+            .health()
+            .await
+            .unwrap();
+        assert_eq!(health.protocol, 1);
     }
 
     #[test]
-    fn https_is_always_allowed() {
-        assert_eq!(is_insecure_http("https://base.example.com"), None);
-        assert_eq!(is_insecure_http("https://192.168.1.10:8443"), None);
-    }
-
-    #[test]
-    fn plaintext_to_lan_or_wan_is_rejected_with_host() {
-        assert_eq!(
-            is_insecure_http("http://base.example.com"),
-            Some("base.example.com".to_string())
-        );
-        assert_eq!(
-            is_insecure_http("http://192.168.1.10:8901"),
-            Some("192.168.1.10".to_string())
-        );
-    }
-
-    #[test]
-    fn unparseable_urls_do_not_panic() {
-        assert_eq!(is_insecure_http("not a url"), None);
+    fn sse_event_round_trips() {
+        let event = ServerEvent::Domain(vak_domain::Event::ConfigChanged { revision: 7 });
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("ConfigChanged"));
     }
 }

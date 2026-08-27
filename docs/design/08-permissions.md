@@ -1,4 +1,4 @@
-# 08 — Permissions (vak-permission)
+# 08 — Permissions (Runtime broker)
 
 ## Model
 
@@ -91,43 +91,29 @@ constrains *what the process can touch* even when allowed.
 - Bash subprocesses inherit only a small operational environment allowlist
   (`PATH`, locale, terminal, temp, user/home, XDG, and Rust toolchain paths).
   Provider keys, gateway tokens, and arbitrary host secrets are not inherited,
-  including in full-access mode. Future credential use must be explicit and
+  including in full-access mode. Credential use is explicit and
   target-scoped rather than ambient.
-- Configured MCP servers are separately spawned, sandboxed process-group
-  workers. Their environment is empty except for `PATH` and variables
-  explicitly declared in that server's trusted configuration. Restricted MCP
-  servers have no network because they inherit the same sandbox policy.
-- `task` and `session_search` are broker-owned structured capabilities rather
-  than worker code: child agents receive brokered tool registries, while
-  session search receives only its fixed session-index scope.
+- Structured Runtime operations (tasks, memory, checkpoints, and session
+  search) are broker-owned capabilities rather than worker code and receive
+  only their fixed project/session scope.
 - Static and dynamically planned Bash flow nodes evaluate the same permission
   engine and approver before dispatching through the brokered registry. A flow
   cannot treat a model-generated command as implicitly approved.
 - Changing permission mode through the server revokes every in-flight main and
   side run and rejects pending approvals before the new mode is reported. A
   running agent never continues with a stale, more-permissive snapshot.
-- Learned allow rules: pressing `[p]` on an approval persists a SCOPED rule
-  derived from the call — `bash(<first-word> *)`, `<write|edit>(<path>)`,
-  `mcp(<server>/*)`, `task(<label>)` — into
-  `.vakcoder/permissions.local.toml` (trusted workspaces only). Every spec
-  is round-trip validated (must parse AND match the triggering call) before
-  it is written. Loaded at Core startup for trusted workspaces and merged
-  into every engine build (`exec`/`plan` included); because evaluation is
-  severity-aggregated, a learned Allow can never shadow an explicit Deny.
-  `[a]` remains session-only for calls that cannot be scoped safely
-  (e.g. opaque bash with command substitution).
+- Learned allow rules are not persisted by the current Runtime contract;
+  approvals are explicit per request and project configuration is edited
+  through its revision-checked endpoint.
 - Known semantics: on macOS `/tmp` resolves to `/private/tmp`, so tmp writes
   are permitted in workspace-write mode by design (output spill files rely on
   it). Everything else outside the cwd is blocked at kernel level.
 
-## Later
+## Enforcement boundary
 
-- A pinned full-worker container image and VM/remote execution remain the
-  stronger hostile-code backends. The local worker plus Seatbelt/Landlock path
-  is the default low-friction boundary; today's Docker backend contains Bash.
-
-See `24-agent-security.md` for the adversarial threat model, comparative
-research, residual risks, and the containment roadmap.
+The local broker plus Seatbelt/Landlock path is the default boundary. Docker
+provides command-scoped containment for Bash. Missing or unverified containment
+fails closed; no effect is dispatched outside the selected policy.
 
 ## Diff note — severity aggregation + opaque commands (this change)
 
@@ -136,7 +122,6 @@ of first-match-wins, so deny precedence is a property of the engine rather
 than of rule insertion order. Bash commands containing newlines, backticks,
 or `$()`/`<()`/`>()` produce NO arg candidates: pattern-based allow rules
 cannot see inside them, so they fall through to the mode default / approver,
-which sees the full command. Blanket (patternless) rules still apply. MCP
-calls expose `server/tool` candidates (`Mcp(docs/*)`), tasks expose their
-label, and Ask reasons for mcp/task include the resolved target instead of
-approving blind.
+which sees the full command. Blanket (patternless) rules still apply. Structured
+task operations expose their project-scoped target in the approval reason
+instead of asking the user to approve an opaque effect.

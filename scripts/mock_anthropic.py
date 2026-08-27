@@ -6,10 +6,8 @@ import os
 import sys
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8787
-TOOL_NAME = os.environ.get("MOCK_TOOL", "bash")
-TOOL_INPUT = (
-    {"action": "list"} if TOOL_NAME == "mcp" else {"command": "echo smoke-ok"}
-)
+TOOL_NAME = "bash"
+TOOL_INPUT = {"command": "echo smoke-ok"}
 
 TOOL_TURN = {
     "type": "message_start",
@@ -78,30 +76,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Probe summary: all good."}},
                 {"type": "content_block_stop", "index": 0},
                 {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 15}},
-            ]))
-        elif "Return the JSON verdict now" in texts:
-            # Goal-audit judge call (docs/design/27 Phase H): echo every
-            # criterion from the prompt as PASS so offline goal scenarios
-            # reach audited completion deterministically.
-            import re as _re
-            block = texts.split("Acceptance criteria:", 1)[-1].split("Transcript digest:", 1)[0]
-            crits = [ln.lstrip()[2:].strip() for ln in block.splitlines() if ln.strip().startswith("- ")]
-            verdict = {"results": [{"criterion": c, "verdict": "pass", "evidence": "mock audit"} for c in crits]}
-            self.wfile.write(sse([
-                {"type": "message_start", "message": {"model": "claude-sonnet-4-5", "usage": {"input_tokens": 60, "output_tokens": 30}}},
-                {"type": "content_block_start", "index": 0, "content_block": {"type": "text"}},
-                {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": json.dumps(verdict)}},
-                {"type": "content_block_stop", "index": 0},
-                {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 40}},
-            ]))
-        elif "SCENARIO-GOAL" in texts and n_user_msgs <= 1:
-            # Goal-scenario first turn: plain claim, no tools.
-            self.wfile.write(sse([
-                {"type": "message_start", "message": {"model": "claude-sonnet-4-5", "usage": {"input_tokens": 40, "output_tokens": 10}}},
-                {"type": "content_block_start", "index": 0, "content_block": {"type": "text"}},
-                {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Claim: the goal is satisfied."}},
-                {"type": "content_block_stop", "index": 0},
-                {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 12}},
             ]))
         elif n_user_msgs <= 1:
             self.wfile.write(sse([TOOL_TURN] + TOOL_BLOCKS))

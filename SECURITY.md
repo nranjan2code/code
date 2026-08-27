@@ -46,7 +46,7 @@ responsibly:
     traversal escapes fail closed.
 11. **Permission changes revoke old capability.** A runtime mode change
     cancels in-flight runs.
-12. **Secrets are not ambient tool state.** Bash and MCP subprocesses
+12. **Secrets are not ambient tool state.** Bash subprocesses
     receive a small operational environment allowlist.
 13. **FullAccess is an explicit human trust decision.** Never selected
     automatically after a denial or retry.
@@ -65,7 +65,6 @@ responsibly:
   workspace and explicit temp paths.
 - Every built-in model tool crosses a versioned JSON broker protocol into a
   disposable child process group.
-- MCP servers are external workers with empty-by-default environment.
 - Docker backend: no network, read-only root, bounded tmpfs, CPU/memory/PID
   ceilings, dropped capabilities, `no-new-privileges`.
 
@@ -89,7 +88,7 @@ Exceeded limits return `429 Too Many Requests` with `Retry-After`.
 - Gateway ships disabled; enable via `[gateway] enabled = true` (trusted
   config) or `serve --gateway` (CLI override).
 - `chat_allowlist` restricts which `surface:chat` pairs can send inbound
-  messages. Empty list = all permitted (backward compatible).
+  messages. Empty list means all messages are permitted.
 - Approval gates auto-deny on unattended turns unless `[gateway] approvals`
   is set to `"forward"` with a configured approver surface.
 - Constant-time token comparison prevents timing attacks on bearer tokens.
@@ -110,7 +109,7 @@ Security-relevant events are logged to `<home>/security-events.jsonl`:
 - Auth failures (wrong/missing bearer token, failed logins)
 - Rate limit triggers
 - Chat allowlist rejections
-- Config changes (permission mode, provider keys, MCP servers, hooks)
+- Config changes (permission mode, provider keys, and sandbox settings)
 - FullAccess grants/revocations
 
 The log is append-only, structured JSONL, and lives alongside session data.

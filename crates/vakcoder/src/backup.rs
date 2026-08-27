@@ -1,53 +1,51 @@
-//! `vakcoder backup export|import` (docs/design/29-personal-os.md P3) over
-//! `vak_core::backup`. The CLI layer adds the human guardrails the library
-//! deliberately leaves out: refusing to export onto (or import from) the
-//! live home itself, and a loud terminal warning when secrets ride along.
+//! `vakcoder backup export|import` over the Runtime backup contract.
 
 use std::path::{Path, PathBuf};
 
-use vak_core::Core;
-use vak_core::backup::{self, Conflict};
+use vak_client::{BackupExportRequest, BackupImportRequest, Client};
 
-pub fn run_backup(cwd: PathBuf, action: crate::cli::BackupAction) -> i32 {
-    let core = match Core::new(cwd) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("error: {e}");
+#[cfg(test)]
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => a == b,
+    }
+}
+
+pub async fn run_backup(_cwd: PathBuf, action: crate::cli::BackupAction) -> i32 {
+    let client = match crate::connect::discover(None, None, None)
+        .and_then(|resolved| Client::new(resolved.url, resolved.token).map_err(|e| e.to_string()))
+    {
+        Ok(client) => client,
+        Err(error) => {
+            eprintln!("error connecting to Runtime: {error}");
             return 2;
         }
     };
-    let home = core.sessions_home();
     match action {
         crate::cli::BackupAction::Export {
             dir,
             include_secrets,
-        } => export(&home, &dir, include_secrets),
+        } => export(&client, &dir, include_secrets).await,
         crate::cli::BackupAction::Import { dir, conflict } => {
             let Some(mode) = parse_conflict(&conflict) else {
                 eprintln!("error: unknown --conflict '{conflict}' (skip | rename)");
                 return 2;
             };
-            import(&home, &dir, mode)
+            import(&client, &dir, &mode).await
         }
     }
 }
 
-fn parse_conflict(word: &str) -> Option<Conflict> {
+fn parse_conflict(word: &str) -> Option<String> {
     match word {
-        "skip" => Some(Conflict::Skip),
-        "rename" => Some(Conflict::Rename),
+        "skip" => Some("skip".into()),
+        "rename" => Some("rename".into()),
         _ => None,
     }
 }
 
-fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
-    if same_dir(dir, home) {
-        eprintln!(
-            "error: refusing to export into the live vakcoder home ({}) — pick a directory outside it",
-            home.display()
-        );
-        return 2;
-    }
+async fn export(client: &Client, dir: &Path, include_secrets: bool) -> i32 {
     if include_secrets {
         eprintln!();
         eprintln!("!! WARNING: --include-secrets will copy the user .env");
@@ -55,7 +53,13 @@ fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
         eprintln!("!! Store that directory encrypted and share it with no one.");
         eprintln!();
     }
-    match backup::export_to(home, dir, include_secrets) {
+    match client
+        .backup_export(&BackupExportRequest {
+            directory: dir.display().to_string(),
+            include_secrets,
+        })
+        .await
+    {
         Ok(manifest) => {
             println!(
                 "backed up {} file(s), {} bytes → {}",
@@ -64,9 +68,6 @@ fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
                 dir.display()
             );
             println!("manifest: {}", dir.join("manifest.json").display());
-            if include_secrets && !home.join(".env").is_file() {
-                println!("note: no user .env present; nothing secret was copied");
-            }
             0
         }
         Err(e) => {
@@ -76,22 +77,18 @@ fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
     }
 }
 
-fn import(home: &Path, dir: &Path, conflict: Conflict) -> i32 {
-    if same_dir(dir, home) {
-        eprintln!(
-            "error: refusing to import from the live vakcoder home ({}) — pick a backup directory outside it",
-            home.display()
-        );
-        return 2;
-    }
-    match backup::import_from(dir, home, conflict) {
+async fn import(client: &Client, dir: &Path, conflict: &str) -> i32 {
+    match client
+        .backup_import(&BackupImportRequest {
+            directory: dir.display().to_string(),
+            conflict: conflict.to_owned(),
+        })
+        .await
+    {
         Ok(report) => {
             println!(
-                "restored {} file(s) into {} ({} renamed aside, {} skipped as already present)",
-                report.copied,
-                home.display(),
-                report.renamed,
-                report.skipped
+                "restored {} file(s) into Runtime data home ({} renamed aside, {} skipped as already present)",
+                report.file_count, report.renamed, report.skipped
             );
             0
         }
@@ -99,15 +96,6 @@ fn import(home: &Path, dir: &Path, conflict: Conflict) -> i32 {
             eprintln!("error: import failed: {e}");
             1
         }
-    }
-}
-
-/// Same-directory refusal must survive symlinks and trailing separators,
-/// so compare canonical forms when both sides resolve.
-fn same_dir(a: &Path, b: &Path) -> bool {
-    match (a.canonicalize(), b.canonicalize()) {
-        (Ok(ca), Ok(cb)) => ca == cb,
-        _ => a == b,
     }
 }
 
@@ -131,8 +119,8 @@ mod tests {
 
     #[test]
     fn conflict_words_map_to_modes() {
-        assert_eq!(parse_conflict("skip"), Some(Conflict::Skip));
-        assert_eq!(parse_conflict("rename"), Some(Conflict::Rename));
+        assert_eq!(parse_conflict("skip"), Some("skip".into()));
+        assert_eq!(parse_conflict("rename"), Some("rename".into()));
         assert_eq!(parse_conflict("merge"), None);
         assert_eq!(parse_conflict(""), None);
     }

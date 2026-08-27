@@ -1,87 +1,98 @@
-# Hosting your vakcoder core
+# Hosting vakcoder
 
-The architectural bet of this project: **the core is headless and runs
-anywhere; TUI, desktop and chat bridges are just clients.** This guide makes
-that concrete — from laptop LaunchAgent to a $5 VPS.
+`vakcoder serve --gateway` runs the single Runtime authority. The CLI, TUI,
+desktop, admin console, and channel adapters are clients of that process; none
+of them owns sessions, configuration, credentials, schedules, or tool
+execution.
 
 ## Topology
 
-```
-┌────────────── any machine ──────────────┐     ┌── your phone ──┐
-│ vakcoder serve --gateway --trust :8901  │◀────│ Telegram bot    │
-│ ▲ bearer token (pinned)                 │     │ (bridge process │
-│ └── sessions/, memory/, tasks/ live here │     │  can run anywhere)│
-└──────────────────────────────────────────┘     └────────────────┘
+```text
+                    ┌──────────────────────────────┐
+ CLI / TUI / desktop ─▶ authenticated vak-server  │
+ admin / channels ────▶        │                   │
+                              ▼                   │
+                         vak-runtime              │
+                    state.db + sessions + blobs    │
+                    broker + leases + audit       │
+                    └──────────────────────────────┘
 ```
 
-- One gateway per workspace (`--trust` the workspace once).
-- Bridges (Telegram today; more later) need network access to the Bot API
-  and to your gateway — they do NOT need to be on the same machine.
-- TUI/desktop connect locally as always; remotely via SSH tunnel or
-  tailnet pointing at the same port.
+Run one gateway for a data home. A second gateway cannot acquire the runtime
+lock. Clients connect over loopback by default; remote access requires an SSH
+tunnel or an explicitly protected network endpoint.
 
-## Quick install (script)
+## Start
 
 ```bash
-scripts/install_gateway_service.sh "$PWD" [--with-telegram]
+export VAKCODER_GATEWAY_TOKEN="use-a-random-secret"
+vakcoder serve --gateway --port 8901
 ```
 
-- macOS → LaunchAgents `com.vakcoder.gateway` / `com.vakcoder.telegram`
-  (KeepAlive + RunAtLoad; survives reboot & crashes).
-- Linux → systemd user units `vakcoder-gateway.service` /
-  `vakcoder-telegram.service` (`systemctl --user ...`, enable lingering for
-  boot start: `sudo loginctl enable-linger $USER`).
-- Generates `VAKCODER_GATEWAY_TOKEN` into `<data_home>/.env` on first run so
-  the bridge keeps working across gateway restarts. The gateway writes a
-  bootstrap token automatically; clients discover it via
-  `runtime/gateway.json`.
-- Re-run after editing `<data_home>/.env` or upgrading the binary.
+The service creates the canonical data home and writes its runtime status to
+`<data_home>/runtime/gateway.json`. Stop it with SIGTERM or Ctrl-C so the
+runtime receipt and lock are released. Use the managed installer for launchd or
+systemd integration; service units must execute the installed `vakcoder`
+launcher, never a Cargo build directory.
 
-The script is a compatibility wrapper. `vakcoder self install` plus generated
-`vak-ops` units are the source of truth; no service points into the build tree.
+## Canonical state
 
-## Secrets
+The Runtime data home contains:
 
-All secrets live in `<data_home>/.env` (0600): provider keys,
-`TELEGRAM_BOT_TOKEN`, `VAKCODER_GATEWAY_TOKEN`. Nothing secret is written
-to config.toml, the repo, or logs. The gateway never prints the pinned
-token when one is provided via environment.
+```text
+<data_home>/
+├── config.toml                    global Runtime configuration
+├── .env                           credentials (0600; never logged)
+├── state.db                       transactional control-plane state
+├── sessions/<project>/<id>.jsonl  append-only model-visible history
+├── blobs/<sha256>                 content-addressed file/checkpoint data
+├── audit/operations.jsonl         append-only operation receipts
+├── runtime/gateway.json           live gateway endpoint metadata
+├── locks/runtime.lock             singleton Runtime lock
+└── logs/                          service logs
+```
 
-## Security posture
+The project layer is `<project>/.vakcoder/project.toml`. It is loaded only for
+the registered canonical project root. Cache/search indexes are rebuildable and
+never the source of truth.
 
-1. Bearer token on every route except `/health`.
-2. Bind to loopback by default. For remote bridges use a tunnel:
-   `ssh -R` reverse tunnel, Tailscale/WireGuard, or bind
-   `--host` behind a firewall that allows only your bridge's IP.
-3. `[gateway]` and `[sandbox]` are privileged config sections — untrusted
-   repositories cannot enable remote execution, pick sandbox backends or
-   images.
-4. Unattended turns auto-deny approval gates unless you configure
-   `approvals = "forward"` with an approver surface (docs/design/
-   22-gateway.md G2).
-5. Backups = copy `<home>` (the data home: `~/Library/Application Support/vakcoder` on macOS, `~/.local/share/vakcoder` on Linux): sessions, memory,
-   tasks, bindings are all plain files.
+## Credentials and security
 
-## Updating
+Provider and channel credentials belong in `<data_home>/.env` or the process
+environment. They are injected only into the intended provider/channel worker;
+they are never ambient Bash subprocess state, configuration output, logs, or session
+content.
+
+Every request is authenticated except `/health`. Every effectful command is
+authorized by the Runtime before broker dispatch. Restricted filesystem access
+is rooted at the registered project; cancellation and capability-epoch changes
+revoke in-flight work and stale approvals.
+
+## Channels
+
+Channels submit inbound messages to the Runtime and receive ordered delivery
+packets from it. Delivery retries use the durable outbox; an outage does not
+create a second session or a second state owner. Configure a channel binding
+and its credential before enabling it. Silence, timeout, missing credentials,
+or an unhandled approval always fails closed.
+
+## Backups and upgrades
+
+Use the Runtime backup command/API to export `state.db`, session ledgers, blobs,
+audit records, and configuration metadata. Restore is explicit and conflict
+checked. Program upgrades replace the installed Runtime binary only; they do
+not rewrite application state. This is a greenfield contract: installation
+uses only the canonical data home and does not discover alternate layouts.
+
+## Diagnostics
 
 ```bash
-git pull && cargo build --release -p vakcoder --no-default-features
-target/release/vakcoder self install
-target/release/vakcoder self services-sync com.vakcoder.telegram # only if configured
+vakcoder doctor
+vakcoder config dump
+vakcoder sessions
+vakcoder admin --print
 ```
 
-Sessions and memory are append-only JSONL/markdown — upgrades require no
-migration.
-
-## Troubleshooting
-
-| Symptom | Check |
-|---|---|
-| bridge replies "(gateway unreachable)" | gateway down or token mismatch — compare `VAKCODER_GATEWAY_TOKEN` in `.env` vs the gateway's launchd environment |
-| replies "(aborted)" | pre-0.3.0 bug; upgrade. Also check `~/Library/Logs/vakcoder/gateway.log` (macOS) or `~/.local/state/vakcoder/logs/gateway.log` (Linux) |
-| tool calls denied on phone | expected in default deny mode; configure an approver surface or use TUI/desktop for escalations |
-| model errors | `/health` shows effective provider/model; keys live in `<data_home>/.env` |
-| MCP server "spawn failed" / dies at handshake | under service managers PATH is minimal: use the absolute interpreter path (`which npx`) in `[mcp.servers.*].command`; network-client tools also need `network = true` |
-| Tavily/web search denied on phone | add `allow = ["+mcp(tavily/*)"]` to trusted config — scoped to that server |
-
-Telegram bridges are single-consumer per bot token: local duplicates fail fast via `$VAKCODER_HOME/locks`, cross-machine rivals put the local bridge into hot-standby with automatic takeover (`docs/design/22-gateway.md` § Telegram bot ownership).
+Check the gateway health endpoint and logs before changing configuration. A
+client that cannot authenticate or complete the `/version` handshake must stop
+with an actionable error rather than silently creating local state.

@@ -17,18 +17,15 @@ import {
   setBackend,
   setDockTab,
   setEditorPath,
-  setDiffTarget,
   setHealth,
   setShowShortcuts,
   setSessions,
   setUsageFor,
   hydrateFromTranscript,
   dockTab,
-  diffTarget,
   showShortcuts,
   setSideOpen,
   sideOpen,
-  bestOfOpen,
   dockWidth,
   setDockWidth,
   setHydratingId,
@@ -37,15 +34,12 @@ import {
   sidebarOpen,
   sidebarWidth,
   setNotice,
-  setBestOfOpen,
   setProviders,
   setSetupNeeded,
   setTasksOpen,
   tasksOpen,
   historyOpen,
   setHistoryOpen,
-   receiptsOpen,
-  setReceiptsOpen,
   searchOpen,
   setSearchOpen,
   settingsOpen,
@@ -69,31 +63,21 @@ import type { SessionSummary } from "./types";
 import * as api from "./api";
 import type { EventStream } from "./api";
 
-// Armed goal consumed by the next prompt (docs/design/27 Phase H).
-let armedGoal: { objective: string; criteria: string[] } | null = null;
 import Sidebar from "./components/Sidebar";
 import ChatPane from "./components/ChatPane";
 import Composer from "./components/Composer";
 import StatusBar from "./components/StatusBar";
-import DiffPane from "./components/DiffPane";
-import TerminalPane from "./components/TerminalPane";
 import EditorPane from "./components/EditorPane";
 import ShortcutsModal from "./components/ShortcutsModal";
 import SideChatPanel from "./components/SideChatPanel";
-import BestOfNDialog from "./components/BestOfNDialog";
-import PrPanel from "./components/PrPanel";
 import TasksModal from "./components/TasksModal";
 import CheckpointsModal from "./components/CheckpointsModal";
-import ReceiptsModal from "./components/ReceiptsModal";
-import PreviewPane from "./components/PreviewPane";
-import SubagentsPanel from "./components/SubagentsPanel";
 import ProjectGate from "./components/ProjectGate";
 import WorkspaceHeader from "./components/WorkspaceHeader";
 import Icon, { type IconName } from "./components/Icon";
 import ResizeHandle from "./components/ResizeHandle";
 import Toast from "./components/Toast";
 import Settings from "./components/Settings";
-import BudgetBanner from "./components/BudgetBanner";
 import SearchModal from "./components/SearchModal";
 import SetupCard from "./components/SetupCard";
 import TranscriptModal from "./components/TranscriptModal";
@@ -233,7 +217,7 @@ export async function toggleSplit(candidate?: string) {
   const current = activeId();
   let other = candidate ?? null;
   if (!other) {
-    const others = sessions().filter((s) => s.session_id !== current && !s.archived);
+    const others = sessions().filter((s) => s.session_id !== current);
     other = others[0]?.session_id ?? null;
   }
   if (!other || other === current || !current) return;
@@ -257,12 +241,8 @@ export function swapPanes() {
   setSplitFocused(!splitFocused());
 }
 
-export async function sendPrompt(
-  text: string,
-  goal?: { objective: string; criteria: string[] },
-  attachments?: { mime: string; data: string }[],
-) {
-  if (!text.trim() && !(attachments && attachments.length)) return;
+export async function sendPrompt(text: string) {
+  if (!text.trim()) return;
   // Typing into the empty state is the natural way to start: create the task
   // rather than silently dropping the prompt because nothing is selected.
   let id = activeId();
@@ -271,44 +251,14 @@ export async function sendPrompt(
     id = activeId();
     if (!id) return; // newSession already surfaced why
   }
-  // Goal mode (docs/design/27 Phase H): /goal arms, bare /goal shows
-  // status, /goal off disarms — mirroring the TUI.
-  if (text.trim().startsWith("/goal")) {
-    const arg = text.trim().slice(5).trim();
-    if (!arg) {
-      appendSystem(id, armedGoal ? `🎯 armed: ${armedGoal.objective} (${armedGoal.criteria.length} criteria)` : "no goal armed · usage: /goal <objective> -- c1; c2");
-      return;
-    }
-    if (arg === "off") {
-      armedGoal = null;
-      appendSystem(id, "goal disarmed");
-      return;
-    }
-    const idx = arg.indexOf("--");
-    const objective = (idx >= 0 ? arg.slice(0, idx) : arg).trim();
-    const criteria = (idx >= 0 ? arg.slice(idx + 2) : "")
-      .split(";")
-      .map((c) => c.trim())
-      .filter(Boolean);
-    if (!objective || criteria.length === 0) {
-      appendSystem(id, "goal needs criteria: /goal <objective> -- c1; c2");
-      return;
-    }
-    armedGoal = { objective, criteria };
-    appendSystem(id, `🎯 goal armed (${criteria.length} criteria) — next prompt will be audited`);
-    return;
-  }
-
-  const thisGoal = armedGoal;
-  armedGoal = null;
   appendUser(id, text);
   try {
     if (isRunning(id)) {
-      await api.steer(id, text, attachments);
+      await api.steer(id, text);
     } else {
       markRunning(id, true);
       try {
-        await api.runPrompt(id, text, goal ?? thisGoal ?? undefined, attachments);
+        await api.runPrompt(id, text);
       } catch (e) {
         markRunning(id, false);
         throw e;
@@ -395,7 +345,6 @@ function resetWorkspaceView() {
   setSessions([]);
   setHealth(null);
   setHydratingId(null);
-  setDiffTarget(null);
   setEditorPath(null);
   setDockTab(null);
   setSideOpen(false);
@@ -444,34 +393,11 @@ async function init() {
 }
 
 /**
- * Open a file the agent touched in whichever right-hand pane actually shows
- * something useful: a modified file has a diff worth reading (Changes), a
- * newly created one does not (Editor). Routing this automatically is the
- * point — the panel has five tabs and the user should not have to guess
- * which one currently holds their file.
+ * Open a file the agent touched in the editor pane.
  */
 export async function openFileSmart(path: string) {
   setEditorPath(path);
-  const id = diffTarget() ?? activeId();
-  if (!id) {
-    setDockTab("editor");
-    return;
-  }
-  try {
-    const d = await api.readDiff(id);
-    const diff = `${d.diff ?? ""}\n${d.staged_diff ?? ""}`;
-    setDockTab(diffCoversPath(diff, path) ? "diff" : "editor");
-  } catch {
-    setDockTab("editor");
-  }
-}
-
-/** True when a unified diff contains a hunk header for `path`. */
-function diffCoversPath(diff: string, path: string): boolean {
-  const rel = path.replace(/^.*?\/(?=[^/]+$)/, "");
-  return diff
-    .split("\n")
-    .some((l) => (l.startsWith("+++ ") || l.startsWith("--- ")) && (l.includes(path) || l.endsWith(rel)));
+  setDockTab("editor");
 }
 
 /** Pick a different project folder and reboot the backend against it. */
@@ -626,10 +552,8 @@ export default function App() {
           if (showShortcuts()) setShowShortcuts(false);
           else if (searchOpen()) setSearchOpen(false);
           else if (settingsOpen()) setSettingsOpen(false);
-          else if (bestOfOpen()) setBestOfOpen(false);
           else if (tasksOpen()) setTasksOpen(false);
           else if (historyOpen()) setHistoryOpen(false);
-          else if (receiptsOpen()) setReceiptsOpen(false);
           else if (transcriptViewId()) setTranscriptViewId(null);
           else if (inboxOpen()) setInboxOpen(false);
           else if (sideOpen()) setSideOpen(false);
@@ -671,15 +595,9 @@ export default function App() {
           if (!v && activeId()) ensureSideStream(activeId()!);
           return !v;
         });
-      } else if (e.key === "d" || e.key === "D") {
-        e.preventDefault();
-        setDockTab((t) => (t === "diff" ? null : "diff"));
       } else if (e.key === "\\") {
         e.preventDefault();
         void toggleSplit();
-      } else if (e.key === "`") {
-        e.preventDefault();
-        setDockTab((t) => (t === "terminal" ? null : "terminal"));
       } else if (e.key === "b" || e.key === "B") {
         e.preventDefault();
         setSidebarOpen((value) => !value);
@@ -753,14 +671,7 @@ export default function App() {
               <ResizeHandle side="dock" />
               <div class="dock" data-dock={tab()}>
                 <div class="dock-tabs">
-                  <For each={[
-                    ["preview", "Preview", "preview"],
-                    ["diff", "Changes", "diff"],
-                    ["terminal", "Terminal", "terminal"],
-                    ["editor", "Editor", "code"],
-                    ["pr", "Pull request", "git"],
-                    ["agents", "Subagents", "grid"],
-                  ] as const}>
+                  <For each={[["editor", "Editor", "code"]] as const}>
                     {([id, label, icon]) => (
                       <button
                         class="dock-tab"
@@ -781,23 +692,8 @@ export default function App() {
                     <Icon name="close" />
                   </button>
                 </div>
-                <Show when={tab() === "diff"}>
-                  <DiffPane sessionId={diffTarget() ?? activeId()} />
-                </Show>
-                <Show when={tab() === "terminal"}>
-                  <TerminalPane sessionId={activeId()} />
-                </Show>
                 <Show when={tab() === "editor"}>
                   <EditorPane />
-                </Show>
-                <Show when={tab() === "pr"}>
-                  <PrPanel sessionId={activeId()} />
-                </Show>
-                <Show when={tab() === "preview"}>
-                  <PreviewPane />
-                </Show>
-                <Show when={tab() === "agents"}>
-                  <SubagentsPanel sessionId={activeId()} />
                 </Show>
               </div>
               </>
@@ -807,19 +703,12 @@ export default function App() {
           {/* Missing provider never blocks the workspace — the card is
               dismissible and everything read-only stays usable. */}
           <SetupCard />
-          <BudgetBanner />
           <Show when={showShortcuts()}>
             <ShortcutsModal />
-          </Show>
-          <Show when={bestOfOpen()}>
-            <BestOfNDialog />
           </Show>
           <TasksModal />
           <Show when={historyOpen()}>
             <CheckpointsModal />
-          </Show>
-          <Show when={receiptsOpen()}>
-            <ReceiptsModal />
           </Show>
           <Show when={transcriptViewId()}>
             <TranscriptModal />

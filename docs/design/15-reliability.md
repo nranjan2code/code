@@ -26,10 +26,6 @@ The standard failure matrix and where each case is handled.
   pain. An OPEN circuit breaker still fails fast — fresh evidence of a dead
   provider must not cost the user minutes of waiting. Permanent errors
   (auth/bad request/api) are never endured.
-- **Planner calls retry too** (found in live testing): `plan`'s model calls
-  bypass the agent loop, so they carry their own bounded retry (3 attempts,
-  exponential backoff, `Retry-After` honored, cancel-aware). A transient
-  failure mid-planning no longer fails the whole run closed.
 - **Truncated SSE streams on OpenAI-compatible proxies**: some endpoints
   (OpenCode Zen free tier) end the body after the last content chunk without
   `[DONE]`/`finish_reason`. The openai-completions adapter treats a clean
@@ -52,24 +48,24 @@ The standard failure matrix and where each case is handled.
 
 | operation | path |
 |---|---|
-| start | `exec`, TUI, `serve`, `flow run`, `plan` |
+| start | `exec`, TUI, `serve`, `flow run` |
 | stop (user) | Ctrl-C → cancel token → `Aborted{partial}`; partial assistant output is persisted |
 | stop (server) | `POST /sessions/:id/cancel` → same path + `RunFinished{cancelled}` |
 | resume (session) | `exec --session <id>` reopens the ledger; projection includes all history |
-| resume (flow) | `flow run <name> --resume` skips completed nodes |
+| resume (flow) | a Runtime flow run resumes from its persisted run state |
 | shutdown (server) | ctrl_c → graceful drain (`with_graceful_shutdown`) |
 
 ## Circuit breaker (cross-run QoS)
 
 Per-step retries protect one run; the **circuit breaker** protects every run
-from a dead provider. Shared via Core across all runs of a process:
+from a dead provider. Shared via Runtime across all runs of a process:
 
 - Only **blind failures** count: network loss, watchdog deadlines, truncated
   or malformed streams. Informed transience — 429 with `Retry-After`,
-  explicit 503/529 overload — is the server saying "try again later"; it
+  explicit 503/529 overload — is the server saying "try again within its retry window"; it
   feeds endurance and must not open the circuit mid-window (found in the
   live chaos campaign: an opened breaker killed runs the window would have
-  released seconds later).
+  released after cooldown).
 - `circuit_breaker_threshold` consecutive failures (default 5) open the
   circuit; while open, steps fail fast with the remaining cooldown instead
   of burning their retry budget.
@@ -82,10 +78,10 @@ from a dead provider. Shared via Core across all runs of a process:
 Config keys: `circuit_breaker_threshold`,
 `circuit_breaker_cooldown_secs` (`0` cooldown disables opening).
 
-## Frozen route ladder (landed — Phase B, router-grade ordering in Phase R)
+## Frozen route ladder
 
-`27-vakyartha-adoption.md` Phases A–B are live: at session admission an
-ordered candidate ladder is computed (primary + warm-discovery fallbacks
+At session admission an ordered candidate ladder is computed (primary +
+warm-discovery fallbacks
 only — no invented ids, no network) and frozen INTO the contract header.
 Dispatch walks legs top-down on typed failure domains; the first dispatch
 of each next leg is receipted `route-fallback` and surfaced as a
@@ -93,7 +89,7 @@ of each next leg is receipted `route-fallback` and surfaced as a
 across all legs, so walking the ladder is contract execution, never
 mid-contract switching (invariant 7 above carries the new wording).
 
-Phase R (vakrouter adoption) upgrades the ordering machinery:
+The ordering machinery provides:
 
 - **Attribution is real**: every attempt records the `(provider, model)`
   leg that actually served or failed; evidence rows land keyed correctly
@@ -101,7 +97,7 @@ Phase R (vakrouter adoption) upgrades the ordering machinery:
 - **Demand-scored objectives** (`order_ladder_v2`): request difficulty
   picks utility/balanced/quality-critical ordering; `[route].objective`
   overrides; `[route].quality_hints` replaces hardcoded model-name bands
-  (invariant 9). v1 stays only for replaying old contracts.
+  (invariant 9). The selected ordering is recorded in the contract.
 - **Cross-model fallbacks are opt-in**: `[route].fallback_models` allowlist
   ∩ warm discovery; the user's primary never loses the head position.
 - **Diversity caps + annotations**: ⌈max_total/3⌉ seats per provider;
@@ -126,9 +122,9 @@ serving leg per dispatch (`CostRow.provider`).
 
 | Event | Handling | Proof |
 |---|---|---|
-| DHCP change / network switch | local plane loopback-immune; outbound reconnectors own recovery | `telegram_bridge::bridge_survives_outage_window_and_resumes_cursor` |
-| Multi-minute outage on a channel | bridge never exits; capped backoff, cursor resumes gap-free via ownership probe | same regression |
+| DHCP change / network switch | local plane loopback-immune; provider reconnect logic owns recovery | Runtime/network fault tests |
+| Multi-minute provider outage | ladder retries remain bounded and auditable; breaker state is explicit | LLM stream fault tests |
 | Inference outage window | ladder legs + endurance ride it; breaker paces the half-close probe | fault_proxy scenario (`scripts/fault_proxy.py`) |
-| Hibernation / wake | tokio timers collapse across sleep; watchdog bounds dead sockets; scheduler per-tick evaluation fires each missed slot once | scheduler catch-up tests |
-| Full restart | sessions append-only + resume; gateway bindings + task store persisted; telegram cursor re-synced by probe | existing resume/bindings suites |
-| Delivery while channel down | inbox chokepoint stores durably; transports best-effort | P6 zero-transports test |
+| Hibernation / wake | bounded request watchdogs and cancellation surface a typed outcome | Runtime request tests |
+| Full restart | sessions append-only; Runtime state and task records persist | storage/runtime suites |
+| Delivery while an adapter is unavailable | delivery job remains pending/retryable with its source payload | delivery service tests |

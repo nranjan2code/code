@@ -1,105 +1,39 @@
-# 13 — Server mode
+# 13 — Runtime HTTP/SSE adapter
 
-The client/server bet from the original architecture: one headless agent
-core, many surfaces. `vakcoder serve --port 8901` exposes vak-core over
-HTTP+SSE; the TUI, web clients, IDE extensions, and curl are all equal
-consumers.
+`vak-server` is a stateless authenticated adapter over `vak-runtime`. It owns
+HTTP parsing, authentication, response encoding, SSE fan-out, and embedded
+admin assets. It does not own sessions, runs, configuration, or filesystem
+state.
 
-## Endpoints
+## Runtime endpoints
 
-| method | path | purpose |
+| Verb | Route | Runtime operation |
 |---|---|---|
-| GET | `/health` | liveness |
-| POST | `/sessions` | create session → `{session_id}` |
-| POST | `/sessions/:id/run` `{prompt}` | 202; events stream on SSE |
-| POST | `/sessions/:id/steering` `{text}` | queue mid-run input |
-| POST | `/sessions/:id/approvals/:rid` `{approve}` | resolve a permission gate |
-| GET | `/sessions/:id/events` | SSE stream of `AgentEvent` JSON |
-| GET | `/sessions/:id/transcript` | derived messages + usage; historical (non-attached) sessions fall back to opening the ledger from disk — error bodies stay 200-wrapped for wire compatibility |
-| GET | `/sessions/:id/transcript.md` | markdown export through the shared `transcript_md` renderer (byte-parity with TUI export); same disk fallback, proper 404 when unknown |
-| GET | `/sessions` | persisted session summaries (sidebar projection) |
-| POST | `/sessions/:id/attach` `{session_id}` | resume a persisted session into memory |
-| GET | `/sessions/:id/diff` | git status + diff of the session workspace |
-| POST | `/config/mode` `{mode}` | switch mode; a changed value cancels all active main/side runs and denies pending approvals before returning 200 |
-| PUT | `/config/key` `{provider,key}` | store a provider credential in the user `.env` (0600) |
-| DELETE | `/config/key` `{provider}` | revoke it; `shadowed_by_env` reports a key still exported in the real environment |
-| GET | `/providers` | provider list + which are configured (never key values) |
-| GET | `/providers/:name/models` | models that provider's stored key can reach, live (502 + reason on failure — never a static fallback) |
-| GET/PUT | `/fs/file` | read/write a file confined to the workspace root |
-| GET | `/fs/tree?limit=` | bounded recursive listing (@-mention autocomplete) |
-| POST | `/sessions/:id/side` `{question}` | side chat: branched turn, main chain untouched |
-| GET | `/sessions/:id/side/events` | SSE for the side-chat branch |
-| POST | `/sessions/:id/side/cancel` | cancel the side run |
-| POST | `/sessions/:id/bestofn` `{prompt,n}` | fan out n worktree-isolated runs |
-| POST | `/sessions/:id/keep` / `discard` | merge or drop a best-of-N candidate branch |
-| GET | `/sessions/:id/pr` | gh-backed PR view + check rollup (`reason: no_pr\|gh_unavailable`) |
-| POST | `/sessions/:id/pr/merge` `{number,method}` | `gh pr merge --auto` (squash/merge/rebase) |
-| GET/POST | `/tasks`, PATCH/DELETE `/tasks/:id` | scheduled-task CRUD (persisted in the data home); additive `schedule` (5-field cron), `script` (zero-token watchdog), `model_pin` fields validated via `TaskDef::validate` → 400 |
-| POST | `/tasks/:id/run-now` | fire immediately; resets schedule |
-| GET | `/sessions/:id/launch` | dev-server configs (`.vakcoder/launch.toml` + npm autodetect) |
-| POST | `/sessions/:id/launch/start\|stop` `{name}` | manage a dev server process |
-| GET | `/sessions/:id/launch/logs?name=` | ring-buffered output tail |
-| GET | `/sessions/:id/subagents` | live children spawned by this session (parent-scoped) |
-| POST | `/sessions/:id/subagents/:child/steer` `{text}` | queue steering for one child; 404 unless the child belongs to `:id` |
-| POST | `/sessions/:id/subagents/:child/stop` | cancel one child; same parent-scope check |
-| GET/PUT | `/config/mcp` | read the effective MCP table / replace it: validates, persists `[mcp.servers]` to the project config without destroying other keys, hot-applies into the running Core |
-| POST | `/sessions/:id/run` attachments | base64 image blocks ride the prompt as native vision content |
-| POST | `/sessions/:id/steering` `{text,attachments?}` | queued input keeps image blocks — never degraded to bare text |
-| GET | `/memory` | durable memory notes, workspace tier + global `USER.md` profile tier (`id`, `scope` per note) |
-| POST | `/memory` `{text,kind?,tag?,scope?,session_id?}` | append to either tier (201; 400 on validation error) — desktop/gateway/CLI all write through this same API |
-| PATCH | `/memory/:note_id` `{text,scope?}` | amend a note body, provenance header preserved |
-| DELETE | `/memory/:note_id?scope=` | forget one block (byte-safe rewrite); 404 unknown id |
-| GET | `/search?q=&limit=&all=true` | recall over the current project's ledgers; `all=true` spans every project hash (`project_hash` annotated) |
-| GET | `/sessions/:id/receipts` | dispatch forensics: per-attempt walk receipts |
-| GET | `/doctor?session=` | `HealthReport` JSON (checks/facts/frozen-ladder) |
-| GET | `/digest?days=N` | usage rollup from the cost ledger + memory/skill deltas (1–90) |
-| POST | `/backup/export` `{dest_dir,include_secrets?}` / `/backup/import` `{src_dir,conflict?}` | home backup round-trip; secrets excluded by default; 400 when source/target equals the home itself |
-| GET | `/skills/proposals` (+ promote/reject) | learned-skill review queue; proposals carry a `duplicate-of:` screening tag where applicable |
+| GET | `/health`, `/version` | liveness and protocol handshake |
+| GET/POST | `/projects` | project discovery and registration |
+| GET/POST | `/sessions` | session catalog and creation |
+| GET | `/sessions/:id/transcript` | authoritative transcript projection |
+| POST | `/runs` | run admission and prompt submission |
+| POST | `/runs/:id/cancel` | cancellation by live run ID |
+| GET | `/events?run_id=:id` | ordered delta/snapshot SSE |
+| GET/POST | `/approvals` | pending gates and verdicts |
+| GET/PATCH | `/config` | effective config and revision-checked updates |
+| GET/POST/PATCH | `/memory`, `/tasks`, `/skills` | Runtime CRUD |
+| GET/POST | `/checkpoints`, `/backup` | checkpoint and backup operations |
+| GET/POST | `/flows`, `/eval` | validated flow and deterministic evaluation |
 
-## Personal-OS scheduler semantics (docs/design/29)
+Every mutating route is authenticated, validated, authorized, and audited by
+Runtime. HTTP errors are typed responses; a route never silently edits local
+client state.
 
-- Cron tasks fire via `cron_next_after` in local time (vixie dom∧dow
-  OR-semantics, DST-gap skip-forward). `[automation] catch_up_missed = true`
-  fires one missed slot at startup.
-- `script:` tasks never touch the LLM: brokered bash, stdout trimmed →
-  verbatim delivery, empty stdout → silent tick, failure/timeout → typed
-  error alert (never silent).
-- After every fire the day-spend is checked against `[finops] max_day_usd`;
-  crossing 80%/100% records an audit-only `budget_alert` ledger row and
-  delivers to configured surfaces once per level per window.
+## Events
 
-## Semantics
+The run stream carries each delta together with its complete snapshot and ends
+with exactly one terminal outcome. A disconnect does not cancel the run. The
+client reconnects and asks Runtime for the authoritative snapshot/transcript.
 
-- **Stream-open handshake**: the SSE handler subscribes to the broadcast
-  ring *before* notifying, then publishes a `StreamOpened` marker. Clients
-  fire `/run` only after seeing it — no subscribe/publish races, verified by
-  both the rust e2e test and the python smoke driver.
-- **Approvals over HTTP**: permission asks publish `ApprovalRequested{id,
-  tool, reason}` and park on a oneshot; `POST /approvals/:rid` resolves it.
-  Grants are consumed exactly once (same invariant as the TUI approver).
-- **Session ledger returns** after each run (`run_turn_with` now yields
-  `(TurnOutcome, SessionLog)`), so transcripts stay queryable between runs.
-- Second concurrent `/run` on a live session → `409 Conflict`.
+## Gateway
 
-## Desktop extensions (docs/design/20)
-
-- **secured_router** returns `(Router, token)` so embedded surfaces (the
-  Tauri shell) share the exact same contract; CORS allows webview origins
-  only. A scheduler task fires due `/tasks` while the server lives.
-- **Side chats** append Q+A as a sibling branch off the current tail and then
-  restore the branch pointer — reconstructable in the JSONL, invisible to
-  `derive_messages()` on the main line.
-- **spawn_isolated_run** is the shared primitive behind best-of-N and
-  scheduled tasks: child Core rooted in a fresh worktree, registered handle,
-  fired turn. Latest-run worktree retention for tasks; keep/discard for N-runs.
-- All new endpoints are bearer-gated like the originals; failures surface as
-  structured values (`{"error"}`, `{"reason": ...}`) — never hangs.
-
-## Implementation notes
-
-- axum + broadcast ring; a single mpsc→broadcast bridge per run.
-- The bridge forwards into the **broadcast** channel — an earlier draft fed
-  the mpsc back into itself, producing an infinite echo loop. The e2e test's
-  event-kind assertions now pin this class of bug.
-- SDK seams added to Core for embedding/tests: `set_provider_instance`,
-  `set_sessions_home`.
+`serve --gateway` additionally owns the singleton lock and live gateway
+receipt. Gateway duties remain in the same Runtime process so there is one
+admission, permission, credential, and audit path.

@@ -1,4 +1,4 @@
-//! Bounded outbound HTTP GET tool (docs/design/29-personal-os.md phase P4).
+//! Bounded outbound HTTP GET tool exposed through the Runtime tool broker.
 //!
 //! Permission posture (Ask in restricted modes, Allow under FullAccess or an
 //! explicit rule) is applied by the registry/permission engine downstream;

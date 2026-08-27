@@ -62,7 +62,7 @@ export default function SetupCard() {  const [dismissed, setDismissed] = createS
           <button
             class="icon-button subtle"
             aria-label="Dismiss setup card"
-            title="Dismiss — you can add a key later in Settings → Agent"
+            title="Dismiss — add a key from Settings → Agent"
             onClick={() => setDismissed(true)}
           >
             <Icon name="close" size={13} />

@@ -9,13 +9,11 @@ import {
   isRunning,
   retryOf,
   sessions,
-  setBestOfOpen,
   setDockTab,
   setHistoryOpen,
   setInboxOpen,
   setInboxUnread,
   setNotice,
-  setReceiptsOpen,
   setSearchOpen,
   setSettingsOpen,
   setSideOpen,
@@ -33,12 +31,8 @@ const INBOX_POLL_MS = 20_000;
 /** Badge counters stay one glyph wide: 100+ collapses to 99+. */
 const countLabel = (n: number) => (n > 99 ? "99+" : String(n));
 
-const tools: { id: "preview" | "diff" | "terminal" | "editor" | "pr"; label: string; icon: IconName }[] = [
-  { id: "preview", label: "Preview", icon: "preview" },
-  { id: "diff", label: "Changes", icon: "diff" },
-  { id: "terminal", label: "Terminal", icon: "terminal" },
+const tools: { id: "editor"; label: string; icon: IconName }[] = [
   { id: "editor", label: "Editor", icon: "code" },
-  { id: "pr", label: "Pull request", icon: "git" },
 ];
 
 export default function WorkspaceHeader() {
@@ -46,7 +40,7 @@ export default function WorkspaceHeader() {
   const title = createMemo(() => session()?.title || (activeId() ? "Untitled task" : "New task"));
   const [exporting, setExporting] = createSignal(false);
 
-  // Unread badge shares the BudgetBanner's polling cadence; the inbox page
+  // Unread badge shares the inbox page polling cadence;
   // also publishes counts on its refreshes, so the two stay in sync.
   const pollUnread = async () => {
     try {
@@ -140,15 +134,6 @@ export default function WorkspaceHeader() {
         </button>
         <button
           class="icon-button has-tooltip"
-          data-tooltip="Compare approaches"
-          aria-label="Compare multiple approaches"
-          disabled={!activeId()}
-          onClick={() => setBestOfOpen(true)}
-        >
-          <Icon name="layers" />
-        </button>
-        <button
-          class="icon-button has-tooltip"
           data-tooltip={'Split view ⌘\\'}
           classList={{ on: !!splitId() }}
           aria-pressed={!!splitId()}
@@ -166,15 +151,6 @@ export default function WorkspaceHeader() {
           onClick={() => setHistoryOpen(true)}
         >
           <Icon name="history" />
-        </button>
-        <button
-          class="icon-button has-tooltip"
-          data-tooltip="Dispatch forensics"
-          aria-label="Dispatch forensics"
-          disabled={!activeId()}
-          onClick={() => setReceiptsOpen(true)}
-        >
-          <Icon name="receipt" />
         </button>
         <button
           class="icon-button has-tooltip"

@@ -7,8 +7,7 @@ const BIN_DIR: &str = "bin";
 const INSTALL_POINTER: &str = "install-root.json";
 
 fn home() -> PathBuf {
-    // Canonical data home (doc 32) — used only for the Linux default
-    // prefix and legacy-path warnings, never as the data home itself.
+    // Canonical data home (doc 32) is the anchor for the managed release prefix.
     vak_config::paths::data_home()
 }
 
@@ -171,8 +170,7 @@ pub(crate) fn run_install(prefix: Option<PathBuf>, no_service: bool) -> i32 {
     {
         eprintln!("warning: delivery worker not installed: {e}");
     }
-    // Preserve an explicitly installed tray addon when a base reinstall
-    // advances `current`; fresh installs still remain headless.
+    // Preserve an explicitly installed tray addon when a base reinstall advances `current`.
     let previous_bin = bin_dir_of(&prefix);
     let previous_tray = previous_bin.join("vakcoder-tray");
     if previous_tray.exists()
@@ -353,19 +351,7 @@ pub(crate) fn run_status() -> i32 {
     println!("build     {} ({})", build_version, current_git_sha());
     match &manifest {
         Ok(m) => println!("manifest  {} installed {}", m.version, m.installed_at),
-        Err(e) => {
-            println!("manifest  — ({e})");
-            // Adoption hint: a pre-bundle install at the old dotdir
-            // prefix is the one migration path into the canonical layout.
-            let legacy = home().join("local").join("release");
-            if legacy.join("install.json").exists() {
-                eprintln!(
-                    "note: legacy install found at {} — run `vakcoder self install` to adopt {}",
-                    legacy.display(),
-                    prefix.display()
-                );
-            }
-        }
+        Err(e) => println!("manifest  — ({e})"),
     }
     for r in &rows {
         let state = match r.pid {
@@ -375,9 +361,9 @@ pub(crate) fn run_status() -> i32 {
         let flag = if !r.unit_exists {
             "— not installed"
         } else if !r.points_at_installed {
-            "✗ legacy path"
+            "✗ unmanaged path"
         } else if r.binary_stale {
-            "⚠ stale process — run `self services-sync` to bounce"
+            "⚠ process drift — run `self services-sync` to reconcile"
         } else {
             "✓"
         };
@@ -406,7 +392,7 @@ pub(crate) fn run_status() -> i32 {
         .collect();
     if !stale.is_empty() {
         eprintln!(
-            "drift: {} predate the installed binary (still executing the old image)",
+            "drift: {} are not using the installed binary",
             stale.join(", ")
         );
         drifted = true;
@@ -483,7 +469,7 @@ pub(crate) fn run_uninstall(yes: bool, purge: bool, no_service: bool) -> i32 {
                 println!("purged cache {}", cache.display());
             }
         }
-        // Logs home: gateway.log, telegram.log, tray.log
+        // Logs home for the Runtime and optional tray.
         let logs = vak_config::paths::logs_dir();
         if logs != data {
             if let Err(e) = std::fs::remove_dir_all(&logs) {
@@ -616,7 +602,7 @@ pub(crate) fn run_update(url: &str, yes: bool) -> i32 {
         eprintln!("error: activation failed: {e}");
         return 1;
     }
-    // Manifest version moves with the artifact so status stays truthful.
+    // The manifest version moves with the artifact so status stays truthful.
     if let Ok(mut m) = read_manifest(&prefix) {
         m.version = manifest.version.clone();
         if let Ok(json) = serde_json::to_vec_pretty(&m)

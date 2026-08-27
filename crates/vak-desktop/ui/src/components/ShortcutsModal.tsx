@@ -2,14 +2,12 @@ import { setShowShortcuts } from "../store";
 
 const SHORTCUTS: [string, string][] = [
   ["⌘N", "new session"],
-  ["⌘D", "toggle diff pane"],
   ["⌘\\", "toggle split view (two tasks side-by-side)"],
   ["⌘B", "toggle sidebar"],
   ["⌘H", "time travel (workspace snapshots)"],
   ["⌘K", "global search across sessions"],
   ["G then I", "open inbox"],
   ["⌘,", "open settings"],
-  ["⌃`", "toggle terminal"],
   ["⌘;", "toggle side chat (ask aside)"],
   ["@", "mention a file in the composer"],
   ["/", "pick a skill in the composer"],

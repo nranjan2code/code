@@ -14,33 +14,30 @@ import {
   setShowShortcuts,
   uiPreferences,
   updateUiPreference,
-  sessions,
   type Density,
 } from "../store";
 import type { ConfigSnapshot } from "../types";
 import * as api from "../api";
 import { relTime } from "../time";
-import { loadHealth, refreshSessions } from "../App";
+import { loadHealth } from "../App";
 import Icon, { type IconName } from "./Icon";
 import OperationsPanel from "./OperationsPanel";
-import DigestCard from "./DigestCard";
 
 /** Sentinel option that swaps the model select for a free-text field. */
 const CUSTOM_MODEL = "\u0000custom";
 
-type Page = "general" | "appearance" | "agent" | "permissions" | "reliability" | "integrations" | "services" | "learning" | "advanced" | "archived";
+type Page = "general" | "appearance" | "agent" | "permissions" | "reliability" | "skills" | "services" | "learning" | "advanced";
 
 const pages: { id: Page; label: string; icon: IconName; hint: string }[] = [
   { id: "general", label: "General", icon: "gear", hint: "notifications suggestions" },
   { id: "appearance", label: "Appearance", icon: "palette", hint: "theme text density motion" },
-  { id: "agent", label: "Agent", icon: "spark", hint: "provider model turns subagents" },
+  { id: "agent", label: "Agent", icon: "spark", hint: "provider model turns" },
   { id: "permissions", label: "Permissions", icon: "shield", hint: "access sandbox approvals" },
   { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker" },
-  { id: "integrations", label: "Integrations", icon: "plug", hint: "mcp hooks skills" },
+  { id: "skills", label: "Skills", icon: "spark", hint: "discovered skills proposals" },
   { id: "services", label: "Services", icon: "grid", hint: "gateway bridge tray watchdog background" },
   { id: "learning", label: "Learning", icon: "history", hint: "memory notes skill proposals review promote" },
   { id: "advanced", label: "Advanced", icon: "tune", hint: "paths context configuration" },
-  { id: "archived", label: "Archived tasks", icon: "archive", hint: "restore delete history" },
 ];
 
 function Switch(props: { checked: boolean; onChange: (next: boolean) => void; label: string }) {
@@ -64,7 +61,7 @@ export default function Settings() {
   const [query, setQuery] = createSignal("");
   const [config, setConfig] = createSignal<ConfigSnapshot | null>(null);
   const [loading, setLoading] = createSignal(true);
-  // Background-service states (docs/design/27-operations.md); polled while
+  // Background-service states; polled while
   // the Services page is open.
   const [ops, setOps] = createSignal<api.OpsStatusShape | null>(null);
 
@@ -159,110 +156,15 @@ export default function Settings() {
     }
   }
 
-  // MCP manager state: loaded when the integrations page opens; edits are
-  // local until Save pushes the whole table.
-  const [mcpServers, setMcpServers] = createSignal<Record<string, api.McpServerDef> | null>(null);
-  const [mcpDirty, setMcpDirty] = createSignal(false);
-  const [mcpSaving, setMcpSaving] = createSignal(false);
   const [skills, setSkills] = createSignal<api.DiscoveredSkill[]>([]);
-  const [hooks, setHooks] = createSignal<api.HookConfig[]>([]);
-  const [hooksDirty, setHooksDirty] = createSignal(false);
-  const [hooksSaving, setHooksSaving] = createSignal(false);
-  const [capabilityTab, setCapabilityTab] = createSignal<"mcp" | "skills" | "hooks">("mcp");
-
-  async function refreshMcp() {
-    try {
-      const res = await api.getMcpServers();
-      setMcpServers(res.servers ?? {});
-      setMcpDirty(false);
-    } catch (e) {
-      setNotice({ kind: "error", text: `Could not load MCP servers: ${e instanceof Error ? e.message : String(e)}` });
-    }
-  }
 
   async function refreshCapabilities() {
     try {
-      const [skillResult, hookResult] = await Promise.all([api.listSkills(), api.getHooks()]);
+      const skillResult = await api.listSkills();
       setSkills(skillResult.skills ?? []);
-      setHooks(hookResult.hooks ?? []);
-      setHooksDirty(false);
     } catch (e) {
       setNotice({ kind: "error", text: `Could not load capabilities: ${e instanceof Error ? e.message : String(e)}` });
     }
-  }
-
-  async function saveHooks() {
-    setHooksSaving(true);
-    try {
-      await api.putHooks(hooks());
-      setHooksDirty(false);
-      setNotice({ kind: "info", text: `Saved ${hooks().length} hook${hooks().length === 1 ? "" : "s"} — active for new turns` });
-    } catch (e) {
-      setNotice({ kind: "error", text: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setHooksSaving(false);
-    }
-  }
-
-  function updateHook(index: number, patch: Partial<api.HookConfig>) {
-    setHooks((current) => current.map((hook, i) => i === index ? { ...hook, ...patch } : hook));
-    setHooksDirty(true);
-  }
-
-  function addHook() {
-    setHooks((current) => [...current, { event: "pre_tool_use", matcher: "", command: "", timeout_ms: 10000, enabled: true }]);
-    setHooksDirty(true);
-  }
-
-  function removeHook(index: number) {
-    setHooks((current) => current.filter((_, i) => i !== index));
-    setHooksDirty(true);
-  }
-
-  async function saveMcp() {
-    const servers = mcpServers() ?? {};
-    setMcpSaving(true);
-    try {
-      await api.putMcpServers(servers);
-      setMcpDirty(false);
-      setNotice({ kind: "info", text: `Saved ${Object.keys(servers).length} MCP server(s) — applied to new turns` });
-    } catch (e) {
-      setNotice({ kind: "error", text: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setMcpSaving(false);
-    }
-  }
-
-  function updateServer(name: string, patch: Partial<api.McpServerDef>) {
-    setMcpServers((cur) => ({ ...cur, [name]: { ...(cur?.[name] ?? { command: "", args: [], env: {}, network: false }), ...patch } }));
-    setMcpDirty(true);
-  }
-
-  function addServer() {
-    let n = "new-server";
-    let i = 2;
-    while (mcpServers()?.[n]) n = `new-server-${i++}`;
-    setMcpServers((cur) => ({ ...(cur ?? {}), [n]: { command: "", args: [], env: {}, network: false } }));
-    setMcpDirty(true);
-  }
-
-  function renameServer(oldName: string, nextName: string) {
-    if (!nextName.trim() || nextName === oldName) return;
-    setMcpServers((cur) => {
-      const entries = Object.entries(cur ?? {});
-      const replaced = entries.map(([k, v]) => (k === oldName ? [nextName, v] as [string, api.McpServerDef] : [k, v] as [string, api.McpServerDef]));
-      return Object.fromEntries(replaced);
-    });
-    setMcpDirty(true);
-  }
-
-  function removeServer(name: string) {
-    setMcpServers((cur) => {
-      const next = { ...(cur ?? {}) };
-      delete next[name];
-      return next;
-    });
-    setMcpDirty(true);
   }
 
   async function promote(id: string) {
@@ -283,7 +185,7 @@ export default function Settings() {
     }
   }
 
-  async function runOp(service: "gateway" | "telegram", action: "start" | "stop" | "restart" | "install" | "uninstall") {
+  async function runOp(service: "gateway", action: "start" | "stop" | "restart" | "install" | "uninstall") {
     try {
       await api.opsAction(service, action);
       await refreshOps();
@@ -315,7 +217,6 @@ export default function Settings() {
     }
   };
   onMount(() => void loadProviders());
-  onMount(() => void refreshSessions());
   createEffect(() => {
     if (page() !== "services") return;
     void refreshOps();
@@ -329,8 +230,7 @@ export default function Settings() {
     onCleanup(() => clearInterval(t));
   });
   createEffect(() => {
-    if (page() !== "integrations") return;
-    void refreshMcp();
+    if (page() !== "skills") return;
     void refreshCapabilities();
   });
 
@@ -382,46 +282,7 @@ export default function Settings() {
   onMount(() => void load());
   const visiblePages = createMemo(() => {
     const needle = query().trim().toLowerCase();
-    return (needle ? pages.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(needle)) : pages).filter((item) => item.id !== "archived");
   });
-  const showArchivedPage = createMemo(() => {
-    const needle = query().trim().toLowerCase();
-    return !needle || "archived tasks restore delete history".includes(needle);
-  });
-  const archivedSessions = createMemo(() => sessions().filter((session) => session.archived));
-
-  const restoreTask = async (id: string) => {
-    try {
-      await api.setArchived(id, false);
-      await refreshSessions();
-      setNotice({ kind: "info", text: "Task restored to the sidebar." });
-    } catch (error) {
-      setNotice({ kind: "error", text: `Could not restore that task: ${error instanceof Error ? error.message : String(error)}` });
-    }
-  };
-
-  const deleteTask = async (id: string) => {
-    const task = archivedSessions().find((session) => session.session_id === id);
-    if (!window.confirm(`Delete “${task?.title || "Untitled task"}”? This cannot be undone in VakCoder.`)) return;
-    try {
-      await api.deleteSession(id);
-      await refreshSessions();
-      setNotice({ kind: "info", text: "Task deleted from history." });
-    } catch (error) {
-      setNotice({ kind: "error", text: `Could not delete that task: ${error instanceof Error ? error.message : String(error)}` });
-    }
-  };
-
-  const deleteAllArchived = async () => {
-    if (!archivedSessions().length || !window.confirm(`Delete all ${archivedSessions().length} archived tasks? This cannot be undone in VakCoder.`)) return;
-    try {
-      const result = await api.deleteAllArchived();
-      await refreshSessions();
-      setNotice({ kind: "info", text: `${result.deleted} archived task${result.deleted === 1 ? "" : "s"} deleted.` });
-    } catch (error) {
-      setNotice({ kind: "error", text: `Could not delete archived tasks: ${error instanceof Error ? error.message : String(error)}` });
-    }
-  };
 
   // ---- Data & backup (docs/design/29-personal-os.md P3) ----------------------
   const [backupDir, setBackupDir] = createSignal("");
@@ -552,7 +413,7 @@ export default function Settings() {
   };
 
   const openProjectConfig = async () => {
-    const relative = ".vakcoder/config.toml";
+    const relative = ".vakcoder/project.toml";
     try {
       await api.readFile(relative);
     } catch {
@@ -574,12 +435,6 @@ export default function Settings() {
             {(item) => <button classList={{ active: page() === item.id }} onClick={() => { setPage(item.id); setQuery(""); }}><Icon name={item.icon} /><span>{item.label}</span></button>}
           </For>
         </nav>
-        <Show when={showArchivedPage()}>
-          <div class="settings-nav-label archived-nav-label">Archived</div>
-          <nav>
-            <button classList={{ active: page() === "archived" }} onClick={() => { setPage("archived"); setQuery(""); }}><Icon name="archive" /><span>Archived tasks</span></button>
-          </nav>
-        </Show>
         <div class="settings-nav-foot"><div class="settings-app-mark"><img src="/vakcoder-icon.png" alt="" /></div><div><strong>VakCoder</strong><span>Version 0.2.0</span></div></div>
       </aside>
 
@@ -600,16 +455,6 @@ export default function Settings() {
               </Group>
             </Show>
 
-            <Show when={page() === "archived"}>
-              <header class="archived-header"><div><h1>Archived tasks</h1><p>Hidden from the sidebar until you restore them.</p></div><button class="settings-button danger" disabled={!archivedSessions().length} onClick={() => void deleteAllArchived()}><Icon name="trash" size={14} /> Delete all</button></header>
-              <div class="settings-callout"><Icon name="archive" /><div><strong>Archive is reversible</strong><span>Restore a task any time. Deleting removes it from VakCoder’s task history; the append-only session ledger remains untouched on disk.</span></div></div>
-              <Show when={archivedSessions().length} fallback={<div class="archived-empty"><Icon name="archive" size={24} /><strong>No archived tasks</strong><span>Tasks you archive from the sidebar will appear here.</span></div>}>
-                <section class="archived-list" aria-label="Archived tasks">
-                  <For each={archivedSessions()}>{(session) => <div class="archived-item"><span class="archived-item-icon"><Icon name="chat" size={15} /></span><span class="archived-item-copy"><strong>{session.title || "Untitled task"}</strong><span>{session.updated_at ? new Date(session.updated_at).toLocaleString() : ""} · {session.entries ?? 0} events</span></span><button class="settings-button" onClick={() => void restoreTask(session.session_id)}><Icon name="restore" size={13} /> Restore</button><button class="icon-button subtle danger has-tooltip" data-tooltip="Delete task" aria-label={`Delete ${session.title || "untitled task"}`} onClick={() => void deleteTask(session.session_id)}><Icon name="trash" size={14} /></button></div>}</For>
-                </section>
-              </Show>
-            </Show>
-
             <Show when={page() === "appearance"}>
               <header><h1>Appearance</h1><p>Make the workspace comfortable for long sessions.</p></header>
               <Group title="Theme">
@@ -617,7 +462,7 @@ export default function Settings() {
               </Group>
               <Group title="Layout and text">
                 <Row title="Text size" description="Conversation and interface text."><div class="range-control"><input type="range" min="90" max="120" step="5" value={uiPreferences.textScale} onInput={(event) => updateUiPreference("textScale", Number(event.currentTarget.value))} /><span>{uiPreferences.textScale}%</span></div></Row>
-                <Row title="Code size" description="Code blocks, diffs, editor, and terminal labels."><div class="range-control"><input type="range" min="90" max="125" step="5" value={uiPreferences.codeScale} onInput={(event) => updateUiPreference("codeScale", Number(event.currentTarget.value))} /><span>{uiPreferences.codeScale}%</span></div></Row>
+              <Row title="Code size" description="Code blocks, diffs, and editor labels."><div class="range-control"><input type="range" min="90" max="125" step="5" value={uiPreferences.codeScale} onInput={(event) => updateUiPreference("codeScale", Number(event.currentTarget.value))} /><span>{uiPreferences.codeScale}%</span></div></Row>
                 <Row title="Compact task list" description="Fit more tasks in the sidebar with tighter rows."><Switch label="Compact task list" checked={uiPreferences.compactSidebar} onChange={(value) => updateUiPreference("compactSidebar", value)} /></Row>
                 <Row title="Reduce motion" description="Disable pulsing, smooth scrolling, and animated transitions."><Switch label="Reduce motion" checked={uiPreferences.reduceMotion} onChange={(value) => updateUiPreference("reduceMotion", value)} /></Row>
               </Group>
@@ -681,7 +526,6 @@ export default function Settings() {
                   </Show>
                 </Row>
                 <Row title="Maximum turns" description="Hard limit for one task before the agent stops."><input class="settings-number" type="number" min="1" max="1000" value={maxTurns()} onInput={(event) => setMaxTurns(Number(event.currentTarget.value))} /></Row>
-                <Row title="Subagents" description="Allow the agent to delegate bounded parallel work."><span class="settings-status good">{config()?.subagents ? "Enabled" : "Disabled in config"}</span></Row>
               </Group>
               <Group title="Credentials">
                 <Row
@@ -762,7 +606,6 @@ export default function Settings() {
 
             <Show when={page() === "services"}>
               <OperationsPanel onNotice={(text) => setNotice({ kind: "error", text })} />
-              <DigestCard />
             </Show>
 
             <Show when={page() === "learning"}>
@@ -843,7 +686,7 @@ export default function Settings() {
                   when={tierNotes().length > 0}
                   fallback={<Row title={tier() === "profile" ? "No profile notes yet" : "No notes yet"} description={tier() === "profile" ? "Add a preference once and every workspace benefits." : "Chat with reflection enabled — durable decisions land here as plain markdown you can edit in ~/.vakcoder/memory/."}><span class="settings-status good">{tier() === "profile" ? "Ready" : "Ready"}</span></Row>}
                 >
-                  <div class="archived-list" aria-label="Memory notes">
+                  <div class="memory-list" aria-label="Memory notes">
                     <For each={tierNotes().slice().reverse()}>
                       {(n) => (
                         <div class="task-row memory-note" data-note-id={n.id} classList={{ picked: recentPickedId() === n.id }}>
@@ -886,35 +729,18 @@ export default function Settings() {
               </Group>
             </Show>
 
-            <Show when={page() === "integrations"}>
-              <header><h1>Capabilities</h1><p>Connect tools, automate lifecycle events, and manage the instructions available to your agent.</p></header>
-              <nav class="capability-tabs" aria-label="Capability types">
-                <button classList={{ active: capabilityTab() === "mcp" }} onClick={() => setCapabilityTab("mcp")}><Icon name="plug" /><span>MCP servers</span><em>{Object.keys(mcpServers() ?? {}).length}</em></button>
-                <button classList={{ active: capabilityTab() === "skills" }} onClick={() => setCapabilityTab("skills")}><Icon name="spark" /><span>Skills</span><em>{skills().length}</em></button>
-                <button classList={{ active: capabilityTab() === "hooks" }} onClick={() => setCapabilityTab("hooks")}><Icon name="tune" /><span>Hooks</span><em>{hooks().length}</em></button>
-              </nav>
-              <Show when={capabilityTab() === "mcp"}>
-                <Group title="Tool servers"><Show when={mcpServers()} fallback={<Row title="Loading servers…" description="Reading the effective MCP configuration."><span /></Row>}>
-                  <div class="mcp-editor">
-                    <Show when={Object.keys(mcpServers() ?? {}).length > 0} fallback={<div class="capability-empty"><Icon name="plug" /><strong>No MCP servers connected</strong><span>Add a local server to give the agent tools such as search, browser, or data access.</span></div>}>
-                      <For each={Object.entries(mcpServers() ?? {})}>{([name, def]) => <div class="mcp-row">
-                        <div class="mcp-row-head"><div><strong>{name}</strong><span class="capability-state ready">Configured</span></div><button class="settings-button danger" onClick={() => removeServer(name)}><Icon name="trash" /> Remove</button></div>
-                        <div class="mcp-fields"><label>Server name<input value={name} aria-label="Server name" onChange={(e) => renameServer(name, e.currentTarget.value.trim())} /></label><label>Command<input placeholder="/path/to/command" value={def.command} aria-label="Command" onInput={(e) => updateServer(name, { command: e.currentTarget.value })} /></label><label>Arguments<input placeholder="Space-separated arguments" value={def.args.join(" ")} aria-label="Arguments" onInput={(e) => updateServer(name, { args: e.currentTarget.value.split(" ").filter(Boolean) })} /></label></div>
-                        <div class="mcp-controls"><label class="mcp-network"><Switch checked={def.network} label={`Allow network for ${name}`} onChange={(v) => updateServer(name, { network: v })} /><span>Allow outbound network</span></label><button class="settings-button" onClick={() => setNotice({ kind: "info", text: "MCP health checks run when the server is first used in a task." })}>Check on next use</button></div>
-                      </div>}</For>
-                    </Show>
-                    <div class="settings-actions"><button class="btn" onClick={addServer}><Icon name="add" /> Add server</button><button class="btn primary" disabled={!mcpDirty() || mcpSaving()} onClick={() => void saveMcp()}>{mcpSaving() ? "Saving…" : "Save & apply"}</button><Show when={mcpDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
-                    <p class="settings-hint">Servers run in a sandbox. Network access is off unless you explicitly enable it. Secrets are referenced by name and never shown here.</p>
-                  </div>
-                </Show></Group>
-              </Show>
-              <Show when={capabilityTab() === "skills"}>
-                <Group title={`Discovered skills (${skills().length})`}><Show when={skills().length > 0} fallback={<div class="capability-empty"><Icon name="spark" /><strong>No skills discovered</strong><span>Add a SKILL.md under the project or your VakCoder home directory, then reload this page.</span></div>}><div class="capability-list"><For each={skills()}>{(skill) => <details class="capability-item"><summary><span><strong>{skill.name}</strong><small>{skill.scope ?? "Project or user"}</small></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show><button class="settings-button" onClick={() => setNotice({ kind: "info", text: `${skill.name} is available from the task composer.` })}>Use in a task</button></div></details>}</For></div></Show></Group>
-                <Group title={`Pending proposals (${proposals().length})`}><Show when={proposals().length > 0} fallback={<Row title="No proposals waiting" description="The agent can suggest reusable skills; they stay inactive until you review them."><span class="settings-status good">Clear</span></Row>}><For each={proposals()}>{(proposal) => <div class="setting-row"><div class="setting-copy"><strong>{proposal.name}</strong><span>{proposal.description}</span></div><div class="setting-control"><button class="settings-button" onClick={() => void promote(proposal.id)}>Review & promote</button><button class="settings-button danger" onClick={() => void reject(proposal.id)}>Reject</button></div></div>}</For></Show></Group>
-              </Show>
-              <Show when={capabilityTab() === "hooks"}>
-                <Group title="Lifecycle automation"><div class="settings-callout"><Icon name="shield" /><div><strong>Hooks run commands at controlled lifecycle points.</strong><span>Keep commands short and review every change. A disabled hook never runs.</span></div></div><Show when={hooks().length > 0} fallback={<div class="capability-empty"><Icon name="tune" /><strong>No hooks configured</strong><span>Add a hook to run a safe, repeatable action at session or tool lifecycle events.</span></div>}><div class="hook-editor"><For each={hooks()}>{(hook, index) => <div class="hook-row"><div class="hook-row-head"><span class="capability-state" classList={{ ready: hook.enabled !== false, muted: hook.enabled === false }}>{hook.enabled === false ? "Disabled" : "Enabled"}</span><Switch checked={hook.enabled !== false} label={`Enable hook ${index() + 1}`} onChange={(v) => updateHook(index(), { enabled: v })} /><button class="settings-button danger" onClick={() => removeHook(index())}><Icon name="trash" /></button></div><label>Lifecycle event<select value={hook.event} onChange={(e) => updateHook(index(), { event: e.currentTarget.value })}><option value="session_start">Session start</option><option value="pre_tool_use">Before a tool runs</option><option value="post_tool_use">After a tool runs</option><option value="stop">Task stop</option></select></label><label>Tool matcher <span class="label-hint">optional</span><input value={hook.matcher ?? ""} placeholder="bash, write, or leave blank" onInput={(e) => updateHook(index(), { matcher: e.currentTarget.value })} /></label><label>Command<input class="hook-command" value={hook.command} placeholder="e.g. cargo fmt --all --check" onInput={(e) => updateHook(index(), { command: e.currentTarget.value })} /></label><label>Timeout (ms)<input type="number" min="100" max="120000" value={hook.timeout_ms ?? 10000} onInput={(e) => updateHook(index(), { timeout_ms: Number(e.currentTarget.value) || 10000 })} /></label></div>}</For></div></Show><div class="settings-actions"><button class="btn" onClick={addHook}><Icon name="add" /> Add hook</button><button class="btn primary" disabled={!hooksDirty() || hooksSaving()} onClick={() => void saveHooks()}>{hooksSaving() ? "Saving…" : "Save hooks"}</button><Show when={hooksDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div></Group>
-              </Show>
+            <Show when={page() === "skills"}>
+              <header><h1>Skills</h1><p>Review the instructions Runtime discovered for this workspace.</p></header>
+              <Group title={`Discovered skills (${skills().length})`}>
+                <Show when={skills().length > 0} fallback={<div class="capability-empty"><Icon name="spark" /><strong>No skills discovered</strong><span>Add a SKILL.md under the project or your VakCoder home directory, then reload this page.</span></div>}>
+                  <div class="capability-list"><For each={skills()}>{(skill) => <details class="capability-item"><summary><span><strong>{skill.name}</strong><small>{skill.scope ?? "Project or user"}</small></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show></div></details>}</For></div>
+                </Show>
+              </Group>
+              <Group title={`Pending proposals (${proposals().length})`}>
+                <Show when={proposals().length > 0} fallback={<Row title="No proposals waiting" description="No skill proposals require review."><span class="settings-status good">Clear</span></Row>}>
+                  <For each={proposals()}>{(proposal) => <div class="setting-row"><div class="setting-copy"><strong>{proposal.name}</strong><span>{proposal.description}</span></div><div class="setting-control"><button class="settings-button" onClick={() => void promote(proposal.id)}>Promote</button><button class="settings-button danger" onClick={() => void reject(proposal.id)}>Reject</button></div></div>}</For>
+                </Show>
+              </Group>
             </Show>
 
             <Show when={page() === "advanced"}>

@@ -71,10 +71,6 @@ export type AgentEvent =
     }
   | { StreamOpened: Record<string, never> }
   | { ApprovalRequested: { id: string; tool: string; args_json: string; reason: string } }
-  | { SubagentStarted: { label: string } }
-  | { SubagentToolCall: { label: string; name: string; is_error: boolean } }
-  | { SubagentUsage: { label: string; input_tokens: number; output_tokens: number } }
-  | { SubagentFinished: { label: string; is_error: boolean; elapsed_ms: number } }
   | { RunFinished: { summary: string; is_error: boolean } }
   | { HandoffReset: { before_tokens: number } };
 
@@ -86,7 +82,6 @@ export interface SessionSummary {
   entries?: number;
   title?: string | null;
   running?: boolean;
-  archived?: boolean;
 }
 
 export interface CheckpointInfo {
@@ -142,7 +137,6 @@ export interface ConfigSnapshot {
   max_tokens: number;
   max_turns: number;
   permission_mode: "ReadOnly" | "WorkspaceWrite" | "FullAccess";
-  subagents: boolean;
   max_retries: number;
   retry_base_backoff_ms: number;
   request_timeout_secs: number;
@@ -160,40 +154,8 @@ export interface ConfigSnapshot {
     max_fallbacks: number;
     quality_hints: string[];
   };
-  integrations: { mcp_servers: string[]; hooks: number; skills: string[] };
   paths: { project_config: string; global_config?: string | null; sessions_home: string; cwd: string };
   warnings: string[];
-}
-
-export interface DiffResponse {
-  // Absent on the error payload (e.g. the workspace is not a git repo), so
-  // these are optional: the server returns { error } alone in that case.
-  root?: string;
-  diff?: string;
-  staged_diff?: string;
-  status?: string;
-  error?: string;
-}
-
-export interface PrCheck {
-  name?: string;
-  status?: string;
-  conclusion?: string | null;
-}
-
-export interface PrStatus {
-  branch: string;
-  pr: {
-    number: number;
-    title: string;
-    url: string;
-    state: string;
-    mergeable: string;
-  } | null;
-  reason?: "no_pr" | "gh_unavailable";
-  error?: string;
-  checks?: PrCheck[];
-  summary?: { pass: number; fail: number; pending: number };
 }
 
 export interface TaskDef {
@@ -223,40 +185,5 @@ export interface OpsServiceState {
 
 export interface OpsStatus {
   gateway: OpsServiceState;
-  telegram: OpsServiceState;
   gateway_healthy: boolean;
-}
-
-// Dispatch forensics (docs/design/27 Phases A+B+R). Mirrors the serde
-// serialization of vak_llm::work — the JSONL ledger is truth.
-export type WorkPurpose = "execute" | "summarize" | "verify";
-export type AttemptReason = "initial" | "retry" | "route_fallback" | "endurance_retry";
-export type FailureDomain =
-  | "account"
-  | "provider"
-  | "model"
-  | "request"
-  | "network"
-  | "deadline"
-  | "unknown";
-export type Settlement = "ok" | "failed" | "cancelled" | "unknown";
-
-export interface DispatchAttempt {
-  ordinal: number;
-  reason: AttemptReason;
-  domain: FailureDomain;
-  settlement: Settlement;
-  latency_ms: number;
-  usage?: Usage | null;
-  error?: string | null;
-  provider?: string | null;
-  model?: string | null;
-}
-
-export interface WorkReceipt {
-  purpose: WorkPurpose;
-  provider: string;
-  model: string;
-  winning_attempt?: number | null;
-  attempts: DispatchAttempt[];
 }

@@ -1,77 +1,33 @@
-# 23 — Memory & cross-session recall
+# 23 — Memory and search
 
-Pillar 2 of the platform plan (see `22-gateway.md` intro): Hermes' crown
-differentiator is not the loop — it is that **nothing learned is ever
-stranded**. Past sessions become retrievable context via a model-visible
-search tool plus FTS-style indexing. We get the same capability with zero
-new dependencies because our session store is already structured JSONL.
+Memory is Runtime-owned data, not a client-side note system. `vak-services`
+stores memory records in `state.db`; `vak-runtime` applies scope, project, and
+deletion rules; every client uses the same CRUD and search endpoints.
 
-## Model
+## Scopes and layout
 
-```
-model calls session_search {query, limit?}
-        │
-vak_session::search::search(home, cwd, query, limit, exclude)
-        │  scans <home>/sessions/<hash_cwd(cwd)>/*.jsonl
-        │  scores user+assistant texts (term frequency w/ saturation,
-        │  whole-phrase bonus), newest-first tiebreak
-        ▼
-top-N hits: {session, ts, role, score, snippet}
-        │
-returned as an ordinary tool result → appended to the ledger
-```
+Each record has an ID, scope (`workspace` or `profile`), optional project ID,
+kind, tag, text, timestamps, and a soft-deletion timestamp. The authoritative
+record is in SQLite and its mutation is audited. Search indexes are projections
+and may be rebuilt without changing memory.
 
-Invariant 1 holds by construction: the answer reaches the model only as a
-logged `tool_result`; nothing is injected outside the chain.
+## Model-visible recall
 
-### Scoring
+The Runtime injects selected memory into an admitted run's context. The selected
+record IDs and query are recorded in the session ledger, so a provider request
+can be reconstructed. The current session is excluded from recall while it is
+being written to prevent self-referential results.
 
-Deterministic, dependency-free:
+## CRUD
 
-- Query tokens lowercased, alphanumeric, length ≥ 2.
-- Per-hit score: `Σ over unique terms: 1 + ln(count)` (saturating), plus
-  `+3` when the full phrase occurs verbatim (case-insensitive), plus a
-  small recency nudge (`ts` descending rank × 0.01).
-- Bounded work: at most the trailing `MAX_SCAN_LINES = 4000` message lines
-  per ledger, `DEFAULT_LIMIT = 8` hits, snippets ≤ 240 chars centered on
-  the first matched term.
+CLI, TUI, desktop, and admin use `GET /memory`, `POST /memory`, `PATCH
+/memory/:id`, and `DELETE /memory/:id`. Delete is a durable tombstone; it does
+not rewrite prior transcripts. Scope and project ownership are validated by
+Runtime.
 
-An incremental index (per-ledger mtime-keyed cache) can slot in behind the
-same function signature later; scan-first keeps v1 honest about relevance
-and simple.
+## Safety and verification
 
-## Surfaces
-
-| Surface | Access |
-|---|---|
-| Agent loop | `session_search` tool, injected in `Core::run_turn_with` next to task/MCP |
-| TUI/desktop/server | `GET /search?q=…&limit=…` over the same function |
-| Future | compaction integration: auto-cite prior sessions in summaries |
-
-## Configuration
-
-```toml
-[memory]
-search_enabled = true   # default; false removes the tool from the loop
-```
-
-Privileged rules do not apply (read-only, workspace-scoped), but unknown
-keys still warn per convention.
-
-## Exclusions & safety
-
-- The **current** session id is excluded — its content is already in
-  context; recalling it would double-count.
-- Subagent ledgers (`child-*`) are included; they carry `parent_session_id`
-  and are legitimate knowledge.
-- Search reads only; it never mutates ledgers, and respects the frozen
-  contract (no rewriting, branching untouched).
-
-## Phases
-
-| Phase | Delivers | Exit criterion |
-|---|---|---|
-| **M0 ✅** | scan+score search in vak-session, `session_search` tool wired into every run, `/search` endpoint, `[memory]` config | relevance unit tests + agent-loop e2e proving the result lands on the ledger; fmt/clippy/tests green |
-| **M1 ✅** | mtime-keyed per-ledger index cache + `search_all` cross-project scan; `/search` in TUI (`--all` flag), desktop SearchModal global toggle, `GET /search?all=true` | warm 10k-message store answered from cache < 500ms CI-safe bound (typ. ≪50ms); appends visible next query without restart; cross-dir exclusion tested |
-| **M2 ✅** | Write path via model-invoked `remember` tool → `<home>/memory/<hash>/MEMORY.md` (plain markdown, provenance blocks, hand-edit-tolerant parser); recalled by search with outranking bonus; `[memory] write_enabled` flag; `GET /memory` + `vakcoder memory` | curated notes rank above equal transcript hits (`memory_extras_outrank_equal_transcript_hits`); agent remembers mid-run and a later run recalls it citing memory (learning_loop e2e) |
-| **M3 ✅** | Tiered + editable memory (docs/design/29 P1): global `<home>/memory/user/USER.md` profile tier recalled as `profile` role extras; explicit `forget_note`/`amend_note` (byte-safe rewrites, FNV id per provenance header); full HTTP CRUD (`POST/PATCH/DELETE /memory`) shared by desktop/gateway/CLI | forget removes exactly one block preserving the rest byte-for-byte; profile notes outrank equal transcript hits (`profile_tier_recalled_as_profile_role_alongside_memory`); amend/forget round-trip over HTTP e2e |
+Memory text is data, never executable instruction. It cannot grant permission,
+change the route ladder, alter credentials, or bypass the broker. Tests verify
+scope isolation, deletion, search ranking, ledger logging, and consistent
+results across all clients.

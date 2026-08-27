@@ -34,7 +34,7 @@ pub(crate) fn discover(
 
     // 2. Named profile from config
     if let Some(name) = profile {
-        let settings = vak_config::load_connect_settings();
+        let settings = load_connect_settings();
         if let Some(p) = settings.profiles.get(name) {
             return Ok(Resolved {
                 url: p.url.clone(),
@@ -48,7 +48,7 @@ pub(crate) fn discover(
     }
 
     // 3. [connect] section in user config
-    let settings = vak_config::load_connect_settings();
+    let settings = load_connect_settings();
     if let (Some(url), Some(token)) = (settings.url, settings.token)
         && !url.is_empty()
         && !token.is_empty()
@@ -159,46 +159,53 @@ fn prompt_onboarding() -> Result<Resolved, String> {
 
 /// Save resolved connection info to the user config `[connect]` section.
 pub(crate) fn save_to_config(resolved: &Resolved) -> Result<(), String> {
-    let config_path = vak_config::global_path().ok_or("cannot determine user config path")?;
-    let mut text = if config_path.exists() {
-        std::fs::read_to_string(&config_path).map_err(|e| e.to_string())?
-    } else {
-        String::new()
+    let data_home = vak_config::paths::data_home();
+    let service = vak_config::ConfigService::new(
+        &data_home,
+        std::env::current_dir().map_err(|e| e.to_string())?,
+    );
+    service
+        .update(|config| {
+            config.connect.url = Some(resolved.url.clone());
+            config.connect.token = Some(resolved.token.clone());
+        })
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+#[derive(Default)]
+struct ConnectSettings {
+    url: Option<String>,
+    token: Option<String>,
+    profiles: std::collections::BTreeMap<String, Resolved>,
+}
+
+fn load_connect_settings() -> ConnectSettings {
+    let home = vak_config::paths::data_home();
+    let root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let Ok(snapshot) = vak_config::ConfigService::new(home, root).load() else {
+        return ConnectSettings::default();
     };
-
-    // Remove existing [connect] section (simple: find and replace).
-    if let Some(start) = text.find("\n[connect]") {
-        // Find next section header or end of file.
-        let after = &text[start + 1..];
-        let next_section = after[1..]
-            .find("\n[")
-            .map(|i| start + 1 + 1 + i + 1)
-            .unwrap_or(text.len());
-        text.replace_range(start..next_section, "");
-    } else if let Some(start) = text.find("[connect]") {
-        let after = &text[start..];
-        let next_section = after[1..]
-            .find("\n[")
-            .map(|i| start + 1 + i + 1)
-            .unwrap_or(text.len());
-        text.replace_range(start..next_section, "");
+    ConnectSettings {
+        url: snapshot.config.connect.url,
+        token: snapshot.config.connect.token,
+        profiles: snapshot
+            .config
+            .connect
+            .profiles
+            .into_iter()
+            .map(|(name, profile)| {
+                (
+                    name,
+                    Resolved {
+                        url: profile.url,
+                        token: profile.token,
+                        source: "connect.profile".to_owned(),
+                    },
+                )
+            })
+            .collect(),
     }
-
-    // Ensure trailing newline and append the section.
-    if !text.ends_with('\n') {
-        text.push('\n');
-    }
-    text.push_str(&format!(
-        "[connect]\nurl = \"{}\"\ntoken = \"{}\"\n",
-        resolved.url, resolved.token
-    ));
-
-    // Write atomically.
-    if let Some(parent) = config_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    std::fs::write(&config_path, &text).map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 /// Check if stderr is a tty (for interactive prompts).

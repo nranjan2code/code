@@ -1,72 +1,32 @@
-# 10 — Flows (static DAGs)
+# 10 — Runtime flows
+
+Flows are project-local TOML definitions discovered by Runtime. The current
+contract supports listing and validating definitions, then starting a normal
+Runtime run associated with the selected flow.
 
 ## Format
 
-`.vakcoder/flows/<name>.toml` (project) or `data_home()/flows/` (user):
-
 ```toml
-[flow]
-name = "migrate-and-test"
+name = "verify"
 
 [[nodes]]
-id = "explore"
-type = "agent"
-readonly = true
-prompt = "Find all call sites of the legacy API"
-
-[[nodes]]
-id = "refactor"
-type = "agent"
-paths = ["src/**"]
-prompt = "Migrate the sites from {{explore}} to the new API"
-
-[[nodes]]
-id = "test"
-type = "bash"
+id = "tests"
+kind = "bash"
 command = "cargo test"
-deps = ["refactor"]
 ```
 
-Node types: `agent` (prompt; readonly/paths like task), `bash` (command,
-timeout_ms), `approval` (message → human gate via Approver), `merge`
-(concatenates upstream outputs; always runs, emitting a partial-outcome
-report when upstream failed).
+Runtime reports the flow name, source path, validity, and node count. A missing
+or malformed TOML file is returned as invalid data; it is not silently
+executed.
 
-## Semantics
+## Interfaces
 
-- **Validate before run**: unique ids, known types, required fields per type,
-  unknown/self deps, cycles (Kahn). `{{dep}}` template references imply
-  dependencies automatically; unknown references are validation errors.
-- **Layered execution**: topological layers run sequentially; nodes within a
-  layer run concurrently (JoinSet). Agent nodes spawn child sessions with
-  `parent_session_id` lineage — same narrowing rules as subagents.
-- **Typed failure policy**: `required` (default true) — failure fails the
-  flow and marks every transitive dependent `skipped` in the ledger;
-  `required = false` — node fails, dependents are skipped, but merge nodes
-  still produce partial-outcome reports.
-- **Frozen definition + resume**: each run persists a state ledger JSON
-  (`data_home()/flow-runs/<flow>/<run>.json`) containing the raw TOML frozen
-  at first run plus per-node status/output. `flow run <name> --resume`
-  replays only non-completed nodes.
-
-## CLI
-
-```
+```text
 vakcoder flow list
-vakcoder flow check <name>     # validate + print layers
-vakcoder flow run <name> [--resume] [--yes]
+vakcoder flow check <name>
+vakcoder flow run <name>
 ```
 
-Ctrl-C aborts cleanly; the ledger allows resuming later.
-
-## Deliberately out of scope (per research)
-
-Dynamic LLM-authored planning is a separate mechanism (planner slice); flows
-are deterministic, hand/GPT-authored files validated before execution.
-
-## Later
-
-Runs → flows adoption (`flows adopt --from <session>` with provider/model
-taken only from work receipts), deterministic run-vs-run diff, and typed
-recovery audits are specced in `27-vakyartha-adoption.md` Phase E
-(demand-backed 2026-08-23: a completed run manually rerun by hand).
+All three commands use `vak-client` and the authenticated server. `flow run`
+reuses normal session/run admission, cancellation, event streaming, and audit;
+it cannot create a private state owner or bypass the broker.

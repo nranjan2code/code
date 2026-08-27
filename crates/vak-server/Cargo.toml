@@ -3,45 +3,28 @@ name = "vak-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Greenfield HTTP and SSE adapter for vakcoder Runtime"
 
 [dependencies]
-base64 = { workspace = true }
-async-trait = { workspace = true }
 axum = { workspace = true }
-reqwest = { workspace = true }
+futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
-tokio-util = { workspace = true }
-uuid = { workspace = true }
-vak-agent = { workspace = true }
-vak-config = { workspace = true }
-vak-core = { workspace = true }
-vak-delivery = { workspace = true }
-vak-llm = { workspace = true }
-futures = { workspace = true }
-vak-ops = { path = "../vak-ops" }
-vak-session = { workspace = true }
-vak-store = { workspace = true }
-vak-flow = { workspace = true }
-vak-hooks = { workspace = true }
-tower-http = { workspace = true }
-subtle = { workspace = true }
+thiserror = { workspace = true }
 include_dir = { workspace = true }
-chrono = { workspace = true }
-walkdir = { workspace = true }
-toml = { workspace = true }
-# Script-task watchdogs execute through the same brokered BashTool the agent
-# loop uses (docs/design/29-personal-os.md P2); this pulls in the Tool
-# trait + ToolContext needed to drive it from the scheduler.
-vak-tools = { workspace = true }
-libc = { workspace = true }
+vak-domain = { workspace = true }
+vak-config = { workspace = true }
+vak-runtime = { workspace = true }
+vak-llm = { workspace = true }
+vak-services = { workspace = true }
+vak-client = { workspace = true }
 
 [dev-dependencies]
-reqwest = { workspace = true }
+http-body-util = { workspace = true }
+tower = { workspace = true }
 tempfile = { workspace = true }
-tower = { version = "0.5", features = ["util"] }
 
 [lints]
 workspace = true

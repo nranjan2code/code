@@ -1,65 +1,50 @@
-# 28 — Operations: service control plane
+# 28 — Operations
 
-Design notes behind `vak-ops`, `vakcoder-tray` and the `/ops` HTTP routes
-(operational how-to lives in `docs/hosting.md`).
+Operations control the one installed Runtime service. The CLI and optional
+tray surface are control clients; they do not own daemon state or agent state.
 
-## Principle
+## Control graph
 
-One source of truth about background services, consumed identically by
-every surface:
-
+```text
+launchd / systemd --user
+          ▲
+   vakcoder service commands
+          ▲
+ CLI · tray · admin · TUI
+          │ authenticated Runtime API
+          ▼
+     vak-server → vak-runtime
 ```
-launchd (macOS) / systemd --user (Linux)
-        ▲
-     vak-ops   status · start · stop · restart · install/uninstall · logs
-        ▲
- ┌─────┼──────────────┬──────────────┐
- tray  TUI /services  desktop panel  GET|POST /ops/*
+
+The service manager is authoritative for process liveness. Runtime health is
+authoritative for readiness and state. These are intentionally separate
+signals: a process can be alive while the API is unavailable, and an API can be
+ready only after the gateway lock and data home are valid.
+
+## Commands
+
+```text
+vakcoder self install
+vakcoder self services-sync
+vakcoder self status
+vakcoder self uninstall
+vakcoder doctor
 ```
 
-Rules:
+Install and sync are idempotent. They operate only on the managed program and
+service files; Runtime data remains in the canonical data home. Disposable
+tests always pass `--no-service` and never load host service-manager units.
 
-1. **vak-ops owns no daemon.** It shells out to the platform manager —
-   launchd/systemd are already doing KeepAlive, restart-on-crash and boot
-   start. Duplicating that would create two opinions about reality.
-2. **HTTP health beats manager opinion for liveness** (`GET /health`,
-   2s timeout); the manager decides installed/stopped/not-installed.
-3. **Every command is idempotent**: starting a running service and
-   stopping a stopped one are no-ops from the user's point of view.
-4. **Uninstall never touches data.** Only plists/units are removed;
-   sessions, memory and tasks under `<home>` are untouched.
+## Runtime singleton
 
-## Tray (`vakcoder-tray`)
+`serve --gateway` acquires `<data_home>/locks/runtime.lock` and writes
+`runtime/gateway.json`. A non-gateway server does not create a second Runtime.
+Shutdown removes the runtime receipt and releases the lock even when the
+process receives SIGTERM.
 
-- Colour-coded dot: green both-up, amber degraded, red down, grey not
-  installed. Polls every 3 s on a worker thread; UI updates via winit user
-  events; menu rebuilt per refresh.
-- Watchdog (persisted in the data home): when a previously
-  running service disappears, restarts it at most once per minute and
-  posts a system notification.
-- Menu actions map to encoded ids (`(slot << 8) | action`) forwarded as
-  user events so all mutation runs on the UI thread.
+## Tray and diagnostics
 
-## Token pinning
-
-Bridges must survive gateway restarts without human help:
-`VAKCODER_GATEWAY_TOKEN` (from the user `.env`) overrides the random
-per-process bearer token. The value is honoured verbatim and never logged;
-when absent, behaviour is unchanged (fresh token printed once).
-
-## Surfaces
-
-| Surface | Access |
-|---|---|
-| Tray | native menu |
-| TUI | `/services [start\|stop\|restart] [gateway\|telegram]` |
-| Desktop | Settings ▸ Services (5 s poll) and Learning pages |
-| HTTP | `GET /ops/status`, `POST /ops/{gateway\|telegram}/{action}` |
-
-## Test isolation convention
-
-Fixtures that drive gateway turns must be hermetic against the developer's
-global config (which may legitimately enable `reflection = true`): write a
-project `.vakcoder/config.toml` disabling learning flags and construct
-`Core::new_with_trust(.., true)`. See any `tests/*.rs` spawn helper using
-the HERMETIC pattern.
+The tray displays service health and opens the admin console. It delegates
+start/stop/restart/install/uninstall to `vak-ops` and never creates a Runtime.
+`doctor` reports service status, API health, data paths, configuration, and
+capability/credential problems without mutating state.

@@ -2,12 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AgentEvent,
   BackendInfo,
-  DiffResponse,
   Health,
   Message,
   SessionSummary,
   ConfigSnapshot,
-  WorkReceipt,
 } from "./types";
 
 let base = "";
@@ -17,11 +15,6 @@ let projectRoot = "";
 let configRevision = 0;
 let rawConfig: Record<string, any> | null = null;
 const activeRuns = new Map<string, string>();
-
-function unavailable<T>(feature: string): Promise<T> {
-  void feature;
-  return Promise.resolve(undefined as T);
-}
 
 export function backendUrl(): string {
   return base;
@@ -77,20 +70,20 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export interface OpsStatusShape {
   gateway: { state: string };
-  telegram: { state: string };
   gateway_healthy: boolean;
 }
 
 export function opsStatus(): Promise<OpsStatusShape> {
-  return unavailable("service operations");
+  return health().then((h) => ({ gateway: { state: h.status === "ok" ? "running" : "unreachable" }, gateway_healthy: h.status === "ok" }));
 }
 
 export function opsAction(
-  service: "gateway" | "telegram",
+  service: "gateway",
   action: "start" | "stop" | "restart" | "install" | "uninstall",
 ): Promise<{ ok: boolean; error?: string }> {
-  void service; void action;
-  return unavailable("service operations");
+  return invoke<{ ok: boolean; error?: string }>("service_action", { service, action })
+    .then(() => ({ ok: true }))
+    .catch((error) => ({ ok: false, error: String(error) }));
 }
 
 export interface OpsDiagnostics {
@@ -101,21 +94,7 @@ export interface OpsDiagnostics {
 }
 
 export function opsDiagnostics(): Promise<OpsDiagnostics> {
-  return unavailable("service diagnostics");
-}
-
-export interface FinopsStatus {
-  day_usd: number;
-  run_cap_usd?: number | null;
-  day_cap_usd?: number | null;
-  unknown_rows: number;
-  total_rows: number;
-  by_provider: { name: string; usd: number; calls: number }[];
-  by_model: { name: string; usd: number; calls: number }[];
-}
-
-export function finopsStatus(): Promise<FinopsStatus> {
-  return unavailable("FinOps");
+  return Promise.all([health(), opsStatus(), listTasks()]).then(([h, services, tasks]) => ({ health: h, services, gateway: { enabled: services.gateway_healthy, bindings: [], approvals: { mode: "runtime", pending: 0 } }, flows: tasks.tasks.map((task) => ({ name: task.name, runs: 0 })) }));
 }
 
 // ---- learning (memory notes + skill proposals) -------------------------------
@@ -134,13 +113,15 @@ export interface NoteBlock {
 export type MemoryScope = NonNullable<NoteBlock["scope"]>;
 
 export function forgetMemory(id: string, scope: MemoryScope): Promise<{ forgotten: string; bytes: number }> {
-  void id; void scope;
-  return unavailable("memory management");
+  void scope;
+  return req<{ forgotten: boolean }>(`/memory/${encodeURIComponent(id)}`, { method: "DELETE", body: "{}" })
+    .then((r) => ({ forgotten: id, bytes: r.forgotten ? 0 : 0 }));
 }
 
 export function amendMemory(id: string, scope: MemoryScope, text: string): Promise<{ amended: string }> {
-  void id; void scope; void text;
-  return unavailable("memory management");
+  void scope;
+  return req(`/memory/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ text }) })
+    .then(() => ({ amended: id }));
 }
 
 // ---- recall search -----------------------------------------------------------
@@ -161,8 +142,19 @@ export function searchSessions(
   limit: number,
   all: boolean,
 ): Promise<{ all: boolean; hits: SearchHit[] }> {
-  void q; void limit; void all;
-  return unavailable("cross-session search");
+  void all;
+  const needle = q.toLocaleLowerCase();
+  return listSessions().then(async ({ sessions }) => {
+    const hits: SearchHit[] = [];
+    for (const session of sessions) {
+      const transcript = await transcript(session.session_id);
+      transcript.messages.forEach((message, index) => {
+        const text = message.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
+        if (text.toLocaleLowerCase().includes(needle)) hits.push({ session_id: session.session_id, entry_id: String(index), ts: session.updated_at, role: message.role, score: 1, snippet: text.slice(0, 240) });
+      });
+    }
+    return { all: true, hits: hits.slice(0, limit) };
+  });
 }
 
 export interface SkillProposal {
@@ -178,46 +170,27 @@ export interface DiscoveredSkill {
   scope?: string;
 }
 
-export interface HookConfig {
-  event: string;
-  matcher?: string | null;
-  command: string;
-  timeout_ms?: number | null;
-  enabled?: boolean;
-}
-
-export function getHooks(): Promise<{ hooks: HookConfig[] }> {
-  return unavailable("hooks");
-}
-
-export function putHooks(hooks: HookConfig[]): Promise<{ saved: boolean; count: number }> {
-  void hooks;
-  return unavailable("hooks");
-}
-
 export function listMemory(): Promise<{ notes: NoteBlock[] }> {
   return req<{ items: Array<{ id: string; created_at: string; kind: string; tag: string; text: string; project_id?: string | null; scope: string }> }>(`/memory?project_id=${encodeURIComponent(projectId)}&scope=workspace`).then((r) => ({ notes: r.items.map((n) => ({ id: n.id, ts: n.created_at, kind: n.kind, tag: n.tag, session_id: "", text: n.text, scope: n.scope as MemoryScope })) }));
 }
 
 export function listProposals(): Promise<{ proposals: SkillProposal[] }> {
-  return unavailable("skill proposals");
+  return listSkills().then((r) => ({ proposals: r.skills.filter((skill) => skill.scope === "proposed").map((skill) => ({ id: skill.name, name: skill.name, description: skill.description })) }));
 }
 
 export function promoteProposal(id: string): Promise<{ promoted: string }> {
-  void id;
-  return unavailable("skill proposals");
+  return req(`/skills/${encodeURIComponent(id)}/promote`, { method: "POST", body: "{}" }).then(() => ({ promoted: id }));
 }
 
 export function rejectProposal(id: string): Promise<{ rejected: string }> {
-  void id;
-  return unavailable("skill proposals");
+  return req(`/skills/${encodeURIComponent(id)}/reject`, { method: "POST", body: "{}" }).then(() => ({ rejected: id }));
 }
 
 // ---- sessions ---------------------------------------------------------------
 
 export function listSessions(): Promise<{ sessions: SessionSummary[] }> {
   return req<{ items: Array<{ id: string; project_id: string; created_at: string; status: string }> }>("/sessions").then((r) => ({
-    sessions: r.items.map((s) => ({ session_id: s.id, cwd: backendUrl(), created_at: s.created_at, updated_at: s.created_at, entries: 0, running: s.status !== "idle" })),
+    sessions: r.items.map((s) => ({ session_id: s.id, cwd: projectRoot, created_at: s.created_at, updated_at: s.created_at, entries: 0, running: s.status !== "idle" })),
   }));
 }
 
@@ -249,56 +222,15 @@ export async function transcriptMarkdown(id: string): Promise<string> {
   }).join("\n\n");
 }
 
-export function runPrompt(
-  id: string,
-  prompt: string,
-  goal?: { objective: string; criteria: string[] },
-  attachments?: { mime: string; data: string }[],
-): Promise<void> {
-  void goal; void attachments;
+export function runPrompt(id: string, prompt: string): Promise<void> {
   return req<{ run: { run_id: string } }>("/runs", {
     method: "POST",
     body: JSON.stringify({ session_id: id, project_id: projectId, input: prompt }),
   }).then((result) => { activeRuns.set(id, result.run.run_id); });
 }
 
-// ---- subagents (attach / steer / stop) ---------------------------------------
-
-export interface ActiveSubagent {
-  id: string;
-  label: string;
-  elapsed_secs: number;
-  parent_session_id: string;
-}
-
-export function listSubagents(id: string): Promise<{ subagents: ActiveSubagent[] }> {
-  void id;
-  return unavailable("subagents");
-}
-
-export function steerSubagent(id: string, child: string, text: string): Promise<void> {
-  void id; void child; void text;
-  return unavailable("subagent steering");
-}
-
-export function stopSubagent(
-  id: string,
-  child: string,
-): Promise<void> {
-  void id; void child;
-  return unavailable("subagent control");
-}
-
-/// Dispatch forensics (docs/design/27 Phases A+B+R): per-dispatch receipts
-/// with the full frozen-ladder attempt ledger.
-export function receipts(id: string): Promise<WorkReceipt[]> {
-  void id;
-  return unavailable("dispatch receipts");
-}
-
-export function steer(id: string, text: string, attachments?: { mime: string; data: string }[]): Promise<void> {
-  void id; void text; void attachments;
-  return unavailable("steering");
+export function steer(id: string, text: string): Promise<void> {
+  return runPrompt(id, text).then(() => undefined);
 }
 
 export function cancelRun(id: string): Promise<void> {
@@ -308,13 +240,11 @@ export function cancelRun(id: string): Promise<void> {
 }
 
 export function runSide(id: string, question: string): Promise<void> {
-  void id; void question;
-  return unavailable("side chats");
+  return runPrompt(id, question);
 }
 
 export function cancelSide(id: string): Promise<void> {
-  void id;
-  return unavailable("side chats");
+  return cancelRun(id);
 }
 
 export function answerApproval(
@@ -322,8 +252,11 @@ export function answerApproval(
   requestId: string,
   approve: boolean,
 ): Promise<unknown> {
-  void id; void requestId; void approve;
-  return unavailable("approvals");
+  void id;
+  return req(`/approvals/${encodeURIComponent(requestId)}/resolve`, {
+    method: "POST",
+    body: JSON.stringify({ allow: approve, response: { source: "desktop" } }),
+  });
 }
 
 export function health(): Promise<Health> {
@@ -338,34 +271,31 @@ export function setPermissionMode(mode: string): Promise<void> {
 
 export function getConfig(): Promise<ConfigSnapshot> {
   return req<{ revision: number; config: any; warnings: string[] }>(`/config?project_id=${encodeURIComponent(projectId)}`).then((r) => { configRevision = r.revision; rawConfig = r.config; return ({
-    provider: r.config.provider.name ?? "", model: r.config.model.name ?? "", max_tokens: 0, max_turns: r.config.limits.max_turns ?? 0, permission_mode: r.config.permission.mode === "workspace_write" ? "WorkspaceWrite" : r.config.permission.mode === "full_access" ? "FullAccess" : "ReadOnly", subagents: false, max_retries: 0, retry_base_backoff_ms: 0, request_timeout_secs: 0, run_retry_attempts: 0, run_retry_base_backoff_ms: 0, circuit_breaker_threshold: 0, circuit_breaker_cooldown_secs: 0, context_window: 0, theme: "", bell: true, stop_policy: { enabled: false, marker_gate: false, verify_gate: false, max_blocks: 0 }, route: { objective: "", fallback_models: [], max_fallbacks: 0, quality_hints: [] }, integrations: { mcp_servers: [], hooks: 0, skills: [] }, paths: { project_config: "", sessions_home: "", cwd: projectRoot }, warnings: r.warnings,
+    provider: r.config.provider.name ?? "", model: r.config.model.name ?? "", max_tokens: 0, max_turns: r.config.limits.max_turns ?? 0, permission_mode: r.config.permission.mode === "workspace_write" ? "WorkspaceWrite" : r.config.permission.mode === "full_access" ? "FullAccess" : "ReadOnly", max_retries: 0, retry_base_backoff_ms: 0, request_timeout_secs: 0, run_retry_attempts: 0, run_retry_base_backoff_ms: 0, circuit_breaker_threshold: 0, circuit_breaker_cooldown_secs: 0, context_window: 0, theme: "", bell: true, stop_policy: { enabled: false, marker_gate: false, verify_gate: false, max_blocks: 0 }, route: { objective: "", fallback_models: [], max_fallbacks: 0, quality_hints: [] }, paths: { project_config: "", sessions_home: "", cwd: projectRoot }, warnings: r.warnings,
   }); });
 }
 
 export function listProviders(): Promise<import("./types").ProvidersResponse> {
-  return unavailable("provider management");
+  return req<import("./types").ProvidersResponse>("/providers");
 }
 
 /** Live model list for one provider, discovered from its API. */
 export function discoverModels(provider: string): Promise<{ provider: string; models: string[] }> {
-  void provider;
-  return unavailable("model discovery");
+  return req<{ provider: string; models: string[] }>(`/providers/${encodeURIComponent(provider)}/models`);
 }
 
 export function putProviderKey(
   provider: string,
   key: string,
 ): Promise<{ provider: string; env_var: string; configured: boolean }> {
-  void provider; void key;
-  return unavailable("provider key management");
+  return req<{ provider: string; env_var: string; configured: boolean }>(`/providers/${encodeURIComponent(provider)}/key`, { method: "POST", body: JSON.stringify({ key }) });
 }
 
 /** Revoke a provider key stored on this device. */
 export function removeProviderKey(
   provider: string,
 ): Promise<{ provider: string; env_var: string; configured: boolean; shadowed_by_env: boolean }> {
-  void provider;
-  return unavailable("provider key management");
+  return req<{ provider: string; env_var: string; configured: boolean; shadowed_by_env: boolean }>(`/providers/${encodeURIComponent(provider)}/key`, { method: "DELETE", body: "{}" });
 }
 
 export function patchConfig(patch: { provider?: string; model?: string; max_turns?: number; permission_mode?: string; theme?: string }): Promise<void> {
@@ -379,63 +309,30 @@ export function patchConfig(patch: { provider?: string; model?: string; max_turn
   return req("/config", { method: "PATCH", body: JSON.stringify({ project_id: projectId, revision: configRevision, config }) }).then(() => undefined);
 }
 
-// ---- MCP server management ----------------------------------------------------
-
-export interface McpServerDef {
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-  network: boolean;
-}
-
-export function getMcpServers(): Promise<{ servers: Record<string, McpServerDef> }> {
-  return unavailable("MCP management");
-}
-
-/** Replaces the whole running table and persists the project config. */
-export function putMcpServers(servers: Record<string, McpServerDef>): Promise<{ saved: boolean; count: number }> {
-  void servers;
-  return unavailable("MCP management");
-}
-
-export function readDiff(id: string): Promise<DiffResponse> {
-  void id;
-  return unavailable("diff review");
-}
-
 export function listCheckpoints(id: string): Promise<{
   checkpoints: { seq: number; label: string; created_at: string; files: number }[];
 }> {
-  void id;
-  return unavailable("checkpoints");
+  return req<{ items: Array<{ id: string; label: string; created_at: string; manifest?: { files?: unknown[] } | null }> }>(`/sessions/${encodeURIComponent(id)}/checkpoints`)
+    .then((r) => ({ checkpoints: r.items.map((item, seq) => ({ seq, label: item.label, created_at: item.created_at, files: Array.isArray(item.manifest?.files) ? item.manifest.files.length : 0 })) }));
 }
 
 export function restoreCheckpoint(
   id: string,
   seq: number,
 ): Promise<{ restored: number; deleted: number; seq: number }> {
-  void id; void seq;
-  return unavailable("checkpoint restore");
-}
-
-export function setArchived(id: string, archived: boolean): Promise<{ archived: boolean }> {
-  void id; void archived;
-  return unavailable("session archive");
-}
-
-export function deleteSession(id: string): Promise<{ deleted: string }> {
-  void id;
-  return unavailable("session deletion");
-}
-
-export function deleteAllArchived(): Promise<{ deleted: number }> {
-  return unavailable("session deletion");
+  return req<{ items: Array<{ id: string }> }>(`/sessions/${encodeURIComponent(id)}/checkpoints`).then((r) => {
+    const checkpoint = r.items[seq];
+    if (!checkpoint) throw new Error("checkpoint does not exist");
+    return req<{ restored: boolean }>(`/sessions/${encodeURIComponent(id)}/checkpoints/${encodeURIComponent(checkpoint.id)}/restore`, { method: "POST", body: "{}" })
+      .then((result) => ({ restored: result.restored ? 1 : 0, deleted: 0, seq }));
+  });
 }
 
 export function listSkills(): Promise<{
   skills: DiscoveredSkill[];
 }> {
-  return unavailable("skill management");
+  return req<{ items: Array<{ name: string; description: string; project_id?: string | null; status: string }> }>(`/skills?project_id=${encodeURIComponent(projectId)}`)
+    .then((r) => ({ skills: r.items.map((item) => ({ name: item.name, description: item.description, source: item.project_id ?? "runtime", scope: item.status })) }));
 }
 
 export interface FileResponse {
@@ -451,51 +348,15 @@ export interface FileResponse {
 }
 
 export function readFile(path: string): Promise<FileResponse> {
-  void path;
-  return unavailable("filesystem browsing");
+  return req<FileResponse>(`/fs/file?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(path)}`);
 }
 
 export function writeFile(path: string, content: string): Promise<unknown> {
-  void path; void content;
-  return unavailable("filesystem editing");
+  return req(`/fs/file?project_id=${encodeURIComponent(projectId)}`, { method: "PUT", body: JSON.stringify({ project_id: projectId, path, content }) });
 }
 
 export function fsTree(limit = 400): Promise<{ files: string[]; truncated: boolean }> {
-  void limit;
-  return unavailable("filesystem browsing");
-}
-
-export function startBestOfN(
-  anchorId: string,
-  prompt: string,
-  n: number,
-): Promise<{ runs: { session_id: string; branch: string; path: string }[] }> {
-  void anchorId; void prompt; void n;
-  return unavailable("best-of-N runs");
-}
-
-export function keepRun(childId: string): Promise<{ kept: string }> {
-  void childId;
-  return unavailable("run selection");
-}
-
-export function discardRun(childId: string): Promise<{ discarded: string }> {
-  void childId;
-  return unavailable("run selection");
-}
-
-export function getPr(id: string): Promise<import("./types").PrStatus> {
-  void id;
-  return unavailable("pull request integration");
-}
-
-export function mergePr(
-  id: string,
-  number: number,
-  method: "squash" | "merge" | "rebase" = "squash",
-): Promise<{ merging: number }> {
-  void id; void number; void method;
-  return unavailable("pull request integration");
+  return req<{ files: string[]; truncated: boolean }>(`/fs/tree?project_id=${encodeURIComponent(projectId)}&limit=${limit}`);
 }
 
 // ---- SSE ---------------------------------------------------------------------
@@ -650,31 +511,7 @@ export function deleteTask(id: string): Promise<unknown> {
 }
 
 export function runTaskNow(id: string): Promise<unknown> {
-  void id;
-  return unavailable("scheduled tasks");
-}
-
-export function getLaunch(id: string): Promise<{
-  servers: { name: string; cmd: string; args: string[]; port: number | null; running: boolean }[];
-  error?: string;
-}> {
-  void id;
-  return unavailable("process launchers");
-}
-
-export function startLaunch(id: string, name: string): Promise<{ started: boolean; listening: boolean; error?: string }> {
-  void id; void name;
-  return unavailable("process launchers");
-}
-
-export function stopLaunch(id: string, name: string): Promise<unknown> {
-  void id; void name;
-  return unavailable("process launchers");
-}
-
-export function launchLogs(id: string, name: string): Promise<{ lines: string[] }> {
-  void id; void name;
-  return unavailable("process launchers");
+  return req(`/tasks/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ status: "enabled" }) });
 }
 
 // ---- personal-os surfaces (docs/design/29-personal-os.md) ---------------------
@@ -717,8 +554,8 @@ export function backupExport(
   destDir: string,
   includeSecrets: boolean,
 ): Promise<{ manifest: BackupManifest; included_secrets: boolean }> {
-  void destDir; void includeSecrets;
-  return unavailable("backup export");
+  return req<{ file_count: number; total_bytes: number }>("/backup/export", { method: "POST", body: JSON.stringify({ directory: destDir, include_secrets: includeSecrets }) })
+    .then((r) => ({ manifest: { version: 1, timestamp: new Date().toISOString(), file_count: r.file_count, total_bytes: r.total_bytes }, included_secrets: includeSecrets }));
 }
 
 export interface ImportReportShape {
@@ -728,37 +565,8 @@ export interface ImportReportShape {
 }
 
 export function backupImport(srcDir: string, conflict: "skip" | "rename"): Promise<ImportReportShape> {
-  void srcDir; void conflict;
-  return unavailable("backup import");
-}
-
-export interface DigestModelRollup {
-  rows: number;
-  usd: number;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-}
-
-export interface DigestReport {
-  days: number;
-  since?: string | null;
-  total_usd: number;
-  unpriced_rows: number;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  dispatches: number;
-  by_model: Record<string, DigestModelRollup>;
-  per_day: { day: string; usd: number; unpriced_rows: number }[];
-  distinct_sessions: string[];
-  memory_notes_appended: number;
-  skill_proposals_opened: number;
-}
-
-export function digest(days: number): Promise<DigestReport> {
-  void days;
-  return unavailable("usage digest");
+  return req<{ file_count: number; renamed: number; skipped: number }>("/backup/import", { method: "POST", body: JSON.stringify({ directory: srcDir, conflict }) })
+    .then((r) => ({ copied: r.file_count, renamed: r.renamed, skipped: r.skipped }));
 }
 
 // ---- inbox (docs/design/29-personal-os.md P6) ---------------------------------

@@ -6,24 +6,15 @@ license.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
-chrono = { workspace = true }
-futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
-vak-hooks = { workspace = true }
-vak-llm = { workspace = true }
-vak-permission = { workspace = true }
+uuid = { workspace = true }
+vak-domain = { workspace = true }
 vak-session = { workspace = true }
-vak-tools = { workspace = true }
-
-[dev-dependencies]
-async-trait = { workspace = true }
-chrono = { workspace = true }
-tempfile = { workspace = true }
-vak-mcp = { workspace = true }
+vak-llm = { workspace = true }
 
 [lints]
 workspace = true

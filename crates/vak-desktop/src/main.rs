@@ -123,7 +123,7 @@ fn runtime_connection() -> Option<(String, String)> {
 
 fn configured_connection() -> Option<(String, String)> {
     let root = vak_home();
-    let snapshot = vak_config2::ConfigService::new(root, std::env::current_dir().ok()?)
+    let snapshot = vak_config::ConfigService::new(root, std::env::current_dir().ok()?)
         .load()
         .ok()?;
     Some((snapshot.config.connect.url?, snapshot.config.connect.token?))
@@ -138,7 +138,7 @@ async fn boot_backend(cwd: PathBuf) -> Result<Running, String> {
             "no vakcoder base found; install/start the base or configure [connect]".to_string()
         })?;
     let client =
-        vak_client2::Client::new(base_url.clone(), token.clone()).map_err(|e| e.to_string())?;
+        vak_client::Client::new(base_url.clone(), token.clone()).map_err(|e| e.to_string())?;
     client
         .health()
         .await
@@ -287,8 +287,33 @@ async fn append_profile_note(
     state: State<'_, BackendState>,
     draft: ProfileNoteDraft,
 ) -> Result<ProfileNoteCreated, String> {
-    let _ = (state, &draft.kind, &draft.tag, &draft.text);
-    Err("profile memory is unavailable until the Runtime memory command is exposed".into())
+    let info = state
+        .running
+        .lock()
+        .map_err(|_| "backend state lock poisoned".to_owned())?
+        .as_ref()
+        .map(|running| running.info.clone())
+        .ok_or_else(|| "Runtime backend is not connected".to_owned())?;
+    let client = vak_client::Client::new(
+        info.base_url
+            .ok_or_else(|| "Runtime URL is missing".to_owned())?,
+        info.token
+            .ok_or_else(|| "Runtime token is missing".to_owned())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let note = client
+        .create_memory(&serde_json::json!({
+            "scope": "profile",
+            "kind": draft.kind,
+            "tag": draft.tag,
+            "text": draft.text,
+        }))
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(ProfileNoteCreated {
+        id: note.id,
+        ts: note.created_at,
+    })
 }
 
 /// Persist an exported document (e.g. a session transcript) to a path the
@@ -314,6 +339,23 @@ fn backend_info(state: State<'_, BackendState>) -> BackendInfo {
         .map_or_else(BackendInfo::default, |running| running.info.clone());
     info.recent_projects = recent_projects();
     info
+}
+
+#[tauri::command]
+fn service_action(service: String, action: String) -> Result<(), String> {
+    let service = match service.as_str() {
+        "gateway" => vak_ops::Service::Gateway,
+        other => return Err(format!("unsupported service: {other}")),
+    };
+    let cfg = vak_ops::OpsConfig::detect();
+    match action.as_str() {
+        "start" if vak_ops::start(service, &cfg) => Ok(()),
+        "stop" if vak_ops::stop(service, &cfg) => Ok(()),
+        "restart" if vak_ops::restart(service, &cfg) => Ok(()),
+        "install" => vak_ops::install(service, &cfg),
+        "uninstall" => vak_ops::uninstall(service, &cfg),
+        other => Err(format!("service action failed: {other}")),
+    }
 }
 
 fn main() {
@@ -367,7 +409,8 @@ fn main() {
             backend_info,
             start_backend,
             append_profile_note,
-            export_text_file
+            export_text_file,
+            service_action
         ])
         .run(tauri::generate_context!())
         .inspect_err(|e| eprintln!("fatal: {e}"))

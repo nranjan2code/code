@@ -1,71 +1,77 @@
-# 00 — Roadmap
+# 00 — Runtime architecture map
 
-Phases with exit criteria. Each phase ships a usable product.
+This document is the entry point for the current implementation. The project
+is greenfield: it has one protocol and one state owner, with no alternate
+layout import. The complete contract is described in
+[36-greenfield-runtime.md](36-greenfield-runtime.md).
 
-| Phase | Delivers | Exit criterion |
+## Authority graph
+
+```text
+surfaces: CLI · TUI · desktop · admin
+                           │ vak-client / typed commands
+                           ▼
+                      vak-server
+                           │ authenticated adapter
+                           ▼
+                      vak-runtime
+          ┌────────────────┼────────────────┐
+          ▼                ▼                ▼
+    vak-domain       vak-agent       vak-services
+    IDs/contracts    turn engine       CRUD/audit
+          │                │                │
+          └─────────────── vak-storage ─────┘
+                    SQLite · JSONL · blobs
+```
+
+`vak-runtime` owns admission, run lifetime, cancellation, capability epochs,
+workspace leases, provider selection, and all mutations. `vak-agent` executes
+one admitted run using an immutable `RunContext`. `vak-server` is transport
+only. A surface never opens a database, reads a session file, or executes a
+tool directly.
+
+## Data ownership
+
+| Data | Authority | Mutation |
 |---|---|---|
-| 0 | Scaffolding, CI, AGENTS.md, design docs | workspace builds green in CI |
-| 1 ✅ | Kernel: loop + Anthropic + 6 tools + JSONL sessions + frozen contract + `exec` mode | offline mock e2e: prompt → tool call → result → final answer, fully auditable JSONL |
-| 2 ✅ | Inline TUI (stream-based, native scrollback), steering input, slash commands | PTY-driven smoke: live streaming, tool status, steering queue, /commands; editor+keys+command unit tests |
-| 3 ✅ | Permission engine (rules × modes), OS sandbox backends (Seatbelt; Landlock later) | allowed vs denied calls audited in JSONL; Seatbelt blocks writes outside cwd and denies sandboxed network |
-| 4 (openai-completions ✅) | Multi-provider: OpenAI/OpenRouter/Ollama live; next: openai-responses + Google | same session history converts across providers; mock e2e per family |
-| 5 ✅ | Extensibility complete: skills, blocking subagents, hooks, MCP client (lazy meta-tool) | fake-server roundtrip tests + e2e mcp list through the binary |
-| 6 ✅ | Agentic depth complete: fan-out scheduler, static flows, dynamic planner + bounded replan | plan/execute/replan/fail-closed all tested; e2e through binary |
-| 7 ✅ | Phase 7 complete: eval harness, HTTP+SSE server, checkpoints/rewind, worktree isolation | all slices tested + e2e through the binary |
-| post-v0.1.0 ✅ | Reliability pass: retry+backoff, watchdog, session resume, server cancel, graceful shutdown, circuit breaker | failure matrix in docs/design/15-reliability.md |
-| post-v0.1.0 ✅ (2) | OpenCode Zen provider + .env secrets; live-model evals; auto-compaction for long-horizon sessions (docs/design/17-context.md) | 10/10 Ox Alpha dogfood battery; compaction overflow tests; 134 tests green |
-| post-v0.1.0 ✅ (3) | TUI/UX pass: markdown+syntax rendering, tool cards w/ diffs, live status row, approval queue+always-allow, multiline+paste input, completions, /resume+/rewind, themes (docs/design/18-tui.md); steering wired through Core | PTY smoke 10/10 incl. approval flow; workspace fmt/clippy/tests green |
-| post-v0.1.0 ✅ (4) | TUI slices 2–3: approval diff previews, readline editing (Ctrl-U/W, Alt-b/f), thinking indicator, subagent lifecycle+tool streams, /theme runtime switch, cost estimates, Ctrl-R history search, session browser with first-prompt snippets, /doctor + /transcript | 191+ tests green; PTY smoke 10/10; clippy -D warnings clean |
-| post-v0.1.0 ✅ (5) | Linux Landlock sandbox backend (safe `landlock` crate; self-exec `__sandbox` runner, fail-closed kernel probe); subagent token rollup into /cost; CI ubuntu job incl. landlock smoke | darwin+linux clippy/test green; scripts/landlock_smoke.sh 5/5 on ubuntu |
-| post-v0.1.0 ✅ (6) | Dogfood + capability gauntlet campaigns: stop-gate built from findings, sandbox temp-dir fix, learned allow rules, exec/TUI output parity; architecture ladder + extensibility battery + live brownout chaos | docs/design/16-achievements.md gauntlet sections; all live probes verified independently |
-| world-class TUI ✅ (7) | Doc 21 closed out: interactive keymap rebind UI, subagent picker + attach/steer/stop via `SubagentRegistry`, truecolor theme packs + `[ui.themes]` customs w/ live preview, vim/emacs composer modes, custom/plugin commands (project·plugin·user namespaces), opt-in OSC52 copy, accessibility modes (plain/reduced-motion/screen-reader) | doc 21 P0–P2 all ✅; fmt/clippy -D warnings green; workspace tests pass |
+| Projects, sessions, runs, tasks, approvals | `vak-storage` via Runtime | transactional command |
+| Model-visible history | session JSONL via `vak-session` | append only |
+| File/checkpoint content | `vak-storage` blob store | content addressed |
+| Configuration and secrets | `vak-config` via Runtime | revision-checked atomic write |
+| Operation receipts | Runtime audit JSONL | append only |
+| Search/index/cache | rebuildable projection | disposable |
+| UI state | client-local presentation state | never authoritative |
 
-| desktop ✅ | Tauri 2 native shell over the serve contract: parallel sessions + worktrees, streaming chat w/ inline approvals, diff review w/ line-comment steering, PTY terminal, file editor, @mentions, side chats as ledger branches, best-of-N compare (keep=merge/discard), PR monitor w/ auto-fix + auto-merge, local scheduled routines daemon, preview pane for dev servers (docs/design/20-tauri-desktop.md) | server_ext.rs e2e per feature; 230 tests green; live smoke via embedded loopback server |
-| gateway G0 ✅ | Always-on surface routing (docs/design/22-gateway.md): `POST /gateway/inbound` (+wait long-poll), persisted `surface:chat → session` bindings, busy→logged-steering→continuation chain, AutoDeny unattended turns, log delivery surface, `TaskDef.deliver_to` cron push w/ real final-text summaries, `[gateway]` privileged config section, `serve --gateway` | gateway.rs e2e: roundtrip+reuse, unbind, busy-steering, disabled-409, cron delivery; workspace fmt/clippy/tests green |
-| gateway G1 ✅ | Outbound webhook transport (fail-closed bearer auth), Telegram bridge + `vakcoder telegram` subcommand (long-poll → inbound → sendMessage), restart-resilience proof, scheduler-free `gateway_router()` embedder constructor | offline e2e vs mock Bot API + webhook receiver incl. missing-credential fail-closed; 10-test gateway matrix in docs/design/22-gateway.md |
-| gateway G2 ✅ | Approval forwarding: `approvals = "forward"` + `approver` target, gates announced via delivery transports and resolved by yes/no chat replies (strict verdict vocabulary), `approval_timeout_secs` fail-closed default 300/min 5, deny-mode regression + timeout tests | gateway_approvals.rs e2e: forward→yes→tool runs, unanswered gate times out & late reply resolves nothing, deny mode never announces |
-| sandbox G3 ✅ | Docker exec backend (docs/design/25-docker-sandbox.md): `[sandbox] backend/image` privileged config, same-path bind mount so host file tools + container bash agree, no-network + mem/cpu caps, read-only root w/ tmpfs, fail-closed on missing daemon; implemented in vak-core without touching tool internals | live e2e vs real daemon: exec, mount visibility, network deny, RO enforcement, config-flow naming test |
-| gateway G2b ✅ | Media passthrough: `ContentBlock::Image` in vak-llm with per-provider wire shapes (Anthropic native source object via serde passthrough, OpenAI data-URL parts, Google inline_data, Responses input_image), `Agent::run_message`/`run_turn_with_message` seam, gateway+`/sessions/{id}/run` attachment fields, Telegram photo bridge | vision_blocks.rs wire-shape tests incl. assistant-image rejection; media_passthrough.rs proves model-visible AND ledger-stored images |
-| learning L0 ✅ | Closed loop (docs/design/26-learning.md): `remember` → per-workspace MEMORY.md w/ provenance; `propose_skill` → human-gated review queue (HTTP `/skills/proposals`, CLI skills-review) promoting into user-level discovery; engine classifies session_search as read + learning tools as workspace-write-sanctioned (deny rules still win); `[memory]` flags | full-loop e2e: remember+propose logged, later run recalls memory ranked first, promote→discover; hand-edit-tolerant parser unit tests |
-| ops ✅ | Service control plane (docs/design/28-operations.md): vak-ops over launchd/systemd; vakcoder-tray menu-bar app (colour dot, start/stop/restart/install/uninstall, logs, persisted watchdog w/ notifications); installer script (--with-telegram/--with-tray); VAKCODER_GATEWAY_TOKEN pinning; docs/hosting.md | launchd-hosted stack verified end-to-end incl. Telegram live roundtrip |
-| surfaces+learning L1/L2 ✅ | TUI `/services`; desktop Services panel (/ops) + Learning page (proposal promote/reject, memory viewer); reflection loop ([memory] reflection) with Jaccard dedup; hermetic gateway fixtures | 82 suites green; live reflection captured a real decision with provenance; near-duplicate reruns write nothing |
-| memory M0 ✅ | Cross-session recall (docs/design/23-memory.md): dependency-free scan+score search over session JSONLs in vak-session, model-visible `session_search` tool injected into every run (frozen-contract listed, current-session excluded, ToolResult logged per invariant 1), `[memory]` config section, `GET /search` endpoint for surfaces | relevance/exclusion/snippet unit tests + agent-loop e2e proving the result lands on the ledger and cites the source session; workspace fmt/clippy/tests green |
-| security S0 ✅ | Adversarial boundary review (docs/design/24-agent-security.md): canonical workspace reads in restricted modes, symlink regression coverage, ambient Bash secret scrubbing, runtime permission-change revocation, comparative OpenClaw/Hermes/Codex/Claude Code/OpenHands/OpenShell research | permission + server revocation regressions; workspace clippy and tests green; brokered-worker/container boundary remains prioritized P0 |
-| security S1 ✅ | P0 local broker boundary: every built-in production tool uses the versioned disposable worker protocol; flows/plans/evals use the same registry; MCP servers run as sandboxed external workers; restricted Seatbelt/Landlock read roots tightened; Docker is brokered command-scoped Bash containment; unsupported containment fails closed | broker protocol, cancellation, missing-worker, hostile home-read, and Docker policy regressions; pinned full-worker container/VM remains P2 |
-| adoption 27 A ✅ | Work receipts + dispatch ceiling (docs/design/27 Phase A): every provider dispatch recorded as a typed `receipt` ledger entry (per-attempt reason/domain/settlement/usage), breaker/endurance consume `FailureDomain`s, shared ceiling fails closed at `(max_retries+1)*(run_retry_attempts+1)` — zero behavior change, full dispatch forensics | work_receipts.rs e2e: success/ceiling-fail-closed/abort-cancelled/disk-round-trip; 375 workspace tests green |
-| adoption 27 C ✅ | Context packet accounting + deterministic gate (docs/design/27 Phase C): compaction plans/entries carry selected/dropped partitions (serde-back-compat), `ContextCompacted` reports kept-vs-dropped counts, `vak-eval::run_context_scorecard()` — 6 deterministic metrics (partition integrity, recall floor, verbatim exclusion, evidence visibility, tool-pair boundary, repeat-compaction) printed by offline eval, failing metric fails eval | context_gate unit test 6/6 PASS; full workspace suite green |
-| adoption 27 D ✅ | FinOps budget admission (docs/design/27 Phase D): `[finops]` caps + price overrides, pricing unified in vak-config::finops (TUI heuristic now delegates), cost-log.jsonl ledger with estimated-USD rows keyed by session attribution, `SpendGate` seam checked before every paid dispatch — denial is one bounded budget Ask (unattended auto-denies), then permanent typed failure | finops.rs unit tests (caps math, day window, unpriced=UNKNOWN), spend_gate.rs e2e (deny→fail, approve→proceed); 386 workspace tests green |
-| adoption 27 H ✅ | Loop-engineering kernel (docs/design/27 Phase H): goal mode (`set_goal`/`run_goal_turn_with`, `exec --goal/--criteria`), audited completion — deterministic `verify:` criteria via brokered bash + skeptical judge dispatch receipted as Verify work, findings re-injected model-visible, capped audits degrade to Unverified (never trap); regression obligations (green bash commands re-run pre-claim); reset-with-handoff rescue on still-over contexts (one-shot, `reset_all` compaction semantics) | TUI `/goal` + server run-goal param + receipts endpoint wired; tui_goal_smoke live PASS; goal_mode.rs e2e 6/6 (audited done, reject→findings→pass, shell-criterion fail w/o judge, obligation regression block, unparseable-judge fail-closed, handoff reset clears verbatim history); 395 workspace tests green |
-| adoption 27 B ✅ | Frozen-ladder routing (docs/design/27 Phase B): `order_ladder_v1` pure ordering over TTL-filtered evidence (unknown shrinks, never punishes; cheap-first w/ frontier-band promotion), ladder frozen into contract header at admission (warm-discovery legs only — no invented ids, no network), dispatch walks legs on typed failure domains receipting `route-fallback`, ceiling/receipts/endurance shared across legs, `routing-evidence.jsonl` ledger, invariant 7 reworded | route.rs 4 unit + routing.rs 2 ledger tests + route_ladder.rs e2e (fallback rescues, all-legs fail-closed); 403 workspace tests green |
-| adoption 27 E ✅ | Runs→flows adoption + diff (docs/design/27 Phase E): `flow adopt <ledger|session> --name` (frozen-TOML reuse w/ provenance header; green-bash chained flow w/ merge tail), `flow diff <A> <B>` deterministic node comparison, `--resume` recovery audit (frozen/drifted/missing → resume/fail-closed+--accept-drift/rebuild), `SessionLog::settled_bash_commands()` substrate | adopt.rs 7 unit tests; live e2e: real plan ledger adopted (4 nodes valid), goal session adopted (6-node chain), drift fail-closed + accept-drift on frozen verified |
-| adoption 27 G ✅ | Run-graph projection (docs/design/27 Phase G): `vak_flow::graph::graph_snapshot` pure projection (layers/statuses/counts), served at `GET /flows[/{name}/runs[/{run}/graph]]`, CLI plan preview + `[L{n}/{total}] ✓` progress strip + final snapshot summary | graph.rs 3 unit tests; live: adopted-goal 6-layer strip + JSON graph over HTTP |
-| adoption 27 G ✅ | Run-graph projection + flow surfaces (docs/design/27 Phase G): graph_snapshot served at /flows endpoints, CLI plan preview + layer strip + snapshot summary | graph.rs tests; live JSON verified |
-| adoption 27 F ✅(core) | Scenario harness live (scripts/scenarios/: exec tool-loop, audited goal, plan→adopt→run→diff; mock audit-verdict + claim routes), doc-citation CI gate | run_all 3/3 green |
-| personal-os P1–P7 ✅ | Personal-use completion pass (docs/design/29-personal-os.md): global USER.md memory tier + forget/amend, reflection everywhere, indexed + cross-project search, cron/watchdog/pinned automation with budget alerts, doctor/wizard/update-check/backup/digest, bounded web_fetch + headless browse, shared markdown transcript export, skill dedup/curation, inbox attention layer (P6), heartbeat proactive check-ins (P7) — enterprise deferred | per-phase exit criteria in doc 29; workspace fmt/clippy/tests green |
-| adoption 27 R ✅ | Router-grade ordering via the vakrouter study (docs/design/27 Phase R): per-attempt leg attribution on receipts (fixes inert evidence ledger — rows were written with empty provider and never matched a ladder key; true p50 replaces first-seen latency), `order_ladder_v2` demand-scored objectives replacing hardcoded frontier bands (invariant 9; `[route]` config: objective/fallback_models/max_fallbacks/quality_hints), opt-in cross-model fallback legs (allowlist ∩ warm discovery; primary never demoted from head), diversity seat caps + freeze annotations in contract header, domain-weighted belief demotion (success clears, governance ≠ evidence, floor 0.1), `CostRow.provider` per-leg FinOps attribution, `RouteFallback` event + TUI status introspection + desktop dispatch-forensics drill-down (receipts modal over `/sessions/{id}/receipts`: attempt walks, settlements, leg attribution) | work.rs stamp/attribution tests, routing.rs beliefs/assemble/p50/e2e attribution tests, route.rs v2 objective/demotion/price-honesty/determinism tests, route_ladder.rs RouteFallback-event e2e; workspace fmt/clippy/tests green |
-| admin console ✅ | Web admin console (docs/design/33-admin-console.md): vak-store SQLite FTS5 rebuildable index over JSONL (all content blocks incl. tool calls/results/thinking), global event hub + SSE with typed SystemEvents, cookie login (HttpOnly SameSite=Strict, constant-time) alongside bearer auth, embedded SolidJS SPA at /admin — observation (overview/search/security/inbox), operation (approvals/config/cancel/live-tail), interaction (prompts/steering/best-of-N ×1–×4/new sessions); security-floor hardening pass (rate limiting, path confinement, env allowlists, config audit trail) | admin unit suites (store 9, hub 4, admin API 9 incl. login→cookie flow + POST-only mutations), live e2e smoke (shell unauth'd, API 401, cookie auth, SSE real-time delivery), workspace fmt/clippy/tests green |
-| base+addons M0 ✅ | Concurrency floor (docs/design/34-base-addons.md): singleton duties gated behind `force_gateway`, SQLite busy_timeout=5000, transactional FTS import, gateway flock, unique .env.tmp.<pid>, dead legacy migration code removed | fmt/clippy/tests green; flock verified against dual-process scenario |
-| base+addons M1 ✅ | Identity & discovery: auto-generated token bootstrap (`vk_*` persisted to data_home/.env), runtime file (`runtime/gateway.json` with pid/token/addr), doctor topology check via PID liveness | gateway boot verified; doctor reports topology; SIGTERM cleans runtime file |
-| base+addons M2 ✅ | Connect command: `vakcoder connect` with 5-step resolution (flags → profile → config → runtime → onboarding), `[connect]` config section, `--save` persistence, token masking | connect resolves local runtime; onboarding prompts in tty; typed error in non-tty |
-| base+addons M3 ✅ | Multi-project base: per-session cwd via `create_session` body, `Core::start_session_in()`, cross-project `list_sessions` scanning all hash dirs | 3 different cwds verified; 84 sessions from 35 project dirs visible |
-| base+addons M4.2 ✅ | TUI thin-client rewrite (docs/design/34-base-addons.md): god-file app.rs (5.8k lines) split into 16 focused modules (state/events/data bridge/commands/{session,config,memory,system}/modals/pickers/transcript/prefs/inbox/tasks), all ~36 slash commands ported onto the `vak-client` HTTP+SSE contract, adapter deleted, binary connects via `connect::discover`; server gained `/config/commands`, `/tools`, `/breaker`, `/sessions/{id}/compact`, `/config/sandbox`. Pre-existing suite breakages fixed en route: cache_home re-entrant mutex deadlock (hung gateway tests since canonical-layout commit), heartbeat/scheduler/webhook fixtures moved to gateway mode per invariant 17, session-create tolerates empty body, doctor check-list test updated | vak-tui 140 tests + full workspace fmt/clippy(-D)/tests green (368 in touched crates) |
-| base+addons M4.3 ✅ | Thin-client hardening (docs/design/34-base-addons.md): SSE terminal frames routed through the ordered per-run bridge (RunFinished could overtake draining deltas — found by the new 5-subscriber sse_fanout e2e), TLS guard in Client::connect refusing plaintext http to non-loopback hosts, GET /version handshake with TUI drift marker, desktop memory appends moved onto the router, memory wire-contract fixes (envelope + ts/scope fields + scope-keyed appends) | vak-server 101 tests incl. sse_fanout, vak-client tls_guard unit tests; workspace fmt/clippy(-D)/tests green (752) |
+## Surface contract
 
-## Decisions locked during research (2026-08)
+All surfaces authenticate to the Runtime endpoint, complete `/version`, submit
+typed commands, and consume the same run/event/status IDs. The TUI and desktop
+are not reduced copies of an agent; they are presentations of Runtime state.
+Delivery adapters use the same typed packet contract and cannot bypass
+Runtime authorization.
 
-- Rust, SDK-first, server optional later
-- Full permission system with prompts (Claude Code-style rules)
-- Multi-provider from day 1 via raw provider APIs (no meta-SDK)
-- Static flows + dynamic planner (vakyartha-style planner→repair→validate,
-  fail-closed `planning_failed`, bounded replan = 1 attempt)
-- Full parallel subagent fan-out gated by resource claims
-- DeepSeek-Harness lessons adopted: model-visible-means-logged invariant,
-  durable-vs-live event split, capability seams as traits, minimal profile as
-  eval baseline, boot-tree introspection (`config dump`)
+## Reliability and security
 
-## Post-v0.1.0 achievements
+Admission freezes the route ladder, permission mode, sandbox, and capability
+epoch. Every effect passes through the broker after an authorization check.
+Cancellation preserves committed and partial output. A permission change
+revokes the old epoch, cancels and joins old work, rejects stale approvals, and
+only then admits new work. No provider, credential, or tool state is global to a
+client process.
 
-See `16-achievements.md` for the full table. Highlights: OpenCode Zen
-provider (free Ox Alpha model), live-model eval mode, reliability pass
-(retry/watchdog/circuit-breaker/resume/cancel), and a 10/10 live dogfood
-battery — the first real-model exercise of the entire stack.
+## Verification
+
+The repository gate is:
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+The client/UI smoke path proves that CLI, TUI, desktop, and admin observe one
+session and one run, including cancellation, approval resolution,
+memory/tasks CRUD, checkpoint/backup operations, and diagnostics.
+
+Detailed contracts live in docs 01–35. Those documents describe the current
+Runtime implementation and must not introduce a second ownership model.

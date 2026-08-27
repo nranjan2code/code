@@ -60,44 +60,8 @@ export default function Composer(props: { cwd: string }) {
   const [picked, setPicked] = createSignal(0);
   const [files, setFiles] = createSignal<string[]>([]);
   const [skills, setSkills] = createSignal<SkillInfo[]>([]);
-  // Goal mode (docs/design/27 Phase H): armed objective consumed by the
-  // next prompt; completion is audited against the criteria.
-  const [goalFormOpen, setGoalFormOpen] = createSignal(false);
-  const [goalObjective, setGoalObjective] = createSignal("");
-  const [goalCriteria, setGoalCriteria] = createSignal("");
-  const [goalArmed, setGoalArmed] = createSignal<{ objective: string; criteria: string[] } | null>(null);
   const [skillPicked, setSkillPicked] = createSignal(0);
-  // Image attachments: picked or pasted, sent as base64 vision blocks.
-  const [pendingFiles, setPendingFiles] = createSignal<{ name: string; mime: string; data: string }[]>([]);
-  const [composerError, setComposerError] = createSignal<string | null>(null);
-  const [dragOver, setDragOver] = createSignal(false);
   let ta!: HTMLTextAreaElement;
-  let fileInput!: HTMLInputElement;
-
-  const MAX_FILE_BYTES = 5 * 1024 * 1024;
-
-  const addFiles = (list: FileList | File[]) => {
-    setComposerError(null);
-    for (const file of Array.from(list)) {
-      if (!file.type.startsWith("image/")) {
-        setComposerError(`${file.name}: only images can be attached`);
-        continue;
-      }
-      if (file.size > MAX_FILE_BYTES) {
-        setComposerError(`${file.name} is too large (max 5 MB)`);
-        continue;
-      }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const url = String(reader.result ?? "");
-        const base64 = url.includes(",") ? url.slice(url.indexOf(",") + 1) : "";
-        if (base64) {
-          setPendingFiles((cur) => [...cur, { name: file.name, mime: file.type, data: base64 }]);
-        }
-      };
-      reader.readAsDataURL(file);
-    }
-  };
 
   const usage = createMemo(() => usageOf(activeId()));
   const ctxPct = createMemo(() => {
@@ -221,31 +185,12 @@ export default function Composer(props: { cwd: string }) {
 
   const submit = () => {
     const t = text().trim();
-    const files = pendingFiles();
     // No active task is fine: sendPrompt creates one.
-    if (!t && files.length === 0) return;
-    if (files.length > 0 && goalArmed()) {
-      setComposerError("goal runs cannot carry images — disarm the goal or remove the attachments");
-      return;
-    }
+    if (!t) return;
     setText("");
     setMention(null);
-    setPendingFiles([]);
-    setComposerError(null);
     queueMicrotask(grow);
-    void sendPrompt(t, goalArmed() ?? undefined, files.length ? files : undefined);
-    setGoalArmed(null); // consumed by this run (TUI parity)
-  };
-
-  const armGoal = () => {
-    const objective = goalObjective().trim();
-    const criteria = goalCriteria()
-      .split(";")
-      .map((c) => c.trim())
-      .filter(Boolean);
-    if (!objective || criteria.length === 0) return;
-    setGoalArmed({ objective, criteria });
-    setGoalFormOpen(false);
+    void sendPrompt(t);
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -342,37 +287,8 @@ export default function Composer(props: { cwd: string }) {
       </Show>
       <div
         class="composer-box"
-        classList={{ running: isRunning(activeId()), "drag-over": dragOver() }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragOver(false);
-          if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
-        }}
+        classList={{ running: isRunning(activeId()) }}
       >
-        <Show when={pendingFiles().length}>
-          <div class="composer-attachments" aria-label="Attached images">
-            <For each={pendingFiles()}>
-              {(f, i) => (
-                <span class="attachment-chip">
-                  {f.name}
-                  <button
-                    class="attachment-remove"
-                    title={`Remove ${f.name}`}
-                    aria-label={`Remove ${f.name}`}
-                    onClick={() => setPendingFiles((cur) => cur.filter((_, j) => j !== i()))}
-                  >
-                    ✕
-                  </button>
-                </span>
-              )}
-            </For>
-          </div>
-        </Show>
         <textarea
           ref={ta}
           rows={1}
@@ -382,13 +298,6 @@ export default function Composer(props: { cwd: string }) {
           onKeyUp={(event) => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) refreshMention(); }}
           onClick={refreshMention}
           onKeyDown={onKeyDown}
-          onPaste={(e) => {
-            const imgs = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
-            if (imgs.length) {
-              e.preventDefault();
-              addFiles(imgs);
-            }
-          }}
         />
         <div class="composer-toolbar">
           <div class="composer-lead">
@@ -414,72 +323,8 @@ export default function Composer(props: { cwd: string }) {
             <button class="composer-context" title="Add file context (@)" onClick={beginMention}>
               <span class="composer-hint">@ to add files</span>
             </button>
-            <input
-              ref={fileInput}
-              type="file"
-              accept="image/*"
-              multiple
-              style="display:none"
-              onChange={(e) => {
-                if (e.currentTarget.files?.length) addFiles(e.currentTarget.files);
-                e.currentTarget.value = "";
-              }}
-            />
-            <button
-              class="composer-context composer-attach"
-              title="Attach images (or paste / drop them here)"
-              aria-label="Attach images"
-              onClick={() => fileInput.click()}
-            >
-              <Icon name="add" size={14} />
-            </button>
           </div>
-          <Show when={goalArmed()}>
-            <div class="goal-chip" title="Goal mode armed (docs/design/27 Phase H) — completion will be audited against the criteria">
-              <Icon name="spark" size={13} />
-              <span>{goalArmed()!.objective.slice(0, 60)}</span>
-              {" · "}
-              {goalArmed()!.criteria.length} criteria
-              <button
-                class="goal-disarm"
-                title="Disarm goal"
-                onClick={() => setGoalArmed(null)}
-              >
-                ✕
-              </button>
-            </div>
-          </Show>
-          <Show when={goalFormOpen()}>
-            <div class="goal-form">
-              <input
-                class="goal-objective"
-                placeholder="Objective — what done means"
-                value={goalObjective()}
-                onInput={(e) => setGoalObjective(e.currentTarget.value)}
-              />
-              <input
-                class="goal-criteria"
-                placeholder="Criteria separated by ';' — prefix 'verify:' to run as shell"
-                value={goalCriteria()}
-                onInput={(e) => setGoalCriteria(e.currentTarget.value)}
-              />
-              <button class="goal-arm" disabled={!goalObjective().trim() || goalCriteria().split(';').filter((c) => c.trim()).length === 0} onClick={armGoal}>
-                Arm
-              </button>
-              <button class="goal-cancel" onClick={() => setGoalFormOpen(false)}>
-                Cancel
-              </button>
-            </div>
-          </Show>
           <div class="composer-actions">
-            <button
-              class="composer-goal"
-              title="Goal mode — audited completion (docs/design/27 Phase H)"
-              aria-label="Configure goal mode"
-              onClick={() => setGoalFormOpen(!goalFormOpen())}
-            >
-              <Icon name="spark" size={14} />
-            </button>
             <select
               class="composer-density"
               value={density()}
@@ -500,15 +345,12 @@ export default function Composer(props: { cwd: string }) {
             <Show when={isRunning(activeId())}>
               <button class="composer-stop" title="Stop (Esc)" aria-label="Stop running task" onClick={stopRun}><Icon name="stop" size={15} /><span>Stop</span></button>
             </Show>
-            <button class="send-button" title="Send (Enter)" aria-label="Send prompt" disabled={!text().trim() && pendingFiles().length === 0} onClick={submit}>
+            <button class="send-button" title="Send (Enter)" aria-label="Send prompt" disabled={!text().trim()} onClick={submit}>
               <Icon name="send" size={16} />
             </button>
           </div>
         </div>
       </div>
-      <Show when={composerError()}>
-        <div class="composer-error" role="alert">{composerError()}</div>
-      </Show>
       <div class="composer-note">VakCoder can make mistakes. Review changes before you keep them.</div>
     </div>
   );

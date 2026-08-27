@@ -4,19 +4,20 @@ Distilled 2026-08 from deep study of Claude Code, Codex CLI, OpenCode, pi,
 vakyartha (sibling project), and DeepSeek Harness.
 
 ## Claude Code — lifecycle control plane
-- ~30 hook events with matcher syntax; 5 handler types. → our Phase 5 hooks.
+- ~30 hook events with matcher syntax; 5 handler types. Runtime keeps the
+  supported lifecycle surface intentionally small and explicit.
 - Skills = markdown content loaded on demand (progressive disclosure).
 - CLAUDE.md memory hierarchy → AGENTS.md walk-up merge.
-- Lesson: hooks are the killer feature; permission rules `Bash(git *)` syntax.
+- Lesson: explicit lifecycle controls and permission rules such as `Bash(git *)` are valuable.
 
 ## Codex CLI — safety & config engineering
 - OS sandbox decoupled from approval policy (read-only / workspace-write /
-  full-access). → Phase 3 shape.
+  full-access).
 - Declarative TOML + named profiles per environment.
 - Lesson: sandbox ≠ prompts; config is a designed surface.
 
 ## OpenCode — architecture & UX simplicity
-- Client/server split; TUI is just a client. → SDK-first now, server later
+- Client/server split; TUI is just a client. → SDK-first now, server endpoint
   behind the same seams.
 - LSP diagnostics fed back to agent; event-bus plugins.
 - Lesson: one headless core, many surfaces; zero-config first run.
@@ -54,10 +55,10 @@ Adopted:
 - Runtime modes as compositions; minimal profile doubles as eval baseline.
 - Boot-tree introspection (`config dump`).
 - Inbox semantics: injected context waits for a real message to admit it.
-Not adopted: runtime plugin mounting à la Cordis (TS-native dynamism; MCP +
-trait seams cover the need in Rust).
+Product boundary: runtime plugin mounting is intentionally excluded; provider
+and tool Rust trait seams provide the supported extension points.
 
 ## Meta-lesson
 Harness variance beats model variance (Binding-Constraint Thesis evidence:
 harness-only changes moved Terminal-Bench 2.0 by 10–14pp). The eval harness
-(Phase 7) is a first-class deliverable, not an afterthought.
+  is a first-class deliverable, not an afterthought.

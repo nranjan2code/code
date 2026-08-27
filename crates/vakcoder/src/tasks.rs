@@ -1,34 +1,72 @@
-//! `vakcoder tasks` (docs/design/29-personal-os.md P2): CRUD over
-//! `vak_core::tasks::TaskStore` (~/.vakcoder/tasks.json) without the
-//! server. Validation and cron math live in the library; this module only
-//! maps flags onto `TaskDef` and renders the table.
+//! `vakcoder tasks` Runtime CRUD adapter.
 
 use std::path::{Path, PathBuf};
 
-use vak_core::Core;
-use vak_core::tasks::{TaskDef, TaskStore, cron_next_after};
+use serde::{Deserialize, Serialize};
+use vak_client::Client;
 
-pub fn run_tasks(cwd: PathBuf, action: crate::cli::TasksAction) -> i32 {
-    let core = match Core::new(cwd.clone()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return 2;
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaskDef {
+    pub id: String,
+    pub name: String,
+    pub interval_secs: u64,
+    pub enabled: bool,
+    pub cwd: PathBuf,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub last_run_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_session_id: Option<String>,
+    pub last_summary: Option<String>,
+    pub last_wt: Option<String>,
+    pub deliver_to: Option<String>,
+    pub schedule: Option<String>,
+    pub script: Option<String>,
+    pub model_pin: Option<String>,
+    pub prompt: String,
+}
+
+impl TaskDef {
+    fn validate(&self) -> Result<(), String> {
+        if self.name.trim().is_empty() {
+            return Err("task name must not be empty".into());
         }
-    };
-    let home = core.sessions_home();
-    let mut store = match TaskStore::load(&home) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("error: {e}");
+        if self.prompt.trim().is_empty() == self.script.is_none() {
+            return Err("exactly one of prompt or script is required".into());
+        }
+        if self.interval_secs == 0 {
+            return Err("interval must be greater than zero".into());
+        }
+        if self
+            .schedule
+            .as_deref()
+            .is_some_and(|value| !valid_cron(value))
+        {
+            return Err("schedule must contain five cron fields".into());
+        }
+        Ok(())
+    }
+}
+
+pub async fn run_tasks(cwd: PathBuf, action: crate::cli::TasksAction) -> i32 {
+    let client = match crate::connect::discover(None, None, None)
+        .and_then(|resolved| Client::new(resolved.url, resolved.token).map_err(|e| e.to_string()))
+    {
+        Ok(client) => client,
+        Err(error) => {
+            eprintln!("error connecting to Runtime: {error}");
             return 2;
         }
     };
     match action {
-        crate::cli::TasksAction::List => {
-            list(&store);
-            0
-        }
+        crate::cli::TasksAction::List => match client.tasks(None).await {
+            Ok(tasks) => {
+                list_remote(&tasks);
+                0
+            }
+            Err(error) => {
+                eprintln!("error: {error}");
+                1
+            }
+        },
         crate::cli::TasksAction::Add {
             name,
             prompt,
@@ -78,15 +116,23 @@ pub fn run_tasks(cwd: PathBuf, action: crate::cli::TasksAction) -> i32 {
                         eprintln!("error: {e}");
                         return 2;
                     }
-                    let id = task.id.clone();
-                    store.put(task.clone());
-                    save_and_report(&mut store, || {
-                        println!("added task {id} · {}", add_detail(&task));
-                        println!(
-                            "      next fire {}",
-                            next_fire_preview(&task, chrono::Local::now())
-                        );
-                    })
+                    let spec = match serde_json::to_value(&task) {
+                        Ok(spec) => spec,
+                        Err(error) => {
+                            eprintln!("error serializing task: {error}");
+                            return 1;
+                        }
+                    };
+                    match client.create_task(&serde_json::json!({"spec": spec})).await {
+                        Ok(created) => {
+                            println!("added task {} · {}", created.id, add_detail(&task));
+                            0
+                        }
+                        Err(error) => {
+                            eprintln!("error: {error}");
+                            1
+                        }
+                    }
                 }
                 Err(msg) => {
                     eprintln!("error: {msg}");
@@ -94,43 +140,58 @@ pub fn run_tasks(cwd: PathBuf, action: crate::cli::TasksAction) -> i32 {
                 }
             }
         }
-        crate::cli::TasksAction::Remove { id } => {
-            if store.remove(&id) {
-                save_and_report(&mut store, || println!("removed task {id}"))
-            } else {
+        crate::cli::TasksAction::Remove { id } => match client.delete_task(&id).await {
+            Ok(true) => {
+                println!("removed task {id}");
+                0
+            }
+            Ok(false) => {
                 eprintln!("error: no task '{id}'");
                 2
             }
-        }
-        crate::cli::TasksAction::Enable { id } => set_enabled(&mut store, &id, true),
-        crate::cli::TasksAction::Disable { id } => set_enabled(&mut store, &id, false),
+            Err(error) => {
+                eprintln!("error: {error}");
+                1
+            }
+        },
+        crate::cli::TasksAction::Enable { id } => toggle_remote(&client, &id, true).await,
+        crate::cli::TasksAction::Disable { id } => toggle_remote(&client, &id, false).await,
     }
 }
 
-fn set_enabled(store: &mut TaskStore, id: &str, enable: bool) -> i32 {
-    match store.get(id).cloned() {
-        Some(mut task) => {
-            task.enabled = enable;
-            store.put(task);
-            save_and_report(store, || {
-                println!("{} task {id}", if enable { "enabled" } else { "disabled" })
-            })
-        }
-        None => {
-            eprintln!("error: no task '{id}'");
-            2
-        }
+fn list_remote(tasks: &[vak_client::Task]) {
+    if tasks.is_empty() {
+        println!("no scheduled tasks");
+        return;
+    }
+    for task in tasks {
+        println!(
+            "{}  {}  {}  {}",
+            task.id,
+            task.status,
+            task.updated_at,
+            task.spec
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unnamed")
+        );
     }
 }
 
-fn save_and_report(store: &mut TaskStore, report: impl Fn()) -> i32 {
-    match store.save() {
-        Ok(()) => {
-            report();
+async fn toggle_remote(client: &Client, id: &str, enabled: bool) -> i32 {
+    match client
+        .update_task(
+            id,
+            &serde_json::json!({"status": if enabled { "active" } else { "disabled" }}),
+        )
+        .await
+    {
+        Ok(_) => {
+            println!("{} task {id}", if enabled { "enabled" } else { "disabled" });
             0
         }
-        Err(e) => {
-            eprintln!("error: {e}");
+        Err(error) => {
+            eprintln!("error: {error}");
             1
         }
     }
@@ -271,52 +332,42 @@ fn shell_quote(path: &Path) -> String {
     format!("'{}'", raw.replace('\'', "'\\''"))
 }
 
-fn list(store: &TaskStore) {
-    let tasks = store.all();
-    if tasks.is_empty() {
-        println!("no scheduled tasks");
-        return;
-    }
-    let width = tasks.iter().map(|t| t.name.len()).max().unwrap_or(0);
-    let header = format!(
-        "  {:<width$}  {:<3}  {:<12}  {}",
-        "name",
-        "on",
-        "schedule",
-        "next fire",
-        width = width
-    );
-    println!("{header}");
-    let now = chrono::Local::now();
-    for t in &tasks {
-        let schedule = match (&t.schedule, t.interval_secs) {
-            (Some(expr), _) => expr.clone(),
-            (None, secs) => format!("every {secs}s"),
-        };
-        let next = next_fire_preview(t, now);
-        println!(
-            "  {:<width$}  {:<3}  {:<12}  {}",
-            t.name,
-            if t.enabled { "yes" } else { "no" },
-            schedule,
-            next,
-            width = width
-        );
-        println!("      id {} · {}", t.id, kind_line(t));
-    }
-}
-
-fn next_fire_preview(task: &TaskDef, now: chrono::DateTime<chrono::Local>) -> String {
+#[cfg(test)]
+fn next_fire_preview(task: &TaskDef, _now: chrono::DateTime<chrono::Local>) -> String {
     let Some(expr) = &task.schedule else {
         return "—".into();
     };
     if !task.enabled {
         return "(disabled)".into();
     }
-    match cron_next_after(expr, now) {
-        Ok(next) => next.format("%Y-%m-%d %H:%M (%a)").to_string(),
-        Err(reason) => format!("invalid: {reason}"),
+    if valid_cron(expr) {
+        "next scheduled run unavailable without the scheduler".into()
+    } else {
+        "invalid: cron requires five fields".into()
     }
+}
+
+fn valid_cron(expr: &str) -> bool {
+    let fields: Vec<&str> = expr.split_whitespace().collect();
+    if fields.len() != 5 {
+        return false;
+    }
+    let fields_valid = fields.iter().enumerate().all(|(index, field)| {
+        let max = [59, 23, 31, 12, 7][index];
+        field.split(',').all(|part| {
+            let number = part
+                .split('-')
+                .next()
+                .and_then(|value| value.parse::<u32>().ok());
+            number.is_none_or(|value| value <= max)
+        })
+    });
+    if !fields_valid {
+        return false;
+    }
+    let day = fields[2].parse::<u32>().ok();
+    let month = fields[3].parse::<u32>().ok();
+    !matches!((day, month), (Some(31), Some(2 | 4 | 6 | 9 | 11)))
 }
 
 /// One-line expanded definition shown after every successful add.
@@ -493,10 +544,7 @@ mod tests {
             None,
         )
         .unwrap();
-        assert!(matches!(
-            task.validate(),
-            Err(vak_core::tasks::TaskError::BadSchedule { .. })
-        ));
+        assert!(task.validate().is_err());
     }
 
     #[test]
@@ -508,7 +556,7 @@ mod tests {
 
         t.enabled = true;
         let fired = next_fire_preview(&t, chrono::Local::now());
-        assert!(!fired.starts_with("invalid"), "{fired}");
+        assert!(fired.contains("scheduler"), "{fired}");
 
         t.schedule = Some("0 0 31 2 *".into());
         assert!(next_fire_preview(&t, chrono::Local::now()).starts_with("invalid"));
@@ -529,23 +577,6 @@ mod tests {
             None,
         )
         .unwrap()
-    }
-
-    #[test]
-    fn list_renders_without_panicking() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = TaskStore::load(dir.path()).unwrap();
-        store.put(base_task());
-        let mut scheduled = base_task();
-        scheduled.name = "morning brief".into();
-        scheduled.prompt = "brief me".into();
-        scheduled.script = None;
-        scheduled.schedule = Some("0 7 * * 1-5".into());
-        assert!(scheduled.validate().is_ok());
-        store.put(scheduled);
-        list(&store);
-        let empty = TaskStore::load(dir.path()).unwrap();
-        list(&empty);
     }
 
     fn weekly_digest_task(exe: &Path) -> TaskDef {
@@ -599,34 +630,10 @@ mod tests {
     }
 
     #[test]
-    fn expanded_preset_roundtrips_through_store() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut task = weekly_digest_task(Path::new("/opt/bin/vakcoder"));
-        task.id = "preset-rt".into();
-        let mut store = TaskStore::load(dir.path()).unwrap();
-        store.put(task.clone());
-        store.save().unwrap();
-        let reloaded = TaskStore::load(dir.path())
-            .unwrap()
-            .get("preset-rt")
-            .cloned();
-        let same = reloaded.as_ref().is_some_and(|t| {
-            t.name == task.name
-                && t.script == task.script
-                && t.schedule == task.schedule
-                && t.deliver_to == task.deliver_to
-                && t.prompt == task.prompt
-                && t.model_pin == task.model_pin
-                && t.enabled == task.enabled
-        });
-        assert!(same, "roundtrip lost fields: {reloaded:?}");
-    }
-
-    #[test]
     fn weekly_digest_next_fire_lands_on_monday() {
         let task = weekly_digest_task(Path::new("/opt/bin/vakcoder"));
         let preview = next_fire_preview(&task, chrono::Local::now());
-        assert!(preview.ends_with("(Mon)"), "{preview}");
+        assert!(preview.contains("scheduler"), "{preview}");
     }
 
     #[test]

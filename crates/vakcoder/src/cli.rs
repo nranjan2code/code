@@ -11,7 +11,7 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
-    /// Managed release lifecycle (docs/design/32): install/status/sync
+    /// Managed release lifecycle: install, service reconciliation, status, and removal.
     Self_ {
         #[command(subcommand)]
         action: SelfAction,
@@ -44,14 +44,6 @@ pub(crate) enum Command {
         /// Resume an existing session instead of starting a new one
         #[arg(long)]
         session: Option<String>,
-        /// Durable objective for goal mode (docs/design/27 Phase H):
-        /// completion is audited against --criteria, never self-reported.
-        #[arg(long)]
-        goal: Option<String>,
-        /// Acceptance criteria, comma-separated. Prefix `verify:` to run a
-        /// criterion as a shell command; others are judged from evidence.
-        #[arg(long, value_delimiter = ',')]
-        criteria: Vec<String>,
         /// Trust this workspace's project config and .env
         #[arg(long)]
         trust: bool,
@@ -67,18 +59,6 @@ pub(crate) enum Command {
     Flow {
         #[command(subcommand)]
         action: FlowAction,
-    },
-    /// Plan and execute an open-ended task with a dynamic planner
-    Plan {
-        task: String,
-        #[arg(long)]
-        yes: bool,
-        /// Run in an isolated git worktree off HEAD
-        #[arg(long)]
-        worktree: bool,
-        /// Trust this workspace's project config and .env
-        #[arg(long)]
-        trust: bool,
     },
     /// Run the built-in eval suite
     Eval {
@@ -126,16 +106,6 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: SkillsReviewAction,
     },
-    /// Bridge a Telegram bot to a running gateway (docs/design/22-gateway.md)
-    Telegram {
-        /// Gateway base URL, e.g. http://127.0.0.1:8901
-        #[arg(long)]
-        server: String,
-        /// Gateway bearer token (overrides VAKCODER_GATEWAY_TOKEN; the
-        /// env var is the normal path so secrets never appear in `ps`)
-        #[arg(long)]
-        token: Option<String>,
-    },
     /// Diagnose provider auth, config warnings, and extensions
     Doctor {
         /// Trust this workspace's project config and .env
@@ -147,21 +117,10 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: BackupAction,
     },
-    /// Usage digest over cost ledger, memory notes, and skill proposals
-    Digest {
-        /// Days of history to fold in (clamped to 1..=90)
-        #[arg(long, default_value_t = 7)]
-        days: u32,
-    },
     /// Scheduled tasks stored in ~/.vakcoder/tasks.json: CRUD without the server
     Tasks {
         #[command(subcommand)]
         action: TasksAction,
-    },
-    /// Durable attention inbox (gateway pushes): list / show / ack / count
-    Inbox {
-        #[command(subcommand)]
-        action: Option<InboxAction>,
     },
     /// Discover and save connection info for a remote or local base
     Connect {
@@ -174,7 +133,7 @@ pub(crate) enum Command {
         /// Auth token for the base
         #[arg(long)]
         token: Option<String>,
-        /// Save the resolved connection to user config for future use
+        /// Save the resolved connection to user config for subsequent commands
         #[arg(long)]
         save: bool,
     },
@@ -182,58 +141,39 @@ pub(crate) enum Command {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum SelfAction {
-    /// Copy release binaries into the managed prefix + manifest
+    /// Copy release binaries into the managed prefix and write its manifest.
     Install {
-        /// Managed prefix (default <home>/local/release)
+        /// Managed prefix (default: the configured data home runtime-bin directory).
         #[arg(long)]
         prefix: Option<PathBuf>,
-        /// Install program files only; intended for containers and packaging tests
+        /// Install program files without touching launchd/systemd.
         #[arg(long)]
         no_service: bool,
     },
-    /// Regenerate + reload service units onto the installed binary
+    /// Regenerate and reload service units for the installed binary.
     ServicesSync {
-        /// Service names (default: all); unknown names are reported
+        /// Service names (default: all configured services).
         names: Vec<String>,
     },
-    /// Drift matrix: build vs manifest vs per-service units
+    /// Show build, manifest, and service drift.
     Status,
-    /// Reverse of install; --purge also deletes ~/.vakcoder (confirmed)
+    /// Remove managed program files and optionally user data.
     Uninstall {
         #[arg(long)]
         yes: bool,
         #[arg(long)]
         purge: bool,
-        /// Remove program files only; intended for containers and packaging tests
+        /// Remove program files without touching launchd/systemd.
         #[arg(long)]
         no_service: bool,
     },
-    /// Opt-in pull-and-replace from a release manifest URL
+    /// Pull and activate a signed release artifact from a manifest URL.
     Update {
         #[arg(long)]
         url: String,
         #[arg(long)]
         yes: bool,
     },
-}
-
-#[derive(Subcommand, Debug)]
-pub(crate) enum InboxAction {
-    /// List entries: unread by default, acked included with --all
-    List {
-        /// Include already-acked entries
-        #[arg(long)]
-        all: bool,
-        /// Maximum rows to print
-        #[arg(long, default_value_t = 50)]
-        limit: usize,
-    },
-    /// Print one entry's body and session/task refs by unique id prefix
-    Show { id_prefix: String },
-    /// Mark an entry read (idempotent tombstone append)
-    Ack { id_prefix: String },
-    /// One-line unread total
-    Count,
 }
 
 #[derive(Subcommand, Debug)]
@@ -281,7 +221,7 @@ pub(crate) enum TasksAction {
         /// Working directory for runs (default: this directory)
         #[arg(long)]
         cwd: Option<PathBuf>,
-        /// Delivery surface for run summaries, e.g. telegram:12345
+        /// Delivery surface for run summaries, e.g. webhook:https://example.invalid/hook
         #[arg(long)]
         deliver: Option<String>,
         /// Pin this task to a model id (never escalates)
@@ -341,26 +281,6 @@ pub(crate) enum MemoryAction {
 pub(crate) enum FlowAction {
     /// List discovered flows
     List,
-    /// Convert proven work into a flow file (doc 27 Phase E):
-    /// --from accepts a flow-run/plan ledger JSON path or a session id.
-    Adopt {
-        /// Ledger JSON path, or a session id whose green bash commands
-        /// become a chained bash flow.
-        from: String,
-        /// Name for the adopted flow (written to .vakcoder/flows/)
-        #[arg(long)]
-        name: String,
-        /// Overwrite an existing flow file of the same name
-        #[arg(long)]
-        force: bool,
-    },
-    /// Deterministic run-vs-run diff over two ledger JSONs (no model)
-    Diff {
-        /// Path to first run/plan ledger JSON
-        a: std::path::PathBuf,
-        /// Path to second run/plan ledger JSON
-        b: std::path::PathBuf,
-    },
     /// Validate a flow without running it
     Check { name: String },
     /// Run a flow (optionally resuming a previous run)
@@ -482,18 +402,6 @@ mod tests {
     }
 
     #[test]
-    fn digest_days_default_is_seven() {
-        match parse(&["digest"]) {
-            Command::Digest { days } => assert_eq!(days, 7),
-            other => panic!("unexpected: {other:?}"),
-        }
-        match parse(&["digest", "--days", "31"]) {
-            Command::Digest { days } => assert_eq!(days, 31),
-            other => panic!("unexpected: {other:?}"),
-        }
-    }
-
-    #[test]
     fn tasks_add_prompt_and_script_are_separate_flags() {
         match parse(&[
             "tasks",
@@ -607,38 +515,6 @@ mod tests {
             } => assert_eq!(id, "abc"),
             other => panic!("unexpected: {other:?}"),
         }
-    }
-
-    #[test]
-    fn inbox_subactions_parse_with_defaults() {
-        assert!(matches!(parse(&["inbox"]), Command::Inbox { action: None }));
-        match parse(&["inbox", "list", "--all", "--limit", "5"]) {
-            Command::Inbox {
-                action: Some(InboxAction::List { all, limit }),
-            } => {
-                assert!(all);
-                assert_eq!(limit, 5);
-            }
-            other => panic!("unexpected: {other:?}"),
-        }
-        match parse(&["inbox", "show", "abcd1234"]) {
-            Command::Inbox {
-                action: Some(InboxAction::Show { id_prefix }),
-            } => assert_eq!(id_prefix, "abcd1234"),
-            other => panic!("unexpected: {other:?}"),
-        }
-        assert!(matches!(
-            parse(&["inbox", "ack", "abcd1234"]),
-            Command::Inbox {
-                action: Some(InboxAction::Ack { .. })
-            }
-        ));
-        assert!(matches!(
-            parse(&["inbox", "count"]),
-            Command::Inbox {
-                action: Some(InboxAction::Count)
-            }
-        ));
     }
 
     #[test]
