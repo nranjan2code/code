@@ -102,7 +102,12 @@ if [[ "$WITH_TRAY" == true ]]; then
   # same managed prefix. Ask the installed base where that is rather than
   # reading the launcher symlink: an unreadable symlink silently yields "/",
   # and the tray would be installed at the filesystem root.
-  TRAY_BIN_DIR="$(target/release/vakcoder self status | awk '$1 == "bin" { print $2 }')"
+  # `self status` exits non-zero when it reports drift, which is expected here:
+  # the tray unit is stale precisely because the tray is not installed yet.
+  # Under `set -o pipefail` that status would abort the install, so read the
+  # output first and let awk answer separately.
+  TRAY_STATUS="$(target/release/vakcoder self status 2>/dev/null || true)"
+  TRAY_BIN_DIR="$(printf '%s\n' "$TRAY_STATUS" | awk '$1 == "bin" { print $2 }')"
   [[ -d "$TRAY_BIN_DIR" ]] || { printf 'error: managed bin dir not found: %s\n' "$TRAY_BIN_DIR" >&2; exit 1; }
   TRAY_DEST="$TRAY_BIN_DIR/vakcoder-tray"
   install -m 755 target/release/vakcoder-tray "$TRAY_DEST"
