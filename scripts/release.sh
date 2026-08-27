@@ -78,6 +78,40 @@ if [[ "$SKIP_CHECKS" != true ]]; then
     printf '  ✓ %-44s passing\n' "cargo test"
 fi
 
+# Both frontends must be rebuilt from their current source before this
+# gate can mean anything, for two different reasons:
+#
+#   vak-admin-ui/dist is *committed* — vak-server embeds it at Cargo
+#   compile time (crates/vak-server/src/admin_ui.rs, include_dir!), so
+#   only what is on disk in dist/ at build time ends up in the binary.
+#   That is exactly how v0.8.1 shipped a blank admin console: the source
+#   had a real fix, dist/ was never regenerated from it, and nothing
+#   caught the mismatch before the release went out. Rebuilding here and
+#   failing on a diff makes that class of miss impossible to ship again.
+#
+#   vak-desktop/ui/dist is *not* committed (gitignored) — self install
+#   copies whatever is currently on disk into the bundle's Resources.
+#   Without an explicit rebuild here, a release could carry whatever
+#   dist/ happened to be left over from an unrelated local build, not
+#   the source this release actually gates and tags.
+command -v npm >/dev/null || {
+    printf 'error: npm is required to build the admin and desktop frontends for release\n' >&2
+    exit 1
+}
+printf '\n== frontends ==\n'
+( cd "$ROOT_DIR/crates/vak-admin-ui" && npm ci --silent && npm run build --silent >/dev/null )
+if [[ -n "$(git status --porcelain -- crates/vak-admin-ui/dist)" ]]; then
+    printf 'error: crates/vak-admin-ui/dist does not match crates/vak-admin-ui/src.\n' >&2
+    printf 'Rebuild locally (npm run build in crates/vak-admin-ui), review the diff,\n' >&2
+    printf 'and commit dist/ before releasing -- otherwise the compiled server embeds\n' >&2
+    printf 'a frontend that does not match what this release claims to ship.\n' >&2
+    git status --short -- crates/vak-admin-ui/dist >&2
+    exit 1
+fi
+printf '  ✓ %-44s matches source\n' "vak-admin-ui/dist"
+( cd "$ROOT_DIR/crates/vak-desktop/ui" && npm ci --silent && npm run build --silent >/dev/null )
+printf '  ✓ %-44s rebuilt\n' "vak-desktop/ui/dist"
+
 if [[ "$ALLOW_DIRTY" != true ]]; then
     if [[ -n "$(git status --porcelain)" ]]; then
         printf 'error: working tree is dirty — commit or pass --allow-dirty\n' >&2

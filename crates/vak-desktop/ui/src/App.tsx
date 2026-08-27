@@ -141,12 +141,36 @@ async function hydrate(id: string) {
   }
 }
 
+const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 function openStream(id: string) {
   if (streams.has(id)) return;
   const es = api.openEventStream(
     id,
     (ev) => applyEvent(id, ev, { onFinish: (s) => onFinished(id, s) }),
-    () => {},
+    () => {
+      // A plain browser-level connection error is not necessarily fatal:
+      // EventSource retries transient failures on its own per spec. Only
+      // intervene once it has actually given up (readyState CLOSED) --
+      // otherwise this races the browser's own reconnect and can tear
+      // down a connection that would have recovered by itself.
+      if (es.readyState !== EventSource.CLOSED) return;
+      // Without this, a permanently closed connection left `streams`
+      // holding a dead entry forever: openStream's own guard above then
+      // refused to ever reopen it for this session, so a run that
+      // finished after the drop had no path left to reach the UI --
+      // the backend would complete and durably log the reply while the
+      // task stayed on "Working" until the app was relaunched.
+      if (streams.get(id) === es) streams.delete(id);
+      if (reconnectTimers.has(id)) return;
+      reconnectTimers.set(
+        id,
+        setTimeout(() => {
+          reconnectTimers.delete(id);
+          openStream(id);
+        }, 2000),
+      );
+    },
   );
   streams.set(id, es);
 }

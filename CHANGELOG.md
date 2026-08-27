@@ -4,34 +4,76 @@
 
 ### Admin console serving a blank shell
 
-`v0.8.1`'s admin console loaded to a blank dark screen with nothing in
-the console — no JavaScript ever ran, so nothing had a chance to error.
+The admin console loaded to a blank dark screen with nothing in the
+console — no JavaScript ever ran, so nothing had a chance to error.
 Found by opening the one-click link this release added and seeing
-exactly that.
+exactly that; confirmed fixed by loading the real page and reading its
+network requests and rendered content, not by inspecting code.
 
-- Fixed `vak-server` embedding a stale, mismatched build of the admin
-  SPA. `src/admin_ui.rs` embeds `crates/vak-admin-ui/dist` at compile
-  time via `include_dir!`, but nothing told Cargo that directory was a
-  build input — only a `.rs` source change triggers a recompile by
-  default. A `cargo build` run after `npm run build` regenerated
-  `dist/` could therefore reuse an incremental build of `vak-server`
-  from before that regeneration, silently embedding an `index.html`
-  that referenced hashed JS/CSS filenames the embedded directory no
-  longer contained. Every request for those assets 404'd, so the page
-  rendered its empty shell and stopped. Added `crates/vak-server/build.rs`
-  declaring the directory a build input; verified by touching a file
-  under `dist/` and confirming it now triggers a `vak-server` rebuild,
-  which it did not before.
-- Added a test asserting every asset URL `index.html` references is
-  actually present in the embedded directory — confirmed it fails with
-  the exact defect's message when given a real mismatch, and passes
-  clean otherwise. This guards the consistency of what actually got
-  compiled; the build script is what prevents the staleness in the
-  first place.
+Three layered defects, found one at a time as each fix exposed the next:
+
+- **The actual bug**: `crates/vak-server/src/admin_ui.rs` registered a
+  route for every embedded file via `Dir::files()` — which is not
+  recursive. Everything under `dist/assets/` (the JS bundle, the CSS)
+  therefore had no route at all; a request for either 404'd from axum's
+  router itself, before ever reaching the file lookup (which — via
+  `get_entry` — was recursive and would have found them fine). Only
+  `index.html`, at the top level, ever actually loaded, which is exactly
+  why the failure read as "the page loads, but nothing on it does."
+  Fixed by walking the embedded tree recursively when registering
+  routes. A `#[tokio::test]` now drives the real `Router` `routes()`
+  builds through every asset URL `index.html` references, exactly as a
+  browser would — confirmed it fails with the exact defect's diagnostic
+  when the non-recursive version is restored, and passes clean
+  otherwise. An earlier, narrower test that only checked the assets were
+  *embedded* passed throughout; embedding was never the problem.
+- `vak-server` embedded a stale, mismatched build of the SPA on top of
+  that: nothing told Cargo that `crates/vak-admin-ui/dist` was a build
+  input, so a `cargo build` after `npm run build` regenerated it could
+  reuse an incremental build of `vak-server` from before the
+  regeneration, embedding an `index.html` that referenced filenames the
+  embedded directory no longer had at all. Added `crates/vak-server/build.rs`
+  declaring the directory a build input.
+- The `vak-admin-ui` source fix for one-click login shipped without ever
+  being compiled: `dist/` is committed (`vak-server` embeds it, not
+  reads it live) and nothing forced a rebuild before release. `scripts/release.sh`
+  now rebuilds both `vak-admin-ui` and `vak-desktop/ui` from source as
+  part of the gate, before the working-tree-clean check, and fails the
+  release outright — naming the exact fix — if the rebuilt
+  `vak-admin-ui/dist` differs from what is committed.
 
 Rebuilt the install, update, and release lifecycle around one owner, one
 version, and verifiable artifacts. Found by exercising every command
 against a real prefix rather than reading the code.
+
+### Desktop chat replies that never appear
+
+A desktop task could complete a full turn — correct provider, correct
+model, correct reply, durably logged to the session's JSONL — and the
+window would still show "Working" forever, with no reply, no error, and
+nothing in the console. Confirmed the backend was never at fault by
+reading the session log directly: the assistant's message was there,
+timestamped, `settlement: "ok"`.
+
+- Fixed `openEventStream`'s message handler swallowing exceptions raised
+  by its own caller. `es.onmessage` wrapped both `JSON.parse(m.data)`
+  *and* the call to the event handler in one `try/catch` commented as
+  "ignore keep-alive/comment frames" — but that catch also silently
+  discarded any exception thrown while handling a successfully parsed
+  event, including `RunFinished`, the one that clears "Working" and
+  reveals the reply. The connection stayed healthy throughout, so
+  nothing ever looked wrong from the outside. The parse and the handler
+  now have separate try/catches; a handler exception is reported via
+  `console.error` with the event attached, not discarded.
+- Fixed a dead event stream having no way back. `openStream`'s error
+  callback was a no-op, and its own guard (`if (streams.has(id)) return`)
+  meant a session whose `EventSource` had genuinely closed could never
+  be reopened — every future run on that session would complete on the
+  backend and never reach the UI, permanently, until the app was
+  relaunched. It now clears the stale entry and retries after a short
+  delay, but only once the browser's own reconnect has actually given up
+  (`readyState === CLOSED`), so a transient error the browser is already
+  retrying isn't torn down and duplicated.
 
 ### Desktop credential visibility and silent run failures
 

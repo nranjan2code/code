@@ -498,10 +498,28 @@ export function openEventStream(
 ): EventSource {
   const es = new EventSource(`${base}/sessions/${id}/events?token=${encodeURIComponent(token)}`);
   es.onmessage = (m) => {
+    // Only the parse is allowed to fail silently -- a genuine keep-alive
+    // or comment frame is not valid JSON, and that is expected. `onEvent`
+    // runs outside this catch on purpose: it previously shared the same
+    // try/catch, so a bug in the caller's own handling of a successfully
+    // parsed event -- including RunFinished, the one that clears
+    // "running" state and reveals the reply -- vanished with no trace.
+    // The backend would complete a turn and durably log it correctly
+    // while the UI stayed on "Working" forever with nothing in the
+    // console to explain why, because nothing had actually failed at
+    // the connection level: the exception was caught and discarded.
+    let parsed: AgentEvent;
     try {
-      onEvent(JSON.parse(m.data) as AgentEvent);
+      parsed = JSON.parse(m.data) as AgentEvent;
     } catch {
-      // ignore keep-alive/comment frames
+      return; // not JSON: a keep-alive or comment frame, not an error
+    }
+    try {
+      onEvent(parsed);
+    } catch (err) {
+      // Report and move on rather than either vanish (the defect this
+      // replaces) or take the whole stream down over one bad event.
+      console.error("vakcoder: error handling agent event", parsed, err);
     }
   };
   es.onerror = () => onError?.();
