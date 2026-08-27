@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Admin console serving a blank shell
+
+`v0.8.1`'s admin console loaded to a blank dark screen with nothing in
+the console — no JavaScript ever ran, so nothing had a chance to error.
+Found by opening the one-click link this release added and seeing
+exactly that.
+
+- Fixed `vak-server` embedding a stale, mismatched build of the admin
+  SPA. `src/admin_ui.rs` embeds `crates/vak-admin-ui/dist` at compile
+  time via `include_dir!`, but nothing told Cargo that directory was a
+  build input — only a `.rs` source change triggers a recompile by
+  default. A `cargo build` run after `npm run build` regenerated
+  `dist/` could therefore reuse an incremental build of `vak-server`
+  from before that regeneration, silently embedding an `index.html`
+  that referenced hashed JS/CSS filenames the embedded directory no
+  longer contained. Every request for those assets 404'd, so the page
+  rendered its empty shell and stopped. Added `crates/vak-server/build.rs`
+  declaring the directory a build input; verified by touching a file
+  under `dist/` and confirming it now triggers a `vak-server` rebuild,
+  which it did not before.
+- Added a test asserting every asset URL `index.html` references is
+  actually present in the embedded directory — confirmed it fails with
+  the exact defect's message when given a real mismatch, and passes
+  clean otherwise. This guards the consistency of what actually got
+  compiled; the build script is what prevents the staleness in the
+  first place.
+
 Rebuilt the install, update, and release lifecycle around one owner, one
 version, and verifiable artifacts. Found by exercising every command
 against a real prefix rather than reading the code.

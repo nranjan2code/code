@@ -63,3 +63,53 @@ pub(crate) fn routes() -> axum::Router<crate::AppState> {
     }
     router
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    /// Every asset `index.html` references by URL must actually be
+    /// embedded, or the admin console loads a blank shell with nothing
+    /// in the console to say why: no JS runs, so nothing errors.
+    ///
+    /// This is the same failure `crates/vak-server/build.rs` exists to
+    /// prevent — `include_dir!` has no way to know dist/ is a build
+    /// input unless a build script says so, and without one a `cargo
+    /// build` after `npm run build` could reuse an incremental build of
+    /// this crate from before the rebuild, silently embedding an
+    /// `index.html` that references hashed filenames the embedded
+    /// directory no longer contains. That shipped as part of v0.8.1.
+    /// This test cannot substitute for the build script — a stale
+    /// cached artifact that already happened to pass it once would keep
+    /// passing — but it does prove the two are consistent in whatever
+    /// this test run actually compiled, and a clean build (which CI and
+    /// `scripts/release.sh` both do) makes that proof real.
+    #[test]
+    fn every_asset_index_html_references_is_actually_embedded() {
+        let index = ADMIN_UI
+            .get_file("index.html")
+            .expect("index.html must be embedded")
+            .contents_utf8()
+            .expect("index.html must be UTF-8");
+
+        let referenced: Vec<&str> = index
+            .split(['"', '\''])
+            .filter(|s| s.starts_with("/admin/assets/"))
+            .collect();
+        assert!(
+            !referenced.is_empty(),
+            "index.html references no /admin/assets/ paths — the extraction above is not \
+             matching this build's markup, not evidence there is nothing to check"
+        );
+
+        for url_path in referenced {
+            let embedded_path = url_path.trim_start_matches("/admin/");
+            assert!(
+                ADMIN_UI.get_file(embedded_path).is_some(),
+                "index.html references {url_path}, but no such file is embedded — \
+                 this is the exact defect that shipped in v0.8.1"
+            );
+        }
+    }
+}
