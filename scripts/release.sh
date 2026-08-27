@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# Build a release and emit the feed `vakcoder self update` consumes.
+#
+# Produces, under dist/<version>/:
+#   <component>                 the release binaries
+#   SHA256SUMS                  checksums for manual verification
+#   release.json                the update feed (schema 2)
+#
+# Usage: scripts/release.sh [--base-url URL] [--allow-dirty] [--no-build]
+#                          [--skip-checks]
+#
+# --base-url is where the artifacts will be served from; the feed records
+# <base-url>/<version>/<component>. It defaults to a localhost URL so the
+# update path can be exercised end to end by serving dist/ locally --
+# `self update` speaks http/https only, so a file:// feed cannot be used.
+
+set -Eeuo pipefail
+# shellcheck source=scripts/version.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/version.sh"
+
+BASE_URL=""
+ALLOW_DIRTY=false
+BUILD=true
+SKIP_CHECKS=false
+
+while (($# > 0)); do
+    case "$1" in
+        --base-url) BASE_URL="${2:-}"; shift ;;
+        --allow-dirty) ALLOW_DIRTY=true ;;
+        --no-build) BUILD=false ;;
+        --skip-checks) SKIP_CHECKS=true ;;
+        -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) printf 'unknown option: %s\n' "$1" >&2; exit 2 ;;
+    esac
+    shift
+done
+
+cd "$ROOT_DIR"
+VERSION="$(workspace_version)"
+
+# ---- gates ----------------------------------------------------------
+# docs/design/32-release-engineering.md: gate before build, so a release
+# is never assembled from a tree that would not pass review.
+printf '== gates ==\n'
+"$ROOT_DIR/scripts/check-version.sh"
+
+if [[ "$SKIP_CHECKS" != true ]]; then
+    cargo fmt --all -- --check
+    printf '  ✓ %-44s clean\n' "cargo fmt"
+    cargo clippy --workspace --all-targets -- -D warnings
+    printf '  ✓ %-44s clean\n' "cargo clippy"
+    cargo test --workspace --quiet
+    printf '  ✓ %-44s passing\n' "cargo test"
+fi
+
+if [[ "$ALLOW_DIRTY" != true ]]; then
+    if [[ -n "$(git status --porcelain)" ]]; then
+        printf 'error: working tree is dirty — commit or pass --allow-dirty\n' >&2
+        git status --short >&2
+        exit 1
+    fi
+    printf '  ✓ %-44s clean\n' "working tree"
+fi
+
+GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+printf '  ✓ %-44s %s\n' "commit" "$GIT_SHA"
+
+# A tag that already exists means this version was released before;
+# re-releasing it silently would leave two different binaries claiming
+# the same version.
+if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+    printf 'error: tag v%s already exists — bump the version first\n' "$VERSION" >&2
+    exit 1
+fi
+printf '  ✓ %-44s free\n' "tag v$VERSION"
+
+# ---- build ----------------------------------------------------------
+OUT="$ROOT_DIR/dist/$VERSION"
+if [[ "$BUILD" == true ]]; then
+    printf '\n== build ==\n'
+    # The binary stamps this into its own manifest, so an installed
+    # build can be traced back to a commit.
+    VAKCODER_GIT_SHA="$GIT_SHA" cargo build --release --workspace
+else
+    printf '\n== build skipped ==\n'
+fi
+
+rm -rf "$OUT"
+mkdir -p "$OUT"
+
+# Components, mirroring COMPONENTS in crates/vakcoder/src/install/mod.rs.
+# Only vakcoder is required; the rest ship when the build produced them.
+REQUIRED=("vakcoder")
+OPTIONAL=("vakcoder-tray" "vak-desktop" "vak-delivery-worker")
+
+collected=()
+for name in "${REQUIRED[@]}"; do
+    src="$ROOT_DIR/target/release/$name"
+    if [[ ! -x "$src" ]]; then
+        printf 'error: required component %s missing at %s\n' "$name" "$src" >&2
+        exit 1
+    fi
+    cp "$src" "$OUT/$name"
+    collected+=("$name:true")
+done
+for name in "${OPTIONAL[@]}"; do
+    src="$ROOT_DIR/target/release/$name"
+    if [[ -x "$src" ]]; then
+        cp "$src" "$OUT/$name"
+        collected+=("$name:false")
+    else
+        printf '  · %s not built — omitted from this release\n' "$name"
+    fi
+done
+
+# ---- checksums + feed ----------------------------------------------
+printf '\n== artifacts ==\n'
+( cd "$OUT" && shasum -a 256 "${collected[@]%%:*}" > SHA256SUMS )
+
+PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
+case "$PLATFORM" in
+    darwin) PLATFORM="macos" ;;
+esac
+ARCH="$(uname -m)"
+case "$ARCH" in
+    arm64) ARCH="aarch64" ;;
+esac
+KEY="$PLATFORM/$ARCH"
+
+if [[ -z "$BASE_URL" ]]; then
+    BASE_URL="http://127.0.0.1:8899"
+    printf '  · no --base-url; feed points at %s for local testing\n' "$BASE_URL"
+fi
+
+{
+    printf '{\n'
+    printf '  "schema": 2,\n'
+    printf '  "version": "%s",\n' "$VERSION"
+    printf '  "released_at": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '  "platforms": {\n'
+    printf '    "%s": {\n' "$KEY"
+    printf '      "components": [\n'
+    first=true
+    for entry in "${collected[@]}"; do
+        name="${entry%%:*}"
+        required="${entry##*:}"
+        sum="$(shasum -a 256 "$OUT/$name" | awk '{print $1}')"
+        [[ "$first" == true ]] || printf ',\n'
+        first=false
+        printf '        {"name": "%s", "url": "%s/%s/%s", "sha256": "%s", "required": %s}' \
+            "$name" "${BASE_URL%/}" "$VERSION" "$name" "$sum" "$required"
+    done
+    printf '\n      ]\n'
+    printf '    }\n'
+    printf '  }\n'
+    printf '}\n'
+} > "$OUT/release.json"
+
+for entry in "${collected[@]}"; do
+    name="${entry%%:*}"
+    printf '  ✓ %-24s %s\n' "$name" "$(shasum -a 256 "$OUT/$name" | awk '{print $1}' | cut -c1-16)…"
+done
+
+printf '\n== done ==\n'
+printf 'version   %s (%s)\n' "$VERSION" "$GIT_SHA"
+printf 'platform  %s\n' "$KEY"
+printf 'output    %s\n' "$OUT"
+printf '\nexercise the update path against these artifacts:\n'
+printf '  (cd %s && python3 -m http.server 8899) &\n' "$ROOT_DIR/dist"
+printf '  vakcoder self update --url %s/%s/release.json --dry-run\n' "${BASE_URL%/}" "$VERSION"
+printf '\npublish, then tag:\n'
+printf '  git tag -a v%s -m "release %s" && git push origin v%s\n' "$VERSION" "$VERSION" "$VERSION"

@@ -13,8 +13,8 @@ mod cli;
 mod digest;
 mod doctor;
 mod inbox;
+mod install;
 mod memory;
-mod self_release;
 mod tasks;
 mod update_check;
 mod wizard;
@@ -247,11 +247,30 @@ async fn main() {
             0
         }
         Some(Command::Self_ { action }) => match action {
-            cli::SelfAction::Install { prefix } => self_release::run_install(prefix),
-            cli::SelfAction::ServicesSync { names } => self_release::run_services_sync(names),
-            cli::SelfAction::Status => self_release::run_status(),
-            cli::SelfAction::Uninstall { yes, purge } => self_release::run_uninstall(yes, purge),
-            cli::SelfAction::Update { url, yes } => self_release::run_update(&url, yes),
+            cli::SelfAction::Install { prefix, force } => install::run_install(prefix, force),
+            cli::SelfAction::Reinstall { prefix, yes } => install::run_reinstall(prefix, yes),
+            cli::SelfAction::Verify { prefix } => install::run_verify(prefix),
+            cli::SelfAction::ServicesSync { prefix, names } => {
+                install::run_services_sync(prefix, names)
+            }
+            cli::SelfAction::Status { prefix } => install::run_status(prefix),
+            cli::SelfAction::Uninstall { prefix, yes, purge } => {
+                install::run_uninstall(prefix, yes, purge)
+            }
+            cli::SelfAction::Update {
+                prefix,
+                url,
+                yes,
+                dry_run,
+            } => match resolve_update_url(url) {
+                Some(u) => install::run_update(prefix, &u, yes, dry_run),
+                None => {
+                    eprintln!(
+                        "error: no release feed URL — pass `--url` or set `[update] url` in config"
+                    );
+                    2
+                }
+            },
         },
         Some(Command::Memory { action }) => memory::run_memory(cwd, action),
         Some(Command::SkillsReview { action }) => run_skills_review(cwd, action),
@@ -308,6 +327,17 @@ async fn main() {
 // URL redirection). First use of an untrusted workspace demotes those keys
 // until the user confirms — per-directory, remembered under ~/.vakcoder.
 // ---------------------------------------------------------------------------
+
+/// Release feed URL for `self update`: the flag when given, otherwise the
+/// `[update] url` already used by the startup update check, so the two
+/// paths can never point at different feeds.
+fn resolve_update_url(flag: Option<String>) -> Option<String> {
+    if let Some(u) = flag.filter(|u| !u.trim().is_empty()) {
+        return Some(u);
+    }
+    let cwd = std::env::current_dir().ok()?;
+    vak_config::load(&cwd).ok()?.update.url
+}
 
 fn fnv1a(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;

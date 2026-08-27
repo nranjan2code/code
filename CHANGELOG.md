@@ -1,5 +1,76 @@
 # Changelog
 
+## Unreleased
+
+Rebuilt the install, update, and release lifecycle around one owner, one
+version, and verifiable artifacts. Found by exercising every command
+against a real prefix rather than reading the code.
+
+### Install and uninstall
+
+- Removed the second installer. `build-install.sh` copied a Tauri bundle
+  to `~/Applications/VakCoder.app` while `self install` managed
+  `vakcoder.app` — the same directory on a case-insensitive volume, which
+  every macOS default is. The script's `rm -rf` destroyed the manifest of
+  a managed install, after which `status` reported nothing installed and
+  `uninstall` could not clean up. Placement is now solely `self install`;
+  `scripts/build.sh` builds and hands off.
+- `--prefix` is accepted by every `self` subcommand, not just `install`.
+  Installing to a custom prefix previously left an install that could not
+  be inspected, updated, or removed.
+- Install, reinstall, and update are transactions. Every file is staged
+  and verified before any is placed, and a failure restores the prior
+  state — no half-installed prefix, and no window where the CLI is new
+  while the tray is still old.
+- Added `self verify` and `self reinstall`. The manifest (schema 2) now
+  records a SHA-256 per component, so tampering and truncation are
+  detected instead of assumed absent. Schema 1 manifests migrate on read.
+- Install verifies its own result before reporting success, and reports
+  how to put the CLI on PATH when it is not.
+- Uninstall names components living outside the prefix that removing the
+  prefix will not reach, and no longer treats an absent install as an
+  error.
+
+### Update
+
+- Fixed `self update` panicking before it did anything. It builds a
+  `reqwest::blocking` client inside the CLI's tokio runtime, which aborts
+  with "Cannot drop a runtime in a context where blocking is not
+  allowed". The transfer now runs on its own thread, the confinement the
+  passive update check already used.
+- Fixed version comparison being lexical. `manifest.version <= CARGO_PKG_VERSION`
+  compares strings, and `"0.10.0" <= "0.8.0"` is true — the first release
+  past `0.9` would have reported "up to date" permanently. Ordering now
+  goes through `semver::Version`, with build metadata stripped, because
+  the crate's own `Ord` ranks `0.8.0+build.7` above `0.8.0` while semver
+  §10 requires build metadata be ignored for precedence.
+- Downloaded artifacts are verified against a SHA-256 from the feed
+  before anything is written. A feed entry without a digest is refused
+  rather than trusted.
+- Update replaces every component in the release, not only `vakcoder`.
+  Previously the manifest version was rewritten while the tray, desktop,
+  and worker stayed on the old build, so `status` reported a clean
+  install that was actually mixed-version.
+- Update compares against the installed version rather than the running
+  build, and gained `--dry-run`.
+
+### Versioning, build, and release
+
+- Restored version singularity per docs/design/32. `tauri.conf.json` and
+  both frontend `package.json` files carried their own `0.7.0` stamp
+  while the workspace was at `0.8.0`, so the shipped app reported the
+  wrong version. Tauri now derives the version from its crate, the
+  private frontends are pinned to `0.0.0`, and `scripts/check-version.sh`
+  fails if a second stamp reappears.
+- Added `scripts/release.sh`, which produces the `release.json` feed that
+  `self update` consumes. That feed had a consumer and no producer, so
+  the update path could never work end to end. It gates on version
+  singularity, fmt, clippy, tests, a clean tree, and an unused tag before
+  building, then emits binaries, `SHA256SUMS`, and the feed.
+- Added `scripts/bump-version.sh` (one edit plus a lockfile refresh) and
+  `scripts/build.sh` (build, install, verify), replacing the root
+  `build-install.sh`.
+
 ## 0.8.0 — canonical layout release
 
 Platform-standard filesystem locations. One-time automatic migration from

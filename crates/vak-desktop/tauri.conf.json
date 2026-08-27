@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "VakCoder",
-  "version": "0.7.0",
   "identifier": "dev.vakcoder.desktop",
   "build": {
     "frontendDist": "./ui/dist"

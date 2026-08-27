@@ -161,31 +161,60 @@ pub(crate) enum Command {
 #[derive(Subcommand, Debug)]
 pub(crate) enum SelfAction {
     /// Copy release binaries into the managed prefix + manifest
+    /// Place this build into the managed prefix
     Install {
-        /// Managed prefix (default <home>/local/release)
+        /// Managed prefix (default: platform application location)
+        #[arg(long)]
+        prefix: Option<PathBuf>,
+        /// Reinstall even when the prefix already holds this exact build
+        #[arg(long)]
+        force: bool,
+    },
+    /// Clear the prefix and place this build fresh
+    Reinstall {
+        #[arg(long)]
+        prefix: Option<PathBuf>,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Check every installed component against the manifest digests
+    Verify {
         #[arg(long)]
         prefix: Option<PathBuf>,
     },
     /// Regenerate + reload service units onto the installed binary
     ServicesSync {
+        #[arg(long)]
+        prefix: Option<PathBuf>,
         /// Service names (default: all); unknown names are reported
         names: Vec<String>,
     },
     /// Drift matrix: build vs manifest vs per-service units
-    Status,
-    /// Reverse of install; --purge also deletes ~/.vakcoder (confirmed)
+    Status {
+        #[arg(long)]
+        prefix: Option<PathBuf>,
+    },
+    /// Reverse of install; --purge also deletes the data home (confirmed)
     Uninstall {
+        #[arg(long)]
+        prefix: Option<PathBuf>,
         #[arg(long)]
         yes: bool,
         #[arg(long)]
         purge: bool,
     },
-    /// Opt-in pull-and-replace from a release manifest URL
+    /// Opt-in pull-and-replace from a release feed URL
     Update {
         #[arg(long)]
-        url: String,
+        prefix: Option<PathBuf>,
+        /// Release feed URL (default: the [update] url in config)
+        #[arg(long)]
+        url: Option<String>,
         #[arg(long)]
         yes: bool,
+        /// Report what would change without installing anything
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 

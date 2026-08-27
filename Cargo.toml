@@ -71,6 +71,11 @@ walkdir = "2"
 base64 = "0.22"
 # Constant-time token comparison for auth (timing-attack resistance)
 subtle = "2"
+# Release lifecycle: real precedence ordering for update decisions
+semver = "1"
+# Artifact integrity for downloaded release binaries
+sha2 = "0.10"
+hex = "0.4"
 # Embeds the built admin SPA (crates/vak-admin-ui/dist) into the binary
 include_dir = "0.7"
 globset = "0.4"

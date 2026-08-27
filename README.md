@@ -171,14 +171,44 @@ cd ../../..
 cargo run -p vak-desktop
 ```
 
-On macOS, the project installer can create and install a release bundle:
+### Install
+
+`scripts/build.sh` builds the workspace and then hands placement to the
+managed installer, which owns the install root and its manifest:
 
 ```bash
-cargo install tauri-cli --version '^2'
-./build-install.sh
+scripts/build.sh
 ```
 
-Use `./build-install.sh --no-clean` for an incremental build or `--no-install` to produce the bundle without installing it.
+`--no-install` builds without placing anything, `--no-desktop` skips the
+frontend, and `--prefix DIR` installs somewhere other than the platform
+default. Every `self` subcommand accepts the same `--prefix`, so a custom
+install stays inspectable and removable:
+
+```bash
+vakcoder self status      # build vs manifest vs service units
+vakcoder self verify      # every component against its recorded digest
+vakcoder self reinstall   # clear the prefix and place a fresh build
+vakcoder self uninstall   # remove it; --purge also deletes the data home
+```
+
+### Release
+
+```bash
+scripts/bump-version.sh 0.8.1   # THE version, plus a lockfile refresh
+scripts/check-version.sh        # proves no second version stamp exists
+scripts/release.sh --base-url https://downloads.example.com
+```
+
+There is exactly one authoritative version — `[workspace.package] version`.
+Crates inherit it, `tauri.conf.json` omits the key so Tauri derives it, and
+the private frontend packages stay pinned at `0.0.0`. `check-version.sh`
+fails if a second stamp reappears anywhere.
+
+`release.sh` builds, checksums each artifact, and writes
+`dist/<version>/release.json` — the feed `vakcoder self update` reads. Every
+artifact carries a SHA-256 that `self update` verifies before installing;
+an artifact without one is refused.
 
 ### Server and gateway
 

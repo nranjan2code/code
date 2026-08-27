@@ -35,19 +35,64 @@ no plists pointing into build trees, no spot-fixing deploys.
 ## Command surface
 
 ```
-vakcoder self install  [--prefix DIR]     copy release artifacts + manifest
-vakcoder self services sync [NAME…]       regenerate + reload units
-vakcoder self status                      drift matrix (exit ≠0 on drift)
-vakcoder self uninstall [-y] [--purge]    exact reverse of install
-vakcoder self update --url URL            opt-in pull-and-replace
+vakcoder self install   [--prefix DIR] [--force]   place this build + manifest
+vakcoder self reinstall [--prefix DIR] [-y]        clear the prefix, place fresh
+vakcoder self verify    [--prefix DIR]             components vs recorded digests
+vakcoder self status    [--prefix DIR]             drift matrix (exit != 0 on drift)
+vakcoder self services-sync [--prefix DIR] [NAME…] regenerate + reload units
+vakcoder self uninstall [--prefix DIR] [-y] [--purge]  exact reverse of install
+vakcoder self update    [--prefix DIR] [--url URL] [-y] [--dry-run]
 ```
 
-## Release runbook (scripts/release.sh)
+`--prefix` is accepted by **every** subcommand and resolved in one place
+(`install::layout::InstallRoot::resolve`): explicit flag, then
+`VAKCODER_PREFIX`, then the platform default. A prefix only `install`
+understood produced installs that could not afterwards be inspected,
+updated, or removed.
 
-gate (fmt/clippy/test) → `cargo build --workspace --release` →
-desktop bundle → `self install` → `self services sync` →
-smoke (doctor parity, gateway port, bridge alive) → tag + GitHub release.
-Humans and agents run the script; nobody replays steps from memory.
+## Integrity and atomicity
+
+7. **The manifest records a digest per component.** `install.json` is
+   schema 2: `{schema, version, git_sha, installed_at, prefix,
+   components[{name, path, sha256, required}]}`. `self verify` checks
+   every component against its digest, so tampering and truncation are
+   detected rather than assumed absent. Schema 1 manifests are migrated
+   on read.
+8. **Every mutation is a transaction.** Install and update stage all
+   files first, verify the whole set, then move them into place, keeping
+   what they displaced until the last move succeeds. Any failure restores
+   the prior state — there is no half-installed prefix, and never a
+   window where the CLI is new while the tray is old.
+9. **Downloaded artifacts are verified before they are trusted.** The
+   feed carries a SHA-256 per artifact; a mismatch aborts before anything
+   is placed. A feed entry without a digest is refused outright.
+10. **Version decisions are semantic, never lexical.** Comparing version
+    strings puts `0.10.0` below `0.8.0`. Ordering goes through
+    `semver::Version` — with build metadata stripped, because the crate's
+    own `Ord` treats it as significant while semver 10 requires it be
+    ignored for precedence.
+11. **One writer owns the install root.** Build scripts build; placement
+    is always `self install`. A script that copied a bundle into place
+    separately produced an app the installer could not see, at a path
+    that on a case-insensitive volume was the same directory.
+12. **Blocking HTTP is confined to its own thread.** These subcommands
+    dispatch from inside the CLI's tokio runtime, where constructing or
+    dropping a `reqwest::blocking` client panics.
+
+## Release runbook (scripts/)
+
+```
+scripts/bump-version.sh <semver>    THE version + lockfile refresh
+scripts/check-version.sh            proves no second stamp exists
+scripts/build.sh                    build, then `self install`, then `self verify`
+scripts/release.sh --base-url URL   gate, build, checksum, emit release.json
+```
+
+`release.sh` gates on `check-version.sh`, `cargo fmt --check`, `cargo
+clippy -D warnings`, `cargo test`, a clean working tree, and an unused
+`v<version>` tag before it builds anything. It then writes
+`dist/<version>/` containing the binaries, `SHA256SUMS`, and the
+`release.json` feed that `self update` consumes.
 
 ## Canonical filesystem layout
 
