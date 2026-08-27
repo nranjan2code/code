@@ -12,7 +12,8 @@
 //!   already keeping the services alive.
 //! - Every command is idempotent from the user's point of view — start on a
 //!   running service is a no-op, stop on a stopped one too.
-//! - Health checks are plain HTTP against the gateway's /health.
+//! - Health checks are authenticated HTTP against the gateway's /health,
+//!   using only the token held in the canonical runtime receipt.
 
 use std::fmt;
 use std::path::PathBuf;
