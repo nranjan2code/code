@@ -189,6 +189,62 @@ async fn finish_stop_maps_to_end_turn() {
     assert_eq!(msg.text_content(), "done");
 }
 
+/// The terminal chunk carries both the last content delta and finish_reason,
+/// which is what opencode-zen and several other compat endpoints do.
+const FIXTURE_CONTENT_WITH_FINISH: &str = "\
+data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"p\"},\"finish_reason\":null}]}\n\
+\n\
+data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ong\"},\"finish_reason\":\"stop\"}]}\n\
+\n\
+data: [DONE]\n\
+\n";
+
+#[tokio::test]
+async fn content_in_the_finish_chunk_is_not_discarded() {
+    // Ending the turn before folding in that chunk's text truncated every
+    // reply: long answers lost their final token and "pong" arrived as "p".
+    let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
+        api_key: "k".into(),
+        base_url: mock_url(FIXTURE_CONTENT_WITH_FINISH).await,
+    })
+    .unwrap();
+    let mut req = ChatRequest::new("m");
+    req.messages = vec![Message::user_text("hi")];
+    let mut es = provider
+        .stream(req, CancellationToken::new())
+        .await
+        .unwrap();
+    while futures::StreamExt::next(&mut es).await.is_some() {}
+    let msg = es.result().await.unwrap();
+    assert_eq!(msg.text_content(), "pong");
+    assert_eq!(msg.stop_reason, StopReason::EndTurn);
+}
+
+/// A body that ends immediately after the final `data:` line, with no
+/// terminating blank line and no `[DONE]`.
+const FIXTURE_UNTERMINATED_TAIL: &str = "\
+data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"po\"},\"finish_reason\":null}]}\n\
+\n\
+data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ng\"},\"finish_reason\":\"stop\"}]}\n";
+
+#[tokio::test]
+async fn an_unterminated_final_frame_is_still_decoded() {
+    let provider = OpenAiCompletionsProvider::new(OpenAiConfig {
+        api_key: "k".into(),
+        base_url: mock_url(FIXTURE_UNTERMINATED_TAIL).await,
+    })
+    .unwrap();
+    let mut req = ChatRequest::new("m");
+    req.messages = vec![Message::user_text("hi")];
+    let mut es = provider
+        .stream(req, CancellationToken::new())
+        .await
+        .unwrap();
+    while futures::StreamExt::next(&mut es).await.is_some() {}
+    let msg = es.result().await.unwrap();
+    assert_eq!(msg.text_content(), "pong");
+}
+
 #[tokio::test]
 async fn http_error_maps_to_typed_value() {
     let url = error_url(429, r#"{"error":{"message":"quota exceeded"}}"#).await;

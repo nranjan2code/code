@@ -249,38 +249,24 @@ impl Accumulator {
                 self.message.content.len()
             );
         }
-        if let Some(finish) = choice.get("finish_reason").and_then(|f| f.as_str()) {
-            // Accumulated tool_use blocks are ground truth: some compat
-            // endpoints close tool-call turns with finish reasons outside
-            // the canonical set (e.g. plain "stop"). Trusting the label
-            // would strand a dangling tool_use and kill the run.
-            let has_tool_use = self
-                .message
-                .content
-                .iter()
-                .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
-            self.message.stop_reason = if has_tool_use {
-                StopReason::ToolUse
-            } else {
-                match finish {
-                    "tool_calls" | "function_call" => StopReason::ToolUse,
-                    "length" => StopReason::MaxTokens,
-                    _ => StopReason::EndTurn,
-                }
-            };
-            self.saw_end = true;
-            return Ok(Some(StreamEvent::End {
-                message: self.message.clone(),
-            }));
-        }
+        // Read the finish reason but do not act on it yet. Compat endpoints
+        // routinely put the last content delta in the very same chunk that
+        // carries finish_reason; returning End here discarded that text, so
+        // every reply lost its final token and a short one lost nearly all of
+        // it ("pong" arrived as "p").
+        let finish = choice
+            .get("finish_reason")
+            .and_then(|f| f.as_str())
+            .map(str::to_owned);
 
-        let Some(delta) = choice.get("delta") else {
+        let delta = choice.get("delta");
+        if finish.is_none() && delta.is_none() {
             return Ok(None);
-        };
+        }
 
         let mut event = None;
         if let Some(text) = delta
-            .get("content")
+            .and_then(|d| d.get("content"))
             .and_then(|c| c.as_str())
             .filter(|t| !t.is_empty())
         {
@@ -291,7 +277,10 @@ impl Accumulator {
             });
         }
 
-        if let Some(calls) = delta.get("tool_calls").and_then(|c| c.as_array()) {
+        if let Some(calls) = delta
+            .and_then(|d| d.get("tool_calls"))
+            .and_then(|c| c.as_array())
+        {
             for call in calls {
                 let idx = call.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
                 let pos = match self.tool_pos.get(&idx) {
@@ -338,6 +327,31 @@ impl Accumulator {
                     });
                 }
             }
+        }
+
+        if let Some(finish) = finish {
+            // Accumulated tool_use blocks are ground truth: some compat
+            // endpoints close tool-call turns with finish reasons outside
+            // the canonical set (e.g. plain "stop"). Trusting the label
+            // would strand a dangling tool_use and kill the run.
+            let has_tool_use = self
+                .message
+                .content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
+            self.message.stop_reason = if has_tool_use {
+                StopReason::ToolUse
+            } else {
+                match finish.as_str() {
+                    "tool_calls" | "function_call" => StopReason::ToolUse,
+                    "length" => StopReason::MaxTokens,
+                    _ => StopReason::EndTurn,
+                }
+            };
+            self.saw_end = true;
+            return Ok(Some(StreamEvent::End {
+                message: self.message.clone(),
+            }));
         }
 
         Ok(event)
