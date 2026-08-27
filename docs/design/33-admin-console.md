@@ -9,7 +9,7 @@ Runtime packets separately. The console is embedded in
 
 ```text
 vak-admin-ui (SolidJS/Vite, committed dist)
-              │ /admin/api/*
+              │ /auth/login then secured Runtime routes
               ▼
         vak-server auth + SSE
               │
@@ -23,11 +23,14 @@ the server; the Runtime validates and audits each one before dispatch.
 
 ## Authentication
 
-Browser login posts the gateway token to `/auth/login`; the server sets an
-HttpOnly, SameSite=Strict `vakcoder_session` cookie. CLI and native clients use the
-same token as a bearer credential. `/health`, static assets, and login are the
-only unauthenticated routes. Authentication failures return an error and do
-not create Runtime state.
+Browser login posts the one-time gateway token to `/auth/login`; the server
+sets an HttpOnly, SameSite=Strict `vakcoder_session` cookie. CLI and native
+clients use the Runtime token as a bearer credential through `vak-client`.
+Only Admin static assets and `/auth/login` are public: `/health`, `/version`,
+diagnostics, and every Runtime resource require authentication. A browser that
+has no valid cookie shows an explicit recovery state directing the user to open
+a fresh Admin Console; it never presents authentication failure as an
+indefinite connection spinner.
 
 ## Views and commands
 

@@ -52,9 +52,13 @@ the broker.
 ## Network boundary
 
 The gateway writes its authenticated loopback endpoint to
-`runtime/gateway.json`; clients reconnect and reload Runtime snapshots after a
-disconnect. Provider network errors remain typed failures. Delivery outages
-leave the durable job pending or retryable for the owning external adapter.
+`runtime/gateway.json`. Native surfaces resolve that receipt through the one
+`vak-client` connection manager, which validates PID, endpoint, authenticated
+`/version`, and authenticated `/health` before reporting Ready. Desktop keeps
+the selected project and retries that shared handshake after a disconnect;
+TUI and CLI re-resolve it for each invocation. Provider network errors remain
+typed failures. Delivery outages leave the durable job pending or retryable
+for the owning external adapter.
 
 ## Verification
 

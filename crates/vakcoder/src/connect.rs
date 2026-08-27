@@ -3,8 +3,8 @@
 //! Resolution order:
 //! 1. Explicit `--url` + `--token` flags
 //! 2. `--profile` (selects from `[connect.profiles]` in user config)
-//! 3. `[connect]` section in the Runtime config (`<data_home>/config.toml`)
-//! 4. Local `runtime/gateway.json` (pid liveness check)
+//! 3. Local managed Runtime receipt plus authenticated handshake
+//! 4. `[connect]` section in the Runtime config (`<data_home>/config.toml`)
 //! 5. Interactive prompt (tty only) or typed error (non-tty)
 
 /// Resolved connection info from the discovery process.
@@ -47,7 +47,14 @@ pub(crate) fn discover(
         ));
     }
 
-    // 3. [connect] section in user config
+    // 3. The local managed Runtime is the default authority. It takes
+    // precedence over a saved remote fallback, which otherwise creates a
+    // second, stale connection path for ordinary local use.
+    if let Some(resolved) = try_local_runtime() {
+        return Ok(resolved);
+    }
+
+    // 4. [connect] section in user config is an explicit remote fallback.
     let settings = load_connect_settings();
     if let (Some(url), Some(token)) = (settings.url, settings.token)
         && !url.is_empty()
@@ -58,11 +65,6 @@ pub(crate) fn discover(
             token,
             source: "[connect] in user config".into(),
         });
-    }
-
-    // 4. Local runtime/gateway.json
-    if let Some(resolved) = try_local_runtime() {
-        return Ok(resolved);
     }
 
     // 5. Interactive prompt or error
@@ -78,44 +80,11 @@ pub(crate) fn discover(
 
 /// Try to discover from a local `runtime/gateway.json`.
 fn try_local_runtime() -> Option<Resolved> {
-    let runtime_path = vak_config::paths::data_home()
-        .join("runtime")
-        .join("gateway.json");
-    let text = std::fs::read_to_string(&runtime_path).ok()?;
-    let val: serde_json::Value = serde_json::from_str(&text).ok()?;
-
-    let pid = val.get("pid").and_then(|v| v.as_u64()).unwrap_or(0);
-    let url = val.get("addr").and_then(|v| v.as_str())?;
-    let token = val.get("token").and_then(|v| v.as_str())?;
-
-    if url.is_empty() || token.is_empty() {
-        return None;
-    }
-
-    // Verify the PID is still alive.
-    let alive = std::process::Command::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if !alive {
-        return None;
-    }
-
-    // URL from runtime file is just host:port — prefix http:// if needed.
-    let full_url = if url.starts_with("http://") || url.starts_with("https://") {
-        url.to_string()
-    } else {
-        format!("http://{url}")
-    };
+    let connection = vak_client::GatewayConnection::discover_local().ok()?;
 
     Some(Resolved {
-        url: full_url,
-        token: token.to_string(),
+        url: connection.base_url().to_owned(),
+        token: connection.token().to_owned(),
         source: "local runtime/gateway.json".into(),
     })
 }

@@ -15,7 +15,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 vak-client = { workspace = true }
-vak-config = { workspace = true }
 vak-domain = { workspace = true }
 
 [dev-dependencies]

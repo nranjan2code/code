@@ -44,10 +44,11 @@ process receives SIGTERM.
 
 ## Tray and diagnostics
 
-The tray displays service health and opens the admin console. Its readiness
-probe calls the authenticated `/health` endpoint with the token from the
-runtime receipt; it must not treat an unauthenticated `401` as service
-failure. It delegates start/stop/restart/install/uninstall to `vak-ops` and
-never creates a Runtime.
+The tray displays **Runtime readiness**, not a claim that every UI window is
+currently attached. Its probe resolves the canonical receipt through
+`vak-client`, uses that receipt's endpoint rather than a guessed port, and
+requires both authenticated `/version` and `/health`. It must not treat an
+unauthenticated `401` as service failure. It delegates
+start/stop/restart/install/uninstall to `vak-ops` and never creates a Runtime.
 `doctor` reports service status, API health, data paths, configuration, and
 capability/credential problems without mutating state.

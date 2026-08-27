@@ -15,6 +15,12 @@ fn error(error: ClientError) -> String {
 impl ClientData {
     pub async fn connect(url: &str, token: &str, root: String) -> Result<Self, String> {
         let client = Client::new(url, token).map_err(error)?;
+        Self::connect_client(client, root).await
+    }
+
+    /// Attach an already-resolved typed Runtime client. Connection discovery
+    /// belongs to `vak-client`, not to this terminal adapter.
+    pub async fn connect_client(client: Client, root: String) -> Result<Self, String> {
         client.health().await.map_err(error)?;
         client.version().await.map_err(error)?;
         let project = client

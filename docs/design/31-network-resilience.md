@@ -7,10 +7,12 @@ before an external adapter is invoked.
 ## Local plane
 
 `vak-server` binds the configured loopback address and writes its authenticated
-endpoint to `runtime/gateway.json`. TUI, desktop, admin, and CLI use that
-endpoint and bearer/cookie authentication. DHCP changes do not alter a
-loopback connection. Remote exposure is an explicit operator decision outside
-the Runtime process.
+endpoint to `runtime/gateway.json`. Native TUI, desktop, CLI, and tray resolve
+that receipt exclusively through `vak-client`; no adapter guesses a port or
+parses a private connection format of its own. The browser Admin console uses
+the same origin and establishes an HttpOnly cookie through `/auth/login`.
+DHCP changes do not alter a loopback connection. Remote exposure is an
+explicit operator decision outside the Runtime process.
 
 ## Inference plane
 

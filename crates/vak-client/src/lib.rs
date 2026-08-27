@@ -5,7 +5,9 @@
 
 pub mod cli;
 mod client;
+mod connection;
 pub mod types;
 
 pub use client::{Client, ClientBuilder, ClientError, EventStream, Result};
+pub use connection::{ConnectionError, GatewayConnection, GatewayHandshake};
 pub use types::*;

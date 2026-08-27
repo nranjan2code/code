@@ -228,37 +228,36 @@ fn manager_state(service: Service) -> State {
     }
 }
 
-/// True when the gateway answers /health.
-pub fn health_ok(cfg: &OpsConfig) -> bool {
+/// True when the canonical receipt resolves to a gateway that returns the
+/// authenticated version and health readiness contract.
+pub fn health_ok(_cfg: &OpsConfig) -> bool {
     // Blocking call by design: callers are UI threads that want a quick,
-    // bounded answer.
-    let receipt = vak_config::paths::data_home()
-        .join("runtime")
-        .join("gateway.json");
-    let token = std::fs::read_to_string(receipt)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .and_then(|value| {
-            value
-                .get("token")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-        })
-        .filter(|token| !token.is_empty());
-    let Some(token) = token else {
+    // bounded answer. Endpoint and process validation come from vak-client;
+    // the tray must never guess a port independently of the receipt.
+    let Ok(connection) = vak_client::GatewayConnection::discover_local() else {
         return false;
     };
-    let url = format!("{}/health", cfg.base_url());
-    reqwest::blocking::Client::builder()
+    let client = match reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()
-        .and_then(|c| {
-            c.get(&url)
-                .bearer_auth(token)
-                .send()
-                .and_then(|r| r.error_for_status())
-        })
-        .is_ok()
+    {
+        Ok(client) => client,
+        Err(_) => return false,
+    };
+    let version = client
+        .get(format!("{}/version", connection.base_url()))
+        .bearer_auth(connection.token())
+        .send()
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.json::<vak_client::Version>());
+    let health = client
+        .get(format!("{}/health", connection.base_url()))
+        .bearer_auth(connection.token())
+        .send()
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.json::<vak_client::Health>());
+    matches!(version, Ok(version) if !version.version.trim().is_empty())
+        && matches!(health, Ok(health) if health.status == "ok" && health.protocol == 1)
 }
 
 pub fn start(service: Service, _cfg: &OpsConfig) -> bool {

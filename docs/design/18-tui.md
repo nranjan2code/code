@@ -6,13 +6,12 @@ second server.
 
 ## Connection
 
-Startup resolves an explicit `VAKCODER_URL`/`VAKCODER_TOKEN` pair first, then
-the live authenticated endpoint in `<data_home>/runtime/gateway.json`,
-performs the authenticated health check, and registers the canonical project
-when needed. Connection failures are printed and terminate the client with a
-non-zero status. This makes the installed `vakcoder-tui` work with the
-managed local gateway without requiring users to copy a token into their
-shell environment.
+Startup resolves an explicit `VAKCODER_URL`/`VAKCODER_TOKEN` pair first. For
+the managed local Runtime, `vak-client` resolves the live receipt and performs
+the authenticated `/version` and `/health` handshake before the TUI registers
+the canonical project. The TUI itself never reads a Runtime file or guesses a
+port. Connection failures are printed and terminate the client with a non-zero
+status, so the next invocation performs a fresh resolution.
 
 ## Commands
 

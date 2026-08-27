@@ -10,9 +10,9 @@ architectures.
 | Component | Owns | Connects through |
 |---|---|---|
 | `vakcoder` | Runtime process, CLI, gateway, admin assets | `vak-runtime` directly |
-| `vak-tui` | terminal input and rendering | `vak-client` HTTP/SSE |
-| `vak-desktop` | native shell and rendering | secured Runtime router |
-| admin SPA | browser presentation | `/admin/api` on `vak-server` |
+| `vak-tui` | terminal input and rendering | `vak-client` connection manager + HTTP/SSE |
+| `vak-desktop` | native shell and rendering | `vak-client` connection manager + secured Runtime router |
+| admin SPA | browser presentation | `/admin`, `/auth/login`, then secured Runtime routes |
 | external channel adapters | transport ingress/egress | Runtime commands and delivery |
 
 No client opens SQLite, session JSONL, blobs, or secrets. No client constructs
@@ -38,8 +38,10 @@ authorizes effects, owns cancellation, and emits ordered events.
 ## Process and data rules
 
 There is one gateway lock per data home and one runtime receipt at
-`<data_home>/runtime/gateway.json`. A plain server/client process does not
-create a second Runtime or write control state.
+`<data_home>/runtime/gateway.json`. `vak-client` is the sole native receipt
+resolver and readiness handshake owner; adapters do not parse it, guess ports,
+or cache credentials across a failed handshake. A plain server/client process
+does not create a second Runtime or write control state.
 
 The data home layout is defined once in
 [36-greenfield-runtime.md](36-greenfield-runtime.md). SQLite is the mutable

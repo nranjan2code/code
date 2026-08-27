@@ -65,7 +65,7 @@ async fn main() {
             url,
             token,
             save,
-        }) => connect_cmd(profile, url, token, save),
+        }) => connect_cmd(profile, url, token, save).await,
         Some(Command::Serve { port, .. }) => serve(port, cwd).await,
         Some(Command::Admin { print }) => admin_open::run(print),
     };
@@ -74,7 +74,10 @@ async fn main() {
 
 async fn client_for() -> Result<Client, String> {
     let resolved = connect::discover(None, None, None)?;
-    Client::new(resolved.url, resolved.token).map_err(|e| e.to_string())
+    let client = Client::new(resolved.url, resolved.token).map_err(|e| e.to_string())?;
+    client.version().await.map_err(|e| e.to_string())?;
+    client.health().await.map_err(|e| e.to_string())?;
+    Ok(client)
 }
 
 async fn project_for(client: &Client, cwd: &std::path::Path) -> Result<ProjectContext, String> {
@@ -637,7 +640,7 @@ async fn doctor() -> i32 {
     }
 }
 
-fn connect_cmd(
+async fn connect_cmd(
     profile: Option<String>,
     url: Option<String>,
     token: Option<String>,
@@ -645,6 +648,21 @@ fn connect_cmd(
 ) -> i32 {
     match connect::discover(profile.as_deref(), url.as_deref(), token.as_deref()) {
         Ok(resolved) => {
+            let client = match Client::new(resolved.url.clone(), resolved.token.clone()) {
+                Ok(client) => client,
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    return 1;
+                }
+            };
+            if let Err(error) = client.version().await {
+                eprintln!("error: Runtime handshake failed: {error}");
+                return 1;
+            }
+            if let Err(error) = client.health().await {
+                eprintln!("error: Runtime handshake failed: {error}");
+                return 1;
+            }
             println!("connected: {}", resolved.source);
             if save && let Err(e) = connect::save_to_config(&resolved) {
                 eprintln!("error saving connection: {e}");
