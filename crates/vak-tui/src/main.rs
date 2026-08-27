@@ -21,10 +21,10 @@ fn runtime_connection() -> Option<(String, String)> {
     if let (Ok(url), Ok(token)) = (
         std::env::var("VAKCODER_URL"),
         std::env::var("VAKCODER_TOKEN"),
-    ) {
-        if !url.is_empty() && !token.is_empty() {
-            return Some((url, token));
-        }
+    ) && !url.is_empty()
+        && !token.is_empty()
+    {
+        return Some((url, token));
     }
 
     // The managed gateway publishes its authenticated loopback endpoint in
