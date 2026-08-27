@@ -4,6 +4,28 @@
 
 ## 0.9.4 — install correctness and Runtime ownership
 
+Found by verifying every surface against a real installed release:
+
+- Fixed model replies losing their final token. OpenAI-compatible endpoints
+  put the last content delta in the same chunk as `finish_reason`, and the
+  accumulator ended the turn before folding that chunk in — so a reply of
+  "pong" arrived as "p", which reads as the app not answering at all.
+  `SseDecoder` also now flushes a frame left unterminated when a provider
+  closes the body without a trailing blank line.
+- Fixed streaming output never reaching any surface. The task forwarding
+  engine events onto the Runtime broadcast channel was aborted the instant a
+  run returned, discarding the `RunOutput` events still queued behind it.
+- Fixed the desktop app being unable to talk to the gateway at all. It is a
+  Tauri webview at `tauri://localhost`, so every request is cross-origin and
+  preflighted; `vak-server` had no CORS layer and did not depend on
+  `tower-http`, so preflights were rejected as unauthenticated and the app sat
+  on "Connecting…" forever. The layer is scoped to the webview origins.
+- Fixed service sync rolling back a rewritten unit because `launchctl bootout`
+  returns before launchd retires the job, and fixed sync reporting a failure
+  for a current unit whose job simply was not registered.
+- Fixed `bump-version.sh` leaving `Cargo.lock` stale, which failed the next
+  release run's clean-tree gate after a full build.
+
 - Made a fresh install actually run. `self install` now mints the gateway
   bearer token into `<data_home>/.env`, and the Runtime opens without a
   provider credential instead of refusing to start — previously the managed
