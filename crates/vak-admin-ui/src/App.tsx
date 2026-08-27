@@ -812,7 +812,7 @@ function IntegrationsView() {
   };
 
   const deleteMcpServer = async (name: string) => {
-    const current = { ...(mcpData()?.servers ?? {}) };
+    const current: Record<string, McpServerConfig> = { ...(mcpData()?.servers ?? {}) };
     delete current[name];
     try {
       await api.putMcpServers(current);
@@ -884,7 +884,7 @@ function IntegrationsView() {
                   <table class="table">
                     <thead><tr><th>name</th><th>command</th><th /></tr></thead>
                     <tbody>
-                      <For each={Object.entries(mcpData()?.servers ?? {})}>
+                      <For each={Object.entries(mcpData()?.servers ?? {}) as [string, McpServerConfig][]}>
                         {([name, s]) => (
                           <tr>
                             <td class="mono bold">{name}</td>

@@ -5738,6 +5738,7 @@ name = "vak-desktop"
 version = "0.8.6"
 dependencies = [
  "axum",
+ "notify-rust",
  "portable-pty",
  "serde",
  "serde_json",

@@ -166,6 +166,10 @@ export interface McpServerConfig {
   network?: boolean;
 }
 
+export interface McpListResponse {
+  servers: Record<string, McpServerConfig>;
+}
+
 export interface HookConfig {
   event: string;
   matcher?: string | null;

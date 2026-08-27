@@ -8,15 +8,27 @@
 mod pty;
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 
+const TRAY_ID: &str = "vakcoder";
 const TRAY_OPEN_ID: &str = "desktop.open";
+const TRAY_ADMIN_ID: &str = "desktop.admin";
+const TRAY_WATCHDOG_ID: &str = "desktop.watchdog";
 const TRAY_QUIT_ID: &str = "desktop.quit";
+const GATEWAY: usize = 0;
+const TELEGRAM: usize = 1;
+
+struct TrayState {
+    watchdog: Arc<AtomicBool>,
+    last_rendered: Mutex<Option<([vak_ops::State; 2], bool)>>,
+}
 
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -29,20 +41,222 @@ fn show_main_window(app: &AppHandle) {
 /// The desktop process is VakCoder's only GUI lifecycle owner. Keeping the
 /// tray here means a Dock/Finder activation and a tray activation target the
 /// same process and always have a window to reveal.
-fn install_tray(app: &tauri::App) -> tauri::Result<()> {
+fn service(index: usize) -> vak_ops::Service {
+    if index == GATEWAY {
+        vak_ops::Service::Gateway
+    } else {
+        vak_ops::Service::Telegram
+    }
+}
+
+fn states_now() -> [vak_ops::State; 2] {
+    let config = vak_ops::OpsConfig::detect();
+    [
+        vak_ops::status(vak_ops::Service::Gateway, &config),
+        vak_ops::status(vak_ops::Service::Telegram, &config),
+    ]
+}
+
+fn status_tooltip(states: &[vak_ops::State; 2]) -> String {
+    format!(
+        "VakCoder — gateway {}, telegram {}",
+        states[GATEWAY], states[TELEGRAM]
+    )
+}
+
+fn service_menu(app: &tauri::AppHandle, index: usize, state: vak_ops::State) -> tauri::Result<Vec<tauri::menu::MenuItem<tauri::Wry>>> {
+    let prefix = if index == GATEWAY { "gateway" } else { "telegram" };
+    let dot = match state {
+        vak_ops::State::Running => "●",
+        vak_ops::State::Stopped => "○",
+        vak_ops::State::NotInstalled => "×",
+        vak_ops::State::Unknown => "?",
+    };
+    let header = MenuItem::with_id(
+        app,
+        format!("desktop.{prefix}.status"),
+        format!("{dot} {} — {state}", service(index).label()),
+        false,
+        None::<&str>,
+    )?;
+    let mut items = vec![header];
+    if state == vak_ops::State::NotInstalled {
+        items.push(MenuItem::with_id(app, format!("desktop.{prefix}.install"), "Install service", true, None::<&str>)?);
+    } else {
+        let running = state == vak_ops::State::Running;
+        items.push(MenuItem::with_id(app, format!("desktop.{prefix}.{}", if running { "stop" } else { "start" }), if running { "Stop" } else { "Start" }, true, None::<&str>)?);
+        items.push(MenuItem::with_id(app, format!("desktop.{prefix}.restart"), "Restart", running, None::<&str>)?);
+        items.push(MenuItem::with_id(app, format!("desktop.{prefix}.uninstall"), "Uninstall service", true, None::<&str>)?);
+    }
+    items.push(MenuItem::with_id(app, format!("desktop.{prefix}.log"), "Open log", true, None::<&str>)?);
+    Ok(items)
+}
+
+fn build_tray_menu(app: &tauri::AppHandle, states: &[vak_ops::State; 2], watchdog_on: bool) -> tauri::Result<Menu<tauri::Wry>> {
     let open = MenuItem::with_id(app, TRAY_OPEN_ID, "Open VakCoder", true, None::<&str>)?;
+    let admin = MenuItem::with_id(app, TRAY_ADMIN_ID, "Open Admin Console", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
+    let gateway = service_menu(app, GATEWAY, states[GATEWAY])?;
+    let separator_gateway = PredefinedMenuItem::separator(app)?;
+    let telegram = service_menu(app, TELEGRAM, states[TELEGRAM])?;
+    let separator_telegram = PredefinedMenuItem::separator(app)?;
+    let watchdog = CheckMenuItem::with_id(app, TRAY_WATCHDOG_ID, "Watchdog: auto-restart crashed services", true, watchdog_on, None::<&str>)?;
+    let separator_watchdog = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, TRAY_QUIT_ID, "Quit VakCoder", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &separator, &quit])?;
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&open, &admin, &separator];
+    items.extend(gateway.iter().map(|item| item as &dyn tauri::menu::IsMenuItem<tauri::Wry>));
+    items.push(&separator_gateway);
+    items.extend(telegram.iter().map(|item| item as &dyn tauri::menu::IsMenuItem<tauri::Wry>));
+    items.extend([&separator_telegram as &dyn tauri::menu::IsMenuItem<tauri::Wry>, &watchdog, &separator_watchdog, &quit]);
+    Menu::with_items(app, &items)
+}
+
+fn refresh_tray(app: &AppHandle) {
+    let states = states_now();
+    let tray_state = app.state::<TrayState>();
+    let watchdog_on = tray_state.watchdog.load(Ordering::SeqCst);
+    let snapshot = (states, watchdog_on);
+    let mut last = tray_state.last_rendered.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if *last == Some(snapshot) {
+        return;
+    }
+    if let (Some(tray), Ok(menu)) = (app.tray_by_id(TRAY_ID), build_tray_menu(app, &states, watchdog_on)) {
+        let _ = tray.set_menu(Some(menu));
+        let _ = tray.set_tooltip(Some(status_tooltip(&states)));
+        *last = Some(snapshot);
+    }
+}
+
+fn persist_watchdog(on: bool) {
+    let path = vak_config::paths::data_home().join("tray.json");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, serde_json::json!({ "auto_restart": on }).to_string());
+}
+
+fn load_watchdog() -> bool {
+    std::fs::read_to_string(vak_config::paths::data_home().join("tray.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| value["auto_restart"].as_bool())
+        .unwrap_or(true)
+}
+
+fn notify(title: &str, body: &str) {
+    let _ = notify_rust::Notification::new().summary(title).body(body).show();
+}
+
+fn pinned_gateway_token() -> Option<String> {
+    std::fs::read_to_string(vak_config::paths::data_home().join(".env"))
+        .ok()?
+        .lines()
+        .find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            (key.trim() == "VAKCODER_GATEWAY_TOKEN")
+                .then(|| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+}
+
+fn open_admin_console() {
+    let config = vak_ops::OpsConfig::detect();
+    if vak_ops::status(vak_ops::Service::Gateway, &config) != vak_ops::State::Running {
+        notify("VakCoder", "Start the gateway service first.");
+        return;
+    }
+    let url = match pinned_gateway_token() {
+        Some(token) => format!("http://127.0.0.1:{}/admin?token={token}", config.port),
+        None => format!("http://127.0.0.1:{}/admin", config.port),
+    };
+    if let Err(error) = std::process::Command::new("open").arg(url).spawn() {
+        notify("VakCoder", &format!("Could not open the admin console: {error}"));
+    }
+}
+
+fn run_service_action(app: &AppHandle, service: vak_ops::Service, action: &str) {
+    let config = vak_ops::OpsConfig::detect();
+    let problem = match action {
+        "start" if !vak_ops::start(service, &config) => Some("could not start service".to_string()),
+        "stop" if !vak_ops::stop(service, &config) => Some("could not stop service".to_string()),
+        "restart" if !vak_ops::restart(service, &config) => Some("could not restart service".to_string()),
+        "install" => vak_ops::install(service, &config).err(),
+        "uninstall" => vak_ops::uninstall(service, &config).err(),
+        "log" => {
+            vak_ops::open_log(service);
+            None
+        }
+        _ => None,
+    };
+    if let Some(problem) = problem {
+        notify("VakCoder", &format!("{}: {problem}", service.label()));
+    }
+    refresh_tray(app);
+}
+
+fn handle_tray_menu(app: &AppHandle, id: &str) {
+    match id {
+        TRAY_OPEN_ID => show_main_window(app),
+        TRAY_ADMIN_ID => open_admin_console(),
+        TRAY_WATCHDOG_ID => {
+            let tray = app.state::<TrayState>();
+            let new_value = !tray.watchdog.load(Ordering::SeqCst);
+            tray.watchdog.store(new_value, Ordering::SeqCst);
+            persist_watchdog(new_value);
+            refresh_tray(app);
+        }
+        TRAY_QUIT_ID => app.exit(0),
+        _ => {
+            for (prefix, service) in [("desktop.gateway.", vak_ops::Service::Gateway), ("desktop.telegram.", vak_ops::Service::Telegram)] {
+                if let Some(action) = id.strip_prefix(prefix) {
+                    run_service_action(app, service, action);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+fn start_tray_monitor(app: AppHandle) {
+    std::thread::spawn(move || {
+        let mut last_running = [false; 2];
+        let mut last_restart = std::time::Instant::now() - Duration::from_secs(60);
+        loop {
+            let mut states = states_now();
+            let tray = app.state::<TrayState>();
+            if tray.watchdog.load(Ordering::SeqCst) && last_restart.elapsed() >= Duration::from_secs(60) {
+                let config = vak_ops::OpsConfig::detect();
+                for index in 0..2 {
+                    let running = states[index] == vak_ops::State::Running;
+                    if last_running[index] && !running {
+                        if vak_ops::start(service(index), &config) {
+                            notify("VakCoder watchdog", &format!("{} went down — restarting", service(index).label()));
+                            states[index] = vak_ops::status(service(index), &config);
+                        }
+                        last_restart = std::time::Instant::now();
+                    }
+                    last_running[index] = running;
+                }
+            } else {
+                for index in 0..2 {
+                    last_running[index] = states[index] == vak_ops::State::Running;
+                }
+            }
+            refresh_tray(&app);
+            std::thread::sleep(Duration::from_secs(3));
+        }
+    });
+}
+
+fn install_tray(app: &tauri::App) -> tauri::Result<()> {
+    let states = states_now();
+    let watchdog_on = app.state::<TrayState>().watchdog.load(Ordering::SeqCst);
+    let menu = build_tray_menu(app.handle(), &states, watchdog_on)?;
     let mut tray = TrayIconBuilder::with_id("vakcoder")
         .menu(&menu)
-        .tooltip("VakCoder")
+        .tooltip(status_tooltip(&states))
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            TRAY_OPEN_ID => show_main_window(app),
-            TRAY_QUIT_ID => app.exit(0),
-            _ => {}
-        })
+        .on_menu_event(|app, event| handle_tray_menu(app, event.id().as_ref()))
         .on_tray_icon_event(|tray, event| {
             if matches!(
                 event,
@@ -58,6 +272,7 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
     tray = tray.icon(icon);
     tray.build(app)?;
+    start_tray_monitor(app.handle().clone());
     Ok(())
 }
 
