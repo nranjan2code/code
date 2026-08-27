@@ -330,15 +330,24 @@ fn urlencode(s: &str) -> String {
 
 fn open_url(url: &str) {
     #[cfg(target_os = "macos")]
-    match std::process::Command::new("/usr/bin/open").arg(url).status() {
+    match std::process::Command::new("/usr/bin/open")
+        .arg(url)
+        .status()
+    {
         Ok(status) if status.success() => {}
-        Ok(status) => notify("vakcoder", &format!("Could not open the browser (exit {status})")),
+        Ok(status) => notify(
+            "vakcoder",
+            &format!("Could not open the browser (exit {status})"),
+        ),
         Err(error) => notify("vakcoder", &format!("Could not open the browser: {error}")),
     }
     #[cfg(target_os = "linux")]
     match std::process::Command::new("xdg-open").arg(url).status() {
         Ok(status) if status.success() => {}
-        Ok(status) => notify("vakcoder", &format!("Could not open the browser (exit {status})")),
+        Ok(status) => notify(
+            "vakcoder",
+            &format!("Could not open the browser (exit {status})"),
+        ),
         Err(error) => notify("vakcoder", &format!("Could not open the browser: {error}")),
     }
 }
