@@ -11,6 +11,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
+use vak_domain::{ProjectContext, ProjectId};
 
 struct BackendState {
     running: Mutex<Option<Running>>,
@@ -35,6 +36,7 @@ struct BackendInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     boot_error: Option<String>,
     recent_projects: Vec<String>,
+    project_id: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Default)]
@@ -45,7 +47,13 @@ struct DesktopPrefs {
 }
 
 fn vak_home() -> PathBuf {
-    vak_config::paths::data_home()
+    std::env::var_os("VAKCODER_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|h| PathBuf::from(h).join("Library/Application Support/vakcoder"))
+        })
+        .unwrap_or_else(|| PathBuf::from(".vakcoder"))
 }
 
 fn prefs_path() -> PathBuf {
@@ -104,8 +112,16 @@ fn runtime_connection() -> Option<(String, String)> {
 }
 
 fn configured_connection() -> Option<(String, String)> {
-    let settings = vak_config::load_connect_settings();
-    Some((settings.url?, settings.token?))
+    let root = std::env::var_os("VAKCODER_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|h| PathBuf::from(h).join("Library/Application Support/vakcoder"))
+        })?;
+    let snapshot = vak_config2::ConfigService::new(root, std::env::current_dir().ok()?)
+        .load()
+        .ok()?;
+    Some((snapshot.config.connect.url?, snapshot.config.connect.token?))
 }
 
 /// Connect the desktop addon to the installed or configured base. The desktop
@@ -117,17 +133,36 @@ async fn boot_backend(cwd: PathBuf) -> Result<Running, String> {
             "no vakcoder base found; install/start the base or configure [connect]".to_string()
         })?;
     let client =
-        vak_client::Client::connect(base_url.clone(), token.clone()).map_err(|e| e.to_string())?;
-    let server = client
-        .server_version()
+        vak_client2::Client::new(base_url.clone(), token.clone()).map_err(|e| e.to_string())?;
+    client
+        .health()
         .await
         .map_err(|e| format!("base is unavailable: {e}"))?;
-    if server.protocol != 1 {
-        return Err(format!(
-            "base protocol {} is incompatible with desktop protocol 1",
-            server.protocol
-        ));
-    }
+    let project_id = client
+        .projects()
+        .await
+        .ok()
+        .and_then(|projects| {
+            projects
+                .into_iter()
+                .find(|p| p.root == cwd.to_string_lossy())
+        })
+        .map(|p| p.id.to_string());
+    let project_id = match project_id {
+        Some(id) => id,
+        None => {
+            let id = ProjectId::new();
+            client
+                .register_project(&ProjectContext {
+                    id: id.clone(),
+                    root: cwd.to_string_lossy().into_owned(),
+                    display_name: None,
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+            id.to_string()
+        }
+    };
 
     let info = BackendInfo {
         ready: true,
@@ -136,6 +171,7 @@ async fn boot_backend(cwd: PathBuf) -> Result<Running, String> {
         cwd: Some(cwd.to_string_lossy().into_owned()),
         boot_error: None,
         recent_projects: Vec::new(),
+        project_id: Some(project_id),
     };
     Ok(Running { info })
 }
@@ -215,6 +251,7 @@ fn set_boot_error(state: &State<'_, BackendState>, error: Option<String>) {
                 info: BackendInfo {
                     ready: false,
                     boot_error: Some(err),
+                    project_id: None,
                     ..BackendInfo::default()
                 },
             });
@@ -245,42 +282,8 @@ async fn append_profile_note(
     state: State<'_, BackendState>,
     draft: ProfileNoteDraft,
 ) -> Result<ProfileNoteCreated, String> {
-    let (base, token) = {
-        let guard = state
-            .running
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let running = guard
-            .as_ref()
-            .filter(|r| r.info.ready)
-            .ok_or_else(|| "no backend running".to_string())?;
-        let base = running
-            .info
-            .base_url
-            .clone()
-            .ok_or_else(|| "backend missing base url".to_string())?;
-        let token = running
-            .info
-            .token
-            .clone()
-            .ok_or_else(|| "backend missing token".to_string())?;
-        (base, token)
-    };
-    let client = vak_client::Client::new(base, token);
-    let note = client
-        .append_memory(
-            draft.text.trim(),
-            "profile",
-            draft.kind.trim(),
-            draft.tag.trim(),
-            "desktop",
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(ProfileNoteCreated {
-        id: note.id,
-        ts: note.ts,
-    })
+    let _ = (state, &draft.kind, &draft.tag, &draft.text);
+    Err("profile memory is unavailable until the Runtime memory command is exposed".into())
 }
 
 /// Persist an exported document (e.g. a session transcript) to a path the

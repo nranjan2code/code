@@ -133,6 +133,7 @@ export interface BackendInfo {
   cwd?: string;
   boot_error?: string;
   recent_projects: string[];
+  project_id?: string;
 }
 
 export interface ConfigSnapshot {
