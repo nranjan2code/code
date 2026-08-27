@@ -160,6 +160,56 @@ fn build_router(state: AppState, token: String) -> Router {
         .merge(api)
         .with_state(state)
         .layer(middleware::from_fn_with_state(token, require_bearer))
+        // Outermost, so a CORS preflight — which never carries an
+        // Authorization header — is answered instead of rejected as
+        // unauthenticated.
+        .layer(webview_cors())
+}
+
+/// Cross-origin access for the native webview surfaces, and nothing else.
+///
+/// The desktop UI is a Tauri webview at `tauri://localhost` calling this
+/// gateway over loopback, so every one of its requests is cross-origin. It
+/// sends `Authorization` and `Content-Type`, which makes even a GET
+/// preflighted; without this layer every desktop request fails and the app
+/// sits on "Connecting…" forever.
+///
+/// The allowlist is explicit rather than permissive: a loopback gateway is
+/// reachable from any page the user visits, so `Any` would let a hostile site
+/// probe it. Credentials stay off, which keeps the admin console's HttpOnly
+/// session cookie from ever being replayed cross-origin — browser surfaces
+/// are same-origin and need none of this.
+fn webview_cors() -> tower_http::cors::CorsLayer {
+    use axum::http::{HeaderName, Method};
+
+    const ORIGINS: [&str; 4] = [
+        // macOS and Linux webviews.
+        "tauri://localhost",
+        // Windows webview.
+        "http://tauri.localhost",
+        // `npm run dev` against a live gateway.
+        "http://localhost:1420",
+        "http://127.0.0.1:1420",
+    ];
+
+    let origins: Vec<axum::http::HeaderValue> = ORIGINS
+        .iter()
+        .filter_map(|origin| origin.parse().ok())
+        .collect();
+
+    tower_http::cors::CorsLayer::new()
+        .allow_origin(origins)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::PUT,
+            Method::DELETE,
+        ])
+        .allow_headers([
+            HeaderName::from_static("authorization"),
+            HeaderName::from_static("content-type"),
+        ])
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1621,6 +1671,77 @@ mod tests {
     use http_body_util::BodyExt;
     use tempfile::tempdir;
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn webview_preflight_is_answered_without_a_bearer_token() {
+        let home = tempdir().expect("tempdir");
+        let app = router_with_token(
+            Runtime::open(home.path()).expect("runtime"),
+            "local-development",
+        )
+        .expect("router");
+        // The desktop webview is a different origin from the loopback gateway,
+        // so every request it makes is preflighted — and a preflight never
+        // carries Authorization.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/config")
+                    .header("origin", "tauri://localhost")
+                    .header("access-control-request-method", "GET")
+                    .header(
+                        "access-control-request-headers",
+                        "authorization,content-type",
+                    )
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert!(
+            response.status().is_success(),
+            "preflight was rejected: {}",
+            response.status()
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .and_then(|value| value.to_str().ok()),
+            Some("tauri://localhost")
+        );
+    }
+
+    #[tokio::test]
+    async fn cross_origin_access_is_limited_to_the_webview_surfaces() {
+        let home = tempdir().expect("tempdir");
+        let app = router_with_token(
+            Runtime::open(home.path()).expect("runtime"),
+            "local-development",
+        )
+        .expect("router");
+        // A loopback gateway is reachable from any page the user visits, so an
+        // unknown origin must not be granted access.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .header("origin", "https://evil.example")
+                    .header("authorization", "Bearer local-development")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none(),
+            "an unlisted origin must not be granted CORS access"
+        );
+    }
 
     #[test]
     fn runtime_lock_is_exclusive_while_its_owner_lives() {

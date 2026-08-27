@@ -5716,6 +5716,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tower",
+ "tower-http",
  "vak-client",
  "vak-config",
  "vak-domain",
