@@ -1369,10 +1369,12 @@ function Settings() {
   const [providerKeyInput, setProviderKeyInput] = createSignal("");
   const [savingKey, setSavingKey] = createSignal(false);
 
-  // Seed on config load
+  // Seed once on initial config load
+  let initialized = false;
   createEffect(() => {
     const c = config();
-    if (c) {
+    if (c && !initialized) {
+      initialized = true;
       setSelectedProvider(c.provider || "anthropic");
       setSelectedModel(c.model || "");
     }
@@ -1385,7 +1387,11 @@ function Settings() {
     setLoadingModels(true);
     try {
       const res = await api.models(prov);
-      setDiscoveredModels(res.models ?? []);
+      const models = res.models ?? [];
+      setDiscoveredModels(models);
+      if (models.length > 0 && !models.includes(selectedModel())) {
+        setSelectedModel(models[0]);
+      }
     } catch {
       setDiscoveredModels([]);
     } finally {
@@ -1396,7 +1402,7 @@ function Settings() {
   const saveIdentity = async () => {
     try {
       await api.patchConfig({ provider: selectedProvider(), model: selectedModel() });
-      pushToast("info", "Provider & model updated");
+      pushToast("info", `Model updated: ${selectedProvider()} / ${selectedModel()}`);
       refetchConfig();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);

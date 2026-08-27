@@ -447,16 +447,14 @@ pub(crate) async fn list_bestofn(State(state): State<AppState>) -> Json<serde_js
 // ---- GET /admin/api/config ------------------------------------------------
 
 pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let cfg = state.core.config();
-    // Report the EFFECTIVE permission mode: POST /config/mode applies a
-    // runtime override that config() does not reflect, and the console
-    // must show what is actually enforced.
+    // Report the EFFECTIVE provider, model, turns, mode, and theme so runtime
+    // overrides applied by PATCH /config and POST /config/mode are accurately returned.
     Json(serde_json::json!({
-        "provider": cfg.provider,
-        "model": cfg.model,
-        "max_turns": cfg.max_turns,
+        "provider": state.core.effective_provider(),
+        "model": state.core.effective_model(),
+        "max_turns": state.core.effective_max_turns(),
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
-        "theme": cfg.ui.theme,
+        "theme": state.core.effective_theme(),
     }))
 }
 
