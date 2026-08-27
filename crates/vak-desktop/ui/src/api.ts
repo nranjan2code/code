@@ -359,6 +359,22 @@ export function patchConfig(patch: { provider?: string; model?: string; max_turn
   return req("/config", { method: "PATCH", body: JSON.stringify(patch) });
 }
 
+/** Store the Telegram bot token in the shared user `.env` and kick the
+ * bridge service so it restarts with the new token. */
+export function putTelegramToken(
+  token: string,
+): Promise<{ env_var: string; configured: boolean; restarted: boolean }> {
+  return req("/config/telegram-token", {
+    method: "PUT",
+    body: JSON.stringify({ token }),
+  });
+}
+
+/** Revoke the stored Telegram bot token and kick the bridge service. */
+export function removeTelegramToken(): Promise<{ env_var: string; configured: boolean; shadowed_by_env: boolean; restarted: boolean }> {
+  return req("/config/telegram-token", { method: "DELETE" });
+}
+
 // ---- MCP server management ----------------------------------------------------
 
 export interface McpServerDef {

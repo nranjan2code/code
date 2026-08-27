@@ -785,6 +785,52 @@ impl Core {
         })
     }
 
+    /// The env var that authenticates the Telegram bridge. Not a "provider"
+    /// in the LLM sense, but stored the same way: the shared user `.env`
+    /// that every surface and service loads.
+    pub const TELEGRAM_TOKEN_ENV: &'static str = "TELEGRAM_BOT_TOKEN";
+
+    /// True when a Telegram bridge launched right now would find a token.
+    pub fn telegram_configured(&self) -> bool {
+        vak_config::get_var(Self::TELEGRAM_TOKEN_ENV).is_some()
+    }
+
+    /// Persists the Telegram bot token into the user-level `.env`
+    /// (0600, shared by every surface) and registers it as a runtime
+    /// override so it's visible immediately. The launchd/systemd unit for
+    /// the bridge still reads `.env` itself on (re)start — this only makes
+    /// `telegram_configured()` and any in-process check correct right away.
+    /// The token itself never re-enters any response.
+    pub fn set_telegram_token(&self, token: &str) -> Result<String, CoreError> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err(CoreError::InvalidConfig("empty telegram bot token".into()));
+        }
+        let env = Self::TELEGRAM_TOKEN_ENV;
+        let path = self.user_env_file();
+        vak_config::upsert_env_file(&path, env, token)
+            .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))?;
+        vak_config::set_override(env, token);
+        Ok(env.to_string())
+    }
+
+    /// Revoke the stored Telegram bot token: strip it from the user `.env`
+    /// and drop the runtime override. A token exported in the real
+    /// environment cannot be unset from here — the caller is told so it can
+    /// say as much.
+    pub fn remove_telegram_token(&self) -> Result<RemovedKey, CoreError> {
+        let env = Self::TELEGRAM_TOKEN_ENV;
+        let path = self.user_env_file();
+        vak_config::remove_env_file_key(&path, env)
+            .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))?;
+        vak_config::clear_override(env);
+        vak_config::forget_dotenv_var(env);
+        Ok(RemovedKey {
+            env_var: env.to_string(),
+            shadowed_by_env: vak_config::get_var(env).is_some(),
+        })
+    }
+
     /// Ask `provider` which models its configured key can actually reach.
     ///
     /// There is no baked-in catalogue: an out-of-date table silently hides

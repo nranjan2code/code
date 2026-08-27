@@ -153,6 +153,7 @@ export interface ConfigSnapshot {
     quality_hints: string[];
   };
   integrations: { mcp_servers: string[]; hooks: number; skills: string[] };
+  telegram: { env_var: string; configured: boolean };
   paths: { project_config: string; global_config?: string | null; sessions_home: string; cwd: string };
   warnings: string[];
 }

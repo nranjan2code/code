@@ -304,6 +304,8 @@ export default function Settings() {
   const [saving, setSaving] = createSignal(false);
   const [keyDraft, setKeyDraft] = createSignal<string | null>(null);
   const [keyBusy, setKeyBusy] = createSignal(false);
+  const [telegramDraft, setTelegramDraft] = createSignal<string | null>(null);
+  const [telegramBusy, setTelegramBusy] = createSignal(false);
 
   const loadProviders = async () => {
     try {
@@ -519,6 +521,47 @@ export default function Settings() {
     }
   };
 
+  const saveTelegramToken = async () => {
+    const draft = telegramDraft()?.trim();
+    if (!draft) return;
+    setTelegramBusy(true);
+    try {
+      const res = await api.putTelegramToken(draft);
+      setTelegramDraft(null);
+      await load();
+      setNotice({
+        kind: "info",
+        text: res.restarted
+          ? `Telegram token stored locally (${res.env_var}) and the bridge was restarted with it.`
+          : `Telegram token stored locally (${res.env_var}). The bridge isn't installed as a service yet — start it from Operations to use it.`,
+      });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not store Telegram token: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setTelegramBusy(false);
+    }
+  };
+
+  const removeTelegramToken = async () => {
+    setTelegramBusy(true);
+    try {
+      const res = await api.removeTelegramToken();
+      await load();
+      setNotice({
+        kind: "info",
+        text: res.shadowed_by_env
+          ? `Removed from ~/.vakcoder/.env, but ${res.env_var} is still set in the real environment.`
+          : res.restarted
+            ? "Telegram token removed and the bridge was restarted."
+            : "Telegram token removed.",
+      });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not remove Telegram token: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setTelegramBusy(false);
+    }
+  };
+
   const removeKey = async () => {
     const name = provider() || providers()?.current || "";
     setKeyBusy(true);
@@ -710,6 +753,28 @@ export default function Settings() {
                         </Show>
                       </span>
                     </Show>
+                  </Show>
+                </Row>
+                <Row
+                  title={`Telegram bridge — ${config()?.telegram.env_var ?? "TELEGRAM_BOT_TOKEN"}`}
+                  description={`${config()?.telegram.configured ? "Saved on this device" : "Not set yet"} · stored in ~/.vakcoder/.env with owner-only permissions. Saving restarts the bridge automatically.`}
+                >
+                  <Show
+                    when={telegramDraft() === null}
+                    fallback={
+                      <span class="key-edit">
+                        <input type="password" autocomplete="off" spellcheck={false} placeholder="paste bot token from @BotFather" aria-label="Telegram bot token" value={telegramDraft() ?? ""} onInput={(e) => setTelegramDraft(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void saveTelegramToken()} />
+                        <button class="btn primary sm" disabled={telegramBusy() || !telegramDraft()?.trim()} onClick={() => void saveTelegramToken()}>{telegramBusy() ? "Saving…" : "Save"}</button>
+                        <button class="settings-button" onClick={() => setTelegramDraft(null)}>Cancel</button>
+                      </span>
+                    }
+                  >
+                    <span class="key-edit">
+                      <button class="settings-button" onClick={() => setTelegramDraft("")}>{config()?.telegram.configured ? "Replace token" : "Add token"}</button>
+                      <Show when={config()?.telegram.configured}>
+                        <button class="settings-button danger" disabled={telegramBusy()} onClick={() => void removeTelegramToken()}>Remove token</button>
+                      </Show>
+                    </span>
                   </Show>
                 </Row>
               </Group>

@@ -352,6 +352,10 @@ fn router_with_state(state: AppState) -> Router {
             "/config/key",
             put(put_provider_key).delete(delete_provider_key),
         )
+        .route(
+            "/config/telegram-token",
+            put(put_telegram_token).delete(delete_telegram_token),
+        )
         .route("/providers", get(list_providers))
         .route("/providers/{name}/models", get(discover_models))
         .route("/search", get(search_sessions))
@@ -2785,6 +2789,89 @@ async fn put_provider_key(
     }
 }
 
+#[derive(serde::Deserialize)]
+struct TelegramTokenBody {
+    token: String,
+}
+
+/// Persists the Telegram bot token to the same user-level `.env` the
+/// provider keys use, then kicks the bridge service so the new token takes
+/// effect right away — it self-sources `.env` at launch, it doesn't
+/// inherit this process's environment or the runtime override. The token
+/// is accepted once and never echoed back.
+async fn put_telegram_token(
+    State(state): State<AppState>,
+    Json(body): Json<TelegramTokenBody>,
+) -> axum::response::Response {
+    match state.core.set_telegram_token(&body.token) {
+        Ok(env_var) => {
+            vak_core::security_events::record(
+                &state.core.sessions_home(),
+                vak_core::security_events::EventKind::ProviderKeyChange,
+                "telegram_token_set",
+                "telegram",
+                None,
+            );
+            state
+                .hub
+                .emit_config_changed("telegram_token_set", "telegram");
+            // Best-effort: kickstart -k (macOS) / systemctl restart (linux)
+            // reads the fresh .env on the way back up. If the bridge isn't
+            // installed as a service yet, this is a harmless no-op — the
+            // caller still gets `restarted: false` to reflect that.
+            let cfg = vak_ops::OpsConfig::detect();
+            let restarted = vak_ops::restart(vak_ops::Service::Telegram, &cfg);
+            Json(serde_json::json!({
+                "env_var": env_var,
+                "configured": true,
+                "restarted": restarted,
+            }))
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Revoke the stored Telegram bot token. Reports when the variable is
+/// still set in the real environment, since that keeps the bridge
+/// authenticated and no app-level action can change it.
+async fn delete_telegram_token(State(state): State<AppState>) -> axum::response::Response {
+    match state.core.remove_telegram_token() {
+        Ok(removed) => {
+            vak_core::security_events::record(
+                &state.core.sessions_home(),
+                vak_core::security_events::EventKind::ProviderKeyChange,
+                "telegram_token_removed",
+                &format!("shadowed={}", removed.shadowed_by_env),
+                None,
+            );
+            state
+                .hub
+                .emit_config_changed("telegram_token_removed", "telegram");
+            // Same best-effort kick as on save, so a removed token doesn't
+            // keep serving off a stale in-memory credential.
+            let cfg = vak_ops::OpsConfig::detect();
+            let restarted = vak_ops::restart(vak_ops::Service::Telegram, &cfg);
+            Json(serde_json::json!({
+                "env_var": removed.env_var,
+                "configured": removed.shadowed_by_env,
+                "shadowed_by_env": removed.shadowed_by_env,
+                "restarted": restarted,
+            }))
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
     let cfg = state.core.config();
     let project_path = vak_config::project_path(state.core.cwd());
@@ -2821,6 +2908,10 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
             "mcp_servers": cfg.mcp.servers.keys().collect::<Vec<_>>(),
             "hooks": cfg.hooks.len(),
             "skills": state.core.skills().iter().map(|skill| skill.name.clone()).collect::<Vec<_>>(),
+        },
+        "telegram": {
+            "env_var": Core::TELEGRAM_TOKEN_ENV,
+            "configured": state.core.telegram_configured(),
         },
         "paths": {
             "project_config": project_path,

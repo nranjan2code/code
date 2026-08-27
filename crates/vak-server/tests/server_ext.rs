@@ -1485,3 +1485,131 @@ async fn providers_listing_and_key_storage_roundtrip() {
         .unwrap();
     assert_eq!(ollama_key.status(), 400);
 }
+
+#[tokio::test]
+async fn telegram_token_storage_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    std::mem::forget(dir);
+
+    let core = Core::new(cwd.clone()).unwrap();
+    core.set_sessions_home(cwd.join("home"));
+    // Hermetic secret store: never touch the developer's real ~/.vakcoder.
+    let user_env = cwd.join("user-home/.vakcoder/.env");
+    core.set_user_env_path(user_env.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (app, token) = vak_server::secured_router(core);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let base = format!("http://{addr}");
+    let client = client_with(&token);
+
+    // Nothing configured yet.
+    let config: serde_json::Value = client
+        .get(format!("{base}/config"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(config["telegram"]["env_var"], "TELEGRAM_BOT_TOKEN");
+    assert_eq!(config["telegram"]["configured"], false);
+
+    // Saving: effective immediately, persisted, never echoed back.
+    let saved: serde_json::Value = client
+        .put(format!("{base}/config/telegram-token"))
+        .json(&serde_json::json!({ "token": "  123:abc-test-token  " }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(saved["env_var"], "TELEGRAM_BOT_TOKEN");
+    assert_eq!(saved["configured"], true);
+    // The bridge isn't installed as a service in this hermetic test, so
+    // the restart kick is a harmless no-op; only the shape is asserted.
+    assert!(saved["restarted"].is_boolean());
+    let body_text = serde_json::to_string(&saved).unwrap();
+    assert!(
+        !body_text.contains("123:abc-test-token"),
+        "token must not echo back"
+    );
+
+    let file = std::fs::read_to_string(&user_env).unwrap();
+    assert!(file.contains("TELEGRAM_BOT_TOKEN=123:abc-test-token"));
+
+    let after: serde_json::Value = client
+        .get(format!("{base}/config"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(after["telegram"]["configured"], true);
+
+    // Re-saving replaces the line instead of appending duplicates.
+    client
+        .put(format!("{base}/config/telegram-token"))
+        .json(&serde_json::json!({ "token": "456:def-test-token" }))
+        .send()
+        .await
+        .unwrap();
+    let file = std::fs::read_to_string(&user_env).unwrap();
+    assert_eq!(
+        file.matches("TELEGRAM_BOT_TOKEN=").count(),
+        1,
+        "upsert must replace, not duplicate"
+    );
+    assert!(file.contains("TELEGRAM_BOT_TOKEN=456:def-test-token"));
+
+    // Empty token is rejected as a value, not a panic.
+    let empty = client
+        .put(format!("{base}/config/telegram-token"))
+        .json(&serde_json::json!({ "token": "   " }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(empty.status(), 400);
+
+    // Revoking strips the token, leaves the rest of the file intact.
+    std::fs::write(
+        &user_env,
+        format!(
+            "{}\nUNRELATED_VALUE=keep-me\n",
+            std::fs::read_to_string(&user_env).unwrap().trim_end()
+        ),
+    )
+    .unwrap();
+    let removed: serde_json::Value = client
+        .delete(format!("{base}/config/telegram-token"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(removed["env_var"], "TELEGRAM_BOT_TOKEN");
+    assert_eq!(removed["configured"], false);
+    assert_eq!(removed["shadowed_by_env"], false);
+    let file = std::fs::read_to_string(&user_env).unwrap();
+    assert!(!file.contains("TELEGRAM_BOT_TOKEN"), "token must be gone");
+    assert!(
+        file.contains("UNRELATED_VALUE=keep-me"),
+        "revoking the token must not disturb the rest of the file"
+    );
+    let after_remove: serde_json::Value = client
+        .get(format!("{base}/config"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(after_remove["telegram"]["configured"], false);
+}
