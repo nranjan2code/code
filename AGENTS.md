@@ -206,13 +206,6 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      cron engine, health report, backup export/import,
                      digest, shared transcript_md renderer
                      (docs/design/29-personal-os.md)
-crates/vak-tui       retained-render terminal UI: contextual keymap +
-                     interactive rebind, themes + custom theme packs,
-                     vim/emacs composer, subagent attach/steer,
-                     custom commands, OSC52 copy, accessibility modes,
-                     /mode /compact /budget /memory /proposals /mcp
-                     /sandbox /search /tasks /inbox + live breaker/ladder/spend
-                     introspection + budget status marker
 crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      subagent steer-stop/MCP management/memory
                      CRUD/search-all/transcript.md/doctor/backup/
