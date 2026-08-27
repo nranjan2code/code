@@ -983,7 +983,6 @@ function IntegrationsView() {
                         <li class="inbox-item">
                           <div class="hit-meta">
                             <span class="mono bold">{p.name}</span>
-                            <span class="when">{timeAgo(p.created_at)}</span>
                           </div>
                           <div class="hit-snippet">{p.description}</div>
                           <div class="row-gap" style="margin-top:8px">
@@ -1007,16 +1006,17 @@ function IntegrationsView() {
             <Show when={!tasksData.loading} fallback={<div class="empty">Loading tasks…</div>}>
               <Show when={(tasksData()?.tasks?.length ?? 0) > 0} fallback={<div class="empty">No scheduled tasks or cron jobs configured.</div>}>
                 <table class="table">
-                  <thead><tr><th>name</th><th>schedule</th><th>pinned model</th><th>last run</th><th>next run</th><th /></tr></thead>
+                  <thead><tr><th>name</th><th>type</th><th>schedule / interval</th><th>model pin</th><th>last run</th><th>status</th><th /></tr></thead>
                   <tbody>
                     <For each={tasksData()?.tasks ?? []}>
                       {(t: TaskItem) => (
                         <tr>
                           <td class="bold">{t.name}</td>
-                          <td class="mono">{t.schedule}</td>
-                          <td class="mono dim">{t.pinned_model ?? "default"}</td>
-                          <td title={t.last_run ?? ""}>{t.last_run ? timeAgo(t.last_run) : "never"}</td>
-                          <td title={t.next_run ?? ""}>{t.next_run ? timeAgo(t.next_run) : "—"}</td>
+                          <td><span class={`chip ${t.script ? "chip-tool" : "chip-mode"}`}>{t.script ? "script" : "prompt"}</span></td>
+                          <td class="mono">{t.schedule ?? `${t.interval_secs ?? 3600}s`}</td>
+                          <td class="mono dim">{t.model_pin ?? "default"}</td>
+                          <td title={t.last_run_at ?? ""}>{t.last_run_at ? timeAgo(t.last_run_at) : "never"}</td>
+                          <td><span class={`chip ${t.enabled ? "chip-ok" : "chip-warn"}`}>{t.enabled ? "enabled" : "disabled"}</span></td>
                           <td>
                             <button class="ghost small" onClick={() => runTask(t.id)}>Run now</button>
                           </td>
@@ -1038,19 +1038,19 @@ function IntegrationsView() {
 
 function MemoryView() {
   const [memoryData, { refetch }] = createResource(() => api.memory().catch(() => ({ notes: [] })));
-  const [tier, setTier] = createSignal<"profile" | "project">("project");
-  const [topic, setTopic] = createSignal("");
-  const [content, setContent] = createSignal("");
+  const [scope, setScope] = createSignal<"profile" | "project">("project");
+  const [tag, setTag] = createSignal("");
+  const [noteText, setNoteText] = createSignal("");
   const [busy, setBusy] = createSignal(false);
 
   const addNote = async () => {
-    if (!content().trim() || busy()) return;
+    if (!noteText().trim() || busy()) return;
     setBusy(true);
     try {
-      await api.addMemory(tier(), content().trim(), topic().trim() || undefined);
+      await api.addMemory(scope(), noteText().trim(), tag().trim() || undefined);
       pushToast("info", "Memory note recorded");
-      setContent("");
-      setTopic("");
+      setNoteText("");
+      setTag("");
       refetch();
     } catch (err) {
       pushToast("alert", `${err}`);
@@ -1081,11 +1081,11 @@ function MemoryView() {
                   {(m: MemoryItem) => (
                     <li class="inbox-item">
                       <div class="hit-meta">
-                        <span class={`chip ${m.tier === "profile" ? "chip-mode" : "chip-tool"}`}>{m.tier}</span>
-                        <Show when={m.topic}><strong class="mono">{m.topic}</strong></Show>
+                        <span class={`chip ${m.scope === "profile" ? "chip-mode" : "chip-tool"}`}>{m.scope}</span>
+                        <Show when={m.tag}><strong class="mono">{m.tag}</strong></Show>
                         <span class="when">{timeAgo(m.ts)}</span>
                       </div>
-                      <div class="hit-snippet">{m.content}</div>
+                      <div class="hit-snippet">{m.text}</div>
                       <div class="row-gap" style="margin-top:8px">
                         <button class="danger small" onClick={() => forget(m.id)}>Forget</button>
                       </div>
@@ -1100,22 +1100,22 @@ function MemoryView() {
         <section class="panel">
           <h2>Record Knowledge Note</h2>
           <div class="form-row">
-            <label>tier</label>
-            <select value={tier()} onChange={(e) => setTier(e.currentTarget.value as "profile" | "project")}>
-              <option value="project">Project Note</option>
-              <option value="profile">USER.md Profile Tier</option>
+            <label>scope</label>
+            <select value={scope()} onChange={(e) => setScope(e.currentTarget.value as "profile" | "project")}>
+              <option value="project">Workspace Note</option>
+              <option value="profile">USER.md Profile</option>
             </select>
           </div>
           <div class="form-row">
-            <label>topic</label>
-            <input placeholder="Optional topic slug" value={topic()} onInput={(e) => setTopic(e.currentTarget.value)} />
+            <label>tag</label>
+            <input placeholder="Optional tag slug" value={tag()} onInput={(e) => setTag(e.currentTarget.value)} />
           </div>
           <div class="form-row">
-            <label>content</label>
-            <textarea rows={4} placeholder="Note content to persist..." value={content()} onInput={(e) => setContent(e.currentTarget.value)} />
+            <label>text</label>
+            <textarea rows={4} placeholder="Note content to persist..." value={noteText()} onInput={(e) => setNoteText(e.currentTarget.value)} />
           </div>
           <div class="row-gap" style="margin-top:12px">
-            <button disabled={busy() || !content().trim()} onClick={addNote}>
+            <button disabled={busy() || !noteText().trim()} onClick={addNote}>
               {busy() ? "Recording…" : "Save Note"}
             </button>
           </div>

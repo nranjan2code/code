@@ -275,11 +275,15 @@ export const api = {
   memory: (): Promise<{ notes: MemoryItem[] }> =>
     fetch("/memory").then((r) => handle(r)),
 
-  addMemory: (tier: "profile" | "project", content: string, topic?: string): Promise<void> =>
+  addMemory: (scope: "profile" | "project", text: string, tag?: string): Promise<void> =>
     fetch("/memory", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ tier, content, topic }),
+      body: JSON.stringify({
+        text,
+        scope: scope === "profile" ? "profile" : "workspace",
+        tag: tag || undefined,
+      }),
     }).then((r) => void handle(r)),
 
   forgetMemory: (noteId: string): Promise<void> =>

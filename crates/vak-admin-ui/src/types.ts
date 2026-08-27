@@ -188,30 +188,31 @@ export interface SkillProposal {
   id: string;
   name: string;
   description: string;
-  prompt_summary: string;
-  tool_pattern: string;
-  created_at: string;
-  status: string;
 }
 
 export interface TaskItem {
   id: string;
   name: string;
-  schedule: string;
-  script?: string | null;
-  prompt?: string | null;
-  pinned_model?: string | null;
+  prompt?: string;
+  interval_secs?: number;
   enabled: boolean;
-  last_run?: string | null;
-  next_run?: string | null;
+  schedule?: string | null;
+  script?: string | null;
+  model_pin?: string | null;
+  created_at?: string;
+  last_run_at?: string | null;
+  last_session_id?: string | null;
+  last_summary?: string | null;
 }
 
 export interface MemoryItem {
   id: string;
   ts: string;
-  tier: "profile" | "project" | string;
-  topic?: string;
-  content: string;
+  scope: "workspace" | "profile" | string;
+  kind: string;
+  tag?: string;
+  text: string;
+  session_id?: string;
 }
 
 export interface WorkReceipt {
