@@ -4,8 +4,6 @@
 //! surface (tui/exec/serve) speaks. It discovers a local base runtime or saved
 //! remote connection and never starts a competing server or state owner.
 
-mod pty;
-
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -50,8 +48,20 @@ fn vak_home() -> PathBuf {
     std::env::var_os("VAKCODER_HOME")
         .map(PathBuf::from)
         .or_else(|| {
-            std::env::var_os("HOME")
-                .map(|h| PathBuf::from(h).join("Library/Application Support/vakcoder"))
+            #[cfg(target_os = "macos")]
+            {
+                std::env::var_os("HOME")
+                    .map(|h| PathBuf::from(h).join("Library/Application Support/vakcoder"))
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                std::env::var_os("XDG_DATA_HOME")
+                    .map(|h| PathBuf::from(h).join("vakcoder"))
+                    .or_else(|| {
+                        std::env::var_os("HOME")
+                            .map(|h| PathBuf::from(h).join(".local/share/vakcoder"))
+                    })
+            }
         })
         .unwrap_or_else(|| PathBuf::from(".vakcoder"))
 }
@@ -112,12 +122,7 @@ fn runtime_connection() -> Option<(String, String)> {
 }
 
 fn configured_connection() -> Option<(String, String)> {
-    let root = std::env::var_os("VAKCODER_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .map(|h| PathBuf::from(h).join("Library/Application Support/vakcoder"))
-        })?;
+    let root = vak_home();
     let snapshot = vak_config2::ConfigService::new(root, std::env::current_dir().ok()?)
         .load()
         .ok()?;
@@ -331,7 +336,6 @@ fn main() {
             running: Mutex::new(None),
             switching: tokio::sync::Mutex::new(()),
         })
-        .manage(pty::PtyMap::default())
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -363,10 +367,7 @@ fn main() {
             backend_info,
             start_backend,
             append_profile_note,
-            export_text_file,
-            pty::spawn_pty,
-            pty::pty_write,
-            pty::pty_resize
+            export_text_file
         ])
         .run(tauri::generate_context!())
         .inspect_err(|e| eprintln!("fatal: {e}"))
