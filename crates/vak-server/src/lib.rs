@@ -1530,10 +1530,11 @@ mod tests {
             .await
             .expect("body")
             .to_bytes();
-        assert_eq!(
-            &body[..],
-            br#"{"status":"ok","protocol":1,"runtime_id":"0.9.2"}"#
+        let expected = format!(
+            r#"{{"status":"ok","protocol":1,"runtime_id":"{}"}}"#,
+            env!("CARGO_PKG_VERSION")
         );
+        assert_eq!(&body[..], expected.as_bytes());
     }
 
     #[tokio::test]
