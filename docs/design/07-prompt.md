@@ -1,7 +1,9 @@
 # 07 — System prompt
 
-Current prompt: `crates/vak-runtime/src/system-prompt.md` (~120 tokens).
-Override per project via `.vakcoder/SYSTEM.md`.
+The CLI default prompt is defined when it creates the immutable session
+contract in `crates/vakcoder/src/main.rs` (~7 tokens). TUI, desktop, and other
+clients provide their prompt as part of the same typed session contract; there
+is no second prompt file or override path.
 
 ## Diff notes
 
