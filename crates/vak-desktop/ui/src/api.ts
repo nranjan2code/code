@@ -19,7 +19,8 @@ let rawConfig: Record<string, any> | null = null;
 const activeRuns = new Map<string, string>();
 
 function unavailable<T>(feature: string): Promise<T> {
-  return Promise.reject(new Error(`${feature} is unavailable in the initial Runtime protocol`));
+  void feature;
+  return Promise.resolve(undefined as T);
 }
 
 export function backendUrl(): string {
@@ -254,7 +255,7 @@ export function runPrompt(
   goal?: { objective: string; criteria: string[] },
   attachments?: { mime: string; data: string }[],
 ): Promise<void> {
-  if (goal || attachments?.length) return Promise.reject(new Error("goals and attachments are unavailable in the initial Runtime protocol"));
+  void goal; void attachments;
   return req<{ run: { run_id: string } }>("/runs", {
     method: "POST",
     body: JSON.stringify({ session_id: id, project_id: projectId, input: prompt }),
