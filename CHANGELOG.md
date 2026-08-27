@@ -74,6 +74,25 @@ timestamped, `settlement: "ok"`.
   delay, but only once the browser's own reconnect has actually given up
   (`readyState === CLOSED`), so a transient error the browser is already
   retrying isn't torn down and duplicated.
+- Neither of the above was actually the fault: verified live, in a build
+  containing both fixes, against a brand-new task — same symptom, same
+  correct reply already sitting in the session log. The real cause is a
+  race the two fixes above don't touch: `openStream` constructs the
+  `EventSource` but never awaits its connection actually opening before
+  the prompt is sent, and the server's broadcast channel does not
+  replay history to a subscriber that attaches after an event has
+  already fired. A run that finishes before that connection is fully
+  live loses `RunFinished` permanently — nothing dropped, nothing
+  errored, the event simply never had a listener at the moment it was
+  sent. `refreshSessions()` already polls the session list every 10s
+  but only refreshed the sidebar; it never reconciled the "running" flag
+  gating the header pill and `hydrate()`'s own guard (`if
+  (!isRunning(id))`), so even once the server knew the run was done, the
+  client had no path back to that fact without a relaunch. It now
+  cross-checks every session's server-reported `running` state on each
+  poll and, on a mismatch, corrects it and loads the transcript the push
+  path missed — self-healing within 10 seconds instead of requiring a
+  relaunch.
 
 ### Desktop credential visibility and silent run failures
 

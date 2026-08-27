@@ -118,6 +118,31 @@ export async function refreshSessions() {
       ) {
         closeSplit();
       }
+      // Reconcile "running" against the server's own truth. The push
+      // path (openStream -> RunFinished) can miss a completion for
+      // reasons that are not bugs to chase individually: the
+      // EventSource is constructed but its connection is still
+      // establishing when the run finishes, the tab was backgrounded,
+      // the stream dropped and hasn't reconnected yet -- in every case
+      // the server-side broadcast channel does not replay history to a
+      // late or reconnecting subscriber, so a missed RunFinished is
+      // gone, not delayed. Without this, a session the client still
+      // thinks is running never revisits that belief on its own: the
+      // header stays on "Working" and hydrate()'s own guard (`if
+      // (!isRunning(id))`) refuses to load the transcript that already
+      // has the reply, indefinitely -- previously recoverable only by
+      // relaunching the whole app. This runs every 10s regardless of
+      // whether anything is being viewed, so the correction lands
+      // without the user needing to do anything.
+      const visible = new Set([activeId(), splitId()].filter((x): x is string => !!x));
+      for (const s of res.sessions) {
+        if (!s.running && isRunning(s.session_id)) {
+          markRunning(s.session_id, false);
+          if (visible.has(s.session_id)) {
+            await hydrate(s.session_id);
+          }
+        }
+      }
     }
   } catch {
     /* backend restarting */
