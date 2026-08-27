@@ -416,12 +416,18 @@ async fn doctor_reports_checks_facts_and_optional_ladder() {
         .iter()
         .map(|c| c["label"].as_str().unwrap())
         .collect();
+    // Order mirrors the pushes in vak_core::health::collect. "install
+    // layout" (canonical-layout conformance, doc 32) joined the ladder in
+    // f6131a5 and this expectation was never updated; the failure stayed
+    // hidden because a deadlock in gateway.rs stopped this binary from
+    // ever running.
     assert_eq!(
         labels,
         vec![
             "provider",
             "sessions home",
             "config warnings",
+            "install layout",
             "self version parity"
         ]
     );

@@ -24,6 +24,11 @@ against a real prefix rather than reading the code.
   with a deadline. A reintroduced deadlock fails the suite in 10s with a
   message naming the cause, rather than hanging it — a test that hangs
   reports nothing and blocks every gate behind it.
+- Fixed `doctor_reports_checks_facts_and_optional_ladder`, which had
+  expected four health checks since before the "install layout" check
+  joined the ladder in f6131a5. Cargo runs test binaries sequentially, so
+  the hang in `gateway.rs` meant this binary never ran and the stale
+  assertion stayed invisible for the whole 0.8.0 cycle.
 
 ### Install and uninstall
 
