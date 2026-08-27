@@ -43,6 +43,7 @@ fn provider_env(provider: &str) -> String {
         "anthropic" => "ANTHROPIC_API_KEY",
         "google" => "GOOGLE_API_KEY",
         "ollama" => "OLLAMA_API_KEY",
+        "opencode-zen" => "OPENCODE_API_KEY",
         _ => "OPENAI_API_KEY",
     }
     .to_owned()
@@ -127,6 +128,7 @@ impl Runtime {
             "anthropic" => "ANTHROPIC_API_KEY",
             "google" => "GOOGLE_API_KEY",
             "ollama" => "OLLAMA_API_KEY",
+            "opencode-zen" => "OPENCODE_API_KEY",
             _ => "OPENAI_API_KEY",
         };
         let api_key = SecretService::new(&data_home)
@@ -1276,6 +1278,15 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
     use vak_domain::{PermissionMode, RouteLeg, SandboxMode};
+
+    #[test]
+    fn provider_credentials_use_provider_specific_environment_keys() {
+        assert_eq!(provider_env("anthropic"), "ANTHROPIC_API_KEY");
+        assert_eq!(provider_env("google"), "GOOGLE_API_KEY");
+        assert_eq!(provider_env("ollama"), "OLLAMA_API_KEY");
+        assert_eq!(provider_env("opencode-zen"), "OPENCODE_API_KEY");
+        assert_eq!(provider_env("openai"), "OPENAI_API_KEY");
+    }
 
     fn contract() -> SessionContract {
         SessionContract {

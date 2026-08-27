@@ -801,13 +801,14 @@ async fn list_providers(
         .as_ref()
         .and_then(|s| s.config.model.name.clone())
         .unwrap_or_default();
-    let providers = ["anthropic", "openai", "google", "ollama"]
+    let providers = ["anthropic", "openai", "google", "ollama", "opencode-zen"]
         .into_iter()
         .map(|name| {
             let env = match name {
                 "anthropic" => "ANTHROPIC_API_KEY",
                 "google" => "GOOGLE_API_KEY",
                 "ollama" => "OLLAMA_API_KEY",
+                "opencode-zen" => "OPENCODE_API_KEY",
                 _ => "OPENAI_API_KEY",
             };
             let configured = state.runtime.secrets().get(env).ok().flatten().is_some()
