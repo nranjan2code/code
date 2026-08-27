@@ -277,42 +277,19 @@ fn open_desktop() {
     }
 }
 
-/// Open the web admin console. When the gateway runtime file is fresh, the
-/// URL carries `#token=…`: the fragment never reaches the network and the
-/// console trades it for an HttpOnly cookie, then scrubs itself — one click
-/// for a non-technical user, no plaintext token in any server log.
+/// Open the web admin console through the canonical local connection. The URL
+/// carries `#token=…`: the fragment never reaches the network and the console
+/// trades it for an HttpOnly cookie, then scrubs itself — one click for a
+/// non-technical user, no plaintext token in any server log.
 fn open_admin_console() {
-    let home = vak_config::paths::data_home();
-    let raw =
-        std::fs::read_to_string(home.join("runtime").join("gateway.json")).unwrap_or_default();
-    open_url(&admin_url(&raw, &|pid| {
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }));
+    match vak_client::GatewayConnection::discover_local() {
+        Ok(connection) => open_url(&admin_url(connection.base_url(), connection.token())),
+        Err(error) => notify("vakcoder", &format!("Cannot open Admin Console: {error}")),
+    }
 }
 
-/// Builds the console URL from the gateway runtime file contents. Falls
-/// back to the tokenless login page unless pid liveness confirms the file.
-fn admin_url(runtime_json: &str, pid_alive: &dyn Fn(i32) -> bool) -> String {
-    let fallback = "http://127.0.0.1:8901/admin".to_string();
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(runtime_json) else {
-        return fallback;
-    };
-    let pid = v["pid"].as_i64().unwrap_or(0);
-    if pid <= 0 || !pid_alive(pid as i32) {
-        return fallback;
-    }
-    match (v["addr"].as_str(), v["token"].as_str()) {
-        (Some(addr), Some(token)) => {
-            format!("http://{addr}/admin#token={}", urlencode(token))
-        }
-        _ => fallback,
-    }
+fn admin_url(base_url: &str, token: &str) -> String {
+    format!("{base_url}/admin#token={}", urlencode(token))
 }
 
 fn urlencode(s: &str) -> String {
@@ -431,22 +408,11 @@ fn build_menu(states: &[vak_ops::State; 1], watchdog_on: bool) -> Menu {
 mod admin_url_tests {
     use super::admin_url;
 
-    const ALIVE: &dyn Fn(i32) -> bool = &|_| true;
-    const DEAD: &dyn Fn(i32) -> bool = &|_| false;
-
     #[test]
-    fn fresh_runtime_yields_one_click_fragment() {
-        let raw = r#"{"pid":42,"addr":"127.0.0.1:8901","token":"vk_a/b.c~d"}"#;
+    fn connection_yields_one_click_fragment() {
         assert_eq!(
-            admin_url(raw, ALIVE),
+            admin_url("http://127.0.0.1:8901", "vk_a/b.c~d"),
             "http://127.0.0.1:8901/admin#token=vk_a%2Fb.c~d"
         );
-    }
-
-    #[test]
-    fn dead_pid_or_garbage_falls_back_to_login_page() {
-        let raw = r#"{"pid":42,"addr":"127.0.0.1:8901","token":"t"}"#;
-        assert_eq!(admin_url(raw, DEAD), "http://127.0.0.1:8901/admin");
-        assert_eq!(admin_url("not json", ALIVE), "http://127.0.0.1:8901/admin");
     }
 }

@@ -1,33 +1,3 @@
-use std::path::Path;
-
-fn pid_alive(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success())
-    }
-    #[cfg(windows)]
-    {
-        std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-            .output()
-            .is_ok_and(|output| {
-                output.status.success()
-                    && String::from_utf8_lossy(&output.stdout).contains(&pid.to_string())
-            })
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = pid;
-        false
-    }
-}
-
 fn encode_fragment(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -41,35 +11,14 @@ fn encode_fragment(value: &str) -> String {
     encoded
 }
 
-fn url_from_runtime(path: &Path) -> Result<String, String> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|_| "no local gateway runtime found; start the gateway first".to_string())?;
-    let value: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|e| format!("gateway runtime is invalid: {e}"))?;
-    let pid = value
-        .get("pid")
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|pid| u32::try_from(pid).ok())
-        .ok_or_else(|| "gateway runtime has no valid pid".to_string())?;
-    if !pid_alive(pid) {
-        return Err("gateway runtime is stale; start the gateway first".to_string());
-    }
-    let addr = value
-        .get("addr")
-        .and_then(serde_json::Value::as_str)
-        .filter(|addr| !addr.is_empty())
-        .ok_or_else(|| "gateway runtime has no address".to_string())?;
-    let token = value
-        .get("token")
-        .and_then(serde_json::Value::as_str)
-        .filter(|token| !token.is_empty())
-        .ok_or_else(|| "gateway runtime has no token".to_string())?;
-    let base = if addr.starts_with("http://") || addr.starts_with("https://") {
-        addr.to_string()
-    } else {
-        format!("http://{addr}")
-    };
-    Ok(format!("{base}/admin#token={}", encode_fragment(token)))
+fn local_admin_url() -> Result<String, String> {
+    let connection = vak_client::GatewayConnection::discover_local()
+        .map_err(|error| format!("no usable local gateway: {error}"))?;
+    Ok(format!(
+        "{}/admin#token={}",
+        connection.base_url(),
+        encode_fragment(connection.token())
+    ))
 }
 
 fn open_browser(url: &str) -> Result<(), String> {
@@ -93,10 +42,7 @@ fn open_browser(url: &str) -> Result<(), String> {
 }
 
 pub(crate) fn run(print: bool) -> i32 {
-    let path = vak_config::paths::data_home()
-        .join("runtime")
-        .join("gateway.json");
-    let url = match url_from_runtime(&path) {
+    let url = match local_admin_url() {
         Ok(url) => url,
         Err(error) => {
             eprintln!("error: {error}");
