@@ -52,6 +52,22 @@ pub fn write_metadata(
     // Plist first: a bundle without one is not launchable as an app.
     atomic::write(&contents.join("Info.plist"), info_plist(version).as_bytes())?;
     if let Some(dist) = assets.filter(|p| p.exists()) {
+        // Every frontend rebuild produces new content-hashed filenames
+        // (Vite), and copy_dir only ever adds files, never removes ones
+        // absent from the source. Without clearing the destination
+        // first, every reinstall left the previous build's JS and CSS
+        // behind alongside the new one — harmless to which file
+        // actually gets served (index.html always names the current
+        // hash), but unbounded bloat, and confusing to anyone
+        // inspecting the bundle who has no way to tell which files are
+        // live. Only the hashed subtree is cleared, not all of
+        // Resources: that directory also holds install.json (written
+        // after this function returns) and Info.plist (written above).
+        let stale_assets = root.resources_dir().join("assets");
+        if stale_assets.exists() {
+            std::fs::remove_dir_all(&stale_assets)
+                .map_err(|e| format!("clear stale assets at {}: {e}", stale_assets.display()))?;
+        }
         atomic::copy_dir(dist, &root.resources_dir())?;
     }
     Ok(())
@@ -104,5 +120,53 @@ mod tests {
         write_metadata(&root, "0.8.0", None).unwrap();
         let plist = std::fs::read_to_string(root.prefix().join("Contents/Info.plist")).unwrap();
         assert!(plist.contains("0.8.0"));
+    }
+
+    #[test]
+    fn reinstall_removes_the_previous_builds_hashed_assets() {
+        // Every rebuild of the frontend produces new content-hashed
+        // filenames; copy_dir only adds, it never removes. Without
+        // clearing the destination first, a reinstall accumulated every
+        // prior build's JS and CSS forever.
+        let d = tempfile::tempdir().unwrap();
+        let root = InstallRoot::at(d.path().join("VakCoder.app"));
+
+        let first_dist = d.path().join("dist-v1");
+        std::fs::create_dir_all(first_dist.join("assets")).unwrap();
+        std::fs::write(first_dist.join("assets/index-OLDHASH.js"), b"old").unwrap();
+        std::fs::write(
+            first_dist.join("index.html"),
+            b"<script src=assets/index-OLDHASH.js>",
+        )
+        .unwrap();
+        write_metadata(&root, "1.0.0", Some(&first_dist)).unwrap();
+        assert!(
+            root.resources_dir()
+                .join("assets/index-OLDHASH.js")
+                .exists()
+        );
+
+        let second_dist = d.path().join("dist-v2");
+        std::fs::create_dir_all(second_dist.join("assets")).unwrap();
+        std::fs::write(second_dist.join("assets/index-NEWHASH.js"), b"new").unwrap();
+        std::fs::write(
+            second_dist.join("index.html"),
+            b"<script src=assets/index-NEWHASH.js>",
+        )
+        .unwrap();
+        write_metadata(&root, "1.0.1", Some(&second_dist)).unwrap();
+
+        assert!(
+            !root
+                .resources_dir()
+                .join("assets/index-OLDHASH.js")
+                .exists(),
+            "the previous build's asset must be gone, not merely superseded"
+        );
+        assert!(
+            root.resources_dir()
+                .join("assets/index-NEWHASH.js")
+                .exists()
+        );
     }
 }

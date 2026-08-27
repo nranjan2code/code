@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Install bloat
+
+`self install`'s bundle-asset copy (`copy_dir`) only ever adds files; it
+never removes ones absent from the source. The desktop frontend's
+filenames are content-hashed (Vite) and change on every rebuild, so every
+reinstall left the *previous* build's JS and CSS sitting in
+`Contents/Resources/assets/` alongside the new one — harmless to which
+file actually gets served (`index.html` always names the current hash),
+but unbounded bloat, and confusing to anyone inspecting the bundle with
+no way to tell which files are actually live. `write_metadata` now clears
+the hashed `assets/` subtree before copying — only that subtree, not all
+of Resources, which also holds `install.json` and `Info.plist`.
+
 ### Admin console serving a blank shell
 
 The admin console loaded to a blank dark screen with nothing in the
