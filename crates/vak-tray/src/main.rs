@@ -42,6 +42,7 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS as _};
 
 #[derive(Debug, Clone)]
 enum TrayEvent {
@@ -490,8 +491,15 @@ fn main() {
     };
     let watchdog = Arc::new(AtomicBool::new(load_watchdog()));
 
-    let event_loop: EventLoop<TrayEvent> =
-        EventLoop::with_user_event().build().expect("event loop");
+    // Menu-bar-only, set here rather than via the bundle's LSUIElement.
+    // The bundle now launches vak-desktop (see install::bundle), and a
+    // bundle-wide LSUIElement would have hidden that app too. Setting the
+    // policy on our own event loop keeps this process out of the Dock
+    // without constraining the app the bundle actually launches.
+    let event_loop: EventLoop<TrayEvent> = EventLoop::with_user_event()
+        .with_activation_policy(ActivationPolicy::Accessory)
+        .build()
+        .expect("event loop");
 
     let cfg = vak_ops::OpsConfig::detect();
     let proxy = event_loop.create_proxy();
@@ -543,15 +551,11 @@ fn main() {
         .build()
         .expect("tray built");
 
-    // Launching VakCoder.app from Finder/Spotlight runs this binary
-    // (Info.plist CFBundleExecutable), which is LSUIElement -- no Dock
-    // icon, no window of its own. Without this, "opening the app"
-    // produced only a menu-bar dot: correct for a background controller,
-    // wrong for what a user just double-clicked expecting to see
-    // something. open_desktop's single-instance guard makes this safe to
-    // call unconditionally rather than trying to detect whether a window
-    // is already up.
-    open_desktop();
+    // Deliberately does NOT open the chat window here. This process is a
+    // background service (com.vakcoder.tray, RunAtLoad), so doing so
+    // would throw a window in the user's face at every login. Opening
+    // the app is now the bundle's job -- its CFBundleExecutable is
+    // vak-desktop -- and "Open VakCoder" in the menu covers the rest.
 
     let mut ui = Ui {
         tray,

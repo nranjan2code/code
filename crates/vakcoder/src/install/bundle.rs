@@ -12,8 +12,25 @@ use super::layout::InstallRoot;
 /// Bundle identifier, matching `tauri.conf.json`.
 pub const IDENTIFIER: &str = "dev.vakcoder.desktop";
 
-/// `LSUIElement` keeps the tray out of the Dock: a menu-bar agent, per
-/// the macOS HIG.
+/// The bundle launches `vak-desktop`, the actual application.
+///
+/// It used to launch `vakcoder-tray` with `LSUIElement`, which made the
+/// whole `.app` a background menu-bar agent. That had a fatal
+/// consequence: `com.vakcoder.tray` runs the same binary as a launchd
+/// service, so macOS considered the app already running and answered a
+/// double-click in Finder by sending an activate event to that existing
+/// process rather than launching anything. No new process meant no code
+/// of ours ran at all -- double-clicking VakCoder did nothing visible,
+/// and no amount of logic inside the tray's startup could have fixed it,
+/// because startup never happened.
+///
+/// `vak-desktop` is what a user double-clicking the app is asking for,
+/// and it already handles being launched twice: `tauri_plugin_single_instance`
+/// refocuses the open window instead of starting a rival instance. The
+/// tray keeps its menu-bar-only presence by setting
+/// `ActivationPolicy::Accessory` on its own event loop, so it no longer
+/// depends on a bundle-wide `LSUIElement` that would also have hidden
+/// the app this bundle now launches.
 pub fn info_plist(version: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -26,9 +43,8 @@ pub fn info_plist(version: &str) -> String {
   <key>CFBundleVersion</key><string>{version}</string>
   <key>CFBundleShortVersionString</key><string>{version}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleExecutable</key><string>vakcoder-tray</string>
+  <key>CFBundleExecutable</key><string>vak-desktop</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
-  <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
@@ -99,9 +115,20 @@ mod tests {
         let p = info_plist("1.2.3");
         assert!(p.contains("<key>CFBundleShortVersionString</key><string>1.2.3</string>"));
         assert!(p.contains(IDENTIFIER));
+        // The bundle launches the app the user double-clicks, not the
+        // background menu-bar agent. When it launched the tray under
+        // LSUIElement, macOS treated the app as already running (the
+        // tray also runs as a launchd service) and answered a
+        // double-click by activating that process instead of launching
+        // anything -- so opening VakCoder did nothing at all.
         assert!(
-            p.contains("<key>LSUIElement</key><true/>"),
-            "stays out of the Dock"
+            p.contains("<key>CFBundleExecutable</key><string>vak-desktop</string>"),
+            "the bundle must launch the desktop app"
+        );
+        assert!(
+            !p.contains("LSUIElement"),
+            "a bundle-wide LSUIElement would hide the app this bundle launches; \
+             the tray sets ActivationPolicy::Accessory on its own event loop instead"
         );
     }
 
