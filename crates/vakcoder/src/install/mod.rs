@@ -44,10 +44,6 @@ const COMPONENTS: &[ComponentSpec] = &[
         required: true,
     },
     ComponentSpec {
-        name: "vakcoder-tray",
-        required: false,
-    },
-    ComponentSpec {
         name: "vak-desktop",
         required: false,
     },
@@ -175,6 +171,11 @@ fn install_into(root: &InstallRoot, force: bool) -> Result<Manifest, String> {
 
     tx.commit()?;
 
+    // Before the desktop app is opened again, retire the old independently
+    // launchd-owned tray. It lived inside the same .app bundle and made macOS
+    // activate a background process instead of launching the desktop window.
+    retire_legacy_tray(root);
+
     // Pin the gateway's bearer token into the canonical .env, once,
     // rather than letting it re-mint on every boot (the un-pinned
     // fallback in vak-server::AppState::new). A token that changes every
@@ -207,6 +208,26 @@ fn install_into(root: &InstallRoot, force: bool) -> Result<Manifest, String> {
         ));
     }
     Ok(m)
+}
+
+fn retire_legacy_tray(root: &InstallRoot) {
+    let retired = vak_ops::services::RETIRED_SERVICES;
+    if !retired.is_empty() {
+        let _ = vak_ops::services::services_uninstall(
+            retired,
+            &vak_ops::services::Paths::default(),
+            &vak_ops::services::SystemRunner,
+        );
+    }
+    let obsolete_binary = root.bin_dir().join("vakcoder-tray");
+    if let Err(e) = std::fs::remove_file(&obsolete_binary)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        eprintln!(
+            "warning: could not remove retired tray binary {}: {e}",
+            obsolete_binary.display()
+        );
+    }
 }
 
 /// Ensure `VAKCODER_GATEWAY_TOKEN` is set in the canonical `.env`,
@@ -414,6 +435,16 @@ pub fn run_services_sync(prefix: Option<PathBuf>, names: Vec<String>) -> i32 {
         }
     };
     let requested: Vec<&str> = if names.is_empty() {
+        let retired = vak_ops::services::RETIRED_SERVICES;
+        if !retired.is_empty()
+            && let Err(e) = vak_ops::services::services_uninstall(
+                retired,
+                &vak_ops::services::Paths::default(),
+                &vak_ops::services::SystemRunner,
+            )
+        {
+            eprintln!("warning: retired tray teardown incomplete: {e}");
+        }
         vak_ops::services::SERVICES.iter().map(|d| d.name).collect()
     } else {
         names.iter().map(String::as_str).collect()

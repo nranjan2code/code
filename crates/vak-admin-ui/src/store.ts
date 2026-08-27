@@ -63,17 +63,25 @@ function describe(ev: SystemEvent): { kind: Toast["kind"]; text: string } | null
   }
 }
 
+// Bumped whenever approval-related events arrive; consumers createResource
+// on this to refetch the pending list live.
+const [approvalsVersion, bumpApprovals] = createSignal(0);
+const [sessionsVersion, bumpSessions] = createSignal(0);
+const [statsVersion, bumpStats] = createSignal(0);
+const [bestofnVersion, bumpBestofn] = createSignal(0);
+export { approvalsVersion, sessionsVersion, statsVersion, bestofnVersion };
+
 export function ingest(ev: SystemEvent) {
   const d = describe(ev);
   if (d) pushToast(d.kind, d.text);
   setFeed((prev) => [...prev.slice(-59), { id: ++feedSeq, ts: new Date().toISOString(), event: ev }]);
   if (ev.type.startsWith("Approval")) bumpApprovals((v) => v + 1);
+  if (ev.type === "SessionCreated" || ev.type === "SessionEntryAppended" || ev.type === "Agent" || ev.type === "ConfigChanged") {
+    bumpSessions((v) => v + 1);
+    bumpStats((v) => v + 1);
+    bumpBestofn((v) => v + 1);
+  }
 }
-
-// Bumped whenever approval-related events arrive; consumers createResource
-// on this to refetch the pending list live.
-const [approvalsVersion, bumpApprovals] = createSignal(0);
-export { approvalsVersion };
 
 let source: EventSource | null = null;
 let backoffMs = 1000;

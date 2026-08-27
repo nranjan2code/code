@@ -1,6 +1,6 @@
 # 28 — Operations: service control plane
 
-Design notes behind `vak-ops`, `vakcoder-tray` and the `/ops` HTTP routes
+Design notes behind `vak-ops`, the desktop-owned tray, and the `/ops` HTTP routes
 (operational how-to lives in `docs/hosting.md`).
 
 ## Principle
@@ -29,16 +29,20 @@ Rules:
 4. **Uninstall never touches data.** Only plists/units are removed;
    sessions, memory and tasks under `<home>` are untouched.
 
-## Tray (`vakcoder-tray`)
+## Tray (owned by `vak-desktop`)
 
-- Colour-coded dot: green both-up, amber degraded, red down, grey not
-  installed. Polls every 3 s on a worker thread; UI updates via winit user
-  events; menu rebuilt per refresh.
-- Watchdog (persisted in the data home): when a previously
-  running service disappears, restarts it at most once per minute and
-  posts a system notification.
-- Menu actions map to encoded ids (`(slot << 8) | action`) forwarded as
-  user events so all mutation runs on the UI thread.
+The desktop process owns the menu-bar icon and the visible window. It never
+runs as a separate launchd service: a tray executable launched independently
+from inside the same `.app` bundle can cause LaunchServices to activate that
+background-only process when the user opens VakCoder. Close hides the main
+window; Dock/Finder re-open, tray Open, and repeated launches all reveal and
+focus that same window. Gateway and Telegram remain the only durable services.
+
+- A left click and the `Open VakCoder` menu item reveal and focus the main
+  window; `Quit VakCoder` ends the desktop process explicitly.
+- Closing the main window hides it, preserving the local embedded backend and
+  the tray until the user explicitly quits. Durable gateway and Telegram work
+  remains independently supervised by the platform service manager.
 
 ## Token pinning
 

@@ -1,15 +1,30 @@
 import type {
   BestOfNRun,
   ConfigInfo,
+  DiscoveredModelsResponse,
+  FinOpsStatus,
   GatewayStatus,
   HealthInfo,
+  HookConfig,
   InboxEntry,
+  McpListResponse,
+  McpServerConfig,
+  MemoryItem,
+  OpsDiagnostics,
+  OpsStatus,
   PendingApproval,
+  ProviderListResponse,
   RebuildStats,
   SearchHit,
   SecurityEvent,
+  SessionCheckpoint,
+  SessionDiff,
   SessionListItem,
+  SkillItem,
+  SkillProposal,
+  TaskItem,
   TranscriptEntry,
+  WorkReceipt,
 } from "./types";
 
 export class AuthRequired extends Error {
@@ -55,7 +70,7 @@ export const api = {
   transcript: (
     id: string,
     opts: { limit?: number; offset?: number; kind?: string; role?: string; refresh?: boolean } = {},
-  ): Promise<{ session_id: string; entries: TranscriptEntry[]; offset: number; has_more: boolean }> => {
+  ): Promise<{ session_id: string; entries: TranscriptEntry[]; offset: number; total: number; has_more: boolean }> => {
     const q = new URLSearchParams();
     if (opts.limit != null) q.set("limit", String(opts.limit));
     if (opts.offset != null) q.set("offset", String(opts.offset));
@@ -109,7 +124,7 @@ export const api = {
       body: JSON.stringify({ mode }),
     }).then((r) => void handle(r)),
 
-  patchConfig: (patch: { provider?: string; model?: string }): Promise<void> =>
+  patchConfig: (patch: { provider?: string; model?: string; max_turns?: number; theme?: string }): Promise<void> =>
     fetch("/config", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -151,6 +166,127 @@ export const api = {
 
   bestofn: (): Promise<{ runs: BestOfNRun[]; total: number }> =>
     fetch("/admin/api/bestofn").then((r) => handle(r)),
+
+  keepBestRun: (sessionId: string): Promise<void> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/keep`, { method: "POST" }).then((r) =>
+      void handle(r),
+    ),
+
+  discardBestRun: (sessionId: string): Promise<void> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/discard`, { method: "POST" }).then((r) =>
+      void handle(r),
+    ),
+
+  diff: (sessionId: string): Promise<SessionDiff> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/diff`).then((r) => handle(r)),
+
+  receipts: (sessionId: string): Promise<WorkReceipt[]> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/receipts`).then((r) => handle(r)),
+
+  checkpoints: (sessionId: string): Promise<{ checkpoints: SessionCheckpoint[] }> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/checkpoints`).then((r) => handle(r)),
+
+  restoreCheckpoint: (sessionId: string, seq: number): Promise<void> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/checkpoints/${seq}/restore`, {
+      method: "POST",
+    }).then((r) => void handle(r)),
+
+  providers: (): Promise<ProviderListResponse> =>
+    fetch("/providers").then((r) => handle(r)),
+
+  models: (providerName: string): Promise<DiscoveredModelsResponse> =>
+    fetch(`/providers/${encodeURIComponent(providerName)}/models`).then((r) => handle(r)),
+
+  setProviderKey: (provider: string, key: string): Promise<void> =>
+    fetch("/config/key", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider, key }),
+    }).then((r) => void handle(r)),
+
+  deleteProviderKey: (provider: string): Promise<void> =>
+    fetch("/config/key", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider }),
+    }).then((r) => void handle(r)),
+
+  finops: (): Promise<FinOpsStatus> =>
+    fetch("/finops").then((r) => handle(r)),
+
+  opsStatus: (): Promise<OpsStatus> =>
+    fetch("/ops/status").then((r) => handle(r)),
+
+  opsDiagnostics: (): Promise<OpsDiagnostics> =>
+    fetch("/ops/diagnostics").then((r) => handle(r)),
+
+  mcpServers: (): Promise<McpListResponse> =>
+    fetch("/config/mcp").then((r) => handle(r)),
+
+  putMcpServers: (servers: Record<string, McpServerConfig>): Promise<void> =>
+    fetch("/config/mcp", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ servers }),
+    }).then((r) => void handle(r)),
+
+  hooks: (): Promise<{ hooks: HookConfig[] }> =>
+    fetch("/config/hooks").then((r) => handle(r)),
+
+  putHooks: (hooks: HookConfig[]): Promise<void> =>
+    fetch("/config/hooks", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hooks }),
+    }).then((r) => void handle(r)),
+
+  skills: (): Promise<{ skills: SkillItem[] }> =>
+    fetch("/skills").then((r) => handle(r)),
+
+  skillProposals: (): Promise<{ proposals: SkillProposal[] }> =>
+    fetch("/skills/proposals").then((r) => handle(r)),
+
+  promoteProposal: (id: string): Promise<void> =>
+    fetch(`/skills/proposals/${encodeURIComponent(id)}/promote`, { method: "POST" }).then((r) =>
+      void handle(r),
+    ),
+
+  rejectProposal: (id: string): Promise<void> =>
+    fetch(`/skills/proposals/${encodeURIComponent(id)}/reject`, { method: "POST" }).then((r) =>
+      void handle(r),
+    ),
+
+  tasks: (): Promise<{ tasks: TaskItem[] }> =>
+    fetch("/tasks").then((r) => handle(r)),
+
+  runTaskNow: (id: string): Promise<void> =>
+    fetch(`/tasks/${encodeURIComponent(id)}/run-now`, { method: "POST" }).then((r) => void handle(r)),
+
+  patchTask: (id: string, patch: Partial<TaskItem>): Promise<void> =>
+    fetch(`/tasks/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }).then((r) => void handle(r)),
+
+  deleteTask: (id: string): Promise<void> =>
+    fetch(`/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }).then((r) => void handle(r)),
+
+  memory: (): Promise<{ notes: MemoryItem[] }> =>
+    fetch("/memory").then((r) => handle(r)),
+
+  addMemory: (tier: "profile" | "project", content: string, topic?: string): Promise<void> =>
+    fetch("/memory", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tier, content, topic }),
+    }).then((r) => void handle(r)),
+
+  forgetMemory: (noteId: string): Promise<void> =>
+    fetch(`/memory/${encodeURIComponent(noteId)}`, { method: "DELETE" }).then((r) => void handle(r)),
+
+  doctor: (): Promise<{ report: string; ok: boolean }> =>
+    fetch("/doctor").then((r) => handle(r)),
 
   inbox: (unreadOnly = false, limit = 100): Promise<{ entries: InboxEntry[]; unread_count: number }> => {
     const p = new URLSearchParams({ limit: String(limit) });

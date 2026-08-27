@@ -82,8 +82,9 @@ libc = "0.2"
 tempfile = "3"
 # Linux filesystem containment: safe wrapper over the Landlock LSM syscalls
 landlock = "0.4"
-# Desktop shell (docs/design/20-tauri-desktop.md): native webview + Rust host
-tauri = "2.11"
+# Desktop shell (docs/design/20-tauri-desktop.md): native webview + Rust host.
+# `tray-icon` keeps the window and menu-bar lifecycle in this one app process.
+tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
 # Static assets/context codegen for the tauri app at compile time
 tauri-build = "2.6"
 tauri-plugin-dialog = "2.7"

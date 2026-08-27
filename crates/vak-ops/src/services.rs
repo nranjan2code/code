@@ -66,13 +66,12 @@ pub const SERVICES: &[ServiceDef] = &[
         args: &["telegram", "--server", "http://127.0.0.1:8901"],
         log_file: "telegram.log",
     },
-    ServiceDef {
-        name: "com.vakcoder.tray",
-        bin_file: "vakcoder-tray",
-        args: &[],
-        log_file: "tray.log",
-    },
 ];
+
+/// Obsolete GUI launch agents that must be removed during an upgrade. The
+/// desktop app now owns its tray, so a separate launchd tray must never keep
+/// the bundle's LaunchServices identity alive without a window to reveal.
+pub const RETIRED_SERVICES: &[&str] = &["com.vakcoder.tray"];
 
 impl ServiceDef {
     /// Resolve against an install prefix: `bin_dir` holds the release

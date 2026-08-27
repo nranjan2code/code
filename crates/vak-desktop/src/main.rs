@@ -11,7 +11,55 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
+
+const TRAY_OPEN_ID: &str = "desktop.open";
+const TRAY_QUIT_ID: &str = "desktop.quit";
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// The desktop process is VakCoder's only GUI lifecycle owner. Keeping the
+/// tray here means a Dock/Finder activation and a tray activation target the
+/// same process and always have a window to reveal.
+fn install_tray(app: &tauri::App) -> tauri::Result<()> {
+    let open = MenuItem::with_id(app, TRAY_OPEN_ID, "Open VakCoder", true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(app, TRAY_QUIT_ID, "Quit VakCoder", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &separator, &quit])?;
+    let mut tray = TrayIconBuilder::with_id("vakcoder")
+        .menu(&menu)
+        .tooltip("VakCoder")
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            TRAY_OPEN_ID => show_main_window(app),
+            TRAY_QUIT_ID => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if matches!(
+                event,
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                }
+            ) {
+                show_main_window(tray.app_handle());
+            }
+        });
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
+    tray = tray.icon(icon);
+    tray.build(app)?;
+    Ok(())
+}
 
 #[derive(Clone)]
 struct Backend {
@@ -365,11 +413,7 @@ fn main() {
         // Must be registered first so it can bail out before any other
         // plugin or the setup hook does work.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            show_main_window(app);
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -379,6 +423,7 @@ fn main() {
         })
         .manage(pty::PtyMap::default())
         .setup(|app| {
+            install_tray(app)?;
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 // Same secret-loading contract as the CLI: user-level
@@ -419,7 +464,24 @@ fn main() {
             pty::pty_write,
             pty::pty_resize
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
+        .map(|app| {
+            app.run(|app, event| match event {
+                #[cfg(target_os = "macos")]
+                RunEvent::Reopen { .. } => show_main_window(app),
+                RunEvent::WindowEvent {
+                    label,
+                    event: WindowEvent::CloseRequested { api, .. },
+                    ..
+                } if label == "main" => {
+                    api.prevent_close();
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.hide();
+                    }
+                }
+                _ => {}
+            })
+        })
         .inspect_err(|e| eprintln!("fatal: {e}"))
         .ok();
 }

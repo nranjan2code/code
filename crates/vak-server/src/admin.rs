@@ -205,13 +205,11 @@ pub(crate) async fn session_transcript_admin(
         role: q.role,
         ..Default::default()
     };
-    match store.query(&filter, offset.saturating_add(limit)) {
-        Ok(mut entries) => {
-            entries.sort_by(|a, b| a.ts.cmp(&b.ts).then(a.entry_id.cmp(&b.entry_id)));
-            let has_more = entries.len() > offset + limit;
+    match store.query_page(&filter, limit, offset, true) {
+        Ok((entries, total)) => {
+            let has_more = offset.saturating_add(entries.len()) < total;
             let page: Vec<serde_json::Value> = entries
                 .iter()
-                .skip(offset)
                 .map(|e| {
                     serde_json::json!({
                         "entry_id": e.entry_id,
@@ -220,7 +218,7 @@ pub(crate) async fn session_transcript_admin(
                         "role": e.role,
                         "tool_name": e.tool_name,
                         "is_error": e.is_error,
-                        "content": truncate_chars(&e.content_text, 2000),
+                        "content": truncate_chars(&e.content_text, 16000),
                     })
                 })
                 .collect();
@@ -228,6 +226,7 @@ pub(crate) async fn session_transcript_admin(
                 "session_id": session_id,
                 "entries": page,
                 "offset": offset,
+                "total": total,
                 "has_more": has_more,
             }))
         }

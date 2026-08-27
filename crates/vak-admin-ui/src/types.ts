@@ -109,3 +109,125 @@ export interface RebuildStats {
   fts_rows?: number;
   error?: string;
 }
+
+export interface ProviderSummary {
+  name: string;
+  env_var: string;
+  requires_key: boolean;
+  configured: boolean;
+}
+
+export interface ProviderListResponse {
+  current: string;
+  current_model: string;
+  current_configured: boolean;
+  providers: ProviderSummary[];
+}
+
+export interface DiscoveredModelsResponse {
+  provider: string;
+  models: string[];
+  error?: string;
+}
+
+export interface FinOpsStatus {
+  total_spend_usd?: number;
+  total_cost?: number;
+  total_input_tokens?: number;
+  total_output_tokens?: number;
+  budget_cap_usd?: number | null;
+  budget_admission?: string;
+  budget_exhausted?: boolean;
+  alert_rows?: Array<{ ts: string; level: string; message: string }>;
+  currency?: string;
+}
+
+export interface OpsStatus {
+  gateway: { state: string };
+  telegram: { state: string };
+  gateway_healthy: boolean;
+}
+
+export interface OpsDiagnostics {
+  health: HealthInfo;
+  services: OpsStatus;
+  gateway: {
+    enabled: boolean;
+    bindings: Array<{ target: string; session_id: string }>;
+    approvals: { mode: string; approver: string | null; pending: number };
+  };
+  flows: Array<{ name: string; runs: number }>;
+}
+
+export interface McpServerConfig {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  network?: boolean;
+}
+
+export interface HookConfig {
+  event: string;
+  matcher?: string | null;
+  command: string;
+  timeout_ms: number;
+  enabled: boolean;
+}
+
+export interface SkillItem {
+  name: string;
+  path?: string;
+  description?: string;
+}
+
+export interface SkillProposal {
+  id: string;
+  name: string;
+  description: string;
+  prompt_summary: string;
+  tool_pattern: string;
+  created_at: string;
+  status: string;
+}
+
+export interface TaskItem {
+  id: string;
+  name: string;
+  schedule: string;
+  script?: string | null;
+  prompt?: string | null;
+  pinned_model?: string | null;
+  enabled: boolean;
+  last_run?: string | null;
+  next_run?: string | null;
+}
+
+export interface MemoryItem {
+  id: string;
+  ts: string;
+  tier: "profile" | "project" | string;
+  topic?: string;
+  content: string;
+}
+
+export interface WorkReceipt {
+  step?: number;
+  provider?: string;
+  model?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  cost_usd?: number;
+  latency_ms?: number;
+  ts?: string;
+}
+
+export interface SessionDiff {
+  diff: string;
+}
+
+export interface SessionCheckpoint {
+  seq: number;
+  ts: string;
+  commit_hash?: string;
+  message?: string;
+}

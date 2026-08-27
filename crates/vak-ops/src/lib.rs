@@ -21,9 +21,9 @@ use std::sync::OnceLock;
 
 pub mod services;
 pub use services::{
-    CommandRunner, Paths, SERVICES, ServiceDef, ServiceRow, ServiceSpec, SyncAction, SyncOutcome,
-    SystemRunner, render_launchd_plist, render_systemd_unit, resolve_specs, services_status,
-    services_sync, services_uninstall, status_specs, sync_specs,
+    CommandRunner, Paths, RETIRED_SERVICES, SERVICES, ServiceDef, ServiceRow, ServiceSpec,
+    SyncAction, SyncOutcome, SystemRunner, render_launchd_plist, render_systemd_unit,
+    resolve_specs, services_status, services_sync, services_uninstall, status_specs, sync_specs,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

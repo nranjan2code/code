@@ -150,7 +150,7 @@ mkdir -p "$OUT"
 # Components, mirroring COMPONENTS in crates/vakcoder/src/install/mod.rs.
 # Only vakcoder is required; the rest ship when the build produced them.
 REQUIRED=("vakcoder")
-OPTIONAL=("vakcoder-tray" "vak-desktop" "vak-delivery-worker")
+OPTIONAL=("vak-desktop" "vak-delivery-worker")
 
 collected=()
 for name in "${REQUIRED[@]}"; do

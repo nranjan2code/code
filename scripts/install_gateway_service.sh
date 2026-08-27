@@ -108,26 +108,12 @@ TPLIST
     echo "✓ telegram bridge service installed (launchd)"
   fi
 
-  # Menu-bar controller (watchdog + start/stop indicators).
+  # The desktop process owns the menu-bar icon. A separately launchd-owned
+  # tray inside VakCoder.app prevents Finder from launching the desktop.
   if [[ "${3:-}" == "--with-tray" ]]; then
-    TRAY_PLIST="$PLIST_DIR/com.vakcoder.tray.plist"
-    TMPJ3=$(mktemp /tmp/vak-tray.XXXXXX).json
-    cat > "$TMPJ3" <<TRAYJ
-{
-  "Label": "com.vakcoder.tray",
-  "ProgramArguments": ["$BIN_DIR/vakcoder-tray"],
-  "EnvironmentVariables": { "HOME": "$HOME" },
-  "RunAtLoad": true,
-  "KeepAlive": true,
-  "StandardOutPath": "$HOME/.vakcoder/logs/tray.log",
-  "StandardErrorPath": "$HOME/.vakcoder/logs/tray.log"
-}
-TRAYJ
-    plutil -convert xml1 "$TMPJ3" -o "$TRAY_PLIST"
-    rm -f "$TMPJ3"
     launchctl bootout "gui/$(id -u)/com.vakcoder.tray" 2>/dev/null || true
-    launchctl bootstrap "gui/$(id -u)" "$TRAY_PLIST"
-    echo "✓ tray controller installed (menu bar)"
+    rm -f "$PLIST_DIR/com.vakcoder.tray.plist"
+    echo "✓ retired separate tray controller (desktop now owns the menu bar)"
   fi
 
   echo "→ manage with:  launchctl kickstart -k gui/\$(id -u)/com.vakcoder.gateway"

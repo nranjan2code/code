@@ -130,6 +130,18 @@ impl Store {
         filter: &SearchFilter,
         limit: usize,
     ) -> Result<Vec<IndexedEntry>, StoreError> {
+        self.query_page(filter, limit, 0, false)
+            .map(|(entries, _)| entries)
+    }
+
+    /// Structured query with pagination, ordering, and total matching count.
+    pub fn query_page(
+        &self,
+        filter: &SearchFilter,
+        limit: usize,
+        offset: usize,
+        ascending: bool,
+    ) -> Result<(Vec<IndexedEntry>, usize), StoreError> {
         let conn = self.conn();
         let limit = limit.clamp(1, 500);
 
@@ -171,18 +183,22 @@ impl Store {
             conditions.join(" AND ")
         };
 
+        let count_sql = format!("SELECT COUNT(*) FROM entries WHERE {where_clause}");
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+
+        let total: usize = conn.query_row(&count_sql, param_refs.as_slice(), |row| row.get(0))?;
+
+        let order_dir = if ascending { "ASC" } else { "DESC" };
         let sql = format!(
             "SELECT entry_id, session_id, project_hash, parent_id, ts,
                     kind, role, provider, model, tool_name,
                     content_text, is_error
              FROM entries
              WHERE {where_clause}
-             ORDER BY ts DESC
-             LIMIT {limit}"
+             ORDER BY ts {order_dir}, entry_id {order_dir}
+             LIMIT {limit} OFFSET {offset}"
         );
-
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-            params.iter().map(|p| p.as_ref()).collect();
 
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(param_refs.as_slice(), |row| {
@@ -207,7 +223,7 @@ impl Store {
         for row in rows {
             entries.push(row?);
         }
-        Ok(entries)
+        Ok((entries, total))
     }
 
     /// List all distinct session IDs with entry counts.
@@ -219,7 +235,6 @@ impl Store {
                     MIN(ts) as first_ts,
                     MAX(ts) as last_ts
              FROM entries
-             WHERE kind = 'message'
              GROUP BY session_id
              ORDER BY last_ts DESC",
         )?;
@@ -456,22 +471,63 @@ mod tests {
             &[user_msg("first"), assistant_msg("second")],
         );
         write_session(home, cwd, "sess-bbb", &[user_msg("third")]);
+        write_session(home, cwd, "sess-empty", &[]);
 
         let store = Store::open(home).unwrap();
         store.rebuild(home).unwrap();
 
         let sessions = store.list_sessions().unwrap();
-        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions.len(), 3);
         let aaa = sessions
             .iter()
             .find(|s| s.session_id == "sess-aaa")
             .unwrap();
-        assert_eq!(aaa.entry_count, 2);
+        assert_eq!(aaa.entry_count, 3); // 1 header + 2 messages
         let bbb = sessions
             .iter()
             .find(|s| s.session_id == "sess-bbb")
             .unwrap();
-        assert_eq!(bbb.entry_count, 1);
+        assert_eq!(bbb.entry_count, 2); // 1 header + 1 message
+        let empty = sessions
+            .iter()
+            .find(|s| s.session_id == "sess-empty")
+            .unwrap();
+        assert_eq!(empty.entry_count, 1); // 1 header
+    }
+
+    #[test]
+    fn query_page_paginates_and_orders_correctly() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let cwd = dir.path();
+        write_session(
+            home,
+            cwd,
+            "sess-p",
+            &[user_msg("msg 1"), assistant_msg("msg 2"), user_msg("msg 3")],
+        );
+
+        let store = Store::open(home).unwrap();
+        store.rebuild(home).unwrap();
+
+        let filter = SearchFilter {
+            session_id: Some("sess-p".into()),
+            ..Default::default()
+        };
+
+        // Total entries = 1 header + 3 messages = 4
+        let (page1, total) = store.query_page(&filter, 2, 0, true).unwrap();
+        assert_eq!(total, 4);
+        assert_eq!(page1.len(), 2);
+        assert_eq!(page1[0].kind, crate::EntryKind::Header);
+
+        let (page2, total2) = store.query_page(&filter, 2, 2, true).unwrap();
+        assert_eq!(total2, 4);
+        assert_eq!(page2.len(), 2);
+
+        let (page3, total3) = store.query_page(&filter, 2, 4, true).unwrap();
+        assert_eq!(total3, 4);
+        assert_eq!(page3.len(), 0);
     }
 
     #[test]
