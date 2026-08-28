@@ -871,6 +871,7 @@ fn main() {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::{TRAY_FLAG, is_tray_launch, requested_project};
 
