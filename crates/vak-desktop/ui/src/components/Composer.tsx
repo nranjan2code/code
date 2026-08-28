@@ -14,7 +14,7 @@ function Ring(props: { pct: number; label: string }): JSX.Element {
   const clamped = () => Math.max(0, Math.min(1, props.pct));
   const color = () => (clamped() > 0.85 ? "#d86f72" : clamped() > 0.6 ? "#d4a85d" : "#df795f");
   return (
-    <div class="ring" title={props.label}>
+    <div class="ring" title={props.label} role="img" aria-label={props.label}>
       <svg width="24" height="24" viewBox="0 0 24 24">
         <circle cx="12" cy="12" r={r} fill="none" stroke="#34342f" stroke-width="3" />
         <circle
@@ -394,23 +394,31 @@ export default function Composer(props: { cwd: string }) {
           <div class="composer-lead">
             <button
               class="composer-project"
-              title={`${props.cwd} — click to switch project`}
+              title={`${props.cwd} — open the workspace switcher`}
+              aria-label={`Workspace: ${props.cwd}. Open workspace switcher`}
               onClick={() => void switchProject()}
             >
               <Icon name="folder" size={14} />
-              <span>{workspaceSwitching() ? "Opening…" : props.cwd.split("/").pop()}</span>
+              <span class="composer-control-copy">
+                <small>Workspace</small>
+                <strong>{workspaceSwitching() ? "Opening…" : props.cwd.split("/").pop()}</strong>
+              </span>
               <Icon name="chevron" size={12} />
             </button>
-            <select
-              class="composer-mode"
-              value={health()?.permission_mode ?? ""}
-              onChange={(e) => void changeMode(e.currentTarget.value)}
-              title="Permission mode — applies to new tool calls immediately"
-            >
-              <option value="ReadOnly">Read only</option>
-              <option value="WorkspaceWrite">Workspace write</option>
-              <option value="FullAccess">Full access</option>
-            </select>
+            <label class="composer-select-control">
+              <span>Permissions</span>
+              <select
+                class="composer-mode"
+                value={health()?.permission_mode ?? ""}
+                onChange={(e) => void changeMode(e.currentTarget.value)}
+                title="Permission mode — applies to new tool calls immediately"
+                aria-label="Permission mode"
+              >
+                <option value="ReadOnly">Read only</option>
+                <option value="WorkspaceWrite">Workspace write</option>
+                <option value="FullAccess">Full access</option>
+              </select>
+            </label>
             <button class="composer-context" title="Add file context (@)" onClick={beginMention}>
               <span class="composer-hint">@ to add files</span>
             </button>
@@ -431,7 +439,7 @@ export default function Composer(props: { cwd: string }) {
               aria-label="Attach images"
               onClick={() => fileInput.click()}
             >
-              <Icon name="add" size={14} />
+              <Icon name="add" size={14} /> <span>Attach</span>
             </button>
           </div>
           <Show when={goalArmed()}>
@@ -474,22 +482,27 @@ export default function Composer(props: { cwd: string }) {
           <div class="composer-actions">
             <button
               class="composer-goal"
-              title="Goal mode — audited completion (docs/design/27 Phase H)"
-              aria-label="Configure goal mode"
+              title="Goal mode — define success criteria and audit completion"
+              aria-label={goalArmed() ? "Goal mode is armed. Edit goal" : "Configure goal mode"}
               onClick={() => setGoalFormOpen(!goalFormOpen())}
             >
               <Icon name="spark" size={14} />
+              <span>Goal</span>
             </button>
-            <select
-              class="composer-density"
-              value={density()}
-              onChange={(e) => setDensity(e.currentTarget.value as Density)}
-              title="Transcript detail"
-            >
-              <option value="summary">summary</option>
-              <option value="normal">normal</option>
-              <option value="verbose">verbose</option>
-            </select>
+            <label class="composer-select-control composer-detail-control">
+              <span>Detail</span>
+              <select
+                class="composer-density"
+                value={density()}
+                onChange={(e) => setDensity(e.currentTarget.value as Density)}
+                title="Transcript detail"
+                aria-label="Transcript detail"
+              >
+                <option value="summary">Summary</option>
+                <option value="normal">Normal</option>
+                <option value="verbose">Verbose</option>
+              </select>
+            </label>
             <span class="composer-tokens" title={`Input ${inTok()} tokens · output ${outTok()} tokens`}>
               {inTok()} in · {outTok()} out
             </span>
@@ -500,8 +513,9 @@ export default function Composer(props: { cwd: string }) {
             <Show when={isRunning(activeId())}>
               <button class="composer-stop" title="Stop (Esc)" aria-label="Stop running task" onClick={stopRun}><Icon name="stop" size={15} /><span>Stop</span></button>
             </Show>
-            <button class="send-button" title="Send (Enter)" aria-label="Send prompt" disabled={!text().trim() && pendingFiles().length === 0} onClick={submit}>
+            <button class="send-button" title="Send prompt (Enter)" aria-label="Send prompt" disabled={!text().trim() && pendingFiles().length === 0} onClick={submit}>
               <Icon name="send" size={16} />
+              <span>Send</span>
             </button>
           </div>
         </div>
