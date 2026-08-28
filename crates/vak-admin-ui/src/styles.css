@@ -135,7 +135,8 @@ html, body {
   text-align: center;
   box-shadow: var(--shadow-lg);
 }
-.login-logo { font-size: 32px; color: var(--accent); margin-bottom: 6px; }
+.login-logo { width: 64px; height: 64px; margin: 0 auto 10px; }
+.login-logo img { display: block; width: 100%; height: 100%; border-radius: var(--radius-lg); }
 .login-card h1 { font-size: 18px; font-weight: 600; margin: 0 0 6px; color: var(--text); }
 .login-card .hint { color: var(--muted); font-size: 12px; margin: 0 0 20px; }
 .login-card .hint code {
@@ -211,8 +212,18 @@ html, body {
   color: var(--text);
 }
 .brand-mark {
-  color: var(--accent-bright);
-  font-size: 16px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
 .sidebar nav a {

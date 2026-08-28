@@ -89,7 +89,7 @@ function Login() {
   return (
     <div class="login-wrap">
       <form class="login-card" onSubmit={submit}>
-        <div class="login-logo">◆</div>
+        <div class="login-logo"><img src="/admin/vak-icon.png" alt="" /></div>
         <h1>vak admin</h1>
         <p class="hint">Paste the token printed by <code>vak serve</code></p>
         <input
@@ -2651,7 +2651,7 @@ export default function App() {
       <Match when={authed() === true}>
         <div class="shell">
           <aside class="sidebar">
-            <div class="brand"><span class="brand-mark">◆</span> vak</div>
+            <div class="brand"><span class="brand-mark"><img src="/admin/vak-icon.png" alt="" /></span> vak</div>
             <nav>
               <For each={NAV}>
                 {(item) => (
