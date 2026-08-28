@@ -14,13 +14,30 @@
 //! than a local session already has. The allowlist approval step (Phase 1)
 //! is what gates a channel reaching a workspace at all; this module does
 //! not weaken that boundary.
+//!
+//! Per-channel permission overrides (docs/design/34 "Per-channel
+//! permission mode") make the pool key a *pair*: `(workspace, override)`.
+//! Two channels sharing a workspace but wanting different trust levels get
+//! two distinct `Core` instances, because a `Core`'s permission mode is a
+//! single piece of shared mutable state — handing one `Core` to two
+//! channels with different intended modes would let whichever channel
+//! resolved first dictate the other's permissions. The override itself is
+//! capped in `apply_permission_override` and can only ever reduce, never
+//! raise, what the workspace's own config already grants.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use vak_config::PermissionMode;
 use vak_core::Core;
+
+/// Pool identity. `None` in the second slot is "inherit this workspace's
+/// own configured mode" — today's behavior and the key the gateway's own
+/// default entry always uses, so an un-overridden channel keeps sharing
+/// the exact `Core` it shares now.
+type PoolKey = (PathBuf, Option<PermissionMode>);
 
 struct PooledEntry {
     core: Core,
@@ -32,6 +49,33 @@ pub struct PoolStatusEntry {
     pub workspace: PathBuf,
     pub is_default: bool,
     pub idle_secs: u64,
+    /// The permission override this pooled instance was keyed by, if any,
+    /// so the panel can tell two same-workspace instances apart.
+    pub permission_override: Option<PermissionMode>,
+    /// What this instance actually resolved to after capping.
+    pub effective_permission_mode: PermissionMode,
+}
+
+/// Clamp a requested per-channel override to what the workspace's own
+/// resolved configuration already grants, and pin the result onto `core`.
+///
+/// `core` must be freshly constructed by `Core::new_with_trust`, so its
+/// `effective_permission_mode()` is precisely the workspace's own
+/// configured mode — the same value a local `vak` run in that workspace
+/// would get. That value is the ceiling. `capped_by` is a `min`, so the
+/// result is provably never more permissive than the ceiling; there is no
+/// code path here that pins a mode above it.
+///
+/// Returns `Some((requested, capped))` when the request had to be reduced,
+/// so the caller can record it in the audit log.
+fn apply_permission_override(
+    core: &Core,
+    requested: PermissionMode,
+) -> Option<(PermissionMode, PermissionMode)> {
+    let workspace_ceiling = core.effective_permission_mode();
+    let capped = requested.capped_by(workspace_ceiling);
+    core.set_permission_mode(capped);
+    (capped != requested).then_some((requested, workspace_ceiling))
 }
 
 /// Canonicalize the same way `checkpoints.rs` already does: best effort,
@@ -44,7 +88,7 @@ fn canonical(path: &Path) -> PathBuf {
 
 pub struct CorePool {
     default_workspace: PathBuf,
-    entries: Mutex<HashMap<PathBuf, PooledEntry>>,
+    entries: Mutex<HashMap<PoolKey, PooledEntry>>,
     max: usize,
     idle: Duration,
 }
@@ -56,7 +100,7 @@ impl CorePool {
         let default_workspace = canonical(default_core.cwd());
         let mut entries = HashMap::new();
         entries.insert(
-            default_workspace.clone(),
+            (default_workspace.clone(), None),
             PooledEntry {
                 core: default_core,
                 last_active: Instant::now(),
@@ -83,8 +127,19 @@ impl CorePool {
     /// entries and enforcing the cap along the way. `now` is threaded
     /// explicitly rather than read from `Instant::now()` internally so
     /// tests can drive eviction deterministically without sleeping.
-    pub fn resolve_at(&self, workspace: &Path, now: Instant) -> Result<Core, String> {
-        let key = canonical(workspace);
+    ///
+    /// `permission_override` is the channel's requested permission mode
+    /// (`None` = inherit the workspace's own). It is part of the pool key,
+    /// so a channel asking for a different mode never shares an instance
+    /// with one asking for another, and it is capped to the workspace's
+    /// own resolved mode before being pinned onto the fresh `Core`.
+    pub fn resolve_at(
+        &self,
+        workspace: &Path,
+        permission_override: Option<PermissionMode>,
+        now: Instant,
+    ) -> Result<Core, String> {
+        let key: PoolKey = (canonical(workspace), permission_override);
         {
             let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
             self.evict_idle_locked(&mut entries, now);
@@ -95,7 +150,25 @@ impl CorePool {
         }
         // Start outside the lock: `Core::new_with_trust` does filesystem IO
         // (config load) and must not hold up every other pool lookup.
-        let core = Core::new_with_trust(key.clone(), true).map_err(|e| e.to_string())?;
+        let core = Core::new_with_trust(key.0.clone(), true).map_err(|e| e.to_string())?;
+        // Cap and pin before the instance is ever published to the map, so
+        // no other request can observe it at the un-capped default.
+        if let Some(requested) = permission_override
+            && let Some((requested, ceiling)) = apply_permission_override(&core, requested)
+        {
+            vak_core::security_events::record(
+                &core.sessions_home(),
+                vak_core::security_events::EventKind::PermissionCapped,
+                "permission_capped",
+                &format!(
+                    "workspace={} requested={} capped_to={}",
+                    key.0.display(),
+                    requested.as_str(),
+                    ceiling.as_str()
+                ),
+                None,
+            );
+        }
         let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
         // Someone else may have started the same workspace while we didn't
         // hold the lock; keep whichever is already resident to avoid a
@@ -117,24 +190,31 @@ impl CorePool {
         Ok(core)
     }
 
-    fn evict_idle_locked(&self, entries: &mut HashMap<PathBuf, PooledEntry>, now: Instant) {
-        let default = self.default_workspace.clone();
+    fn evict_idle_locked(&self, entries: &mut HashMap<PoolKey, PooledEntry>, now: Instant) {
+        let default = self.default_key();
         let idle = self.idle;
-        entries.retain(|path, entry| {
-            *path == default || now.saturating_duration_since(entry.last_active) < idle
+        entries.retain(|key, entry| {
+            *key == default || now.saturating_duration_since(entry.last_active) < idle
         });
+    }
+
+    /// The permanent entry's key: the gateway's own workspace with no
+    /// permission override. A same-workspace *override* entry is an
+    /// ordinary evictable entry — it is not the gateway's own Core.
+    fn default_key(&self) -> PoolKey {
+        (self.default_workspace.clone(), None)
     }
 
     /// Cap enforcement: drop the least-recently-active non-default entry.
     /// The default workspace is never evicted, matching `GatewayState`'s
     /// old single-`Core` behavior for the gateway's own cwd.
-    fn evict_oldest_idle_locked(&self, entries: &mut HashMap<PathBuf, PooledEntry>) {
-        let default = self.default_workspace.clone();
+    fn evict_oldest_idle_locked(&self, entries: &mut HashMap<PoolKey, PooledEntry>) {
+        let default = self.default_key();
         if let Some(oldest) = entries
             .iter()
-            .filter(|(path, _)| **path != default)
+            .filter(|(key, _)| **key != default)
             .min_by_key(|(_, entry)| entry.last_active)
-            .map(|(path, _)| path.clone())
+            .map(|(key, _)| key.clone())
         {
             entries.remove(&oldest);
         }
@@ -145,15 +225,24 @@ impl CorePool {
     /// as `resolve_at`.
     pub fn snapshot_at(&self, now: Instant) -> Vec<PoolStatusEntry> {
         let entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
+        let default = self.default_key();
         let mut out: Vec<PoolStatusEntry> = entries
             .iter()
-            .map(|(path, entry)| PoolStatusEntry {
-                workspace: path.clone(),
-                is_default: *path == self.default_workspace,
+            .map(|(key, entry)| PoolStatusEntry {
+                workspace: key.0.clone(),
+                is_default: *key == default,
                 idle_secs: now.saturating_duration_since(entry.last_active).as_secs(),
+                permission_override: key.1,
+                effective_permission_mode: entry.core.effective_permission_mode(),
             })
             .collect();
-        out.sort_by(|a, b| a.workspace.cmp(&b.workspace));
+        out.sort_by(|a, b| {
+            a.workspace.cmp(&b.workspace).then_with(|| {
+                a.permission_override
+                    .map(|m| m.rank())
+                    .cmp(&b.permission_override.map(|m| m.rank()))
+            })
+        });
         out
     }
 
@@ -173,6 +262,181 @@ mod tests {
         Core::new_with_trust(dir.to_path_buf(), true).expect("core")
     }
 
+    /// Write a workspace config that fixes the workspace's own permission
+    /// mode — the ceiling every channel override is capped against.
+    fn workspace_with_mode(dir: &std::path::Path, mode: &str) {
+        let vak = dir.join(".vak");
+        std::fs::create_dir_all(&vak).expect("mkdir .vak");
+        std::fs::write(
+            vak.join("config.toml"),
+            format!("permission_mode = \"{mode}\"\n"),
+        )
+        .expect("write config");
+    }
+
+    #[test]
+    fn no_override_inherits_the_workspace_mode_unchanged() {
+        let default_dir = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        workspace_with_mode(ws.path(), "full-access");
+        let pool = CorePool::new(test_core(default_dir.path()), 8, Duration::from_secs(1800));
+
+        let core = pool.resolve_at(ws.path(), None, Instant::now()).unwrap();
+        // Today's behavior, untouched: the workspace's own config wins.
+        assert_eq!(core.effective_permission_mode(), PermissionMode::FullAccess);
+        assert!(!core.permission_mode_runtime_pinned());
+    }
+
+    #[test]
+    fn override_at_or_below_the_workspace_mode_is_applied_exactly() {
+        let default_dir = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        workspace_with_mode(ws.path(), "full-access");
+        let pool = CorePool::new(test_core(default_dir.path()), 8, Duration::from_secs(1800));
+
+        for requested in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
+            let core = pool
+                .resolve_at(ws.path(), Some(requested), Instant::now())
+                .unwrap();
+            assert_eq!(
+                core.effective_permission_mode(),
+                requested,
+                "a reduction to {requested:?} under full-access must apply verbatim"
+            );
+        }
+        // And an override that exactly equals the ceiling is a no-op match.
+        let core = pool
+            .resolve_at(ws.path(), Some(PermissionMode::FullAccess), Instant::now())
+            .unwrap();
+        assert_eq!(core.effective_permission_mode(), PermissionMode::FullAccess);
+    }
+
+    /// The security property: an override asking for MORE than the
+    /// workspace's own config grants is clamped to the workspace's mode,
+    /// and the reduction is written to the audit log.
+    #[test]
+    fn override_above_the_workspace_mode_is_capped_and_audited() {
+        let default_dir = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        workspace_with_mode(ws.path(), "read-only");
+        let pool = CorePool::new(test_core(default_dir.path()), 8, Duration::from_secs(1800));
+
+        let core = pool
+            .resolve_at(ws.path(), Some(PermissionMode::FullAccess), Instant::now())
+            .unwrap();
+        assert_eq!(
+            core.effective_permission_mode(),
+            PermissionMode::ReadOnly,
+            "a full-access override on a read-only workspace must NOT escalate"
+        );
+
+        // `sessions_home` is process-wide here (these pool tests build
+        // real `Core`s), so scope the assertion to this test's own unique
+        // tempdir workspace rather than to the whole event log.
+        let marker = format!("workspace={}", canonical(ws.path()).display());
+        let events = vak_core::security_events::list(&core.sessions_home(), 500);
+        let capped: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                e.kind == vak_core::security_events::EventKind::PermissionCapped
+                    && e.detail.contains(&marker)
+            })
+            .collect();
+        assert_eq!(capped.len(), 1, "the silent reduction must be auditable");
+        assert!(capped[0].detail.contains("requested=full-access"));
+        assert!(capped[0].detail.contains("capped_to=read-only"));
+
+        // A workspace-write request on the same read-only workspace is
+        // capped too — the ceiling is the config, not merely "not full".
+        let core2 = pool
+            .resolve_at(
+                ws.path(),
+                Some(PermissionMode::WorkspaceWrite),
+                Instant::now(),
+            )
+            .unwrap();
+        assert_eq!(core2.effective_permission_mode(), PermissionMode::ReadOnly);
+    }
+
+    /// Two channels, one workspace, different overrides: they must never
+    /// share a `Core`, because a `Core` carries exactly one permission
+    /// mode and sharing would let the looser channel's mode leak into the
+    /// tighter one (or vice versa, depending on who resolved first).
+    #[test]
+    fn same_workspace_different_overrides_get_distinct_cores() {
+        let default_dir = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        workspace_with_mode(ws.path(), "full-access");
+        let pool = CorePool::new(test_core(default_dir.path()), 8, Duration::from_secs(1800));
+        let t0 = Instant::now();
+
+        let tight = pool
+            .resolve_at(ws.path(), Some(PermissionMode::ReadOnly), t0)
+            .unwrap();
+        let loose = pool
+            .resolve_at(ws.path(), Some(PermissionMode::FullAccess), t0)
+            .unwrap();
+        let inherited = pool.resolve_at(ws.path(), None, t0).unwrap();
+
+        // Three distinct pooled instances for one workspace path.
+        assert_eq!(pool.len(), 4); // default + the three above
+        assert_eq!(tight.cwd(), loose.cwd());
+
+        // Neither leaks into the other, in either direction.
+        assert_eq!(tight.effective_permission_mode(), PermissionMode::ReadOnly);
+        assert_eq!(
+            loose.effective_permission_mode(),
+            PermissionMode::FullAccess
+        );
+        assert_eq!(
+            inherited.effective_permission_mode(),
+            PermissionMode::FullAccess
+        );
+
+        // Re-resolving the tight channel still yields the tight instance —
+        // the looser resolution did not overwrite the cached entry.
+        let tight_again = pool
+            .resolve_at(ws.path(), Some(PermissionMode::ReadOnly), t0)
+            .unwrap();
+        assert_eq!(
+            tight_again.effective_permission_mode(),
+            PermissionMode::ReadOnly
+        );
+
+        // The pool status panel can tell the instances apart.
+        let snapshot = pool.snapshot_at(t0);
+        let mut overrides: Vec<_> = snapshot
+            .iter()
+            .filter(|e| e.workspace == canonical(ws.path()))
+            .map(|e| (e.permission_override, e.effective_permission_mode))
+            .collect();
+        overrides.sort_by_key(|(o, _)| o.map(|m| m.rank()));
+        assert_eq!(overrides.len(), 3);
+    }
+
+    #[test]
+    fn override_entries_are_evictable_but_the_default_key_is_not() {
+        let default_dir = tempfile::tempdir().unwrap();
+        let pool = CorePool::new(test_core(default_dir.path()), 8, Duration::from_secs(60));
+        let t0 = Instant::now();
+        // An override entry on the *default* workspace is an ordinary
+        // evictable entry, not the permanent gateway Core.
+        pool.resolve_at(default_dir.path(), Some(PermissionMode::ReadOnly), t0)
+            .unwrap();
+        assert_eq!(pool.len(), 2);
+
+        let other = tempfile::tempdir().unwrap();
+        pool.resolve_at(other.path(), None, t0 + Duration::from_secs(120))
+            .unwrap();
+        let snapshot = pool.snapshot_at(t0 + Duration::from_secs(120));
+        assert!(snapshot.iter().any(|e| e.is_default));
+        assert!(
+            !snapshot
+                .iter()
+                .any(|e| e.permission_override == Some(PermissionMode::ReadOnly))
+        );
+    }
+
     #[test]
     fn lazy_start_and_cache_hit() {
         let default_dir = tempfile::tempdir().unwrap();
@@ -181,11 +445,11 @@ mod tests {
         let t0 = Instant::now();
         assert_eq!(pool.len(), 1); // default only
 
-        let first = pool.resolve_at(other_dir.path(), t0).expect("start");
+        let first = pool.resolve_at(other_dir.path(), None, t0).expect("start");
         assert_eq!(pool.len(), 2);
 
         let second = pool
-            .resolve_at(other_dir.path(), t0 + Duration::from_secs(1))
+            .resolve_at(other_dir.path(), None, t0 + Duration::from_secs(1))
             .expect("cache hit");
         // Same canonical workspace resolves to the same pooled Core
         // instance (Arc-backed clone), not a freshly started one.
@@ -199,17 +463,17 @@ mod tests {
         let other_dir = tempfile::tempdir().unwrap();
         let pool = CorePool::new(test_core(default_dir.path()), 8, Duration::from_secs(60));
         let t0 = Instant::now();
-        pool.resolve_at(other_dir.path(), t0).unwrap();
+        pool.resolve_at(other_dir.path(), None, t0).unwrap();
         assert_eq!(pool.len(), 2);
 
         // Still within the idle window: a lookup elsewhere must not evict it.
         let unrelated_dir = tempfile::tempdir().unwrap();
-        pool.resolve_at(unrelated_dir.path(), t0 + Duration::from_secs(30))
+        pool.resolve_at(unrelated_dir.path(), None, t0 + Duration::from_secs(30))
             .unwrap();
         assert_eq!(pool.len(), 3);
 
         // Past the idle window: the next lookup sweeps stale entries first.
-        pool.resolve_at(unrelated_dir.path(), t0 + Duration::from_secs(120))
+        pool.resolve_at(unrelated_dir.path(), None, t0 + Duration::from_secs(120))
             .unwrap();
         let snapshot = pool.snapshot_at(t0 + Duration::from_secs(120));
         let paths: Vec<_> = snapshot.iter().map(|e| e.workspace.clone()).collect();
@@ -223,10 +487,10 @@ mod tests {
         let other_dir = tempfile::tempdir().unwrap();
         let pool = CorePool::new(test_core(default_dir.path()), 8, Duration::from_secs(5));
         let t0 = Instant::now();
-        pool.resolve_at(other_dir.path(), t0).unwrap();
+        pool.resolve_at(other_dir.path(), None, t0).unwrap();
         // Way past idle for everything, including the default.
         let far_future = t0 + Duration::from_secs(10_000);
-        pool.resolve_at(other_dir.path(), far_future)
+        pool.resolve_at(other_dir.path(), None, far_future)
             .unwrap_or_else(|_| test_core(other_dir.path()));
         let snapshot = pool.snapshot_at(far_future);
         assert!(
@@ -246,9 +510,9 @@ mod tests {
         let dir_b = tempfile::tempdir().unwrap();
         // Cap is 2: default + one more fits; a second non-default entry
         // must evict the oldest-idle non-default one (dir_a), not default.
-        pool.resolve_at(dir_a.path(), t0).unwrap();
+        pool.resolve_at(dir_a.path(), None, t0).unwrap();
         assert_eq!(pool.len(), 2);
-        pool.resolve_at(dir_b.path(), t0 + Duration::from_secs(10))
+        pool.resolve_at(dir_b.path(), None, t0 + Duration::from_secs(10))
             .unwrap();
         assert_eq!(pool.len(), 2);
 

@@ -40,6 +40,13 @@ pub enum EventKind {
     ChatDenied,
     /// An operator revoked a previously allowed entry.
     ChatRevoked,
+    /// docs/design/34-channel-onboarding.md: a per-channel permission-mode
+    /// override asked for more than the target workspace's own configured
+    /// mode allows, and was capped down to that workspace's mode. A
+    /// distinct kind rather than a `ConfigChange` so a silently-reduced
+    /// grant is greppable in the audit log — it means an operator believes
+    /// a channel has access it does not actually have.
+    PermissionCapped,
 }
 
 /// Append a security event to `<home>/security-events.jsonl`.

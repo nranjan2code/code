@@ -11,7 +11,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PermissionMode {
     ReadOnly,
@@ -27,6 +27,41 @@ impl PermissionMode {
             "workspace-write" => Some(PermissionMode::WorkspaceWrite),
             "full-access" | "fullaccess" => Some(PermissionMode::FullAccess),
             _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PermissionMode::ReadOnly => "read-only",
+            PermissionMode::WorkspaceWrite => "workspace-write",
+            PermissionMode::FullAccess => "full-access",
+        }
+    }
+
+    /// How much this mode grants, as a total order. Deliberately spelled
+    /// out rather than derived from declaration order: the security cap in
+    /// `capped_by` depends on this ranking being correct, and a future
+    /// reordering of the variants must not silently invert it.
+    pub fn rank(&self) -> u8 {
+        match self {
+            PermissionMode::ReadOnly => 0,
+            PermissionMode::WorkspaceWrite => 1,
+            PermissionMode::FullAccess => 2,
+        }
+    }
+
+    /// The least permissive of `self` and `ceiling`.
+    ///
+    /// This is the one place a requested permission grant is reconciled
+    /// against a trust boundary: an override may match or reduce what the
+    /// ceiling already allows, never exceed it. Used by the gateway so a
+    /// per-channel permission override can never grant a channel more than
+    /// the workspace's own configuration would give a local `vak` run.
+    pub fn capped_by(self, ceiling: PermissionMode) -> PermissionMode {
+        if self.rank() > ceiling.rank() {
+            ceiling
+        } else {
+            self
         }
     }
 }
@@ -1901,6 +1936,36 @@ pub fn upsert_env_file(path: &std::path::Path, key: &str, value: &str) -> std::i
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    /// `capped_by` is the single arithmetic the gateway's per-channel
+    /// permission override rests on: it must be a true `min` over the
+    /// permissiveness ranking, in both argument orders, for every pair.
+    #[test]
+    fn capped_by_is_min_over_permissiveness_and_never_escalates() {
+        use PermissionMode::*;
+        let all = [ReadOnly, WorkspaceWrite, FullAccess];
+        assert!(ReadOnly.rank() < WorkspaceWrite.rank());
+        assert!(WorkspaceWrite.rank() < FullAccess.rank());
+        for requested in all {
+            for ceiling in all {
+                let got = requested.capped_by(ceiling);
+                // Never more permissive than the ceiling — the whole point.
+                assert!(
+                    got.rank() <= ceiling.rank(),
+                    "{requested:?} capped by {ceiling:?} escalated to {got:?}"
+                );
+                // Never more permissive than what was asked for either.
+                assert!(got.rank() <= requested.rank());
+                // And it is exactly the min, not an over-eager clamp.
+                assert_eq!(got.rank(), requested.rank().min(ceiling.rank()));
+            }
+        }
+        // Concrete spot checks of the security-relevant direction.
+        assert_eq!(FullAccess.capped_by(ReadOnly), ReadOnly);
+        assert_eq!(FullAccess.capped_by(WorkspaceWrite), WorkspaceWrite);
+        assert_eq!(ReadOnly.capped_by(FullAccess), ReadOnly);
+        assert_eq!(WorkspaceWrite.capped_by(WorkspaceWrite), WorkspaceWrite);
+    }
 
     fn write_project_config(dir: &Path, text: &str) {
         let project = dir.join(".vak");

@@ -91,6 +91,10 @@ export interface CorePoolEntry {
   is_default: boolean;
   state: "warm";
   idle_secs: number;
+  /// The pool is keyed by (workspace, permission override), so one
+  /// workspace can appear more than once with different overrides.
+  permission_override: PermissionMode | null;
+  effective_permission_mode: PermissionMode;
 }
 
 export interface CorePoolStatus {
@@ -119,11 +123,24 @@ export interface AllowlistRoute {
   model: string;
 }
 
+/// Wire form of `vak_config::PermissionMode` (serde kebab-case).
+export type PermissionMode = "read-only" | "workspace-write" | "full-access";
+
 export interface AllowlistEntry {
   key: string;
   status: AllowlistStatus;
   workspace: string | null;
   route: AllowlistRoute | null;
+  /// What the operator pinned, if anything. `null` = inherit the workspace.
+  permission_mode: PermissionMode | null;
+  /// The target workspace's own configured mode — the ceiling an override
+  /// is capped to. `null` when the entry names no workspace.
+  workspace_permission_mode: PermissionMode | null;
+  /// What the channel actually gets: min(pin, workspace mode).
+  effective_permission_mode: PermissionMode | null;
+  /// True when the pin asked for more than the workspace allows and was
+  /// reduced — the console must not show it as a live grant.
+  permission_capped: boolean;
   added_at: string;
   added_by: string;
   first_seen_text: string | null;

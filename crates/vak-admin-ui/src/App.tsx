@@ -7,7 +7,8 @@ import {
 } from "./store";
 import type {
   AllowlistEntry, BestOfNRun, ConfigInfo, CorePoolEntry, DiscoveredModelsResponse, FinOpsStatus, HookConfig,
-  GatewayBinding, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval, ProviderSummary,
+  GatewayBinding, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval,
+  PermissionMode, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
   SkillItem, SkillProposal, TaskItem, TranscriptEntry, WorkReceipt,
 } from "./types";
@@ -1679,6 +1680,23 @@ function GatewayBindingEditor(props: {
           <code>{props.binding.effective_route.model}</code>
           <span class="binding-meta">{props.binding.effective_route.source}</span>
         </div>
+        {/* The permission counterpart of "Effective route": what this
+            channel actually runs as, and where that came from. A pin that
+            the workspace's own mode capped is called out rather than shown
+            as if the wider grant were live. */}
+        <Show when={props.allowlistEntry?.effective_permission_mode}>
+          <div>
+            <span class="eyebrow">Effective permission</span>
+            <strong>{props.allowlistEntry!.effective_permission_mode}</strong>
+            <span class="binding-meta">
+              {props.allowlistEntry!.permission_capped
+                ? `channel pin ${props.allowlistEntry!.permission_mode} capped by workspace`
+                : props.allowlistEntry!.permission_mode
+                  ? "channel override"
+                  : "inherited from workspace"}
+            </span>
+          </div>
+        </Show>
         <div>
           <span class="eyebrow">Frozen session</span>
           <Show when={props.binding.session_contract} fallback={<span class="dim">Not created</span>}>
@@ -1753,6 +1771,74 @@ function GatewayBindingEditor(props: {
   );
 }
 
+/// The three permission modes in wire (kebab-case) form, ordered least to
+/// most permissive — the same order and the same `mode-btn` control the
+/// Settings page's "Permission Mode" panel uses, so an operator sees one
+/// vocabulary in both places.
+const CHANNEL_MODES: { value: PermissionMode; label: string; desc: string }[] = [
+  { value: "read-only", label: "ReadOnly", desc: "Read-only tools; writes denied" },
+  { value: "workspace-write", label: "WorkspaceWrite", desc: "Writes confined to workspace" },
+  { value: "full-access", label: "FullAccess", desc: "Unsandboxed — explicit trust" },
+];
+
+/// Optional per-channel permission pin, parallel to the "Pin a specific
+/// provider / model" checkbox. Unchecked means inherit the workspace's own
+/// configured mode, which is the default and today's behavior.
+function ChannelPermissionPicker(props: {
+  pinned: boolean;
+  setPinned: (v: boolean) => void;
+  mode: PermissionMode;
+  setMode: (m: PermissionMode) => void;
+  /// The workspace's own mode, when known — the ceiling a pin is capped to.
+  ceiling?: PermissionMode | null;
+}) {
+  // A pin above the workspace's own mode is not an error, it is simply
+  // reduced at dispatch; say so plainly rather than letting the operator
+  // believe they granted access the workspace never permits.
+  const capped = () => {
+    const c = props.ceiling;
+    if (!props.pinned || !c) return null;
+    const rank = (m: PermissionMode) => CHANNEL_MODES.findIndex((x) => x.value === m);
+    return rank(props.mode) > rank(c) ? c : null;
+  };
+  return (
+    <>
+      <label class="inherit-toggle">
+        <input
+          type="checkbox"
+          checked={props.pinned}
+          onChange={(e) => props.setPinned(e.currentTarget.checked)}
+        />
+        Pin a specific permission mode (otherwise inherits the workspace default)
+      </label>
+      <Show when={props.pinned}>
+        <div class="mode-grid">
+          <For each={CHANNEL_MODES}>
+            {(m) => (
+              <button
+                class="mode-btn"
+                classList={{ active: props.mode === m.value }}
+                onClick={() => props.setMode(m.value)}
+              >
+                <span class="mode-name">{m.label}</span>
+                <span class="mode-desc">{m.desc}</span>
+              </button>
+            )}
+          </For>
+        </div>
+        <Show when={capped()}>
+          {(c) => (
+            <div class="binding-meta">
+              This workspace is configured for <code>{c()}</code>. A channel can only match or
+              reduce that, never exceed it — this pin will take effect as <code>{c()}</code>.
+            </div>
+          )}
+        </Show>
+      </Show>
+    </>
+  );
+}
+
 /// Re-point an already-allowed channel's workspace/route in place
 /// (`PATCH .../allowlist/{key}`) instead of revoke-and-re-approve, which
 /// would lose the added_at/added_by provenance and 403 the channel in
@@ -1772,6 +1858,10 @@ function ChannelAccessEditor(props: {
   const [model, setModel] = createSignal(props.entry.route?.model ?? "");
   const [models, setModels] = createSignal<string[]>([]);
   const [busy, setBusy] = createSignal(false);
+  const [pinPerm, setPinPerm] = createSignal(!!props.entry.permission_mode);
+  const [perm, setPerm] = createSignal<PermissionMode>(
+    props.entry.permission_mode ?? props.entry.workspace_permission_mode ?? "workspace-write",
+  );
 
   createEffect(async () => {
     if (!pinRoute() || !provider()) return;
@@ -1790,6 +1880,8 @@ function ChannelAccessEditor(props: {
       await api.patchGatewayAllowlist(props.entry.key, {
         workspace: workspace().trim() || undefined,
         route: pinRoute() && provider() && model() ? { provider: provider(), model: model() } : {},
+        // "" clears the pin back to inheriting the workspace default.
+        permission_mode: pinPerm() ? perm() : "",
       });
       pushToast("info", `Updated ${props.entry.key} — the next message rotates to a fresh session`);
       props.refresh();
@@ -1831,6 +1923,13 @@ function ChannelAccessEditor(props: {
           </Show>
         </div>
       </Show>
+      <ChannelPermissionPicker
+        pinned={pinPerm()}
+        setPinned={setPinPerm}
+        mode={perm()}
+        setMode={setPerm}
+        ceiling={props.entry.workspace_permission_mode}
+      />
       <div class="row-gap">
         <button disabled={busy()} onClick={save}>Save access</button>
       </div>
@@ -1852,6 +1951,8 @@ function PendingChannelCard(props: {
   const [model, setModel] = createSignal("");
   const [models, setModels] = createSignal<string[]>([]);
   const [busy, setBusy] = createSignal(false);
+  const [pinPerm, setPinPerm] = createSignal(false);
+  const [perm, setPerm] = createSignal<PermissionMode>("workspace-write");
 
   createEffect(async () => {
     if (!pinRoute() || !provider()) return;
@@ -1870,7 +1971,17 @@ function PendingChannelCard(props: {
       const entry = await api.approveGatewayAllowlist(props.entry.key, {
         workspace: workspace().trim() || undefined,
         route: pinRoute() && provider() && model() ? { provider: provider(), model: model() } : undefined,
+        permission_mode: pinPerm() ? perm() : undefined,
       });
+      // Surface a capped grant at the moment it happens: the server
+      // reduces an over-broad pin to the workspace's own mode, and an
+      // operator who is not told would believe the wider grant is live.
+      if (entry.permission_capped) {
+        pushToast(
+          "alert",
+          `${props.entry.key}: ${entry.permission_mode} exceeds that workspace's own mode — capped to ${entry.effective_permission_mode}`,
+        );
+      }
       pushToast("info", `Approved ${props.entry.key} → ${entry.workspace ?? "(workspace unset)"}`);
       props.refresh();
     } catch (err) {
@@ -1935,6 +2046,13 @@ function PendingChannelCard(props: {
           </Show>
         </div>
       </Show>
+
+      <ChannelPermissionPicker
+        pinned={pinPerm()}
+        setPinned={setPinPerm}
+        mode={perm()}
+        setMode={setPerm}
+      />
 
       <div class="row-gap">
         <button disabled={busy()} onClick={approve}>Approve</button>
