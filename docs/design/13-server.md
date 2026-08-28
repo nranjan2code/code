@@ -21,7 +21,7 @@ consumers.
 | POST | `/sessions/:id/attach` `{session_id}` | resume a persisted session into memory |
 | GET | `/sessions/:id/diff` | git status + diff of the session workspace |
 | POST | `/config/mode` `{mode}` | switch mode; a changed value cancels all active main/side runs and denies pending approvals before returning 200 |
-| GET/PATCH | `/config` | effective configuration; authenticated changes to provider, model, max turns, permission mode, and theme are atomically persisted to the workspace config before the live override is applied; responses include provider/model source |
+| GET/PATCH | `/config` | effective configuration; provider/model is resolved and persisted as one atomic route before hot-apply; responses include route source/revision; max turns, permission mode, theme, MCP, and hooks share the cross-process refresh contract |
 | PUT | `/config/key` `{provider,key}` | store a provider credential in the user `.env` (0600) |
 | DELETE | `/config/key` `{provider}` | revoke it; `shadowed_by_env` reports a key still exported in the real environment |
 | GET | `/providers` | provider list + which are configured (never key values) |

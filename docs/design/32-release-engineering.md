@@ -17,7 +17,7 @@ no plists pointing into build trees, no spot-fixing deploys.
    `~/.local/share/vakcoder/bin/` on Linux) plus an `install.json` manifest
    {version, git_sha, installed_at, binaries}. The build tree may be
    cleaned at any time without touching a running deployment.
-3. **Services are generated, never hand-edited.** `self services sync`
+3. **Services are generated, never hand-edited.** `self services-sync`
    renders launchd/systemd units from templates (vak-ops) referencing the
    *installed* path and the workspace directory from which sync was run,
    unloads stale units, loads the new ones. Sync is idempotent: identical
@@ -106,9 +106,10 @@ clippy -D warnings`, `cargo test`, a clean working tree, and an unused
 
 ## Canonical filesystem layout
 
-`vak_config::paths` is the single source of truth. Every crate resolves
-homes through it; no crate hardcodes `~/.vakcoder` or platform-specific
-paths directly.
+`vak_config::paths` is the single source of truth for data, cache, and log
+homes. Project-local `.vakcoder/` and the CLI workspace-trust marker are
+separate scoped contracts; pre-0.8 `~/.vakcoder` references below describe
+legacy migration only.
 
 ### macOS (default)
 
@@ -181,6 +182,6 @@ at startup before any other logic.
 
 ## Migration of legacy deployments
 
-Plists pointing at `target/release/*` are legacy. `self services sync`
+Plists pointing at `target/release/*` are legacy. `self services-sync`
 rewrites them onto the installed path on first run; `self status` flags
 any unit still exec'ing from a build tree until migrated.

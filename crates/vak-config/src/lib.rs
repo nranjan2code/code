@@ -1781,8 +1781,7 @@ pub fn forget_dotenv_var(key: &str) {
     dotenv_extra().remove(key);
 }
 
-/// `$HOME/.vakcoder/.env` — the user-level secret store shared by every
-/// vakcoder surface.
+/// `data_home()/.env` — the user-level secret store shared by every surface.
 pub fn user_env_path() -> Option<std::path::PathBuf> {
     Some(crate::paths::data_home().join(".env"))
 }

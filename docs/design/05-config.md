@@ -13,30 +13,21 @@ splits without duplicating files.
 ## Rules
 
 - Unknown keys are ignored with a warning, never fatal (forward compatibility).
-- ~15 keys total to know; everything else is discoverable via
-  `vakcoder config dump` (boot-tree introspection, DeepSeek-Harness pattern).
+- The supported surface is grouped by concern and discoverable through
+  `vakcoder config dump`: core agent/provider settings, profiles, frozen route
+  policy, retries, permissions, sandbox/tools, UI, hooks, MCP, FinOps, goals,
+  memory/learning, gateway, automation, and update checks.
 - `VAKCODER_HOME` relocates the data home and nests `cache/` and `logs/` under it (default: `~/Library/Application Support/vakcoder` on macOS, `~/.local/share/vakcoder` on Linux).
 
-## Current keys
+## Current contract
 
-provider, model, max_tokens, max_turns, permission_mode, profile, profiles.*,
-anthropic_base_url, allow/ask/deny, subagents, hooks.*, mcp.servers.*,
-max_retries, retry_base_backoff_ms, request_timeout_secs,
-circuit_breaker_threshold, circuit_breaker_cooldown_secs, context_window
-(min 16384; smaller values warn and fall back to the default),
-ui.theme, ui.bell, ui.keymap.*, ui.composer ("emacs"|"vim"), ui.osc52,
-ui.accessibility.plain/reduced_motion/screen_reader, ui.themes.<name>.<color>
-(#rgb/#rrggbb hex or named colors over the dark base; theme = any custom
-name resolves without warning), stop_policy.enabled/marker_gate/
-verify_gate/max_blocks.
-
-## Later
-
-- permission rules block (Phase 3)
-- hooks/skills/MCP registration blocks (Phase 5)
-- minimal|standard runtime profiles as eval baseline (Phase 7)
-- headless surface for extension status: `config dump` omits skills/hooks;
-  `/doctor` is TUI-only — add a `vakcoder doctor` subcommand
+`provider` and `model` form one atomic route. They are never persisted or
+hot-applied independently. Provider model ids come from live discovery, never
+source-code catalogues. The remaining major groups are `profiles.*`,
+`[route]`, retry/watchdog/circuit-breaker controls, `allow`/`ask`/`deny`,
+`[sandbox]`, `[tools]`, `[ui]`, `[hooks]`, `[mcp.servers]`, `[finops]`,
+`[goal]`, `[memory]`, `[learning]`, `[gateway]`, `[automation]`, and `[update]`.
+Unknown keys warn and remain forward-compatible.
 
 ## Diff note — workspace trust + unknown keys (this change)
 
@@ -64,8 +55,10 @@ alter protocol behavior or session content.
 Authenticated `/config` mutations for provider, model, max turns, permission
 mode, and theme now persist changed fields atomically in the workspace
 `.vakcoder/config.toml` before applying the live Core override. Health,
-provider discovery, and admin snapshots expose the effective source. CLI and
-task-scoped overrides remain intentionally transient. Sessions continue to
-freeze their provider/model contract at creation; runs on an existing session
-dispatch that frozen contract, so changing workspace defaults cannot silently
-rewrite historical session behavior.
+provider discovery, and admin snapshots expose effective values, provenance,
+and the route revision. New-session admission in other local processes
+refreshes persisted provider/model, max turns, theme, MCP, hooks, and permission
+mode; permission changes revoke live capabilities before apply. CLI, task,
+heartbeat, and subagent pins remain intentionally transient. Sessions continue
+to freeze their provider/model contract at creation; gateway bindings rotate to
+a new frozen session on mismatch while preserving the old append-only ledger.
