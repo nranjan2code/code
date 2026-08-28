@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { api, AuthRequired } from "./api";
 import type { SystemEvent } from "./types";
 
 export const [authed, setAuthed] = createSignal<boolean | null>(null); // null = probing
@@ -105,7 +106,24 @@ export function connectEvents() {
     setConn("down");
     source?.close();
     source = null;
-    setTimeout(connectEvents, backoffMs);
+    // EventSource's error event carries no HTTP status, so a closed cookie
+    // (server restarted with a fresh token, or a full self uninstall
+    // --purge + reinstall under an already-open tab) looks identical to a
+    // dropped connection here -- it just reconnects forever, silently
+    // failing every time, with the rest of the page still showing
+    // whatever it last rendered before the cookie went stale. A real
+    // fetch DOES carry a status, so use one as a side-channel auth probe
+    // before assuming this is transient and retrying.
+    api
+      .config()
+      .then(() => setTimeout(connectEvents, backoffMs))
+      .catch((err) => {
+        if (err instanceof AuthRequired) {
+          setAuthed(false);
+          return;
+        }
+        setTimeout(connectEvents, backoffMs);
+      });
     backoffMs = Math.min(backoffMs * 2, 15000);
   };
 }

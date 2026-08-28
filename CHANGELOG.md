@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### The live-event stream now recovers from a stale session too
+
+The previous fix for a session going stale after a server restart only
+covered the polled unread-count check; the SSE event stream
+(`/admin/api/events`) kept silently reconnecting forever on the same
+dead cookie, since a browser `EventSource` error carries no HTTP status
+to detect the failure by. `connectEvents` now side-channels a real
+`fetch` (which does carry a status) on every reconnect attempt and drops
+back to the login screen on a real 401/403, instead of retrying a
+connection that can never succeed again without a fresh login.
+
 ### Broken desktop welcome-screen icon, and the admin console silently going dead after a token change
 
 The desktop app's welcome screen (`ProjectGate`) has referenced
