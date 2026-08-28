@@ -4,6 +4,7 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
@@ -469,11 +470,14 @@ pub(crate) async fn list_bestofn(State(state): State<AppState>) -> Json<serde_js
 pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serde_json::Value> {
     // Report the EFFECTIVE provider, model, turns, mode, and theme so runtime
     // overrides applied by PATCH /config and POST /config/mode are accurately returned.
+    crate::refresh_control_plane(&state);
+    let route = state.core.effective_route();
     Json(serde_json::json!({
-        "provider": state.core.effective_provider(),
-        "model": state.core.effective_model(),
-        "provider_source": state.core.provider_source(),
-        "model_source": state.core.model_source(),
+        "provider": route.provider,
+        "model": route.model,
+        "provider_source": route.provider_source,
+        "model_source": route.model_source,
+        "route_revision": route.revision,
         "max_turns": state.core.effective_max_turns(),
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
         "theme": state.core.effective_theme(),
@@ -484,23 +488,169 @@ pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serd
 
 pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<serde_json::Value> {
     let gw = &state.gateway;
-    let bindings: Vec<String> = gw
-        .bindings_snapshot()
-        .into_iter()
-        .map(|(k, _v)| k)
-        .collect();
+    crate::refresh_control_plane(&state);
+    let default_route = state.core.effective_route();
+    let mut bindings = Vec::new();
+    for (target, binding) in gw.bindings_snapshot() {
+        let channel_override = binding.provider.clone().zip(binding.model.clone());
+        let (provider, model, source, revision) = match &channel_override {
+            Some((provider, model)) => (
+                provider.clone(),
+                model.clone(),
+                "channel_override",
+                format!("channel:{provider}:{model}"),
+            ),
+            None => (
+                default_route.provider.clone(),
+                default_route.model.clone(),
+                "workspace_default",
+                default_route.revision.clone(),
+            ),
+        };
+        let contract = binding.session_id.as_ref().and_then(|session_id| {
+            state
+                .get(session_id)
+                .and_then(|handle| {
+                    handle
+                        .session
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .as_ref()
+                        .and_then(|session| session.header().cloned())
+                })
+                .or_else(|| {
+                    crate::read_historical_header(&state, session_id, binding.workspace.as_deref())
+                })
+        });
+        let stale_reasons = contract
+            .as_ref()
+            .map(|header| {
+                let mut reasons = Vec::new();
+                if header.cwd != *state.core.cwd() {
+                    reasons.push("workspace_changed");
+                }
+                if header.contract.provider != provider {
+                    reasons.push("provider_changed");
+                }
+                if header.contract.model != model {
+                    reasons.push("model_changed");
+                }
+                reasons
+            })
+            .unwrap_or_else(|| {
+                binding
+                    .session_id
+                    .as_ref()
+                    .map(|_| vec!["session_missing"])
+                    .unwrap_or_default()
+            });
+        bindings.push(serde_json::json!({
+            "target": target,
+            "session_id": binding.session_id,
+            "workspace": state.core.cwd(),
+            "configured_workspace": binding.workspace,
+            "override": channel_override.map(|(provider, model)| serde_json::json!({
+                "provider": provider,
+                "model": model,
+            })),
+            "effective_route": {
+                "provider": provider,
+                "model": model,
+                "source": source,
+                "revision": revision,
+            },
+            "session_contract": contract.map(|header| serde_json::json!({
+                "provider": header.contract.provider,
+                "model": header.contract.model,
+                "workspace": header.cwd,
+                "app_version": header.contract.app_version,
+            })),
+            "stale": !stale_reasons.is_empty(),
+            "stale_reasons": stale_reasons,
+        }));
+    }
+    bindings.sort_by(|a, b| a["target"].as_str().cmp(&b["target"].as_str()));
     Json(serde_json::json!({
         "enabled": gw.enabled,
+        "workspace": state.core.cwd(),
+        "default_route": default_route,
         "bindings": bindings,
         "chat_allowlist": state.core.config().gateway.chat_allowlist,
         "chat_allowlist_open": state.core.config().gateway.chat_allowlist_open,
     }))
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct GatewayRoutePatch {
+    provider: Option<String>,
+    model: Option<String>,
+}
+
+pub(crate) async fn patch_gateway_binding(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    Json(body): Json<GatewayRoutePatch>,
+) -> StatusCode {
+    if key.trim().is_empty() || !key.contains(':') {
+        return StatusCode::BAD_REQUEST;
+    }
+    let route = match (body.provider, body.model) {
+        (None, None) => None,
+        (Some(provider), Some(model))
+            if !provider.trim().is_empty() && !model.trim().is_empty() =>
+        {
+            Some((provider.trim().to_string(), model.trim().to_string()))
+        }
+        _ => return StatusCode::BAD_REQUEST,
+    };
+    if route.as_ref().is_some_and(|(provider, _)| {
+        !state
+            .core
+            .provider_names()
+            .iter()
+            .any(|name| name == provider)
+    }) {
+        return StatusCode::BAD_REQUEST;
+    }
+    state
+        .gateway
+        .set_route_override(&state.core, key.clone(), route);
+    state.hub.emit_config_changed("gateway_binding_route", &key);
+    StatusCode::OK
+}
+
+pub(crate) async fn rotate_gateway_binding(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+) -> StatusCode {
+    if state.gateway.rotate(&state.core, &key) {
+        state
+            .hub
+            .emit_config_changed("gateway_binding_rotated", &key);
+        StatusCode::OK
+    } else {
+        StatusCode::NOT_FOUND
+    }
+}
+
+pub(crate) async fn delete_gateway_binding_admin(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+) -> StatusCode {
+    if state.gateway.unbind(&state.core, &key) {
+        state
+            .hub
+            .emit_config_changed("gateway_binding_deleted", &key);
+        StatusCode::OK
+    } else {
+        StatusCode::NOT_FOUND
+    }
+}
+
 // ---- Admin route mounter --------------------------------------------------
 
 pub(crate) fn routes() -> axum::Router<AppState> {
-    use axum::routing::{get, post};
+    use axum::routing::{get, patch, post};
     axum::Router::new()
         .route("/admin/login", post(login))
         .route("/admin/logout", post(logout))
@@ -522,6 +672,14 @@ pub(crate) fn routes() -> axum::Router<AppState> {
         )
         .route("/admin/api/config", get(get_config_admin))
         .route("/admin/api/gateway/status", get(gateway_status_admin))
+        .route(
+            "/admin/api/gateway/bindings/{key}",
+            patch(patch_gateway_binding).delete(delete_gateway_binding_admin),
+        )
+        .route(
+            "/admin/api/gateway/bindings/{key}/rotate",
+            post(rotate_gateway_binding),
+        )
 }
 
 // ---- Tests ----------------------------------------------------------------

@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v0.8.10 — all roadmap phases implemented and live-tested.**
+**Status: v0.8.11 — all roadmap phases implemented and live-tested.**
 See `docs/design/00-roadmap.md` for the phase history and
 `docs/design/15-reliability.md` for the failure-handling matrix. Security work
 must also follow the threat model and priority order in
@@ -147,7 +147,14 @@ security/inbox), operation (approvals/config/cancel), and interaction
     CLI flags, task pins, heartbeat pins, and subagent pins are scoped
     overrides and must remain visibly non-global. Session provider/model
     contracts freeze at session creation; changing workspace defaults never
-    rewrites an existing session or silently changes its dispatch.
+    rewrites an existing session or silently changes its dispatch. Provider
+    and model are one atomic route at every read/write boundary. New-session
+    admission refreshes persisted defaults across processes unless an explicit
+    scoped pin is present. Gateway bindings expose route provenance and stale
+    reasons; a changed effective route rotates to a new frozen session while
+    preserving the old append-only ledger. Persisted max-turns, theme, MCP,
+    hooks, and permission mode use the same cross-process refresh; permission
+    changes revoke active capabilities before apply.
 18. **Durable services retain workspace identity.** Generated launchd/systemd
     units must execute from the workspace captured by `self services-sync` so
     gateway and Telegram runs load that workspace's config and project `.env`,

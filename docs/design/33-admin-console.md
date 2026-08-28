@@ -91,14 +91,23 @@ is bounded by `[gateway.rate_limit]`.
 | `/store/rebuild` | POST | Full index rebuild (mutation ⇒ POST) |
 | `/store/import/:id` | POST | Import one session's JSONL |
 | `/config` | GET | Effective config snapshot, including provider/model provenance |
-| `/gateway/status` | GET | Gateway enablement, bindings, chat allowlist |
+| `/gateway/status` | GET | Default route + provenance, binding contracts, stale reasons, allowlist |
+| `/gateway/bindings/:key` | PATCH | Set provider/model pair, or `{}` to inherit workspace default |
+| `/gateway/bindings/:key/rotate` | POST | Detach session; preserve ledger; create fresh on next inbound |
+| `/gateway/bindings/:key` | DELETE | Remove binding and override; preserve session ledger |
 
 Answering approvals, running prompts, steering, cancelling, mode changes,
 config patches, inbox acks reuse the EXISTING secured routes. Config patches
-are durable workspace mutations: the server writes the selected fields
-atomically before applying the live Core override, and returns source metadata
-so clients can distinguish project config, global config, environment, and
-runtime/scoped overrides.
+are durable workspace mutations: the server resolves provider/model into one
+complete pair, writes the pair atomically, then hot-applies one atomic Core
+route. New-session admission in other local Core processes refreshes that
+persisted pair, so desktop, server, CLI, and inheriting channels converge
+without a restart. Source metadata and a deterministic route revision let
+clients distinguish project config, global config, environment, and
+runtime/scoped overrides. Explicit runtime pins remain non-global.
+The refresh also covers max turns, theme, MCP servers, and hooks. A persisted
+permission-mode difference is routed through the revoke path (cancel main and
+side runs, deny pending approvals) before the new mode is exposed.
 (`/sessions/:id/approvals/:req`, `/sessions/:id/run`, `/sessions/:id/
 steering`, `/sessions/:id/cancel`, `/config/mode`, `PATCH /config`,
 `/inbox/:id/ack`). The console is just another client of the same contract.
@@ -117,6 +126,9 @@ steering`, `/sessions/:id/cancel`, `/config/mode`, `PATCH /config`,
   click-through to transcripts.
 - **Inbox** — attention entries with unread badge (30 s poll) and acks.
 - **Security** — color-coded audit trail with per-kind filters.
+- **Gateway** — workspace default and provenance, channel route editor backed
+  by live model discovery, inherited versus overridden route, frozen-session
+  comparison, stale reason, rotate-now, and safe removal.
 - **Settings** — provider/model editor (dirty-tracked), permission-mode
   cards (ReadOnly / WorkspaceWrite / FullAccess with consequences stated),
   gateway status, index rebuild, sign out.
@@ -138,6 +150,9 @@ with exponential-backoff reconnect.
 5. **Built assets are committed.** `crates/vak-admin-ui/dist` is embedded
    at compile time so `cargo build` needs no node; regenerate with
    `cd crates/vak-admin-ui && npm install && npm run build`.
+6. **A route is a pair.** Admin APIs never persist or hot-apply a provider
+   independently from its model. Binding changes mark old contracts stale;
+   they never rewrite a session header.
 
 ## Testing
 

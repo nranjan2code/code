@@ -616,11 +616,12 @@ async fn run_flow_exec(
         eprintln!("plan: {}", rendered.join(" | "));
     }
 
-    if let Some(p) = provider_flag {
-        core.set_provider(p);
-    }
-    if let Some(m) = model_flag {
-        core.set_model(m);
+    if provider_flag.is_some() || model_flag.is_some() {
+        let route = core.effective_route();
+        core.set_route(
+            provider_flag.unwrap_or(route.provider),
+            model_flag.unwrap_or(route.model),
+        );
     }
     let provider = match core.provider() {
         Ok(p) => p,
@@ -863,11 +864,12 @@ async fn run_exec(
     };
     print_config_warnings(&core);
     update_check::maybe_check_update(core.config());
-    if let Some(m) = model {
-        core.set_model(m);
-    }
-    if let Some(p) = provider {
-        core.set_provider(p);
+    if provider.is_some() || model.is_some() {
+        let route = core.effective_route();
+        core.set_route(
+            provider.unwrap_or(route.provider),
+            model.unwrap_or(route.model),
+        );
     }
     core.set_max_turns(max_turns);
     if let Some(pm) = permission_mode {
@@ -1380,11 +1382,12 @@ async fn run_eval(
                 return 2;
             }
         };
-        if let Some(p) = provider_flag {
-            core.set_provider(p);
-        }
-        if let Some(m) = model_flag {
-            core.set_model(m);
+        if provider_flag.is_some() || model_flag.is_some() {
+            let route = core.effective_route();
+            core.set_route(
+                provider_flag.unwrap_or(route.provider),
+                model_flag.unwrap_or(route.model),
+            );
         }
         let provider = match core.provider() {
             Ok(p) => p,

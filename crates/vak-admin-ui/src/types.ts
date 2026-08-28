@@ -54,14 +54,43 @@ export interface ConfigInfo {
   model: string;
   provider_source?: string;
   model_source?: string;
+  route_revision?: string;
   max_turns: number;
   permission_mode: string;
   theme: string;
 }
 
+export interface RouteInfo {
+  provider: string;
+  model: string;
+  provider_source?: string;
+  model_source?: string;
+  source?: string;
+  revision: string;
+}
+
+export interface GatewayBinding {
+  target: string;
+  session_id: string | null;
+  workspace: string;
+  configured_workspace: string | null;
+  override: { provider: string; model: string } | null;
+  effective_route: RouteInfo;
+  session_contract: {
+    provider: string;
+    model: string;
+    workspace: string;
+    app_version: string;
+  } | null;
+  stale: boolean;
+  stale_reasons: string[];
+}
+
 export interface GatewayStatus {
   enabled: boolean;
-  bindings: string[];
+  workspace: string;
+  default_route: RouteInfo;
+  bindings: GatewayBinding[];
   chat_allowlist: string[];
   chat_allowlist_open: boolean;
 }

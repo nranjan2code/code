@@ -116,7 +116,7 @@ fn bindings_path(home: &std::path::Path) -> PathBuf {
 
 pub struct GatewayState {
     pub enabled: bool,
-    bindings: Mutex<HashMap<String, String>>,
+    bindings: Mutex<HashMap<String, ChannelBinding>>,
     /// Resolved approval policy (docs/design/22-gateway.md G2).
     approvals: String,
     approver: Option<String>,
@@ -128,6 +128,33 @@ pub struct GatewayState {
     /// `chat_allowlist_open` was explicitly set (0c-02).
     chat_allowlist: Vec<String>,
     chat_allowlist_open: bool,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ChannelBinding {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_revision: Option<String>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct BindingsFile {
+    version: u32,
+    bindings: HashMap<String, ChannelBinding>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum StoredBindings {
+    Versioned(BindingsFile),
+    Legacy(HashMap<String, String>),
 }
 
 struct PendingGate {
@@ -149,9 +176,23 @@ impl GatewayState {
     pub fn load(core: &Core, force: bool) -> Self {
         let mut bindings = HashMap::new();
         if let Ok(raw) = std::fs::read_to_string(bindings_path(&core.sessions_home()))
-            && let Ok(map) = serde_json::from_str::<HashMap<String, String>>(&raw)
+            && let Ok(stored) = serde_json::from_str::<StoredBindings>(&raw)
         {
-            bindings = map;
+            bindings = match stored {
+                StoredBindings::Versioned(file) => file.bindings,
+                StoredBindings::Legacy(map) => map
+                    .into_iter()
+                    .map(|(key, session_id)| {
+                        (
+                            key,
+                            ChannelBinding {
+                                session_id: Some(session_id),
+                                ..ChannelBinding::default()
+                            },
+                        )
+                    })
+                    .collect(),
+            };
         }
         let gw = &core.config().gateway;
         let forward_ok = gw.approvals == "forward" && gw.approver.is_some();
@@ -180,7 +221,7 @@ impl GatewayState {
     }
 
     /// Snapshot of current surface bindings (key→value).
-    pub(crate) fn bindings_snapshot(&self) -> Vec<(String, String)> {
+    pub(crate) fn bindings_snapshot(&self) -> Vec<(String, ChannelBinding)> {
         self.bindings
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -270,27 +311,73 @@ impl GatewayState {
         })
     }
 
-    pub(crate) fn snapshot(&self) -> Vec<(String, String)> {
-        let mut pairs: Vec<(String, String)> = self
+    pub(crate) fn snapshot(&self) -> Vec<(String, ChannelBinding)> {
+        let mut pairs: Vec<(String, ChannelBinding)> = self
             .bindings
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        pairs.sort();
+        pairs.sort_by(|a, b| a.0.cmp(&b.0));
         pairs
     }
 
-    fn bind(&self, core: &Core, key: String, session_id: String) {
-        self.bindings
+    fn bind(&self, core: &Core, key: String, session_id: String, revision: String) {
+        let mut bindings = self
+            .bindings
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(key, session_id);
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let binding = bindings.entry(key).or_default();
+        binding.session_id = Some(session_id);
+        binding.workspace = Some(core.cwd().clone());
+        binding.route_revision = Some(revision);
+        drop(bindings);
         persist_bindings(core, self);
     }
 
-    fn unbind(&self, core: &Core, key: &str) -> bool {
+    pub(crate) fn set_route_override(
+        &self,
+        core: &Core,
+        key: String,
+        route: Option<(String, String)>,
+    ) {
+        let mut bindings = self
+            .bindings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let binding = bindings.entry(key).or_default();
+        match route {
+            Some((provider, model)) => {
+                binding.provider = Some(provider);
+                binding.model = Some(model);
+            }
+            None => {
+                binding.provider = None;
+                binding.model = None;
+            }
+        }
+        binding.route_revision = None;
+        drop(bindings);
+        persist_bindings(core, self);
+    }
+
+    pub(crate) fn rotate(&self, core: &Core, key: &str) -> bool {
+        let mut bindings = self
+            .bindings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(binding) = bindings.get_mut(key) else {
+            return false;
+        };
+        binding.session_id = None;
+        binding.route_revision = None;
+        drop(bindings);
+        persist_bindings(core, self);
+        true
+    }
+
+    pub(crate) fn unbind(&self, core: &Core, key: &str) -> bool {
         let removed = self
             .bindings
             .lock()
@@ -305,7 +392,7 @@ impl GatewayState {
 }
 
 fn persist_bindings(core: &Core, gw: &GatewayState) {
-    let map = gw
+    let bindings = gw
         .bindings
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -314,8 +401,15 @@ fn persist_bindings(core: &Core, gw: &GatewayState) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Ok(json) = serde_json::to_string_pretty(&map) {
-        let _ = std::fs::write(path, json);
+    let file = BindingsFile {
+        version: 2,
+        bindings,
+    };
+    if let Ok(json) = serde_json::to_string_pretty(&file) {
+        let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        if std::fs::write(&temp, json).is_ok() {
+            let _ = std::fs::rename(temp, path);
+        }
     }
 }
 
@@ -394,8 +488,7 @@ fn compose_prompt(text: &str, attachments: &[InboundAttachment]) -> vak_llm::Mes
         if a.kind == "document" {
             let filename = a.filename.as_deref().unwrap_or("file");
             use base64::Engine as _;
-            let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(a.data.trim())
-            else {
+            let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(a.data.trim()) else {
                 blocks.push(vak_llm::ContentBlock::text(format!(
                     "[attached file '{filename}' could not be decoded; not included]"
                 )));
@@ -535,6 +628,7 @@ async fn gateway_inbound(
     State(state): State<AppState>,
     Json(body): Json<InboundBody>,
 ) -> axum::response::Response {
+    crate::refresh_control_plane(&state);
     if !state.gateway.enabled {
         return (
             StatusCode::CONFLICT,
@@ -758,7 +852,16 @@ async fn gateway_status(State(state): State<AppState>) -> Json<serde_json::Value
         .gateway
         .snapshot()
         .into_iter()
-        .map(|(k, sid)| serde_json::json!({"target": k, "session_id": sid}))
+        .map(|(target, binding)| {
+            serde_json::json!({
+                "target": target,
+                "session_id": binding.session_id,
+                "provider": binding.provider,
+                "model": binding.model,
+                "workspace": binding.workspace,
+                "route_revision": binding.route_revision,
+            })
+        })
         .collect();
     Json(serde_json::json!({
         "enabled": state.gateway.enabled,
@@ -789,37 +892,98 @@ fn binding_session(state: &AppState, key: &str) -> Option<String> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(key)
-        .cloned()
+        .and_then(|binding| binding.session_id.clone())
+}
+
+fn binding_route(state: &AppState, key: &str) -> (String, String, String) {
+    let override_route = state
+        .gateway
+        .bindings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(key)
+        .and_then(|binding| Some((binding.provider.clone()?, binding.model.clone()?)));
+    if let Some((provider, model)) = override_route {
+        let revision = format!("channel:{}:{}", provider, model);
+        return (provider, model, revision);
+    }
+    let _ = state.core.refresh_persisted_route();
+    let route = state.core.effective_route();
+    (route.provider, route.model, route.revision)
+}
+
+fn busy_binding_matches_revision(state: &AppState, key: &str, revision: &str) -> bool {
+    state
+        .gateway
+        .bindings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(key)
+        .is_some_and(|binding| {
+            binding.route_revision.as_deref() == Some(revision)
+                && binding.workspace.as_deref() == Some(state.core.cwd().as_path())
+        })
+}
+
+fn session_matches_route(
+    session: &vak_session::SessionLog,
+    cwd: &std::path::Path,
+    provider: &str,
+    model: &str,
+) -> bool {
+    session.header().is_some_and(|header| {
+        header.cwd == cwd && header.contract.provider == provider && header.contract.model == model
+    })
 }
 
 /// Attach-or-create the session bound to `key`. Stale bindings (ledger
 /// deleted through the normal endpoint) rebind to a fresh session.
 async fn resolve_session(state: &AppState, key: &str) -> Result<Arc<SessionHandle>, String> {
+    let (provider, model, revision) = binding_route(state, key);
     if let Some(sid) = binding_session(state, key) {
         if let Some(handle) = state.get(&sid) {
-            return Ok(handle);
-        }
-        match state.core.open_session(&sid).await {
-            Ok(session) => {
-                let id = session
-                    .header()
-                    .map(|h| h.session_id.clone())
-                    .unwrap_or_else(|| sid.clone());
-                return Ok(crate::register_handle(
-                    state,
-                    id,
-                    session,
-                    state.core.cwd().clone(),
-                ));
+            let matches = {
+                let session = handle
+                    .session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                match session.as_ref() {
+                    Some(session) => {
+                        session_matches_route(session, state.core.cwd(), &provider, &model)
+                    }
+                    None => busy_binding_matches_revision(state, key, &revision),
+                }
+            };
+            if matches {
+                return Ok(handle);
             }
-            Err(_) => {
-                state.gateway.unbind(&state.core, key);
+            state.gateway.rotate(&state.core, key);
+        } else {
+            match state.core.open_session(&sid).await {
+                Ok(session) => {
+                    if session_matches_route(&session, state.core.cwd(), &provider, &model) {
+                        let id = session
+                            .header()
+                            .map(|h| h.session_id.clone())
+                            .unwrap_or_else(|| sid.clone());
+                        return Ok(crate::register_handle(
+                            state,
+                            id,
+                            session,
+                            state.core.cwd().clone(),
+                        ));
+                    }
+                    state.gateway.rotate(&state.core, key);
+                }
+                Err(_) => {
+                    state.gateway.rotate(&state.core, key);
+                }
             }
         }
     }
     let session = state
         .core
-        .start_session()
+        .start_session_with_route(provider, model)
         .await
         .map_err(|e| format!("start session: {e}"))?;
     let id = session
@@ -829,7 +993,9 @@ async fn resolve_session(state: &AppState, key: &str) -> Result<Arc<SessionHandl
     let handle = crate::register_handle(state, id.clone(), session, state.core.cwd().clone());
     // Two racing first-messages could each mint a session; last bind wins
     // and the loser stays a hidden header-only draft.
-    state.gateway.bind(&state.core, key.to_string(), id);
+    state
+        .gateway
+        .bind(&state.core, key.to_string(), id, revision);
     Ok(handle)
 }
 
@@ -1262,7 +1428,10 @@ mod tests {
             unreachable!("expected a text block noting the oversized document");
         };
         assert!(text.contains("exceeds"));
-        assert!(!text.contains("xxxx"), "the raw content must not be inlined");
+        assert!(
+            !text.contains("xxxx"),
+            "the raw content must not be inlined"
+        );
     }
 
     #[test]
@@ -1290,5 +1459,61 @@ mod tests {
         assert!(!webhook_retryable(Some(401)), "auth is permanent");
         assert!(!webhook_retryable(Some(404)));
         assert!(!webhook_retryable(Some(200)));
+    }
+
+    #[test]
+    fn legacy_session_map_loads_as_versioned_binding_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let path = bindings_path(&core.sessions_home());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"telegram:42":"old-session"}"#).unwrap();
+        let gateway = GatewayState::load(&core, true);
+        let snapshot = gateway.snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].0, "telegram:42");
+        assert_eq!(snapshot[0].1.session_id.as_deref(), Some("old-session"));
+        assert!(snapshot[0].1.provider.is_none());
+    }
+
+    #[tokio::test]
+    async fn route_change_rotates_binding_without_rewriting_old_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core.clone());
+        let old = core
+            .start_session_with_route("provider-a".into(), "model-a".into())
+            .await
+            .unwrap();
+        let old_id = old.header().unwrap().session_id.clone();
+        crate::register_handle(&state, old_id.clone(), old, core.cwd().clone());
+        state.gateway.bind(
+            &core,
+            "telegram:42".into(),
+            old_id.clone(),
+            "old-revision".into(),
+        );
+        state.gateway.set_route_override(
+            &core,
+            "telegram:42".into(),
+            Some(("provider-b".into(), "model-b".into())),
+        );
+
+        let fresh = resolve_session(&state, "telegram:42").await.unwrap();
+        assert_ne!(fresh.id, old_id);
+        {
+            let lock = fresh
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let contract = &lock.as_ref().unwrap().header().unwrap().contract;
+            assert_eq!(contract.provider, "provider-b");
+            assert_eq!(contract.model, "model-b");
+        }
+        let old_path =
+            vak_session::SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &old_id);
+        assert!(old_path.is_file(), "old append-only ledger remains intact");
     }
 }

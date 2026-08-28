@@ -404,6 +404,7 @@ async fn ops_status(State(_state): State<AppState>) -> Json<serde_json::Value> {
 /// service, gateway, flow and health state in one refreshable payload without
 /// exposing credentials or implementation paths.
 async fn ops_diagnostics(State(state): State<AppState>) -> Json<serde_json::Value> {
+    refresh_control_plane(&state);
     let cfg = vak_ops::OpsConfig::detect();
     let root = state.core.sessions_home().join("flow-runs");
     let mut flows = Vec::new();
@@ -435,7 +436,14 @@ async fn ops_diagnostics(State(state): State<AppState>) -> Json<serde_json::Valu
         "services": ops_payload(&cfg),
         "gateway": {
             "enabled": state.gateway.enabled,
-            "bindings": gateway.into_iter().map(|(target, session_id)| serde_json::json!({ "target": target, "session_id": session_id })).collect::<Vec<_>>(),
+            "bindings": gateway.into_iter().map(|(target, binding)| serde_json::json!({
+                "target": target,
+                "session_id": binding.session_id,
+                "provider": binding.provider,
+                "model": binding.model,
+                "workspace": binding.workspace,
+                "route_revision": binding.route_revision,
+            })).collect::<Vec<_>>(),
             "approvals": {
                 "mode": state.gateway.approvals_mode(),
                 "approver": state.gateway.approver_target(),
@@ -928,9 +936,11 @@ pub async fn serve_with(
     eprintln!("VakCoder server listening on http://{addr}");
     if std::env::var("VAKCODER_GATEWAY_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
         eprintln!("auth token: (pinned via VAKCODER_GATEWAY_TOKEN)");
-    } else {
+    } else if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
         eprintln!("auth token: {token}");
         eprintln!("clients must send 'Authorization: Bearer {token}' (or ?token=)");
+    } else {
+        eprintln!("auth token: generated for this process (suppressed in non-interactive output)");
     }
     if force_gateway {
         eprintln!("gateway: ENABLED (--gateway overrides config)");
@@ -1059,12 +1069,15 @@ pub(crate) async fn require_bearer(
 }
 
 async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
+    refresh_control_plane(&state);
+    let route = state.core.effective_route();
     Json(serde_json::json!({
         "status": "ok",
-        "provider": state.core.effective_provider(),
-        "model": state.core.effective_model(),
-        "provider_source": state.core.provider_source(),
-        "model_source": state.core.model_source(),
+        "provider": route.provider,
+        "model": route.model,
+        "provider_source": route.provider_source,
+        "model_source": route.model_source,
+        "route_revision": route.revision,
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
         "sandbox": state.core.effective_sandbox_name(),
         "context_window": state.core.config().context_window,
@@ -1103,6 +1116,7 @@ pub(crate) fn register_handle(
 }
 
 async fn create_session(State(state): State<AppState>) -> Json<serde_json::Value> {
+    refresh_control_plane(&state);
     let session = match state.core.start_session().await {
         Ok(s) => s,
         Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
@@ -1452,6 +1466,7 @@ async fn run_prompt(
     Path(id): Path<String>,
     Json(body): Json<RunBody>,
 ) -> axum::response::Response {
+    refresh_control_plane(&state);
     use axum::response::IntoResponse;
     let Some(handle) = state.get(&id) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -1985,6 +2000,44 @@ fn open_historical_session(state: &AppState, id: &str) -> Option<vak_session::Se
         .join(vak_core::memory::hash_cwd(state.core.cwd()))
         .join(format!("{id}.jsonl"));
     vak_session::SessionLog::open(path).ok()
+}
+
+/// Read only the immutable first header entry without acquiring the session's
+/// writer lock. Admin forensics must still work when another local process is
+/// actively serving the channel.
+pub(crate) fn read_historical_header(
+    state: &AppState,
+    id: &str,
+    workspace: Option<&std::path::Path>,
+) -> Option<vak_session::types::SessionHeader> {
+    fn read(path: &std::path::Path) -> Option<vak_session::types::SessionHeader> {
+        use std::io::BufRead;
+        let file = std::fs::File::open(path).ok()?;
+        for line in std::io::BufReader::new(file).lines().take(4) {
+            let entry: vak_session::types::Entry = serde_json::from_str(&line.ok()?).ok()?;
+            if let vak_session::types::EntryPayload::Header(header) = entry.payload {
+                return Some(header);
+            }
+        }
+        None
+    }
+
+    if let Some(workspace) = workspace {
+        let path =
+            vak_session::SessionPath::new_session_file(&state.core.sessions_home(), workspace, id);
+        if let Some(header) = read(&path) {
+            return Some(header);
+        }
+    }
+    let root = state.core.sessions_home().join("sessions");
+    let entries = std::fs::read_dir(root).ok()?;
+    for project in entries.flatten().filter(|entry| entry.path().is_dir()) {
+        let path = project.path().join(format!("{id}.jsonl"));
+        if let Some(header) = read(&path) {
+            return Some(header);
+        }
+    }
+    None
 }
 
 /// Reopen a session whose in-memory handle was consumed by a turn that
@@ -2671,7 +2724,7 @@ async fn set_permission_mode(
             {
                 return StatusCode::INTERNAL_SERVER_ERROR;
             }
-            apply_permission_mode(&state, mode);
+            apply_permission_mode(&state, mode, true);
             if old != mode {
                 vak_core::security_events::record(
                     &state.core.sessions_home(),
@@ -2690,11 +2743,15 @@ async fn set_permission_mode(
     }
 }
 
-fn apply_permission_mode(state: &AppState, mode: vak_config::PermissionMode) {
+fn apply_permission_mode(state: &AppState, mode: vak_config::PermissionMode, persisted: bool) {
     if state.core.effective_permission_mode() == mode {
         return;
     }
-    state.core.set_permission_mode(mode);
+    if persisted {
+        state.core.apply_persisted_permission_mode(mode);
+    } else {
+        state.core.set_permission_mode(mode);
+    }
     let handles: Vec<Arc<SessionHandle>> = state
         .sessions
         .lock()
@@ -2717,9 +2774,24 @@ fn apply_permission_mode(state: &AppState, mode: vak_config::PermissionMode) {
     }
 }
 
+fn refresh_control_plane(state: &AppState) {
+    let old_mode = state.core.effective_permission_mode();
+    if let Ok(mode) = state.core.refresh_persisted_preferences()
+        && !state.core.permission_mode_runtime_pinned()
+        && mode != old_mode
+    {
+        apply_permission_mode(state, mode, true);
+        state
+            .hub
+            .emit_config_changed("permission_mode_refreshed", &format!("{mode:?}"));
+    }
+}
+
 /// Picker data for provider/model UIs. Reports WHICH env var authenticates
 /// each provider and whether it resolves right now — never the value.
 async fn list_providers(State(state): State<AppState>) -> Json<serde_json::Value> {
+    refresh_control_plane(&state);
+    let route = state.core.effective_route();
     let mut providers = Vec::new();
     for name in state.core.provider_names() {
         let requires_key = name != "ollama";
@@ -2732,10 +2804,11 @@ async fn list_providers(State(state): State<AppState>) -> Json<serde_json::Value
         }));
     }
     Json(serde_json::json!({
-        "current": state.core.effective_provider(),
-        "current_model": state.core.effective_model(),
-        "current_provider_source": state.core.provider_source(),
-        "current_model_source": state.core.model_source(),
+        "current": route.provider,
+        "current_model": route.model,
+        "current_provider_source": route.provider_source,
+        "current_model_source": route.model_source,
+        "route_revision": route.revision,
         "current_configured": state.core.provider_configured(&state.core.effective_provider()),
         "providers": providers,
     }))
@@ -2933,13 +3006,16 @@ async fn delete_telegram_token(State(state): State<AppState>) -> axum::response:
 }
 
 async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
+    refresh_control_plane(&state);
     let cfg = state.core.config();
+    let route = state.core.effective_route();
     let project_path = vak_config::project_path(state.core.cwd());
     Json(serde_json::json!({
-        "provider": state.core.effective_provider(),
-        "model": state.core.effective_model(),
-        "provider_source": state.core.provider_source(),
-        "model_source": state.core.model_source(),
+        "provider": route.provider,
+        "model": route.model,
+        "provider_source": route.provider_source,
+        "model_source": route.model_source,
+        "route_revision": route.revision,
         "max_tokens": cfg.max_tokens,
         "max_turns": state.core.effective_max_turns(),
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
@@ -3018,6 +3094,22 @@ async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatc
         return StatusCode::BAD_REQUEST;
     }
     let permission_mode = body.permission_mode.as_deref().and_then(parse_mode);
+    let current_route = state.core.effective_route();
+    let route_change = body.provider.is_some() || body.model.is_some();
+    let provider = route_change.then(|| {
+        body.provider
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or(&current_route.provider)
+            .to_string()
+    });
+    let model = route_change.then(|| {
+        body.model
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or(&current_route.model)
+            .to_string()
+    });
     if (body.provider.is_some()
         || body.model.is_some()
         || body.max_turns.is_some()
@@ -3025,8 +3117,8 @@ async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatc
         || body.theme.is_some())
         && vak_config::persist_project_preferences(
             state.core.cwd(),
-            body.provider.as_deref().map(str::trim),
-            body.model.as_deref().map(str::trim),
+            provider.as_deref(),
+            model.as_deref(),
             body.max_turns,
             permission_mode,
             body.theme.as_deref(),
@@ -3036,32 +3128,29 @@ async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatc
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
     let mut changes = Vec::new();
-    if let Some(provider) = body.provider {
-        if provider.trim().is_empty() {
-            return StatusCode::BAD_REQUEST;
-        }
-        state.core.set_provider(provider.trim().to_string());
-        changes.push(format!("provider={}", provider.trim()));
-    }
-    if let Some(model) = body.model {
-        if model.trim().is_empty() {
-            return StatusCode::BAD_REQUEST;
-        }
-        state.core.set_model(model.trim().to_string());
-        changes.push(format!("model={}", model.trim()));
+    if let (Some(provider), Some(model)) = (provider, model) {
+        let effective =
+            vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted());
+        let Ok(effective) = effective else {
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        };
+        state
+            .core
+            .apply_persisted_route(effective.provider, effective.model);
+        changes.push(format!("route={provider}/{model}"));
     }
     if let Some(max_turns) = body.max_turns {
         if !(1..=1000).contains(&max_turns) {
             return StatusCode::BAD_REQUEST;
         }
-        state.core.set_max_turns(max_turns);
+        state.core.apply_persisted_max_turns(max_turns);
         changes.push(format!("max_turns={max_turns}"));
     }
     if let Some(mode) = body.permission_mode {
         let Some(mode) = parse_mode(&mode) else {
             return StatusCode::BAD_REQUEST;
         };
-        apply_permission_mode(&state, mode);
+        apply_permission_mode(&state, mode, true);
         changes.push(format!("permission_mode={mode:?}"));
     }
     if let Some(theme) = body.theme {
@@ -3069,7 +3158,7 @@ async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatc
             return StatusCode::BAD_REQUEST;
         }
         changes.push(format!("theme={theme}"));
-        state.core.set_theme(theme);
+        state.core.apply_persisted_theme(theme);
     }
     if !changes.is_empty() {
         vak_core::security_events::record(
@@ -3246,7 +3335,7 @@ async fn put_hooks(
         )
             .into_response();
     }
-    state.core.set_hooks(
+    state.core.apply_persisted_hooks(
         body.hooks
             .iter()
             .filter(|h| h.enabled)
@@ -3401,7 +3490,7 @@ async fn put_mcp_servers(
             })
             .collect(),
     };
-    state.core.set_mcp_servers(cfg);
+    state.core.apply_persisted_mcp_servers(cfg);
     vak_core::security_events::record(
         &state.core.sessions_home(),
         vak_core::security_events::EventKind::ConfigChange,
@@ -3765,8 +3854,7 @@ async fn spawn_isolated_run(
     child_core.set_sessions_home(state.core.sessions_home());
     if let Some(pin) = model_pin.map(str::trim).filter(|p| !p.is_empty()) {
         let (pin_provider, pin_model) = split_model_pin(pin, &child_core.effective_provider());
-        child_core.set_provider(pin_provider);
-        child_core.set_model(pin_model);
+        child_core.set_route(pin_provider, pin_model);
     }
 
     let child_log = child_core
@@ -5331,5 +5419,41 @@ mod scheduler_pure_tests {
         );
         assert_eq!(stdout_section("(no output)"), "");
         assert_eq!(stdout_section(""), "");
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod configuration_control_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cross_process_mode_refresh_revokes_live_capability_before_apply() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core.clone());
+        let session = core.start_session().await.unwrap();
+        let id = session.header().unwrap().session_id.clone();
+        let handle = register_handle(&state, id, session, core.cwd().clone());
+        assert!(!handle.cancel.lock().unwrap().is_cancelled());
+
+        vak_config::persist_project_preferences(
+            dir.path(),
+            None,
+            None,
+            Some(19),
+            Some(vak_config::PermissionMode::ReadOnly),
+            None,
+        )
+        .unwrap();
+        refresh_control_plane(&state);
+
+        assert_eq!(core.effective_max_turns(), 19);
+        assert_eq!(
+            core.effective_permission_mode(),
+            vak_config::PermissionMode::ReadOnly
+        );
+        assert!(handle.cancel.lock().unwrap().is_cancelled());
     }
 }

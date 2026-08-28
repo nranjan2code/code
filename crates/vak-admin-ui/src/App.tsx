@@ -7,7 +7,7 @@ import {
 } from "./store";
 import type {
   BestOfNRun, ConfigInfo, DiscoveredModelsResponse, FinOpsStatus, HookConfig,
-  InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval, ProviderSummary,
+  GatewayBinding, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
   SkillItem, SkillProposal, TaskItem, TranscriptEntry, WorkReceipt,
 } from "./types";
@@ -47,6 +47,7 @@ const ICONS = {
   overview: "M3 3v18h18M7 15l4-6 4 4 5-8",
   sessions: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87",
   integrations: "M16.5 9.4 7.55 4.24a1.78 1.78 0 0 0-2.5 1.55v12.42a1.78 1.78 0 0 0 2.5 1.55L16.5 14.6a1.78 1.78 0 0 0 0-3.2z M21 12h-3 M3 12h1",
+  gateway: "M4 4h16v12H4z M8 20h8 M12 16v4 M8 8h.01 M12 8h4 M8 12h8",
   memory: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20 M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15z",
   search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35",
   inbox: "M22 12h-6l-2 3h-4l-2-3H2M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z",
@@ -1511,6 +1512,179 @@ function Inbox() {
 
 // ---- Settings & Governance -------------------------------------------------
 
+function GatewayBindingEditor(props: {
+  binding: GatewayBinding;
+  providers: ProviderSummary[];
+  refresh: () => void;
+}) {
+  const [inherit, setInherit] = createSignal(!props.binding.override);
+  const [provider, setProvider] = createSignal(
+    props.binding.override?.provider ?? props.binding.effective_route.provider,
+  );
+  const [model, setModel] = createSignal(
+    props.binding.override?.model ?? props.binding.effective_route.model,
+  );
+  const [models, setModels] = createSignal<string[]>([]);
+  const [busy, setBusy] = createSignal(false);
+
+  createEffect(async () => {
+    if (inherit()) return;
+    try {
+      const found = (await api.models(provider())).models ?? [];
+      setModels(found);
+      if (found.length && !found.includes(model())) setModel(found[0]);
+    } catch {
+      setModels([]);
+    }
+  });
+
+  const act = async (operation: () => Promise<void>, message: string) => {
+    setBusy(true);
+    try {
+      await operation();
+      pushToast("info", message);
+      props.refresh();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <article class="binding-card" classList={{ "binding-stale": props.binding.stale }}>
+      <div class="binding-head">
+        <div>
+          <strong class="mono">{props.binding.target}</strong>
+          <div class="binding-meta">
+            {props.binding.session_id ? `session ${shortId(props.binding.session_id)}` : "new session on next message"}
+          </div>
+        </div>
+        <span class={`chip ${props.binding.stale ? "chip-tone-warning" : "chip-tone-success"}`}>
+          {props.binding.stale ? "rotation required" : "current"}
+        </span>
+      </div>
+
+      <div class="route-compare">
+        <div>
+          <span class="eyebrow">Effective route</span>
+          <strong>{props.binding.effective_route.provider}</strong>
+          <code>{props.binding.effective_route.model}</code>
+          <span class="binding-meta">{props.binding.effective_route.source}</span>
+        </div>
+        <div>
+          <span class="eyebrow">Frozen session</span>
+          <Show when={props.binding.session_contract} fallback={<span class="dim">Not created</span>}>
+            <strong>{props.binding.session_contract!.provider}</strong>
+            <code>{props.binding.session_contract!.model}</code>
+            <span class="binding-meta">v{props.binding.session_contract!.app_version}</span>
+          </Show>
+        </div>
+      </div>
+
+      <Show when={props.binding.stale_reasons.length}>
+        <div class="warning">Will rotate on next inbound message: {props.binding.stale_reasons.join(", ").replaceAll("_", " ")}</div>
+      </Show>
+
+      <label class="inherit-toggle">
+        <input type="checkbox" checked={inherit()} onChange={(e) => setInherit(e.currentTarget.checked)} />
+        Inherit workspace default
+      </label>
+      <Show when={!inherit()}>
+        <div class="binding-controls">
+          <select value={provider()} onChange={(e) => setProvider(e.currentTarget.value)}>
+            <For each={props.providers}>{(p) => <option value={p.name}>{p.name}</option>}</For>
+          </select>
+          <Show when={models().length} fallback={
+            <input class="mono" value={model()} onInput={(e) => setModel(e.currentTarget.value)} placeholder="model id" />
+          }>
+            <select class="mono" value={model()} onChange={(e) => setModel(e.currentTarget.value)}>
+              <For each={models()}>{(m) => <option value={m}>{m}</option>}</For>
+            </select>
+          </Show>
+        </div>
+      </Show>
+      <div class="row-gap">
+        <button disabled={busy() || (!inherit() && !model().trim())} onClick={() => act(
+          () => api.patchGatewayBinding(props.binding.target, inherit() ? {} : { provider: provider(), model: model() }),
+          `Route updated for ${props.binding.target}`,
+        )}>Save route</button>
+        <button class="ghost" disabled={busy() || !props.binding.session_id} onClick={() => act(
+          () => api.rotateGatewayBinding(props.binding.target),
+          `Conversation rotated for ${props.binding.target}`,
+        )}>Rotate now</button>
+        <span class="spacer" />
+        <button class="danger small" disabled={busy()} onClick={() => {
+          if (window.confirm(`Remove ${props.binding.target} and its route override? Session history is preserved.`)) {
+            void act(() => api.deleteGatewayBinding(props.binding.target), `Binding removed: ${props.binding.target}`);
+          }
+        }}>Remove binding</button>
+      </div>
+    </article>
+  );
+}
+
+function GatewayView() {
+  const [status, { refetch }] = createResource(() => api.gatewayStatus());
+  const [providers] = createResource(() => api.providers());
+  const [target, setTarget] = createSignal("");
+
+  const addTarget = async () => {
+    const key = target().trim();
+    if (!key.includes(":")) {
+      pushToast("alert", "Use surface:chat, for example telegram:12345");
+      return;
+    }
+    try {
+      await api.patchGatewayBinding(key, {});
+      setTarget("");
+      pushToast("info", `Registered ${key} with the workspace default`);
+      refetch();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    }
+  };
+
+  return (
+    <div class="view">
+      <section class="panel gateway-summary">
+        <div class="panel-title-row">
+          <div>
+            <h2>Gateway routing control</h2>
+            <p class="dim">One visible route chain for every remote surface. Defaults propagate to inheriting channels; frozen sessions rotate instead of mutating.</p>
+          </div>
+          <button class="ghost small" onClick={() => refetch()}>Refresh</button>
+        </div>
+        <Show when={!status.loading} fallback={<div class="empty">Loading gateway state…</div>}>
+          <div class="route-summary-grid">
+            <div><span class="eyebrow">Gateway</span><strong>{status()?.enabled ? "Enabled" : "Disabled"}</strong></div>
+            <div><span class="eyebrow">Workspace</span><code>{status()?.workspace}</code></div>
+            <div><span class="eyebrow">Admin default</span><strong>{status()?.default_route.provider}</strong><code>{status()?.default_route.model}</code></div>
+            <div><span class="eyebrow">Provenance</span><code>{status()?.default_route.provider_source} + {status()?.default_route.model_source}</code><span class="binding-meta">{status()?.default_route.revision}</span></div>
+          </div>
+        </Show>
+      </section>
+
+      <section class="panel" style="margin-top:14px">
+        <div class="panel-title-row">
+          <div><h2>Registered channels</h2><p class="dim">Provider and model are always saved together. An empty override inherits the admin default.</p></div>
+          <div class="add-binding">
+            <input class="mono" value={target()} onInput={(e) => setTarget(e.currentTarget.value)} placeholder="telegram:chat-id" />
+            <button disabled={!target().trim()} onClick={addTarget}>Register</button>
+          </div>
+        </div>
+        <Show when={(status()?.bindings.length ?? 0) > 0} fallback={<div class="empty">No channels registered yet. Inbound channels appear here automatically, or register one above.</div>}>
+          <div class="binding-list">
+            <For each={status()?.bindings}>{(binding) => (
+              <GatewayBindingEditor binding={binding} providers={providers()?.providers ?? []} refresh={refetch} />
+            )}</For>
+          </div>
+        </Show>
+      </section>
+    </div>
+  );
+}
+
 const MODES = ["ReadOnly", "WorkspaceWrite", "FullAccess"];
 
 function Settings() {
@@ -1774,7 +1948,7 @@ function Settings() {
               <dt>gateway</dt>
               <dd><span class="chip" data-on={gateway()?.enabled}>{gateway()?.enabled ? "enabled" : "disabled"}</span></dd>
               <dt>bindings</dt>
-              <dd>{gateway()?.bindings.length ? gateway()!.bindings.join(", ") : "none"}</dd>
+              <dd>{gateway()?.bindings.length ? `${gateway()!.bindings.length} registered` : "none"}</dd>
             </dl>
           </Show>
           <div class="row-gap" style="margin-top:16px">
@@ -1792,6 +1966,7 @@ const NAV = [
   { hash: "#/overview", label: "Overview", icon: ICONS.overview },
   { hash: "#/sessions", label: "Sessions", icon: ICONS.sessions },
   { hash: "#/integrations", label: "Integrations", icon: ICONS.integrations },
+  { hash: "#/gateway", label: "Gateway", icon: ICONS.gateway },
   { hash: "#/memory", label: "Memory", icon: ICONS.memory },
   { hash: "#/search", label: "Search", icon: ICONS.search },
   { hash: "#/inbox", label: "Inbox", icon: ICONS.inbox, badge: () => unread().toString() || "" },
@@ -1888,6 +2063,7 @@ export default function App() {
                 <Transcript sessionId={route().slice("#/sessions/".length)} />
               </Match>
               <Match when={currentRoute() === "#/integrations"}><IntegrationsView /></Match>
+              <Match when={currentRoute() === "#/gateway"}><GatewayView /></Match>
               <Match when={currentRoute() === "#/memory"}><MemoryView /></Match>
               <Match when={currentRoute() === "#/search"}><SearchView /></Match>
               <Match when={currentRoute() === "#/inbox"}><Inbox /></Match>

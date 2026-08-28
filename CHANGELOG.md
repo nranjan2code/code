@@ -26,6 +26,37 @@ silently collapse every remote user into one session. The Telegram
 bridge now sends the message sender's real Telegram user id instead of
 a fixed `"telegram"` placeholder.
 
+## 0.8.11 — 2026-08-28
+
+### System-wide route control plane
+
+Provider and model are now one atomic route across Core, configuration writes,
+session admission, task and heartbeat pins, desktop, gateway, and admin
+surfaces. Authenticated workspace changes persist the complete pair before
+hot-apply; independent long-running local processes refresh persisted defaults
+when admitting a new session. Explicit scoped pins remain isolated.
+
+The same refresh path now covers max turns, theme, MCP servers, hooks, and
+permission mode. A permission change is applied only after active main/side
+runs are cancelled and pending approvals denied, preserving capability
+revocation across process boundaries.
+
+Gateway bindings now use a backward-compatible, versioned record containing
+the bound session, optional channel route, workspace, and route revision.
+Admin-default precedence is deterministic (`channel override > workspace
+default`). A frozen session that no longer matches its effective route is
+reported stale and rotates to a new session on the next inbound message; the
+old append-only ledger is preserved.
+
+The admin console adds a dedicated Gateway control view with workspace default
+and provenance, registered-channel creation/edit/removal, live-discovered model
+selection, inherited versus overridden routes, frozen-contract comparison,
+stale reasons, and explicit conversation rotation.
+
+Non-interactive server logs no longer print generated bearer tokens, and
+Telegram transport/decode failures are rendered without request URLs so bot
+tokens embedded in Bot API paths cannot enter service logs.
+
 ## 0.8.10 — 2026-08-27
 
 ### Workspace-aware durable services

@@ -119,11 +119,13 @@ struct CoreInner {
     cwd: PathBuf,
     sessions_home: PathBuf,
     registry: ProviderRegistry,
-    model_override: std::sync::Mutex<Option<String>>,
-    provider_override: std::sync::Mutex<Option<String>>,
+    route: std::sync::Mutex<RouteSelection>,
     max_turns_override: std::sync::Mutex<Option<usize>>,
+    max_turns_runtime_pinned: std::sync::atomic::AtomicBool,
     mode_override: std::sync::Mutex<Option<vak_config::PermissionMode>>,
+    mode_runtime_pinned: std::sync::atomic::AtomicBool,
     theme_override: std::sync::Mutex<Option<String>>,
+    theme_runtime_pinned: std::sync::atomic::AtomicBool,
     sandbox_backend_override: std::sync::Mutex<Option<String>>,
     provider_instance: std::sync::Mutex<Option<Arc<dyn Provider>>>,
     sessions_home_override: std::sync::Mutex<Option<PathBuf>>,
@@ -141,8 +143,10 @@ struct CoreInner {
     mcp_inventory: std::sync::Mutex<Option<String>>,
     /// Runtime MCP table override (desktop/TUI management surface).
     mcp_override: std::sync::Mutex<Option<vak_config::McpConfig>>,
+    mcp_runtime_pinned: std::sync::atomic::AtomicBool,
     /// Runtime hook override (desktop/TUI management surface).
     hooks_override: std::sync::Mutex<Option<Vec<vak_config::HookConfig>>>,
+    hooks_runtime_pinned: std::sync::atomic::AtomicBool,
     /// Session-scoped domain-weighted doubt per (provider, model) leg
     /// (Phase R). Fed from work receipts at run end; read at ladder
     /// admission.
@@ -164,6 +168,92 @@ pub struct Core {
     inner: Arc<CoreInner>,
 }
 
+/// One indivisible provider/model selection. A route is always read and
+/// written as a pair so session admission cannot observe a torn update.
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct RouteSelection {
+    pub provider: String,
+    pub model: String,
+    pub provider_source: String,
+    pub model_source: String,
+    pub revision: String,
+    #[serde(skip)]
+    runtime_pinned: bool,
+}
+
+fn route_selection(
+    provider: String,
+    model: String,
+    provider_source: &str,
+    model_source: &str,
+    runtime_pinned: bool,
+) -> RouteSelection {
+    let revision = route_revision(&provider, &model, provider_source, model_source);
+    RouteSelection {
+        provider,
+        model,
+        provider_source: provider_source.to_string(),
+        model_source: model_source.to_string(),
+        revision,
+        runtime_pinned,
+    }
+}
+
+fn route_from_config(
+    cwd: &std::path::Path,
+    config: &vak_config::Config,
+    pinned: bool,
+) -> RouteSelection {
+    route_selection(
+        config.provider.clone(),
+        config.model.clone(),
+        &route_source(cwd, "provider"),
+        &route_source(cwd, "model"),
+        pinned,
+    )
+}
+
+fn route_revision(
+    provider: &str,
+    model: &str,
+    provider_source: &str,
+    model_source: &str,
+) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in [provider, model, provider_source, model_source]
+        .join("\0")
+        .bytes()
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("r{hash:016x}")
+}
+
+fn route_source(cwd: &std::path::Path, key: &str) -> String {
+    let env_set = match key {
+        "provider" => std::env::var("VAKCODER_PROVIDER").is_ok(),
+        "model" => std::env::var("VAKCODER_MODEL").is_ok(),
+        _ => false,
+    };
+    if env_set {
+        "environment"
+    } else if project_profile_has_key(cwd, key) {
+        "project_profile"
+    } else if vak_config::project_path(cwd).is_file() && project_config_has_key(cwd, key) {
+        "project_config"
+    } else if global_profile_has_key(key) {
+        "global_profile"
+    } else if vak_config::global_path().is_some_and(|path| path.is_file())
+        && global_config_has_key(key)
+    {
+        "global_config"
+    } else {
+        "built_in_default"
+    }
+    .to_string()
+}
+
 impl Core {
     pub fn new(cwd: PathBuf) -> Result<Self, CoreError> {
         Self::new_with_trust(cwd, true)
@@ -175,6 +265,7 @@ impl Core {
     /// or hook/base-URL redirection on first run.
     pub fn new_with_trust(cwd: PathBuf, trust_project_config: bool) -> Result<Self, CoreError> {
         let config = vak_config::load_with_trust(&cwd, trust_project_config)?;
+        let route = route_from_config(&cwd, &config, false);
         // Canonical layout (doc 32): one resolver for the whole workspace.
         // The cwd fallback covers exotic environments with no HOME.
         let sessions_home = vak_config::paths::data_home();
@@ -203,12 +294,14 @@ impl Core {
                 cwd,
                 sessions_home,
                 registry: default_registry(),
-                model_override: std::sync::Mutex::new(None),
-                provider_override: std::sync::Mutex::new(None),
+                route: std::sync::Mutex::new(route),
                 max_turns_override: std::sync::Mutex::new(None),
+                max_turns_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 mode_override: std::sync::Mutex::new(None),
+                mode_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 sandbox_backend_override: std::sync::Mutex::new(None),
                 theme_override: std::sync::Mutex::new(None),
+                theme_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 provider_instance: std::sync::Mutex::new(None),
                 sessions_home_override: std::sync::Mutex::new(None),
                 breaker,
@@ -223,7 +316,9 @@ impl Core {
                 models_cache: std::sync::Mutex::new(HashMap::new()),
                 mcp_inventory: std::sync::Mutex::new(None),
                 mcp_override: std::sync::Mutex::new(None),
+                mcp_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 hooks_override: std::sync::Mutex::new(None),
+                hooks_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 beliefs: Arc::new(routing::BeliefState::new()),
             }),
         })
@@ -264,38 +359,81 @@ impl Core {
     }
 
     pub fn set_model(&self, model: String) {
-        Self::write_override(&self.inner.model_override, Some(model));
+        let route = self.effective_route();
+        self.set_route(route.provider, model);
     }
 
     pub fn effective_model(&self) -> String {
-        Self::read_override(&self.inner.model_override)
-            .unwrap_or_else(|| self.inner.config.model.clone())
+        self.effective_route().model
     }
 
-    pub fn model_source(&self) -> &'static str {
-        if Self::read_override(&self.inner.model_override).is_some() {
-            "runtime_override"
-        } else if std::env::var("VAKCODER_MODEL").is_ok() {
-            "environment"
-        } else if project_profile_has_key(&self.inner.cwd, "model") {
-            "project_profile"
-        } else if vak_config::project_path(&self.inner.cwd).is_file()
-            && project_config_has_key(&self.inner.cwd, "model")
-        {
-            "project_config"
-        } else if global_profile_has_key("model") {
-            "global_profile"
-        } else if vak_config::global_path().is_some_and(|path| path.is_file())
-            && global_config_has_key("model")
-        {
-            "global_config"
-        } else {
-            "built_in_default"
-        }
+    pub fn model_source(&self) -> String {
+        self.effective_route().model_source
     }
 
     pub fn set_provider(&self, provider: String) {
-        Self::write_override(&self.inner.provider_override, Some(provider.clone()));
+        let route = self.effective_route();
+        self.set_route(provider, route.model);
+    }
+
+    /// Apply an explicit scoped route override atomically. CLI flags, task
+    /// pins, heartbeat pins, and test seams use this path; persisted admin
+    /// changes use `apply_persisted_route` instead.
+    pub fn set_route(&self, provider: String, model: String) {
+        self.replace_route(route_selection(
+            provider,
+            model,
+            "runtime_override",
+            "runtime_override",
+            true,
+        ));
+    }
+
+    /// Re-read the layered provider/model defaults. Runtime-pinned cores are
+    /// deliberately excluded so a global admin edit cannot rewrite a scoped
+    /// CLI, task, heartbeat, or subagent contract.
+    pub fn refresh_persisted_route(&self) -> Result<RouteSelection, CoreError> {
+        let current = self.effective_route();
+        if current.runtime_pinned {
+            return Ok(current);
+        }
+        let config = vak_config::load_with_trust(&self.inner.cwd, self.inner.trust_project_config)?;
+        let route = route_from_config(&self.inner.cwd, &config, false);
+        if route != current {
+            self.replace_route(route.clone());
+        }
+        Ok(route)
+    }
+
+    /// Hot-apply a route that has already been committed atomically to the
+    /// workspace config by the authenticated administration surface.
+    pub fn apply_persisted_route(&self, provider: String, model: String) {
+        let provider_source = route_source(&self.inner.cwd, "provider");
+        let model_source = route_source(&self.inner.cwd, "model");
+        self.replace_route(route_selection(
+            provider,
+            model,
+            &provider_source,
+            &model_source,
+            false,
+        ));
+    }
+
+    pub fn effective_route(&self) -> RouteSelection {
+        self.inner
+            .route
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn replace_route(&self, route: RouteSelection) {
+        let provider = route.provider.clone();
+        *self
+            .inner
+            .route
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = route;
         if let Ok(mut injected) = self.inner.provider_instance.lock()
             && injected
                 .as_ref()
@@ -306,30 +444,11 @@ impl Core {
     }
 
     pub fn effective_provider(&self) -> String {
-        Self::read_override(&self.inner.provider_override)
-            .unwrap_or_else(|| self.inner.config.provider.clone())
+        self.effective_route().provider
     }
 
-    pub fn provider_source(&self) -> &'static str {
-        if Self::read_override(&self.inner.provider_override).is_some() {
-            "runtime_override"
-        } else if std::env::var("VAKCODER_PROVIDER").is_ok() {
-            "environment"
-        } else if project_profile_has_key(&self.inner.cwd, "provider") {
-            "project_profile"
-        } else if vak_config::project_path(&self.inner.cwd).is_file()
-            && project_config_has_key(&self.inner.cwd, "provider")
-        {
-            "project_config"
-        } else if global_profile_has_key("provider") {
-            "global_profile"
-        } else if vak_config::global_path().is_some_and(|path| path.is_file())
-            && global_config_has_key("provider")
-        {
-            "global_config"
-        } else {
-            "built_in_default"
-        }
+    pub fn provider_source(&self) -> String {
+        self.effective_route().provider_source
     }
 
     /// Whether project-owned privileged configuration was admitted when this
@@ -343,9 +462,19 @@ impl Core {
     }
 
     pub fn set_max_turns(&self, max_turns: usize) {
+        self.inner
+            .max_turns_runtime_pinned
+            .store(true, std::sync::atomic::Ordering::Release);
         if let Ok(mut c) = self.inner.max_turns_override.lock() {
             *c = Some(max_turns);
         }
+    }
+
+    pub fn apply_persisted_max_turns(&self, max_turns: usize) {
+        Self::write_override(&self.inner.max_turns_override, Some(max_turns));
+        self.inner
+            .max_turns_runtime_pinned
+            .store(false, std::sync::atomic::Ordering::Release);
     }
 
     pub fn set_tool_worker_exe(&self, executable: PathBuf) {
@@ -385,7 +514,23 @@ impl Core {
     }
 
     pub fn set_permission_mode(&self, mode: vak_config::PermissionMode) {
+        self.inner
+            .mode_runtime_pinned
+            .store(true, std::sync::atomic::Ordering::Release);
         Self::write_override(&self.inner.mode_override, Some(mode));
+    }
+
+    pub fn apply_persisted_permission_mode(&self, mode: vak_config::PermissionMode) {
+        Self::write_override(&self.inner.mode_override, Some(mode));
+        self.inner
+            .mode_runtime_pinned
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    pub fn permission_mode_runtime_pinned(&self) -> bool {
+        self.inner
+            .mode_runtime_pinned
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Runtime sandbox-backend selection ("os", "docker", or config default
@@ -407,6 +552,20 @@ impl Core {
     /// effect on the next turn; the cached capability section is dropped so
     /// the next run re-discovers the new inventory.
     pub fn set_mcp_servers(&self, config: vak_config::McpConfig) {
+        self.inner
+            .mcp_runtime_pinned
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.replace_mcp(config);
+    }
+
+    pub fn apply_persisted_mcp_servers(&self, config: vak_config::McpConfig) {
+        self.replace_mcp(config);
+        self.inner
+            .mcp_runtime_pinned
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    fn replace_mcp(&self, config: vak_config::McpConfig) {
         if let Ok(mut c) = self.inner.mcp_override.lock() {
             *c = Some(config);
         }
@@ -427,6 +586,20 @@ impl Core {
     /// Replace lifecycle hooks for subsequent turns without restarting the
     /// desktop/server process. Persistence is owned by the server surface.
     pub fn set_hooks(&self, hooks: Vec<vak_config::HookConfig>) {
+        self.inner
+            .hooks_runtime_pinned
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.replace_hooks(hooks);
+    }
+
+    pub fn apply_persisted_hooks(&self, hooks: Vec<vak_config::HookConfig>) {
+        self.replace_hooks(hooks);
+        self.inner
+            .hooks_runtime_pinned
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    fn replace_hooks(&self, hooks: Vec<vak_config::HookConfig>) {
         if let Ok(mut current) = self.inner.hooks_override.lock() {
             *current = Some(hooks);
         }
@@ -442,9 +615,62 @@ impl Core {
     }
 
     pub fn set_theme(&self, theme: String) {
+        self.inner
+            .theme_runtime_pinned
+            .store(true, std::sync::atomic::Ordering::Release);
         if let Ok(mut t) = self.inner.theme_override.lock() {
             *t = Some(theme);
         }
+    }
+
+    pub fn apply_persisted_theme(&self, theme: String) {
+        Self::write_override(&self.inner.theme_override, Some(theme));
+        self.inner
+            .theme_runtime_pinned
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Refresh every non-security persisted preference. Permission mode is
+    /// returned to the server control plane so it can revoke in-flight
+    /// capabilities before applying a changed value.
+    pub fn refresh_persisted_preferences(&self) -> Result<vak_config::PermissionMode, CoreError> {
+        let config = vak_config::load_with_trust(&self.inner.cwd, self.inner.trust_project_config)?;
+        let current_route = self.effective_route();
+        if !current_route.runtime_pinned {
+            let route = route_from_config(&self.inner.cwd, &config, false);
+            if route != current_route {
+                self.replace_route(route);
+            }
+        }
+        if !self
+            .inner
+            .max_turns_runtime_pinned
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.apply_persisted_max_turns(config.max_turns);
+        }
+        if !self
+            .inner
+            .theme_runtime_pinned
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.apply_persisted_theme(config.ui.theme.clone());
+        }
+        if !self
+            .inner
+            .mcp_runtime_pinned
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.apply_persisted_mcp_servers(config.mcp.clone());
+        }
+        if !self
+            .inner
+            .hooks_runtime_pinned
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.apply_persisted_hooks(config.hooks.clone());
+        }
+        Ok(config.permission_mode)
     }
 
     /// Persists a learned allow rule to `.vakcoder/permissions.local.toml`
@@ -918,11 +1144,7 @@ impl Core {
     /// evidence ledger, session beliefs, config, and tool count. No
     /// network, no invented model ids. The operator-selected primary is
     /// pinned to the head; v2 ordering decides only the FALLBACK order.
-    fn plan_route_ladder(&self) -> routing::RoutePlan {
-        let primary = vak_llm::RouteLeg {
-            provider: self.effective_provider(),
-            model: self.effective_model(),
-        };
+    fn plan_route_ladder(&self, primary: vak_llm::RouteLeg) -> routing::RoutePlan {
         let mut candidates = vec![primary.clone()];
 
         // Same-model legs on other keyed providers (legacy Phase B set).
@@ -1015,13 +1237,29 @@ impl Core {
     }
 
     pub async fn start_session(&self) -> Result<SessionLog, CoreError> {
+        let route = self.refresh_persisted_route()?;
+        self.start_session_with_route(route.provider, route.model)
+            .await
+    }
+
+    /// Create a frozen session from an explicit provider/model pair without
+    /// mutating the Core default. Gateway/channel overrides use this path so
+    /// concurrent surfaces cannot overwrite one another's admission route.
+    pub async fn start_session_with_route(
+        &self,
+        provider: String,
+        model: String,
+    ) -> Result<SessionLog, CoreError> {
         let session_id = uuid_like();
         let path = vak_session::SessionPath::new_session_file(
             &self.sessions_home(),
             &self.inner.cwd,
             &session_id,
         );
-        let plan = self.plan_route_ladder();
+        let plan = self.plan_route_ladder(vak_llm::RouteLeg {
+            provider: provider.clone(),
+            model: model.clone(),
+        });
         let header = SessionHeader {
             session_id,
             created_at: chrono::Utc::now(),
@@ -1029,8 +1267,8 @@ impl Core {
             parent_session_id: None,
             contract: FrozenContract {
                 app_version: APP_VERSION.into(),
-                provider: self.effective_provider(),
-                model: self.effective_model(),
+                provider,
+                model,
                 // Frozen-ladder admission (docs/design/27 Phase B +
                 // Phase R): primary leg always first; additional legs
                 // ONLY from warm discovery caches -- the same model on
@@ -1044,7 +1282,7 @@ impl Core {
                 route_annotations: plan.annotations,
                 system_prompt: self.system_prompt(),
                 tools: self.tool_names(),
-                permission_mode: format!("{:?}", self.inner.config.permission_mode)
+                permission_mode: format!("{:?}", self.effective_permission_mode())
                     .to_kebab_lowercase(),
                 skills: self.skills().iter().map(|s| s.name.clone()).collect(),
             },
@@ -2438,5 +2676,96 @@ mod override_deadlock {
             let c = Arc::clone(&core);
             within(label, move || check(c));
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod route_control_tests {
+    use super::*;
+
+    #[test]
+    fn provider_and_model_are_never_observed_as_a_torn_pair() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Arc::new(Core::new(dir.path().to_path_buf()).unwrap());
+        core.set_route("provider-a".into(), "model-a".into());
+        let writer = {
+            let core = Arc::clone(&core);
+            std::thread::spawn(move || {
+                for _ in 0..10_000 {
+                    core.set_route("provider-b".into(), "model-b".into());
+                    core.set_route("provider-a".into(), "model-a".into());
+                }
+            })
+        };
+        for _ in 0..20_000 {
+            let route = core.effective_route();
+            assert!(
+                (route.provider == "provider-a" && route.model == "model-a")
+                    || (route.provider == "provider-b" && route.model == "model-b")
+            );
+        }
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn independent_cores_observe_one_persisted_route_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = Core::new(dir.path().to_path_buf()).unwrap();
+        let second = Core::new(dir.path().to_path_buf()).unwrap();
+        vak_config::persist_project_preferences(
+            dir.path(),
+            Some("provider-new"),
+            Some("model-new"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        first.refresh_persisted_route().unwrap();
+        second.refresh_persisted_route().unwrap();
+        assert_eq!(first.effective_provider(), "provider-new");
+        assert_eq!(first.effective_model(), "model-new");
+        assert_eq!(first.effective_route(), second.effective_route());
+    }
+
+    #[test]
+    fn persisted_non_route_preferences_refresh_without_touching_runtime_pins() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        vak_config::persist_project_preferences(
+            dir.path(),
+            None,
+            None,
+            Some(17),
+            None,
+            Some("plain"),
+        )
+        .unwrap();
+        core.refresh_persisted_preferences().unwrap();
+        assert_eq!(core.effective_max_turns(), 17);
+        assert_eq!(core.effective_theme(), "plain");
+
+        core.set_max_turns(23);
+        vak_config::persist_project_preferences(dir.path(), None, None, Some(31), None, None)
+            .unwrap();
+        core.refresh_persisted_preferences().unwrap();
+        assert_eq!(core.effective_max_turns(), 23, "scoped runtime pin wins");
+    }
+
+    #[tokio::test]
+    async fn explicit_session_route_does_not_mutate_the_shared_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let default = core.effective_route();
+        let session = core
+            .start_session_with_route("channel-provider".into(), "channel-model".into())
+            .await
+            .unwrap();
+        let contract = &session.header().unwrap().contract;
+        assert_eq!(contract.provider, "channel-provider");
+        assert_eq!(contract.model, "channel-model");
+        assert_eq!(core.effective_route(), default);
     }
 }

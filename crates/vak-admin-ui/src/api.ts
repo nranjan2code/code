@@ -107,6 +107,21 @@ export const api = {
   gatewayStatus: () =>
     fetch("/admin/api/gateway/status").then((r) => handle<GatewayStatus>(r)),
 
+  patchGatewayBinding: (target: string, route: { provider?: string; model?: string }): Promise<void> =>
+    fetch(`/admin/api/gateway/bindings/${encodeURIComponent(target)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(route),
+    }).then((r) => void handle(r)),
+
+  rotateGatewayBinding: (target: string): Promise<void> =>
+    fetch(`/admin/api/gateway/bindings/${encodeURIComponent(target)}/rotate`, { method: "POST" })
+      .then((r) => void handle(r)),
+
+  deleteGatewayBinding: (target: string): Promise<void> =>
+    fetch(`/admin/api/gateway/bindings/${encodeURIComponent(target)}`, { method: "DELETE" })
+      .then((r) => void handle(r)),
+
   approvals: (): Promise<{ approvals: PendingApproval[]; total: number }> =>
     fetch("/admin/api/approvals").then((r) => handle(r)),
 

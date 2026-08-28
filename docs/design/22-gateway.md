@@ -47,8 +47,9 @@ cron tick    ┘                          └ any future client
                  vak-core  (unchanged, surface-agnostic)
 ```
 
-One `Core` per workspace; N concurrent routed sessions above it; sessions
-remain append-only JSONL trees keyed per-cwd exactly as before.
+One `Core` per workspace; N concurrent routed sessions above it. The Core owns
+one atomic provider/model default, while each binding may own an atomic
+provider/model override. Sessions remain append-only JSONL trees keyed per-cwd.
 
 ## Non-goals for this phase
 
@@ -80,13 +81,30 @@ A **binding** maps a routing key to a session:
 
 ```
 routing key = "{surface}:{chat}"        e.g. "telegram:48211", "webhook:ci-alerts"
-binding     = key -> session_id          persisted at <home>/gateway/bindings.json
+binding     = key -> { session_id?, provider?, model?, workspace?, route_revision? }
+                                      persisted at <home>/gateway/bindings.json
 ```
 
-First message from an unknown key creates a fresh session (normal frozen-
-contract header, normal JSONL); later messages resume that session across
-gateway restarts. Deleting a session through the normal endpoint leaves the
-binding stale; the next inbound detects the missing ledger and rebinds fresh.
+The bindings document is schema-versioned. Legacy `key -> session_id` maps are
+read without data loss and become versioned records on the next binding write.
+Writes use temp-file + rename atomicity.
+
+Route precedence is `channel override > workspace default`. Provider and model
+are accepted, persisted, and applied only as a pair. A channel with no override
+inherits the workspace route revision. First message from an unknown key
+creates a fresh session; later messages resume it across gateway restarts.
+
+Session contracts never mutate. Before every inbound dispatch, the gateway
+compares the bound session's workspace/provider/model contract with the
+binding's effective route. Missing ledgers and mismatches are stale bindings:
+the old JSONL remains intact, the binding rotates, and the inbound message
+starts a fresh session under the new contract. This is how an administrative
+default propagates without corrupting history.
+
+Authenticated administration exposes register, pairwise route update,
+inherit-default, rotate-now, and remove operations. Status includes effective
+route and provenance, frozen session contract, workspace, route revision, and
+machine-readable stale reasons.
 
 ### Busy handling = steering, never 409
 
@@ -284,6 +302,8 @@ Lessons from OpenClaw's incident history, inverted:
 5. Bindings file lives under `<sessions_home>` next to tasks.json — same
    trust domain as session ledgers, no secrets inside (channel tokens belong
    in `.env` at the adapter layer, never here).
+6. Binding route overrides contain identifiers only, never credentials; model
+   catalogues still come from live provider discovery.
 
 ## Invariants mapping
 
@@ -291,6 +311,7 @@ Lessons from OpenClaw's incident history, inverted:
 |---|---|
 | Model-visible ⇒ logged | inbound texts enter as prompt or steering entries |
 | Append-only sessions | untouched — bindings reference, never rewrite |
+| Configuration authority | provider/model is one atomic pair; stale bindings rotate to a new frozen session |
 | Errors are values | inbound validation + delivery return typed errors; turn failures deliver `is_error` summaries |
 | Abort preserves output | `/cancel` still works per session; partial text delivered on abort |
 | No unsafe | none added |
@@ -318,6 +339,9 @@ Lessons from OpenClaw's incident history, inverted:
   `<home>/gateway/bindings.json`; on a fresh process the first inbound
   reopens the bound ledger through the normal attach path. Proven by
   `bindings_survive_process_restart`.
+- Workspace defaults are refreshed from layered config at session admission.
+  Explicit CLI/task/heartbeat/subagent pins remain scoped and are never
+  overwritten by an admin default refresh.
 - The wait long-poll returns the turn chain's final text; if the session was
   busy the reply is `202 steering_queued` and callers follow the SSE stream
   or poll the transcript.

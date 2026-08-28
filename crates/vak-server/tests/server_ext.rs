@@ -419,8 +419,13 @@ async fn mode_switch_and_diff_endpoint() {
     assert_eq!(updated["model"], "gemini-test");
     assert_eq!(updated["max_turns"], 17);
     assert_eq!(updated["permission_mode"], "WorkspaceWrite");
-    assert_eq!(updated["provider_source"], "runtime_override");
-    assert_eq!(updated["model_source"], "runtime_override");
+    assert_eq!(updated["provider_source"], "project_config");
+    assert_eq!(updated["model_source"], "project_config");
+    assert!(
+        updated["route_revision"]
+            .as_str()
+            .is_some_and(|r| r.starts_with('r'))
+    );
     let persisted = tokio::fs::read_to_string(cwd.join(".vakcoder/config.toml"))
         .await
         .unwrap();

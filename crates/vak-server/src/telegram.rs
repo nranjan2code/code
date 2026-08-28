@@ -12,6 +12,26 @@ use std::path::PathBuf;
 
 use crate::gateway::{InboundChannel, InboundRequest};
 
+fn telegram_http_error(operation: &str, error: &reqwest::Error) -> String {
+    let kind = if error.is_timeout() {
+        "request timed out"
+    } else if error.is_connect() {
+        "connection failed"
+    } else if error.is_decode() {
+        "response decode failed"
+    } else if error.is_body() {
+        "request or response body failed"
+    } else if error.is_request() {
+        "request failed"
+    } else {
+        "HTTP operation failed"
+    };
+    match error.status() {
+        Some(status) => format!("{operation}: {kind} ({status})"),
+        None => format!("{operation}: {kind}"),
+    }
+}
+
 pub struct TelegramBridge {
     /// Bot API base, e.g. `https://api.telegram.org`. Overridable for
     /// self-hosted relays and tests via `TELEGRAM_API_BASE`.
@@ -336,7 +356,7 @@ impl TelegramBridge {
             .json(&serde_json::json!({ "callback_query_id": callback_id, "text": text }))
             .send()
             .await
-            .map_err(|e| format!("answerCallbackQuery: {e}"))?;
+            .map_err(|e| telegram_http_error("answerCallbackQuery", &e))?;
         if !resp.status().is_success() {
             return Err(format!("answerCallbackQuery returned {}", resp.status()));
         }
@@ -409,7 +429,7 @@ impl TelegramBridge {
             .query(&[("timeout", "25"), ("offset", &offset.to_string())])
             .send()
             .await
-            .map_err(|e| format!("getUpdates: {e}"))?;
+            .map_err(|e| telegram_http_error("getUpdates", &e))?;
         let status = resp.status();
         if !status.is_success() {
             return Err(format!("getUpdates returned {status}"));
@@ -417,7 +437,7 @@ impl TelegramBridge {
         let body: Value = resp
             .json()
             .await
-            .map_err(|e| format!("getUpdates body: {e}"))?;
+            .map_err(|e| telegram_http_error("getUpdates body", &e))?;
         if body["ok"].as_bool() != Some(true) {
             return Err(format!(
                 "getUpdates not ok: {}",
@@ -550,12 +570,14 @@ impl TelegramBridge {
                                     r2.status()
                                 ));
                             }
-                            Err(e) => return Err(format!("sendMessage retry: {e}")),
+                            Err(e) => {
+                                return Err(telegram_http_error("sendMessage retry", &e));
+                            }
                         }
                     }
                     return Err(format!("sendMessage returned {status}"));
                 }
-                Err(e) => return Err(format!("sendMessage: {e}")),
+                Err(e) => return Err(telegram_http_error("sendMessage", &e)),
             }
         }
         Ok(())
@@ -579,10 +601,10 @@ impl TelegramBridge {
             .query(&[("file_id", file_id)])
             .send()
             .await
-            .map_err(|e| format!("getFile: {e}"))?
+            .map_err(|e| telegram_http_error("getFile", &e))?
             .json()
             .await
-            .map_err(|e| format!("getFile body: {e}"))?;
+            .map_err(|e| telegram_http_error("getFile body", &e))?;
         if !meta.ok {
             return Err("getFile not ok".into());
         }
@@ -594,12 +616,12 @@ impl TelegramBridge {
             ))
             .send()
             .await
-            .map_err(|e| format!("download: {e}"))?
+            .map_err(|e| telegram_http_error("download", &e))?
             .error_for_status()
-            .map_err(|e| format!("download status: {e}"))?
+            .map_err(|e| telegram_http_error("download status", &e))?
             .bytes()
             .await
-            .map_err(|e| format!("download body: {e}"))?;
+            .map_err(|e| telegram_http_error("download body", &e))?;
         Ok((path, bytes.to_vec()))
     }
 
@@ -790,6 +812,19 @@ mod tests {
             classify_poll_error("getUpdates: error sending request"),
             PollBlock::Transient
         );
+    }
+
+    #[tokio::test]
+    async fn telegram_http_errors_never_include_bot_token_or_url() {
+        let error = reqwest::Client::new()
+            .get("http://127.0.0.1:1/botsecret-token/getUpdates")
+            .send()
+            .await
+            .unwrap_err();
+        let rendered = telegram_http_error("getUpdates", &error);
+        assert!(!rendered.contains("secret-token"));
+        assert!(!rendered.contains("127.0.0.1"));
+        assert!(!rendered.contains("/bot"));
     }
 
     #[test]

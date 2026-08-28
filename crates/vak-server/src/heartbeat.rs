@@ -170,8 +170,7 @@ async fn run_heartbeat_turn(
         .filter(|p| !p.is_empty())
     {
         let (pin_provider, pin_model) = crate::split_model_pin(pin, &core.effective_provider());
-        core.set_provider(pin_provider);
-        core.set_model(pin_model);
+        core.set_route(pin_provider, pin_model);
     }
 
     let ledger = take_persistent_session(&core).await?;

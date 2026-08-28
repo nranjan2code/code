@@ -340,13 +340,19 @@ from either settings icon or `Cmd+,`. General and appearance preferences are
 stored locally and applied live, including theme, text and code scale, task-list
 density, transcript detail, prompt suggestions, notifications, and reduced
 motion. Agent defaults and permission mode update the live Core through the
-authenticated `GET|PATCH /config` endpoint. Changing the mode revokes active
+authenticated `GET|PATCH /config` endpoint. Provider and model are one atomic
+route: a partial patch is completed from the effective route, both values are
+persisted together, and both are hot-applied together. Every new-session
+admission refreshes persisted defaults unless the Core carries an explicit
+scoped runtime pin, so an admin-console change reaches an already-running
+desktop backend without relying on stale startup memory. Changing the mode revokes active
 main and side runs plus pending approvals so no task retains a stale security
 snapshot; the next run starts under the selected mode. Agent defaults and
 the permission mode are persisted in the workspace config before the live
 Core is updated, so a restart does not lose an applied choice. Existing
 sessions retain their immutable provider/model contract and the transcript
-API reports when it differs from current workspace defaults. The endpoint
+API reports when it differs from current workspace defaults. New sessions use
+the new pair; history is never rewritten. The endpoint
 deliberately returns only a safe, secret-free configuration projection.
 Reliability, integration, context, and path pages expose the effective runtime
 configuration without
