@@ -273,6 +273,28 @@ html, body {
 
 .view { max-width: 1200px; margin: 0 auto; }
 
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 2px 0 20px;
+}
+.page-header h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 620;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+.page-header p { margin: 5px 0 0; max-width: 72ch; color: var(--muted); font-size: 13px; }
+.page-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.error-state { padding: 32px 18px; border: 1px solid rgba(216, 111, 114, 0.35); border-radius: var(--radius); background: var(--red-soft); }
+.error-state strong { color: var(--text); font-weight: 620; }
+.error-state p { margin: 5px auto 12px; max-width: 58ch; color: var(--text-soft); }
+
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -559,6 +581,7 @@ button.approve:hover:not(:disabled) { background: #88c298; border-color: #88c298
 .table tbody tr:last-child td { border-bottom: none; }
 .table tbody tr { cursor: pointer; transition: background 0.1s; }
 .table tbody tr:hover { background: var(--surface-hover); color: var(--text); }
+.table tbody tr[tabindex="0"]:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
 
 /* ---- chips & badges ---- */
 
@@ -1102,6 +1125,15 @@ a.tab-btn {
 }
 .advanced summary:hover { color: var(--text-soft); }
 .advanced p { margin: 8px 0 10px; max-width: 72ch; font-size: 12.5px; }
+.edit-form {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+.edit-form h3 { margin: 0 0 3px; font-size: 13.5px; font-weight: 620; }
+.compact-edit { margin-top: 12px; }
 
 /* ---- gateway: credentials ---- */
 
@@ -1263,3 +1295,27 @@ a.tab-btn {
   text-decoration-color: rgba(238, 146, 120, 0.4);
 }
 .panel p a:hover, .empty p a:hover { text-decoration-color: currentColor; }
+
+@media (max-width: 700px) {
+  .shell { grid-template-columns: 1fr; overflow: auto; }
+  .sidebar { position: sticky; top: 0; z-index: 3; padding: 8px; border-right: 0; border-bottom: 1px solid var(--border-soft); }
+  .brand { padding: 4px 8px 8px; }
+  .sidebar nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; }
+  .sidebar nav a { justify-content: center; padding: 7px 4px; font-size: 11.5px; }
+  .sidebar nav a svg { display: none; }
+  .nav-sub, .sidebar-foot { display: none; }
+  .main { overflow: visible; padding: 18px 12px 32px; }
+  .page-header { align-items: flex-start; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+  .page-header h1 { font-size: 18px; }
+  .page-actions { width: 100%; }
+  .page-actions > * { flex: 1; }
+  .toolbar { align-items: stretch; }
+  .toolbar > input, .toolbar > select { min-width: 0; flex: 1; }
+  .table { display: block; overflow-x: auto; white-space: nowrap; }
+  .form-row { align-items: stretch; flex-direction: column; gap: 4px; }
+  .form-row label { width: auto; }
+  .form-row input, .form-row select, .form-row textarea { width: 100%; }
+  .composer { align-items: stretch; flex-wrap: wrap; }
+  .composer textarea { order: 3; flex-basis: 100%; }
+  .composer button { flex: 1; }
+}

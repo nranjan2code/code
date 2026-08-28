@@ -625,7 +625,7 @@ function Sessions() {
             <tbody>
               <For each={filtered()}>
                 {(s) => (
-                  <tr onClick={() => navigate(`#/sessions/${s.session_id}`)}>
+                  <tr tabindex="0" onClick={() => navigate(`#/sessions/${s.session_id}`)} onKeyDown={(e) => e.key === "Enter" && navigate(`#/sessions/${s.session_id}`)}>
                     <td class="mono">{shortId(s.session_id)}</td>
                     <td>{s.entry_count}</td>
                     <td title={s.first_ts}>{timeAgo(s.first_ts)}</td>
@@ -1254,7 +1254,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
                     const open = () => expanded() === name;
                     return (
                       <>
-                        <tr classList={{ "row-open": open() }} onClick={() => setExpanded(open() ? "" : name)}>
+                        <tr tabindex="0" classList={{ "row-open": open() }} onClick={() => setExpanded(open() ? "" : name)} onKeyDown={(e) => e.key === "Enter" && setExpanded(open() ? "" : name)}>
                           <td class="mono bold">{name}</td>
                           <td class="dim col-command">
                             <span class="path" title={`${server.command} ${(server.args ?? []).join(" ")}`}>
@@ -2038,7 +2038,7 @@ function ExtensionsSection() {
 // ---- Memory & Recall -------------------------------------------------------
 
 function MemoryView() {
-  const [memoryData, { refetch }] = createResource(() => api.memory().catch(() => ({ notes: [] })));
+  const [memoryData, { refetch }] = createResource(() => api.memory());
   const [scope, setScope] = createSignal<"profile" | "project">("project");
   const [tag, setTag] = createSignal("");
   const [noteText, setNoteText] = createSignal("");
@@ -2078,6 +2078,7 @@ function MemoryView() {
         <section class="panel">
           <h2>Tiered Memory Notes ({memoryData()?.notes?.length ?? 0})</h2>
           <Show when={!memoryData.loading} fallback={<div class="empty">Loading memory…</div>}>
+            <Show when={!memoryData.error} fallback={<LoadError message={`${memoryData.error}`} onRetry={() => refetch()} />}>
             <Show when={(memoryData()?.notes?.length ?? 0) > 0} fallback={<div class="empty">No memory notes recorded.</div>}>
               <ul class="hit-list">
                 <For each={memoryData()?.notes ?? []}>
@@ -2096,6 +2097,7 @@ function MemoryView() {
                   )}
                 </For>
               </ul>
+            </Show>
             </Show>
           </Show>
         </section>
@@ -3245,8 +3247,10 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
                     return (
                       <>
                         <tr
+                          tabindex="0"
                           classList={{ "row-open": open() }}
                           onClick={() => setExpanded(open() ? "" : binding.target)}
+                          onKeyDown={(e) => e.key === "Enter" && setExpanded(open() ? "" : binding.target)}
                         >
                           <td class="mono">{binding.target}</td>
                           <td><SurfaceBadge channelKey={binding.target} /></td>
