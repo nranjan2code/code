@@ -1,8 +1,11 @@
 # 34 — Channel onboarding: lifecycle, governance, admin/desktop UX
 
-Status: **proposed**, not yet implemented (Phase 1: allowlist lifecycle +
-Admin UI; Phase 2: multi-tenant Core pool; Phase 3: Discord/Slack
-bridges — see phase sections below). Written after a live incident
+Status: **Phase 1 implemented** (allowlist store, gateway pending
+lifecycle, admin API routes, Admin UI pending/approve/deny/revoke panels —
+`crates/vak-server/src/gateway.rs`, `crates/vak-server/src/admin.rs`,
+`crates/vak-admin-ui/src/App.tsx`). Phase 2 (multi-tenant Core pool) and
+Phase 3 (Discord/Slack bridges) remain **proposed**, not yet implemented —
+see the phase sections below. Written after a live incident
 (2026-08-28): the Telegram bridge returned `403` for a chat that used to
 work, because `gateway.chat_allowlist` is a config-file-only setting with
 no UI, no runtime API, and no visible pending-request state — the operator
@@ -173,6 +176,10 @@ isolation or Discord/Slack bridges — those were flagged as non-goals, then
 promoted to Phase 2/3 below once it was clear "control surface" means all
 three need to exist for the feature to be complete, not just the
 allowlist mechanics.
+
+**Implemented.** The allowlist store, gateway pending-lifecycle change,
+admin API routes, and Admin UI panels described above are built. Phase 2
+and 3 below are still only proposed.
 
 ## Phase 2: multi-tenant Core isolation
 

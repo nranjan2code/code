@@ -586,13 +586,9 @@ async fn empty_chat_allowlist_denies_by_default() {
     .await;
     assert_eq!(res.status(), 403);
     let body: serde_json::Value = res.json().await.unwrap();
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("chat_allowlist_open"),
-        "expected the open-access hint in: {body}"
-    );
+    // docs/design/34: an unknown chat becomes a reviewable pending entry
+    // instead of a flat rejection with a config-editing hint.
+    assert_eq!(body["state"].as_str(), Some("pending"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -194,6 +194,10 @@ mod tests {
     fn test_state() -> crate::AppState {
         let dir = tempfile::tempdir().unwrap();
         let core = vak_core::Core::new(dir.path().to_path_buf()).unwrap();
+        // Without this, `sessions_home()` falls back to the developer's
+        // real $XDG_DATA_HOME/vak — AppState::new loads (and can seed)
+        // the gateway allowlist store there.
+        core.set_sessions_home(dir.path().join("home"));
         crate::AppState::new(core)
     }
 }

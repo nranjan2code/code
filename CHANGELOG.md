@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Channel onboarding: live allowlist store + Admin UI approvals
+
+`gateway.chat_allowlist` is no longer a config-file-only, restart-required
+setting. Unknown inbound chats now land as a reviewable **pending** entry
+in a new schema-versioned, live-reloadable store
+(`<sessions_home>/gateway/allowlist.json`, sibling to `bindings.json`)
+instead of a flat rejection — the operator has a forward path from "I see
+it was rejected" to "let it through" that doesn't require hand-editing
+`.vak/config.toml` and bouncing the gateway process. A repeat message from
+an already-pending chat is logged lightly instead of spamming a fresh
+security event each time. `chat_allowlist_open = true` still bypasses the
+store entirely, as before. Existing `gateway.chat_allowlist` entries are
+imported into the new store once, on first load, as `allowed`; after that
+the store is authoritative, matching `bindings.json`'s relationship to
+route overrides.
+
+New admin API routes: `GET /admin/api/gateway/allowlist`, `POST
+/admin/api/gateway/allowlist/{key}/approve` (body: `{workspace?, route?}`
+— approving always makes the effective workspace explicit in the
+response, even when the caller didn't supply one, so it's never a silent
+inherited default), `POST /admin/api/gateway/allowlist/{key}/deny`, and
+`DELETE /admin/api/gateway/allowlist/{key}` (revoke an allowed entry).
+Every transition is recorded via `vak_core::security_events` under new
+`chat_pending` / `chat_approved` / `chat_denied` / `chat_revoked` kinds.
+
+The Admin UI's Gateway page gains a "Pending channels" panel (chat key,
+first-seen text, arrival time, Approve/Deny — approving lets the operator
+confirm or edit the workspace and optionally pin a provider/model) above
+"Registered channels," and registered channels now show an allowlist
+status chip (allowed/pending/denied) with a Revoke action for allowed
+entries.
+
 ### `vak doctor --repair` and `scripts/vak.sh`
 
 `vak doctor` gained `--repair`: it acts on the checks that have a known

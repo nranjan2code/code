@@ -1,4 +1,6 @@
 import type {
+  AllowlistEntry,
+  AllowlistRoute,
   BestOfNRun,
   ConfigInfo,
   DiscoveredModelsResponse,
@@ -120,6 +122,27 @@ export const api = {
 
   deleteGatewayBinding: (target: string): Promise<void> =>
     fetch(`/admin/api/gateway/bindings/${encodeURIComponent(target)}`, { method: "DELETE" })
+      .then((r) => void handle(r)),
+
+  gatewayAllowlist: (): Promise<{ entries: AllowlistEntry[] }> =>
+    fetch("/admin/api/gateway/allowlist").then((r) => handle(r)),
+
+  approveGatewayAllowlist: (
+    key: string,
+    body: { workspace?: string; route?: AllowlistRoute } = {},
+  ): Promise<AllowlistEntry> =>
+    fetch(`/admin/api/gateway/allowlist/${encodeURIComponent(key)}/approve`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => handle(r)),
+
+  denyGatewayAllowlist: (key: string): Promise<AllowlistEntry> =>
+    fetch(`/admin/api/gateway/allowlist/${encodeURIComponent(key)}/deny`, { method: "POST" })
+      .then((r) => handle(r)),
+
+  revokeGatewayAllowlist: (key: string): Promise<void> =>
+    fetch(`/admin/api/gateway/allowlist/${encodeURIComponent(key)}`, { method: "DELETE" })
       .then((r) => void handle(r)),
 
   approvals: (): Promise<{ approvals: PendingApproval[]; total: number }> =>

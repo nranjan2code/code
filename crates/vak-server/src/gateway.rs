@@ -114,6 +114,60 @@ fn bindings_path(home: &std::path::Path) -> PathBuf {
     home.join("gateway").join("bindings.json")
 }
 
+fn allowlist_path(home: &std::path::Path) -> PathBuf {
+    home.join("gateway").join("allowlist.json")
+}
+
+/// Truncation cap for `first_seen_text` on a freshly pending entry — kept
+/// only for operator review, never used as agent input.
+const FIRST_SEEN_TEXT_MAX_CHARS: usize = 500;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AllowlistStatus {
+    Pending,
+    Allowed,
+    Denied,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AllowlistRoute {
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AllowlistEntry {
+    pub key: String,
+    pub status: AllowlistStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<AllowlistRoute>,
+    pub added_at: String,
+    pub added_by: String,
+    /// Only meaningful while `status == Pending` — the first message text
+    /// that triggered this entry, truncated for operator review.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_seen_text: Option<String>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct AllowlistFile {
+    schema: u32,
+    entries: Vec<AllowlistEntry>,
+}
+
+/// Outcome of resolving an inbound key against the allowlist store, so the
+/// caller can distinguish "just became pending" from "still pending" from
+/// a flat denial without re-deriving it from mutable state.
+pub(crate) enum AllowlistDecision {
+    Allowed,
+    Denied,
+    NewlyPending,
+    StillPending,
+}
+
 pub struct GatewayState {
     pub enabled: bool,
     bindings: Mutex<HashMap<String, ChannelBinding>>,
@@ -124,10 +178,10 @@ pub struct GatewayState {
     /// Forwarded gates awaiting a yes/no from the approver surface,
     /// oldest first (uuidv7 keys sort by insertion time).
     pending_approvals: Mutex<std::collections::BTreeMap<String, PendingGate>>,
-    /// Allowed inbound chat keys. Empty fails closed unless
-    /// `chat_allowlist_open` was explicitly set (0c-02).
-    chat_allowlist: Vec<String>,
     chat_allowlist_open: bool,
+    /// Live, schema-versioned allowlist store (docs/design/34). Authoritative
+    /// once it exists on disk; seeded once from `chat_allowlist` otherwise.
+    allowlist: Mutex<HashMap<String, AllowlistEntry>>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -196,6 +250,48 @@ impl GatewayState {
         }
         let gw = &core.config().gateway;
         let forward_ok = gw.approvals == "forward" && gw.approver.is_some();
+
+        // Allowlist store: authoritative once allowlist.json exists; a
+        // one-time import from config.toml's `chat_allowlist` seeds it the
+        // first time a process ever loads (same relationship bindings.json
+        // already has to route overrides — config.toml itself is untouched).
+        let path = allowlist_path(&core.sessions_home());
+        let allowlist: HashMap<String, AllowlistEntry> = match std::fs::read_to_string(&path) {
+            Ok(raw) => serde_json::from_str::<AllowlistFile>(&raw)
+                .map(|file| {
+                    file.entries
+                        .into_iter()
+                        .map(|e| (e.key.clone(), e))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            Err(_) => {
+                let now = chrono::Utc::now().to_rfc3339();
+                let seeded: HashMap<String, AllowlistEntry> = gw
+                    .chat_allowlist
+                    .iter()
+                    .map(|key| {
+                        (
+                            key.clone(),
+                            AllowlistEntry {
+                                key: key.clone(),
+                                status: AllowlistStatus::Allowed,
+                                workspace: None,
+                                route: None,
+                                added_at: now.clone(),
+                                added_by: "config_import".into(),
+                                first_seen_text: None,
+                            },
+                        )
+                    })
+                    .collect();
+                if !seeded.is_empty() {
+                    write_allowlist_file(&path, &seeded);
+                }
+                seeded
+            }
+        };
+
         GatewayState {
             enabled: force || gw.enabled,
             bindings: Mutex::new(bindings),
@@ -211,8 +307,8 @@ impl GatewayState {
             },
             approval_timeout: Duration::from_secs(gw.approval_timeout_secs),
             pending_approvals: Mutex::new(std::collections::BTreeMap::new()),
-            chat_allowlist: gw.chat_allowlist.clone(),
             chat_allowlist_open: gw.chat_allowlist_open,
+            allowlist: Mutex::new(allowlist),
         }
     }
 
@@ -245,10 +341,6 @@ impl GatewayState {
 
     pub(crate) fn approvals_mode(&self) -> &str {
         &self.approvals
-    }
-
-    pub(crate) fn chat_allowlist(&self) -> &[String] {
-        &self.chat_allowlist
     }
 
     /// True when an empty `chat_allowlist` was explicitly opted into
@@ -389,6 +481,146 @@ impl GatewayState {
         }
         removed
     }
+
+    // ---- Allowlist store (docs/design/34-channel-onboarding.md) -----------
+
+    /// Snapshot of all allowlist entries, any status, sorted by key.
+    pub(crate) fn allowlist_snapshot(&self) -> Vec<AllowlistEntry> {
+        let mut entries: Vec<AllowlistEntry> = self
+            .allowlist
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect();
+        entries.sort_by(|a, b| a.key.cmp(&b.key));
+        entries
+    }
+
+    pub(crate) fn allowlist_get(&self, key: &str) -> Option<AllowlistEntry> {
+        self.allowlist
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(key)
+            .cloned()
+    }
+
+    /// Resolve an inbound key against the store: creates a pending entry on
+    /// first sight, never duplicates or bumps `added_at` on a repeat
+    /// message from an already-pending key.
+    pub(crate) fn allowlist_resolve_inbound(
+        &self,
+        core: &Core,
+        key: &str,
+        first_seen_text: &str,
+    ) -> AllowlistDecision {
+        let mut map = self
+            .allowlist
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let decision = match map.get(key).map(|e| e.status) {
+            Some(AllowlistStatus::Allowed) => AllowlistDecision::Allowed,
+            Some(AllowlistStatus::Denied) => AllowlistDecision::Denied,
+            Some(AllowlistStatus::Pending) => AllowlistDecision::StillPending,
+            None => {
+                let truncated: String = first_seen_text
+                    .chars()
+                    .take(FIRST_SEEN_TEXT_MAX_CHARS)
+                    .collect();
+                map.insert(
+                    key.to_string(),
+                    AllowlistEntry {
+                        key: key.to_string(),
+                        status: AllowlistStatus::Pending,
+                        workspace: None,
+                        route: None,
+                        added_at: chrono::Utc::now().to_rfc3339(),
+                        added_by: "gateway".into(),
+                        first_seen_text: Some(truncated),
+                    },
+                );
+                AllowlistDecision::NewlyPending
+            }
+        };
+        if matches!(decision, AllowlistDecision::NewlyPending) {
+            drop(map);
+            persist_allowlist(core, self);
+        }
+        decision
+    }
+
+    /// Approve a key: pending or unknown → allowed, with an explicit
+    /// workspace (never silently inherited) and optional route override.
+    pub(crate) fn allowlist_approve(
+        &self,
+        core: &Core,
+        key: &str,
+        workspace: PathBuf,
+        route: Option<AllowlistRoute>,
+        added_by: &str,
+    ) -> AllowlistEntry {
+        let entry = {
+            let mut map = self
+                .allowlist
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let entry = AllowlistEntry {
+                key: key.to_string(),
+                status: AllowlistStatus::Allowed,
+                workspace: Some(workspace),
+                route,
+                added_at: chrono::Utc::now().to_rfc3339(),
+                added_by: added_by.to_string(),
+                first_seen_text: None,
+            };
+            map.insert(key.to_string(), entry.clone());
+            entry
+        };
+        persist_allowlist(core, self);
+        entry
+    }
+
+    /// Deny a key: pending or unknown → denied (sticky).
+    pub(crate) fn allowlist_deny(&self, core: &Core, key: &str, added_by: &str) -> AllowlistEntry {
+        let entry = {
+            let mut map = self
+                .allowlist
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let entry = AllowlistEntry {
+                key: key.to_string(),
+                status: AllowlistStatus::Denied,
+                workspace: None,
+                route: None,
+                added_at: chrono::Utc::now().to_rfc3339(),
+                added_by: added_by.to_string(),
+                first_seen_text: None,
+            };
+            map.insert(key.to_string(), entry.clone());
+            entry
+        };
+        persist_allowlist(core, self);
+        entry
+    }
+
+    /// Revoke an allowed entry: removes it from the store entirely (a
+    /// future message from that key starts a fresh pending review, not a
+    /// stale "denied" record masquerading as an audit trail).
+    pub(crate) fn allowlist_revoke(&self, core: &Core, key: &str) -> bool {
+        if self.allowlist_get(key).map(|e| e.status) != Some(AllowlistStatus::Allowed) {
+            return false;
+        }
+        let removed = self
+            .allowlist
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(key)
+            .is_some();
+        if removed {
+            persist_allowlist(core, self);
+        }
+        removed
+    }
 }
 
 fn persist_bindings(core: &Core, gw: &GatewayState) {
@@ -404,6 +636,35 @@ fn persist_bindings(core: &Core, gw: &GatewayState) {
     let file = BindingsFile {
         version: 2,
         bindings,
+    };
+    if let Ok(json) = serde_json::to_string_pretty(&file) {
+        let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        if std::fs::write(&temp, json).is_ok() {
+            let _ = std::fs::rename(temp, path);
+        }
+    }
+}
+
+fn persist_allowlist(core: &Core, gw: &GatewayState) {
+    let entries = gw
+        .allowlist
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    let path = allowlist_path(&core.sessions_home());
+    write_allowlist_file(&path, &entries);
+}
+
+/// Atomic temp-file+rename write, same pattern as `persist_bindings`.
+fn write_allowlist_file(path: &std::path::Path, entries: &HashMap<String, AllowlistEntry>) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut sorted: Vec<AllowlistEntry> = entries.values().cloned().collect();
+    sorted.sort_by(|a, b| a.key.cmp(&b.key));
+    let file = AllowlistFile {
+        schema: 1,
+        entries: sorted,
     };
     if let Ok(json) = serde_json::to_string_pretty(&file) {
         let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
@@ -651,37 +912,70 @@ async fn gateway_inbound(
             .into_response();
     }
     let key = format!("{}:{}", body.surface.trim(), body.chat.trim());
-    // 0c-01/0c-02: chat allowlist — reject messages from unknown chats.
-    // An empty list fails closed by default: every chat is rejected until
-    // the operator either populates chat_allowlist or explicitly opts
-    // into open access via chat_allowlist_open. This is deliberately the
-    // opposite of "backward compatible" — a bot anyone can DM into a full
-    // agent session is not a safe default.
-    let allowed = if state.gateway.chat_allowlist().is_empty() {
-        state.gateway.chat_allowlist_open()
-    } else {
-        state.gateway.chat_allowlist().contains(&key)
-    };
-    if !allowed {
-        vak_core::security_events::record(
-            &state.core.sessions_home(),
-            vak_core::security_events::EventKind::ChatAllowlist,
-            "chat_rejected",
-            &format!("key={key}"),
-            None,
-        );
-        let hint = if state.gateway.chat_allowlist().is_empty() {
-            "gateway.chat_allowlist is empty; add this chat key or set gateway.chat_allowlist_open = true to allow all"
-        } else {
-            "chat not in gateway.chat_allowlist"
-        };
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({
-                "error": format!("chat '{key}' rejected: {hint}")
-            })),
-        )
-            .into_response();
+    // 0c-01/0c-02/docs/design/34: chat allowlist — reject messages from
+    // unknown chats, but record a reviewable *pending* entry instead of a
+    // flat rejection so the operator has a forward path to "let it
+    // through" that isn't a hand-edited config file + process restart.
+    // `chat_allowlist_open = true` still bypasses the store entirely.
+    if !state.gateway.chat_allowlist_open() {
+        let decision = state
+            .gateway
+            .allowlist_resolve_inbound(&state.core, &key, &text);
+        match decision {
+            AllowlistDecision::Allowed => {}
+            AllowlistDecision::Denied => {
+                vak_core::security_events::record(
+                    &state.core.sessions_home(),
+                    vak_core::security_events::EventKind::ChatDenied,
+                    "chat_denied",
+                    &format!("key={key}"),
+                    None,
+                );
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(serde_json::json!({
+                        "error": format!("chat '{key}' rejected: denied by operator"),
+                        "state": "denied",
+                    })),
+                )
+                    .into_response();
+            }
+            AllowlistDecision::NewlyPending => {
+                vak_core::security_events::record(
+                    &state.core.sessions_home(),
+                    vak_core::security_events::EventKind::ChatPending,
+                    "chat_pending",
+                    &format!("key={key}"),
+                    None,
+                );
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(serde_json::json!({
+                        "error": format!(
+                            "chat '{key}' rejected: awaiting operator approval in the admin console"
+                        ),
+                        "state": "pending",
+                    })),
+                )
+                    .into_response();
+            }
+            AllowlistDecision::StillPending => {
+                // A lighter, non-security-event log line: this is expected
+                // repeat traffic from an already-reviewable key, not a
+                // fresh incident to append to the audit trail each time.
+                eprintln!("[gateway] chat '{key}' still pending operator review");
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(serde_json::json!({
+                        "error": format!(
+                            "chat '{key}' rejected: still awaiting operator approval"
+                        ),
+                        "state": "pending",
+                    })),
+                )
+                    .into_response();
+            }
+        }
     }
 
     // Approval replies from the designated approver surface resolve the
@@ -1515,5 +1809,155 @@ mod tests {
         let old_path =
             vak_session::SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &old_id);
         assert!(old_path.is_file(), "old append-only ledger remains intact");
+    }
+
+    // ---- Allowlist store (docs/design/34-channel-onboarding.md) -----------
+
+    fn core_with_config(toml: &str) -> (tempfile::TempDir, Core) {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_path_buf();
+        std::fs::create_dir_all(cwd.join(".vak")).unwrap();
+        std::fs::write(cwd.join(".vak/config.toml"), toml).unwrap();
+        let core = Core::new_with_trust(cwd.clone(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        (dir, core)
+    }
+
+    #[test]
+    fn allowlist_seeds_from_config_only_when_file_absent() {
+        let (_dir, core) =
+            core_with_config("[gateway]\nchat_allowlist = [\"telegram:1\", \"telegram:2\"]\n");
+        let gw = GatewayState::load(&core, true);
+        let mut entries = gw.allowlist_snapshot();
+        entries.sort_by(|a, b| a.key.cmp(&b.key));
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].key, "telegram:1");
+        assert_eq!(entries[0].status, AllowlistStatus::Allowed);
+        assert_eq!(entries[0].added_by, "config_import");
+        assert!(allowlist_path(&core.sessions_home()).is_file());
+
+        // Once the file exists, it is authoritative: a config change is not
+        // re-imported on the next load.
+        gw.allowlist_revoke(&core, "telegram:1");
+        drop(gw);
+        let gw2 = GatewayState::load(&core, true);
+        let keys: Vec<String> = gw2
+            .allowlist_snapshot()
+            .into_iter()
+            .map(|e| e.key)
+            .collect();
+        assert_eq!(keys, vec!["telegram:2"]);
+    }
+
+    #[test]
+    fn allowlist_open_flag_does_not_seed_pending_entries() {
+        // An explicit (non-empty) project `chat_allowlist` always overrides
+        // whatever a developer's own global config.toml might set, so this
+        // stays deterministic regardless of the machine it runs on.
+        let (_dir, core) = core_with_config(
+            "[gateway]\nchat_allowlist = [\"testonly:1\"]\nchat_allowlist_open = true\n",
+        );
+        let gw = GatewayState::load(&core, true);
+        assert!(gw.chat_allowlist_open());
+        let entries = gw.allowlist_snapshot();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key, "testonly:1");
+        assert_eq!(entries[0].status, AllowlistStatus::Allowed);
+        assert_eq!(entries[0].added_by, "config_import");
+    }
+
+    #[test]
+    fn allowlist_approve_deny_revoke_roundtrip() {
+        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        let gw = GatewayState::load(&core, true);
+
+        // Unknown key: approve creates an allowed entry with the explicit
+        // workspace visible in the record (not silently inherited).
+        let approved = gw.allowlist_approve(
+            &core,
+            "telegram:7",
+            core.cwd().clone(),
+            Some(AllowlistRoute {
+                provider: "anthropic".into(),
+                model: "sonnet".into(),
+            }),
+            "admin",
+        );
+        assert_eq!(approved.status, AllowlistStatus::Allowed);
+        assert_eq!(approved.workspace.as_deref(), Some(core.cwd().as_path()));
+        assert_eq!(approved.route.as_ref().unwrap().provider, "anthropic");
+
+        // Persisted to disk atomically.
+        let raw = std::fs::read_to_string(allowlist_path(&core.sessions_home())).unwrap();
+        assert!(raw.contains("telegram:7"));
+
+        // Revoke removes an allowed entry.
+        assert!(gw.allowlist_revoke(&core, "telegram:7"));
+        assert!(gw.allowlist_get("telegram:7").is_none());
+        // Revoking a nonexistent / non-allowed entry is a no-op failure.
+        assert!(!gw.allowlist_revoke(&core, "telegram:7"));
+
+        // Deny sticks.
+        let denied = gw.allowlist_deny(&core, "telegram:8", "admin");
+        assert_eq!(denied.status, AllowlistStatus::Denied);
+        assert!(!gw.allowlist_revoke(&core, "telegram:8"));
+    }
+
+    #[test]
+    fn inbound_resolve_creates_one_pending_entry_not_duplicated() {
+        // An explicit project `chat_allowlist` overrides a developer's own
+        // global config.toml so the seeded starting state is deterministic.
+        let (_dir, core) = core_with_config(
+            "[memory]\nreflection = false\n[gateway]\nchat_allowlist = [\"testonly:0\"]\n",
+        );
+        let gw = GatewayState::load(&core, true);
+
+        let first = gw.allowlist_resolve_inbound(&core, "telegram:99", "hello there");
+        assert!(matches!(first, AllowlistDecision::NewlyPending));
+        let entry = gw.allowlist_get("telegram:99").unwrap();
+        assert_eq!(entry.status, AllowlistStatus::Pending);
+        assert_eq!(entry.first_seen_text.as_deref(), Some("hello there"));
+        let added_at = entry.added_at.clone();
+
+        // A repeat message on the same pending key does not duplicate or
+        // bump added_at.
+        let second = gw.allowlist_resolve_inbound(&core, "telegram:99", "hello again");
+        assert!(matches!(second, AllowlistDecision::StillPending));
+        let entry2 = gw.allowlist_get("telegram:99").unwrap();
+        assert_eq!(entry2.added_at, added_at);
+        assert_eq!(entry2.first_seen_text.as_deref(), Some("hello there"));
+        let pending_count = gw
+            .allowlist_snapshot()
+            .iter()
+            .filter(|e| e.status == AllowlistStatus::Pending)
+            .count();
+        assert_eq!(pending_count, 1, "no duplicate pending entry created");
+
+        // Allowed key dispatches normally.
+        gw.allowlist_approve(&core, "telegram:100", core.cwd().clone(), None, "admin");
+        assert!(matches!(
+            gw.allowlist_resolve_inbound(&core, "telegram:100", "hi"),
+            AllowlistDecision::Allowed
+        ));
+
+        // Denied key stays rejected.
+        gw.allowlist_deny(&core, "telegram:101", "admin");
+        assert!(matches!(
+            gw.allowlist_resolve_inbound(&core, "telegram:101", "hi"),
+            AllowlistDecision::Denied
+        ));
+    }
+
+    #[test]
+    fn first_seen_text_is_truncated() {
+        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        let gw = GatewayState::load(&core, true);
+        let long = "x".repeat(FIRST_SEEN_TEXT_MAX_CHARS + 50);
+        gw.allowlist_resolve_inbound(&core, "telegram:200", &long);
+        let entry = gw.allowlist_get("telegram:200").unwrap();
+        assert_eq!(
+            entry.first_seen_text.unwrap().chars().count(),
+            FIRST_SEEN_TEXT_MAX_CHARS
+        );
     }
 }

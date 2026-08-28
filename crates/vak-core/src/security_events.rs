@@ -31,6 +31,15 @@ pub enum EventKind {
     ProviderKeyChange,
     FullAccessGrant,
     FullAccessRevoke,
+    /// docs/design/34-channel-onboarding.md: an unknown inbound chat key
+    /// was newly recorded as pending operator review.
+    ChatPending,
+    /// An operator approved a pending (or unknown) allowlist entry.
+    ChatApproved,
+    /// An operator denied a pending (or unknown) allowlist entry.
+    ChatDenied,
+    /// An operator revoked a previously allowed entry.
+    ChatRevoked,
 }
 
 /// Append a security event to `<home>/security-events.jsonl`.

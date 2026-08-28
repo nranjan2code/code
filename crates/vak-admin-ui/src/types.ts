@@ -95,6 +95,23 @@ export interface GatewayStatus {
   chat_allowlist_open: boolean;
 }
 
+export type AllowlistStatus = "pending" | "allowed" | "denied";
+
+export interface AllowlistRoute {
+  provider: string;
+  model: string;
+}
+
+export interface AllowlistEntry {
+  key: string;
+  status: AllowlistStatus;
+  workspace: string | null;
+  route: AllowlistRoute | null;
+  added_at: string;
+  added_by: string;
+  first_seen_text: string | null;
+}
+
 export type SystemEvent =
   | { type: "Agent"; data: { summary: string; detail?: string } }
   | { type: "SessionCreated"; data: { session_id: string; project_hash: string } }

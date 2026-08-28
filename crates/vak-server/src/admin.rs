@@ -2,6 +2,8 @@
 //! catalog, transcripts, live event SSE, security audit log, and store
 //! management. Mounted under `/admin/api` in `router_with_state`.
 
+use std::path::PathBuf;
+
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -647,6 +649,131 @@ pub(crate) async fn delete_gateway_binding_admin(
     }
 }
 
+// ---- Allowlist (docs/design/34-channel-onboarding.md) ---------------------
+
+fn allowlist_entry_json(e: &crate::gateway::AllowlistEntry) -> serde_json::Value {
+    serde_json::json!({
+        "key": e.key,
+        "status": e.status,
+        "workspace": e.workspace,
+        "route": e.route,
+        "added_at": e.added_at,
+        "added_by": e.added_by,
+        "first_seen_text": e.first_seen_text,
+    })
+}
+
+pub(crate) async fn list_gateway_allowlist(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let entries: Vec<serde_json::Value> = state
+        .gateway
+        .allowlist_snapshot()
+        .iter()
+        .map(allowlist_entry_json)
+        .collect();
+    Json(serde_json::json!({ "entries": entries }))
+}
+
+#[derive(serde::Deserialize, Default)]
+pub(crate) struct AllowlistApproveBody {
+    #[serde(default)]
+    workspace: Option<String>,
+    #[serde(default)]
+    route: Option<GatewayRoutePatch>,
+}
+
+pub(crate) async fn approve_gateway_allowlist(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    if key.trim().is_empty() || !key.contains(':') {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let body: AllowlistApproveBody = if body.is_empty() {
+        AllowlistApproveBody::default()
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(b) => b,
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        }
+    };
+    let workspace = match body.workspace {
+        Some(w) if !w.trim().is_empty() => PathBuf::from(w.trim()),
+        _ => state.core.cwd().clone(),
+    };
+    let route = match body.route {
+        Some(GatewayRoutePatch {
+            provider: Some(provider),
+            model: Some(model),
+        }) if !provider.trim().is_empty() && !model.trim().is_empty() => {
+            Some(crate::gateway::AllowlistRoute {
+                provider: provider.trim().to_string(),
+                model: model.trim().to_string(),
+            })
+        }
+        Some(_) => return StatusCode::BAD_REQUEST.into_response(),
+        None => None,
+    };
+    let entry = state
+        .gateway
+        .allowlist_approve(&state.core, &key, workspace, route, "admin");
+    vak_core::security_events::record(
+        &state.core.sessions_home(),
+        vak_core::security_events::EventKind::ChatApproved,
+        "chat_approved",
+        &format!("key={key}"),
+        None,
+    );
+    state
+        .hub
+        .emit_config_changed("gateway_allowlist_approved", &key);
+    (StatusCode::OK, Json(allowlist_entry_json(&entry))).into_response()
+}
+
+pub(crate) async fn deny_gateway_allowlist(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+) -> Response {
+    if key.trim().is_empty() || !key.contains(':') {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let entry = state.gateway.allowlist_deny(&state.core, &key, "admin");
+    vak_core::security_events::record(
+        &state.core.sessions_home(),
+        vak_core::security_events::EventKind::ChatDenied,
+        "chat_denied",
+        &format!("key={key}"),
+        None,
+    );
+    state
+        .hub
+        .emit_config_changed("gateway_allowlist_denied", &key);
+    (StatusCode::OK, Json(allowlist_entry_json(&entry))).into_response()
+}
+
+pub(crate) async fn revoke_gateway_allowlist(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+) -> StatusCode {
+    if state.gateway.allowlist_revoke(&state.core, &key) {
+        vak_core::security_events::record(
+            &state.core.sessions_home(),
+            vak_core::security_events::EventKind::ChatRevoked,
+            "chat_revoked",
+            &format!("key={key}"),
+            None,
+        );
+        state
+            .hub
+            .emit_config_changed("gateway_allowlist_revoked", &key);
+        StatusCode::OK
+    } else {
+        StatusCode::NOT_FOUND
+    }
+}
+
 // ---- Admin route mounter --------------------------------------------------
 
 pub(crate) fn routes() -> axum::Router<AppState> {
@@ -680,6 +807,19 @@ pub(crate) fn routes() -> axum::Router<AppState> {
             "/admin/api/gateway/bindings/{key}/rotate",
             post(rotate_gateway_binding),
         )
+        .route("/admin/api/gateway/allowlist", get(list_gateway_allowlist))
+        .route(
+            "/admin/api/gateway/allowlist/{key}/approve",
+            post(approve_gateway_allowlist),
+        )
+        .route(
+            "/admin/api/gateway/allowlist/{key}/deny",
+            post(deny_gateway_allowlist),
+        )
+        .route(
+            "/admin/api/gateway/allowlist/{key}",
+            axum::routing::delete(revoke_gateway_allowlist),
+        )
 }
 
 // ---- Tests ----------------------------------------------------------------
@@ -697,6 +837,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cwd = dir.path().to_path_buf();
         let core = vak_core::Core::new(cwd).unwrap();
+        // Without this, `sessions_home()` falls back to the developer's
+        // real $XDG_DATA_HOME/vak — any test that persists something
+        // (gateway bindings, the allowlist store) would leak state across
+        // test runs and across the machine. Every other test module in
+        // this crate isolates it the same way.
+        core.set_sessions_home(dir.path().join("home"));
         AppState::new(core)
     }
 
@@ -944,5 +1090,167 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert!(json["provider"].is_string());
+    }
+
+    // ---- Allowlist admin routes (docs/design/34-channel-onboarding.md) ----
+
+    #[tokio::test]
+    async fn allowlist_list_returns_entries_array() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let req = Request::builder()
+            .uri("/admin/api/gateway/allowlist")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        // Not asserting emptiness: a developer's own global config.toml may
+        // legitimately seed `gateway.chat_allowlist` entries on load, and
+        // that is not this test's concern — only that the route responds
+        // with the documented shape.
+        assert!(json["entries"].is_array());
+    }
+
+    #[tokio::test]
+    async fn allowlist_list_requires_auth() {
+        let state = test_state();
+        let app = authed_app(&state);
+        let req = Request::builder()
+            .uri("/admin/api/gateway/allowlist")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn allowlist_approve_defaults_workspace_to_core_cwd_and_shows_it() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/admin/api/gateway/allowlist/telegram%3A42/approve")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["status"], "allowed");
+        // The point of this endpoint: the workspace is explicit in the
+        // response even when the caller didn't supply one.
+        let ws = json["workspace"].as_str().expect("workspace must be shown");
+        assert_eq!(std::path::Path::new(ws), state.core.cwd().as_path());
+    }
+
+    #[tokio::test]
+    async fn allowlist_approve_with_explicit_workspace_and_route() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/admin/api/gateway/allowlist/telegram%3A43/approve")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"workspace":"/tmp/somewhere","route":{"provider":"anthropic","model":"sonnet"}}"#,
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["workspace"], "/tmp/somewhere");
+        assert_eq!(json["route"]["provider"], "anthropic");
+        assert_eq!(json["route"]["model"], "sonnet");
+    }
+
+    #[tokio::test]
+    async fn allowlist_deny_then_revoke_of_denied_is_404() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/admin/api/gateway/allowlist/telegram%3A44/deny")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["status"], "denied");
+
+        // Revoke only applies to *allowed* entries; a denied one 404s.
+        let app2 = authed_app(&state);
+        let req = Request::builder()
+            .method("DELETE")
+            .uri("/admin/api/gateway/allowlist/telegram%3A44")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app2.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn allowlist_revoke_unknown_key_is_404() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let req = Request::builder()
+            .method("DELETE")
+            .uri("/admin/api/gateway/allowlist/telegram%3Anever-seen")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn allowlist_approve_then_revoke_roundtrip() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/admin/api/gateway/allowlist/telegram%3A45/approve")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let app2 = authed_app(&state);
+        let req = Request::builder()
+            .method("DELETE")
+            .uri("/admin/api/gateway/allowlist/telegram%3A45")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app2.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let app3 = authed_app(&state);
+        let req = Request::builder()
+            .uri("/admin/api/gateway/allowlist")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app3.oneshot(req).await.unwrap();
+        let json = body_json(resp).await;
+        let has_key = json["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["key"] == "telegram:45");
+        assert!(!has_key, "revoked entry must not remain in the list");
     }
 }

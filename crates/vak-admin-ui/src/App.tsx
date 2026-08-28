@@ -6,7 +6,7 @@ import {
   route, sessionsVersion, setAuthed, statsVersion, toasts,
 } from "./store";
 import type {
-  BestOfNRun, ConfigInfo, DiscoveredModelsResponse, FinOpsStatus, HookConfig,
+  AllowlistEntry, BestOfNRun, ConfigInfo, DiscoveredModelsResponse, FinOpsStatus, HookConfig,
   GatewayBinding, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
   SkillItem, SkillProposal, TaskItem, TranscriptEntry, WorkReceipt,
@@ -1375,7 +1375,7 @@ function SearchView() {
 
 // ---- Security --------------------------------------------------------------
 
-const SEC_KINDS = ["", "auth_failure", "rate_limit", "chat_allowlist", "permission_denial", "config_change", "provider_key_change", "full_access_grant", "full_access_revoke"];
+const SEC_KINDS = ["", "auth_failure", "rate_limit", "chat_allowlist", "chat_pending", "chat_approved", "chat_denied", "chat_revoked", "permission_denial", "config_change", "provider_key_change", "full_access_grant", "full_access_revoke"];
 
 function Security() {
   const [kind, setKind] = createSignal("");
@@ -1512,9 +1512,16 @@ function Inbox() {
 
 // ---- Settings & Governance -------------------------------------------------
 
+const ALLOWLIST_CHIP_TONE: Record<string, string> = {
+  allowed: "success",
+  pending: "warning",
+  denied: "danger",
+};
+
 function GatewayBindingEditor(props: {
   binding: GatewayBinding;
   providers: ProviderSummary[];
+  allowlistEntry: AllowlistEntry | undefined;
   refresh: () => void;
 }) {
   const [inherit, setInherit] = createSignal(!props.binding.override);
@@ -1560,9 +1567,16 @@ function GatewayBindingEditor(props: {
             {props.binding.session_id ? `session ${shortId(props.binding.session_id)}` : "new session on next message"}
           </div>
         </div>
-        <span class={`chip ${props.binding.stale ? "chip-tone-warning" : "chip-tone-success"}`}>
-          {props.binding.stale ? "rotation required" : "current"}
-        </span>
+        <div class="row-gap" style="gap:6px">
+          <Show when={props.allowlistEntry}>
+            <span class={`chip chip-tone-${ALLOWLIST_CHIP_TONE[props.allowlistEntry!.status] ?? ""}`}>
+              {props.allowlistEntry!.status}
+            </span>
+          </Show>
+          <span class={`chip ${props.binding.stale ? "chip-tone-warning" : "chip-tone-success"}`}>
+            {props.binding.stale ? "rotation required" : "current"}
+          </span>
+        </div>
       </div>
 
       <div class="route-compare">
@@ -1614,6 +1628,13 @@ function GatewayBindingEditor(props: {
           `Conversation rotated for ${props.binding.target}`,
         )}>Rotate now</button>
         <span class="spacer" />
+        <Show when={props.allowlistEntry?.status === "allowed"}>
+          <button class="danger small" disabled={busy()} onClick={() => {
+            if (window.confirm(`Revoke allowlist access for ${props.binding.target}? The next message from this chat will be rejected and start a fresh pending review.`)) {
+              void act(() => api.revokeGatewayAllowlist(props.binding.target), `Access revoked: ${props.binding.target}`);
+            }
+          }}>Revoke access</button>
+        </Show>
         <button class="danger small" disabled={busy()} onClick={() => {
           if (window.confirm(`Remove ${props.binding.target} and its route override? Session history is preserved.`)) {
             void act(() => api.deleteGatewayBinding(props.binding.target), `Binding removed: ${props.binding.target}`);
@@ -1624,10 +1645,121 @@ function GatewayBindingEditor(props: {
   );
 }
 
+function PendingChannelCard(props: {
+  entry: AllowlistEntry;
+  providers: ProviderSummary[];
+  defaultWorkspace: string;
+  refresh: () => void;
+}) {
+  const [workspace, setWorkspace] = createSignal(props.defaultWorkspace);
+  const [pinRoute, setPinRoute] = createSignal(false);
+  const [provider, setProvider] = createSignal(props.providers[0]?.name ?? "");
+  const [model, setModel] = createSignal("");
+  const [models, setModels] = createSignal<string[]>([]);
+  const [busy, setBusy] = createSignal(false);
+
+  createEffect(async () => {
+    if (!pinRoute() || !provider()) return;
+    try {
+      const found = (await api.models(provider())).models ?? [];
+      setModels(found);
+      if (found.length && !found.includes(model())) setModel(found[0]);
+    } catch {
+      setModels([]);
+    }
+  });
+
+  const approve = async () => {
+    setBusy(true);
+    try {
+      const entry = await api.approveGatewayAllowlist(props.entry.key, {
+        workspace: workspace().trim() || undefined,
+        route: pinRoute() && provider() && model() ? { provider: provider(), model: model() } : undefined,
+      });
+      pushToast("info", `Approved ${props.entry.key} → ${entry.workspace ?? "(workspace unset)"}`);
+      props.refresh();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deny = async () => {
+    setBusy(true);
+    try {
+      await api.denyGatewayAllowlist(props.entry.key);
+      pushToast("info", `Denied ${props.entry.key}`);
+      props.refresh();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <article class="binding-card pending-card">
+      <div class="binding-head">
+        <div>
+          <strong class="mono">{props.entry.key}</strong>
+          <div class="binding-meta">first seen {timeAgo(props.entry.added_at)}</div>
+        </div>
+        <span class="chip chip-tone-warning">pending</span>
+      </div>
+
+      <Show when={props.entry.first_seen_text}>
+        <div class="pending-first-seen">{props.entry.first_seen_text}</div>
+      </Show>
+
+      <label class="inherit-toggle" style="margin-top:2px">
+        Workspace
+      </label>
+      <input
+        class="mono"
+        value={workspace()}
+        onInput={(e) => setWorkspace(e.currentTarget.value)}
+        placeholder={props.defaultWorkspace}
+        style="width:100%;margin-bottom:8px"
+      />
+
+      <label class="inherit-toggle">
+        <input type="checkbox" checked={pinRoute()} onChange={(e) => setPinRoute(e.currentTarget.checked)} />
+        Pin a specific provider / model (otherwise inherits the workspace default)
+      </label>
+      <Show when={pinRoute()}>
+        <div class="binding-controls">
+          <select value={provider()} onChange={(e) => setProvider(e.currentTarget.value)}>
+            <For each={props.providers}>{(p) => <option value={p.name}>{p.name}</option>}</For>
+          </select>
+          <Show when={models().length} fallback={
+            <input class="mono" value={model()} onInput={(e) => setModel(e.currentTarget.value)} placeholder="model id" />
+          }>
+            <select class="mono" value={model()} onChange={(e) => setModel(e.currentTarget.value)}>
+              <For each={models()}>{(m) => <option value={m}>{m}</option>}</For>
+            </select>
+          </Show>
+        </div>
+      </Show>
+
+      <div class="row-gap">
+        <button disabled={busy()} onClick={approve}>Approve</button>
+        <button class="danger small" disabled={busy()} onClick={deny}>Deny</button>
+      </div>
+    </article>
+  );
+}
+
 function GatewayView() {
   const [status, { refetch }] = createResource(() => api.gatewayStatus());
+  const [allowlist, { refetch: refetchAllowlist }] = createResource(() => api.gatewayAllowlist());
   const [providers] = createResource(() => api.providers());
   const [target, setTarget] = createSignal("");
+
+  const refreshAll = () => {
+    refetch();
+    refetchAllowlist();
+  };
 
   const addTarget = async () => {
     const key = target().trim();
@@ -1639,11 +1771,21 @@ function GatewayView() {
       await api.patchGatewayBinding(key, {});
       setTarget("");
       pushToast("info", `Registered ${key} with the workspace default`);
-      refetch();
+      refreshAll();
     } catch (err) {
       pushToast("alert", `${err}`);
     }
   };
+
+  const allowlistByKey = createMemo(() => {
+    const map = new Map<string, AllowlistEntry>();
+    for (const e of allowlist()?.entries ?? []) map.set(e.key, e);
+    return map;
+  });
+
+  const pendingEntries = createMemo(() =>
+    (allowlist()?.entries ?? []).filter((e) => e.status === "pending"),
+  );
 
   return (
     <div class="view">
@@ -1653,7 +1795,7 @@ function GatewayView() {
             <h2>Gateway routing control</h2>
             <p class="dim">One visible route chain for every remote surface. Defaults propagate to inheriting channels; frozen sessions rotate instead of mutating.</p>
           </div>
-          <button class="ghost small" onClick={() => refetch()}>Refresh</button>
+          <button class="ghost small" onClick={() => refreshAll()}>Refresh</button>
         </div>
         <Show when={!status.loading} fallback={<div class="empty">Loading gateway state…</div>}>
           <div class="route-summary-grid">
@@ -1664,6 +1806,27 @@ function GatewayView() {
           </div>
         </Show>
       </section>
+
+      <Show when={pendingEntries().length > 0}>
+        <section class="panel" style="margin-top:14px">
+          <div class="panel-title-row">
+            <div>
+              <h2>Pending channels</h2>
+              <p class="dim">Unrecognized chats are rejected but recorded here for review — nothing is silently allowed in.</p>
+            </div>
+          </div>
+          <div class="binding-list">
+            <For each={pendingEntries()}>{(entry) => (
+              <PendingChannelCard
+                entry={entry}
+                providers={providers()?.providers ?? []}
+                defaultWorkspace={status()?.workspace ?? ""}
+                refresh={refreshAll}
+              />
+            )}</For>
+          </div>
+        </section>
+      </Show>
 
       <section class="panel" style="margin-top:14px">
         <div class="panel-title-row">
@@ -1676,7 +1839,12 @@ function GatewayView() {
         <Show when={(status()?.bindings.length ?? 0) > 0} fallback={<div class="empty">No channels registered yet. Inbound channels appear here automatically, or register one above.</div>}>
           <div class="binding-list">
             <For each={status()?.bindings}>{(binding) => (
-              <GatewayBindingEditor binding={binding} providers={providers()?.providers ?? []} refresh={refetch} />
+              <GatewayBindingEditor
+                binding={binding}
+                providers={providers()?.providers ?? []}
+                allowlistEntry={allowlistByKey().get(binding.target)}
+                refresh={refreshAll}
+              />
             )}</For>
           </div>
         </Show>

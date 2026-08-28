@@ -1110,9 +1110,18 @@ async fn checkpoints_list_and_restore_roundtrip() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["seq"], 1);
     assert_eq!(items[0]["label"], "turn 1");
-    // Two files live here: notes.txt plus the session ledger itself,
-    // because this test nests sessions_home inside the workspace.
-    assert_eq!(items[0]["files"], 2);
+    // At least two files live here: notes.txt plus the session ledger
+    // itself, because this test nests sessions_home inside the workspace.
+    // The gateway may also seed a live-reloadable `gateway/allowlist.json`
+    // from `gateway.chat_allowlist` on startup (docs/design/34), which
+    // adds one more file whenever a config layer sets that key — not
+    // asserted as an exact count so this stays independent of the
+    // environment's own config layering.
+    let expected_files = items[0]["files"].as_u64().unwrap();
+    assert!(
+        expected_files >= 2,
+        "expected at least notes.txt + session ledger, got {expected_files}"
+    );
 
     let restored: serde_json::Value = client
         .post(format!("{base}/sessions/{id}/checkpoints/1/restore"))
@@ -1122,7 +1131,7 @@ async fn checkpoints_list_and_restore_roundtrip() {
         .json()
         .await
         .unwrap();
-    assert_eq!(restored["restored"].as_u64(), Some(2));
+    assert_eq!(restored["restored"].as_u64(), Some(expected_files));
     assert!(
         restored["deleted"].as_u64().unwrap() >= 1,
         "the stray file must be removed"
