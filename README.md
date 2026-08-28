@@ -177,11 +177,40 @@ default. Every `self` subcommand accepts the same `--prefix`, so a custom
 install stays inspectable and removable:
 
 ```bash
-vak self status      # build vs manifest vs service units
-vak self verify      # every component against its recorded digest
-vak self reinstall   # clear the prefix and place a fresh build
-vak self uninstall   # remove it; --purge also deletes the data home
+vak self status         # build vs manifest vs service units
+vak self verify         # every component against its recorded digest
+vak self services-sync  # regenerate + reload the launchd/systemd units
+vak self reinstall      # clear the prefix and place a fresh build
+vak self update --url <feed>  # opt-in pull-and-replace from a release feed
+vak self uninstall      # remove it; --purge also deletes the data home
+vak doctor              # read-only health report across config, services, routes
 ```
+
+`vak doctor` diagnoses; `vak doctor --repair` acts on the checks that have a
+known mechanical fix (today: reinstalling on self version parity drift) and
+re-checks, leaving anything else — provider auth, config warnings — for you.
+Checks without a mechanical fix are never guessed at.
+
+`scripts/vak.sh <verb>` is a thin dispatcher over all of the above, if
+you'd rather remember one entry point than which of `scripts/*.sh` or
+`vak self <verb>` owns a given step:
+
+```bash
+scripts/vak.sh build          # -> scripts/build.sh
+scripts/vak.sh release        # -> scripts/release.sh
+scripts/vak.sh install        # -> vak self install
+scripts/vak.sh reinstall      # -> vak self reinstall
+scripts/vak.sh verify         # -> vak self verify
+scripts/vak.sh status         # -> vak self status
+scripts/vak.sh update         # -> vak self update
+scripts/vak.sh uninstall      # -> vak self uninstall
+scripts/vak.sh services-sync  # -> vak self services-sync
+scripts/vak.sh doctor         # -> vak doctor
+```
+
+It resolves `vak` from PATH first, falling back to the freshly built
+`target/release` or `target/debug` binary — it never reimplements a verb,
+only routes to the thing that already owns it.
 
 ### Release
 

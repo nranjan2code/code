@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### `vak doctor --repair` and `scripts/vak.sh`
+
+`vak doctor` gained `--repair`: it acts on the checks that have a known
+mechanical fix (today: self version parity, via `self install --force`)
+and re-collects the report, leaving checks with no mechanical fix
+(provider auth, config warnings) for the operator — it never guesses at
+those. `scripts/vak.sh <verb>` is a new thin dispatcher over
+`scripts/build.sh` / `scripts/release.sh` / `vak self <verb>` / `vak
+doctor`, for anyone who'd rather remember one entry point than which
+script or subcommand owns a given lifecycle step; it only routes, it
+never reimplements a verb.
+
 ## 0.10.0 — 2026-08-28
 
 ### Rebrand: VakCoder → Vak

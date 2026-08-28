@@ -30,9 +30,14 @@ no plists pointing into build trees, no spot-fixing deploys.
    system account home when GUI launch environments omit `HOME`, and fails
    closed to an absolute root rather than treating the current workspace as a
    home directory.
-4. **Drift is detectable.** `self status` prints build vs manifest vs
-   per-service versions and exits non-zero on mismatch; `/doctor`
-   surfaces the same check so any surface reveals drift.
+4. **Drift is detectable, and the mechanical fixes are one flag away.**
+   `self status` prints build vs manifest vs per-service versions and
+   exits non-zero on mismatch; `/doctor` surfaces the same check so any
+   surface reveals drift. `vak doctor --repair` acts on the checks that
+   have a known mechanical fix (self version parity → `self install
+   --force`) and re-collects the report; checks with no mechanical fix
+   (provider auth, config warnings) are left for the operator — doctor
+   never guesses at those.
 5. **Lifecycle is symmetric.** `self uninstall` reverses install exactly
    (stop → unload → remove units → remove binaries+manifest), preserving
    user data unless `--purge`.
@@ -52,7 +57,13 @@ vak self services-sync [--prefix DIR] [NAME…] regenerate + reload units
                                       (using the invoking workspace)
 vak self uninstall [--prefix DIR] [-y] [--purge]  exact reverse of install
 vak self update    [--prefix DIR] [--url URL] [-y] [--dry-run]
+vak doctor         [--trust] [--repair]       health report; --repair acts on known fixes
 ```
+
+`scripts/vak.sh <verb>` dispatches to the above (or to `scripts/build.sh` /
+`scripts/release.sh` for `build`/`release`) so there's one entry point for
+someone who doesn't already know which script or subcommand owns a given
+lifecycle step — it never reimplements a verb, only routes to it.
 
 `--prefix` is accepted by **every** subcommand and resolved in one place
 (`install::layout::InstallRoot::resolve`): explicit flag, then

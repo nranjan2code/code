@@ -271,12 +271,12 @@ async fn main() {
         Some(Command::Checkpoints { action }) => run_checkpoints(cwd, action).await,
         Some(Command::Telegram { server, token }) => run_telegram(server, token).await,
         Some(Command::Flow { action }) => run_flow(cwd, action).await,
-        Some(Command::Doctor { trust }) => {
+        Some(Command::Doctor { trust, repair }) => {
             let trusted = resolve_trust(&cwd, trust, false);
             if trusted {
                 vak_config::load_env_file(std::path::Path::new(".env"));
             }
-            doctor::run_doctor(cwd, trusted)
+            doctor::run_doctor(cwd, trusted, repair)
         }
         Some(Command::Backup { action }) => backup::run_backup(cwd, action),
         Some(Command::Digest { days }) => digest::run_digest(cwd, days),

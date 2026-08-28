@@ -128,6 +128,9 @@ pub(crate) enum Command {
         /// Trust this workspace's project config and .env
         #[arg(long)]
         trust: bool,
+        /// Act on failing checks that have a known fix, then re-check
+        #[arg(long)]
+        repair: bool,
     },
     /// Backup your vak home: export or import a directory copy
     Backup {
@@ -426,11 +429,23 @@ mod tests {
     fn doctor_parses_with_and_without_trust() {
         assert!(!matches!(
             parse(&["doctor"]),
-            Command::Doctor { trust: true }
+            Command::Doctor { trust: true, .. }
         ));
         assert!(matches!(
             parse(&["doctor", "--trust"]),
-            Command::Doctor { trust: true }
+            Command::Doctor { trust: true, .. }
+        ));
+    }
+
+    #[test]
+    fn doctor_parses_repair() {
+        assert!(matches!(
+            parse(&["doctor", "--repair"]),
+            Command::Doctor { repair: true, .. }
+        ));
+        assert!(!matches!(
+            parse(&["doctor"]),
+            Command::Doctor { repair: true, .. }
         ));
     }
 

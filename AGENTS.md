@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v0.8.12 — all roadmap phases implemented and live-tested.**
+**Status: v0.10.0 — all roadmap phases implemented and live-tested.**
 See `docs/design/00-roadmap.md` for the phase history and
 `docs/design/15-reliability.md` for the failure-handling matrix. Security work
 must also follow the threat model and priority order in
@@ -164,6 +164,13 @@ security/inbox), operation (approvals/config/cancel), and interaction
     `.vak` directory away. Canonical path resolution must never use the
     current working directory as a missing-home fallback; GUI launches use the
     OS account home and otherwise fail closed to an absolute path.
+19. **`doctor` diagnoses; `doctor --repair` only acts on checks with a known
+    mechanical fix**, then re-collects and re-prints the report. A check
+    with no mechanical fix (provider auth, config warnings) is left for the
+    operator — `--repair` must never guess at those or paper over a failure
+    it can't actually resolve. `scripts/vak.sh <verb>` is a thin dispatcher
+    over `scripts/build.sh` / `scripts/release.sh` / `vak self <verb>` /
+    `vak doctor` — it routes, it never reimplements a verb's logic.
 
 ## Code rules
 
