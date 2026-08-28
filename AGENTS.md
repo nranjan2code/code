@@ -51,6 +51,14 @@
     it can't actually resolve. `scripts/vak.sh <verb>` is a thin dispatcher
     over `scripts/build.sh` / `scripts/release.sh` / `vak self <verb>` /
     `vak doctor` — it routes, it never reimplements a verb's logic.
+20. **Channel capability overlays are restrictive and execution-scoped.** An
+    allowlist entry may inherit or narrow built-in tools, MCP server/tool
+    patterns, visible skills, and hooks; `None` inherits, `Some([])` blocks
+    that category, and deny patterns win. The overlay is persisted with the
+    binding, included in the `CorePool` identity, filtered from advertised
+    surfaces, and enforced again at MCP call time. Skills are visibility
+    controls, not a replacement for permission rules. Secrets remain owned by
+    the workspace integration and are never assigned to a channel overlay.
 
 ## Code rules
 

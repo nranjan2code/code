@@ -221,6 +221,12 @@ Nothing here is inferred where it could be read.
   that does not parse is flagged rather than hidden.
 - **Skill provenance** comes from `GET /skills`, extended with `path` and a
   `scope` of `workspace` (`<cwd>/.vak/skills`) or `user`.
+- **Channel capability overlays** are edited from the Gateway channel editor
+  and pending-approval form. They support inherited or restrictive
+  built-in-tool, MCP server/tool, skill-visibility, and hook patterns. The
+  Admin UI sends the overlay with the allowlist mutation; the runtime stores
+  it on the binding and applies the same policy before tool dispatch. Skills
+  are visibility only, and secrets remain workspace-owned.
 
 ### What is deliberately not shown
 

@@ -1,6 +1,7 @@
 # 35 — First-class Tavily integration
 
-Status: **proposed**
+Status: **Admin bootstrap shipped in 0.11.3; lifecycle hardening remains
+designed below**
 
 ## Decision
 
@@ -20,6 +21,30 @@ This removes the configuration choices that currently cause failures:
 The generic MCP manager remains available for other servers. Tavily is a
 managed adapter with a stable server name (`tavily`) and a fixed set of
 capabilities.
+
+## Shipped in 0.11.3
+
+The Admin console now provides a real Tavily key entry point. **Save & enable**
+stores the key in the canonical user `.env`, writes the managed environment
+reference and fixed `npx -y tavily-mcp` command into the workspace MCP table,
+enables outbound network access, hot-applies the configuration, and emits the
+normal configuration event. **Disable Tavily** removes the effective server
+from the workspace table and hot-applies that change. The GET endpoint and
+Admin card expose only enabled/key-present/network metadata; the key is never
+returned to the browser.
+
+The runtime and channel overlay work shipped together: Tavily calls still use
+the normal MCP meta-tool, permission engine, broker boundary, and any
+channel-specific `mcp_allow`/`mcp_deny` policy. The service deployment keeps
+the captured workspace and canonical user home, so Telegram and gateway
+workers resolve the same user `.env` after `services-sync`.
+
+The remaining items in this document—typed dedicated integration state,
+transactional validation/rollback, rotation and remove-key endpoints,
+connection testing, doctor-specific Tavily diagnostics, and legacy migration
+warnings—are intentionally not represented as shipped behavior yet. The
+current Admin flow is a working bootstrap path, not the complete managed
+integration lifecycle specified below.
 
 ## Security and configuration invariants
 

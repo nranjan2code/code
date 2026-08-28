@@ -1,7 +1,7 @@
 # 34 — Channel onboarding: lifecycle, governance, admin/desktop UX
 
-Status: **Phases 1, 2, and 3 implemented, and the follow-up pass
-implemented** — allowlist store, gateway pending lifecycle, admin API
+Status: **Phases 1, 2, and 3 implemented, plus the capability-overlay phase
+in 0.11.3** — allowlist store, gateway pending lifecycle, admin API
 routes, Admin UI panels, the multi-tenant `CorePool`, the Discord and
 Slack bridges, `PATCH .../allowlist/{key}` (unified with the existing
 binding route-override path), the `vak doctor` "gateway channels" check
@@ -520,7 +520,28 @@ bridge is started by hand rather than promising a restart that will not
 happen. See the two deferrals at the top of this doc for the polling
 transport and typed-verdict approvals.
 
-## Non-goals (still, even after phases 2-3)
+## Phase 4: channel capability overlays (0.11.3)
+
+The channel editor now persists a restrictive `ChannelPolicy` alongside each
+allowlist entry. It supports inheritance or explicit allow/deny patterns for
+built-in tools, MCP servers/tools, discovered skills, and lifecycle hooks. An
+explicit empty allow list blocks the category; deny patterns always win.
+
+The policy is enforced at every relevant boundary: the Core filters built-in
+tools, skills, and hooks; the MCP meta-tool filters its advertised tools and
+rejects disallowed calls; and the permission engine receives the corresponding
+channel-scoped rules before dispatch. `CorePool` includes a serialized policy
+fingerprint in its key so channels sharing a workspace cannot share a Core
+with different capabilities. Existing entries default to inheritance, and
+route-only binding edits preserve their policy.
+
+The Admin UI exposes these controls in both pending approval and registered
+channel editing. It makes clear that skills control visibility while
+permission rules remain the security boundary, and that secrets stay
+workspace-owned. The policy does not copy API keys into channel state or grant
+an overlay access to a workspace it was not already approved to use.
+
+## Non-goals (still, even after phases 2-4)
 
 - No cross-machine/cross-account process isolation (see Phase 2's "what
   stays single-process").
