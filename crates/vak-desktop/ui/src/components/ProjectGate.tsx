@@ -67,7 +67,10 @@ export default function ProjectGate() {
 
   // The picker is the whole gate now; a loaded provider snapshot just means
   // the workspace is about to take over.
-  const showPicker = () => !providers();
+  // A provider snapshot may arrive before a workspace backend (for example
+  // after a desktop-service handover). It must never suppress the only
+  // recovery control while the backend is unavailable.
+  const showPicker = () => !backend().ready || !providers();
 
   return (
     <div class="gate">
