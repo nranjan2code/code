@@ -572,6 +572,23 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
         }));
     }
     bindings.sort_by(|a, b| a["target"].as_str().cmp(&b["target"].as_str()));
+    // docs/design/34 Phase 2: which workspaces currently have a pooled Core
+    // running (warm) vs. cold (will lazily start on next inbound message),
+    // so the workspace picker in the approve flow isn't guessing.
+    let now = std::time::Instant::now();
+    let core_pool: Vec<serde_json::Value> = gw
+        .core_pool
+        .snapshot_at(now)
+        .into_iter()
+        .map(|entry| {
+            serde_json::json!({
+                "workspace": entry.workspace,
+                "is_default": entry.is_default,
+                "state": "warm",
+                "idle_secs": entry.idle_secs,
+            })
+        })
+        .collect();
     Json(serde_json::json!({
         "enabled": gw.enabled,
         "workspace": state.core.cwd(),
@@ -579,6 +596,11 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
         "bindings": bindings,
         "chat_allowlist": state.core.config().gateway.chat_allowlist,
         "chat_allowlist_open": state.core.config().gateway.chat_allowlist_open,
+        "core_pool": {
+            "max": state.core.config().gateway.core_pool_max,
+            "idle_secs": state.core.config().gateway.core_pool_idle_secs,
+            "entries": core_pool,
+        },
     }))
 }
 

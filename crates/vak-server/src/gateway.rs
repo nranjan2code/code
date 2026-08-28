@@ -182,6 +182,10 @@ pub struct GatewayState {
     /// Live, schema-versioned allowlist store (docs/design/34). Authoritative
     /// once it exists on disk; seeded once from `chat_allowlist` otherwise.
     allowlist: Mutex<HashMap<String, AllowlistEntry>>,
+    /// Multi-tenant Core pool (docs/design/34 Phase 2). The gateway's own
+    /// default workspace is the pool's permanent entry; every other
+    /// workspace an allowlist entry names is lazily started here.
+    pub(crate) core_pool: crate::core_pool::CorePool,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -309,7 +313,28 @@ impl GatewayState {
             pending_approvals: Mutex::new(std::collections::BTreeMap::new()),
             chat_allowlist_open: gw.chat_allowlist_open,
             allowlist: Mutex::new(allowlist),
+            core_pool: crate::core_pool::CorePool::new(
+                core.clone(),
+                gw.core_pool_max,
+                Duration::from_secs(gw.core_pool_idle_secs),
+            ),
         }
+    }
+
+    /// Resolve the `Core` a channel's entry should actually run through:
+    /// the pool's default entry when the entry has no workspace override or
+    /// names the gateway's own workspace, otherwise the (lazily started)
+    /// pooled `Core` for that workspace. This is the Phase 2 seam that
+    /// makes an allowlist entry's `workspace` field actually run that
+    /// workspace's own sandbox/permission/session state, not just pick its
+    /// provider/model.
+    pub(crate) fn core_for_entry(&self, default_core: &Core, key: &str) -> Result<Core, String> {
+        let workspace = self
+            .allowlist_get(key)
+            .and_then(|entry| entry.workspace)
+            .unwrap_or_else(|| default_core.cwd().clone());
+        self.core_pool
+            .resolve_at(&workspace, std::time::Instant::now())
     }
 
     pub(crate) fn set_enabled(&mut self, enabled: bool) {
@@ -1024,7 +1049,23 @@ async fn gateway_inbound(
         };
     }
 
-    let handle = match resolve_session(&state, &key).await {
+    // docs/design/34 Phase 2: run this key's entry through its own
+    // workspace's Core (sandbox, permission mode, session ledger) — not
+    // just its provider/model — when the entry names a workspace other
+    // than the gateway's own. Falls back to the gateway's default Core
+    // when the entry has no workspace override, exactly as before.
+    let core = match state.gateway.core_for_entry(&state.core, &key) {
+        Ok(core) => core,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("workspace core unavailable: {e}")})),
+            )
+                .into_response();
+        }
+    };
+
+    let handle = match resolve_session(&state, &core, &key).await {
         Ok(h) => h,
         Err(e) => {
             return (
@@ -1070,7 +1111,7 @@ async fn gateway_inbound(
             .into_response();
     }
 
-    if state.core.provider().is_err() {
+    if core.provider().is_err() {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({"error": "no provider credential configured"})),
@@ -1086,7 +1127,13 @@ async fn gateway_inbound(
         _ => text.clone(),
     };
     let prompt = compose_prompt(&attributed, &body.attachments);
-    start_turn_chain(&state, handle, prompt, want_reply.then_some(reply_tx));
+    start_turn_chain(
+        &state,
+        &core,
+        handle,
+        prompt,
+        want_reply.then_some(reply_tx),
+    );
 
     if !want_reply {
         return (
@@ -1097,7 +1144,7 @@ async fn gateway_inbound(
     }
     match tokio::time::timeout(WAIT_TIMEOUT, reply_rx).await {
         Ok(Ok(text)) => match crate::delivery::render_response(
-            &state.core,
+            &core,
             body.surface.trim(),
             body.chat.trim(),
             text.clone(),
@@ -1189,7 +1236,7 @@ fn binding_session(state: &AppState, key: &str) -> Option<String> {
         .and_then(|binding| binding.session_id.clone())
 }
 
-fn binding_route(state: &AppState, key: &str) -> (String, String, String) {
+fn binding_route(state: &AppState, core: &Core, key: &str) -> (String, String, String) {
     let override_route = state
         .gateway
         .bindings
@@ -1201,12 +1248,12 @@ fn binding_route(state: &AppState, key: &str) -> (String, String, String) {
         let revision = format!("channel:{}:{}", provider, model);
         return (provider, model, revision);
     }
-    let _ = state.core.refresh_persisted_route();
-    let route = state.core.effective_route();
+    let _ = core.refresh_persisted_route();
+    let route = core.effective_route();
     (route.provider, route.model, route.revision)
 }
 
-fn busy_binding_matches_revision(state: &AppState, key: &str, revision: &str) -> bool {
+fn busy_binding_matches_revision(state: &AppState, core: &Core, key: &str, revision: &str) -> bool {
     state
         .gateway
         .bindings
@@ -1215,7 +1262,7 @@ fn busy_binding_matches_revision(state: &AppState, key: &str, revision: &str) ->
         .get(key)
         .is_some_and(|binding| {
             binding.route_revision.as_deref() == Some(revision)
-                && binding.workspace.as_deref() == Some(state.core.cwd().as_path())
+                && binding.workspace.as_deref() == Some(core.cwd().as_path())
         })
 }
 
@@ -1232,8 +1279,12 @@ fn session_matches_route(
 
 /// Attach-or-create the session bound to `key`. Stale bindings (ledger
 /// deleted through the normal endpoint) rebind to a fresh session.
-async fn resolve_session(state: &AppState, key: &str) -> Result<Arc<SessionHandle>, String> {
-    let (provider, model, revision) = binding_route(state, key);
+async fn resolve_session(
+    state: &AppState,
+    core: &Core,
+    key: &str,
+) -> Result<Arc<SessionHandle>, String> {
+    let (provider, model, revision) = binding_route(state, core, key);
     if let Some(sid) = binding_session(state, key) {
         if let Some(handle) = state.get(&sid) {
             let matches = {
@@ -1242,20 +1293,18 @@ async fn resolve_session(state: &AppState, key: &str) -> Result<Arc<SessionHandl
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 match session.as_ref() {
-                    Some(session) => {
-                        session_matches_route(session, state.core.cwd(), &provider, &model)
-                    }
-                    None => busy_binding_matches_revision(state, key, &revision),
+                    Some(session) => session_matches_route(session, core.cwd(), &provider, &model),
+                    None => busy_binding_matches_revision(state, core, key, &revision),
                 }
             };
             if matches {
                 return Ok(handle);
             }
-            state.gateway.rotate(&state.core, key);
+            state.gateway.rotate(core, key);
         } else {
-            match state.core.open_session(&sid).await {
+            match core.open_session(&sid).await {
                 Ok(session) => {
-                    if session_matches_route(&session, state.core.cwd(), &provider, &model) {
+                    if session_matches_route(&session, core.cwd(), &provider, &model) {
                         let id = session
                             .header()
                             .map(|h| h.session_id.clone())
@@ -1264,19 +1313,18 @@ async fn resolve_session(state: &AppState, key: &str) -> Result<Arc<SessionHandl
                             state,
                             id,
                             session,
-                            state.core.cwd().clone(),
+                            core.cwd().clone(),
                         ));
                     }
-                    state.gateway.rotate(&state.core, key);
+                    state.gateway.rotate(core, key);
                 }
                 Err(_) => {
-                    state.gateway.rotate(&state.core, key);
+                    state.gateway.rotate(core, key);
                 }
             }
         }
     }
-    let session = state
-        .core
+    let session = core
         .start_session_with_route(provider, model)
         .await
         .map_err(|e| format!("start session: {e}"))?;
@@ -1284,12 +1332,10 @@ async fn resolve_session(state: &AppState, key: &str) -> Result<Arc<SessionHandl
         .header()
         .map(|h| h.session_id.clone())
         .unwrap_or_default();
-    let handle = crate::register_handle(state, id.clone(), session, state.core.cwd().clone());
+    let handle = crate::register_handle(state, id.clone(), session, core.cwd().clone());
     // Two racing first-messages could each mint a session; last bind wins
     // and the loser stays a hidden header-only draft.
-    state
-        .gateway
-        .bind(&state.core, key.to_string(), id, revision);
+    state.gateway.bind(core, key.to_string(), id, revision);
     Ok(handle)
 }
 
@@ -1300,11 +1346,12 @@ async fn resolve_session(state: &AppState, key: &str) -> Result<Arc<SessionHandl
 /// `RunFinished` per turn so SSE consumers see normal terminal markers.
 fn start_turn_chain(
     state: &AppState,
+    core: &Core,
     handle: Arc<SessionHandle>,
     prompt: vak_llm::Message,
     reply: Option<oneshot::Sender<String>>,
 ) {
-    let core = state.core.clone();
+    let core = core.clone();
     let gw = state.gateway.clone();
     tokio::spawn(execute_turn_chain(core, gw, handle, prompt, reply));
 }
@@ -1795,7 +1842,7 @@ mod tests {
             Some(("provider-b".into(), "model-b".into())),
         );
 
-        let fresh = resolve_session(&state, "telegram:42").await.unwrap();
+        let fresh = resolve_session(&state, &core, "telegram:42").await.unwrap();
         assert_ne!(fresh.id, old_id);
         {
             let lock = fresh

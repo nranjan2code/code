@@ -34,6 +34,35 @@ confirm or edit the workspace and optionally pin a provider/model) above
 status chip (allowed/pending/denied) with a Revoke action for allowed
 entries.
 
+**Phase 2: multi-tenant Core pool.** An allowlist entry's `workspace`
+field used to only pick provider/model — the gateway ran every channel
+through its own single `Core`, fixed at process start, regardless of what
+workspace an entry named. `GatewayState` now holds a `CorePool`
+(`crates/vak-server/src/core_pool.rs`): a canonical-workspace-path →
+lazily-started `Core` map. The gateway's own default workspace is the
+pool's permanent, never-evicted entry; on inbound dispatch, once the
+allowlist resolves an entry as `allowed`, the gateway looks up (or lazily
+starts) that entry's own workspace `Core` via `Core::new_with_trust` —
+the exact same trust/permission/sandbox resolution a local `vak` run in
+that workspace gets — and routes the turn's session, ledger, and turn
+execution through it instead of the gateway's own `Core`. Pooling never
+grants a channel more access than a local session in that workspace
+already has; the allowlist approval step is still what gates a channel
+reaching a workspace at all.
+
+Pooled Cores for non-default workspaces are idle-evicted after
+`[gateway] core_pool_idle_secs` (default 1800 = 30 minutes) of no inbound
+activity, and capped at `[gateway] core_pool_max` (default 8) concurrently
+pooled Cores — over the cap, the oldest-idle non-default entry is evicted
+to make room; the default workspace is never evicted. Both are new
+recognized `[gateway]` config keys (unknown-keys-warn-not-fail, like every
+other gateway key). `GET /admin/api/gateway/status` gains a `core_pool`
+field (max, idle_secs, and the list of currently warm workspaces with
+idle time) and the Admin UI's Gateway page shows a "Core pool" panel plus
+a warm/cold indicator next to the workspace field in the pending-channel
+approve flow, so the operator can see whether approving a workspace will
+reuse a live Core or start a fresh one.
+
 ### `vak doctor --repair` and `scripts/vak.sh`
 
 `vak doctor` gained `--repair`: it acts on the checks that have a known

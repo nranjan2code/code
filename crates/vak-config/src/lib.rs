@@ -152,6 +152,12 @@ pub struct GatewaySettings {
     /// Only takes effect when `chat_allowlist` is empty; ignored otherwise.
     /// Default false — an operator must opt in to open access.
     pub chat_allowlist_open: Option<bool>,
+    /// Process-wide cap on concurrently pooled per-workspace `Core`
+    /// instances (docs/design/34-channel-onboarding.md Phase 2). Default 8.
+    pub core_pool_max: Option<usize>,
+    /// Idle duration (seconds) after which a pooled non-default-workspace
+    /// `Core` is evicted. Default 1800 (30 minutes).
+    pub core_pool_idle_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -519,6 +525,12 @@ pub struct GatewayResolved {
     pub chat_allowlist: Vec<String>,
     /// Empty `chat_allowlist` was explicitly opted into staying open.
     pub chat_allowlist_open: bool,
+    /// Process-wide cap on concurrently pooled per-workspace `Core`
+    /// instances (docs/design/34 Phase 2). Default 8.
+    pub core_pool_max: usize,
+    /// Idle duration after which a pooled non-default-workspace `Core` is
+    /// evicted. Default 1800s (30 minutes).
+    pub core_pool_idle_secs: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -642,6 +654,8 @@ impl Default for Config {
                 rate_limit: None,
                 chat_allowlist: Vec::new(),
                 chat_allowlist_open: false,
+                core_pool_max: 8,
+                core_pool_idle_secs: 1800,
             },
             memory: MemoryResolved {
                 search_enabled: true,
@@ -1035,6 +1049,8 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     cfg.gateway.rate_limit = merged.gateway.rate_limit.clone();
     cfg.gateway.chat_allowlist = merged.gateway.chat_allowlist.clone();
     cfg.gateway.chat_allowlist_open = merged.gateway.chat_allowlist_open.unwrap_or(false);
+    cfg.gateway.core_pool_max = merged.gateway.core_pool_max.unwrap_or(8).max(1);
+    cfg.gateway.core_pool_idle_secs = merged.gateway.core_pool_idle_secs.unwrap_or(1800).max(60);
     if cfg.gateway.enabled
         && cfg.gateway.chat_allowlist.is_empty()
         && cfg.gateway.chat_allowlist_open
@@ -1228,6 +1244,8 @@ const KNOWN_GATEWAY_KEYS: &[&str] = &[
     "rate_limit",
     "chat_allowlist",
     "chat_allowlist_open",
+    "core_pool_max",
+    "core_pool_idle_secs",
 ];
 const KNOWN_MEMORY_KEYS: &[&str] = &[
     "search_enabled",
@@ -1601,6 +1619,12 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.gateway.chat_allowlist_open.is_some() {
         base.gateway.chat_allowlist_open = over.gateway.chat_allowlist_open;
+    }
+    if over.gateway.core_pool_max.is_some() {
+        base.gateway.core_pool_max = over.gateway.core_pool_max;
+    }
+    if over.gateway.core_pool_idle_secs.is_some() {
+        base.gateway.core_pool_idle_secs = over.gateway.core_pool_idle_secs;
     }
     if over.memory.search_enabled.is_some() {
         base.memory.search_enabled = over.memory.search_enabled;

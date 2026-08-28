@@ -1,18 +1,21 @@
 # 34 — Channel onboarding: lifecycle, governance, admin/desktop UX
 
-Status: **Phase 1 implemented** (allowlist store, gateway pending
-lifecycle, admin API routes, Admin UI pending/approve/deny/revoke panels —
-`crates/vak-server/src/gateway.rs`, `crates/vak-server/src/admin.rs`,
-`crates/vak-admin-ui/src/App.tsx`). Phase 2 (multi-tenant Core pool) is
-**in progress**; Phase 3 (Discord/Slack bridges) remains **proposed**.
-A follow-up pass ("Editing an already-allowed entry", "Lifecycle
-completeness: doctor and repair" below) closes gaps found after Phase 1
-shipped: entries were create-only (no edit path once allowed), nothing
-tied a channel's health into `vak doctor`, and the resolved-vs-open
-question list needed actual resolutions before Phase 2 builds on top of
-it — those sections are corrections/additions to apply during or
-immediately after Phase 2, not a separate Phase 4. See the phase sections
-below. Written after a live incident
+Status: **Phase 1 and Phase 2 implemented** (allowlist store, gateway
+pending lifecycle, admin API routes, Admin UI pending/approve/deny/revoke
+panels, and the multi-tenant `CorePool` that actually runs an approved
+entry's own workspace `Core` — `crates/vak-server/src/gateway.rs`,
+`crates/vak-server/src/admin.rs`, `crates/vak-server/src/core_pool.rs`,
+`crates/vak-admin-ui/src/App.tsx`). Phase 3 (Discord/Slack bridges)
+remains **proposed**, not yet implemented. A follow-up pass ("Editing an
+already-allowed entry", "Lifecycle completeness: doctor and repair"
+below) is designed but **not yet implemented**: `PATCH
+.../allowlist/{key}` for editing an already-allowed entry's
+workspace/route in place (unified with the existing binding
+route-override path, not a second divergent config), a `vak doctor`
+"gateway channels" health check with `--repair` wiring for expired
+pending entries, and a workspace picker (known-workspaces dropdown +
+warned free-text fallback) replacing unconstrained free text. See the
+phase sections below. Written after a live incident
 (2026-08-28): the Telegram bridge returned `403` for a chat that used to
 work, because `gateway.chat_allowlist` is a config-file-only setting with
 no UI, no runtime API, and no visible pending-request state — the operator
@@ -317,6 +320,16 @@ same trust/permission resolution as running `vak` locally in W — pooling
 does not grant a channel more access than a local session in that
 workspace would already have; the *approval* step (Phase 1) is what gates
 a channel getting there at all.
+
+**Implemented.** `crates/vak-server/src/core_pool.rs`'s `CorePool` holds
+the map; `GatewayState::core_for_entry` (`gateway.rs`) resolves it on
+dispatch after allowlist resolution, ahead of session creation. Idle
+eviction and the pool cap are both config keys under `[gateway]`
+(`core_pool_idle_secs`, default 1800; `core_pool_max`, default 8) — see
+`crates/vak-config/src/lib.rs`'s `KNOWN_GATEWAY_KEYS`. `GET
+/admin/api/gateway/status` reports pool state under `core_pool`, rendered
+by the Admin UI's new "Core pool" panel and a warm/cold chip in the
+pending-channel approve flow.
 
 ## Phase 3: Discord/Slack bridges + per-surface admin UI
 

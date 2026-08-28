@@ -86,6 +86,19 @@ export interface GatewayBinding {
   stale_reasons: string[];
 }
 
+export interface CorePoolEntry {
+  workspace: string;
+  is_default: boolean;
+  state: "warm";
+  idle_secs: number;
+}
+
+export interface CorePoolStatus {
+  max: number;
+  idle_secs: number;
+  entries: CorePoolEntry[];
+}
+
 export interface GatewayStatus {
   enabled: boolean;
   workspace: string;
@@ -93,6 +106,7 @@ export interface GatewayStatus {
   bindings: GatewayBinding[];
   chat_allowlist: string[];
   chat_allowlist_open: boolean;
+  core_pool: CorePoolStatus;
 }
 
 export type AllowlistStatus = "pending" | "allowed" | "denied";
