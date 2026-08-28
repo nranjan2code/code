@@ -1,3 +1,10 @@
-provider = "anthropic"
-model = "claude-sonnet-4-5"
-permission_mode = "workspace-write"
+model = "gemma4:e2b-mlx"
+permission_mode = "full-access"
+provider = "ollama"
+
+[mcp.servers.tavily]
+args = [
+    "-y",
+    "tavily-mcp",
+]
+command = "npx"
