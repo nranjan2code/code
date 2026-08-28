@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Admin console can finally set a bot token, and stops accepting one as a routing key
+
+The Gateway page's "Registered channels" box could register a
+`surface:chat` routing key, but nowhere in the admin console could an
+operator actually set a bridge's bot token — that capability only
+existed in Desktop Settings, or a raw API call. A bot token
+("`8229314494:AAHuujv...`") happens to be syntactically indistinguishable
+from a routing key by a bare colon check, so pasting one into the wrong
+box silently created a nonsense binding instead of doing anything useful
+— exactly what happened in the field. Fixed both ends: a new "Bot
+tokens" panel on the Gateway page (`PUT/DELETE /config/bot-token/{surface}`,
+already existed server-side, never had admin-console UI) lets an operator
+set Telegram/Discord/Slack credentials directly; the routing-key box now
+validates the surface prefix against the actual known surfaces and
+rejects anything else with a message pointing at the right field, instead
+of accepting any string containing a colon.
+
 ### The menu bar really does survive a logout now
 
 The `com.vak.desktop` LaunchAgent added last release did bring the

@@ -12,6 +12,12 @@ import type {
   SkillItem, SkillProposal, TaskItem, TranscriptEntry, WorkReceipt,
 } from "./types";
 
+// Chat surfaces with a bridge (crates/vak-server's InboundChannel impls) and
+// a matching Core::bot_token_env entry. A routing key's surface prefix is
+// validated against this list — the bare colon check it replaced accepted
+// a pasted bot token (itself "digits:secret"-shaped) as a plausible key.
+const KNOWN_SURFACES = ["telegram", "discord", "slack"] as const;
+
 // Theme state: initialized from localStorage and synchronized to document root dataset
 const [theme, setTheme] = createSignal<"warm" | "dark" | "contrast">(
   (localStorage.getItem("vak_admin_theme") as "warm" | "dark" | "contrast") || "warm"
@@ -1938,6 +1944,102 @@ function PendingChannelCard(props: {
   );
 }
 
+// The credential a bridge authenticates to its platform with (from
+// BotFather, Discord's Developer Portal, or a Slack app's Bot User OAuth
+// Token) — separate from a gateway routing key (surface:chat), which the
+// "Registered channels" box below manages. Nothing in this console could
+// set this before; the only way in was Desktop Settings, or a raw API
+// call, which is exactly the gap that led an operator to paste a bot
+// token into the routing-key box instead, creating a nonsense binding.
+function BotTokens() {
+  const [drafts, setDrafts] = createSignal<Record<string, string>>({});
+  const [editing, setEditing] = createSignal<Record<string, boolean>>({});
+  const [busy, setBusy] = createSignal<string | null>(null);
+
+  const save = async (surface: string) => {
+    const token = (drafts()[surface] ?? "").trim();
+    if (!token) return;
+    setBusy(surface);
+    try {
+      const res = await api.putBotToken(surface, token);
+      setEditing((e) => ({ ...e, [surface]: false }));
+      setDrafts((d) => ({ ...d, [surface]: "" }));
+      pushToast(
+        "info",
+        res.restarted
+          ? `${surface} token saved and the bridge restarted`
+          : `${surface} token saved — start the bridge by hand (vak ${surface} --server ...) or from the tray`,
+      );
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const remove = async (surface: string) => {
+    setBusy(surface);
+    try {
+      await api.removeBotToken(surface);
+      pushToast("info", `${surface} token removed`);
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section class="panel" style="margin-top:14px">
+      <div class="panel-title-row">
+        <div>
+          <h2>Bot tokens</h2>
+          <p class="dim">
+            The credential each bridge authenticates with — from BotFather (Telegram), the Discord
+            Developer Portal, or a Slack app's Bot User OAuth Token. Stored in the shared user{" "}
+            <code>.env</code>, never echoed back. Not a routing key — see "Registered channels" below
+            for that.
+          </p>
+        </div>
+      </div>
+      <div class="binding-list">
+        <For each={KNOWN_SURFACES}>{(surface) => (
+          <div class="binding-row">
+            <strong style="min-width:80px">{surface}</strong>
+            <Show
+              when={editing()[surface]}
+              fallback={
+                <button
+                  class="settings-button"
+                  disabled={busy() === surface}
+                  onClick={() => setEditing((e) => ({ ...e, [surface]: true }))}
+                >
+                  Set token
+                </button>
+              }
+            >
+              <input
+                type="password"
+                autocomplete="off"
+                spellcheck={false}
+                placeholder={`paste ${surface} bot token`}
+                value={drafts()[surface] ?? ""}
+                onInput={(e) => setDrafts((d) => ({ ...d, [surface]: e.currentTarget.value }))}
+                onKeyDown={(e) => e.key === "Enter" && void save(surface)}
+              />
+              <button class="btn primary sm" disabled={busy() === surface || !drafts()[surface]?.trim()} onClick={() => void save(surface)}>
+                {busy() === surface ? "Saving…" : "Save"}
+              </button>
+              <button class="settings-button" onClick={() => setEditing((e) => ({ ...e, [surface]: false }))}>Cancel</button>
+            </Show>
+            <button class="ghost small" disabled={busy() === surface} onClick={() => void remove(surface)}>Remove</button>
+          </div>
+        )}</For>
+      </div>
+    </section>
+  );
+}
+
 function GatewayView() {
   const [status, { refetch }] = createResource(() => api.gatewayStatus());
   const [allowlist, { refetch: refetchAllowlist }] = createResource(() => api.gatewayAllowlist());
@@ -1951,8 +2053,13 @@ function GatewayView() {
 
   const addTarget = async () => {
     const key = target().trim();
-    if (!key.includes(":")) {
-      pushToast("alert", "Use surface:chat, for example telegram:12345");
+    const [surface] = key.split(":", 1);
+    if (!key.includes(":") || !(KNOWN_SURFACES as readonly string[]).includes(surface)) {
+      pushToast(
+        "alert",
+        `Use surface:chat, for example telegram:12345 (surface must be one of ${KNOWN_SURFACES.join(", ")}) — ` +
+          "this is a routing key, not the bot's own token; set that below instead",
+      );
       return;
     }
     try {
@@ -1994,6 +2101,8 @@ function GatewayView() {
           </div>
         </Show>
       </section>
+
+      <BotTokens />
 
       <section class="panel" style="margin-top:14px">
         <div class="panel-title-row">

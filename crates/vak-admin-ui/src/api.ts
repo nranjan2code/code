@@ -358,4 +358,25 @@ export const api = {
 
   unreadCount: (): Promise<{ count: number }> =>
     fetch("/inbox/unread_count").then((r) => handle(r)),
+
+  /** Store a chat bridge's bot token in the shared user `.env`. Restarts
+   * the bridge for surfaces with a managed service unit (Telegram); the
+   * others are started by hand and report `restarted: false`. This is
+   * the credential a bridge authenticates to Telegram/Discord/Slack
+   * with — distinct from a gateway *binding* (which routes an already-
+   * connected chat to a workspace/model, and has no field for this). */
+  putBotToken: (
+    surface: string,
+    token: string,
+  ): Promise<{ surface: string; env_var: string; configured: boolean; restarted: boolean }> =>
+    fetch(`/config/bot-token/${encodeURIComponent(surface)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token }),
+    }).then((r) => handle(r)),
+
+  removeBotToken: (
+    surface: string,
+  ): Promise<{ surface: string; env_var: string; configured: boolean; restarted: boolean }> =>
+    fetch(`/config/bot-token/${encodeURIComponent(surface)}`, { method: "DELETE" }).then((r) => handle(r)),
 };
