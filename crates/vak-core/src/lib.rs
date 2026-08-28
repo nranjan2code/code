@@ -808,7 +808,14 @@ impl Core {
             DEFAULT_SYSTEM_PROMPT.replace("{{version}}", APP_VERSION)
         };
         let discovered = self.skills();
-        format!("{}{}", base, skills::prompt_section(&discovered))
+        let mcp = self.effective_mcp();
+        let servers = mcp.servers.keys().cloned().collect::<Vec<_>>();
+        format!(
+            "{}{}{}",
+            base,
+            skills::prompt_section(&discovered),
+            mcp_config_section(&servers)
+        )
     }
 
     pub fn skills(&self) -> Vec<skills::Skill> {
@@ -2301,6 +2308,19 @@ when the task matches:\n",
     out
 }
 
+/// Model-visible fallback for configured MCP servers when live discovery is
+/// unavailable. This belongs in the frozen session contract as well as the
+/// live prompt so a transient launcher failure cannot hide a capability.
+fn mcp_config_section(servers: &[String]) -> String {
+    if servers.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\nConfigured MCP servers: {}. Use the `mcp` tool with action \"list\" to inspect their tools, then action \"call\" with server, tool, and arguments.\n",
+        servers.join(", ")
+    )
+}
+
 /// Phase H MEA provider: diff the run-start checkpoint against disk.
 struct CheckpointDelta {
     home: PathBuf,
@@ -2324,7 +2344,7 @@ impl vak_agent::WorkspaceDelta for CheckpointDelta {
 
 #[cfg(test)]
 mod mcp_section_tests {
-    use super::mcp_section;
+    use super::{mcp_config_section, mcp_section};
 
     #[test]
     fn section_lists_server_tools_with_call_hint() {
@@ -2343,6 +2363,14 @@ mod mcp_section_tests {
         assert!(s.contains("Web search"));
         assert!(s.contains("action \"call\""));
         assert!(s.contains("server=\"tavily\""));
+    }
+
+    #[test]
+    fn configured_servers_remain_visible_without_inventory() {
+        let section = mcp_config_section(&["tavily".to_string()]);
+        assert!(section.contains("tavily"));
+        assert!(section.contains("`mcp`"));
+        assert!(section.contains("action \"list\""));
     }
 
     #[test]
