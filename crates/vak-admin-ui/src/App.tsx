@@ -6,7 +6,7 @@ import {
   route, sessionsVersion, setAuthed, statsVersion, toasts,
 } from "./store";
 import type {
-  AllowlistEntry, BestOfNRun, ConfigInfo, DiscoveredModelsResponse, FinOpsStatus, HookConfig,
+  AllowlistEntry, BestOfNRun, ConfigInfo, CorePoolEntry, DiscoveredModelsResponse, FinOpsStatus, HookConfig,
   GatewayBinding, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
   SkillItem, SkillProposal, TaskItem, TranscriptEntry, WorkReceipt,
@@ -1649,9 +1649,13 @@ function PendingChannelCard(props: {
   entry: AllowlistEntry;
   providers: ProviderSummary[];
   defaultWorkspace: string;
+  corePool: CorePoolEntry[];
   refresh: () => void;
 }) {
   const [workspace, setWorkspace] = createSignal(props.defaultWorkspace);
+  const poolMatch = createMemo(() =>
+    props.corePool.find((e) => e.workspace === workspace().trim()),
+  );
   const [pinRoute, setPinRoute] = createSignal(false);
   const [provider, setProvider] = createSignal(props.providers[0]?.name ?? "");
   const [model, setModel] = createSignal("");
@@ -1713,7 +1717,7 @@ function PendingChannelCard(props: {
       </Show>
 
       <label class="inherit-toggle" style="margin-top:2px">
-        Workspace
+        Workspace <span class="chip" data-on={!!poolMatch()} style="margin-left:6px">{poolMatch() ? "warm" : "cold — starts on next message"}</span>
       </label>
       <input
         class="mono"
@@ -1807,6 +1811,27 @@ function GatewayView() {
         </Show>
       </section>
 
+      <section class="panel" style="margin-top:14px">
+        <div class="panel-title-row">
+          <div>
+            <h2>Core pool</h2>
+            <p class="dim">Workspaces with a live Core (sandbox, permission mode, session ledger) vs. cold — a cold workspace starts its own Core on the next inbound message. Max {status()?.core_pool.max} pooled, idle eviction after {status()?.core_pool.idle_secs}s.</p>
+          </div>
+        </div>
+        <Show when={(status()?.core_pool.entries.length ?? 0) > 0} fallback={<div class="empty">No pooled Cores yet.</div>}>
+          <div class="binding-list">
+            <For each={status()?.core_pool.entries}>{(entry) => (
+              <div class="binding-row">
+                <code>{entry.workspace}</code>
+                <Show when={entry.is_default}><span class="chip chip-mode">default</span></Show>
+                <span class="chip" data-on={true}>warm</span>
+                <span class="binding-meta">idle {entry.idle_secs}s</span>
+              </div>
+            )}</For>
+          </div>
+        </Show>
+      </section>
+
       <Show when={pendingEntries().length > 0}>
         <section class="panel" style="margin-top:14px">
           <div class="panel-title-row">
@@ -1821,6 +1846,7 @@ function GatewayView() {
                 entry={entry}
                 providers={providers()?.providers ?? []}
                 defaultWorkspace={status()?.workspace ?? ""}
+                corePool={status()?.core_pool.entries ?? []}
                 refresh={refreshAll}
               />
             )}</For>

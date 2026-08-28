@@ -41,6 +41,7 @@
 mod admin;
 mod admin_ui;
 mod channels;
+mod core_pool;
 mod delivery;
 mod events;
 mod gateway;
