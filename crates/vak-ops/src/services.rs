@@ -46,6 +46,10 @@ pub struct ServiceSpec {
     /// User home required by platform path resolution in the sanitized
     /// service-manager environment. This is operational state, not a secret.
     pub home_dir: PathBuf,
+    /// Non-secret executable search path captured when the unit is synced.
+    /// MCP commands such as `npx` are resolved by the service manager, whose
+    /// default PATH is usually smaller than the interactive shell's PATH.
+    pub path_env: String,
     /// Whether the manager should resurrect the process when it exits
     /// (launchd `KeepAlive`, systemd `Restart=always`). False for GUI
     /// services, where an explicit user quit must actually quit.
@@ -164,6 +168,7 @@ impl ServiceDef {
                 home_dir.to_path_buf()
             },
             home_dir: home_dir.to_path_buf(),
+            path_env: std::env::var("PATH").unwrap_or_default(),
             keep_alive: self.keep_alive,
             gui: self.gui,
         }
@@ -205,7 +210,7 @@ fn xml_escape(s: &str) -> String {
 
 /// launchd property list: RunAtLoad always, KeepAlive per definition
 /// (off for GUI services so an explicit quit sticks), stdout/stderr to the stable
-/// log, with only non-secret HOME in the environment so canonical path
+/// log, with only non-secret HOME and PATH in the environment so canonical path
 /// resolution cannot mistake the workspace for the user home. Credentials
 /// still come from the user env file loaded by the binary itself.
 pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
@@ -240,7 +245,9 @@ pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
 	<true/>
 	<key>EnvironmentVariables</key>
 	<dict>
-		<key>HOME</key>
+	<key>HOME</key>
+		<string>{}</string>
+		<key>PATH</key>
 		<string>{}</string>
 	</dict>
 	<key>WorkingDirectory</key>
@@ -257,6 +264,7 @@ pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
         xml_escape(spec.name),
         prog_args,
         xml_escape(&spec.home_dir.to_string_lossy()),
+        xml_escape(&spec.path_env),
         xml_escape(&spec.working_dir.to_string_lossy()),
         log,
         log
@@ -264,7 +272,7 @@ pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
 }
 
 /// systemd user unit: Restart per definition, journald bypassed in favour of the same
-/// stable log files launchd uses, and no Environment= lines.
+/// stable log files launchd uses, with only non-secret HOME and PATH.
 pub fn render_systemd_unit(spec: &ServiceSpec) -> String {
     let mut exec = spec.bin_path.to_string_lossy().into_owned();
     for arg in &spec.args {
@@ -282,6 +290,7 @@ pub fn render_systemd_unit(spec: &ServiceSpec) -> String {
          [Service]\n\
          ExecStart={exec}\n\
          Environment=HOME={}\n\
+         Environment=PATH={}\n\
          WorkingDirectory={}\n\
          Restart={}\n\
          StandardOutput=append:{log}\n\
@@ -291,6 +300,7 @@ pub fn render_systemd_unit(spec: &ServiceSpec) -> String {
          WantedBy=default.target\n",
         short_name(spec.name),
         spec.home_dir.display(),
+        spec.path_env,
         spec.working_dir.display(),
         if spec.keep_alive { "always" } else { "no" },
     )
@@ -843,6 +853,7 @@ mod tests {
             log_path: log_dir.join(def.log_file),
             working_dir: PathBuf::from("/workspace"),
             home_dir: PathBuf::from("/Users/x"),
+            path_env: "/usr/bin:/bin".into(),
             keep_alive: def.keep_alive,
             gui: def.gui,
         }
@@ -975,6 +986,8 @@ mod tests {
         assert!(plist.contains("RunAtLoad"));
         assert!(plist.contains("<key>HOME</key>"));
         assert!(plist.contains("<string>/Users/x</string>"));
+        assert!(plist.contains("<key>PATH</key>"));
+        assert!(plist.contains("/usr/bin:/bin"));
         // Update safety (doc 32): units never embed credentials.
         for secret in ["TOKEN", "SECRET", "BOT_TOKEN"] {
             assert!(!plist.contains(secret), "unit must not contain {secret}");
