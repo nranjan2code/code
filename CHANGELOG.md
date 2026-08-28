@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### The Gateway page is four screens, one per job
+
+Gateway had accreted into a single scroll: routing summary, Core pool, bot
+tokens, pending channels, registered channels, each an independent panel
+stacked on the last. Nothing said which box did what, and an operator pasted
+a bot token into the routing-key field — a credential and a routing key were
+two boxes apart on the same page. Adding a validator to that field treated
+the symptom; the layout was the cause.
+
+The section now splits along the task boundaries an operator actually has,
+as four hash routes shown both in a tab bar and as sidebar sub-rows:
+`#/gateway` (Channels), `#/gateway/connect`, `#/gateway/credentials`,
+`#/gateway/routing`. "Add a bot", "look at my channels", and "check if
+things are healthy" are three different destinations you can name from the
+nav instead of three scroll positions.
+
+Channels is a scan-first table — channel, surface, workspace, effective
+route, effective permission, status, including *capped* and *rotates next* —
+and editing is a row expansion, so the settled state reads first and the
+form appears on demand. Connect is a three-step sequence (set the bot token,
+message the bot, review and approve) where each step reports its own state
+from the backend rather than asking you to remember where you are: token
+presence comes from `GET /config`'s `chat_surfaces`, the knock comes from the
+pending allowlist. Credentials is bot tokens and nothing else, with no
+routing field on the screen at all; the manual routing-key registration is
+demoted to a disclosure on Channels that says in its own copy that a token
+does not belong there. Routing & pool keeps the defaults, provenance, and
+Core pool.
+
+No functionality was dropped: approve, deny, revoke, remove, rotate, save
+route, edit access, set/remove bot token all survive with the same calls.
+Empty states now teach the flow instead of saying "nothing here", loading is
+skeletons rather than bare text, removing a bot token asks for confirmation,
+and DESIGN.md's documented `:focus-visible` accent ring, themed scrollbars,
+and tabular numerals — specified for the desktop client and never carried
+across — reach the console.
+
 ### One channel can be read-only while another shares its workspace
 
 Permission mode was workspace-scoped and nothing else: set once in a

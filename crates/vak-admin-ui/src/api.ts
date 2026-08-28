@@ -2,6 +2,7 @@ import type {
   AllowlistEntry,
   AllowlistRoute,
   BestOfNRun,
+  ChatSurfaceStatus,
   ConfigInfo,
   DiscoveredModelsResponse,
   FinOpsStatus,
@@ -364,6 +365,15 @@ export const api = {
 
   unreadCount: (): Promise<{ count: number }> =>
     fetch("/inbox/unread_count").then((r) => handle(r)),
+
+  /** Which chat bridges have a bot token set. `/config` is the only route
+   * that reports this — the admin projection (`/admin/api/config`) omits
+   * it — and it reports presence only; the token itself never comes back
+   * over the wire. */
+  chatSurfaces: (): Promise<ChatSurfaceStatus[]> =>
+    fetch("/config")
+      .then((r) => handle<{ chat_surfaces?: ChatSurfaceStatus[] }>(r))
+      .then((c) => c.chat_surfaces ?? []),
 
   /** Store a chat bridge's bot token in the shared user `.env`. Restarts
    * the bridge for surfaces with a managed service unit (Telegram); the

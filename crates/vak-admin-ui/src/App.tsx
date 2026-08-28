@@ -6,8 +6,8 @@ import {
   route, sessionsVersion, setAuthed, statsVersion, toasts,
 } from "./store";
 import type {
-  AllowlistEntry, BestOfNRun, ConfigInfo, CorePoolEntry, DiscoveredModelsResponse, FinOpsStatus, HookConfig,
-  GatewayBinding, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval,
+  AllowlistEntry, BestOfNRun, ChatSurfaceStatus, ConfigInfo, CorePoolEntry, DiscoveredModelsResponse, FinOpsStatus, HookConfig,
+  GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval,
   PermissionMode, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
   SkillItem, SkillProposal, TaskItem, TranscriptEntry, WorkReceipt,
@@ -2062,32 +2062,33 @@ function PendingChannelCard(props: {
   );
 }
 
-// The credential a bridge authenticates to its platform with (from
-// BotFather, Discord's Developer Portal, or a Slack app's Bot User OAuth
-// Token) — separate from a gateway routing key (surface:chat), which the
-// "Registered channels" box below manages. Nothing in this console could
-// set this before; the only way in was Desktop Settings, or a raw API
-// call, which is exactly the gap that led an operator to paste a bot
-// token into the routing-key box instead, creating a nonsense binding.
-function BotTokens() {
-  const [drafts, setDrafts] = createSignal<Record<string, string>>({});
-  const [editing, setEditing] = createSignal<Record<string, boolean>>({});
-  const [busy, setBusy] = createSignal<string | null>(null);
+// One credential row: the token a bridge authenticates to its platform
+// with (BotFather, Discord's Developer Portal, a Slack app's Bot User
+// OAuth Token). Deliberately shares no screen real estate with a routing
+// key (`surface:chat`) — the two were adjacent in one long page, and an
+// operator pasted a token into the routing-key field.
+function CredentialRow(props: { surface: string; state: ChatSurfaceStatus | undefined; refresh: () => void }) {
+  const [editing, setEditing] = createSignal(false);
+  const [draft, setDraft] = createSignal("");
+  const [busy, setBusy] = createSignal<"save" | "remove" | null>(null);
 
-  const save = async (surface: string) => {
-    const token = (drafts()[surface] ?? "").trim();
+  const configured = () => props.state?.configured ?? false;
+
+  const save = async () => {
+    const token = draft().trim();
     if (!token) return;
-    setBusy(surface);
+    setBusy("save");
     try {
-      const res = await api.putBotToken(surface, token);
-      setEditing((e) => ({ ...e, [surface]: false }));
-      setDrafts((d) => ({ ...d, [surface]: "" }));
+      const res = await api.putBotToken(props.surface, token);
+      setEditing(false);
+      setDraft("");
       pushToast(
         "info",
         res.restarted
-          ? `${surface} token saved and the bridge restarted`
-          : `${surface} token saved — start the bridge by hand (vak ${surface} --server ...) or from the tray`,
+          ? `${props.surface} token saved and the bridge restarted`
+          : `${props.surface} token saved — start the bridge by hand (vak ${props.surface} --server …) or from the tray`,
       );
+      props.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -2095,11 +2096,13 @@ function BotTokens() {
     }
   };
 
-  const remove = async (surface: string) => {
-    setBusy(surface);
+  const remove = async () => {
+    if (!window.confirm(`Remove the ${props.surface} bot token? The bridge stops authenticating and every channel on that surface goes quiet until a new token is set.`)) return;
+    setBusy("remove");
     try {
-      await api.removeBotToken(surface);
-      pushToast("info", `${surface} token removed`);
+      await api.removeBotToken(props.surface);
+      pushToast("info", `${props.surface} token removed`);
+      props.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -2108,187 +2111,605 @@ function BotTokens() {
   };
 
   return (
-    <section class="panel" style="margin-top:14px">
+    <div class="cred-row">
+      <div class="cred-id">
+        <SurfaceBadge channelKey={`${props.surface}:`} />
+        <code class="binding-meta">{props.state?.env_var ?? "—"}</code>
+      </div>
+      <span class={`chip ${configured() ? "chip-tone-success" : ""}`}>
+        {configured() ? "token set" : "no token"}
+      </span>
+      <span class="binding-meta cred-service">
+        {props.state?.managed_service ? "managed service — restarts on save" : "started by hand"}
+      </span>
+      <span class="spacer" />
+      <Show
+        when={editing()}
+        fallback={
+          <div class="row-gap">
+            <button class="ghost small" onClick={() => setEditing(true)}>
+              {configured() ? "Replace token" : "Set token"}
+            </button>
+            <Show when={configured()}>
+              <button class="danger small" disabled={busy() === "remove"} onClick={() => void remove()}>
+                {busy() === "remove" ? "Removing…" : "Remove"}
+              </button>
+            </Show>
+          </div>
+        }
+      >
+        <div class="cred-edit">
+          <input
+            type="password"
+            autocomplete="off"
+            spellcheck={false}
+            autofocus
+            placeholder={`paste the ${props.surface} bot token`}
+            value={draft()}
+            onInput={(e) => setDraft(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void save();
+              if (e.key === "Escape") setEditing(false);
+            }}
+          />
+          <button disabled={busy() === "save" || !draft().trim()} onClick={() => void save()}>
+            {busy() === "save" ? "Saving…" : "Save"}
+          </button>
+          <button class="ghost small" onClick={() => { setEditing(false); setDraft(""); }}>Cancel</button>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+/// Everything the four gateway screens read, fetched once at the section
+/// level so a refresh on one screen is a refresh on all of them.
+interface GatewayCtx {
+  status: () => GatewayStatus | undefined;
+  statusLoading: () => boolean;
+  entries: () => AllowlistEntry[];
+  pending: () => AllowlistEntry[];
+  providers: () => ProviderSummary[];
+  surfaces: () => ChatSurfaceStatus[];
+  surfacesLoading: () => boolean;
+  configured: () => ChatSurfaceStatus[];
+  refresh: () => void;
+}
+
+function SkeletonRows(props: { rows?: number; cols: number }) {
+  return (
+    <For each={Array.from({ length: props.rows ?? 3 })}>
+      {() => (
+        <tr class="skel-row">
+          <For each={Array.from({ length: props.cols })}>{() => <td><span class="skel" /></td>}</For>
+        </tr>
+      )}
+    </For>
+  );
+}
+
+// ---- Gateway › Channels ----------------------------------------------------
+
+/// The settled, scan-first view: every approved channel, what it routes
+/// to, what permission it runs with. Editing is a row expansion, so the
+/// page reads as a list of channels first and a form only on demand.
+function ChannelsView(props: { ctx: GatewayCtx }) {
+  const [filter, setFilter] = createSignal("");
+  const [expanded, setExpanded] = createSignal("");
+  const [manualKey, setManualKey] = createSignal("");
+  const [registering, setRegistering] = createSignal(false);
+
+  const byKey = createMemo(() => {
+    const map = new Map<string, AllowlistEntry>();
+    for (const e of props.ctx.entries()) map.set(e.key, e);
+    return map;
+  });
+
+  const rows = createMemo(() => {
+    const needle = filter().trim().toLowerCase();
+    return (props.ctx.status()?.bindings ?? []).filter(
+      (b) => !needle || b.target.toLowerCase().includes(needle) || b.workspace.toLowerCase().includes(needle),
+    );
+  });
+
+  const registerManually = async () => {
+    const key = manualKey().trim();
+    const surface = key.split(":", 1)[0];
+    if (!key.includes(":") || !(KNOWN_SURFACES as readonly string[]).includes(surface)) {
+      pushToast(
+        "alert",
+        `A routing key looks like surface:chat — for example telegram:12345, with the surface one of ${KNOWN_SURFACES.join(", ")}. Bot tokens live under Credentials and are never entered here.`,
+      );
+      return;
+    }
+    setRegistering(true);
+    try {
+      await api.patchGatewayBinding(key, {});
+      setManualKey("");
+      pushToast("info", `Registered ${key} with the workspace default`);
+      props.ctx.refresh();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setRegistering(false);
+    }
+  };
+
+  return (
+    <>
+      <div class="toolbar">
+        <input
+          class="search-input"
+          placeholder="Filter by channel or workspace…"
+          value={filter()}
+          onInput={(e) => setFilter(e.currentTarget.value)}
+        />
+        <span class="spacer" />
+        <button class="ghost" onClick={() => props.ctx.refresh()}>Refresh</button>
+        <button onClick={() => navigate("#/gateway/connect")}>Connect a channel</button>
+      </div>
+
+      <Show when={props.ctx.pending().length > 0}>
+        <section class="panel panel-alert callout">
+          <div>
+            <strong>
+              {props.ctx.pending().length} chat{props.ctx.pending().length === 1 ? "" : "s"} waiting for review
+            </strong>
+            <p class="dim">
+              Unrecognized chats are rejected on arrival and recorded — nothing is allowed in silently.
+            </p>
+          </div>
+          <button class="ghost" onClick={() => navigate("#/gateway/connect")}>Review</button>
+        </section>
+      </Show>
+
+      <section class="panel">
+        <div class="panel-title-row">
+          <div>
+            <h2>Registered channels</h2>
+            <Show when={(props.ctx.status()?.bindings.length ?? 0) > 0}>
+              <p class="dim">
+                Each row is one approved chat: where it runs, what it routes to, and what it is
+                allowed to do. Open a row to change any of that or to revoke it.
+              </p>
+            </Show>
+          </div>
+        </div>
+
+        <Switch>
+          <Match when={props.ctx.statusLoading()}>
+            <table class="table">
+              <thead>
+                <tr><th>channel</th><th>surface</th><th>workspace</th><th>route</th><th>permission</th><th>status</th><th /></tr>
+              </thead>
+              <tbody><SkeletonRows cols={7} /></tbody>
+            </table>
+          </Match>
+
+          <Match when={(props.ctx.status()?.bindings.length ?? 0) === 0}>
+            <div class="empty empty-teach">
+              <strong>No channels are connected yet.</strong>
+              <p>
+                A channel is one chat — a Telegram group, a Discord channel, a Slack conversation —
+                bound to a workspace and a model. Connecting one takes three steps: give the bridge
+                its bot token, message the bot from the chat, then approve it here.
+              </p>
+              <button onClick={() => navigate("#/gateway/connect")}>Connect a channel</button>
+            </div>
+          </Match>
+
+          <Match when={rows().length === 0}>
+            <div class="empty">
+              No channel matches “{filter()}”.{" "}
+              <button class="ghost small" onClick={() => setFilter("")}>Clear filter</button>
+            </div>
+          </Match>
+
+          <Match when={rows().length > 0}>
+            <table class="table">
+              <thead>
+                <tr><th>channel</th><th>surface</th><th>workspace</th><th>route</th><th>permission</th><th>status</th><th /></tr>
+              </thead>
+              <tbody>
+                <For each={rows()}>
+                  {(binding) => {
+                    const entry = () => byKey().get(binding.target);
+                    const open = () => expanded() === binding.target;
+                    return (
+                      <>
+                        <tr
+                          classList={{ "row-open": open() }}
+                          onClick={() => setExpanded(open() ? "" : binding.target)}
+                        >
+                          <td class="mono">{binding.target}</td>
+                          <td><SurfaceBadge channelKey={binding.target} /></td>
+                          <td class="mono dim wrap">{binding.workspace}</td>
+                          <td class="mono dim">
+                            {binding.effective_route.provider} / {binding.effective_route.model}
+                            <Show when={binding.override}>
+                              <span class="chip chip-mode" style="margin-left:6px">pinned</span>
+                            </Show>
+                          </td>
+                          <td>
+                            <Show when={entry()?.effective_permission_mode} fallback={<span class="dim">—</span>}>
+                              <span class="chip chip-kind">{entry()!.effective_permission_mode}</span>
+                              <Show when={entry()!.permission_capped}>
+                                <span class="chip chip-tone-warning" style="margin-left:6px">capped</span>
+                              </Show>
+                            </Show>
+                          </td>
+                          <td>
+                            <Show when={entry()}>
+                              <span class={`chip chip-tone-${ALLOWLIST_CHIP_TONE[entry()!.status] ?? ""}`}>
+                                {entry()!.status}
+                              </span>
+                            </Show>
+                            <Show when={binding.stale}>
+                              <span class="chip chip-tone-warning" style="margin-left:6px">rotates next</span>
+                            </Show>
+                          </td>
+                          <td><span class="chev">{open() ? "⌄" : "›"}</span></td>
+                        </tr>
+                        <Show when={open()}>
+                          <tr class="row-detail">
+                            <td colspan={7}>
+                              <GatewayBindingEditor
+                                binding={binding}
+                                providers={props.ctx.providers()}
+                                allowlistEntry={entry()}
+                                knownWorkspaces={props.ctx.status()?.known_workspaces ?? []}
+                                corePool={props.ctx.status()?.core_pool.entries ?? []}
+                                refresh={props.ctx.refresh}
+                              />
+                            </td>
+                          </tr>
+                        </Show>
+                      </>
+                    );
+                  }}
+                </For>
+              </tbody>
+            </table>
+          </Match>
+        </Switch>
+
+        <details class="advanced">
+          <summary>Register a routing key by hand</summary>
+          <p class="dim">
+            Only for a chat whose id you already know — normally a channel registers itself the first
+            time it messages the bot. This is the routing key <code>surface:chat</code>, never a bot
+            token; tokens are set under Credentials.
+          </p>
+          <div class="add-binding">
+            <input
+              class="mono"
+              value={manualKey()}
+              placeholder="telegram:12345"
+              onInput={(e) => setManualKey(e.currentTarget.value)}
+              onKeyDown={(e) => e.key === "Enter" && void registerManually()}
+            />
+            <button disabled={registering() || !manualKey().trim()} onClick={() => void registerManually()}>
+              {registering() ? "Registering…" : "Register"}
+            </button>
+          </div>
+        </details>
+      </section>
+    </>
+  );
+}
+
+// ---- Gateway › Connect -----------------------------------------------------
+
+/// Onboarding, as the sequence it actually is. Each step reports its own
+/// state from the live backend rather than asking the operator to keep
+/// track: a token either is set or is not, a chat either has knocked or
+/// has not.
+function ConnectView(props: { ctx: GatewayCtx }) {
+  const credentialDone = () => props.ctx.configured().length > 0;
+  const knockDone = () => props.ctx.pending().length > 0 || (props.ctx.status()?.bindings.length ?? 0) > 0;
+  const current = () => (!credentialDone() ? 1 : !props.ctx.pending().length ? 2 : 3);
+
+  const stepState = (n: number) => {
+    const done = n === 1 ? credentialDone() : n === 2 ? knockDone() : false;
+    if (done && current() !== n) return "done";
+    return current() === n ? "current" : "waiting";
+  };
+
+  return (
+    <>
+      <div class="toolbar">
+        <div>
+          <h2 class="view-title">Connect a channel</h2>
+          <p class="dim">From a bot with no credential to a chat routed at a workspace.</p>
+        </div>
+        <span class="spacer" />
+        <button class="ghost" onClick={() => props.ctx.refresh()}>Refresh</button>
+        <button class="ghost" onClick={() => navigate("#/gateway")}>All channels</button>
+      </div>
+
+      <ol class="steps">
+        <li class="step" data-state={stepState(1)}>
+          <span class="step-index">1</span>
+          <div class="step-body">
+            <h3>Give the bridge its bot token</h3>
+            <p class="dim">
+              The credential the bridge authenticates with — from BotFather (Telegram), the Discord
+              Developer Portal, or a Slack app's Bot User OAuth Token. Stored in the shared user{" "}
+              <code>.env</code> and never read back.
+            </p>
+            <Show when={!props.ctx.surfacesLoading()} fallback={<div class="cred-list"><span class="skel skel-block" /><span class="skel skel-block" /></div>}>
+              <div class="cred-list">
+                <For each={KNOWN_SURFACES}>
+                  {(surface) => (
+                    <CredentialRow
+                      surface={surface}
+                      state={props.ctx.surfaces().find((s) => s.surface === surface)}
+                      refresh={props.ctx.refresh}
+                    />
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
+        </li>
+
+        <li class="step" data-state={stepState(2)}>
+          <span class="step-index">2</span>
+          <div class="step-body">
+            <h3>Message the bot from the chat you want to connect</h3>
+            <p class="dim">
+              The first message is rejected on purpose — vak records the chat as pending instead of
+              letting it in. That rejection is what puts it in front of you below.
+            </p>
+            <Show
+              when={props.ctx.pending().length > 0}
+              fallback={
+                <div class="waiting-line">
+                  <span class={`dot dot-${conn()}`} />
+                  <Show when={credentialDone()} fallback={<span class="dim">Waiting on step 1 — no bot token is set yet.</span>}>
+                    <span class="dim">Listening. Send any message to the bot and it appears in step 3.</span>
+                  </Show>
+                </div>
+              }
+            >
+              <div class="waiting-line">
+                <span class="chip chip-tone-success">
+                  {props.ctx.pending().length} chat{props.ctx.pending().length === 1 ? "" : "s"} knocked
+                </span>
+              </div>
+            </Show>
+          </div>
+        </li>
+
+        <li class="step" data-state={stepState(3)}>
+          <span class="step-index">3</span>
+          <div class="step-body">
+            <h3>Review and approve</h3>
+            <p class="dim">
+              Approving binds the chat to a workspace and, optionally, pins a route and a permission
+              mode. Anything left unpinned inherits the workspace default and can be changed later
+              from Channels.
+            </p>
+            <Show
+              when={props.ctx.pending().length > 0}
+              fallback={
+                <div class="empty">
+                  Nothing is waiting for review.{" "}
+                  <Show when={(props.ctx.status()?.bindings.length ?? 0) > 0}>
+                    <button class="ghost small" onClick={() => navigate("#/gateway")}>See connected channels</button>
+                  </Show>
+                </div>
+              }
+            >
+              <div class="binding-list">
+                <For each={props.ctx.pending()}>
+                  {(entry) => (
+                    <PendingChannelCard
+                      entry={entry}
+                      providers={props.ctx.providers()}
+                      defaultWorkspace={props.ctx.status()?.workspace ?? ""}
+                      knownWorkspaces={props.ctx.status()?.known_workspaces ?? []}
+                      corePool={props.ctx.status()?.core_pool.entries ?? []}
+                      refresh={props.ctx.refresh}
+                    />
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
+        </li>
+      </ol>
+    </>
+  );
+}
+
+// ---- Gateway › Credentials -------------------------------------------------
+
+function CredentialsView(props: { ctx: GatewayCtx }) {
+  return (
+    <section class="panel">
       <div class="panel-title-row">
         <div>
           <h2>Bot tokens</h2>
           <p class="dim">
-            The credential each bridge authenticates with — from BotFather (Telegram), the Discord
-            Developer Portal, or a Slack app's Bot User OAuth Token. Stored in the shared user{" "}
-            <code>.env</code>, never echoed back. Not a routing key — see "Registered channels" below
-            for that.
+            One credential per chat surface — what the bridge authenticates to Telegram, Discord, or
+            Slack with. Kept in the shared user <code>.env</code>; the console can set or clear a
+            token but never reads one back. Routing keys (<code>surface:chat</code>) are a different
+            thing entirely and live under Channels.
           </p>
         </div>
+        <button class="ghost small" onClick={() => props.ctx.refresh()}>Refresh</button>
       </div>
-      <div class="binding-list">
-        <For each={KNOWN_SURFACES}>{(surface) => (
-          <div class="binding-row">
-            <strong style="min-width:80px">{surface}</strong>
-            <Show
-              when={editing()[surface]}
-              fallback={
-                <button
-                  class="settings-button"
-                  disabled={busy() === surface}
-                  onClick={() => setEditing((e) => ({ ...e, [surface]: true }))}
-                >
-                  Set token
-                </button>
-              }
-            >
-              <input
-                type="password"
-                autocomplete="off"
-                spellcheck={false}
-                placeholder={`paste ${surface} bot token`}
-                value={drafts()[surface] ?? ""}
-                onInput={(e) => setDrafts((d) => ({ ...d, [surface]: e.currentTarget.value }))}
-                onKeyDown={(e) => e.key === "Enter" && void save(surface)}
+      <Show
+        when={!props.ctx.surfacesLoading()}
+        fallback={<div class="cred-list"><span class="skel skel-block" /><span class="skel skel-block" /><span class="skel skel-block" /></div>}
+      >
+        <div class="cred-list">
+          <For each={KNOWN_SURFACES}>
+            {(surface) => (
+              <CredentialRow
+                surface={surface}
+                state={props.ctx.surfaces().find((s) => s.surface === surface)}
+                refresh={props.ctx.refresh}
               />
-              <button class="btn primary sm" disabled={busy() === surface || !drafts()[surface]?.trim()} onClick={() => void save(surface)}>
-                {busy() === surface ? "Saving…" : "Save"}
-              </button>
-              <button class="settings-button" onClick={() => setEditing((e) => ({ ...e, [surface]: false }))}>Cancel</button>
-            </Show>
-            <button class="ghost small" disabled={busy() === surface} onClick={() => void remove(surface)}>Remove</button>
-          </div>
-        )}</For>
-      </div>
+            )}
+          </For>
+        </div>
+      </Show>
     </section>
   );
 }
 
-function GatewayView() {
-  const [status, { refetch }] = createResource(() => api.gatewayStatus());
-  const [allowlist, { refetch: refetchAllowlist }] = createResource(() => api.gatewayAllowlist());
-  const [providers] = createResource(() => api.providers());
-  const [target, setTarget] = createSignal("");
+// ---- Gateway › Routing & pool ----------------------------------------------
 
-  const refreshAll = () => {
-    refetch();
-    refetchAllowlist();
-  };
-
-  const addTarget = async () => {
-    const key = target().trim();
-    const [surface] = key.split(":", 1);
-    if (!key.includes(":") || !(KNOWN_SURFACES as readonly string[]).includes(surface)) {
-      pushToast(
-        "alert",
-        `Use surface:chat, for example telegram:12345 (surface must be one of ${KNOWN_SURFACES.join(", ")}) — ` +
-          "this is a routing key, not the bot's own token; set that below instead",
-      );
-      return;
-    }
-    try {
-      await api.patchGatewayBinding(key, {});
-      setTarget("");
-      pushToast("info", `Registered ${key} with the workspace default`);
-      refreshAll();
-    } catch (err) {
-      pushToast("alert", `${err}`);
-    }
-  };
-
-  const allowlistByKey = createMemo(() => {
-    const map = new Map<string, AllowlistEntry>();
-    for (const e of allowlist()?.entries ?? []) map.set(e.key, e);
-    return map;
-  });
-
-  const pendingEntries = createMemo(() =>
-    (allowlist()?.entries ?? []).filter((e) => e.status === "pending"),
-  );
-
+function GatewayHealthView(props: { ctx: GatewayCtx }) {
+  const pool = () => props.ctx.status()?.core_pool;
   return (
-    <div class="view">
+    <>
       <section class="panel gateway-summary">
         <div class="panel-title-row">
           <div>
-            <h2>Gateway routing control</h2>
-            <p class="dim">One visible route chain for every remote surface. Defaults propagate to inheriting channels; frozen sessions rotate instead of mutating.</p>
+            <h2>Routing defaults</h2>
+            <p class="dim">
+              What a channel gets when it pins nothing of its own. Defaults propagate to inheriting
+              channels; frozen sessions rotate rather than mutate.
+            </p>
           </div>
-          <button class="ghost small" onClick={() => refreshAll()}>Refresh</button>
+          <button class="ghost small" onClick={() => props.ctx.refresh()}>Refresh</button>
         </div>
-        <Show when={!status.loading} fallback={<div class="empty">Loading gateway state…</div>}>
+        <Show
+          when={!props.ctx.statusLoading()}
+          fallback={<div class="route-summary-grid"><span class="skel skel-block" /><span class="skel skel-block" /><span class="skel skel-block" /><span class="skel skel-block" /></div>}
+        >
           <div class="route-summary-grid">
-            <div><span class="eyebrow">Gateway</span><strong>{status()?.enabled ? "Enabled" : "Disabled"}</strong></div>
-            <div><span class="eyebrow">Workspace</span><code>{status()?.workspace}</code></div>
-            <div><span class="eyebrow">Admin default</span><strong>{status()?.default_route.provider}</strong><code>{status()?.default_route.model}</code></div>
-            <div><span class="eyebrow">Provenance</span><code>{status()?.default_route.provider_source} + {status()?.default_route.model_source}</code><span class="binding-meta">{status()?.default_route.revision}</span></div>
+            <div><span class="eyebrow">Gateway</span><strong>{props.ctx.status()?.enabled ? "Enabled" : "Disabled"}</strong></div>
+            <div><span class="eyebrow">Workspace</span><code>{props.ctx.status()?.workspace}</code></div>
+            <div><span class="eyebrow">Admin default</span><strong>{props.ctx.status()?.default_route.provider}</strong><code>{props.ctx.status()?.default_route.model}</code></div>
+            <div>
+              <span class="eyebrow">Provenance</span>
+              <code>{props.ctx.status()?.default_route.provider_source} + {props.ctx.status()?.default_route.model_source}</code>
+              <span class="binding-meta">{props.ctx.status()?.default_route.revision}</span>
+            </div>
           </div>
         </Show>
       </section>
-
-      <BotTokens />
 
       <section class="panel" style="margin-top:14px">
         <div class="panel-title-row">
           <div>
             <h2>Core pool</h2>
-            <p class="dim">Workspaces with a live Core (sandbox, permission mode, session ledger) vs. cold — a cold workspace starts its own Core on the next inbound message. Max {status()?.core_pool.max} pooled, idle eviction after {status()?.core_pool.idle_secs}s.</p>
+            <p class="dim">
+              Workspaces holding a live Core (sandbox, permission mode, session ledger). A cold
+              workspace starts its own Core on the next inbound message. Max {pool()?.max ?? "—"}{" "}
+              pooled, idle eviction after {pool()?.idle_secs ?? "—"}s.
+            </p>
           </div>
         </div>
-        <Show when={(status()?.core_pool.entries.length ?? 0) > 0} fallback={<div class="empty">No pooled Cores yet.</div>}>
-          <div class="binding-list">
-            <For each={status()?.core_pool.entries}>{(entry) => (
-              <div class="binding-row">
-                <code>{entry.workspace}</code>
-                <Show when={entry.is_default}><span class="chip chip-mode">default</span></Show>
-                <span class="chip" data-on={true}>warm</span>
-                <span class="binding-meta">idle {entry.idle_secs}s</span>
-              </div>
-            )}</For>
-          </div>
-        </Show>
-      </section>
-
-      <Show when={pendingEntries().length > 0}>
-        <section class="panel" style="margin-top:14px">
-          <div class="panel-title-row">
-            <div>
-              <h2>Pending channels</h2>
-              <p class="dim">Unrecognized chats are rejected but recorded here for review — nothing is silently allowed in.</p>
+        <Switch>
+          <Match when={props.ctx.statusLoading()}>
+            <div class="cred-list"><span class="skel skel-block" /><span class="skel skel-block" /></div>
+          </Match>
+          <Match when={(pool()?.entries.length ?? 0) === 0}>
+            <div class="empty empty-teach">
+              <strong>Every workspace is cold.</strong>
+              <p>
+                Nothing is wrong: a Core starts on the first inbound message to a channel and stays
+                warm here until it has been idle for {pool()?.idle_secs ?? "—"}s.
+              </p>
             </div>
-          </div>
-          <div class="binding-list">
-            <For each={pendingEntries()}>{(entry) => (
-              <PendingChannelCard
-                entry={entry}
-                providers={providers()?.providers ?? []}
-                defaultWorkspace={status()?.workspace ?? ""}
-                knownWorkspaces={status()?.known_workspaces ?? []}
-                corePool={status()?.core_pool.entries ?? []}
-                refresh={refreshAll}
-              />
-            )}</For>
-          </div>
-        </section>
-      </Show>
-
-      <section class="panel" style="margin-top:14px">
-        <div class="panel-title-row">
-          <div><h2>Registered channels</h2><p class="dim">Provider and model are always saved together. An empty override inherits the admin default.</p></div>
-          <div class="add-binding">
-            <input class="mono" value={target()} onInput={(e) => setTarget(e.currentTarget.value)} placeholder="telegram:chat-id" />
-            <button disabled={!target().trim()} onClick={addTarget}>Register</button>
-          </div>
-        </div>
-        <Show when={(status()?.bindings.length ?? 0) > 0} fallback={<div class="empty">No channels registered yet. Inbound channels appear here automatically, or register one above.</div>}>
-          <div class="binding-list">
-            <For each={status()?.bindings}>{(binding) => (
-              <GatewayBindingEditor
-                binding={binding}
-                providers={providers()?.providers ?? []}
-                allowlistEntry={allowlistByKey().get(binding.target)}
-                knownWorkspaces={status()?.known_workspaces ?? []}
-                corePool={status()?.core_pool.entries ?? []}
-                refresh={refreshAll}
-              />
-            )}</For>
-          </div>
-        </Show>
+          </Match>
+          <Match when={(pool()?.entries.length ?? 0) > 0}>
+            <table class="table">
+              <thead>
+                <tr><th>workspace</th><th>permission</th><th>idle</th><th /></tr>
+              </thead>
+              <tbody>
+                <For each={pool()?.entries}>
+                  {(entry) => (
+                    <tr class="row-static">
+                      <td class="mono wrap">{entry.workspace}</td>
+                      <td><span class="chip chip-kind">{entry.effective_permission_mode}</span></td>
+                      <td class="dim">{entry.idle_secs}s</td>
+                      <td>
+                        <Show when={entry.is_default}><span class="chip chip-mode">default</span></Show>
+                        <span class="chip chip-tone-success" style="margin-left:6px">warm</span>
+                      </td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </Match>
+        </Switch>
       </section>
+    </>
+  );
+}
+
+// ---- Gateway section shell -------------------------------------------------
+
+const GATEWAY_TABS = [
+  { hash: "#/gateway", label: "Channels" },
+  { hash: "#/gateway/connect", label: "Connect" },
+  { hash: "#/gateway/credentials", label: "Credentials" },
+  { hash: "#/gateway/routing", label: "Routing & pool" },
+] as const;
+
+function gatewayTab(): string {
+  const r = route();
+  return GATEWAY_TABS.slice(1).find((t) => r.startsWith(t.hash))?.hash ?? "#/gateway";
+}
+
+function GatewaySection() {
+  const [status, { refetch: refetchStatus }] = createResource(() => api.gatewayStatus());
+  const [allowlist, { refetch: refetchAllowlist }] = createResource(() => api.gatewayAllowlist());
+  const [providers] = createResource(() => api.providers().catch(() => ({ providers: [] })));
+  const [surfaces, { refetch: refetchSurfaces }] = createResource(() => api.chatSurfaces().catch(() => []));
+
+  const refresh = () => {
+    refetchStatus();
+    refetchAllowlist();
+    refetchSurfaces();
+  };
+
+  const entries = createMemo(() => allowlist()?.entries ?? []);
+  const ctx: GatewayCtx = {
+    status: () => status(),
+    statusLoading: () => status.loading,
+    entries,
+    pending: createMemo(() => entries().filter((e) => e.status === "pending")),
+    providers: () => providers()?.providers ?? [],
+    surfaces: () => surfaces() ?? [],
+    surfacesLoading: () => surfaces.loading,
+    configured: createMemo(() => (surfaces() ?? []).filter((s) => s.configured)),
+    refresh,
+  };
+
+  return (
+    <div class="view">
+      <div class="tab-bar">
+        <For each={GATEWAY_TABS}>
+          {(t) => (
+            <a
+              class="tab-btn"
+              href={t.hash}
+              classList={{ active: gatewayTab() === t.hash }}
+            >
+              {t.label}
+              <Show when={t.hash === "#/gateway/connect" && ctx.pending().length > 0}>
+                <span class="nav-badge">{ctx.pending().length}</span>
+              </Show>
+            </a>
+          )}
+        </For>
+      </div>
+
+      <Switch>
+        <Match when={gatewayTab() === "#/gateway"}><ChannelsView ctx={ctx} /></Match>
+        <Match when={gatewayTab() === "#/gateway/connect"}><ConnectView ctx={ctx} /></Match>
+        <Match when={gatewayTab() === "#/gateway/credentials"}><CredentialsView ctx={ctx} /></Match>
+        <Match when={gatewayTab() === "#/gateway/routing"}><GatewayHealthView ctx={ctx} /></Match>
+      </Switch>
     </div>
   );
 }
@@ -2570,11 +2991,25 @@ function Settings() {
 
 // ---- Shell -----------------------------------------------------------------
 
-const NAV = [
+interface NavItem {
+  hash: string;
+  label: string;
+  icon: string;
+  badge?: () => string;
+  /// Sub-destinations, rendered in the sidebar while the section is open.
+  children?: readonly { readonly hash: string; readonly label: string }[];
+}
+
+const NAV: NavItem[] = [
   { hash: "#/overview", label: "Overview", icon: ICONS.overview },
   { hash: "#/sessions", label: "Sessions", icon: ICONS.sessions },
   { hash: "#/integrations", label: "Integrations", icon: ICONS.integrations },
-  { hash: "#/gateway", label: "Gateway", icon: ICONS.gateway },
+  // The gateway is four distinct jobs, not one page: watch the channels
+  // you have, walk a new one in, handle credentials, check routing and
+  // pool health. The sub-rows expand in place when the section is open so
+  // the destination is nameable from the nav rather than found by
+  // scrolling one long view.
+  { hash: "#/gateway", label: "Gateway", icon: ICONS.gateway, children: GATEWAY_TABS },
   { hash: "#/memory", label: "Memory", icon: ICONS.memory },
   { hash: "#/search", label: "Search", icon: ICONS.search },
   { hash: "#/inbox", label: "Inbox", icon: ICONS.inbox, badge: () => unread().toString() || "" },
@@ -2655,13 +3090,30 @@ export default function App() {
             <nav>
               <For each={NAV}>
                 {(item) => (
-                  <a href={item.hash} classList={{ active: currentRoute() === item.hash }}>
-                    <Icon d={item.icon} />
-                    {item.label}
-                    <Show when={"badge" in item && item.badge?.() && Number(item.badge!()) > 0}>
-                      <span class="nav-badge">{item.badge!()}</span>
+                  <>
+                    <a href={item.hash} classList={{ active: currentRoute() === item.hash }}>
+                      <Icon d={item.icon} />
+                      {item.label}
+                      <Show when={"badge" in item && item.badge?.() && Number(item.badge!()) > 0}>
+                        <span class="nav-badge">{item.badge!()}</span>
+                      </Show>
+                    </a>
+                    <Show when={item.children && currentRoute() === item.hash}>
+                      <div class="nav-sub">
+                        <For each={item.children ?? []}>
+                          {(child) => (
+                            <a
+                              class="sub"
+                              href={child.hash}
+                              classList={{ active: gatewayTab() === child.hash }}
+                            >
+                              {child.label}
+                            </a>
+                          )}
+                        </For>
+                      </div>
                     </Show>
-                  </a>
+                  </>
                 )}
               </For>
             </nav>
@@ -2678,7 +3130,7 @@ export default function App() {
                 <Transcript sessionId={route().slice("#/sessions/".length)} />
               </Match>
               <Match when={currentRoute() === "#/integrations"}><IntegrationsView /></Match>
-              <Match when={currentRoute() === "#/gateway"}><GatewayView /></Match>
+              <Match when={currentRoute() === "#/gateway"}><GatewaySection /></Match>
               <Match when={currentRoute() === "#/memory"}><MemoryView /></Match>
               <Match when={currentRoute() === "#/search"}><SearchView /></Match>
               <Match when={currentRoute() === "#/inbox"}><Inbox /></Match>

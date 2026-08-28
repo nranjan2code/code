@@ -929,3 +929,184 @@ button.approve:hover:not(:disabled) { background: #88c298; border-color: #88c298
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ---- browser surfaces: focus, scrollbars, numerals ---- */
+
+/* DESIGN.md's documented focus treatment: a 2px accent-tinted outline on
+   :focus-visible. It was specified for the desktop client and never
+   reached the admin console, so keyboard focus fell back to the UA ring. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+:where(input, select, textarea):focus-visible { outline-offset: 0; }
+
+* { scrollbar-color: var(--surface-active) transparent; scrollbar-width: thin; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--surface-active);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); background-clip: padding-box; }
+
+/* Columns of ids, counts, and idle seconds only line up with lining
+   tabular figures. */
+.table td, .table th, .mono, .kv dd { font-variant-numeric: tabular-nums; }
+
+/* ---- loading skeletons ---- */
+
+.skel {
+  display: block;
+  height: 11px;
+  width: 100%;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--surface-raised), var(--surface-hover), var(--surface-raised));
+  background-size: 220% 100%;
+  animation: skel-sweep 1.4s ease-in-out infinite;
+}
+.skel-block { height: 42px; }
+.skel-row td { border-bottom-color: var(--border-soft); }
+.skel-row:hover { background: transparent; }
+@keyframes skel-sweep {
+  from { background-position: 120% 0; }
+  to { background-position: -20% 0; }
+}
+@media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
+
+/* ---- sidebar sub-navigation ---- */
+
+.nav-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 2px 0 4px 10px;
+  padding-left: 11px;
+  border-left: 1px solid var(--border-soft);
+}
+.sidebar nav .nav-sub a.sub {
+  padding: 5px 9px;
+  font-size: 12.5px;
+  font-weight: 540;
+  color: var(--muted);
+  gap: 0;
+}
+.sidebar nav .nav-sub a.sub:hover { color: var(--text); background: var(--surface-hover); }
+.sidebar nav .nav-sub a.sub.active { color: var(--text); background: var(--surface-active); font-weight: 580; }
+
+/* ---- tab bar as links ---- */
+
+a.tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  text-decoration: none;
+}
+
+/* ---- gateway: channels table ---- */
+
+.view-title {
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin: 0 0 2px;
+}
+.toolbar .view-title + .dim { margin: 0; font-size: 12.5px; }
+
+.callout {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.callout p { margin: 2px 0 0; font-size: 12.5px; }
+.callout button { flex-shrink: 0; }
+
+.table tbody tr.row-open { background: var(--surface-hover); }
+.table tbody tr.row-detail,
+.table tbody tr.row-detail:hover { background: var(--bg); cursor: default; }
+.table tbody tr.row-detail > td { padding: 10px 12px; }
+.table tbody tr.row-static { cursor: default; }
+.table tbody tr.row-static:hover { background: transparent; }
+
+.empty-teach {
+  text-align: left;
+  padding: 22px 2px 6px;
+  color: var(--text-soft);
+  max-width: 66ch;
+}
+.empty-teach strong { display: block; color: var(--text); font-size: 13.5px; font-weight: 620; }
+.empty-teach p { margin: 6px 0 14px; color: var(--muted); }
+
+.advanced { margin-top: 16px; border-top: 1px solid var(--border-soft); padding-top: 12px; }
+.advanced summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 540;
+  list-style-position: outside;
+}
+.advanced summary:hover { color: var(--text-soft); }
+.advanced p { margin: 8px 0 10px; max-width: 72ch; font-size: 12.5px; }
+
+/* ---- gateway: credentials ---- */
+
+.cred-list { display: grid; gap: 8px; margin-top: 12px; }
+.cred-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+}
+.cred-id { display: flex; align-items: center; gap: 8px; min-width: 190px; }
+.cred-service { flex-shrink: 0; }
+.cred-edit { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 260px; }
+.cred-edit input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12.5px; }
+
+/* ---- gateway: onboarding steps ---- */
+
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.step {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 15px 18px;
+  transition: border-color 0.15s, opacity 0.15s;
+}
+.step[data-state="waiting"] { opacity: 0.62; }
+.step[data-state="current"] { border-color: var(--accent); }
+.step-index {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 11.5px;
+  font-weight: 620;
+  color: var(--muted);
+  background: var(--surface-active);
+  font-variant-numeric: tabular-nums;
+}
+.step[data-state="current"] .step-index { background: var(--accent-wash); color: var(--accent-bright); }
+.step[data-state="done"] .step-index { background: var(--green-soft); color: var(--green); }
+.step-body h3 {
+  margin: 2px 0 4px;
+  font-size: 13.5px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.step-body > p { margin: 0; max-width: 74ch; font-size: 12.5px; }
+.step[data-state="done"] .step-body h3 { color: var(--text-soft); }
+.waiting-line { display: flex; align-items: center; gap: 8px; margin-top: 12px; }

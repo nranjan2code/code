@@ -126,12 +126,58 @@ steering`, `/sessions/:id/cancel`, `/config/mode`, `PATCH /config`,
   click-through to transcripts.
 - **Inbox** — attention entries with unread badge (30 s poll) and acks.
 - **Security** — color-coded audit trail with per-kind filters.
-- **Gateway** — workspace default and provenance, channel route editor backed
-  by live model discovery, inherited versus overridden route, frozen-session
-  comparison, stale reason, rotate-now, and safe removal.
+- **Gateway** — four sub-routes, one per operator task; see below.
 - **Settings** — provider/model editor (dirty-tracked), permission-mode
   cards (ReadOnly / WorkspaceWrite / FullAccess with consequences stated),
   gateway status, index rebuild, sign out.
+
+### Gateway information architecture
+
+The gateway area grew one panel at a time — routing summary, Core pool, bot
+tokens, pending channels, registered channels — until it was one page an
+operator had to scroll to form a mental model of. It did not survive contact
+with a real operator: a bot token was pasted into the routing-key field,
+because a credential input and a routing-key input sat two boxes apart on the
+same scroll.
+
+It is now split by task, each with its own hash route, listed in the sidebar
+as sub-rows while the section is open and in a tab bar above the view:
+
+| Route | Task | Shape |
+|---|---|---|
+| `#/gateway` | "What channels do I have, and what do they do?" | Scan-first table; a row expands into the full route/access editor |
+| `#/gateway/connect` | "I need to add a new bot" | Three-step guided sequence with live state per step |
+| `#/gateway/credentials` | "Set or clear a bot token" | Credentials only — no routing field on the screen |
+| `#/gateway/routing` | "Is this healthy?" | Routing defaults, provenance, Core pool |
+
+Rules the split enforces:
+
+1. **A credential and a routing key never share a screen.** Bot tokens live
+   under Credentials (and inside step 1 of Connect, which is the same
+   component). The manual routing-key registration is demoted to a
+   `<details>` on Channels and says in its own copy that a token does not go
+   there. The surface prefix is still validated against the known bridges.
+2. **Onboarding reads as a sequence, not a pile.** Connect's three steps —
+   set the credential, message the bot, review and approve — report their own
+   state from the backend (`GET /config`'s `chat_surfaces` for token
+   presence, the allowlist for pending chats) rather than asking the operator
+   to track where they are. The current step carries the accent border;
+   finished steps dim.
+3. **Ongoing management is a list, not a form.** Channels is a table of
+   channel, surface, workspace, effective route, effective permission, and
+   status (including *capped* and *rotates next*). Editing is a row
+   expansion, so the settled state reads first and the form appears on
+   demand. Every prior control — save route, rotate now, edit access,
+   revoke access, remove binding, approve/deny — is preserved unchanged.
+4. **Empty states teach.** A fresh install's Channels screen explains what a
+   channel is and what the three steps are, and offers the Connect action; a
+   cold Core pool says why cold is normal.
+
+Loading is skeleton rows and blocks, not a spinner dropped into content. No
+new tokens or colors: the split reuses `panel`, `table`, `chip`, `binding-*`,
+and the DESIGN.md status vocabulary. The documented `:focus-visible` accent
+ring, themed scrollbars, and tabular numerals were specified in DESIGN.md but
+had never reached the console; they ship here.
 
 Toasts surface high-signal events everywhere (runs finished, gates
 waiting, security alerts); the sidebar dot shows hub connection state

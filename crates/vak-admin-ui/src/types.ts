@@ -49,6 +49,19 @@ export interface HealthInfo {
   warnings: string[];
 }
 
+/// Credential state for one chat bridge, as `/config` reports it
+/// (`chat_surface_status` in vak-server). `configured` is the only thing
+/// the server will say about a bot token — the value itself never comes
+/// back over the wire.
+export interface ChatSurfaceStatus {
+  surface: string;
+  env_var: string;
+  configured: boolean;
+  /// Telegram alone has a managed service unit; the others are started by
+  /// hand, and the console must not promise otherwise.
+  managed_service: boolean;
+}
+
 export interface ConfigInfo {
   provider: string;
   model: string;
