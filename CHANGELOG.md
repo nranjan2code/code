@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased — Telegram document attachments and inline-keyboard approvals
+## 0.9.0 — 2026-08-28
+
+### Telegram document attachments and inline-keyboard approvals
 
 Telegram messages can now include a `document` (code, logs, CSVs, ...) up
 to 256 KiB; it's inlined into the prompt as a fenced text block (capped
@@ -13,7 +15,7 @@ a Telegram approver previously failed the push and denied closed with no
 adapter registered for that scheme). Button taps resolve through the
 same verdict-parsing path a typed reply already used.
 
-## Unreleased — gateway chat allowlist fails closed
+### Gateway chat allowlist fails closed
 
 `gateway.chat_allowlist` now fails closed: an empty list rejects every
 inbound chat with `403` instead of allowing all of them, unless the
