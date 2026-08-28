@@ -943,7 +943,19 @@ pub async fn serve_with(
     let (app, token) = secured_router_with(core, force_gateway);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     eprintln!("Vak server listening on http://{addr}");
-    if std::env::var("VAK_GATEWAY_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
+    // Same source the real token-selection logic above (auth_token, in
+    // AppState::new) already checks: `vak_config::get_var` also sees a
+    // value that only reached the process through a loaded `.env` file
+    // (never a real `std::env` var), so a plain `std::env::var` check
+    // here — which is all this ever did — reported "generated" for
+    // every service-managed deployment, since none of them export
+    // VAK_GATEWAY_TOKEN into the actual process environment; they rely
+    // on the user `.env` main() already loads unconditionally at
+    // startup. The token itself was always correctly pinned; only this
+    // log line was wrong, in exactly the deployment shape (a durable
+    // service reading `.env`) where getting it right matters most for
+    // debugging a stale-cookie/token mismatch after a restart.
+    if vak_config::get_var("VAK_GATEWAY_TOKEN").is_some_and(|t| !t.trim().is_empty()) {
         eprintln!("auth token: (pinned via VAK_GATEWAY_TOKEN)");
     } else if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
         eprintln!("auth token: {token}");
