@@ -15,6 +15,7 @@
     --accent:#c85a3c; --accent-bright:#b64d31; --accent-wash:rgba(200,90,60,.10);
     --green:#4f8a5f; --yellow:#b0842f; --red:#c1494c; --blue:#4d76ad;
     --ground:#e9e5da; --ground2:#e3ded0; --outside:#ded9cb; --wall:#ffffff; --wallv:#efeade;
+    --chip:rgba(255,255,255,.92);
     --shadow:0 1px 2px rgba(40,34,22,.05),0 10px 30px rgba(40,34,22,.08);
     --mono:'IBM Plex Mono','SF Mono',ui-monospace,Menlo,monospace;
     --sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
@@ -26,6 +27,7 @@
     --accent:#df795f; --accent-bright:#ee9278; --accent-wash:rgba(223,121,95,.14);
     --green:#73a982; --yellow:#d4a85d; --red:#d86f72; --blue:#7c9fc9;
     --ground:#1f1f1c; --ground2:#242421; --outside:#191916; --wall:#2a2a26; --wallv:#22221f;
+    --chip:rgba(20,20,17,.88);
     --shadow:0 1px 2px rgba(0,0,0,.3),0 16px 44px rgba(0,0,0,.4);
   }}
   :root[data-theme="dark"]{
@@ -35,24 +37,25 @@
     --accent:#df795f; --accent-bright:#ee9278; --accent-wash:rgba(223,121,95,.14);
     --green:#73a982; --yellow:#d4a85d; --red:#d86f72; --blue:#7c9fc9;
     --ground:#1f1f1c; --ground2:#242421; --outside:#191916; --wall:#2a2a26; --wallv:#22221f;
+    --chip:rgba(20,20,17,.88);
     --shadow:0 1px 2px rgba(0,0,0,.3),0 16px 44px rgba(0,0,0,.4);
   }
   *{box-sizing:border-box}
   html,body{margin:0}
   body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
-  .wrap{max-width:1400px;margin:0 auto;padding:0 18px}
+  .wrap{max-width:1420px;margin:0 auto;padding:0 18px}
 
   header.mast{border-bottom:1px solid var(--border);background:radial-gradient(120% 150% at 90% -30%,var(--accent-wash),transparent 60%),var(--surface)}
-  .mast-in{padding:22px 0 18px;display:flex;align-items:flex-end;gap:20px;flex-wrap:wrap}
+  .mast-in{padding:20px 0 16px;display:flex;align-items:flex-end;gap:20px;flex-wrap:wrap}
   .eyebrow{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);margin:0 0 8px}
   h1{font-weight:600;font-size:clamp(23px,3.2vw,31px);line-height:1.05;letter-spacing:-.025em;margin:0 0 6px}
-  .sub{font-size:14px;color:var(--text-soft);max-width:74ch;margin:0}
+  .sub{font-size:13.5px;color:var(--text-soft);max-width:76ch;margin:0}
   .sub b{color:var(--text);font-weight:600}
   .clockbox{margin-left:auto;text-align:right}
-  .clockbox .t{font-family:var(--mono);font-weight:600;font-size:32px;letter-spacing:-.02em;line-height:1;font-variant-numeric:tabular-nums}
+  .clockbox .t{font-family:var(--mono);font-weight:600;font-size:30px;letter-spacing:-.02em;line-height:1;font-variant-numeric:tabular-nums}
   .clockbox .p{font-family:var(--mono);font-size:11.5px;color:var(--accent);margin-top:5px}
 
-  .bar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:12px 0;border-bottom:1px solid var(--border-soft)}
+  .bar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:11px 0;border-bottom:1px solid var(--border-soft)}
   .btn{font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer;border-radius:8px;padding:8px 14px;border:1px solid transparent}
   .btn.primary{background:var(--accent);color:#fff}.btn.primary:hover{background:var(--accent-bright)}
   .btn.ghost{background:var(--surface-2);border-color:var(--border);color:var(--text-soft)}
@@ -66,36 +69,54 @@
   .ev.warn .d{background:var(--yellow)}.ev.alert .d{background:var(--red)}
   .ev .l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-  .layout{display:grid;grid-template-columns:1fr 326px;gap:14px;margin:14px 0 8px}
-  @media (max-width:1080px){.layout{grid-template-columns:1fr}}
+  .layout{display:grid;grid-template-columns:1fr 332px;gap:14px;margin:14px 0 8px}
+  @media (max-width:1100px){.layout{grid-template-columns:1fr}}
   .worldbox{border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:var(--shadow);overflow:hidden;position:relative}
   canvas{width:100%;display:block;cursor:crosshair}
 
   .side{display:flex;flex-direction:column;gap:12px;min-width:0}
   .panel{border:1px solid var(--border);border-radius:12px;background:var(--surface);overflow:hidden}
-  .panel h3{margin:0;padding:10px 13px;font-size:12px;font-family:var(--mono);font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border-soft);display:flex;align-items:center;gap:8px}
+  .panel h3{margin:0;padding:9px 13px;font-size:11.5px;font-family:var(--mono);font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border-soft);display:flex;align-items:center;gap:8px}
   .panel h3 .pill{margin-left:auto;font-size:10px;padding:2px 7px;border-radius:999px;background:var(--accent-wash);color:var(--accent);letter-spacing:0}
+
+  /* score */
+  .scorebox{padding:12px 14px;display:flex;align-items:flex-end;gap:14px}
+  .scorebox .sv{font-family:var(--mono);font-weight:600;font-size:34px;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:var(--accent)}
+  .scorebox .sk{font-family:var(--mono);font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+  .combo{margin-left:auto;text-align:right}
+  .combo .cv{font-family:var(--mono);font-weight:600;font-size:19px;color:var(--green);font-variant-numeric:tabular-nums;line-height:1}
+  .combo.cold .cv{color:var(--faint)}
+  .hp{height:7px;background:var(--surface-3);border-radius:999px;margin:0 14px 12px;overflow:hidden}
+  .hp i{display:block;height:100%;width:100%;background:var(--green);border-radius:999px;transition:width .3s ease,background .3s ease}
+  .hp.warn i{background:var(--yellow)}.hp.crit i{background:var(--red)}
+
   .tally{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border-soft)}
-  .tally div{background:var(--surface);padding:9px 12px}
-  .tally .k{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
-  .tally .v{font-family:var(--mono);font-weight:600;font-size:19px;font-variant-numeric:tabular-nums;line-height:1.15}
+  .tally div{background:var(--surface);padding:8px 12px}
+  .tally .k{font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+  .tally .v{font-family:var(--mono);font-weight:600;font-size:18px;font-variant-numeric:tabular-nums;line-height:1.15}
   .v.g{color:var(--green)}.v.r{color:var(--red)}.v.y{color:var(--yellow)}.v.a{color:var(--accent)}
 
-  #tracelog{max-height:340px;overflow-y:auto;padding:4px 0}
+  /* achievements */
+  #achs{display:flex;flex-wrap:wrap;gap:6px;padding:11px 13px}
+  .ach{font-family:var(--mono);font-size:10px;padding:4px 9px;border-radius:999px;border:1px solid var(--border-soft);
+    color:var(--faint);background:var(--surface-3);opacity:.55;transition:all .3s ease;cursor:default}
+  .ach.got{opacity:1;color:var(--accent);border-color:var(--accent);background:var(--accent-wash);font-weight:600}
+  .ach.pop{animation:pop .5s ease}
+  @keyframes pop{0%{transform:scale(1)}35%{transform:scale(1.22)}100%{transform:scale(1)}}
+
+  #tracelog{max-height:300px;overflow-y:auto;padding:4px 0}
   .tl{display:grid;grid-template-columns:20px 1fr;gap:9px;padding:7px 13px;border-bottom:1px solid var(--border-soft);font-size:12px}
   .tl:last-child{border-bottom:none}
   .tl .n{font-family:var(--mono);font-size:10px;color:var(--faint);padding-top:2px}
-  .tl .b{min-width:0}
   .tl .h{font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--text);word-break:break-word}
   .tl .s{color:var(--muted);font-size:11.5px;line-height:1.4;margin-top:1px}
   .tl.ok .h{color:var(--green)}.tl.no .h{color:var(--red)}.tl.wt .h{color:var(--yellow)}.tl.bd .h{color:var(--accent)}
-  .empty{padding:16px 13px;color:var(--faint);font-size:12.5px;line-height:1.5}
-
-  .legend{display:flex;flex-wrap:wrap;gap:6px 13px;padding:10px 13px;font-family:var(--mono);font-size:11px;color:var(--muted);border-top:1px solid var(--border-soft)}
+  .empty{padding:15px 13px;color:var(--faint);font-size:12.5px;line-height:1.5}
+  .legend{display:flex;flex-wrap:wrap;gap:6px 13px;padding:9px 13px;font-family:var(--mono);font-size:10.5px;color:var(--muted);border-top:1px solid var(--border-soft)}
   .legend span{display:inline-flex;align-items:center;gap:6px}
   .legend i{width:9px;height:9px;border-radius:3px;flex:none}
 
-  footer{padding:20px 0 46px;color:var(--muted);font-size:12.5px}
+  footer{padding:18px 0 44px;color:var(--muted);font-size:12.5px}
   footer .wrap{display:flex;flex-wrap:wrap;gap:5px 15px;align-items:center}
   footer b{color:var(--text-soft);font-weight:500}
   footer code{font-family:var(--mono);font-size:11.5px;color:var(--accent)}
@@ -107,7 +128,7 @@
   <div>
     <p class="eyebrow">Playable Internals · v0.11.7</p>
     <h1>The vak Works</h1>
-    <p class="sub">Every component is a <b>building</b>; every message is a <b>courier</b> who walks the route. Channels live <b>outside the perimeter</b> and reach you only through a bridge and the gatehouse. Cores get <b>built</b> and <b>demolished</b>; the ledger only ever <b>grows</b> — because it is append-only. Same 24-hour clock and incidents as the ops simulation. Hit <b>Trace a message</b> to follow one courier's entire life.</p>
+    <p class="sub">Every component is a <b>building</b>; every message is a <b>courier</b> who walks the route. Channels live <b>outside the trust perimeter</b> and reach you only through a bridge and the gatehouse. Cores are <b>built</b> and <b>demolished</b>; the ledger only ever <b>grows</b>. Survive six <b>waves</b> across one day, keep the combo alive, and unlock the campaign badges.</p>
   </div>
   <div class="clockbox"><div class="t" id="clock">00:00</div><div class="p" id="phase">night · quiet</div></div>
 </div></header>
@@ -126,16 +147,30 @@
   </div>
 
   <div class="layout">
-    <div class="worldbox"><canvas id="world" height="700"></canvas></div>
+    <div class="worldbox"><canvas id="world" height="720"></canvas></div>
 
     <div class="side">
+      <div class="panel">
+        <h3>Shift score</h3>
+        <div class="scorebox">
+          <div><div class="sk">points</div><div class="sv" id="score">0</div></div>
+          <div class="combo cold" id="combobox"><div class="sk">combo</div><div class="cv" id="combo">×1</div></div>
+        </div>
+        <div class="hp" id="hpbar"><i style="width:100%"></i></div>
+      </div>
+
+      <div class="panel">
+        <h3>Campaign badges <span class="pill" id="achcount">0 / 10</span></h3>
+        <div id="achs"></div>
+      </div>
+
       <div class="panel">
         <h3>Built &amp; destroyed</h3>
         <div class="tally">
           <div><div class="k">Ledger blocks</div><div class="v g" id="t-ledger">0</div></div>
+          <div><div class="k">Runs completed</div><div class="v a" id="t-done">0</div></div>
           <div><div class="k">Cores built</div><div class="v a" id="t-built">0</div></div>
           <div><div class="k">Cores demolished</div><div class="v y" id="t-evict">0</div></div>
-          <div><div class="k">Turned away</div><div class="v r" id="t-turn">0</div></div>
           <div><div class="k">Tools allowed</div><div class="v g" id="t-allow">0</div></div>
           <div><div class="k">Tools denied</div><div class="v r" id="t-deny">0</div></div>
         </div>
@@ -150,7 +185,7 @@
 
       <div class="panel">
         <h3>Life of a message <span class="pill" id="tracetag">idle</span></h3>
-        <div id="tracelog"><div class="empty">Press <b>Trace a message</b> — the next courier arriving from a channel gets a spotlight, and every step of their life is logged here with the real mechanism behind it. You can also click any courier to pick them up mid-route.</div></div>
+        <div id="tracelog"><div class="empty">Press <b>Trace a message</b> — the next courier from a channel gets a spotlight, and every step of their life is logged here. You can also click any courier to pick them up mid-route.</div></div>
       </div>
     </div>
   </div>
@@ -158,15 +193,16 @@
 
 <footer><div class="wrap">
   <span><b>vak 0.11.7</b></span>
-  <span>· Buildings map 1:1 to <code>slack/discord/telegram</code> bridges, <code>gateway.rs</code> (allowlist + bindings.json), <code>rate_limit.rs</code>, <code>core_pool.rs</code>, <code>vak-permission</code>, <code>vak-tools</code> sandbox, <code>vak-session</code> ledger and the <code>vak-delivery</code> outbox</span>
-  <span>· Illustrative simulation, not measured telemetry</span>
+  <span>· Buildings map 1:1 to the <code>slack/discord/telegram</code> bridges, <code>gateway.rs</code>, <code>rate_limit.rs</code>, <code>core_pool.rs</code>, <code>vak-permission</code>, the <code>vak-tools</code> sandbox, the <code>vak-session</code> ledger and the <code>vak-delivery</code> outbox</span>
+  <span>· Badge names nod to <code>docs/design/16-achievements.md</code>. Illustrative simulation, not measured telemetry.</span>
 </div></footer>
 
 <script>
 (function(){
 "use strict";
+var REDUCE=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-/* ============================ shared day model ============================ */
+/* ============================= day model ============================= */
 var DAY=1440;
 var ANCH=[[0,2],[5,2],[6,3],[7,7],[8,12],[9,18],[10,24],[11,23],[12,15],[13,19],
           [14,25],[15,26],[16,24],[17,16],[18,11],[19,13],[20,20],[21,12],[22,7],[23,4],[24,2]];
@@ -180,12 +216,12 @@ function baseDemand(min){
   } return 2;
 }
 var EVENTS=[
-  {a:550,b:585,name:'Morning surge — teams come online',kind:'warn',dem:10},
-  {a:660,b:676,name:'Provider 429 storm — upstream degraded',kind:'alert',fault:true},
-  {a:740,b:782,name:'Lunch dip',kind:'ok',dem:-13},
-  {a:840,b:872,name:'Workspace fan-out — CI hits many repos',kind:'warn',dem:7,fan:true},
-  {a:1000,b:1017,name:'Traffic burst — rate limiter engages',kind:'alert',dem:27,burst:true},
-  {a:1200,b:1246,name:'Nightly unattended batch — gateway auto-denies',kind:'warn',dem:12,deny:true}
+  {a:550, b:585, wave:1, name:'Morning surge — teams come online',        kind:'warn',  dem:10},
+  {a:660, b:676, wave:2, name:'Provider 429 storm — upstream degraded',   kind:'alert', fault:true},
+  {a:740, b:782, wave:3, name:'Lunch dip — the works catch their breath', kind:'ok',    dem:-13},
+  {a:840, b:872, wave:4, name:'Workspace fan-out — CI hits many repos',   kind:'warn',  dem:7,  fan:true},
+  {a:1000,b:1017,wave:5, name:'Traffic burst — rate limiter engages',     kind:'alert', dem:27, burst:true},
+  {a:1200,b:1246,wave:6, name:'Nightly unattended batch — auto-denies',   kind:'warn',  dem:12, deny:true}
 ];
 function evAt(m){for(var i=0;i<EVENTS.length;i++){if(m>=EVENTS[i].a&&m<EVENTS[i].b)return EVENTS[i];}return null;}
 function phaseOf(m){var h=m/60;
@@ -194,23 +230,20 @@ function phaseOf(m){var h=m/60;
   if(h<17)return['afternoon peak','var(--accent)']; if(h<20)return['winding down','var(--blue)'];
   if(h<22)return['evening batch','var(--yellow)']; return['night · quiet','var(--blue)'];}
 
-/* ============================== canvas setup ============================== */
+/* ============================ canvas setup =========================== */
 var cvs=document.getElementById('world'), ctx=cvs.getContext('2d');
-var VW=1300, VH=700, scale=1, dpr=Math.max(1,window.devicePixelRatio||1);
+var VW=1300, VH=720, scale=1, dpr=Math.max(1,window.devicePixelRatio||1);
 function sizeCanvas(){
   var cw=cvs.clientWidth||1000;
   scale=cw/VW;
-  cvs.width=Math.round(cw*dpr);
-  cvs.height=Math.round(VH*scale*dpr);
+  cvs.width=Math.round(cw*dpr); cvs.height=Math.round(VH*scale*dpr);
   cvs.style.height=(VH*scale)+'px';
   ctx.setTransform(dpr*scale,0,0,dpr*scale,0,0);
 }
 function cv(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
 var MONO="'IBM Plex Mono',ui-monospace,Menlo,monospace";
-
 function rr(x,y,w,h,r){
-  r=Math.min(r,w/2,h/2);
-  ctx.beginPath();
+  r=Math.min(r,w/2,h/2); ctx.beginPath();
   ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
   ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
 }
@@ -218,35 +251,43 @@ function txt(s,x,y,size,color,weight,align){
   ctx.fillStyle=color; ctx.textAlign=align||'left'; ctx.textBaseline='alphabetic';
   ctx.font=(weight||500)+' '+size+'px '+MONO; ctx.fillText(s,x,y);
 }
+/* text on a solid chip — prevents the float/label collisions */
+function chipText(s,x,y,size,color,weight){
+  ctx.font=(weight||600)+' '+size+'px '+MONO;
+  var w=ctx.measureText(s).width, padX=6, padY=3.5, h=size+padY*2;
+  rr(x-w/2-padX, y-size+1-padY, w+padX*2, h, 5);
+  ctx.fillStyle=cv('--chip'); ctx.fill();
+  ctx.strokeStyle=color; ctx.globalAlpha=.5; ctx.lineWidth=1; ctx.stroke(); ctx.globalAlpha=1;
+  txt(s,x,y,size,color,weight,'center');
+}
 
-/* ================================= world map ============================== */
-/* zone 1: external channel platforms (outside the perimeter)                */
+/* =============================== world map ============================== */
 var CHAN=[
   {id:'slack',    label:'Slack',    col:'--blue',   x:16, y:96,  w:88,h:60},
   {id:'discord',  label:'Discord',  col:'--accent', x:16, y:214, w:88,h:60},
   {id:'telegram', label:'Telegram', col:'--green',  x:16, y:332, w:88,h:60}
 ];
-var PERIM=126;                                   /* the trust boundary       */
-/* zone 2: bridge processes (hold bot token + gateway token; host no Core)   */
+var PERIM=126;
 var BRIDGE=[
   {id:'slack',    label:'slack bridge',    col:'--blue',   x:146,y:88, w:120,h:74},
   {id:'discord',  label:'discord bridge',  col:'--accent', x:146,y:206,w:120,h:74},
   {id:'telegram', label:'telegram bridge', col:'--green',  x:146,y:324,w:120,h:74}
 ];
-/* local surfaces: no bridge, no gate, no rate limit                          */
 var LOCAL=[
-  {id:'desktop', label:'Desktop', sub:'loopback + token', col:'--yellow', x:146,y:448,w:120,h:66},
-  {id:'cli',     label:'CLI',     sub:'in-process Core',  col:'--muted',  x:146,y:544,w:120,h:66}
+  {id:'desktop', label:'Desktop', sub:'loopback + token', col:'--yellow', x:146,y:436,w:120,h:64},
+  {id:'cli',     label:'CLI',     sub:'in-process Core',  col:'--muted',  x:146,y:520,w:120,h:64}
 ];
-var GATE  ={x:312,y:150,w:132,h:104};   /* gatehouse: allowlist            */
-var BOARD ={x:312,y:286,w:132,h:128};   /* bindings.json board             */
-var TURN  ={x:490,y:186,w:112,h:96};    /* rate limiter turnstile          */
-var BAYX=650, BAYY0=52, BAYW=152, BAYH=88, BAYGAP=12;
-var PERM  ={x:848,y:64, w:134,h:104};   /* permission gate                 */
-var SBOX  ={x:848,y:214,w:134,h:120};   /* sandbox yard                    */
-var OUTBOX={x:848,y:392,w:134,h:96};    /* vak-delivery outbox             */
-var MAST  ={x:1032,y:64,w:126,h:156};   /* providers                       */
-var LEDGER={x:1032,y:262,w:126,h:330};  /* append-only archive             */
+var GATE  ={x:312,y:150,w:132,h:104};
+var BOARD ={x:312,y:286,w:132,h:128};
+var TURN  ={x:490,y:186,w:112,h:96};
+var QUEUE ={x:490,y:330,w:112,h:150};      /* visible waiting pen */
+var BAYX=650, BAYY0=52, BAYW=152, BAYH=84, BAYGAP=11;
+var PERM  ={x:848,y:64, w:134,h:100};
+var SBOX  ={x:848,y:206,w:134,h:112};
+var OUTBOX={x:848,y:378,w:134,h:92};
+var MAST  ={x:1032,y:64,w:126,h:150};
+var LEDGER={x:1032,y:256,w:126,h:300};
+var STRIP ={x:24, y:VH-62, w:VW-48, h:38};  /* day / wave progress bar */
 
 var WS_NAMES=['default','api-svc','web-app','infra','billing','docs','mobile','data'];
 var CHATS=['C042','C118','D7','#ops','#eng','@dm'];
@@ -254,52 +295,96 @@ var CHATS=['C042','C118','D7','#ops','#eng','@dm'];
 var bays=[], bindings=[];
 function resetBays(){
   bays=[];
-  for(var i=0;i<5;i++){
+  for(var i=0;i<5;i++)
     bays.push({i:i,x:BAYX,y:BAYY0+i*(BAYH+BAYGAP),w:BAYW,h:BAYH,
-      ws:(i===0?'default':null), pinned:(i===0),
-      state:(i===0?'warm':'empty'), grow:(i===0?1:0), idle:0, busy:0, flash:0});
-  }
+      ws:(i===0?'default':null), pinned:(i===0), state:(i===0?'warm':'empty'),
+      grow:(i===0?1:0), idle:0, busy:0, flash:0, shake:0});
 }
-var stats, particles, couriers, ledgerBlocks;
+var stats, particles, couriers, ledgerBlocks, score, combo, comboBest, hp, shake, banner;
 function resetWorld(){
   resetBays(); bindings=[];
-  stats={ledger:0,built:1,evict:0,turn:0,allow:0,deny:0};
+  stats={ledger:0,built:1,evict:0,turn:0,allow:0,deny:0,done:0};
   particles=[]; couriers=[]; ledgerBlocks=0;
-  traceSteps=[]; renderTrace();
+  score=0; combo=1; comboBest=1; hp=1; shake=0; banner=null;
+  for(var i=0;i<ACHS.length;i++) ACHS[i].got=false;
+  seenWaves={}; circuitEverOpen=false;
+  traceSteps=[]; renderTrace(); renderAchs();
 }
 
-/* ============================== particles =============================== */
+/* ============================ achievements ============================ */
+var ACHS=[
+  {id:'ink',    name:'Ink on Paper',      got:false, test:function(){return stats.ledger>=1;}},
+  {id:'ground', name:'Groundbreaking',    got:false, test:function(){return stats.built>=5;}},
+  {id:'demo',   name:'Demolition Derby',  got:false, test:function(){return stats.evict>=5;}},
+  {id:'gate',   name:'Gatekeeper',        got:false, test:function(){return stats.deny>=10;}},
+  {id:'bounce', name:'Bouncer',           got:false, test:function(){return stats.turn>=3;}},
+  {id:'chaos',  name:'Chaos Endurance',   got:false, test:function(){return circuitEverOpen&&circuit===0;}},
+  {id:'roll',   name:'On a Roll',         got:false, test:function(){return comboBest>=10;}},
+  {id:'cent',   name:'Century Ledger',    got:false, test:function(){return stats.ledger>=100;}},
+  {id:'gaunt',  name:'Capability Gauntlet',got:false,test:function(){return countWaves()>=4;}},
+  {id:'long',   name:'Long Horizon',      got:false, test:function(){return simMin>=DAY-1;}}
+];
+var seenWaves={}, circuitEverOpen=false;
+function countWaves(){ var n=0; for(var k in seenWaves) if(seenWaves[k]) n++; return n; }
+function renderAchs(){
+  var el=document.getElementById('achs'), h='', got=0;
+  for(var i=0;i<ACHS.length;i++){
+    var a=ACHS[i]; if(a.got) got++;
+    h+='<span class="ach'+(a.got?' got':'')+'" id="ach-'+a.id+'">'+(a.got?'★ ':'☆ ')+a.name+'</span>';
+  }
+  el.innerHTML=h;
+  document.getElementById('achcount').textContent=got+' / '+ACHS.length;
+}
+function checkAchs(){
+  for(var i=0;i<ACHS.length;i++){
+    var a=ACHS[i];
+    if(!a.got && a.test()){
+      a.got=true; renderAchs();
+      var node=document.getElementById('ach-'+a.id);
+      if(node) node.classList.add('pop');
+      score+=250;
+      banner={text:'★ BADGE UNLOCKED — '+a.name, sub:'+250', life:2.2, kind:'--accent'};
+      puff(VW/2,VH/2-40,'--accent',22,120);
+    }
+  }
+}
+
+/* ============================== particles ============================= */
 function puff(x,y,color,n,spread){
+  if(REDUCE) return;
   for(var i=0;i<(n||8);i++)
     particles.push({x:x,y:y,vx:(Math.random()-.5)*(spread||42),vy:(Math.random()-.5)*(spread||42)-18,
       life:1,r:2+Math.random()*3,c:color});
 }
-function floatText(x,y,s,color){ particles.push({x:x,y:y,text:s,c:color,life:1,vy:-26,vx:0}); }
+function floatText(x,y,s,color){ particles.push({x:x,y:y,text:s,c:color,life:1.15,vy:-30,vx:0}); }
 function updateParticles(dt){
   for(var i=particles.length-1;i>=0;i--){
     var p=particles[i];
     p.x+=p.vx*dt; p.y+=p.vy*dt; if(!p.text) p.vy+=42*dt;
-    p.life-=dt*(p.text?0.8:1.5);
+    p.life-=dt*(p.text?0.75:1.5);
     if(p.life<=0) particles.splice(i,1);
   }
 }
 function drawParticles(){
   for(var i=0;i<particles.length;i++){
-    var p=particles[i]; ctx.globalAlpha=Math.max(0,p.life);
-    if(p.text) txt(p.text,p.x,p.y,10.5,cv(p.c),600,'center');
+    var p=particles[i]; ctx.globalAlpha=Math.max(0,Math.min(1,p.life));
+    if(p.text) chipText(p.text,p.x,p.y,9.5,cv(p.c),600);
     else { ctx.fillStyle=cv(p.c); ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,7); ctx.fill(); }
     ctx.globalAlpha=1;
   }
 }
+function addScore(n){ score+=Math.round(n*combo); }
+function bumpCombo(){ combo=Math.min(20,combo+1); if(combo>comboBest) comboBest=combo; }
+function breakCombo(){ combo=1; }
 
-/* ============================== couriers ================================ */
+/* =============================== couriers ============================= */
 var cid=0, traceSteps=[], traceArmed=false;
 function pickWorkspace(fan){
-  /* more distinct workspaces than there are slots, so the pool genuinely churns */
   if(fan) return WS_NAMES[1+Math.floor(Math.random()*(WS_NAMES.length-1))];
   return Math.random()<0.42 ? 'default' : WS_NAMES[1+Math.floor(Math.random()*6)];
 }
 function findB(id,arr){ for(var i=0;i<arr.length;i++) if(arr[i].id===id) return arr[i]; return arr[0]; }
+function P(o,dx,dy){ return {x:o.x+(dx===undefined?o.w/2:dx), y:o.y+(dy===undefined?o.h/2:dy)}; }
 
 function spawn(minute){
   var ev=evAt(minute);
@@ -307,160 +392,149 @@ function spawn(minute){
   var r=Math.random()*0.80, acc=0, pick='slack';
   for(var i=0;i<pool.length;i++){ acc+=pool[i][1]; if(r<=acc){ pick=pool[i][0]; break; } }
   var gw=(pick==='slack'||pick==='discord'||pick==='telegram');
-  var home = gw ? findB(pick,CHAN) : findB(pick,LOCAL);
+  var home=gw?findB(pick,CHAN):findB(pick,LOCAL);
   var c={
     id:++cid, surface:pick, gw:gw, home:home,
-    col: gw? findB(pick,CHAN).col : findB(pick,LOCAL).col,
+    col: gw?findB(pick,CHAN).col:findB(pick,LOCAL).col,
     chat: CHATS[Math.floor(Math.random()*CHATS.length)],
-    ws: gw ? pickWorkspace(ev&&ev.fan) : (pick==='cli'?'default':pickWorkspace(false)),
-    unattended: !!(ev&&ev.deny) && gw,
+    ws: gw?pickWorkspace(ev&&ev.fan):(pick==='cli'?'default':pickWorkspace(false)),
+    unattended: !!(ev&&ev.deny)&&gw,
     x:home.x+home.w/2, y:home.y+home.h/2,
     route:[], ri:0, dwell:0, si:-1, steps:[], bay:null, carry:null,
-    dead:false, alpha:1, bob:Math.random()*6, spd:118+Math.random()*26,
-    traced:false, tint:null, dwellExtra:0
+    dead:false, alpha:1, bob:Math.random()*6, spd:120+Math.random()*26,
+    traced:false, tint:null, dwellExtra:0, retry:false, waits:0, face:1
   };
-  c.steps = gw ? gatewaySteps(c) : localSteps(c);
-  if(traceArmed && gw){
+  c.steps = gw?gatewaySteps(c):localSteps(c);
+  if(traceArmed&&gw){
     traceArmed=false; c.traced=true; traceSteps=[];
     document.getElementById('tracetag').textContent='#'+c.id+' · '+pick;
     log(c,'bd','A person posts in '+c.chat,'On '+pick+' — outside the perimeter. vak has not seen anything yet.');
   }
-  couriers.push(c);
-  goToStep(c);
-  return c;
+  couriers.push(c); goToStep(c); return c;
 }
-function log(c,kind,head,sub){
-  if(!c.traced) return;
-  traceSteps.push({kind:kind,head:head,sub:sub});
-  renderTrace();
-}
-function P(o,dx,dy){ return {x:o.x+(dx===undefined?o.w/2:dx), y:o.y+(dy===undefined?o.h/2:dy)}; }
+function log(c,kind,head,sub){ if(!c.traced) return; traceSteps.push({kind:kind,head:head,sub:sub}); renderTrace(); }
 
-/* ---------- gateway / channel route (the long, interesting one) ---------- */
 function gatewaySteps(c){
   var br=findB(c.surface,BRIDGE), s=[];
-
-  s.push({at:P(br), dwell:.45, act:function(cc){
+  s.push({at:P(br), dwell:.42, act:function(cc){
     log(cc,'bd','Bridge picks it up — separate process',
       'vak '+cc.surface+' polls the platform with its bot token. The bridge hosts no Core; it only translates.');
-    cc.carry='token';
-    floatText(cc.x,cc.y-18,'gateway token','--muted');
+    cc.carry='token'; floatText(cc.x,cc.y-24,'gateway token','--muted');
   }});
-
-  s.push({at:P(GATE), dwell:.5, act:function(cc){
+  s.push({at:P(GATE), dwell:.45, act:function(cc){
     log(cc,'bd','Crosses the perimeter → POST /gateway/inbound',
-      'Validated {surface, chat, sender, text}. Real remote identity matters: the allowlist and binding depend on it.');
+      'Validated {surface, chat, sender, text}. The allowlist and binding depend on the real remote identity.');
     if(Math.random()<0.05){
       log(cc,'no','Allowlist rejected','gateway.chat_allowlist has no entry for '+cc.surface+':'+cc.chat+' — it never reaches a workspace.');
-      stats.turn++; floatText(cc.x,cc.y-18,'NOT ALLOWED','--red'); puff(cc.x,cc.y,'--red',9);
+      stats.turn++; breakCombo(); floatText(cc.x,cc.y-26,'NOT ALLOWED','--red'); puff(cc.x,cc.y,'--red',10);
       bounce(cc); return;
     }
     log(cc,'ok','Allowlist ✓ admitted','This surface:chat is approved to reach a workspace.');
   }});
-
-  s.push({at:P(BOARD), dwell:.45, act:function(cc){
+  s.push({at:P(BOARD), dwell:.42, act:function(cc){
     var key=cc.surface+':'+cc.chat, found=null;
     for(var i=0;i<bindings.length;i++) if(bindings[i].key===key) found=bindings[i];
-    if(found){
-      found.hits++; found.flash=1; cc.session=found.session;
+    if(found){ found.hits++; found.flash=1; cc.session=found.session;
       log(cc,'ok','Binding found → '+found.session,'(surface:chat) → session_id already in gateway/bindings.json — the conversation continues.');
     } else {
       var sid='s_'+(1000+Math.floor(Math.random()*8999));
-      var b={key:key,session:sid,ws:cc.ws,hits:1,flash:1};
-      bindings.push(b); if(bindings.length>5) bindings.shift();
+      bindings.push({key:key,session:sid,ws:cc.ws,hits:1,flash:1});
+      if(bindings.length>5) bindings.shift();
       cc.session=sid;
       log(cc,'bd','New binding written → '+sid,'Persisted to gateway/bindings.json so the conversation survives a restart.');
-      floatText(cc.x,cc.y-20,'bound','--green');
+      floatText(cc.x,cc.y-26,'bound','--green');
     }
     cc.carry='badge';
   }});
-
-  s.push({at:P(TURN), dwell:.35, act:function(cc){
+  s.push({at:P(TURN), dwell:.32, act:function(cc){
     var ev=evAt(Math.floor(simMin));
     var pressure=(ev&&ev.burst)?0.40:(demandNow>28?0.10:0.015);
     if(Math.random()<pressure){
       log(cc,'no','429 Too Many Requests','Per-IP window exceeded (inbound 30/min). Retry-After returned to the bridge.');
-      stats.turn++; floatText(cc.x,cc.y-18,'429','--red'); puff(cc.x,cc.y,'--red',9);
+      stats.turn++; breakCombo(); floatText(cc.x,cc.y-26,'429','--red'); puff(cc.x,cc.y,'--red',10);
       bounce(cc); return;
     }
     log(cc,'ok','Rate limiter ✓ admitted','Inside the per-IP budget for this window.');
   }});
-
-  coreAndBeyond(s,c,true);
-  return s;
+  coreAndBeyond(s,c,true); return s;
 }
-/* ---------------- local surfaces: a deliberately shorter path ------------- */
 function localSteps(c){
   var s=[];
-  s.push({at:{x:GATE.x+GATE.w/2, y:BOARD.y+BOARD.h+64}, dwell:.3, act:function(cc){
+  s.push({at:{x:GATE.x+GATE.w/2,y:BOARD.y+BOARD.h+58}, dwell:.28, act:function(cc){
     if(cc.surface==='desktop')
       log(cc,'ok','Loopback + bearer token','Desktop embeds vak-server on 127.0.0.1:0. No bridge, no gatehouse, no rate limit.');
     else
       log(cc,'ok','In-process Core','The CLI builds its own Core directly — no server and no network at all.');
   }});
-  coreAndBeyond(s,c,false);
-  return s;
+  coreAndBeyond(s,c,false); return s;
 }
-/* ------------------- shared tail: core → tools → provider ---------------- */
 function coreAndBeyond(s,c,viaOutbox){
-  s.push({at:{x:BAYX-52,y:VH/2}, dwell:.2, act:function(cc){
+  /* acquire a Core — may wait in the visible queue pen and retry */
+  s.push({at:{x:QUEUE.x+QUEUE.w/2,y:QUEUE.y+QUEUE.h/2}, dwell:.18, act:function(cc){
     var bay=acquireBay(cc.ws,cc);
     if(!bay){
-      log(cc,'wt','Pool at capacity — queued','Every slot is busy; this run waits for a Core rather than starting a sixth.');
-      floatText(cc.x,cc.y-16,'queued','--yellow'); bounce(cc); return;
+      cc.waits++;
+      if(cc.waits===1) log(cc,'wt','Pool at capacity — queued','Every slot is busy. The run waits for a Core rather than starting a sixth.');
+      if(cc.waits>6){
+        log(cc,'no','Gave up waiting','Backpressure held too long; the caller is told to retry.');
+        stats.turn++; breakCombo(); bounce(cc); return;
+      }
+      floatText(cc.x,cc.y-24,'queued','--yellow');
+      cc.retry=true; cc.queued=true; return;
     }
-    cc.bay=bay; bay.busy++;
-    cc.steps[cc.si+1].at={x:bay.x+bay.w/2, y:bay.y+bay.h/2};
+    cc.queued=false; cc.bay=bay; bay.busy++;
+    cc.steps[cc.si+1].at={x:bay.x+bay.w/2,y:bay.y+bay.h/2};
   }});
-  s.push({at:{x:BAYX+BAYW/2,y:VH/2}, dwell:.5, act:function(cc){
+  s.push({at:{x:BAYX+BAYW/2,y:VH/2}, dwell:.45, act:function(cc){
     log(cc,'bd','Core::new_with_trust — workspace "'+cc.ws+'"',
       'CorePool key is (workspace, override). Trust, permission mode and sandbox resolve exactly as a local run would.');
     appendLedger(cc,'UserMessage');
   }});
-  s.push({at:P(PERM), dwell:.5, act:function(cc){
+  s.push({at:P(PERM), dwell:.45, act:function(cc){
     if(cc.unattended){
-      log(cc,'wt','Unattended → AUTO-DENY','Gateway turns fail closed: the approval gate is auto-denied and fed back to the model as a tool error.');
-      stats.deny++; floatText(cc.x,cc.y-18,'AUTO-DENY','--yellow'); puff(cc.x,cc.y,'--yellow',7);
+      log(cc,'wt','Unattended → AUTO-DENY','Gateway turns fail closed: the approval gate is auto-denied and fed back as a tool error.');
+      stats.deny++; breakCombo(); floatText(cc.x,cc.y-26,'AUTO-DENY','--yellow'); puff(cc.x,cc.y,'--yellow',8);
       appendLedger(cc,'ApprovalDenied');
     } else if(Math.random()<0.13){
       log(cc,'no','Permission DENIED','A rule matched a gated effect outside workspace-write. The denial is logged and returned.');
-      stats.deny++; floatText(cc.x,cc.y-18,'DENY','--red'); puff(cc.x,cc.y,'--red',7);
+      stats.deny++; breakCombo(); floatText(cc.x,cc.y-26,'DENY','--red'); puff(cc.x,cc.y,'--red',8);
       appendLedger(cc,'ToolDenied');
     } else {
       log(cc,'ok','Permission ALLOW','The effect cleared the policy gate before dispatch (workspace-write).');
-      stats.allow++; floatText(cc.x,cc.y-18,'ALLOW','--green');
+      stats.allow++; addScore(5); floatText(cc.x,cc.y-26,'ALLOW','--green');
       appendLedger(cc,'ToolCall');
     }
   }});
-  s.push({at:P(SBOX), dwell:.5, act:function(cc){
+  s.push({at:P(SBOX), dwell:.45, act:function(cc){
     log(cc,'ok','Sandbox — brokered execution','Landlock/Seatbelt scope writes to the workspace; traversal escapes fail closed.');
     appendLedger(cc,'ToolResult');
   }});
-  s.push({at:P(MAST,MAST.w/2,MAST.h-30), dwell:.55, act:function(cc){
+  s.push({at:P(MAST,MAST.w/2,MAST.h-28), dwell:.5, act:function(cc){
     if(circuit===2){
       log(cc,'no','Circuit OPEN — fail fast','The breaker refuses immediately on fresh evidence of a dead route, instead of queueing behind a timeout.');
-      floatText(cc.x,cc.y-18,'FAIL FAST','--red'); puff(cc.x,cc.y,'--red',9);
+      breakCombo(); floatText(cc.x,cc.y-26,'FAIL FAST','--red'); puff(cc.x,cc.y,'--red',10);
       appendLedger(cc,'RunFailed'); leaveBay(cc); bounce(cc); return;
     }
-    if(faultNow && Math.random()<0.6){
+    if(faultNow&&Math.random()<0.6){
       log(cc,'wt','Provider 429 → RetryScheduled','Backoff with jitter capped at 30s; a server Retry-After wins. Turn budget is not consumed by infrastructure pain.');
-      floatText(cc.x,cc.y-18,'retry','--yellow'); cc.dwellExtra=0.7;
+      floatText(cc.x,cc.y-26,'retry','--yellow'); cc.dwellExtra=0.7;
       appendLedger(cc,'RetryScheduled');
     }
     log(cc,'ok','Provider dispatch + receipt','Usage, cost and outcome recorded as a receipt in the ledger.');
     appendLedger(cc,'Receipt');
   }});
-  s.push({at:P(LEDGER,LEDGER.w/2,34), dwell:.4, act:function(cc){
+  s.push({at:P(LEDGER,LEDGER.w/2,34), dwell:.38, act:function(cc){
     appendLedger(cc,'RunFinished');
     log(cc,'bd','RunFinished — the turn is sealed','Reconstructable from the append-only JSONL. Nothing was ever rewritten.');
     leaveBay(cc); cc.carry='reply';
+    stats.done++; bumpCombo(); addScore(20);
+    floatText(cc.x,cc.y-28,'+'+Math.round(20*combo),'--green');
   }});
   if(viaOutbox){
-    s.push({at:P(OUTBOX), dwell:.4, act:function(cc){
+    s.push({at:P(OUTBOX), dwell:.35, act:function(cc){
       log(cc,'bd','Handed to the delivery outbox','vak-delivery durably queues the reply so a flaky channel cannot lose it.');
-      floatText(cc.x,cc.y-18,'queued reply','--accent');
     }});
-    s.push({at:P(findB(c.surface,BRIDGE)), dwell:.25, act:function(cc){
+    s.push({at:P(findB(c.surface,BRIDGE)), dwell:.22, act:function(cc){
       log(cc,'ok','Bridge posts it back','Translated to the platform API and sent to '+cc.chat+'.');
     }});
   }
@@ -469,7 +543,6 @@ function coreAndBeyond(s,c,viaOutbox){
     cc.dead=true;
   }});
 }
-
 function bounce(c){
   c.tint='--red';
   c.steps=[{at:{x:c.home.x+c.home.w/2,y:c.home.y+c.home.h/2},dwell:.05,act:function(cc){cc.dead=true;}}];
@@ -492,35 +565,44 @@ function acquireBay(ws,c){
 }
 function buildBay(b,ws,c){
   b.ws=ws; b.state='warm'; b.grow=0; b.idle=0; b.flash=1; stats.built++;
-  puff(b.x+b.w/2,b.y+b.h/2,'--green',10,30);
-  floatText(b.x+b.w/2,b.y-6,'BUILT '+ws,'--green');
+  puff(b.x+b.w/2,b.y+b.h/2,'--green',12,34);
+  floatText(b.x+b.w/2,b.y+b.h/2-4,'BUILT · '+ws,'--green');
   if(c) log(c,'bd','Core BUILT — slot '+b.i+' ("'+ws+'")','Lazily started on first use, through Core::new_with_trust.');
   return b;
 }
 function demolishBay(b){
-  stats.evict++;
-  puff(b.x+b.w/2,b.y+b.h/2,'--yellow',14,52);
-  floatText(b.x+b.w/2,b.y-6,'DEMOLISHED','--yellow');
+  stats.evict++; b.shake=1; shake=Math.max(shake,0.5);
+  puff(b.x+b.w/2,b.y+b.h/2,'--yellow',18,60);
+  floatText(b.x+b.w/2,b.y+b.h/2-4,'DEMOLISHED','--yellow');
   b.state='empty'; b.ws=null; b.grow=0; b.idle=0;
 }
 function leaveBay(c){ if(c.bay){ c.bay.busy=Math.max(0,c.bay.busy-1); c.bay=null; } }
 function appendLedger(c,kind){
-  ledgerBlocks++; stats.ledger++;
-  particles.push({x:LEDGER.x+LEDGER.w/2+(Math.random()-.5)*20,y:LEDGER.y+40,vx:0,vy:-14,life:.8,r:2.4,c:'--green'});
+  ledgerBlocks++; stats.ledger++; addScore(2);
+  particles.push({x:LEDGER.x+LEDGER.w/2+(Math.random()-.5)*20,y:LEDGER.y+40,vx:0,vy:-16,life:.8,r:2.4,c:'--green'});
   if(c&&c.traced) log(c,'ok','ledger ← '+kind,'Append-only JSONL: the record grows, it is never rewritten.');
 }
 function goToStep(c){
   c.si++;
   if(c.si>=c.steps.length){ c.dead=true; return; }
   var t=c.steps[c.si].at, midx=(c.x+t.x)/2;
+  c.face = (t.x>=c.x)?1:-1;
   c.route=[{x:midx,y:c.y},{x:midx,y:t.y},{x:t.x,y:t.y}];
   c.ri=0; c.dwell=0;
 }
 function updateCourier(c,dt){
   if(c.dead){ c.alpha-=dt*2.6; return; }
-  if(c.dwell>0){ c.dwell-=dt; if(c.dwell<=0) goToStep(c); return; }
+  if(c.dwell>0){
+    c.dwell-=dt;
+    if(c.dwell<=0){
+      if(c.retry){ c.retry=false; c.steps[c.si].done=false; }   /* re-attempt this step */
+      else goToStep(c);
+    }
+    return;
+  }
   if(c.ri<c.route.length){
     var t=c.route[c.ri], dx=t.x-c.x, dy=t.y-c.y, d=Math.hypot(dx,dy), step=c.spd*dt*speedMul;
+    if(Math.abs(dx)>1) c.face=dx>0?1:-1;
     if(d<=step){ c.x=t.x; c.y=t.y; c.ri++; } else { c.x+=dx/d*step; c.y+=dy/d*step; }
     c.bob+=dt*13*speedMul;
   } else {
@@ -528,19 +610,18 @@ function updateCourier(c,dt){
     if(st&&!st.done){ st.done=true; st.act(c); }
     if(c.dead) return;
     c.dwell=(st?st.dwell:.2)+(c.dwellExtra||0); c.dwellExtra=0;
+    if(c.retry) c.dwell=0.55;
     if(c.dwell<=0) goToStep(c);
   }
 }
 
-/* ================================ drawing ================================ */
+/* ================================ drawing =============================== */
 function building(x,y,w,h,label,sub,accent,opts){
   opts=opts||{};
-  ctx.save();
-  ctx.shadowColor='rgba(0,0,0,.16)'; ctx.shadowBlur=10; ctx.shadowOffsetY=3;
-  rr(x,y,w,h,10); ctx.fillStyle=cv(opts.fill||'--wall'); ctx.fill();
-  ctx.restore();
+  ctx.save(); ctx.shadowColor='rgba(0,0,0,.16)'; ctx.shadowBlur=10; ctx.shadowOffsetY=3;
+  rr(x,y,w,h,10); ctx.fillStyle=cv(opts.fill||'--wall'); ctx.fill(); ctx.restore();
   rr(x,y,w,h,10); ctx.strokeStyle=cv(opts.stroke||accent||'--border');
-  ctx.lineWidth=opts.lw||1.3; if(opts.dash){ctx.setLineDash([5,4]);} ctx.stroke(); ctx.setLineDash([]);
+  ctx.lineWidth=opts.lw||1.3; if(opts.dash) ctx.setLineDash([5,4]); ctx.stroke(); ctx.setLineDash([]);
   rr(x,y,w,20,10); ctx.fillStyle=cv(accent||'--border'); ctx.globalAlpha=.16; ctx.fill(); ctx.globalAlpha=1;
   txt(label,x+10,y+14,10.5,cv(accent||'--text'),600);
   if(sub) txt(sub,x+10,y+32,9,cv('--faint'),400);
@@ -548,37 +629,31 @@ function building(x,y,w,h,label,sub,accent,opts){
 function drawGround(){
   ctx.fillStyle=cv('--ground'); ctx.fillRect(0,0,VW,VH);
   ctx.fillStyle=cv('--outside'); ctx.fillRect(0,0,PERIM,VH);
-  // perimeter fence
   ctx.strokeStyle=cv('--accent'); ctx.globalAlpha=.55; ctx.lineWidth=1.6; ctx.setLineDash([7,6]);
-  ctx.beginPath(); ctx.moveTo(PERIM,10); ctx.lineTo(PERIM,VH-10); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(PERIM,10); ctx.lineTo(PERIM,VH-80); ctx.stroke();
   ctx.setLineDash([]); ctx.globalAlpha=1;
-  ctx.save(); ctx.translate(PERIM-9,VH/2); ctx.rotate(-Math.PI/2);
-  txt('TRUST PERIMETER  ·  your host starts here',0,0,9.5,cv('--accent'),600,'center'); ctx.restore();
-  // corridor
+  ctx.save(); ctx.translate(PERIM-9,300); ctx.rotate(-Math.PI/2);
+  txt('TRUST PERIMETER · your host starts here',0,0,9.5,cv('--accent'),600,'center'); ctx.restore();
   ctx.strokeStyle=cv('--ground2'); ctx.lineWidth=28;
-  ctx.beginPath(); ctx.moveTo(300,VH/2); ctx.lineTo(1120,VH/2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(300,VH/2-40); ctx.lineTo(1120,VH/2-40); ctx.stroke();
   txt('EXTERNAL',16,72,9.5,cv('--faint'),600);
-  txt('BRIDGES  ·  separate processes',146,72,9.5,cv('--faint'),600);
+  txt('BRIDGES · separate processes',146,72,9.5,cv('--faint'),600);
   txt('ADMISSION',312,132,9.5,cv('--faint'),600);
   txt('EXECUTION',848,46,9.5,cv('--faint'),600);
   txt('RECORD',1032,46,9.5,cv('--faint'),600);
 }
 function drawChannels(){
-  for(var i=0;i<CHAN.length;i++){
-    var c=CHAN[i];
+  for(var i=0;i<CHAN.length;i++){ var c=CHAN[i];
     building(c.x,c.y,c.w,c.h,c.label,'platform',c.col,{fill:'--wallv',dash:true});
     txt('#chat',c.x+10,c.y+50,9,cv('--muted'),500);
   }
 }
 function drawBridges(){
-  for(var i=0;i<BRIDGE.length;i++){
-    var b=BRIDGE[i];
+  for(var i=0;i<BRIDGE.length;i++){ var b=BRIDGE[i];
     building(b.x,b.y,b.w,b.h,b.label,'bot + gateway token',b.col);
-    txt('hosts no Core',b.x+10,b.y+50,9,cv('--faint'),500);
-    ctx.fillStyle=cv(b.col); ctx.globalAlpha=.5; rr(b.x+b.w-22,b.y+42,12,14,3); ctx.fill(); ctx.globalAlpha=1;
+    txt('hosts no Core',b.x+10,b.y+52,9,cv('--faint'),500);
   }
-  for(var j=0;j<LOCAL.length;j++){
-    var l=LOCAL[j];
+  for(var j=0;j<LOCAL.length;j++){ var l=LOCAL[j];
     building(l.x,l.y,l.w,l.h,l.label,l.sub,l.col);
     txt('skips the gate',l.x+10,l.y+52,9,cv('--faint'),500);
   }
@@ -611,39 +686,47 @@ function drawTurnstile(){
     ctx.beginPath(); ctx.moveTo(TURN.x+22+i*32,TURN.y+66); ctx.lineTo(TURN.x+22+i*32,TURN.y+84); ctx.stroke();
   }
 }
+function drawQueue(){
+  var n=0; for(var i=0;i<couriers.length;i++) if(couriers[i].queued&&!couriers[i].dead) n++;
+  ctx.setLineDash([5,4]); rr(QUEUE.x,QUEUE.y,QUEUE.w,QUEUE.h,10);
+  ctx.strokeStyle=cv(n?'--yellow':'--border-soft'); ctx.lineWidth=1.2; ctx.stroke(); ctx.setLineDash([]);
+  txt('WAITING',QUEUE.x+10,QUEUE.y+16,9.5,cv(n?'--yellow':'--faint'),600);
+  txt(n?(n+' run'+(n>1?'s':'')+' queued'):'no backpressure',QUEUE.x+10,QUEUE.y+30,8.5,cv('--faint'),500);
+}
 function drawBays(dt){
-  txt('CORE POOL  ·  1 pinned + 4 slots',BAYX,BAYY0-12,10,cv('--muted'),600);
+  txt('CORE POOL · 1 pinned + 4 slots',BAYX,BAYY0-12,10,cv('--muted'),600);
   for(var i=0;i<bays.length;i++){
-    var b=bays[i];
+    var b=bays[i], ox=0;
     if(b.state==='warm'){ b.grow=Math.min(1,b.grow+dt*3.2); b.idle+=b.busy?0:dt*9.6*speedMul; }
     if(b.flash>0) b.flash-=dt*1.6;
+    if(b.shake>0){ b.shake-=dt*2.4; ox=Math.sin(now*60)*3*b.shake; }
     ctx.setLineDash([4,4]); rr(b.x,b.y,b.w,b.h,10);
     ctx.strokeStyle=cv('--border-soft'); ctx.lineWidth=1; ctx.stroke(); ctx.setLineDash([]);
     if(b.state!=='warm'||b.grow<=0.01){ txt('slot '+i+' · empty',b.x+10,b.y+b.h/2+4,9.5,cv('--faint'),500); continue; }
     var hh=b.h*b.grow, yy=b.y+(b.h-hh);
-    ctx.save(); ctx.beginPath(); rr(b.x,yy,b.w,hh,10); ctx.clip();
-    building(b.x,b.y,b.w,b.h,(b.ws||'').toUpperCase(),
+    ctx.save(); ctx.beginPath(); rr(b.x+ox,yy,b.w,hh,10); ctx.clip();
+    building(b.x+ox,b.y,b.w,b.h,(b.ws||'').toUpperCase(),
       b.pinned?'pinned · never evicted':(b.busy?'running':'idle '+Math.floor(b.idle)+'m'),
       b.pinned?'--accent':(b.busy?'--green':'--border'),{fill:b.busy?'--wallv':'--wall'});
     ctx.restore();
     for(var k=0;k<Math.min(b.busy,4);k++){
       ctx.fillStyle=cv('--green'); ctx.globalAlpha=.55+.45*Math.sin(now*4+k);
-      ctx.beginPath(); ctx.arc(b.x+b.w-16-k*11,b.y+13,3.2,0,7); ctx.fill(); ctx.globalAlpha=1;
+      ctx.beginPath(); ctx.arc(b.x+b.w-16-k*11+ox,b.y+13,3.2,0,7); ctx.fill(); ctx.globalAlpha=1;
     }
-    if(b.flash>0){ rr(b.x,b.y,b.w,b.h,10); ctx.strokeStyle=cv('--green');
-      ctx.globalAlpha=b.flash; ctx.lineWidth=2.4; ctx.stroke(); ctx.globalAlpha=1; }
+    if(b.flash>0){ rr(b.x+ox,b.y,b.w,b.h,10); ctx.strokeStyle=cv('--green');
+      ctx.globalAlpha=b.flash; ctx.lineWidth=2.6; ctx.stroke(); ctx.globalAlpha=1; }
   }
 }
 function drawPerm(){
   building(PERM.x,PERM.y,PERM.w,PERM.h,'PERMISSION','gate before dispatch','--green');
   ctx.strokeStyle=cv('--green'); ctx.globalAlpha=.5; ctx.lineWidth=2;
-  rr(PERM.x+18,PERM.y+52,PERM.w-36,34,7); ctx.stroke(); ctx.globalAlpha=1;
-  txt('ALLOW / DENY',PERM.x+PERM.w/2,PERM.y+73,10,cv('--green'),600,'center');
+  rr(PERM.x+18,PERM.y+50,PERM.w-36,32,7); ctx.stroke(); ctx.globalAlpha=1;
+  txt('ALLOW / DENY',PERM.x+PERM.w/2,PERM.y+70,10,cv('--green'),600,'center');
 }
 function drawSandbox(){
   building(SBOX.x,SBOX.y,SBOX.w,SBOX.h,'SANDBOX','landlock · seatbelt','--blue',{fill:'--wallv'});
   ctx.strokeStyle=cv('--blue'); ctx.globalAlpha=.22; ctx.lineWidth=1;
-  for(var i=0;i<6;i++){ ctx.beginPath(); ctx.moveTo(SBOX.x+8,SBOX.y+48+i*11); ctx.lineTo(SBOX.x+SBOX.w-8,SBOX.y+44+i*11); ctx.stroke(); }
+  for(var i=0;i<5;i++){ ctx.beginPath(); ctx.moveTo(SBOX.x+8,SBOX.y+48+i*11); ctx.lineTo(SBOX.x+SBOX.w-8,SBOX.y+44+i*11); ctx.stroke(); }
   ctx.globalAlpha=1;
   txt('writes confined',SBOX.x+SBOX.w/2,SBOX.y+SBOX.h-11,9.5,cv('--faint'),500,'center');
 }
@@ -651,8 +734,8 @@ function drawOutbox(){
   building(OUTBOX.x,OUTBOX.y,OUTBOX.w,OUTBOX.h,'OUTBOX','vak-delivery','--accent',{fill:'--wallv'});
   txt('durable replies',OUTBOX.x+10,OUTBOX.y+50,9,cv('--faint'),500);
   for(var i=0;i<3;i++){
-    ctx.fillStyle=cv('--accent'); ctx.globalAlpha=.30+i*.16;
-    rr(OUTBOX.x+14+i*30,OUTBOX.y+64,24,16,3); ctx.fill(); ctx.globalAlpha=1;
+    ctx.fillStyle=cv('--accent'); ctx.globalAlpha=.28+i*.16;
+    rr(OUTBOX.x+14+i*38,OUTBOX.y+62,30,18,3); ctx.fill(); ctx.globalAlpha=1;
   }
 }
 function drawMast(){
@@ -661,7 +744,7 @@ function drawMast(){
   building(MAST.x,MAST.y,MAST.w,MAST.h,'PROVIDERS','route ladder',acc);
   var cx=MAST.x+MAST.w/2, top=MAST.y+44;
   ctx.strokeStyle=cv(acc); ctx.lineWidth=2;
-  ctx.beginPath(); ctx.moveTo(cx,top+62); ctx.lineTo(cx,top); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx,top+58); ctx.lineTo(cx,top); ctx.stroke();
   for(var i=1;i<=3;i++){
     ctx.globalAlpha=dark?0.12:(0.55-(i*0.12))*(0.6+0.4*Math.sin(now*3-i));
     ctx.strokeStyle=cv(acc); ctx.lineWidth=1.6;
@@ -684,46 +767,114 @@ function drawLedger(){
   txt(total+' blocks',LEDGER.x+LEDGER.w/2,LEDGER.y+50,11.5,cv('--green'),600,'center');
   txt('never rewritten',LEDGER.x+LEDGER.w/2,LEDGER.y+64,9,cv('--faint'),400,'center');
 }
+/* the wave / day progress strip — fills the previously dead bottom band */
+function drawStrip(){
+  rr(STRIP.x,STRIP.y,STRIP.w,STRIP.h,9);
+  ctx.fillStyle=cv('--wallv'); ctx.fill();
+  ctx.strokeStyle=cv('--border'); ctx.lineWidth=1; ctx.stroke();
+  for(var i=0;i<EVENTS.length;i++){
+    var e=EVENTS[i];
+    var x0=STRIP.x+(e.a/DAY)*STRIP.w, x1=STRIP.x+(e.b/DAY)*STRIP.w;
+    var col=e.kind==='alert'?'--red':(e.kind==='warn'?'--yellow':'--green');
+    rr(x0,STRIP.y+7,Math.max(3,x1-x0),STRIP.h-14,4);
+    ctx.fillStyle=cv(col); ctx.globalAlpha=simMin>=e.a?0.55:0.20; ctx.fill(); ctx.globalAlpha=1;
+    txt('W'+e.wave,(x0+x1)/2,STRIP.y+STRIP.h/2+3.5,8.5,cv(simMin>=e.a?col:'--faint'),600,'center');
+  }
+  for(var h=0;h<=24;h+=6){
+    var x=STRIP.x+(h*60/DAY)*STRIP.w;
+    txt((h<10?'0':'')+h+':00',x,STRIP.y-4,8,cv('--faint'),500,'center');
+  }
+  var px=STRIP.x+(simMin/DAY)*STRIP.w;
+  ctx.strokeStyle=cv('--accent'); ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(px,STRIP.y-1); ctx.lineTo(px,STRIP.y+STRIP.h+1); ctx.stroke();
+  ctx.fillStyle=cv('--accent'); ctx.beginPath(); ctx.arc(px,STRIP.y+STRIP.h+1,3.2,0,7); ctx.fill();
+}
+function drawBanner(dt){
+  if(!banner) return;
+  banner.life-=dt; if(banner.life<=0){ banner=null; return; }
+  var a=Math.min(1,banner.life*1.6);
+  var w=520,h=54,x=(VW-w)/2,y=118;
+  ctx.globalAlpha=a*0.96;
+  rr(x,y,w,h,12); ctx.fillStyle=cv('--chip'); ctx.fill();
+  ctx.strokeStyle=cv(banner.kind); ctx.lineWidth=1.6; ctx.stroke();
+  txt(banner.text,VW/2,y+25,13,cv(banner.kind),600,'center');
+  if(banner.sub) txt(banner.sub,VW/2,y+42,10,cv('--muted'),500,'center');
+  ctx.globalAlpha=1;
+}
 function drawCourier(c){
-  var bobY=Math.sin(c.bob)*1.8, col=cv(c.tint||c.col);
+  var bobY=Math.sin(c.bob)*2.2, col=cv(c.tint||c.col);
   ctx.globalAlpha=Math.max(0,c.alpha);
   if(c.traced&&!c.dead){
-    ctx.globalAlpha=0.18*Math.max(0,c.alpha); ctx.fillStyle=cv('--accent');
-    ctx.beginPath(); ctx.arc(c.x,c.y+bobY,20+Math.sin(now*4)*2,0,7); ctx.fill();
+    ctx.globalAlpha=0.2*Math.max(0,c.alpha); ctx.fillStyle=cv('--accent');
+    ctx.beginPath(); ctx.arc(c.x,c.y+bobY,26+Math.sin(now*4)*3,0,7); ctx.fill();
     ctx.globalAlpha=Math.max(0,c.alpha);
   }
-  ctx.fillStyle='rgba(0,0,0,.18)'; ctx.beginPath(); ctx.ellipse(c.x,c.y+9,6,2.4,0,0,7); ctx.fill();
-  rr(c.x-4.5,c.y-4+bobY,9,11,3.5); ctx.fillStyle=col; ctx.fill();
-  ctx.beginPath(); ctx.arc(c.x,c.y-8+bobY,3.6,0,7); ctx.fillStyle=col; ctx.fill();
-  var lp=Math.sin(c.bob)*2.2;
-  ctx.strokeStyle=col; ctx.lineWidth=1.6;
-  ctx.beginPath(); ctx.moveTo(c.x-2,c.y+7+bobY); ctx.lineTo(c.x-2+lp,c.y+11+bobY);
-  ctx.moveTo(c.x+2,c.y+7+bobY); ctx.lineTo(c.x+2-lp,c.y+11+bobY); ctx.stroke();
-  if(c.carry==='token'){ ctx.fillStyle=cv('--muted'); rr(c.x+5,c.y-3+bobY,5,4,1.5); ctx.fill(); }
-  if(c.carry==='badge'){ ctx.fillStyle=cv('--green'); rr(c.x+5,c.y-3+bobY,5,4,1.5); ctx.fill(); }
-  if(c.carry==='reply'){ ctx.fillStyle=cv('--accent'); rr(c.x+5,c.y-4+bobY,6,5,1.5); ctx.fill(); }
-  if(c.traced) txt('#'+c.id,c.x,c.y-15+bobY,8.5,cv('--accent'),600,'center');
+  ctx.fillStyle='rgba(0,0,0,.20)';
+  ctx.beginPath(); ctx.ellipse(c.x,c.y+13,8,3,0,0,7); ctx.fill();
+  /* legs */
+  var lp=Math.sin(c.bob)*3;
+  ctx.strokeStyle=col; ctx.lineWidth=2.1; ctx.lineCap='round';
+  ctx.beginPath();
+  ctx.moveTo(c.x-2.5,c.y+8+bobY); ctx.lineTo(c.x-2.5+lp,c.y+13+bobY);
+  ctx.moveTo(c.x+2.5,c.y+8+bobY); ctx.lineTo(c.x+2.5-lp,c.y+13+bobY);
+  ctx.stroke(); ctx.lineCap='butt';
+  /* body */
+  rr(c.x-6,c.y-5+bobY,12,14,4.5); ctx.fillStyle=col; ctx.fill();
+  /* head */
+  ctx.beginPath(); ctx.arc(c.x,c.y-10+bobY,5,0,7); ctx.fillStyle=col; ctx.fill();
+  /* eye — gives them a facing direction */
+  ctx.fillStyle=cv('--wall');
+  ctx.beginPath(); ctx.arc(c.x+c.face*1.8,c.y-10.5+bobY,1.5,0,7); ctx.fill();
+  /* satchel */
+  if(c.carry){
+    var cc2 = c.carry==='reply'?'--accent':(c.carry==='badge'?'--green':'--muted');
+    ctx.fillStyle=cv(cc2); rr(c.x+c.face*6-2.5,c.y-2+bobY,6,7,2); ctx.fill();
+    ctx.strokeStyle=cv('--wall'); ctx.lineWidth=.8; ctx.stroke();
+  }
+  if(c.queued){ chipText('…',c.x,c.y-20+bobY,9,cv('--yellow'),600); }
+  if(c.traced) chipText('#'+c.id,c.x,c.y-21+bobY,9,cv('--accent'),600);
   ctx.globalAlpha=1;
 }
 
-/* ================================ driver ================================ */
+/* ================================ driver =============================== */
 var simMin=0, playing=false, speedMul=1, raf=null, lastT=0, now=0;
-var demandNow=0, spawnAcc=0, faultNow=false, circuit=0, errAcc=0, ctimer=0;
+var demandNow=0, spawnAcc=0, faultNow=false, circuit=0, errAcc=0, ctimer=0, lastWave=null;
 function clockStr(){ var m=Math.floor(simMin),h=Math.floor(m/60),mm=m%60;
   return (h<10?'0':'')+h+':'+(mm<10?'0':'')+mm; }
 
 function updateSim(dt){
-  simMin += dt*9.6*speedMul;
-  if(simMin>=DAY){ simMin=DAY-0.01; pause(); document.getElementById('play').innerHTML='▶ Replay day'; }
+  simMin+=dt*9.6*speedMul;
+  if(simMin>=DAY){ simMin=DAY-0.01; checkAchs(); pause();
+    banner={text:'SHIFT COMPLETE — '+score+' points',sub:'24 hours · '+stats.ledger+' ledger blocks · nothing rewritten',life:6,kind:'--green'};
+    document.getElementById('play').innerHTML='▶ Replay day'; }
   var m=Math.floor(simMin), ev=evAt(m);
   demandNow=Math.max(0,baseDemand(m)+(ev&&ev.dem?ev.dem:0));
   faultNow=!!(ev&&ev.fault);
-  if(faultNow) errAcc+=dt*3.2; else errAcc=Math.max(0,errAcc-dt*2.2);
-  if(circuit===0&&errAcc>2.2){ circuit=2; ctimer=2.6; }
-  else if(circuit===2){ ctimer-=dt; if(ctimer<=0) circuit=1; }
-  else if(circuit===1){ if(faultNow){circuit=2;ctimer=2.6;} else if(errAcc<0.4) circuit=0; }
 
-  var live=0; for(var i=0;i<couriers.length;i++) if(!couriers[i].dead) live++;
+  /* wave banner on entry */
+  var wid=ev?ev.wave:null;
+  if(wid!==lastWave){
+    if(wid){ seenWaves[wid]=true;
+      banner={text:'⚠ WAVE '+wid+' — '+ev.name.split('—')[0].trim().toUpperCase(),
+              sub:ev.name.split('—')[1]?ev.name.split('—')[1].trim():'', life:2.6,
+              kind:ev.kind==='alert'?'--red':(ev.kind==='warn'?'--yellow':'--green')};
+      if(ev.kind==='alert') shake=Math.max(shake,0.6);
+    }
+    lastWave=wid;
+  }
+  /* circuit breaker — measured in SIMULATED minutes so it behaves the same
+     at every playback speed (a real breaker trips on elapsed fault, not on
+     how fast you are watching). */
+  var simDt=dt*9.6*speedMul;
+  if(faultNow) errAcc+=simDt*0.5; else errAcc=Math.max(0,errAcc-simDt*0.35);
+  if(circuit===0&&errAcc>2.2){ circuit=2; ctimer=4; circuitEverOpen=true; shake=Math.max(shake,0.8);
+    banner={text:'⛔ CIRCUIT OPEN — failing fast',sub:'The breaker refuses immediately rather than queueing behind timeouts',life:2.4,kind:'--red'}; }
+  else if(circuit===2){ ctimer-=simDt; if(ctimer<=0) circuit=1; }
+  else if(circuit===1){ if(faultNow){circuit=2;ctimer=4;} else if(errAcc<0.4){ circuit=0;
+    banner={text:'✓ CIRCUIT CLOSED — route recovered',sub:'Half-open probe succeeded; normal dispatch resumes',life:2.2,kind:'--green'}; } }
+
+  var live=0,queued=0;
+  for(var i=0;i<couriers.length;i++){ if(!couriers[i].dead){ live++; if(couriers[i].queued) queued++; } }
   spawnAcc+=dt*speedMul*(demandNow*0.30);
   while(spawnAcc>=1){ spawnAcc-=1; if(live<24){ spawn(m); live++; } }
 
@@ -735,13 +886,21 @@ function updateSim(dt){
     var b=bays[k];
     if(b.state==='warm'&&!b.pinned&&b.busy===0&&b.idle>45) demolishBay(b);
   }
+  /* system pressure = "HP" */
+  var target=1-Math.min(1,(queued/8)*0.6+(circuit===2?0.45:0)+(faultNow?0.2:0));
+  hp+=(target-hp)*Math.min(1,dt*2.4);
+  if(shake>0) shake-=dt*1.6;
   updateParticles(dt);
+  checkAchs();
 }
 function render(dt){
+  ctx.save();
+  if(shake>0&&!REDUCE) ctx.translate((Math.random()-.5)*7*shake,(Math.random()-.5)*7*shake);
   drawGround(); drawChannels(); drawBridges(); drawGate(); drawBoard(dt); drawTurnstile();
-  drawBays(dt); drawPerm(); drawSandbox(); drawOutbox(); drawMast(); drawLedger();
+  drawQueue(); drawBays(dt); drawPerm(); drawSandbox(); drawOutbox(); drawMast(); drawLedger();
   for(var i=0;i<couriers.length;i++) drawCourier(couriers[i]);
-  drawParticles();
+  drawParticles(); drawStrip(); drawBanner(dt);
+  ctx.restore();
 }
 function paintHUD(){
   var m=Math.floor(simMin);
@@ -749,24 +908,30 @@ function paintHUD(){
   var ph=phaseOf(m), pe=document.getElementById('phase'); pe.textContent=ph[0]; pe.style.color=ph[1];
   var ev=evAt(m), box=document.getElementById('ev');
   box.className='ev'+(ev?(ev.kind==='alert'?' alert':ev.kind==='warn'?' warn':''):'');
-  box.querySelector('.l').textContent=ev?ev.name:'Nominal — steady state';
+  box.querySelector('.l').textContent=ev?('WAVE '+ev.wave+' · '+ev.name):'Nominal — steady state';
+  document.getElementById('score').textContent=score;
+  document.getElementById('combo').textContent='×'+combo;
+  document.getElementById('combobox').className='combo'+(combo>1?'':' cold');
+  var bar=document.getElementById('hpbar');
+  bar.className='hp'+(hp<0.4?' crit':hp<0.7?' warn':'');
+  bar.firstElementChild.style.width=Math.max(3,hp*100)+'%';
   document.getElementById('t-ledger').textContent=stats.ledger;
+  document.getElementById('t-done').textContent=stats.done;
   document.getElementById('t-built').textContent=stats.built;
   document.getElementById('t-evict').textContent=stats.evict;
-  document.getElementById('t-turn').textContent=stats.turn;
   document.getElementById('t-allow').textContent=stats.allow;
   document.getElementById('t-deny').textContent=stats.deny;
 }
 function renderTrace(){
   var el=document.getElementById('tracelog');
   if(!traceSteps.length){
-    el.innerHTML='<div class="empty">Press <b>Trace a message</b> — the next courier arriving from a channel gets a spotlight, and every step of their life is logged here with the real mechanism behind it. You can also click any courier to pick them up mid-route.</div>';
+    el.innerHTML='<div class="empty">Press <b>Trace a message</b> — the next courier from a channel gets a spotlight, and every step of their life is logged here. You can also click any courier to pick them up mid-route.</div>';
     return;
   }
   var h='';
   for(var i=0;i<traceSteps.length;i++){
     var s=traceSteps[i];
-    h+='<div class="tl '+s.kind+'"><div class="n">'+(i+1)+'</div><div class="b"><div class="h">'+s.head+'</div><div class="s">'+s.sub+'</div></div></div>';
+    h+='<div class="tl '+s.kind+'"><div class="n">'+(i+1)+'</div><div><div class="h">'+s.head+'</div><div class="s">'+s.sub+'</div></div></div>';
   }
   el.innerHTML=h; el.scrollTop=el.scrollHeight;
 }
@@ -781,7 +946,8 @@ function play(){ if(simMin>=DAY-0.05) restart(); playing=true; lastT=0;
   document.getElementById('play').innerHTML='❚❚ Pause'; raf=requestAnimationFrame(frame); }
 function pause(){ playing=false; if(raf)cancelAnimationFrame(raf);
   document.getElementById('play').innerHTML='▶ Open the works'; }
-function restart(){ pause(); simMin=0; now=0; spawnAcc=0; circuit=0; errAcc=0; cid=0; traceArmed=false;
+function restart(){ pause(); simMin=0; now=0; spawnAcc=0; circuit=0; errAcc=0; cid=0;
+  traceArmed=false; lastWave=null;
   document.getElementById('tracetag').textContent='idle';
   resetWorld(); render(0.016); paintHUD();
   document.getElementById('play').innerHTML='▶ Open the works'; }
@@ -802,7 +968,7 @@ document.querySelectorAll('.speed').forEach(function(b){
 });
 cvs.addEventListener('click',function(e){
   var r=cvs.getBoundingClientRect(), mx=(e.clientX-r.left)/scale, my=(e.clientY-r.top)/scale;
-  var best=null,bd=22;
+  var best=null,bd=26;
   for(var i=0;i<couriers.length;i++){
     var c=couriers[i]; if(c.dead) continue;
     var d=Math.hypot(c.x-mx,c.y-my); if(d<bd){bd=d;best=c;}
