@@ -2611,11 +2611,28 @@ async fn delete_all_archived(State(state): State<AppState>) -> axum::response::R
 }
 
 async fn list_skills(State(state): State<AppState>) -> Json<serde_json::Value> {
+    // `path` and `scope` tell the reader WHERE a skill came from. Discovery
+    // reads two roots (`<cwd>/.vak/skills` then `<sessions_home>/skills`), and
+    // a workspace skill is a very different trust proposition from a user-wide
+    // one -- the admin console groups by this.
+    let workspace_root = state.core.cwd().join(".vak/skills");
     let skills: Vec<serde_json::Value> = state
         .core
         .skills()
         .iter()
-        .map(|s| serde_json::json!({ "name": s.name, "description": s.description }))
+        .map(|s| {
+            let scope = if s.path.starts_with(&workspace_root) {
+                "workspace"
+            } else {
+                "user"
+            };
+            serde_json::json!({
+                "name": s.name,
+                "description": s.description,
+                "path": s.path.display().to_string(),
+                "scope": scope,
+            })
+        })
         .collect();
     Json(serde_json::json!({ "skills": skills }))
 }
