@@ -586,6 +586,8 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
                 "is_default": entry.is_default,
                 "state": "warm",
                 "idle_secs": entry.idle_secs,
+                "permission_override": entry.permission_override,
+                "effective_permission_mode": entry.effective_permission_mode,
             })
         })
         .collect();
@@ -777,15 +779,40 @@ pub(crate) async fn delete_gateway_binding_admin(
 // ---- Allowlist (docs/design/34-channel-onboarding.md) ---------------------
 
 fn allowlist_entry_json(e: &crate::gateway::AllowlistEntry) -> serde_json::Value {
+    // Resolve the effective permission mode the same way "Effective route"
+    // is surfaced: the console must show what the channel actually gets,
+    // not just what was requested, so a capped override is visible rather
+    // than mistaken for a live grant.
+    let resolved = e
+        .workspace
+        .as_ref()
+        .map(|w| crate::gateway::resolve_channel_permission(w, e.permission_mode));
     serde_json::json!({
         "key": e.key,
         "status": e.status,
         "workspace": e.workspace,
         "route": e.route,
+        "permission_mode": e.permission_mode,
+        "workspace_permission_mode": resolved.as_ref().map(|r| r.workspace_mode),
+        "effective_permission_mode": resolved.as_ref().map(|r| r.effective),
+        "permission_capped": resolved.as_ref().is_some_and(|r| r.was_capped()),
         "added_at": e.added_at,
         "added_by": e.added_by,
         "first_seen_text": e.first_seen_text,
     })
+}
+
+/// Parse an optional `permission_mode` field from an approve/PATCH body.
+/// `Ok(None)` = inherit (field absent, null, or empty string); `Err(())` =
+/// present but unparseable, which is a 400 rather than a silent inherit —
+/// a typo'd mode must never quietly widen or narrow a channel's access.
+fn parse_permission_mode_field(
+    raw: Option<&str>,
+) -> Result<Option<vak_config::PermissionMode>, ()> {
+    match raw.map(str::trim) {
+        None | Some("") => Ok(None),
+        Some(s) => crate::parse_mode(s).map(Some).ok_or(()),
+    }
 }
 
 pub(crate) async fn list_gateway_allowlist(
@@ -806,6 +833,39 @@ pub(crate) struct AllowlistApproveBody {
     workspace: Option<String>,
     #[serde(default)]
     route: Option<GatewayRoutePatch>,
+    /// Optional per-channel permission mode, riding along in the same
+    /// request as `route` rather than on an endpoint of its own.
+    #[serde(default)]
+    permission_mode: Option<String>,
+}
+
+/// Audit an override that the workspace's own boundary will cap down, at
+/// the moment the operator sets it — so the reduction is visible in the
+/// security log immediately, not only when the channel's `Core` is first
+/// started at dispatch (where `CorePool` records the enforcement itself).
+fn record_permission_cap(state: &AppState, key: &str, entry: &crate::gateway::AllowlistEntry) {
+    let Some(workspace) = entry.workspace.as_ref() else {
+        return;
+    };
+    let resolved = crate::gateway::resolve_channel_permission(workspace, entry.permission_mode);
+    if !resolved.was_capped() {
+        return;
+    }
+    vak_core::security_events::record(
+        &state.core.sessions_home(),
+        vak_core::security_events::EventKind::PermissionCapped,
+        "permission_capped",
+        &format!(
+            "key={key} workspace={} requested={} capped_to={}",
+            workspace.display(),
+            resolved
+                .requested
+                .map(|m| m.as_str())
+                .unwrap_or("(inherit)"),
+            resolved.effective.as_str()
+        ),
+        None,
+    );
 }
 
 pub(crate) async fn approve_gateway_allowlist(
@@ -841,9 +901,18 @@ pub(crate) async fn approve_gateway_allowlist(
         Some(_) => return StatusCode::BAD_REQUEST.into_response(),
         None => None,
     };
-    let entry = state
-        .gateway
-        .allowlist_approve(&state.core, &key, workspace, route, "admin");
+    let permission_mode = match parse_permission_mode_field(body.permission_mode.as_deref()) {
+        Ok(m) => m,
+        Err(()) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    let entry = state.gateway.allowlist_approve(
+        &state.core,
+        &key,
+        workspace,
+        route,
+        permission_mode,
+        "admin",
+    );
     vak_core::security_events::record(
         &state.core.sessions_home(),
         vak_core::security_events::EventKind::ChatApproved,
@@ -851,6 +920,7 @@ pub(crate) async fn approve_gateway_allowlist(
         &format!("key={key}"),
         None,
     );
+    record_permission_cap(&state, &key, &entry);
     state
         .hub
         .emit_config_changed("gateway_allowlist_approved", &key);
@@ -884,6 +954,10 @@ pub(crate) struct AllowlistPatchBody {
     workspace: Option<String>,
     #[serde(default)]
     route: Option<GatewayRoutePatch>,
+    /// Absent / null / `""` clears the pin (inherit the workspace default),
+    /// mirroring how an empty `route` object clears a pinned route.
+    #[serde(default)]
+    permission_mode: Option<String>,
 }
 
 /// `PATCH /admin/api/gateway/allowlist/{key}` (docs/design/34 "Editing an
@@ -949,12 +1023,18 @@ pub(crate) async fn patch_gateway_allowlist(
         | None => None,
         Some(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
-    let Some(entry) = state
-        .gateway
-        .allowlist_patch(&state.core, &key, workspace, route)
+    let permission_mode = match parse_permission_mode_field(body.permission_mode.as_deref()) {
+        Ok(m) => m,
+        Err(()) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    let Some(entry) =
+        state
+            .gateway
+            .allowlist_patch(&state.core, &key, workspace, route, permission_mode)
     else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    record_permission_cap(&state, &key, &entry);
     // Same stale-detection seam as the binding route editor: drop the
     // cached revision (never the ledger) so the next message re-derives
     // the effective route and rotates only if it really changed.
@@ -964,12 +1044,16 @@ pub(crate) async fn patch_gateway_allowlist(
         vak_core::security_events::EventKind::ConfigChange,
         "chat_edited",
         &format!(
-            "key={key} workspace={}",
+            "key={key} workspace={} permission_mode={}",
             entry
                 .workspace
                 .as_ref()
                 .map(|w| w.display().to_string())
-                .unwrap_or_else(|| "(inherit)".into())
+                .unwrap_or_else(|| "(inherit)".into()),
+            entry
+                .permission_mode
+                .map(|m| m.as_str())
+                .unwrap_or("(inherit)")
         ),
         None,
     );
@@ -1408,6 +1492,232 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// Approve and return the entry JSON, for the permission-mode tests.
+    async fn approve_json(
+        app: &axum::Router,
+        token: &str,
+        key: &str,
+        body: &str,
+    ) -> (StatusCode, serde_json::Value) {
+        let req = Request::builder()
+            .method("POST")
+            .uri(format!("/admin/api/gateway/allowlist/{key}/approve"))
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        if status != StatusCode::OK {
+            return (status, serde_json::Value::Null);
+        }
+        (status, body_json(resp).await)
+    }
+
+    /// A workspace directory whose own config fixes `mode` — the ceiling
+    /// a channel override is capped against.
+    fn workspace_dir_with_mode(mode: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let vak = dir.path().join(".vak");
+        std::fs::create_dir_all(&vak).unwrap();
+        std::fs::write(
+            vak.join("config.toml"),
+            format!("permission_mode = \"{mode}\"\n"),
+        )
+        .unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn approve_without_permission_mode_inherits_the_workspace() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let ws = workspace_dir_with_mode("read-only");
+        let (status, json) = approve_json(
+            &app,
+            &token,
+            "telegram%3A60",
+            &serde_json::json!({ "workspace": ws.path() }).to_string(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        // No pin stored, and the effective mode is simply the workspace's.
+        assert!(json["permission_mode"].is_null());
+        assert_eq!(json["effective_permission_mode"], "read-only");
+        assert_eq!(json["permission_capped"], false);
+    }
+
+    #[tokio::test]
+    async fn approve_with_permission_mode_at_or_below_workspace_is_kept() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let ws = workspace_dir_with_mode("full-access");
+        let (status, json) = approve_json(
+            &app,
+            &token,
+            "telegram%3A61",
+            &serde_json::json!({ "workspace": ws.path(), "permission_mode": "read-only" })
+                .to_string(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["permission_mode"], "read-only");
+        assert_eq!(json["workspace_permission_mode"], "full-access");
+        assert_eq!(json["effective_permission_mode"], "read-only");
+        assert_eq!(json["permission_capped"], false);
+    }
+
+    /// The security-relevant admin path: an operator asking for more than
+    /// the workspace itself allows gets the workspace's mode, not theirs,
+    /// and the reduction lands in the security log.
+    #[tokio::test]
+    async fn approve_with_over_broad_permission_mode_is_capped_and_audited() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let ws = workspace_dir_with_mode("read-only");
+        let (status, json) = approve_json(
+            &app,
+            &token,
+            "telegram%3A62",
+            &serde_json::json!({ "workspace": ws.path(), "permission_mode": "full-access" })
+                .to_string(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        // The request is recorded verbatim...
+        assert_eq!(json["permission_mode"], "full-access");
+        // ...but what the channel actually gets is the workspace's ceiling.
+        assert_eq!(json["effective_permission_mode"], "read-only");
+        assert_eq!(json["permission_capped"], true);
+
+        let events = vak_core::security_events::list(&state.core.sessions_home(), 50);
+        assert!(
+            events.iter().any(
+                |e| e.kind == vak_core::security_events::EventKind::PermissionCapped
+                    && e.detail.contains("requested=full-access")
+                    && e.detail.contains("capped_to=read-only")
+            ),
+            "a capped grant must be visible in the audit log, got {events:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn approve_rejects_an_unparseable_permission_mode() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let (status, _) = approve_json(
+            &app,
+            &token,
+            "telegram%3A63",
+            r#"{"permission_mode":"god-mode"}"#,
+        )
+        .await;
+        // A typo must be a hard 400, never a silent inherit.
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn patch_sets_and_clears_a_permission_pin() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let ws = workspace_dir_with_mode("full-access");
+        approve(
+            &app,
+            &token,
+            "telegram%3A64",
+            &serde_json::json!({ "workspace": ws.path() }).to_string(),
+        )
+        .await;
+
+        let resp = patch_allowlist(
+            &app,
+            &token,
+            "telegram%3A64",
+            &serde_json::json!({ "workspace": ws.path(), "permission_mode": "workspace-write" })
+                .to_string(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["permission_mode"], "workspace-write");
+        assert_eq!(json["effective_permission_mode"], "workspace-write");
+
+        // An omitted field clears the pin back to inherit, the same way an
+        // empty route object clears a pinned route.
+        let resp = patch_allowlist(
+            &app,
+            &token,
+            "telegram%3A64",
+            &serde_json::json!({ "workspace": ws.path() }).to_string(),
+        )
+        .await;
+        let json = body_json(resp).await;
+        assert!(json["permission_mode"].is_null());
+        assert_eq!(json["effective_permission_mode"], "full-access");
+    }
+
+    #[tokio::test]
+    async fn patch_with_over_broad_permission_mode_is_capped() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let ws = workspace_dir_with_mode("workspace-write");
+        approve(
+            &app,
+            &token,
+            "telegram%3A65",
+            &serde_json::json!({ "workspace": ws.path() }).to_string(),
+        )
+        .await;
+        let resp = patch_allowlist(
+            &app,
+            &token,
+            "telegram%3A65",
+            &serde_json::json!({ "workspace": ws.path(), "permission_mode": "full-access" })
+                .to_string(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["effective_permission_mode"], "workspace-write");
+        assert_eq!(json["permission_capped"], true);
+    }
+
+    /// Editing a route from the *binding* surface must not silently drop a
+    /// channel's permission pin — that surface never mentions permissions.
+    #[tokio::test]
+    async fn binding_route_write_through_preserves_the_permission_pin() {
+        let state = test_state();
+        let ws = workspace_dir_with_mode("full-access");
+        state.gateway.allowlist_approve(
+            &state.core,
+            "telegram:66",
+            ws.path().to_path_buf(),
+            None,
+            Some(vak_config::PermissionMode::ReadOnly),
+            "admin",
+        );
+        state.gateway.allowlist_patch_route_if_allowed(
+            &state.core,
+            "telegram:66",
+            Some(crate::gateway::AllowlistRoute {
+                provider: "anthropic".into(),
+                model: "sonnet".into(),
+            }),
+        );
+        let entry = state.gateway.allowlist_get("telegram:66").unwrap();
+        assert_eq!(
+            entry.permission_mode,
+            Some(vak_config::PermissionMode::ReadOnly)
+        );
+        assert_eq!(entry.route.unwrap().model, "sonnet");
     }
 
     async fn patch_allowlist(

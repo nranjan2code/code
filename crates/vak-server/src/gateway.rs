@@ -144,6 +144,14 @@ pub struct AllowlistEntry {
     pub workspace: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route: Option<AllowlistRoute>,
+    /// Per-channel permission mode (docs/design/34 "Per-channel permission
+    /// mode"). `None` inherits the target workspace's own configured mode,
+    /// which is the pre-existing behavior and stays the default. `Some(m)`
+    /// pins this channel to `m` — but only ever as a *reduction*: the pool
+    /// caps it to the workspace's own resolved mode, so an override can
+    /// never grant more than a local `vak` run in that workspace has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<vak_config::PermissionMode>,
     pub added_at: String,
     pub added_by: String,
     /// Only meaningful while `status == Pending` — the first message text
@@ -282,6 +290,7 @@ impl GatewayState {
                                 status: AllowlistStatus::Allowed,
                                 workspace: None,
                                 route: None,
+                                permission_mode: None,
                                 added_at: now.clone(),
                                 added_by: "config_import".into(),
                                 first_seen_text: None,
@@ -346,12 +355,19 @@ impl GatewayState {
     /// workspace's own sandbox/permission/session state, not just pick its
     /// provider/model.
     pub(crate) fn core_for_entry(&self, default_core: &Core, key: &str) -> Result<Core, String> {
-        let workspace = self
-            .allowlist_get(key)
-            .and_then(|entry| entry.workspace)
+        let entry = self.allowlist_get(key);
+        let workspace = entry
+            .as_ref()
+            .and_then(|e| e.workspace.clone())
             .unwrap_or_else(|| default_core.cwd().clone());
+        // Only an `allowed` entry's override counts. A pending/denied one
+        // never reaches dispatch, but reading the field unconditionally
+        // would make the pool key depend on a non-authoritative record.
+        let permission_override = entry
+            .filter(|e| e.status == AllowlistStatus::Allowed)
+            .and_then(|e| e.permission_mode);
         self.core_pool
-            .resolve_at(&workspace, std::time::Instant::now())
+            .resolve_at(&workspace, permission_override, std::time::Instant::now())
     }
 
     pub(crate) fn set_enabled(&mut self, enabled: bool) {
@@ -576,6 +592,7 @@ impl GatewayState {
                         status: AllowlistStatus::Pending,
                         workspace: None,
                         route: None,
+                        permission_mode: None,
                         added_at: chrono::Utc::now().to_rfc3339(),
                         added_by: "gateway".into(),
                         first_seen_text: Some(truncated),
@@ -599,6 +616,7 @@ impl GatewayState {
         key: &str,
         workspace: PathBuf,
         route: Option<AllowlistRoute>,
+        permission_mode: Option<vak_config::PermissionMode>,
         added_by: &str,
     ) -> AllowlistEntry {
         let entry = {
@@ -611,6 +629,7 @@ impl GatewayState {
                 status: AllowlistStatus::Allowed,
                 workspace: Some(workspace),
                 route,
+                permission_mode,
                 added_at: chrono::Utc::now().to_rfc3339(),
                 added_by: added_by.to_string(),
                 first_seen_text: None,
@@ -634,6 +653,7 @@ impl GatewayState {
                 status: AllowlistStatus::Denied,
                 workspace: None,
                 route: None,
+                permission_mode: None,
                 added_at: chrono::Utc::now().to_rfc3339(),
                 added_by: added_by.to_string(),
                 first_seen_text: None,
@@ -662,6 +682,7 @@ impl GatewayState {
         key: &str,
         workspace: Option<PathBuf>,
         route: Option<AllowlistRoute>,
+        permission_mode: Option<vak_config::PermissionMode>,
     ) -> Option<AllowlistEntry> {
         let entry = {
             let mut map = self
@@ -674,6 +695,7 @@ impl GatewayState {
             }
             entry.workspace = workspace;
             entry.route = route;
+            entry.permission_mode = permission_mode;
             entry.clone()
         };
         persist_allowlist(core, self);
@@ -697,7 +719,10 @@ impl GatewayState {
         if entry.status != AllowlistStatus::Allowed {
             return false;
         }
-        self.allowlist_patch(core, key, entry.workspace, route)
+        // Preserve the permission override: the binding editor only ever
+        // speaks about routes, so it must not silently clear a channel's
+        // pinned permission mode as a side effect.
+        self.allowlist_patch(core, key, entry.workspace, route, entry.permission_mode)
             .is_some()
     }
 
@@ -818,6 +843,52 @@ impl GatewayState {
             persist_allowlist(core, self);
         }
         removed
+    }
+}
+
+/// What a channel's permission mode actually resolves to, for display and
+/// for the approve/patch audit trail.
+pub(crate) struct ResolvedPermission {
+    /// The target workspace's own configured mode — the ceiling.
+    pub workspace_mode: vak_config::PermissionMode,
+    /// What the entry asked for, if anything.
+    pub requested: Option<vak_config::PermissionMode>,
+    /// What the channel actually gets: `min(requested, workspace_mode)`,
+    /// or `workspace_mode` when nothing was requested.
+    pub effective: vak_config::PermissionMode,
+}
+
+impl ResolvedPermission {
+    /// True when an override asked for more than the workspace allows and
+    /// was reduced. This is the condition worth an audit-log entry.
+    pub fn was_capped(&self) -> bool {
+        matches!(self.requested, Some(r) if r != self.effective)
+    }
+}
+
+/// Read-only mirror of the cap `CorePool::resolve_at` enforces, for the
+/// admin surface. Deliberately shares `PermissionMode::capped_by` with the
+/// pool so the number the console shows is derived the same way as the one
+/// the dispatch path actually pins — no second, drifting rule.
+///
+/// A workspace whose config fails to load falls back to the compiled
+/// default (`WorkspaceWrite`), matching `vak_config`'s own layering; the
+/// pool remains the authority at dispatch either way.
+pub(crate) fn resolve_channel_permission(
+    workspace: &std::path::Path,
+    requested: Option<vak_config::PermissionMode>,
+) -> ResolvedPermission {
+    let workspace_mode = vak_config::load_with_trust(workspace, true)
+        .map(|c| c.permission_mode)
+        .unwrap_or_default();
+    let effective = match requested {
+        Some(r) => r.capped_by(workspace_mode),
+        None => workspace_mode,
+    };
+    ResolvedPermission {
+        workspace_mode,
+        requested,
+        effective,
     }
 }
 
@@ -2104,6 +2175,7 @@ mod tests {
                 provider: "anthropic".into(),
                 model: "sonnet".into(),
             }),
+            None,
             "admin",
         );
         assert_eq!(approved.status, AllowlistStatus::Allowed);
@@ -2157,7 +2229,14 @@ mod tests {
         assert_eq!(pending_count, 1, "no duplicate pending entry created");
 
         // Allowed key dispatches normally.
-        gw.allowlist_approve(&core, "telegram:100", core.cwd().clone(), None, "admin");
+        gw.allowlist_approve(
+            &core,
+            "telegram:100",
+            core.cwd().clone(),
+            None,
+            None,
+            "admin",
+        );
         assert!(matches!(
             gw.allowlist_resolve_inbound(&core, "telegram:100", "hi"),
             AllowlistDecision::Allowed

@@ -2717,7 +2717,7 @@ struct ModeBody {
 
 /// Accepts every spelling clients use: config kebab-case (`workspace-write`)
 /// and the Debug format surfaced by `/health` + `/config` (`WorkspaceWrite`).
-fn parse_mode(raw: &str) -> Option<vak_config::PermissionMode> {
+pub(crate) fn parse_mode(raw: &str) -> Option<vak_config::PermissionMode> {
     vak_config::PermissionMode::deserialize_str(raw).or(match raw {
         "ReadOnly" => Some(vak_config::PermissionMode::ReadOnly),
         "WorkspaceWrite" => Some(vak_config::PermissionMode::WorkspaceWrite),

@@ -15,6 +15,7 @@ import type {
   OpsDiagnostics,
   OpsStatus,
   PendingApproval,
+  PermissionMode,
   ProviderListResponse,
   RebuildStats,
   SearchHit,
@@ -129,7 +130,7 @@ export const api = {
 
   approveGatewayAllowlist: (
     key: string,
-    body: { workspace?: string; route?: AllowlistRoute } = {},
+    body: { workspace?: string; route?: AllowlistRoute; permission_mode?: PermissionMode } = {},
   ): Promise<AllowlistEntry> =>
     fetch(`/admin/api/gateway/allowlist/${encodeURIComponent(key)}/approve`, {
       method: "POST",
@@ -139,7 +140,12 @@ export const api = {
 
   patchGatewayAllowlist: (
     key: string,
-    body: { workspace?: string; route?: AllowlistRoute | Record<string, never> },
+    body: {
+      workspace?: string;
+      route?: AllowlistRoute | Record<string, never>;
+      // Omitted / empty clears the pin back to "inherit the workspace".
+      permission_mode?: PermissionMode | "";
+    },
   ): Promise<AllowlistEntry> =>
     fetch(`/admin/api/gateway/allowlist/${encodeURIComponent(key)}`, {
       method: "PATCH",

@@ -370,6 +370,103 @@ eviction and the pool cap are both config keys under `[gateway]`
 by the Admin UI's new "Core pool" panel and a warm/cold chip in the
 pending-channel approve flow.
 
+## Per-channel permission mode
+
+Phase 2 made a channel run its target workspace's own `Core` — including
+that workspace's permission mode. That closed one gap and exposed the
+next one, straight from the field: permission mode is now *workspace*-
+scoped and nothing else. Every channel routed to a workspace inherits
+that workspace's `.vak/config.toml` mode, so an operator who wants a
+personal Telegram chat to be read-only while a team channel keeps
+workspace-write has exactly one lever — stand up a second, otherwise
+identical workspace purely to vary trust level. That is the same problem
+the route override already solved for provider/model, and it takes the
+same shape.
+
+**Design**: `AllowlistEntry` grows `permission_mode:
+Option<PermissionMode>`, a sibling of the existing `route:
+Option<AllowlistRoute>` and read the same inherit-or-override way.
+`None` — the default, and every pre-existing entry, since the field is
+`#[serde(default)]` — inherits the workspace's own configured mode, which
+is exactly today's behavior. `Some(m)` pins this one channel to `m`.
+
+**Cap, never escalate.** An override is *not* applied blindly. The target
+workspace's own resolved mode is a ceiling, and the pin is clamped to it:
+
+```
+effective = min(channel_pin, workspace_configured_mode)
+```
+
+So a channel may match or reduce what the workspace already grants, and
+can never exceed it. Pinning `full-access` on a channel routed to a
+workspace whose config says `read-only` yields `read-only`, not
+`full-access`. This preserves Phase 2's invariant verbatim — a pooled
+Core still never gives a channel more than a local `vak` run in that
+workspace has — and it makes the failure mode of an operator mistake a
+*denial*, not an exposure. The clamp is `PermissionMode::capped_by`
+(`crates/vak-config/src/lib.rs`), a `min` over an explicit permissiveness
+`rank()`; both the enforcement path and the admin display path go through
+that one function, so the number the console shows and the number the
+dispatch path pins cannot drift.
+
+**CorePool keying**. This is the part that must be right. A `Core`
+carries exactly one permission mode. If two channels sharing a workspace
+but holding different pins were handed the same pooled `Core`, whichever
+resolved first would silently dictate the other's permissions — the
+lower-trust channel would exercise the higher-trust channel's mode. So
+the pool key widens from a canonical workspace path to the pair
+`(workspace, permission_override)`. Un-overridden channels keep key
+`(workspace, None)` and therefore keep sharing the exact instance they
+share today, including the gateway's own permanent default entry.
+Override entries are ordinary evictable entries under the same
+idle-eviction and cap semantics as any other — an override on the
+gateway's *own* workspace is evictable, because it is not the gateway's
+Core.
+
+Capping happens once, in `CorePool::resolve_at`, on the freshly
+constructed `Core` before it is published to the map — so no request can
+ever observe the instance at its un-capped mode. The ceiling read there
+is `Core::effective_permission_mode()` on a Core that has no override
+yet, which is precisely the workspace's own configured value.
+
+**Admin API**: `POST .../allowlist/{key}/approve` and `PATCH
+.../allowlist/{key}` both accept an optional `permission_mode` field
+alongside the existing `workspace`/`route` — same requests, no new
+endpoint, exactly the way `route` already rides along. Absent, `null`, or
+`""` means inherit (and on PATCH, clears an existing pin, mirroring how
+an empty `route` object clears a pinned route). An unparseable value is a
+400, never a silent inherit: a typo must not quietly change a channel's
+access. `GET .../allowlist` entries now carry `permission_mode` (what was
+pinned), `workspace_permission_mode` (the ceiling),
+`effective_permission_mode` (what the channel actually gets), and
+`permission_capped`. The `PATCH .../bindings/{key}` write-through
+preserves an entry's pin — that surface only speaks about routes and must
+not clear a permission pin as a side effect.
+
+**Admin UI**: the pending-channel approve form and the "Edit access"
+editor each gain a "Pin a specific permission mode (otherwise inherits
+the workspace default)" checkbox, parallel to the existing provider/model
+pin, revealing the same three-button `mode-btn` control the Settings
+page's "Permission Mode" panel uses. The channel row shows "Effective
+permission" beside "Effective route", labelled with its provenance
+(inherited / channel override / capped by workspace), and approving with
+an over-broad pin raises an alert toast naming what it was reduced to.
+
+**Audit**: a capped grant is recorded as a `permission_capped` security
+event — a new `EventKind::PermissionCapped` rather than a reused
+`config_change`, so a silently-reduced grant is greppable in the audit
+log. It means an operator believes a channel has access it does not have,
+which is worth its own kind. It fires in two places: at approve/PATCH
+time (the moment the operator sets it) and in `CorePool::resolve_at` (the
+moment enforcement actually applies), so the log shows both intent and
+effect.
+
+**Known limitation**: a pooled Core's ceiling is read when that instance
+is constructed. If a workspace's config later *tightens*, an already-warm
+overridden instance keeps its earlier clamp until idle eviction drops it
+— the same config-staleness a pooled Core already has for route and
+everything else, bounded by `core_pool_idle_secs`.
+
 ## Phase 3: Discord/Slack bridges + per-surface admin UI
 
 The routing model is already surface-agnostic by construction

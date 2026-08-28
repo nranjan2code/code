@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### One channel can be read-only while another shares its workspace
+
+Permission mode was workspace-scoped and nothing else: set once in a
+workspace's `.vak/config.toml`, inherited by every channel routed there.
+An operator who wanted a personal Telegram chat kept read-only while a
+team channel kept workspace-write had exactly one option — stand up a
+second, otherwise identical workspace purely to vary trust level. An
+allowlist entry now carries an optional `permission_mode`, the same
+inherit-or-override shape its `route` field already had. Absent means
+inherit the workspace's own mode, unchanged for every existing entry.
+
+An override can only ever *reduce*. The workspace's own configured mode
+is a hard ceiling, and a pin is clamped to it: pinning `full-access` on a
+channel routed to a `read-only` workspace yields `read-only`. That keeps
+the standing invariant that a channel never gets more than a local `vak`
+run in that workspace would, and makes an operator mistake fail closed. A
+clamped grant is recorded as a new `permission_capped` security event, at
+both the moment it is set and the moment it is enforced, so a silently
+reduced grant is visible in the audit log rather than swallowed.
+
+The Core pool is now keyed by `(workspace, permission override)` rather
+than workspace alone — two channels sharing a workspace with different
+pins get separate `Core` instances, because a `Core` holds exactly one
+permission mode and sharing one would let whichever channel resolved
+first dictate the other's permissions. Un-overridden channels keep
+sharing the instance they already shared; idle-eviction and cap semantics
+are unchanged. `approve` and `PATCH .../allowlist/{key}` take
+`permission_mode` in the same request body that already carries
+`workspace`/`route`, and the Gateway page grows a permission-mode pin in
+both the approve form and "Edit access", plus an "Effective permission"
+readout beside the existing "Effective route".
+
 ### Admin console can finally set a bot token, and stops accepting one as a routing key
 
 The Gateway page's "Registered channels" box could register a
