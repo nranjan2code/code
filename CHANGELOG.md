@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### The menu bar really does survive a logout now
+
+The `com.vak.desktop` LaunchAgent added last release did bring the
+desktop app back at login — but the app it brought back could not draw
+anything. Its plist was missing `LimitLoadToSessionType`, so launchd ran
+the job in the plain background `gui/<uid>` domain rather than the Aqua
+login session. The process started and stayed up, but it never checked
+in with LaunchServices and was given no WindowServer connection, which
+makes a status item impossible to place. `lsappinfo` showed the damage
+plainly: `bundle path=[NULL]`, `executable path=[NULL]`, `Arch=!!none`,
+`!cgsConnection`. With the key set, the same launch reports
+`type="Foreground"`, a real session token, and the resolved bundle — and
+the icon appears. GUI units now render that key; the headless gateway
+and telegram units deliberately do not, since pinning them to Aqua would
+stop them loading in a session with no logged-in GUI user.
+
+A second, independent fault made this almost impossible to diagnose in
+the field. `tauri-plugin-single-instance` calls `std::process::exit(0)`
+from inside its own plugin setup when another instance already owns
+`/tmp/dev_vak_desktop_si.sock`. That happens before anything this app
+writes a line, so a login where macOS had already reopened Vak left
+`~/Library/Logs/vak/desktop.log` completely empty and the job reporting
+`last exit code = 0` — indistinguishable from a unit that never ran.
+`vak-desktop` now writes one startup line naming its pid and argv before
+the builder runs, so an early hand-off is always attributable.
+
+That hand-off path also ignored `--tray`. A login launch from the
+LaunchAgent passes its argv to the already-running instance, which
+unconditionally revealed the window — throwing a window on screen at
+login, exactly what `--tray` exists to prevent. The single-instance
+callback now honours the flag; ordinary second launches (Dock, Finder,
+`open`) carry no flag and still reveal the window as before.
+
 ### The live-event stream now recovers from a stale session too
 
 The previous fix for a session going stale after a server restart only

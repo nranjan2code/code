@@ -44,7 +44,17 @@ const TRAY_FLAG: &str = "--tray";
 /// latter flashes a full-size window on screen before the setup hook can
 /// run.
 fn tray_only_start() -> bool {
-    std::env::args_os().any(|arg| arg == std::ffi::OsStr::new(TRAY_FLAG))
+    is_tray_launch(std::env::args_os())
+}
+
+/// Whether an argv asks for a tray-only launch.
+///
+/// Split out from [`tray_only_start`] so it can also classify the argv the
+/// single-instance plugin hands over from a *second* process, which is not
+/// this process's own `std::env::args`.
+fn is_tray_launch<S: AsRef<std::ffi::OsStr>>(args: impl IntoIterator<Item = S>) -> bool {
+    args.into_iter()
+        .any(|arg| arg.as_ref() == std::ffi::OsStr::new(TRAY_FLAG))
 }
 
 fn show_main_window(app: &AppHandle) {
@@ -722,14 +732,34 @@ fn main() {
     {
         std::process::exit(vak_delivery::worker::run_stdio());
     }
+    // One line, always, before any plugin can bail out. The
+    // single-instance plugin calls `std::process::exit(0)` from inside its
+    // own setup when another instance already owns the socket, so without
+    // this a launchd start that hands over leaves `desktop.log` completely
+    // empty and indistinguishable from a job that never ran at all.
+    eprintln!(
+        "[vak-desktop] starting pid={} tray={} args={:?}",
+        std::process::id(),
+        tray_only_start(),
+        std::env::args().skip(1).collect::<Vec<_>>()
+    );
     tauri::Builder::default()
         // Exactly one instance ever runs: a second launch hands its argv to
         // the live process and refocuses that window instead of starting a
         // rival shell with its own backend and its own project state.
         // Must be registered first so it can bail out before any other
         // plugin or the setup hook does work.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            show_main_window(app);
+        // A handover from a `--tray` launch must stay silent. The
+        // `com.vak.desktop` LaunchAgent fires at every login, and if the
+        // app is already up (macOS reopened it, or the user never quit)
+        // that agent's process hands its argv here and exits 0. Showing
+        // the window then would throw one on screen at login — exactly
+        // what `--tray` exists to prevent. Every human second launch
+        // (Dock, Finder, `open`) still carries no flag and still reveals.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if !is_tray_launch(&argv) {
+                show_main_window(app);
+            }
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -809,4 +839,34 @@ fn main() {
         })
         .inspect_err(|e| eprintln!("fatal: {e}"))
         .ok();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TRAY_FLAG, is_tray_launch};
+
+    /// The single-instance plugin hands a second process's whole argv
+    /// (program name included) to the live app. A login launch from the
+    /// `com.vak.desktop` LaunchAgent carries `--tray` and must not be
+    /// mistaken for a user asking for the window.
+    #[test]
+    fn tray_flag_is_recognised_in_a_handed_over_argv() {
+        assert!(is_tray_launch([
+            "/Applications/Vak.app/Contents/MacOS/vak-desktop",
+            TRAY_FLAG
+        ]));
+        assert!(is_tray_launch(["vak-desktop", "--tray"]));
+    }
+
+    /// Dock, Finder and `open` launches carry no flag; those are the ones
+    /// that must reveal the window.
+    #[test]
+    fn an_ordinary_launch_is_not_a_tray_launch() {
+        assert!(!is_tray_launch(["vak-desktop"]));
+        assert!(!is_tray_launch(Vec::<String>::new()));
+        assert!(
+            !is_tray_launch(["vak-desktop", "--traypad"]),
+            "the flag must match whole arguments, not prefixes"
+        );
+    }
 }

@@ -54,7 +54,20 @@ each deliberate:
 | `RunAtLoad` / `WantedBy` | yes | yes — the whole point |
 | `KeepAlive` / `Restart` | `true` / `always` | `false` / `no` |
 | `WorkingDirectory` | the workspace `services-sync` ran from | the account home |
+| `LimitLoadToSessionType` | absent | `Aqua` |
 | shipped always | yes | only when the build produced `vak-desktop` |
+
+**`LimitLoadToSessionType = Aqua` is what makes the icon appear at all.**
+Without it launchd loads the job into the plain background `gui/<uid>`
+domain: the process starts and stays up, but it never checks in with
+LaunchServices and is given no WindowServer (CGS) connection, so it can
+place no status item — a unit that "works" and shows nothing.
+`lsappinfo` names the difference exactly: `bundle path=[NULL]`,
+`Arch=!!none`, `!cgsConnection` without the key, versus
+`type="Foreground"` with a real session token once it is set. The
+headless units must *not* have it — they have no UI to place, and
+pinning them to Aqua would stop them loading in a session with no
+logged-in GUI user.
 
 **KeepAlive is off** because the tray's `Quit Vak` calls `app.exit(0)`:
 under KeepAlive launchd would relaunch a second later and Quit would
@@ -87,10 +100,20 @@ failure, because both halves of the cause are gone:
    activation of the running instance does what the double-click asked.
 2. If macOS launches a second process instead,
    `tauri_plugin_single_instance` hands its argv to the live one, which
-   also reveals the window — and no second menu-bar icon appears.
+   reveals the window — and no second menu-bar icon appears.
 
 Exactly one of those two paths runs for any given launch, and both end
-with a window on screen. The launchd instance is a normal (not
+with a window on screen. The one exception is a hand-off carrying
+`--tray`: that is the LaunchAgent firing at a login where the app is
+already up, nobody asked for a window, and the callback stays silent.
+
+The hand-off also costs a process. The plugin calls
+`std::process::exit(0)` from inside its own setup, before this app
+writes anything, so a login hand-off used to leave `desktop.log` empty
+and the job reporting `last exit code = 0` — indistinguishable from a
+unit that never ran. `main` therefore writes one line naming its pid and
+argv before the builder runs; an empty `desktop.log` now genuinely means
+the binary never started. The launchd instance is a normal (not
 `Accessory`, not `LSUIElement`) app so it keeps a Dock icon and its
 ordinary LaunchServices registration; the bundle-wide `LSUIElement` that
 made the old tray invisible to all of this is still forbidden
@@ -102,8 +125,8 @@ made the old tray invisible to all of this is still forbidden
 main window is created hidden (`visible: false` in `tauri.conf.json`) and
 revealed in `setup` on an ordinary launch, so nothing flashes on screen
 in either mode. Only the unit passes `--tray`; every other entry point —
-double-click, Dock, `Open Vak`, a handed-over second launch — reveals the
-window. Without it, login-launching the app would throw a 1440×900 window
+double-click, Dock, `Open Vak`, a handed-over second launch that did not
+carry the flag — reveals the window. Without it, login-launching the app would throw a 1440×900 window
 at the user on every boot, a worse regression than the missing
 persistence it fixes.
 

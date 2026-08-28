@@ -50,6 +50,9 @@ pub struct ServiceSpec {
     /// (launchd `KeepAlive`, systemd `Restart=always`). False for GUI
     /// services, where an explicit user quit must actually quit.
     pub keep_alive: bool,
+    /// Whether the process needs a real Aqua login session (a WindowServer
+    /// connection and a LaunchServices check-in). See [`ServiceDef::gui`].
+    pub gui: bool,
 }
 
 /// Static template table behind [`ServiceSpec`].
@@ -73,6 +76,19 @@ pub struct ServiceDef {
     /// in the installer). A unit exec'ing a path that does not exist is
     /// worse than no unit, so these are skipped when absent.
     pub optional: bool,
+    /// The unit draws on screen and must therefore be pinned to the Aqua
+    /// login session (`LimitLoadToSessionType`).
+    ///
+    /// Without that key launchd runs the job in the plain background
+    /// `gui/<uid>` domain: the process starts and stays up, but it never
+    /// checks in with LaunchServices and gets no WindowServer (CGS)
+    /// connection, so it can draw no menu-bar icon at all. `lsappinfo`
+    /// reports the difference exactly — `bundle path=[NULL]`,
+    /// `Arch=!!none`, `!cgsConnection` without the key, versus
+    /// `type="Foreground"` with a real session token once it is set.
+    /// Headless services must stay false: they have no UI to place, and
+    /// pinning them to Aqua would stop them loading in a non-GUI session.
+    pub gui: bool,
 }
 
 pub const SERVICES: &[ServiceDef] = &[
@@ -84,6 +100,7 @@ pub const SERVICES: &[ServiceDef] = &[
         keep_alive: true,
         workspace_scoped: true,
         optional: false,
+        gui: false,
     },
     ServiceDef {
         name: "com.vak.telegram",
@@ -93,6 +110,7 @@ pub const SERVICES: &[ServiceDef] = &[
         keep_alive: true,
         workspace_scoped: true,
         optional: false,
+        gui: false,
     },
     // The desktop app is what puts the menu-bar icon on screen; without a
     // unit nothing brings it back after a logout or reboot, so the tray —
@@ -117,6 +135,7 @@ pub const SERVICES: &[ServiceDef] = &[
         keep_alive: false,
         workspace_scoped: false,
         optional: true,
+        gui: true,
     },
 ];
 
@@ -146,6 +165,7 @@ impl ServiceDef {
             },
             home_dir: home_dir.to_path_buf(),
             keep_alive: self.keep_alive,
+            gui: self.gui,
         }
     }
 
@@ -196,13 +216,21 @@ pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
         prog_args.push_str(&format!("\n\t\t<string>{}</string>", xml_escape(arg)));
     }
     let log = xml_escape(&spec.log_path.to_string_lossy());
+    // GUI units must be pinned to the Aqua login session or launchd hands
+    // them a background job with no WindowServer connection — the process
+    // runs, logs nothing, and silently draws no menu-bar icon.
+    let session_type = if spec.gui {
+        "\n\t<key>LimitLoadToSessionType</key>\n\t<string>Aqua</string>"
+    } else {
+        ""
+    };
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>KeepAlive</key>
-	<{}/>
+	<{}/>{}
 	<key>Label</key>
 	<string>{}</string>
 	<key>ProgramArguments</key>
@@ -225,6 +253,7 @@ pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
 </plist>
 "#,
         if spec.keep_alive { "true" } else { "false" },
+        session_type,
         xml_escape(spec.name),
         prog_args,
         xml_escape(&spec.home_dir.to_string_lossy()),
@@ -815,6 +844,7 @@ mod tests {
             working_dir: PathBuf::from("/workspace"),
             home_dir: PathBuf::from("/Users/x"),
             keep_alive: def.keep_alive,
+            gui: def.gui,
         }
     }
 
@@ -853,6 +883,15 @@ mod tests {
             "a login launch must not throw a window on screen: {plist}"
         );
         assert!(plist.contains("/l/desktop.log"));
+        // Without this key launchd runs the app in the background gui/<uid>
+        // domain: it starts, logs nothing, never checks in with
+        // LaunchServices, gets no WindowServer connection, and therefore
+        // draws no menu-bar icon — the exact failure this unit exists to
+        // prevent.
+        assert!(
+            plist.contains("<key>LimitLoadToSessionType</key>\n\t<string>Aqua</string>"),
+            "a GUI unit needs an Aqua session or it can draw no tray icon: {plist}"
+        );
 
         let unit = render_systemd_unit(&spec);
         assert_eq!(def.systemd_unit(), "vak-desktop.service");
@@ -875,6 +914,12 @@ mod tests {
             let spec = spec_for(def_named(name), Path::new("/b"), Path::new("/l"));
             assert!(render_launchd_plist(&spec).contains("<key>KeepAlive</key>\n\t<true/>"));
             assert!(render_systemd_unit(&spec).contains("Restart=always"));
+            // Aqua-pinning a headless daemon would stop it loading in any
+            // session without a logged-in GUI user.
+            assert!(
+                !render_launchd_plist(&spec).contains("LimitLoadToSessionType"),
+                "{name} has no UI and must not be pinned to a GUI session"
+            );
         }
     }
 
