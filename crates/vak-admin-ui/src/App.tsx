@@ -62,6 +62,36 @@ const ICONS = {
   settings: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
 };
 
+function confirmDestructive(message: string): boolean {
+  return window.confirm(`${message}\n\nThis cannot be undone from the admin console.`);
+}
+
+function PageHeader(props: { title: string; description: string; actions?: import("solid-js").JSX.Element }) {
+  return (
+    <header class="page-header">
+      <div>
+        <h1>{props.title}</h1>
+        <p>{props.description}</p>
+      </div>
+      <Show when={props.actions}>
+        <div class="page-actions">{props.actions}</div>
+      </Show>
+    </header>
+  );
+}
+
+function LoadError(props: { message?: string; onRetry?: () => void }) {
+  return (
+    <div class="empty error-state" role="alert">
+      <strong>Couldn’t load this section</strong>
+      <p>{props.message ?? "The server did not return usable data. Your saved configuration is unchanged."}</p>
+      <Show when={props.onRetry}>
+        <button class="ghost small" onClick={() => props.onRetry?.()}>Try again</button>
+      </Show>
+    </div>
+  );
+}
+
 // ---- filesystem paths ------------------------------------------------------
 
 /// Shorten a path by dropping WHOLE middle segments, never by breaking one.
@@ -307,6 +337,7 @@ function Overview() {
 
   return (
     <div class="view">
+      <PageHeader title="Overview" description="A live readout of sessions, approvals, system health, and recent activity." />
       <div class="stats-row">
         <StatCard label="Sessions indexed" value={sessions()?.sessions.length ?? "…"} />
         <StatCard
@@ -518,6 +549,7 @@ function Sessions() {
   };
 
   const handleDiscard = async (sessionId: string) => {
+    if (!confirmDestructive("Discard this candidate run?")) return;
     setBusyCandidate(sessionId);
     try {
       await api.discardBestRun(sessionId);
@@ -540,6 +572,7 @@ function Sessions() {
 
   return (
     <div class="view">
+      <PageHeader title="Sessions" description="Inspect append-only ledgers, run prompts, review diffs, and compare candidate work." />
       {/* Best of N Candidate Runs Card */}
       <Show when={(bestofn()?.runs?.length ?? 0) > 0}>
         <section class="panel" style="margin-bottom:14px">
@@ -707,6 +740,7 @@ function Transcript(props: { sessionId: string }) {
   };
 
   const restoreCommit = async (seq: number) => {
+    if (!confirmDestructive(`Restore the session worktree to checkpoint #${seq}?`)) return;
     try {
       await api.restoreCheckpoint(props.sessionId, seq);
       pushToast("info", `Restored to checkpoint #${seq}`);
@@ -761,6 +795,7 @@ function Transcript(props: { sessionId: string }) {
 
   return (
     <div class="view">
+      <PageHeader title="Session forensic view" description="Read the ledger, inspect worktree changes, and control the active run." />
       <div class="toolbar">
         <button class="ghost" onClick={() => navigate("#/sessions")}>‹ Sessions</button>
         <span class="mono dim">{shortId(props.sessionId)}</span>
@@ -1011,6 +1046,9 @@ function ModeDefaultChip(props: { mode: string }) {
 
 function McpServersView(props: { ctx: ExtensionsCtx }) {
   const [expanded, setExpanded] = createSignal("");
+  const [editing, setEditing] = createSignal("");
+  const [editCmd, setEditCmd] = createSignal("");
+  const [editArgs, setEditArgs] = createSignal("");
   const [newName, setNewName] = createSignal("");
   const [newCmd, setNewCmd] = createSignal("");
   const [newArgs, setNewArgs] = createSignal("");
@@ -1045,6 +1083,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
   };
 
   const removeServer = async (name: string) => {
+    if (!confirmDestructive(`Remove MCP server “${name}”?`)) return;
     const next = { ...props.ctx.mcp() };
     delete next[name];
     try {
@@ -1054,6 +1093,35 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
+    }
+  };
+
+  const beginEdit = (name: string, server: McpServerConfig) => {
+    setEditing(name);
+    setEditCmd(server.command);
+    setEditArgs((server.args ?? []).join(" "));
+  };
+
+  const saveEdit = async (name: string) => {
+    if (!editCmd().trim() || busy()) return;
+    setBusy(true);
+    try {
+      await api.putMcpServers({
+        ...props.ctx.mcp(),
+        [name]: {
+          ...props.ctx.mcp()[name],
+          command: editCmd().trim(),
+          args: editArgs().trim() ? editArgs().trim().split(/\s+/) : [],
+        },
+      });
+      pushToast("info", `Updated MCP server ‘${name}’`);
+      setEditing("");
+      props.ctx.refetchMcp();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -1076,6 +1144,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
 
   const disableTavily = async () => {
     if (tavilyBusy()) return;
+    if (!confirmDestructive("Disable Tavily web search?")) return;
     setTavilyBusy(true);
     try {
       await api.disableTavily();
@@ -1271,10 +1340,23 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
                                 </div>
                               </div>
                               <div class="row-gap" style="margin-top:12px">
+                                <Show when={editing() !== name}>
+                                  <button class="ghost small" onClick={() => beginEdit(name, server)}>Edit command</button>
+                                </Show>
                                 <button class="danger small" onClick={() => removeServer(name)}>
                                   Remove server
                                 </button>
                               </div>
+                              <Show when={editing() === name}>
+                                <div class="edit-form compact-edit">
+                                  <div class="form-row"><label>command</label><input class="mono" value={editCmd()} onInput={(e) => setEditCmd(e.currentTarget.value)} /></div>
+                                  <div class="form-row"><label>args</label><input class="mono" value={editArgs()} onInput={(e) => setEditArgs(e.currentTarget.value)} /></div>
+                                  <div class="row-gap">
+                                    <button disabled={busy() || !editCmd().trim()} onClick={() => void saveEdit(name)}>Save changes</button>
+                                    <button class="ghost small" onClick={() => setEditing("")}>Cancel</button>
+                                  </div>
+                                </div>
+                              </Show>
                             </td>
                           </tr>
                         </Show>
@@ -1322,6 +1404,7 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
   const [busyId, setBusyId] = createSignal("");
 
   const act = async (id: string, promote: boolean) => {
+    if (!promote && !confirmDestructive("Reject this skill proposal?")) return;
     setBusyId(id);
     try {
       if (promote) await api.promoteProposal(id);
@@ -1475,6 +1558,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
   };
 
   const removeHook = async (index: number) => {
+    if (!confirmDestructive("Remove this lifecycle hook?")) return;
     const next = [...props.ctx.hooks()];
     next.splice(index, 1);
     try {
@@ -1619,6 +1703,11 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
   const [modelPin, setModelPin] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [busyId, setBusyId] = createSignal("");
+  const [editingId, setEditingId] = createSignal("");
+  const [editName, setEditName] = createSignal("");
+  const [editPrompt, setEditPrompt] = createSignal("");
+  const [editSchedule, setEditSchedule] = createSignal("");
+  const [editModelPin, setEditModelPin] = createSignal("");
 
   const guard = async (id: string, work: () => Promise<void>, ok: string) => {
     setBusyId(id);
@@ -1655,6 +1744,36 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
       else pushToast("alert", `${err}`);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const beginEdit = (task: TaskItem) => {
+    setEditingId(task.id);
+    setEditName(task.name);
+    setEditPrompt(task.prompt ?? "");
+    setEditSchedule(task.schedule ?? (task.interval_secs ? String(task.interval_secs) : ""));
+    setEditModelPin(task.model_pin ?? "");
+  };
+
+  const saveEdit = async () => {
+    const id = editingId();
+    if (!id || !editName().trim() || !editPrompt().trim() || busyId()) return;
+    setBusyId(id);
+    try {
+      await api.patchTask(id, {
+        name: editName().trim(),
+        prompt: editPrompt().trim(),
+        schedule: editSchedule().trim() || null,
+        model_pin: editModelPin().trim() || null,
+      });
+      pushToast("info", "Task updated");
+      setEditingId("");
+      props.ctx.refetchTasks();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setBusyId("");
     }
   };
 
@@ -1734,10 +1853,17 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
                           >
                             {t.enabled ? "Pause" : "Enable"}
                           </button>
+                          <button class="ghost small" disabled={busyId() === t.id} onClick={() => beginEdit(t)}>
+                            Edit
+                          </button>
                           <button
                             class="danger small"
                             disabled={busyId() === t.id}
-                            onClick={() => void guard(t.id, () => api.deleteTask(t.id), "Task deleted")}
+                            onClick={() => {
+                              if (confirmDestructive(`Delete task “${t.name}”?`)) {
+                                void guard(t.id, () => api.deleteTask(t.id), "Task deleted");
+                              }
+                            }}
                           >
                             Delete
                           </button>
@@ -1750,6 +1876,25 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
             </table>
           </Match>
         </Switch>
+
+        <Show when={editingId()}>
+          <div class="edit-form" aria-label="Edit scheduled task">
+            <div class="panel-title-row">
+              <div>
+                <h3>Edit task</h3>
+                <p class="dim">Changes apply to the next run. Existing session history is preserved.</p>
+              </div>
+              <button class="ghost small" onClick={() => setEditingId("")}>Cancel</button>
+            </div>
+            <div class="form-row"><label>name</label><input value={editName()} onInput={(e) => setEditName(e.currentTarget.value)} /></div>
+            <div class="form-row"><label>prompt</label><textarea rows={3} value={editPrompt()} onInput={(e) => setEditPrompt(e.currentTarget.value)} /></div>
+            <div class="form-row"><label>schedule</label><input class="mono" placeholder="*/30 * * * *" value={editSchedule()} onInput={(e) => setEditSchedule(e.currentTarget.value)} /></div>
+            <div class="form-row"><label>model pin</label><input class="mono" placeholder="Workspace default" value={editModelPin()} onInput={(e) => setEditModelPin(e.currentTarget.value)} /></div>
+            <button disabled={busyId() === editingId() || !editName().trim() || !editPrompt().trim()} onClick={() => void saveEdit()}>
+              {busyId() === editingId() ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        </Show>
 
         <details class="advanced">
           <summary>Schedule a task</summary>
@@ -1840,6 +1985,7 @@ function ExtensionsSection() {
 
   return (
     <div class="view">
+      <PageHeader title="Extensions" description="Configure the external processes, instructions, hooks, and unattended tasks available to vak." />
       <Show when={failure()}>
         <section class="panel panel-alert callout" style="margin-bottom:14px">
           <div>
@@ -1915,6 +2061,7 @@ function MemoryView() {
   };
 
   const forget = async (id: string) => {
+    if (!confirmDestructive("Forget this memory note?")) return;
     try {
       await api.forgetMemory(id);
       pushToast("info", "Memory note forgotten");
@@ -1926,6 +2073,7 @@ function MemoryView() {
 
   return (
     <div class="view">
+      <PageHeader title="Memory" description="Record durable workspace or profile knowledge and remove stale notes." />
       <div class="two-col">
         <section class="panel">
           <h2>Tiered Memory Notes ({memoryData()?.notes?.length ?? 0})</h2>
@@ -1983,7 +2131,13 @@ function MemoryView() {
 // ---- Search ----------------------------------------------------------------
 
 function highlight(snippet: string): string {
-  return snippet.replaceAll("<b>", "<mark>").replaceAll("</b>", "</mark>");
+  // FTS snippets contain only <b> emphasis markers, but the surrounding text
+  // is still untrusted transcript content. Escape it before using innerHTML.
+  const escaped = snippet
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+  return escaped.replaceAll("&lt;b&gt;", "<mark>").replaceAll("&lt;/b&gt;", "</mark>");
 }
 
 function SearchView() {
@@ -2017,6 +2171,7 @@ function SearchView() {
 
   return (
     <div class="view">
+      <PageHeader title="Search" description="Find evidence across every indexed transcript and jump directly to its session." />
       <div class="search-hero">
         <input
           class="search-big"
@@ -2077,6 +2232,7 @@ function Security() {
 
   return (
     <div class="view">
+      <PageHeader title="Security" description="Review authentication, permission, provider, and gateway events from the audit ledger." />
       <div class="toolbar">
         <div class="chips">
           <For each={SEC_KINDS}>
@@ -2158,6 +2314,7 @@ function Inbox() {
 
   return (
     <div class="view">
+      <PageHeader title="Inbox" description="Handle approvals, task results, budgets, and proactive updates that need your attention." />
       <div class="toolbar">
         <label class="toggle">
           <input
@@ -3618,6 +3775,7 @@ function Settings() {
 
   return (
     <div class="view">
+      <PageHeader title="Settings" description="Manage the workspace route, permission mode, provider credentials, maintenance, and console appearance." />
       <div class="two-col">
         <div class="stack">
           <section class="panel">
@@ -3709,6 +3867,7 @@ function Settings() {
                   class="danger small"
                   onClick={() =>
                     void guard(async () => {
+                      if (!confirmDestructive(`Revoke the ${selectedProvider()} provider key?`)) return;
                       await api.deleteProviderKey(selectedProvider());
                       refetchProviders();
                       setDiscoveredModels([]);
