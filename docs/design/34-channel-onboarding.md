@@ -3,9 +3,16 @@
 Status: **Phase 1 implemented** (allowlist store, gateway pending
 lifecycle, admin API routes, Admin UI pending/approve/deny/revoke panels —
 `crates/vak-server/src/gateway.rs`, `crates/vak-server/src/admin.rs`,
-`crates/vak-admin-ui/src/App.tsx`). Phase 2 (multi-tenant Core pool) and
-Phase 3 (Discord/Slack bridges) remain **proposed**, not yet implemented —
-see the phase sections below. Written after a live incident
+`crates/vak-admin-ui/src/App.tsx`). Phase 2 (multi-tenant Core pool) is
+**in progress**; Phase 3 (Discord/Slack bridges) remains **proposed**.
+A follow-up pass ("Editing an already-allowed entry", "Lifecycle
+completeness: doctor and repair" below) closes gaps found after Phase 1
+shipped: entries were create-only (no edit path once allowed), nothing
+tied a channel's health into `vak doctor`, and the resolved-vs-open
+question list needed actual resolutions before Phase 2 builds on top of
+it — those sections are corrections/additions to apply during or
+immediately after Phase 2, not a separate Phase 4. See the phase sections
+below. Written after a live incident
 (2026-08-28): the Telegram bridge returned `403` for a chat that used to
 work, because `gateway.chat_allowlist` is a config-file-only setting with
 no UI, no runtime API, and no visible pending-request state — the operator
@@ -149,11 +156,79 @@ lists pending/allowed chats the same way, so a single-user desktop setup
 doesn't require opening the web admin console just to approve their own
 phone's chat id.
 
-## Open questions (for review before implementation)
+## Editing an already-allowed entry, and what changing `workspace` means
 
-1. **Expiry for pending entries** — auto-deny after N days so the list
-   doesn't accumulate abandoned probe attempts indefinitely? Proposed
-   default 7 days, configurable.
+Phase 1 as first written only set `workspace`/`route` at approve time —
+an allowed entry was otherwise immutable except for revoke. That's not
+enough: an operator needs to *re-point* a channel later (move it to a
+different project, change its pinned model) without revoking and
+re-approving from scratch, which would lose `added_at`/`added_by`
+provenance and momentarily 403 the channel.
+
+**Fix**: add
+```
+PATCH /admin/api/gateway/allowlist/{key}   body: {workspace?, route?}
+```
+for any `allowed` entry (pending/denied entries aren't edited, they're
+approved/denied/re-triggered). This does not create a new entry or touch
+`added_at`/`added_by` — it mutates `workspace`/`route` in place.
+
+**This must reuse the existing session-rotation contract, not bypass
+it.** `docs/design/22-gateway.md` already establishes: "Session contracts
+never mutate... a changed effective route rotates to a new frozen session
+while preserving the old append-only ledger." Editing an allowlist
+entry's `workspace` or `route` is exactly the kind of change that
+invalidates a bound session's contract, so `PATCH .../allowlist/{key}`
+must go through the *same* stale-detection path `PATCH
+.../bindings/{key}` already uses — not a second, divergent way to change
+a channel's effective route. Concretely: the allowlist entry's
+`workspace`/`route` and the binding's `workspace`/`route` override are
+the same conceptual field observed from two admin surfaces (Phase 1's new
+one and the pre-existing one); implementation should have exactly one
+source of truth for "what does this channel route to" that both surfaces
+read/write, not two configs that can drift from each other. (This is a
+correction to Phase 1/2's implementation, not just future work — worth
+checking before Phase 2 lands whether `AllowlistEntry.workspace` and
+`GatewayBinding.workspace` already risk this exact drift.)
+
+**Workspace no longer resolvable** (directory moved, deleted, or a typo'd
+path was approved): the pool (Phase 2) fails to start a Core for it. This
+must not silently 500 on the next inbound message — it should reject with
+a clear "workspace unreachable, ask an operator to repair" error *and*
+surface as a `vak doctor` failure (see below), so it's caught before a
+user ever hits it, not just when they do.
+
+## Lifecycle completeness: doctor and repair
+
+Channel state is now part of the system's health surface, not a config
+detail. `vak doctor` (`crates/vak-core/src/health.rs` /
+`crates/vak/src/doctor.rs`) gains a new check:
+
+- **`gateway channels`**: fails if any `allowed` entry's `workspace` no
+  longer exists / isn't readable, or if any `pending` entry has sat
+  longer than the expiry window (see below) without being acted on. Pass
+  detail lists counts; fail detail names the offending keys so `doctor`'s
+  output is actionable without a separate admin-console trip.
+
+`vak doctor --repair` (already built for self-install drift) gains a
+matching mechanical fix for the one case that has one:
+- an expired `pending` entry auto-denies (see expiry policy below) —
+  mechanical, no judgment call, matches the existing "act only on checks
+  with a known fix" rule from `AGENTS.md` invariant 19.
+- an `allowed` entry with an unreachable `workspace` is **not**
+  auto-repaired (repointing it to a different workspace is a judgment
+  call, not mechanical) — `doctor --repair` reports it and points at
+  `PATCH .../allowlist/{key}` or the Admin UI, same as it already defers
+  provider-auth and config-warning failures to the operator today.
+
+## Open questions (resolved / for review before implementation)
+
+1. **Expiry for pending entries** — **resolved**: 7 days, configurable
+   via a `[gateway]` key following the existing `KNOWN_GATEWAY_KEYS`
+   pattern. Auto-deny (not silent deletion — a denied-by-expiry entry
+   stays visible with `added_by: "expiry"` so "why did this stop
+   working" has an answer) is now wired into `doctor --repair` above
+   rather than left as a standalone cron-only cleanup.
 2. **Multi-operator approval** — single-user desktop doesn't need it, but
    a hosted gateway with an admin team might want "who approved this" to
    matter beyond the audit log. Deferred; `added_by` is captured from day
@@ -163,10 +238,16 @@ phone's chat id.
    allowlist entry is a separate decision.
 4. **Should `workspace` on an entry be restricted to a known/registered
    set of workspaces**, or free-text any path the gateway process can
-   read? Free-text today (matches how `self services-sync` already picks
-   an arbitrary cwd), but a picker constrained to "workspaces vak has
-   actually been run in" would prevent typo'd paths creating a binding
-   that silently 500s.
+   read? **Resolved toward a picker, not free-text**: the Admin UI's
+   workspace field (approve, and the new PATCH-based edit above) should
+   offer a dropdown of "workspaces vak has actually been run in" (a list
+   already derivable from existing session ledgers grouped by cwd —
+   check `vak-store`'s indexed sessions for a ready source) with a
+   fallback "custom path" option that free-types but visibly warns it's
+   unverified until the pool successfully starts a Core there. This
+   directly serves the doctor check above: a typo'd path is caught at
+   entry time by offering known-good options first, not just diagnosed
+   after the fact.
 
 ## Phase 1 scope vs. later phases
 
