@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vak — A Day in the Life (Load Simulation)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+<style>
+  :root {
+    --bg:#f4f2ec; --surface:#fbfaf6; --surface-2:#ffffff; --surface-3:#f0ede4;
+    --border:#ddd8cb; --border-soft:#e7e3d8;
+    --text:#232019; --text-soft:#4f4a3f; --muted:#7c7565; --faint:#9a9384;
+    --accent:#c85a3c; --accent-bright:#b64d31; --accent-wash:rgba(200,90,60,.10);
+    --green:#4f8a5f; --green-wash:rgba(79,138,95,.14);
+    --yellow:#b0842f; --yellow-wash:rgba(176,132,47,.15);
+    --red:#c1494c; --red-wash:rgba(193,73,76,.14);
+    --blue:#4d76ad; --blue-wash:rgba(77,118,173,.14);
+    --grid:rgba(120,110,90,.14);
+    --shadow:0 1px 2px rgba(40,34,22,.05),0 10px 30px rgba(40,34,22,.08);
+    --mono:'IBM Plex Mono','SF Mono',ui-monospace,Menlo,monospace;
+    --sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  }
+  @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+    --bg:#171714; --surface:#1c1c19; --surface-2:#22221f; --surface-3:#292925;
+    --border:#34342f; --border-soft:#2a2a26;
+    --text:#eeeae2; --text-soft:#c4c0b8; --muted:#918e86; --faint:#68665f;
+    --accent:#df795f; --accent-bright:#ee9278; --accent-wash:rgba(223,121,95,.14);
+    --green:#73a982; --green-wash:rgba(115,169,130,.16);
+    --yellow:#d4a85d; --yellow-wash:rgba(212,168,93,.16);
+    --red:#d86f72; --red-wash:rgba(216,111,114,.16);
+    --blue:#7c9fc9; --blue-wash:rgba(124,159,201,.16);
+    --grid:rgba(200,190,170,.10);
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 16px 44px rgba(0,0,0,.4);
+  }}
+  :root[data-theme="dark"]{
+    --bg:#171714; --surface:#1c1c19; --surface-2:#22221f; --surface-3:#292925;
+    --border:#34342f; --border-soft:#2a2a26;
+    --text:#eeeae2; --text-soft:#c4c0b8; --muted:#918e86; --faint:#68665f;
+    --accent:#df795f; --accent-bright:#ee9278; --accent-wash:rgba(223,121,95,.14);
+    --green:#73a982; --green-wash:rgba(115,169,130,.16);
+    --yellow:#d4a85d; --yellow-wash:rgba(212,168,93,.16);
+    --red:#d86f72; --red-wash:rgba(216,111,114,.16);
+    --blue:#7c9fc9; --blue-wash:rgba(124,159,201,.16);
+    --grid:rgba(200,190,170,.10);
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 16px 44px rgba(0,0,0,.4);
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; }
+  body { background:var(--bg); color:var(--text); font-family:var(--sans);
+    font-size:15px; line-height:1.55; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1200px; margin:0 auto; padding:0 20px; }
+
+  header.mast { border-bottom:1px solid var(--border);
+    background:radial-gradient(120% 150% at 88% -30%,var(--accent-wash),transparent 60%),var(--surface); }
+  .mast-in { padding:30px 0 24px; display:flex; align-items:flex-end; gap:24px; flex-wrap:wrap; }
+  .mast-in .lead { flex:1; min-width:280px; }
+  .eyebrow { font-family:var(--mono); font-size:11.5px; font-weight:500; letter-spacing:.18em;
+    text-transform:uppercase; color:var(--accent); margin:0 0 10px; }
+  h1 { font-weight:600; font-size:clamp(24px,3.6vw,34px); line-height:1.08; letter-spacing:-.025em;
+    margin:0 0 8px; text-wrap:balance; }
+  .sub { font-size:14.5px; color:var(--text-soft); max-width:64ch; margin:0; }
+  .sub b { color:var(--text); font-weight:600; }
+
+  /* clock cluster */
+  .clock { text-align:right; }
+  .clock .time { font-family:var(--mono); font-weight:600; font-size:38px; letter-spacing:-.02em; line-height:1; color:var(--text);
+    font-variant-numeric:tabular-nums; }
+  .clock .phase { font-family:var(--mono); font-size:12px; color:var(--accent); margin-top:6px; letter-spacing:.04em; }
+
+  /* controls */
+  .controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:14px 0; border-bottom:1px solid var(--border-soft); }
+  .btn { font-family:var(--sans); font-size:13px; font-weight:600; cursor:pointer; border-radius:8px; padding:8px 15px; border:1px solid transparent; }
+  .btn.primary { background:var(--accent); color:#fff; } .btn.primary:hover{ background:var(--accent-bright); }
+  .btn.ghost { background:var(--surface-2); border-color:var(--border); color:var(--text-soft); }
+  .btn.ghost:hover { color:var(--text); background:var(--surface-3); }
+  .speeds { display:flex; gap:4px; margin-left:4px; }
+  .speed { font-family:var(--mono); font-size:12px; cursor:pointer; border:1px solid var(--border); background:var(--surface-2);
+    color:var(--muted); border-radius:7px; padding:6px 10px; }
+  .speed[aria-pressed="true"] { border-color:var(--accent); color:var(--text); background:var(--accent-wash); }
+  .ticker { margin-left:auto; display:flex; align-items:center; gap:10px; font-family:var(--mono); font-size:12.5px;
+    padding:7px 13px; border:1px solid var(--border); border-radius:999px; background:var(--surface-2); max-width:100%; }
+  .ticker .tdot { width:8px; height:8px; border-radius:50%; background:var(--green); flex:none; }
+  .ticker.alert .tdot { background:var(--red); } .ticker.warn .tdot { background:var(--yellow); }
+  .ticker .tlabel { color:var(--text); font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  /* stat row */
+  .stats { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin:18px 0; }
+  .stat { border:1px solid var(--border); border-radius:12px; background:var(--surface); padding:12px 14px; }
+  .stat .k { font-family:var(--mono); font-size:10px; letter-spacing:.07em; text-transform:uppercase; color:var(--muted); margin:0 0 6px; }
+  .stat .v { font-family:var(--mono); font-weight:600; font-size:26px; letter-spacing:-.01em; color:var(--text); font-variant-numeric:tabular-nums; line-height:1; }
+  .stat .v small { font-size:12px; color:var(--faint); font-weight:400; margin-left:3px; }
+  .stat .u { font-size:11px; color:var(--faint); margin-top:5px; font-family:var(--mono); }
+  .stat.warnv .v { color:var(--yellow); } .stat.critv .v { color:var(--red); }
+  .cbadge { font-family:var(--mono); font-size:12px; font-weight:600; padding:4px 9px; border-radius:7px; display:inline-block; }
+  .cb-closed { color:var(--green); background:var(--green-wash); }
+  .cb-half { color:var(--yellow); background:var(--yellow-wash); }
+  .cb-open { color:var(--red); background:var(--red-wash); }
+
+  /* component tiles */
+  .grid-h { font-family:var(--mono); font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted);
+    margin:18px 0 10px; display:flex; align-items:center; gap:10px; }
+  .grid-h::after { content:''; flex:1; height:1px; background:var(--border-soft); }
+  .tiles { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; }
+  .tile { border:1px solid var(--border); border-radius:12px; background:var(--surface); padding:12px 13px; position:relative; overflow:hidden;
+    transition:border-color .25s, background .25s; }
+  .tile.act { border-color:var(--green); }
+  .tile.hot { border-color:var(--yellow); }
+  .tile.crit { border-color:var(--red); }
+  .tile .th { display:flex; align-items:center; gap:8px; margin-bottom:9px; }
+  .tile .name { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--text); }
+  .tile .role { font-size:10px; color:var(--faint); font-family:var(--mono); margin-left:auto; }
+  .pdot { width:7px; height:7px; border-radius:50%; background:var(--faint); flex:none; }
+  .pdot.on { background:var(--green); box-shadow:0 0 0 0 rgba(115,169,130,.6); }
+  .pdot.warn { background:var(--yellow); } .pdot.crit { background:var(--red); }
+  .tile .big { font-family:var(--mono); font-weight:600; font-size:22px; color:var(--text); font-variant-numeric:tabular-nums; line-height:1; }
+  .tile .big small { font-size:11px; color:var(--faint); font-weight:400; margin-left:3px; }
+  .tile .meta { font-size:11px; color:var(--muted); margin-top:6px; font-family:var(--mono); min-height:14px; }
+  /* pool slots */
+  .slots { display:flex; gap:4px; margin-top:8px; }
+  .slot { flex:1; height:16px; border-radius:5px; background:var(--surface-3); border:1px solid var(--border-soft); position:relative; }
+  .slot.warm { background:var(--green-wash); border-color:var(--green); }
+  .slot.pin { background:var(--accent-wash); border-color:var(--accent); }
+  .slot.evict { background:var(--red-wash); border-color:var(--red); }
+  .slot .sl { position:absolute; left:2px; top:1px; font-family:var(--mono); font-size:8px; color:var(--faint); }
+  @media (prefers-reduced-motion: no-preference){
+    .pdot.on { animation:pulse 1.6s ease-out infinite; }
+    @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(115,169,130,.5);} 70%{box-shadow:0 0 0 6px rgba(115,169,130,0);} 100%{box-shadow:0 0 0 0 rgba(115,169,130,0);} }
+  }
+
+  /* ops chart */
+  .ops { margin:22px 0 10px; border:1px solid var(--border); border-radius:14px; background:var(--surface); box-shadow:var(--shadow); overflow:hidden; }
+  .ops-h { display:flex; align-items:center; gap:14px; padding:12px 16px; border-bottom:1px solid var(--border-soft); flex-wrap:wrap; }
+  .ops-h .ot { font-weight:600; font-size:14px; letter-spacing:-.01em; }
+  .ops-h .leg { margin-left:auto; display:flex; gap:6px 14px; flex-wrap:wrap; font-family:var(--mono); font-size:11px; color:var(--muted); }
+  .ops-h .leg span { display:inline-flex; align-items:center; gap:6px; }
+  .ops-h .leg i { width:14px; height:3px; border-radius:2px; }
+  .canvas-box { padding:8px 10px 4px; }
+  canvas { width:100%; display:block; }
+
+  footer { padding:22px 0 50px; color:var(--muted); font-size:12.5px; }
+  footer .wrap { display:flex; flex-wrap:wrap; gap:5px 16px; align-items:center; }
+  footer b { color:var(--text-soft); font-weight:500; }
+  footer code { font-family:var(--mono); font-size:11.5px; color:var(--accent); }
+
+  @media (max-width:900px){ .stats{ grid-template-columns:repeat(2,1fr);} .tiles{ grid-template-columns:repeat(2,1fr);} }
+</style>
+</head>
+<body>
+
+<header class="mast"><div class="wrap mast-in">
+  <div class="lead">
+    <p class="eyebrow">Load Simulation · v0.11.7</p>
+    <h1>A day in the life of a vak deployment</h1>
+    <p class="sub">A synthetic 24-hour run of a <b>vak serve --gateway</b> host: a diurnal load curve, injected incidents, and every component reacting live. Watch the tiles, then read the ops charts below — this models the <b>single-node</b> behavior the concurrency review describes: parallel across sessions, bounded by the CorePool, protected by retries, the circuit breaker, and the rate limiter.</p>
+  </div>
+  <div class="clock">
+    <div class="time" id="clock">00:00</div>
+    <div class="phase" id="phase">night · quiet</div>
+  </div>
+</div></header>
+
+<main class="wrap">
+
+  <div class="controls">
+    <button class="btn primary" id="play">▶ Play day</button>
+    <button class="btn ghost" id="restart">Restart</button>
+    <div class="speeds" role="group" aria-label="Speed">
+      <button class="speed" data-x="1" aria-pressed="false">1×</button>
+      <button class="speed" data-x="2" aria-pressed="true">2×</button>
+      <button class="speed" data-x="4" aria-pressed="false">4×</button>
+      <button class="speed" data-x="8" aria-pressed="false">8×</button>
+    </div>
+    <div class="ticker" id="ticker"><span class="tdot"></span><span class="tlabel">Nominal — steady state</span></div>
+  </div>
+
+  <!-- NOW stats -->
+  <div class="stats">
+    <div class="stat" id="s-thru"><p class="k">Throughput now</p><div class="v" id="v-thru">0<small>/min</small></div><div class="u" id="u-thru">runs completed</div></div>
+    <div class="stat" id="s-lat"><p class="k">Latency p95</p><div class="v" id="v-lat">0<small>ms</small></div><div class="u" id="u-lat">p50 <span id="u-p50">0</span> ms</div></div>
+    <div class="stat" id="s-core"><p class="k">Active cores</p><div class="v" id="v-core">1<small>/5</small></div><div class="u">pool: 1 pinned + 4</div></div>
+    <div class="stat" id="s-queue"><p class="k">Queue depth</p><div class="v" id="v-queue">0</div><div class="u" id="u-queue">runs waiting</div></div>
+    <div class="stat" id="s-circ"><p class="k">Provider circuit</p><div class="v" style="font-size:20px;"><span class="cbadge cb-closed" id="v-circ">CLOSED</span></div><div class="u" id="u-circ">retries 0/min</div></div>
+  </div>
+
+  <!-- ingress tiles -->
+  <p class="grid-h">Surfaces &amp; ingress</p>
+  <div class="tiles">
+    <div class="tile" id="t-cli"><div class="th"><span class="pdot" id="d-cli"></span><span class="name">CLI</span><span class="role">vak exec</span></div><div class="big" id="b-cli">0<small>/min</small></div><div class="meta" id="m-cli">local, no network</div></div>
+    <div class="tile" id="t-desk"><div class="th"><span class="pdot" id="d-desk"></span><span class="name">Desktop</span><span class="role">Tauri</span></div><div class="big" id="b-desk">0<small> sess</small></div><div class="meta" id="m-desk">loopback + token</div></div>
+    <div class="tile" id="t-slack"><div class="th"><span class="pdot" id="d-slack"></span><span class="name">Slack</span><span class="role">bridge</span></div><div class="big" id="b-slack">0<small>/min</small></div><div class="meta" id="m-slack">/gateway/inbound</div></div>
+    <div class="tile" id="t-disc"><div class="th"><span class="pdot" id="d-disc"></span><span class="name">Discord</span><span class="role">bridge</span></div><div class="big" id="b-disc">0<small>/min</small></div><div class="meta" id="m-disc">/gateway/inbound</div></div>
+    <div class="tile" id="t-tg"><div class="th"><span class="pdot" id="d-tg"></span><span class="name">Telegram</span><span class="role">bridge</span></div><div class="big" id="b-tg">0<small>/min</small></div><div class="meta" id="m-tg">/gateway/inbound</div></div>
+  </div>
+
+  <!-- core & guards tiles -->
+  <p class="grid-h">Core, guards &amp; providers</p>
+  <div class="tiles">
+    <div class="tile" id="t-rl"><div class="th"><span class="pdot" id="d-rl"></span><span class="name">Rate limiter</span><span class="role">per-IP</span></div><div class="big" id="b-rl">0<small> 429/min</small></div><div class="meta" id="m-rl">admitting</div></div>
+    <div class="tile" id="t-pool"><div class="th"><span class="pdot" id="d-pool"></span><span class="name">CorePool</span><span class="role">cap 4+1</span></div><div class="big" id="b-pool">1<small> warm</small></div>
+      <div class="slots" id="slots"></div></div>
+    <div class="tile" id="t-run"><div class="th"><span class="pdot" id="d-run"></span><span class="name">Runtime</span><span class="role">sessions</span></div><div class="big" id="b-run">0<small> active</small></div><div class="meta" id="m-run">0 queued</div></div>
+    <div class="tile" id="t-llm"><div class="th"><span class="pdot" id="d-llm"></span><span class="name">LLM providers</span><span class="role">route ladder</span></div><div class="big" id="b-llm">0<small> calls/min</small></div><div class="meta" id="m-llm">primary healthy</div></div>
+    <div class="tile" id="t-sbx"><div class="th"><span class="pdot on" id="d-sbx"></span><span class="name">Sandbox</span><span class="role">landlock</span></div><div class="big" id="b-sbx">0<small> denied</small></div><div class="meta" id="m-sbx">enforcing · fail-closed</div></div>
+  </div>
+
+  <!-- OPS CHARTS -->
+  <div class="ops">
+    <div class="ops-h">
+      <span class="ot">Operations — full day</span>
+      <div class="leg">
+        <span><i style="background:var(--accent)"></i>demand</span>
+        <span><i style="background:var(--green)"></i>completed</span>
+        <span><i style="background:var(--blue)"></i>p50 · <i style="background:var(--red)"></i>p95</span>
+        <span><i style="background:var(--green)"></i>cores · <i style="background:var(--yellow)"></i>queue</span>
+        <span><i style="background:var(--red)"></i>429/failed · <i style="background:var(--yellow)"></i>retries · <i style="background:var(--accent)"></i>auto-deny</span>
+      </div>
+    </div>
+    <div class="canvas-box"><canvas id="chart" height="440"></canvas></div>
+  </div>
+
+</main>
+
+<footer><div class="wrap">
+  <span><b>vak 0.11.7</b></span>
+  <span>· Synthetic model calibrated to <code>rate_limit.rs</code> (10 runs/min), <code>core_pool.rs</code> (4+1 slots), <code>15-reliability.md</code> (retry ladder + circuit breaker)</span>
+  <span>· Illustrative, not measured telemetry</span>
+</div></footer>
+
+<script>
+(function(){
+  "use strict";
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var DAY = 1440; // minutes
+
+  // ---------- load model ----------
+  // hourly anchors: [hour, base runs/min]
+  var ANCH = [[0,2],[5,2],[6,3],[7,7],[8,12],[9,18],[10,24],[11,23],[12,15],[13,19],
+              [14,25],[15,26],[16,24],[17,16],[18,11],[19,13],[20,20],[21,12],[22,7],[23,4],[24,2]];
+  function baseDemand(min){
+    var h = min/60;
+    for(var i=0;i<ANCH.length-1;i++){
+      if(h>=ANCH[i][0] && h<=ANCH[i+1][0]){
+        var t=(h-ANCH[i][0])/(ANCH[i+1][0]-ANCH[i][0]);
+        t = t*t*(3-2*t); // smoothstep
+        return ANCH[i][1]+(ANCH[i+1][1]-ANCH[i][1])*t;
+      }
+    }
+    return 3;
+  }
+  // scenario events: {a,b,name,kind}
+  var EVENTS = [
+    {a:550,b:585,name:'Morning surge — teams come online',kind:'warn',dem:10},
+    {a:660,b:676,name:'Provider 429 storm — upstream degraded',kind:'alert',fault:true},
+    {a:740,b:782,name:'Lunch dip',kind:'ok',dem:-13},
+    {a:840,b:872,name:'Workspace fan-out — CI hits many repos',kind:'warn',dem:7,evict:true},
+    {a:1000,b:1017,name:'Traffic burst — rate limiter engages',kind:'alert',dem:27,burst:true},
+    {a:1200,b:1246,name:'Nightly unattended batch — gateway auto-denies escalations',kind:'warn',dem:12,deny:true}
+  ];
+  function evAt(min){ for(var i=0;i<EVENTS.length;i++){ if(min>=EVENTS[i].a && min<EVENTS[i].b) return EVENTS[i]; } return null; }
+  function phaseOf(min){
+    var h=min/60;
+    if(h<6) return ['night · quiet','var(--blue)'];
+    if(h<9) return ['morning ramp','var(--accent)'];
+    if(h<12) return ['peak hours','var(--accent)'];
+    if(h<13) return ['midday','var(--yellow)'];
+    if(h<17) return ['afternoon peak','var(--accent)'];
+    if(h<20) return ['winding down','var(--blue)'];
+    if(h<22) return ['evening batch','var(--yellow)'];
+    return ['night · quiet','var(--blue)'];
+  }
+
+  // capacity constants
+  var ADMIT = 34;      // aggregate admissions/min before 429
+  var BASECAP = 30;    // completions/min at full provider health
+  var CONCUR = 14;     // max concurrent runs
+  var PERCORE = 3.2;   // runs per active core
+
+  // ---------- sampler state ----------
+  var S; // samples object
+  var lastQ, cstate, ctimer, errAcc; // stateful across minutes
+  function resetSim(){
+    S = {dem:[],cmp:[],rej:[],shed:[],ret:[],p50:[],p95:[],core:[],q:[],evi:[],den:[],circ:[],llm:[]};
+    lastQ=0; cstate=0; ctimer=0; errAcc=0; // 0 closed,1 half,2 open
+  }
+  function rnd(a){ return (Math.random()-0.5)*a; }
+
+  function sample(min){
+    var ev = evAt(min);
+    var dem = baseDemand(min) + (ev&&ev.dem?ev.dem:0) + rnd(3);
+    dem = Math.max(0, dem);
+    var fault = !!(ev&&ev.fault);
+
+    // circuit breaker FSM
+    if(fault) errAcc += 3; else errAcc = Math.max(0, errAcc-2);
+    var health = 1;
+    if(cstate===0){ if(errAcc>6){ cstate=2; ctimer=3; } }
+    if(cstate===2){ health=0.35; ctimer-=1; if(ctimer<=0) cstate=1; }
+    else if(cstate===1){ health=0.6; if(fault){ cstate=2; ctimer=3; } else { cstate=0; } }
+    if(cstate===0) health = fault?0.65:1;
+
+    var retries = fault ? (8+Math.abs(rnd(4))) : (cstate!==0 ? 3 : Math.max(0,rnd(1.2)));
+
+    // rate limiting (429s) — only bites above the admission budget
+    var rej = Math.max(0, dem - ADMIT);
+    if(ev&&ev.burst) rej += Math.max(0, dem-ADMIT*0.8)*0.4;
+    var admitted = dem - Math.min(dem,rej);
+
+    // processing
+    var cap = BASECAP*health;
+    var offered = admitted + lastQ;
+    var cmp = Math.min(offered, cap);
+    var shed = 0, q;
+    if(cstate===2){
+      // OPEN circuit = fail fast: excess is rejected as fast failures, the
+      // backlog drains rather than growing unboundedly.
+      shed = Math.max(0, admitted - cap);
+      q = Math.max(0, lastQ - cap*0.6);
+    } else {
+      q = Math.min(Math.max(0, offered - cap), 180);
+    }
+    lastQ = q;
+
+    var concurrent = Math.min(offered, CONCUR);
+    var cores = Math.max(1, Math.min(5, Math.round(concurrent/PERCORE)));
+
+    var evi = (ev&&ev.evict) ? (2+Math.abs(rnd(3))) : (q>25? Math.abs(rnd(1.4)) : 0);
+    var den = (ev&&ev.deny) ? (2+Math.abs(rnd(4))) : 0;
+
+    var p50 = 520 + q*30 + (health<1?420:0) + rnd(50);
+    var p95 = p50*1.8 + (cstate===2?1500:0) + (q>40?500:0) + Math.abs(rnd(180));
+
+    var llm = cmp*1.7 + retries; // model calls incl. tool steps + retries
+
+    S.dem.push(dem); S.cmp.push(cmp); S.rej.push(rej); S.shed.push(shed); S.ret.push(retries);
+    S.p50.push(p50); S.p95.push(p95); S.core.push(cores); S.q.push(q);
+    S.evi.push(evi); S.den.push(den); S.circ.push(cstate); S.llm.push(llm);
+  }
+
+  // ---------- rendering ----------
+  var canvas=document.getElementById('chart'), ctx=canvas.getContext('2d');
+  var W=0,H=440,dpr=Math.max(1,window.devicePixelRatio||1);
+  function sizeCanvas(){
+    W = canvas.clientWidth || canvas.parentElement.clientWidth-20;
+    canvas.width=Math.round(W*dpr); canvas.height=Math.round(H*dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  function cssv(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+  // panels: [label, yfrac height]. 4 panels stacked.
+  var PANELS=[
+    {t:'Throughput (runs/min)', h:0.30},
+    {t:'Latency (ms)', h:0.24},
+    {t:'Concurrency', h:0.22},
+    {t:'Errors & retries (/min)', h:0.24}
+  ];
+  var PADL=44, PADR=12, PADT=8, GAP=26, AXIS=18;
+
+  function panelRects(){
+    var plotH=H-PADT-AXIS - GAP*(PANELS.length-1);
+    var y=PADT, rects=[];
+    for(var i=0;i<PANELS.length;i++){
+      var ph=plotH*PANELS[i].h;
+      rects.push({x:PADL,y:y,w:W-PADL-PADR,h:ph,label:PANELS[i].t});
+      y+=ph+GAP;
+    }
+    return rects;
+  }
+  function xAt(r,min){ return r.x + (min/DAY)*r.w; }
+
+  function maxOf(arr,extra){ var m=extra||1; for(var i=0;i<arr.length;i++) if(arr[i]>m)m=arr[i]; return m; }
+
+  function drawGridBands(r){
+    // phase bands (night/peak) faint
+    var bands=[[0,6],[9,12],[13,17],[20,22]];
+    var cols=['var(--blue-wash)','var(--accent-wash)','var(--accent-wash)','var(--yellow-wash)'];
+    for(var i=0;i<bands.length;i++){
+      var x0=xAt(r,bands[i][0]*60), x1=xAt(r,bands[i][1]*60);
+      ctx.fillStyle=cssv(cols[i].replace('var(','').replace(')',''));
+      ctx.fillRect(x0,r.y,x1-x0,r.h);
+    }
+    // horizontal grid
+    ctx.strokeStyle=cssv('--grid'); ctx.lineWidth=1;
+    for(var g=0;g<=2;g++){ var yy=r.y+r.h*(g/2)+0.5; ctx.beginPath(); ctx.moveTo(r.x,yy); ctx.lineTo(r.x+r.w,yy); ctx.stroke(); }
+  }
+  function drawEventMarks(r, now){
+    for(var i=0;i<EVENTS.length;i++){
+      var e=EVENTS[i]; if(e.a>now) continue;
+      var x=xAt(r,e.a);
+      ctx.strokeStyle = e.kind==='alert'?cssv('--red'):(e.kind==='warn'?cssv('--yellow'):cssv('--faint'));
+      ctx.globalAlpha=0.5; ctx.setLineDash([3,3]); ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(x,r.y); ctx.lineTo(x,r.y+r.h); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha=1;
+    }
+  }
+  function series(r,arr,max,color,fill,now){
+    var n=Math.min(arr.length,now+1); if(n<2) return;
+    ctx.beginPath();
+    for(var i=0;i<n;i++){ var x=xAt(r,i), y=r.y+r.h-(arr[i]/max)*r.h; if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); }
+    if(fill){
+      ctx.lineTo(xAt(r,n-1),r.y+r.h); ctx.lineTo(r.x,r.y+r.h); ctx.closePath();
+      ctx.globalAlpha=0.16; ctx.fillStyle=color; ctx.fill(); ctx.globalAlpha=1;
+      // redraw stroke
+      ctx.beginPath();
+      for(var j=0;j<n;j++){ var x2=xAt(r,j), y2=r.y+r.h-(arr[j]/max)*r.h; if(j===0)ctx.moveTo(x2,y2); else ctx.lineTo(x2,y2); }
+    }
+    ctx.strokeStyle=color; ctx.lineWidth=1.6; ctx.stroke();
+  }
+  function panelLabel(r,max){
+    ctx.fillStyle=cssv('--muted'); ctx.font='600 10px '+cssv('--mono').split(',')[0].replace(/'/g,'')+', monospace';
+    ctx.textAlign='left'; ctx.fillText(r.label, r.x, r.y-3);
+    ctx.fillStyle=cssv('--faint'); ctx.font='400 9px monospace'; ctx.textAlign='right';
+    ctx.fillText(Math.round(max), r.x-6, r.y+8);
+    ctx.fillText('0', r.x-6, r.y+r.h);
+  }
+  function hourAxis(rects){
+    var last=rects[rects.length-1];
+    ctx.fillStyle=cssv('--faint'); ctx.font='400 9px monospace'; ctx.textAlign='center';
+    for(var h=0;h<=24;h+=3){ var x=xAt(last,h*60); ctx.fillText((h<10?'0':'')+h+':00', x, last.y+last.h+13); }
+  }
+
+  function draw(now){
+    ctx.clearRect(0,0,W,H);
+    var rects=panelRects();
+    // maxima (whole-day where known for stable axes)
+    var mThru=maxOf(S.dem,44);
+    var mLat=maxOf(S.p95,2500);
+    var mCore=5;
+    var errRed=S.rej.map(function(v,i){return v+(S.shed[i]||0);}); // 429s + fail-fast rejections
+    var mErr=Math.max(maxOf(errRed,6),maxOf(S.ret,6),maxOf(S.den,6),8);
+
+    // panel 0 throughput
+    var r=rects[0]; drawGridBands(r); drawEventMarks(r,now); panelLabel(r,mThru);
+    series(r,S.dem,mThru,cssv('--accent'),false,now);
+    series(r,S.cmp,mThru,cssv('--green'),true,now);
+    // panel 1 latency
+    r=rects[1]; drawGridBands(r); drawEventMarks(r,now); panelLabel(r,mLat);
+    series(r,S.p50,mLat,cssv('--blue'),false,now);
+    series(r,S.p95,mLat,cssv('--red'),false,now);
+    // panel 2 concurrency
+    r=rects[2]; drawGridBands(r); drawEventMarks(r,now); panelLabel(r,mCore);
+    series(r,S.core,mCore,cssv('--green'),true,now);
+    series(r,S.q.map(function(v){return v/44;}),mCore,cssv('--yellow'),false,now); // queue scaled onto core axis (0..~5)
+    // panel 3 errors
+    r=rects[3]; drawGridBands(r); drawEventMarks(r,now); panelLabel(r,mErr);
+    series(r,errRed,mErr,cssv('--red'),true,now);
+    series(r,S.ret,mErr,cssv('--yellow'),false,now);
+    series(r,S.den,mErr,cssv('--accent'),false,now);
+    hourAxis(rects);
+
+    // playhead
+    for(var i=0;i<rects.length;i++){ var rr=rects[i]; var xh=xAt(rr,now);
+      ctx.strokeStyle=cssv('--text'); ctx.globalAlpha=0.28; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(xh,rr.y); ctx.lineTo(xh,rr.y+rr.h); ctx.stroke(); ctx.globalAlpha=1; }
+  }
+
+  // ---------- tiles / stats update ----------
+  var $=function(id){return document.getElementById(id);};
+  function setTile(tileId,dotId,bigId,val,unit,metaId,meta,state){
+    $(bigId).innerHTML = val + (unit?'<small>'+unit+'</small>':'');
+    if(metaId&&meta!=null) $(metaId).textContent = meta;
+    var d=$(dotId), t=$(tileId);
+    d.className='pdot'+(state==='crit'?' crit':state==='warn'?' warn':(state==='on'?' on':''));
+    t.className='tile'+(state==='crit'?' crit':state==='warn'?' hot':(state==='on'?' act':''));
+  }
+  function buildSlots(){
+    var el=$('slots'); el.innerHTML='';
+    for(var i=0;i<5;i++){ var s=document.createElement('div'); s.className='slot'+(i===0?' pin':''); s.id='slot'+i;
+      s.innerHTML='<span class="sl">'+(i===0?'def':i)+'</span>'; el.appendChild(s); }
+  }
+  function updateSlots(warm, evicting){
+    for(var i=0;i<5;i++){ var s=$('slot'+i); if(!s) continue;
+      s.className='slot'+(i===0?' pin':'');
+      if(i>0 && i<warm) s.className='slot warm';
+      if(evicting && i===warm && warm>1 && warm<5) s.className='slot evict';
+    }
+  }
+
+  function paint(now){
+    var i=Math.min(now, S.dem.length-1); if(i<0) return;
+    var dem=S.dem[i],cmp=S.cmp[i],rej=S.rej[i],ret=S.ret[i],p50=S.p50[i],p95=S.p95[i],
+        core=S.core[i],q=S.q[i],evi=S.evi[i],den=S.den[i],cs=S.circ[i],llm=S.llm[i];
+    var ev=evAt(i);
+
+    // clock + phase + ticker
+    var hh=Math.floor(i/60), mm=i%60;
+    $('clock').textContent=(hh<10?'0':'')+hh+':'+(mm<10?'0':'')+mm;
+    var ph=phaseOf(i); $('phase').textContent=ph[0]; $('phase').style.color=ph[1];
+    var tk=$('ticker');
+    if(ev){ tk.className='ticker '+(ev.kind==='alert'?'alert':ev.kind==='warn'?'warn':''); tk.querySelector('.tlabel').textContent=ev.name; }
+    else { tk.className='ticker'; tk.querySelector('.tlabel').textContent='Nominal — steady state'; }
+
+    // stats
+    $('v-thru').innerHTML=Math.round(cmp)+'<small>/min</small>';
+    $('u-thru').textContent=Math.round(dem)+' /min offered';
+    $('s-thru').className='stat'+(q>60?' warnv':'');
+    $('v-lat').innerHTML=Math.round(p95)+'<small>ms</small>'; $('u-p50').textContent=Math.round(p50);
+    $('s-lat').className='stat'+(p95>3000?' critv':p95>1800?' warnv':'');
+    $('v-core').innerHTML=core+'<small>/5</small>';
+    $('v-queue').textContent=Math.round(q); $('u-queue').textContent=q>60?'backpressure':'runs waiting';
+    $('s-queue').className='stat'+(q>90?' critv':q>40?' warnv':'');
+    var cb=$('v-circ'); cb.textContent=cs===2?'OPEN':cs===1?'HALF-OPEN':'CLOSED';
+    cb.className='cbadge '+(cs===2?'cb-open':cs===1?'cb-half':'cb-closed');
+    $('u-circ').textContent='retries '+Math.round(ret)+'/min';
+
+    // ingress split (illustrative shares of demand)
+    var slack=dem*0.30, disc=dem*0.14, tg=dem*0.10, desk=Math.max(0,Math.round(dem*0.16)), cli=dem*0.12;
+    setTile('t-cli','d-cli','b-cli',Math.round(cli),'/min','m-cli', cli>0.5?'runs in flight':'idle', cli>1?'on':'');
+    setTile('t-desk','d-desk','b-desk',desk,' sess','m-desk','loopback + token', desk>0?'on':'');
+    setTile('t-slack','d-slack','b-slack',Math.round(slack),'/min','m-slack', ev&&ev.deny?'unattended → auto-deny':'/gateway/inbound', slack>1?'on':'');
+    setTile('t-disc','d-disc','b-disc',Math.round(disc),'/min','m-disc','/gateway/inbound', disc>1?'on':'');
+    setTile('t-tg','d-tg','b-tg',Math.round(tg),'/min','m-tg','/gateway/inbound', tg>1?'on':'');
+
+    // guards
+    setTile('t-rl','d-rl','b-rl',Math.round(rej),' 429/min','m-rl', rej>0?'shedding overflow':'admitting', rej>3?'crit':rej>0?'warn':'on');
+    var warm=Math.max(1,core);
+    setTile('t-pool','d-pool','b-pool',warm,' warm','m-pool', null, evi>0?'warn':'on');
+    updateSlots(warm, evi>0.5);
+    setTile('t-run','d-run','b-run',Math.round(Math.min(dem+q,CONCUR)),' active','m-run', Math.round(q)+' queued', q>60?'crit':q>10?'warn':'on');
+    var llmState = cs===2?'crit':(cs===1||ret>4)?'warn':'on';
+    setTile('t-llm','d-llm','b-llm',Math.round(llm),' calls/min','m-llm',
+      cs===2?'circuit OPEN · failing fast':cs===1?'HALF-OPEN · testing':ret>4?'retrying (backoff)':'primary healthy', llmState);
+    var denCum=0; for(var k=0;k<=i;k++) denCum+=S.den[k];
+    setTile('t-sbx','d-sbx','b-sbx',Math.round(denCum),' denied','m-sbx','enforcing · fail-closed','on');
+  }
+
+  // ---------- driver ----------
+  var simMin=0, sampled=-1, playing=false, speed=2, raf=null, lastT=0;
+  function ensureSampled(upto){
+    while(sampled < upto && sampled < DAY-1){ sampled++; sample(sampled); }
+  }
+  function frame(ts){
+    if(!playing){ return; }
+    if(!lastT) lastT=ts;
+    var dt=(ts-lastT)/1000; lastT=ts;
+    // 1x => full day in 90s => 16 min/sec
+    simMin += dt * 16 * speed;
+    if(simMin>=DAY-1){ simMin=DAY-1; playing=false; $('play').innerHTML='▶ Replay day'; }
+    var now=Math.floor(simMin);
+    ensureSampled(now);
+    paint(now); draw(now);
+    if(playing) raf=requestAnimationFrame(frame);
+  }
+  function play(){
+    if(simMin>=DAY-1){ restart(); }
+    playing=true; lastT=0; $('play').innerHTML='❚❚ Pause';
+    raf=requestAnimationFrame(frame);
+  }
+  function pause(){ playing=false; if(raf)cancelAnimationFrame(raf); $('play').innerHTML='▶ Play day'; }
+  function restart(){
+    pause(); resetSim(); simMin=0; sampled=-1; ensureSampled(0); paint(0); draw(0);
+    $('play').innerHTML='▶ Play day';
+  }
+
+  // controls
+  $('play').addEventListener('click',function(){ playing?pause():play(); });
+  $('restart').addEventListener('click',function(){ restart(); });
+  document.querySelectorAll('.speed').forEach(function(b){
+    b.addEventListener('click',function(){
+      document.querySelectorAll('.speed').forEach(function(x){x.setAttribute('aria-pressed','false');});
+      b.setAttribute('aria-pressed','true'); speed=parseInt(b.dataset.x,10);
+    });
+  });
+  window.addEventListener('resize',function(){ sizeCanvas(); draw(Math.floor(simMin)); });
+
+  // boot
+  buildSlots(); resetSim(); sizeCanvas(); ensureSampled(0); paint(0); draw(0);
+})();
+</script>
+</body>
+</html>
