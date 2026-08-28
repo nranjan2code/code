@@ -62,6 +62,155 @@ const ICONS = {
   settings: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
 };
 
+// ---- filesystem paths ------------------------------------------------------
+
+/// Shorten a path by dropping WHOLE middle segments, never by breaking one.
+/// Two workspaces differ in their tail (`…/Projects/vakcoder`), almost never
+/// in the `/Users/<name>` prefix every one of them shares, so the head is
+/// what gets spent and the tail is kept to the last possible character.
+///
+/// The budget is in characters rather than segments on purpose: a
+/// segment-counted result can still overflow the column and get clipped by
+/// CSS from the right, which throws away exactly the end that distinguishes
+/// two workspaces. Fitting the budget here means the CSS ellipsis is only
+/// ever a backstop for a single segment longer than the whole column.
+export function truncatePath(path: string, budget = 38): string {
+  if (path.length <= budget) return path;
+  const absolute = path.startsWith("/");
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length <= 2) return path;
+
+  const head = `${absolute ? "/" : ""}${segments[0]}/…`;
+  // Grow the tail one segment at a time while it still fits, always keeping
+  // at least the final segment even when nothing fits.
+  let tail = segments[segments.length - 1];
+  for (let i = segments.length - 2; i >= 1; i--) {
+    const candidate = `${segments[i]}/${tail}`;
+    if (head.length + 1 + candidate.length > budget) break;
+    tail = candidate;
+  }
+  return `${head}/${tail}`;
+}
+
+/// A filesystem path in a width-constrained cell. Never wraps: middle
+/// segments are elided first, and anything still too wide for the column is
+/// clipped with an ellipsis by CSS. The untruncated path is always on the
+/// `title` and selectable, so nothing is actually lost.
+function PathCell(props: { path: string; budget?: number }) {
+  // The CSS cap is derived from the same budget the text was fitted to, so
+  // the two can never disagree and clip a tail that JS had already made room
+  // for. `ch` is the right unit here because `.path` is monospaced.
+  const budget = () => props.budget ?? 38;
+  return (
+    <span class="path" title={props.path} style={{ "max-width": `${budget() + 1}ch` }}>
+      {truncatePath(props.path, budget())}
+    </span>
+  );
+}
+
+// ---- permission rules ------------------------------------------------------
+
+type RuleDecision = "allow" | "ask" | "deny";
+
+interface ParsedRule {
+  /** The rule exactly as it appears in config, for display. */
+  raw: string;
+  /** Tool the rule binds to, lowercased (`bash`, `mcp`, `write`, …). */
+  tool: string;
+  /** Argument glob, or null for a blanket rule covering the whole tool. */
+  pattern: string | null;
+  decision: RuleDecision;
+}
+
+/// Mirrors `vak_permission::rules::Rule::parse`. A leading `+`/`?`/`-` picks
+/// allow/ask/deny; a bare rule allows. `Tool(pattern)` scopes to matching
+/// arguments, `Tool` covers every call. Anything that does not parse is
+/// surfaced rather than silently dropped — an unparseable rule in config is
+/// exactly the thing an operator needs to see.
+function parseRule(raw: string, listDecision: RuleDecision): ParsedRule | null {
+  const input = raw.trim();
+  if (!input) return null;
+  const prefix = input[0];
+  const decision: RuleDecision =
+    prefix === "+" ? "allow" : prefix === "-" ? "deny" : prefix === "?" ? "ask" : listDecision;
+  const rest = "+-?".includes(prefix) ? input.slice(1) : input;
+  const open = rest.indexOf("(");
+  const close = rest.lastIndexOf(")");
+  const [tool, pattern] =
+    open >= 0 && close > open
+      ? [rest.slice(0, open).trim(), rest.slice(open + 1, close).trim()]
+      : [rest.trim(), null];
+  if (!tool) return null;
+  return {
+    raw: input,
+    tool: tool.toLowerCase(),
+    pattern: pattern === "*" || pattern === "" ? null : pattern,
+    decision,
+  };
+}
+
+/// True when the server did not report its rule lists at all. An older
+/// binary simply omits the field, and "the server did not say" must never be
+/// rendered as "there are no rules" — that is the difference between an
+/// unknown scope and an unrestricted one.
+function rulesReported(config: ConfigInfo | undefined): boolean {
+  return !!config && config.permissions !== undefined;
+}
+
+function parseRuleLists(rules: import("./types").PermissionRules | undefined): ParsedRule[] {
+  if (!rules) return [];
+  return (
+    [
+      ["allow", rules.allow],
+      ["ask", rules.ask],
+      ["deny", rules.deny],
+    ] as const
+  ).flatMap(([decision, list]) =>
+    (list ?? []).map((r) => parseRule(r, decision)).filter((r): r is ParsedRule => r !== null),
+  );
+}
+
+/// Glob match for the subset the rule syntax uses on a single path segment:
+/// `*` spans anything, `?` one character. Enough to answer "does this MCP
+/// pattern name this server", which is all it is used for.
+function globMatch(pattern: string, value: string): boolean {
+  const rx = new RegExp(
+    `^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`,
+  );
+  return rx.test(value);
+}
+
+/// Rules that govern calls into one MCP server. The engine matches
+/// `mcp(server/tool)` patterns against the literal `server/tool` string, so a
+/// rule reaches this server when it is blanket (`mcp`) or when the pattern's
+/// server half names it.
+function rulesForMcpServer(rules: ParsedRule[], server: string): ParsedRule[] {
+  return rules.filter((r) => {
+    if (r.tool !== "mcp") return false;
+    if (r.pattern === null) return true;
+    const serverPart = r.pattern.split("/")[0];
+    return globMatch(serverPart, server);
+  });
+}
+
+// Reuses the chip tones the gateway tables already established, so a red
+// chip means the same thing on every screen. `danger` is the vocabulary --
+// there is no `alert` tone, and naming one would have rendered every deny
+// rule in muted grey.
+const DECISION_TONE: Record<RuleDecision, string> = {
+  allow: "success",
+  ask: "warning",
+  deny: "danger",
+};
+
+function RuleChip(props: { rule: ParsedRule }) {
+  return (
+    <span class={`chip chip-tone-${DECISION_TONE[props.rule.decision]} mono`} title={`${props.rule.decision}: ${props.rule.raw}`}>
+      {props.rule.raw}
+    </span>
+  );
+}
+
 // ---- Login -----------------------------------------------------------------
 
 function Login() {
@@ -202,7 +351,7 @@ function Overview() {
                 </span>
               </dd>
               <dt>workspace</dt>
-              <dd class="mono wrap">{health()?.cwd}</dd>
+              <dd><PathCell path={health()?.cwd ?? ""} budget={46} /></dd>
             </dl>
             <Show when={(health()?.warnings?.length ?? 0) > 0}>
               <div class="warnings">
@@ -403,7 +552,7 @@ function Sessions() {
                     <span class="mono bold">{shortId(run.session_id)}</span>
                     <span class="chip chip-mode mono">{run.branch}</span>
                   </div>
-                  <div class="dim mono small wrap" style="margin-bottom:8px">{run.repo}</div>
+                  <div class="dim" style="margin-bottom:8px"><PathCell path={run.repo} /></div>
                   <div class="row-gap">
                     <button class="approve small" disabled={busyCandidate() === run.session_id} onClick={() => handleKeep(run.session_id)}>
                       Keep
@@ -784,419 +933,880 @@ function Transcript(props: { sessionId: string }) {
   );
 }
 
-// ---- Integrations & Extensibility (MCP, Hooks, Skills, Tasks) ---------------
+// ---- Extensions (MCP servers, skills, hooks, scheduled tasks) ---------------
 
-function IntegrationsView() {
-  const [subTab, setSubTab] = createSignal<"mcp" | "hooks" | "skills" | "tasks">("mcp");
+/// Everything that widens what the agent can do, and what each thing is
+/// permitted to do once loaded. Four sub-routes, one per extension point,
+/// so a destination is nameable from the nav rather than found by scrolling
+/// — the same shape the Gateway section uses.
+const EXTENSION_TABS = [
+  { hash: "#/integrations", label: "MCP servers" },
+  { hash: "#/integrations/skills", label: "Skills" },
+  { hash: "#/integrations/hooks", label: "Hooks" },
+  { hash: "#/integrations/tasks", label: "Scheduled tasks" },
+] as const;
 
-  // MCP State
-  const [mcpData, { refetch: refetchMcp }] = createResource(() => api.mcpServers().catch(() => ({ servers: {} })));
-  const [newMcpName, setNewMcpName] = createSignal("");
-  const [newMcpCmd, setNewMcpCmd] = createSignal("");
-  const [newMcpArgs, setNewMcpArgs] = createSignal("");
+function extensionsTab(): string {
+  const r = route();
+  return EXTENSION_TABS.slice(1).find((t) => r.startsWith(t.hash))?.hash ?? "#/integrations";
+}
 
-  // Hooks State
-  const [hooksData, { refetch: refetchHooks }] = createResource(() => api.hooks().catch(() => ({ hooks: [] })));
-  const [newHookEvent, setNewHookEvent] = createSignal("pre_tool_use");
-  const [newHookMatcher, setNewHookMatcher] = createSignal("");
-  const [newHookCmd, setNewHookCmd] = createSignal("");
-  const [newHookTimeout, setNewHookTimeout] = createSignal("10000");
+interface ExtensionsCtx {
+  mcp: () => Record<string, McpServerConfig>;
+  mcpLoading: () => boolean;
+  refetchMcp: () => void;
+  hooks: () => HookConfig[];
+  hooksLoading: () => boolean;
+  refetchHooks: () => void;
+  skills: () => SkillItem[];
+  skillsLoading: () => boolean;
+  proposals: () => SkillProposal[];
+  proposalsLoading: () => boolean;
+  refetchSkills: () => void;
+  tasks: () => TaskItem[];
+  tasksLoading: () => boolean;
+  refetchTasks: () => void;
+  /** Parsed allow/ask/deny rules from the running config. */
+  rules: () => ParsedRule[];
+  /** Effective permission mode, which decides everything no rule covers. */
+  mode: () => string;
+  /** Whether the server reported its rule lists at all — see rulesReported. */
+  rulesKnown: () => boolean;
+}
 
-  // Skills & Proposals State
-  const [skillsData, { refetch: refetchSkills }] = createResource(() => api.skills().catch(() => ({ skills: [] })));
-  const [proposalsData, { refetch: refetchProposals }] = createResource(() => api.skillProposals().catch(() => ({ proposals: [] })));
+/// Stands in for the rule chips when the server never sent its rule lists.
+/// Says so, rather than letting an empty list read as "unrestricted".
+function RulesUnknown() {
+  return (
+    <span class="chip" title="This server build does not report its permission rules.">
+      scope not reported
+    </span>
+  );
+}
 
-  // Tasks State
-  const [tasksData, { refetch: refetchTasks }] = createResource(() => api.tasks().catch(() => ({ tasks: [] })));
-  const [newTaskName, setNewTaskName] = createSignal("");
-  const [newTaskPrompt, setNewTaskPrompt] = createSignal("");
-  const [newTaskSchedule, setNewTaskSchedule] = createSignal("");
-  const [newTaskModelPin, setNewTaskModelPin] = createSignal("");
+/// What happens to a tool call that no rule matches. Mirrors the mode arms
+/// of `vak_permission::PermissionEngine::evaluate`: full-access allows,
+/// read-only denies anything that is not a read tool, and workspace-write
+/// asks. `mcp` and `task` are neither read nor write tools, so this is the
+/// whole answer for them.
+function modeDefaultDecision(mode: string): RuleDecision {
+  if (mode === "FullAccess") return "allow";
+  if (mode === "ReadOnly") return "deny";
+  return "ask";
+}
 
-  // MCP Save
-  const addMcpServer = async () => {
-    const name = newMcpName().trim();
-    const cmd = newMcpCmd().trim();
-    if (!name || !cmd) return;
-    const current = mcpData()?.servers ?? {};
-    const updated = {
-      ...current,
-      [name]: {
-        command: cmd,
-        args: newMcpArgs().trim() ? newMcpArgs().trim().split(" ") : [],
-      },
-    };
+function ModeDefaultChip(props: { mode: string }) {
+  const decision = () => modeDefaultDecision(props.mode);
+  return (
+    <span
+      class={`chip chip-tone-${DECISION_TONE[decision()]}`}
+      title={`No rule covers this call, so ${props.mode} mode decides: ${decision()}`}
+    >
+      {decision()} · mode default
+    </span>
+  );
+}
+
+// ---- Extensions › MCP servers ----------------------------------------------
+
+function McpServersView(props: { ctx: ExtensionsCtx }) {
+  const [expanded, setExpanded] = createSignal("");
+  const [newName, setNewName] = createSignal("");
+  const [newCmd, setNewCmd] = createSignal("");
+  const [newArgs, setNewArgs] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+
+  const servers = createMemo(() => Object.entries(props.ctx.mcp()) as [string, McpServerConfig][]);
+
+  const addServer = async () => {
+    const name = newName().trim();
+    const cmd = newCmd().trim();
+    if (!name || !cmd || busy()) return;
+    setBusy(true);
     try {
-      await api.putMcpServers(updated);
-      pushToast("info", `Added MCP server '${name}'`);
-      setNewMcpName("");
-      setNewMcpCmd("");
-      setNewMcpArgs("");
-      refetchMcp();
-    } catch (err) {
-      pushToast("alert", `${err}`);
-    }
-  };
-
-  const deleteMcpServer = async (name: string) => {
-    const current: Record<string, McpServerConfig> = { ...(mcpData()?.servers ?? {}) };
-    delete current[name];
-    try {
-      await api.putMcpServers(current);
-      pushToast("info", `Removed MCP server '${name}'`);
-      refetchMcp();
-    } catch (err) {
-      pushToast("alert", `${err}`);
-    }
-  };
-
-  // Hooks CRUD
-  const addHook = async () => {
-    const cmd = newHookCmd().trim();
-    if (!cmd) return;
-    const current = hooksData()?.hooks ?? [];
-    const newHook: HookConfig = {
-      event: newHookEvent(),
-      matcher: newHookMatcher().trim() || null,
-      command: cmd,
-      timeout_ms: parseInt(newHookTimeout()) || 10000,
-      enabled: true,
-    };
-    try {
-      await api.putHooks([...current, newHook]);
-      pushToast("info", `Added ${newHookEvent()} hook`);
-      setNewHookCmd("");
-      setNewHookMatcher("");
-      refetchHooks();
-    } catch (err) {
-      pushToast("alert", `${err}`);
-    }
-  };
-
-  const deleteHook = async (index: number) => {
-    const current = [...(hooksData()?.hooks ?? [])];
-    current.splice(index, 1);
-    try {
-      await api.putHooks(current);
-      pushToast("info", "Hook removed");
-      refetchHooks();
-    } catch (err) {
-      pushToast("alert", `${err}`);
-    }
-  };
-
-  // Proposals
-  const promoteSkill = async (id: string) => {
-    try {
-      await api.promoteProposal(id);
-      pushToast("info", "Proposal promoted to active skill");
-      refetchProposals();
-      refetchSkills();
-    } catch (err) {
-      pushToast("alert", `${err}`);
-    }
-  };
-
-  const rejectSkill = async (id: string) => {
-    try {
-      await api.rejectProposal(id);
-      pushToast("info", "Proposal rejected");
-      refetchProposals();
-    } catch (err) {
-      pushToast("alert", `${err}`);
-    }
-  };
-
-  // Tasks CRUD
-  const runTask = async (id: string) => {
-    try {
-      await api.runTaskNow(id);
-      pushToast("info", "Task executed");
-      refetchTasks();
-    } catch (err) {
-      pushToast("alert", `${err}`);
-    }
-  };
-
-  const createNewTask = async () => {
-    const name = newTaskName().trim();
-    const prompt = newTaskPrompt().trim();
-    if (!name || !prompt) return;
-    try {
-      await api.createTask({
-        name,
-        prompt,
-        schedule: newTaskSchedule().trim() || undefined,
-        model_pin: newTaskModelPin().trim() || undefined,
+      await api.putMcpServers({
+        ...props.ctx.mcp(),
+        [name]: { command: cmd, args: newArgs().trim() ? newArgs().trim().split(/\s+/) : [] },
       });
-      pushToast("info", `Task '${name}' created`);
-      setNewTaskName("");
-      setNewTaskPrompt("");
-      setNewTaskSchedule("");
-      setNewTaskModelPin("");
-      refetchTasks();
+      pushToast("info", `Added MCP server ‘${name}’`);
+      setNewName("");
+      setNewCmd("");
+      setNewArgs("");
+      props.ctx.refetchMcp();
     } catch (err) {
-      pushToast("alert", `${err}`);
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setBusy(false);
     }
   };
 
-  const toggleTask = async (id: string, enabled: boolean) => {
+  const removeServer = async (name: string) => {
+    const next = { ...props.ctx.mcp() };
+    delete next[name];
     try {
-      await api.patchTask(id, { enabled });
-      pushToast("info", enabled ? "Task enabled" : "Task disabled");
-      refetchTasks();
+      await api.putMcpServers(next);
+      pushToast("info", `Removed MCP server ‘${name}’`);
+      props.ctx.refetchMcp();
     } catch (err) {
-      pushToast("alert", `${err}`);
-    }
-  };
-
-  const removeTask = async (id: string) => {
-    try {
-      await api.deleteTask(id);
-      pushToast("info", "Task deleted");
-      refetchTasks();
-    } catch (err) {
-      pushToast("alert", `${err}`);
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
     }
   };
 
   return (
-    <div class="view">
-      <div class="tab-bar">
-        <button class="tab-btn" classList={{ active: subTab() === "mcp" }} onClick={() => setSubTab("mcp")}>
-          MCP Servers ({Object.keys(mcpData()?.servers ?? {}).length})
-        </button>
-        <button class="tab-btn" classList={{ active: subTab() === "hooks" }} onClick={() => setSubTab("hooks")}>
-          Lifecycle Hooks ({hooksData()?.hooks?.length ?? 0})
-        </button>
-        <button class="tab-btn" classList={{ active: subTab() === "skills" }} onClick={() => setSubTab("skills")}>
-          Skills &amp; Proposals ({skillsData()?.skills?.length ?? 0})
-        </button>
-        <button class="tab-btn" classList={{ active: subTab() === "tasks" }} onClick={() => setSubTab("tasks")}>
-          Scheduled Tasks ({tasksData()?.tasks?.length ?? 0})
-        </button>
+    <>
+      <div class="toolbar">
+        <span class="spacer" />
+        <button class="ghost" onClick={() => props.ctx.refetchMcp()}>Refresh</button>
       </div>
 
-      <Switch>
-        {/* MCP Tab */}
-        <Match when={subTab() === "mcp"}>
-          <div class="two-col">
-            <section class="panel">
-              <h2>Registered MCP Servers</h2>
-              <Show when={!mcpData.loading} fallback={<div class="empty">Loading MCP servers…</div>}>
-                <Show when={Object.keys(mcpData()?.servers ?? {}).length > 0} fallback={<div class="empty">No MCP servers registered in .vak/config.toml</div>}>
-                  <table class="table">
-                    <thead><tr><th>name</th><th>command</th><th /></tr></thead>
-                    <tbody>
-                      <For each={Object.entries(mcpData()?.servers ?? {}) as [string, McpServerConfig][]}>
-                        {([name, s]) => (
-                          <tr>
-                            <td class="mono bold">{name}</td>
-                            <td class="mono dim">{s.command} {s.args?.join(" ")}</td>
-                            <td><button class="danger small" onClick={() => deleteMcpServer(name)}>Remove</button></td>
-                          </tr>
-                        )}
-                      </For>
-                    </tbody>
-                  </table>
-                </Show>
-              </Show>
-            </section>
-
-            <section class="panel">
-              <h2>Add MCP Server</h2>
-              <div class="form-row">
-                <label>server name</label>
-                <input placeholder="e.g. github, filesystem" value={newMcpName()} onInput={(e) => setNewMcpName(e.currentTarget.value)} />
-              </div>
-              <div class="form-row">
-                <label>command</label>
-                <input class="mono" placeholder="npx, python3, uvx..." value={newMcpCmd()} onInput={(e) => setNewMcpCmd(e.currentTarget.value)} />
-              </div>
-              <div class="form-row">
-                <label>args</label>
-                <input class="mono" placeholder="-y @modelcontextprotocol/server-..." value={newMcpArgs()} onInput={(e) => setNewMcpArgs(e.currentTarget.value)} />
-              </div>
-              <div class="row-gap" style="margin-top:12px">
-                <button disabled={!newMcpName().trim() || !newMcpCmd().trim()} onClick={addMcpServer}>
-                  Add Server
-                </button>
-              </div>
-            </section>
+      <section class="panel">
+        <div class="panel-title-row">
+          <div>
+            <h2>MCP servers</h2>
+            <p class="dim">
+              Each row is a process vak will start on demand to borrow its tools. What it may then
+              be asked to do is decided by the <code>mcp(server/tool)</code> rules in{" "}
+              <a href="#/settings">Permissions</a> and, where no rule reaches it, by the permission
+              mode.
+            </p>
           </div>
-        </Match>
+        </div>
 
-        {/* Hooks Tab */}
-        <Match when={subTab() === "hooks"}>
-          <div class="two-col">
-            <section class="panel">
-              <h2>Configured Lifecycle Hooks</h2>
-              <Show when={!hooksData.loading} fallback={<div class="empty">Loading hooks…</div>}>
-                <Show when={(hooksData()?.hooks?.length ?? 0) > 0} fallback={<div class="empty">No lifecycle hooks defined in config.toml.</div>}>
-                  <table class="table">
-                    <thead><tr><th>event</th><th>matcher</th><th>command</th><th>timeout</th><th /></tr></thead>
-                    <tbody>
-                      <For each={hooksData()?.hooks ?? []}>
-                        {(h: HookConfig, i) => (
-                          <tr>
-                            <td><span class="chip chip-mode mono">{h.event}</span></td>
-                            <td class="mono dim">{h.matcher ?? "—"}</td>
-                            <td class="mono">{h.command}</td>
-                            <td>{h.timeout_ms}ms</td>
-                            <td><button class="danger small" onClick={() => deleteHook(i())}>Remove</button></td>
-                          </tr>
-                        )}
-                      </For>
-                    </tbody>
-                  </table>
-                </Show>
-              </Show>
-            </section>
+        <Switch>
+          <Match when={props.ctx.mcpLoading()}>
+            <table class="table">
+              <thead>
+                <tr><th>server</th><th>command</th><th>network</th><th>secrets</th><th>governed by</th><th /></tr>
+              </thead>
+              <tbody><SkeletonRows cols={6} /></tbody>
+            </table>
+          </Match>
 
-            <section class="panel">
-              <h2>Add Lifecycle Hook</h2>
-              <div class="form-row">
-                <label>event</label>
-                <select value={newHookEvent()} onChange={(e) => setNewHookEvent(e.currentTarget.value)}>
-                  <option value="pre_tool_use">pre_tool_use</option>
-                  <option value="post_tool_use">post_tool_use</option>
-                  <option value="session_start">session_start</option>
-                  <option value="stop">stop</option>
-                </select>
-              </div>
-              <div class="form-row">
-                <label>matcher</label>
-                <input class="mono" placeholder="Optional tool name pattern" value={newHookMatcher()} onInput={(e) => setNewHookMatcher(e.currentTarget.value)} />
-              </div>
-              <div class="form-row">
-                <label>command</label>
-                <input class="mono" placeholder="/path/to/script.sh" value={newHookCmd()} onInput={(e) => setNewHookCmd(e.currentTarget.value)} />
-              </div>
-              <div class="form-row">
-                <label>timeout (ms)</label>
-                <input type="number" value={newHookTimeout()} onInput={(e) => setNewHookTimeout(e.currentTarget.value)} />
-              </div>
-              <div class="row-gap" style="margin-top:12px">
-                <button disabled={!newHookCmd().trim()} onClick={addHook}>Add Hook</button>
-              </div>
-            </section>
-          </div>
-        </Match>
+          <Match when={servers().length === 0}>
+            <div class="empty empty-teach">
+              <strong>No MCP servers are registered.</strong>
+              <p>
+                An MCP server is an external process that hands the agent extra tools — a GitHub
+                client, a database, a browser. Register one below and it starts the first time a run
+                actually calls it; until then it costs nothing.
+              </p>
+            </div>
+          </Match>
 
-        {/* Skills & Proposals Tab */}
-        <Match when={subTab() === "skills"}>
-          <div class="two-col">
-            <section class="panel">
-              <h2>Active Skills ({skillsData()?.skills?.length ?? 0})</h2>
-              <Show when={!skillsData.loading} fallback={<div class="empty">Loading skills…</div>}>
-                <Show when={(skillsData()?.skills?.length ?? 0) > 0} fallback={<div class="empty">No skills discovered in skills/ directories.</div>}>
-                  <table class="table">
-                    <thead><tr><th>name</th><th>description</th></tr></thead>
-                    <tbody>
-                      <For each={skillsData()?.skills ?? []}>
-                        {(s: SkillItem) => (
-                          <tr>
-                            <td class="mono bold">{s.name}</td>
-                            <td class="dim">{s.description || "Skill extension"}</td>
-                          </tr>
-                        )}
-                      </For>
-                    </tbody>
-                  </table>
-                </Show>
-              </Show>
-            </section>
-
-            <section class="panel">
-              <h2>AI Skill Proposals ({proposalsData()?.proposals?.length ?? 0})</h2>
-              <Show when={!proposalsData.loading} fallback={<div class="empty">Loading proposals…</div>}>
-                <Show when={(proposalsData()?.proposals?.length ?? 0) > 0} fallback={<div class="empty">No pending skill proposals.</div>}>
-                  <ul class="hit-list">
-                    <For each={proposalsData()?.proposals ?? []}>
-                      {(p: SkillProposal) => (
-                        <li class="inbox-item">
-                          <div class="hit-meta">
-                            <span class="mono bold">{p.name}</span>
-                          </div>
-                          <div class="hit-snippet">{p.description}</div>
-                          <div class="row-gap" style="margin-top:8px">
-                            <button class="approve small" onClick={() => promoteSkill(p.id)}>Promote</button>
-                            <button class="danger small" onClick={() => rejectSkill(p.id)}>Reject</button>
-                          </div>
-                        </li>
-                      )}
-                    </For>
-                  </ul>
-                </Show>
-              </Show>
-            </section>
-          </div>
-        </Match>
-
-        {/* Tasks Tab */}
-        <Match when={subTab() === "tasks"}>
-          <div class="two-col">
-            <section class="panel">
-              <h2>Scheduled Tasks &amp; Automations</h2>
-              <Show when={!tasksData.loading} fallback={<div class="empty">Loading tasks…</div>}>
-                <Show when={(tasksData()?.tasks?.length ?? 0) > 0} fallback={<div class="empty">No scheduled tasks or cron jobs configured.</div>}>
-                  <table class="table">
-                    <thead><tr><th>name</th><th>type</th><th>schedule</th><th>model</th><th>last run</th><th>status</th><th /></tr></thead>
-                    <tbody>
-                      <For each={tasksData()?.tasks ?? []}>
-                        {(t: TaskItem) => (
-                          <tr>
-                            <td class="bold">{t.name}</td>
-                            <td><span class={`chip ${t.script ? "chip-tool" : "chip-mode"}`}>{t.script ? "script" : "prompt"}</span></td>
-                            <td class="mono">{t.schedule ?? `${t.interval_secs ?? 3600}s`}</td>
-                            <td class="mono dim">{t.model_pin ?? "default"}</td>
-                            <td title={t.last_run_at ?? ""}>{t.last_run_at ? timeAgo(t.last_run_at) : "never"}</td>
-                            <td>
-                              <button class={`small ${t.enabled ? "chip-ok" : "chip-warn"}`} onClick={() => toggleTask(t.id, !t.enabled)}>
-                                {t.enabled ? "enabled" : "disabled"}
-                              </button>
-                            </td>
-                            <td>
-                              <div class="row-gap">
-                                <button class="ghost small" onClick={() => runTask(t.id)}>Run now</button>
-                                <button class="danger small" onClick={() => removeTask(t.id)}>Delete</button>
+          <Match when={servers().length > 0}>
+            <table class="table">
+              <thead>
+                <tr><th>server</th><th>command</th><th>network</th><th>secrets</th><th>governed by</th><th /></tr>
+              </thead>
+              <tbody>
+                <For each={servers()}>
+                  {([name, server]) => {
+                    const matching = createMemo(() => rulesForMcpServer(props.ctx.rules(), name));
+                    const envKeys = () => Object.keys(server.env ?? {});
+                    const open = () => expanded() === name;
+                    return (
+                      <>
+                        <tr classList={{ "row-open": open() }} onClick={() => setExpanded(open() ? "" : name)}>
+                          <td class="mono bold">{name}</td>
+                          <td class="dim col-command">
+                            <span class="path" title={`${server.command} ${(server.args ?? []).join(" ")}`}>
+                              {server.command} {(server.args ?? []).join(" ")}
+                            </span>
+                          </td>
+                          <td>
+                            <span class={`chip chip-tone-${server.network ? "warning" : "success"}`}>
+                              {server.network ? "outbound allowed" : "blocked"}
+                            </span>
+                          </td>
+                          <td class="dim">
+                            {envKeys().length > 0 ? `${envKeys().length} env var${envKeys().length === 1 ? "" : "s"}` : "—"}
+                          </td>
+                          <td>
+                            <Switch fallback={<ModeDefaultChip mode={props.ctx.mode()} />}>
+                              <Match when={!props.ctx.rulesKnown()}><RulesUnknown /></Match>
+                              <Match when={matching().length > 0}>
+                                <div class="chip-stack">
+                                  <For each={matching()}>{(r) => <RuleChip rule={r} />}</For>
+                                </div>
+                              </Match>
+                            </Switch>
+                          </td>
+                          <td><span class="chev">{open() ? "⌄" : "›"}</span></td>
+                        </tr>
+                        <Show when={open()}>
+                          <tr class="row-detail">
+                            <td colspan={6}>
+                              <div class="detail-grid">
+                                <div>
+                                  <span class="eyebrow">Command line</span>
+                                  <pre class="mono detail-pre">{server.command} {(server.args ?? []).join(" ")}</pre>
+                                </div>
+                                <div>
+                                  <span class="eyebrow">Environment passed in</span>
+                                  <Show
+                                    when={envKeys().length > 0}
+                                    fallback={<p class="dim">Nothing beyond vak's own environment.</p>}
+                                  >
+                                    <div class="chip-stack">
+                                      <For each={envKeys()}>{(k) => <span class="chip mono">{k}</span>}</For>
+                                    </div>
+                                    <p class="dim">
+                                      Names only. Values live in <code>.vak/config.toml</code> and are
+                                      never rendered here.
+                                    </p>
+                                  </Show>
+                                </div>
+                                <div>
+                                  <span class="eyebrow">Permission scope</span>
+                                  <Show when={!props.ctx.rulesKnown()}>
+                                    <p class="dim">
+                                      This server build does not report its permission rules, so what
+                                      governs calls to <code>{name}</code> cannot be shown here. Read{" "}
+                                      <code>allow</code>/<code>ask</code>/<code>deny</code> in{" "}
+                                      <code>config.toml</code> directly, or update vak.
+                                    </p>
+                                  </Show>
+                                  <Show when={props.ctx.rulesKnown()}>
+                                  <Show
+                                    when={matching().length > 0}
+                                    fallback={
+                                      <p class="dim">
+                                        No rule names this server, so every call to it takes the mode
+                                        default: <strong>{modeDefaultDecision(props.ctx.mode())}</strong> under{" "}
+                                        {props.ctx.mode()}. Add an <code>mcp({name}/*)</code> rule to
+                                        config to narrow or widen that.
+                                      </p>
+                                    }
+                                  >
+                                    <div class="chip-stack">
+                                      <For each={matching()}>{(r) => <RuleChip rule={r} />}</For>
+                                    </div>
+                                    <p class="dim">
+                                      Among rules that match one call, deny outranks ask outranks
+                                      allow — order in config never decides it. A call these patterns
+                                      miss falls through to the mode default:{" "}
+                                      <strong>{modeDefaultDecision(props.ctx.mode())}</strong> under {props.ctx.mode()}.
+                                    </p>
+                                  </Show>
+                                  </Show>
+                                </div>
+                              </div>
+                              <div class="row-gap" style="margin-top:12px">
+                                <button class="danger small" onClick={() => removeServer(name)}>
+                                  Remove server
+                                </button>
                               </div>
                             </td>
                           </tr>
-                        )}
-                      </For>
-                    </tbody>
-                  </table>
-                </Show>
-              </Show>
-            </section>
+                        </Show>
+                      </>
+                    );
+                  }}
+                </For>
+              </tbody>
+            </table>
+          </Match>
+        </Switch>
 
-            <section class="panel">
-              <h2>Create Scheduled Task</h2>
-              <div class="form-row">
-                <label>name</label>
-                <input placeholder="e.g. daily-digest, health-check" value={newTaskName()} onInput={(e) => setNewTaskName(e.currentTarget.value)} />
-              </div>
-              <div class="form-row">
-                <label>prompt</label>
-                <textarea rows={3} class="mono" placeholder="LLM instruction for the task…" value={newTaskPrompt()} onInput={(e) => setNewTaskPrompt(e.currentTarget.value)} />
-              </div>
-              <div class="form-row">
-                <label>schedule</label>
-                <input class="mono" placeholder="Optional cron: */30 * * * * or leave blank for 1h interval" value={newTaskSchedule()} onInput={(e) => setNewTaskSchedule(e.currentTarget.value)} />
-              </div>
-              <div class="form-row">
-                <label>model pin</label>
-                <input class="mono" placeholder="Optional model id to pin" value={newTaskModelPin()} onInput={(e) => setNewTaskModelPin(e.currentTarget.value)} />
-              </div>
-              <div class="row-gap" style="margin-top:12px">
-                <button disabled={!newTaskName().trim() || !newTaskPrompt().trim()} onClick={createNewTask}>
-                  Create Task
-                </button>
-              </div>
-            </section>
+        <details class="advanced">
+          <summary>Register an MCP server</summary>
+          <p class="dim">
+            Written straight to <code>mcp.servers</code> in the workspace config. Outbound network
+            and injected environment are privileged fields and are only editable in the file.
+          </p>
+          <div class="form-row">
+            <label>name</label>
+            <input placeholder="github, filesystem, postgres…" value={newName()} onInput={(e) => setNewName(e.currentTarget.value)} />
           </div>
-        </Match>
+          <div class="form-row">
+            <label>command</label>
+            <input class="mono" placeholder="npx, uvx, python3…" value={newCmd()} onInput={(e) => setNewCmd(e.currentTarget.value)} />
+          </div>
+          <div class="form-row">
+            <label>args</label>
+            <input class="mono" placeholder="-y @modelcontextprotocol/server-github" value={newArgs()} onInput={(e) => setNewArgs(e.currentTarget.value)} />
+          </div>
+          <div class="row-gap" style="margin-top:12px">
+            <button disabled={busy() || !newName().trim() || !newCmd().trim()} onClick={() => void addServer()}>
+              {busy() ? "Registering…" : "Register server"}
+            </button>
+          </div>
+        </details>
+      </section>
+    </>
+  );
+}
+
+// ---- Extensions › Skills ---------------------------------------------------
+
+function SkillsView(props: { ctx: ExtensionsCtx }) {
+  const [busyId, setBusyId] = createSignal("");
+
+  const act = async (id: string, promote: boolean) => {
+    setBusyId(id);
+    try {
+      if (promote) await api.promoteProposal(id);
+      else await api.rejectProposal(id);
+      pushToast("info", promote ? "Promoted to an active skill" : "Proposal rejected");
+      props.ctx.refetchSkills();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  return (
+    <>
+      <div class="toolbar">
+        <span class="spacer" />
+        <button class="ghost" onClick={() => props.ctx.refetchSkills()}>Refresh</button>
+      </div>
+
+      <Show when={props.ctx.proposals().length > 0}>
+        <section class="panel panel-alert" style="margin-bottom:14px">
+          <div class="panel-title-row">
+            <div>
+              <h2>{props.ctx.proposals().length} skill{props.ctx.proposals().length === 1 ? "" : "s"} proposed</h2>
+              <p class="dim">
+                Written by the agent from its own runs. Nothing loads until you promote it.
+              </p>
+            </div>
+          </div>
+          <ul class="hit-list">
+            <For each={props.ctx.proposals()}>
+              {(p) => (
+                <li class="inbox-item">
+                  <div class="hit-meta"><strong class="mono">{p.name}</strong></div>
+                  <div class="hit-snippet">{p.description}</div>
+                  <div class="row-gap" style="margin-top:8px">
+                    <button class="approve small" disabled={busyId() === p.id} onClick={() => void act(p.id, true)}>
+                      Promote
+                    </button>
+                    <button class="danger small" disabled={busyId() === p.id} onClick={() => void act(p.id, false)}>
+                      Reject
+                    </button>
+                  </div>
+                </li>
+              )}
+            </For>
+          </ul>
+        </section>
+      </Show>
+
+      <section class="panel">
+        <div class="panel-title-row">
+          <div>
+            <h2>Loaded skills</h2>
+            <p class="dim">
+              A skill is instructions, not capability: it tells the agent how to approach a job, and
+              every tool it then reaches for is gated the same as any other call. What it changes is
+              which files the agent is told to read — so where a skill comes from is the thing worth
+              watching.
+            </p>
+          </div>
+        </div>
+
+        <Switch>
+          <Match when={props.ctx.skillsLoading()}>
+            <table class="table">
+              <thead><tr><th>skill</th><th>scope</th><th>what it does</th><th>source</th></tr></thead>
+              <tbody><SkeletonRows cols={4} /></tbody>
+            </table>
+          </Match>
+
+          <Match when={props.ctx.skills().length === 0}>
+            <div class="empty empty-teach">
+              <strong>No skills are loaded.</strong>
+              <p>
+                Skills are discovered from <code>.vak/skills/</code> in this workspace and from the
+                user-wide skills directory. Each is a folder with a <code>SKILL.md</code> inside.
+              </p>
+            </div>
+          </Match>
+
+          <Match when={props.ctx.skills().length > 0}>
+            <table class="table">
+              <thead><tr><th>skill</th><th>scope</th><th>what it does</th><th>source</th></tr></thead>
+              <tbody>
+                <For each={props.ctx.skills()}>
+                  {(s) => (
+                    <tr class="row-static">
+                      <td class="mono bold">{s.name}</td>
+                      <td>
+                        <span class={`chip ${s.scope === "workspace" ? "chip-tool" : "chip-mode"}`}>
+                          {s.scope ?? "user"}
+                        </span>
+                      </td>
+                      <td class="dim">{s.description || "No description in its frontmatter."}</td>
+                      <td class="dim col-path">
+                        <Show when={s.path} fallback={<span class="dim">—</span>}>
+                          <PathCell path={s.path!} />
+                        </Show>
+                      </td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </Match>
+        </Switch>
+      </section>
+    </>
+  );
+}
+
+// ---- Extensions › Hooks ----------------------------------------------------
+
+const HOOK_EVENTS = ["pre_tool_use", "post_tool_use", "session_start", "stop"] as const;
+
+function HooksView(props: { ctx: ExtensionsCtx }) {
+  const [event, setEvent] = createSignal<string>("pre_tool_use");
+  const [matcher, setMatcher] = createSignal("");
+  const [command, setCommand] = createSignal("");
+  const [timeout, setTimeoutMs] = createSignal("10000");
+  const [busy, setBusy] = createSignal(false);
+
+  const addHook = async () => {
+    const cmd = command().trim();
+    if (!cmd || busy()) return;
+    setBusy(true);
+    try {
+      await api.putHooks([
+        ...props.ctx.hooks(),
+        {
+          event: event(),
+          matcher: matcher().trim() || null,
+          command: cmd,
+          timeout_ms: parseInt(timeout(), 10) || 10_000,
+          enabled: true,
+        },
+      ]);
+      pushToast("info", `Added a ${event()} hook`);
+      setCommand("");
+      setMatcher("");
+      props.ctx.refetchHooks();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeHook = async (index: number) => {
+    const next = [...props.ctx.hooks()];
+    next.splice(index, 1);
+    try {
+      await api.putHooks(next);
+      pushToast("info", "Hook removed");
+      props.ctx.refetchHooks();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    }
+  };
+
+  return (
+    <>
+      <div class="toolbar">
+        <span class="spacer" />
+        <button class="ghost" onClick={() => props.ctx.refetchHooks()}>Refresh</button>
+      </div>
+
+      <section class="panel">
+        <div class="panel-title-row">
+          <div>
+            <h2>Lifecycle hooks</h2>
+            <p class="dim">
+              Hooks are the one extension that governs rather than being governed: a{" "}
+              <code>pre_tool_use</code> hook can block a call outright, and every hook runs as the
+              vak process itself — unsandboxed, outside the permission engine. Its matcher is the
+              only thing narrowing when it fires.
+            </p>
+          </div>
+        </div>
+
+        <Switch>
+          <Match when={props.ctx.hooksLoading()}>
+            <table class="table">
+              <thead><tr><th>event</th><th>fires on</th><th>command</th><th>timeout</th><th /></tr></thead>
+              <tbody><SkeletonRows cols={5} /></tbody>
+            </table>
+          </Match>
+
+          <Match when={props.ctx.hooks().length === 0}>
+            <div class="empty empty-teach">
+              <strong>No hooks are configured.</strong>
+              <p>
+                Nothing intercepts a run. Add one to audit tool calls, block a pattern before it
+                executes, or seed each session with workspace context.
+              </p>
+            </div>
+          </Match>
+
+          <Match when={props.ctx.hooks().length > 0}>
+            <table class="table">
+              <thead><tr><th>event</th><th>fires on</th><th>command</th><th>timeout</th><th /></tr></thead>
+              <tbody>
+                <For each={props.ctx.hooks()}>
+                  {(hook, index) => {
+                    const scope = createMemo(() =>
+                      hook.matcher ? parseRule(hook.matcher, "allow") : null,
+                    );
+                    return (
+                      <tr class="row-static">
+                        <td><span class="chip chip-mode mono">{hook.event}</span></td>
+                        <td>
+                          <Switch>
+                            <Match when={!hook.matcher}>
+                              <span class="chip chip-tone-warning">every call</span>
+                            </Match>
+                            {/* The matcher prints verbatim: it is the string
+                                in config, and its glob half is
+                                case-significant. The parse only decides
+                                whether the engine will accept it at all. */}
+                            <Match when={scope()}>
+                              <span class="chip mono">{hook.matcher}</span>
+                            </Match>
+                            <Match when={!scope()}>
+                              <span class="chip chip-tone-danger mono" title="This matcher does not parse as a rule; the hook will not load.">
+                                {hook.matcher} · invalid
+                              </span>
+                            </Match>
+                          </Switch>
+                        </td>
+                        <td class="dim col-command">
+                          <span class="path" title={hook.command}>{hook.command}</span>
+                        </td>
+                        <td class="dim">{hook.timeout_ms}ms</td>
+                        <td>
+                          <button class="danger small" onClick={() => void removeHook(index())}>
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  }}
+                </For>
+              </tbody>
+            </table>
+          </Match>
+        </Switch>
+
+        <details class="advanced">
+          <summary>Add a hook</summary>
+          <p class="dim">
+            The matcher uses the same syntax as a permission rule — <code>Bash(git *)</code>,{" "}
+            <code>Write</code>, <code>mcp(github/*)</code>. Leave it empty and the hook fires on
+            every call for its event.
+          </p>
+          <div class="form-row">
+            <label>event</label>
+            <select value={event()} onChange={(e) => setEvent(e.currentTarget.value)}>
+              <For each={HOOK_EVENTS}>{(ev) => <option value={ev}>{ev}</option>}</For>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>matcher</label>
+            <input class="mono" placeholder="Bash(git *) — optional" value={matcher()} onInput={(e) => setMatcher(e.currentTarget.value)} />
+          </div>
+          <div class="form-row">
+            <label>command</label>
+            <input class="mono" placeholder="/path/to/script.sh" value={command()} onInput={(e) => setCommand(e.currentTarget.value)} />
+          </div>
+          <div class="form-row">
+            <label>timeout (ms)</label>
+            <input type="number" min="100" value={timeout()} onInput={(e) => setTimeoutMs(e.currentTarget.value)} />
+          </div>
+          <div class="row-gap" style="margin-top:12px">
+            <button disabled={busy() || !command().trim()} onClick={() => void addHook()}>
+              {busy() ? "Adding…" : "Add hook"}
+            </button>
+          </div>
+        </details>
+      </section>
+    </>
+  );
+}
+
+// ---- Extensions › Scheduled tasks ------------------------------------------
+
+function TasksView(props: { ctx: ExtensionsCtx }) {
+  const [name, setName] = createSignal("");
+  const [prompt, setPrompt] = createSignal("");
+  const [schedule, setSchedule] = createSignal("");
+  const [modelPin, setModelPin] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const [busyId, setBusyId] = createSignal("");
+
+  const guard = async (id: string, work: () => Promise<void>, ok: string) => {
+    setBusyId(id);
+    try {
+      await work();
+      pushToast("info", ok);
+      props.ctx.refetchTasks();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const createTask = async () => {
+    if (!name().trim() || !prompt().trim() || busy()) return;
+    setBusy(true);
+    try {
+      await api.createTask({
+        name: name().trim(),
+        prompt: prompt().trim(),
+        schedule: schedule().trim() || undefined,
+        model_pin: modelPin().trim() || undefined,
+      });
+      pushToast("info", `Scheduled ‘${name().trim()}’`);
+      setName("");
+      setPrompt("");
+      setSchedule("");
+      setModelPin("");
+      props.ctx.refetchTasks();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div class="toolbar">
+        <span class="spacer" />
+        <button class="ghost" onClick={() => props.ctx.refetchTasks()}>Refresh</button>
+      </div>
+
+      <section class="panel">
+        <div class="panel-title-row">
+          <div>
+            <h2>Scheduled tasks</h2>
+            <p class="dim">
+              Runs vak starts on its own, with nobody watching. Each one runs under the same
+              permission mode as any other turn — <strong>{props.ctx.mode()}</strong> — so a task
+              that needs an approval simply waits for one.
+            </p>
+          </div>
+        </div>
+
+        <Switch>
+          <Match when={props.ctx.tasksLoading()}>
+            <table class="table">
+              <thead><tr><th>task</th><th>kind</th><th>schedule</th><th>model</th><th>last run</th><th>state</th><th /></tr></thead>
+              <tbody><SkeletonRows cols={7} /></tbody>
+            </table>
+          </Match>
+
+          <Match when={props.ctx.tasks().length === 0}>
+            <div class="empty empty-teach">
+              <strong>Nothing is scheduled.</strong>
+              <p>
+                A scheduled task is a prompt vak runs on a cron expression or a fixed interval — a
+                nightly digest, a recurring health check — and files the result in your Inbox.
+              </p>
+            </div>
+          </Match>
+
+          <Match when={props.ctx.tasks().length > 0}>
+            <table class="table">
+              <thead><tr><th>task</th><th>kind</th><th>schedule</th><th>model</th><th>last run</th><th>state</th><th /></tr></thead>
+              <tbody>
+                <For each={props.ctx.tasks()}>
+                  {(t) => (
+                    <tr class="row-static">
+                      <td class="bold">{t.name}</td>
+                      <td><span class={`chip ${t.script ? "chip-tool" : "chip-mode"}`}>{t.script ? "script" : "prompt"}</span></td>
+                      <td class="mono dim">{t.schedule ?? `every ${t.interval_secs ?? 3600}s`}</td>
+                      <td class="mono dim">{t.model_pin ?? "workspace default"}</td>
+                      <td class="dim" title={t.last_run_at ?? ""}>{t.last_run_at ? timeAgo(t.last_run_at) : "never"}</td>
+                      <td>
+                        <span class={t.enabled ? "chip chip-tone-success" : "chip"}>
+                          {t.enabled ? "enabled" : "paused"}
+                        </span>
+                      </td>
+                      <td>
+                        <div class="row-gap">
+                          <button
+                            class="ghost small"
+                            disabled={busyId() === t.id}
+                            onClick={() => void guard(t.id, () => api.runTaskNow(t.id), `Ran ‘${t.name}’`)}
+                          >
+                            Run now
+                          </button>
+                          <button
+                            class="ghost small"
+                            disabled={busyId() === t.id}
+                            onClick={() =>
+                              void guard(
+                                t.id,
+                                () => api.patchTask(t.id, { enabled: !t.enabled }),
+                                t.enabled ? "Task paused" : "Task enabled",
+                              )
+                            }
+                          >
+                            {t.enabled ? "Pause" : "Enable"}
+                          </button>
+                          <button
+                            class="danger small"
+                            disabled={busyId() === t.id}
+                            onClick={() => void guard(t.id, () => api.deleteTask(t.id), "Task deleted")}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </Match>
+        </Switch>
+
+        <details class="advanced">
+          <summary>Schedule a task</summary>
+          <div class="form-row">
+            <label>name</label>
+            <input placeholder="nightly-digest, dependency-audit…" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
+          </div>
+          <div class="form-row">
+            <label>prompt</label>
+            <textarea rows={3} placeholder="What should vak do each time this runs?" value={prompt()} onInput={(e) => setPrompt(e.currentTarget.value)} />
+          </div>
+          <div class="form-row">
+            <label>schedule</label>
+            <input class="mono" placeholder="*/30 * * * * — empty means hourly" value={schedule()} onInput={(e) => setSchedule(e.currentTarget.value)} />
+          </div>
+          <div class="form-row">
+            <label>model pin</label>
+            <input class="mono" placeholder="Optional — otherwise the workspace default" value={modelPin()} onInput={(e) => setModelPin(e.currentTarget.value)} />
+          </div>
+          <div class="row-gap" style="margin-top:12px">
+            <button disabled={busy() || !name().trim() || !prompt().trim()} onClick={() => void createTask()}>
+              {busy() ? "Scheduling…" : "Schedule task"}
+            </button>
+          </div>
+        </details>
+      </section>
+    </>
+  );
+}
+
+// ---- Extensions section shell ----------------------------------------------
+
+function ExtensionsSection() {
+  const [config] = createResource(() => api.config());
+  const [mcp, mcpActions] = createResource(() => api.mcpServers());
+  const [hooks, hooksActions] = createResource(() => api.hooks());
+  const [skills, skillsActions] = createResource(() => api.skills());
+  const [proposals, proposalsActions] = createResource(() => api.skillProposals());
+  const [tasks, tasksActions] = createResource(() => api.tasks());
+
+  const ctx: ExtensionsCtx = {
+    mcp: () => mcp()?.servers ?? {},
+    mcpLoading: () => mcp.loading,
+    refetchMcp: () => void mcpActions.refetch(),
+    hooks: () => hooks()?.hooks ?? [],
+    hooksLoading: () => hooks.loading,
+    refetchHooks: () => void hooksActions.refetch(),
+    skills: () => skills()?.skills ?? [],
+    skillsLoading: () => skills.loading,
+    proposals: () => proposals()?.proposals ?? [],
+    proposalsLoading: () => proposals.loading,
+    refetchSkills: () => {
+      void skillsActions.refetch();
+      void proposalsActions.refetch();
+    },
+    tasks: () => tasks()?.tasks ?? [],
+    tasksLoading: () => tasks.loading,
+    refetchTasks: () => void tasksActions.refetch(),
+    rules: createMemo(() => parseRuleLists(config()?.permissions)),
+    mode: () => config()?.permission_mode ?? "WorkspaceWrite",
+    rulesKnown: () => rulesReported(config()),
+  };
+
+  const count = (n: number, loading: boolean) => (loading ? "" : ` ${n}`);
+
+  // An errored fetch and a genuinely empty extension point look identical
+  // once the resource settles, and "nothing is configured" is the more
+  // alarming of the two to report wrongly. Name the failure instead.
+  const failure = createMemo(() => {
+    for (const [what, res] of [
+      ["configuration", config],
+      ["MCP servers", mcp],
+      ["hooks", hooks],
+      ["skills", skills],
+      ["skill proposals", proposals],
+      ["scheduled tasks", tasks],
+    ] as const) {
+      if (res.error) return { what, error: `${res.error}` };
+    }
+    return null;
+  });
+
+  createEffect(() => {
+    if (failure() && (config.error instanceof AuthRequired || mcp.error instanceof AuthRequired)) {
+      setAuthed(false);
+    }
+  });
+
+  return (
+    <div class="view">
+      <Show when={failure()}>
+        <section class="panel panel-alert callout" style="margin-bottom:14px">
+          <div>
+            <strong>Could not read {failure()!.what}</strong>
+            <p class="dim">
+              {failure()!.error} — what is shown below may be incomplete, so treat an empty list as
+              unknown rather than as nothing configured.
+            </p>
+          </div>
+        </section>
+      </Show>
+
+      <div class="tab-bar">
+        <For each={EXTENSION_TABS}>
+          {(t) => (
+            <a class="tab-btn" href={t.hash} classList={{ active: extensionsTab() === t.hash }}>
+              {t.label}
+              <Switch>
+                <Match when={t.hash === "#/integrations"}>
+                  <span class="tab-count">{count(Object.keys(ctx.mcp()).length, ctx.mcpLoading())}</span>
+                </Match>
+                <Match when={t.hash === "#/integrations/skills"}>
+                  <span class="tab-count">{count(ctx.skills().length, ctx.skillsLoading())}</span>
+                  <Show when={ctx.proposals().length > 0}>
+                    <span class="nav-badge">{ctx.proposals().length}</span>
+                  </Show>
+                </Match>
+                <Match when={t.hash === "#/integrations/hooks"}>
+                  <span class="tab-count">{count(ctx.hooks().length, ctx.hooksLoading())}</span>
+                </Match>
+                <Match when={t.hash === "#/integrations/tasks"}>
+                  <span class="tab-count">{count(ctx.tasks().length, ctx.tasksLoading())}</span>
+                </Match>
+              </Switch>
+            </a>
+          )}
+        </For>
+      </div>
+
+      <Switch>
+        <Match when={extensionsTab() === "#/integrations"}><McpServersView ctx={ctx} /></Match>
+        <Match when={extensionsTab() === "#/integrations/skills"}><SkillsView ctx={ctx} /></Match>
+        <Match when={extensionsTab() === "#/integrations/hooks"}><HooksView ctx={ctx} /></Match>
+        <Match when={extensionsTab() === "#/integrations/tasks"}><TasksView ctx={ctx} /></Match>
       </Switch>
     </div>
   );
@@ -1438,11 +2048,15 @@ function Security() {
 
 // ---- Inbox -----------------------------------------------------------------
 
+// The tone names here have to be the ones `.chip-tone-*` actually defines
+// (warning / success / danger / info). `warn` and `alert` matched no rule, so
+// a denied approval and a budget alert — the two entries most worth catching
+// the eye — were rendering in the same muted grey as a heartbeat.
 const INBOX_KIND_TONE: Record<string, string> = {
   task_summary: "",
-  approval_pending: "warn",
-  approval_denied: "alert",
-  budget_alert: "alert",
+  approval_pending: "warning",
+  approval_denied: "danger",
+  budget_alert: "danger",
   digest: "",
   heartbeat: "",
   proposal_opened: "info",
@@ -2323,7 +2937,7 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
                         >
                           <td class="mono">{binding.target}</td>
                           <td><SurfaceBadge channelKey={binding.target} /></td>
-                          <td class="mono dim wrap">{binding.workspace}</td>
+                          <td class="dim col-path"><PathCell path={binding.workspace} /></td>
                           <td class="mono dim">
                             {binding.effective_route.provider} / {binding.effective_route.model}
                             <Show when={binding.override}>
@@ -2583,7 +3197,7 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
         >
           <div class="route-summary-grid">
             <div><span class="eyebrow">Gateway</span><strong>{props.ctx.status()?.enabled ? "Enabled" : "Disabled"}</strong></div>
-            <div><span class="eyebrow">Workspace</span><code>{props.ctx.status()?.workspace}</code></div>
+            <div><span class="eyebrow">Workspace</span><PathCell path={props.ctx.status()?.workspace ?? ""} budget={46} /></div>
             <div><span class="eyebrow">Admin default</span><strong>{props.ctx.status()?.default_route.provider}</strong><code>{props.ctx.status()?.default_route.model}</code></div>
             <div>
               <span class="eyebrow">Provenance</span>
@@ -2627,7 +3241,7 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
                 <For each={pool()?.entries}>
                   {(entry) => (
                     <tr class="row-static">
-                      <td class="mono wrap">{entry.workspace}</td>
+                      <td class="col-path"><PathCell path={entry.workspace} /></td>
                       <td><span class="chip chip-kind">{entry.effective_permission_mode}</span></td>
                       <td class="dim">{entry.idle_secs}s</td>
                       <td>
@@ -2716,23 +3330,37 @@ function GatewaySection() {
 
 const MODES = ["ReadOnly", "WorkspaceWrite", "FullAccess"];
 
+const PROVIDERS = [
+  { id: "anthropic", label: "Anthropic (Claude)" },
+  { id: "openai", label: "OpenAI (Responses)" },
+  { id: "google", label: "Google (Gemini)" },
+  { id: "ollama", label: "Ollama (local)" },
+] as const;
+
+const MODE_COPY: Record<string, string> = {
+  ReadOnly: "Read tools only, confined to the workspace. Every write is denied outright.",
+  WorkspaceWrite: "Writes inside the workspace go through; anything else asks first.",
+  FullAccess: "Nothing is gated. Only for a workspace you have decided to trust completely.",
+};
+
+/// One page, six self-contained panels. Each answers a single question about
+/// how this instance is configured; nothing here is a summary of a screen
+/// that already exists elsewhere.
 function Settings() {
   const [config, { refetch: refetchConfig }] = createResource(() => api.config());
-  const [providersData, { refetch: refetchProviders }] = createResource(() => api.providers().catch(() => null));
-  const [gateway] = createResource(() => api.gatewayStatus());
+  const [providersData, { refetch: refetchProviders }] = createResource(() => api.providers());
   const [rebuilding, setRebuilding] = createSignal(false);
   const [doctorReport, setDoctorReport] = createSignal<string | null>(null);
   const [runningDoctor, setRunningDoctor] = createSignal(false);
 
-  // Editable provider & live model discovery
   const [selectedProvider, setSelectedProvider] = createSignal("anthropic");
   const [selectedModel, setSelectedModel] = createSignal("");
   const [discoveredModels, setDiscoveredModels] = createSignal<string[]>([]);
   const [loadingModels, setLoadingModels] = createSignal(false);
+  const [modelError, setModelError] = createSignal("");
   const [providerKeyInput, setProviderKeyInput] = createSignal("");
   const [savingKey, setSavingKey] = createSignal(false);
 
-  // Seed once on initial config load
   let initialized = false;
   createEffect(() => {
     const c = config();
@@ -2743,29 +3371,37 @@ function Settings() {
     }
   });
 
-  // Fetch live discovered models whenever provider changes
-  createEffect(async () => {
-    const prov = selectedProvider();
-    if (!prov) return;
+  const discover = async (provider: string) => {
     setLoadingModels(true);
+    setModelError("");
     try {
-      const res = await api.models(prov);
+      const res = await api.models(provider);
       const models = res.models ?? [];
       setDiscoveredModels(models);
-      if (models.length > 0 && !models.includes(selectedModel())) {
-        setSelectedModel(models[0]);
-      }
-    } catch {
+      if (models.length > 0 && !models.includes(selectedModel())) setSelectedModel(models[0]);
+    } catch (err) {
       setDiscoveredModels([]);
+      // Almost always "no key for this provider yet", which the free-text
+      // model field below already lets the operator work around.
+      setModelError(`${err}`);
     } finally {
       setLoadingModels(false);
     }
+  };
+
+  createEffect(() => {
+    const provider = selectedProvider();
+    if (provider) void discover(provider);
   });
 
-  const saveIdentity = async () => {
+  const keyConfigured = createMemo(
+    () => providersData()?.providers?.find((p) => p.name === selectedProvider())?.configured ?? false,
+  );
+
+  const guard = async (work: () => Promise<void>, ok: string) => {
     try {
-      await api.patchConfig({ provider: selectedProvider(), model: selectedModel() });
-      pushToast("info", `Model updated: ${selectedProvider()} / ${selectedModel()}`);
+      await work();
+      pushToast("info", ok);
       refetchConfig();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
@@ -2778,39 +3414,15 @@ function Settings() {
     setSavingKey(true);
     try {
       await api.setProviderKey(selectedProvider(), providerKeyInput().trim());
-      pushToast("info", `API key set for ${selectedProvider()}`);
+      pushToast("info", `Key stored for ${selectedProvider()}`);
       setProviderKeyInput("");
       refetchProviders();
-      // Re-trigger discovery
-      const res = await api.models(selectedProvider());
-      setDiscoveredModels(res.models ?? []);
-    } catch (err) {
-      pushToast("alert", `${err}`);
-    } finally {
-      setSavingKey(false);
-    }
-  };
-
-  const deleteKey = async () => {
-    try {
-      await api.deleteProviderKey(selectedProvider());
-      pushToast("info", `API key revoked for ${selectedProvider()}`);
-      refetchProviders();
-      setDiscoveredModels([]);
-    } catch (err) {
-      pushToast("alert", `${err}`);
-    }
-  };
-
-  const switchMode = async (mode: string) => {
-    try {
-      await api.setMode(mode);
-      pushToast("info", `Permission mode → ${mode}`);
-      refetchConfig();
+      await discover(selectedProvider());
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
-      refetchConfig();
+    } finally {
+      setSavingKey(false);
     }
   };
 
@@ -2818,7 +3430,7 @@ function Settings() {
     setRebuilding(true);
     try {
       const stats = await api.rebuild();
-      if (stats.ok) pushToast("info", `Rebuilt: ${stats.files_scanned} files, ${stats.entries_indexed} entries`);
+      if (stats.ok) pushToast("info", `Reindexed ${stats.entries_indexed} entries from ${stats.files_scanned} files`);
       else pushToast("alert", `Rebuild failed: ${stats.error}`);
     } catch (err) {
       pushToast("alert", `${err}`);
@@ -2830,8 +3442,7 @@ function Settings() {
   const runDoctor = async () => {
     setRunningDoctor(true);
     try {
-      const doc = await api.doctor();
-      setDoctorReport(doc.report);
+      setDoctorReport((await api.doctor()).report);
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -2846,144 +3457,245 @@ function Settings() {
     navigate("#/overview");
   };
 
+  const rules = createMemo(() => parseRuleLists(config()?.permissions));
+  const rulesFor = (decision: RuleDecision) => rules().filter((r) => r.decision === decision);
+
   return (
     <div class="view">
       <div class="two-col">
-        {/* Model & Provider Live Discovery */}
-        <section class="panel">
-          <h2>Model Identity &amp; Live Discovery</h2>
-          <Show when={!config.loading} fallback={<div class="empty">Loading…</div>}>
-            <div class="form-row">
-              <label>provider</label>
-              <select value={selectedProvider()} onChange={(e) => setSelectedProvider(e.currentTarget.value)}>
-                <option value="anthropic">Anthropic (Claude)</option>
-                <option value="openai">OpenAI (Responses)</option>
-                <option value="google">Google (Gemini)</option>
-                <option value="ollama">Ollama (Local)</option>
-              </select>
+        <div class="stack">
+          <section class="panel">
+            <div class="panel-title-row">
+              <div>
+                <h2>Model</h2>
+                <p class="dim">What answers a turn when nothing pins a different route.</p>
+              </div>
             </div>
-
-            <div class="form-row">
-              <label>model</label>
-              <Show
-                when={discoveredModels().length > 0}
-                fallback={
-                  <input
-                    class="mono"
-                    placeholder={loadingModels() ? "Discovering models from key…" : "e.g. claude-3-5-sonnet-20241022"}
-                    value={selectedModel()}
-                    onInput={(e) => setSelectedModel(e.currentTarget.value)}
-                  />
-                }
-              >
-                <select value={selectedModel()} onChange={(e) => setSelectedModel(e.currentTarget.value)}>
-                  <For each={discoveredModels()}>{(m) => <option value={m}>{m}</option>}</For>
+            <Show when={!config.loading} fallback={<div class="cred-list"><span class="skel skel-block" /><span class="skel skel-block" /></div>}>
+              <div class="form-row">
+                <label>provider</label>
+                <select value={selectedProvider()} onChange={(e) => setSelectedProvider(e.currentTarget.value)}>
+                  <For each={PROVIDERS}>{(p) => <option value={p.id}>{p.label}</option>}</For>
                 </select>
+              </div>
+              <div class="form-row">
+                <label>model</label>
+                <Show
+                  when={discoveredModels().length > 0}
+                  fallback={
+                    <input
+                      class="mono"
+                      placeholder={loadingModels() ? "Asking the provider…" : "claude-sonnet-4-5-20250929"}
+                      value={selectedModel()}
+                      onInput={(e) => setSelectedModel(e.currentTarget.value)}
+                    />
+                  }
+                >
+                  <select value={selectedModel()} onChange={(e) => setSelectedModel(e.currentTarget.value)}>
+                    <For each={discoveredModels()}>{(m) => <option value={m}>{m}</option>}</For>
+                  </select>
+                </Show>
+              </div>
+              <Show when={modelError() && discoveredModels().length === 0}>
+                <p class="dim">
+                  Could not list models for {selectedProvider()} ({modelError()}). Set its key below,
+                  or type a model id by hand.
+                </p>
               </Show>
-            </div>
+              <div class="row-gap" style="margin-top:10px">
+                <button
+                  disabled={!selectedModel().trim()}
+                  onClick={() =>
+                    void guard(
+                      () => api.patchConfig({ provider: selectedProvider(), model: selectedModel() }),
+                      `Route is now ${selectedProvider()} / ${selectedModel()}`,
+                    )
+                  }
+                >
+                  Save route
+                </button>
+                <button class="ghost small" disabled={loadingModels()} onClick={() => void discover(selectedProvider())}>
+                  {loadingModels() ? "Discovering…" : "Rediscover models"}
+                </button>
+              </div>
+            </Show>
+          </section>
 
-            <div class="row-gap" style="margin-top:10px">
-              <button onClick={saveIdentity}>Save model</button>
-              <button class="ghost small" onClick={() => api.models(selectedProvider()).then(r => setDiscoveredModels(r.models))}>
-                {loadingModels() ? "Discovering…" : "Rediscover models"}
-              </button>
+          <section class="panel">
+            <div class="panel-title-row">
+              <div>
+                <h2>Provider key</h2>
+                <p class="dim">
+                  Stored for {selectedProvider()}. Written to the user <code>.env</code>; it is never
+                  read back into this page.
+                </p>
+              </div>
+              <span class={`chip chip-tone-${keyConfigured() ? "success" : "warning"}`}>
+                {keyConfigured() ? "set" : "not set"}
+              </span>
             </div>
-
-            {/* Provider Key Management */}
-            <h2 style="margin-top:20px">API Key Management ({selectedProvider()})</h2>
             <div class="form-row">
               <label>key</label>
-              <input type="password" placeholder="sk-..." value={providerKeyInput()} onInput={(e) => setProviderKeyInput(e.currentTarget.value)} />
+              <input
+                type="password"
+                autocomplete="off"
+                placeholder="sk-…"
+                value={providerKeyInput()}
+                onInput={(e) => setProviderKeyInput(e.currentTarget.value)}
+              />
+            </div>
+            <div class="row-gap" style="margin-top:10px">
+              <button disabled={savingKey() || !providerKeyInput().trim()} onClick={() => void saveKey()}>
+                {savingKey() ? "Storing…" : "Store key"}
+              </button>
+              <Show when={keyConfigured()}>
+                <button
+                  class="danger small"
+                  onClick={() =>
+                    void guard(async () => {
+                      await api.deleteProviderKey(selectedProvider());
+                      refetchProviders();
+                      setDiscoveredModels([]);
+                    }, `Key revoked for ${selectedProvider()}`)
+                  }
+                >
+                  Revoke
+                </button>
+              </Show>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title-row">
+              <div>
+                <h2>Appearance</h2>
+                <p class="dim">Applies to this browser only.</p>
+              </div>
+            </div>
+            <div class="theme-grid">
+              <For
+                each={[
+                  { id: "warm", label: "Warm dark", class: "" },
+                  { id: "dark", label: "Midnight", class: "dark" },
+                  { id: "contrast", label: "High contrast", class: "contrast" },
+                ] as const}
+              >
+                {(t) => (
+                  <button class="theme-choice" classList={{ active: theme() === t.id }} onClick={() => setTheme(t.id)}>
+                    <span class={`theme-preview ${t.class}`}><i /><i /><i /></span>
+                    <strong>{t.label}</strong>
+                  </button>
+                )}
+              </For>
+            </div>
+          </section>
+        </div>
+
+        <div class="stack">
+          <section class="panel">
+            <div class="panel-title-row">
+              <div>
+                <h2>Permissions</h2>
+                <p class="dim">
+                  The mode decides every call no rule covers. Rules are checked first, and among the
+                  rules that match one call, deny outranks ask outranks allow — the order they appear
+                  in never decides it.
+                </p>
+              </div>
+            </div>
+            <div class="mode-grid">
+              <For each={MODES}>
+                {(m) => (
+                  <button
+                    class="mode-btn"
+                    classList={{ active: config()?.permission_mode === m }}
+                    onClick={() => void guard(() => api.setMode(m), `Permission mode → ${m}`)}
+                    disabled={config()?.permission_mode === m}
+                  >
+                    <span class="mode-name">{m}</span>
+                    <span class="mode-desc">{MODE_COPY[m]}</span>
+                  </button>
+                )}
+              </For>
+            </div>
+
+            <Show
+              when={rulesReported(config())}
+              fallback={
+                <Show when={!config.loading}>
+                  <div class="rule-lists">
+                    <p class="dim">
+                      This server build does not report its rule lists, so the rules layered on top
+                      of the mode cannot be shown. Everything above still applies; read{" "}
+                      <code>allow</code>/<code>ask</code>/<code>deny</code> in <code>config.toml</code>{" "}
+                      directly, or update vak.
+                    </p>
+                  </div>
+                </Show>
+              }
+            >
+              <div class="rule-lists">
+                <For each={["deny", "ask", "allow"] as const}>
+                  {(decision) => (
+                    <div>
+                      <span class="eyebrow">{decision} rules</span>
+                      <Show
+                        when={rulesFor(decision).length > 0}
+                        fallback={<p class="dim">None — nothing is {decision === "allow" ? "pre-approved" : decision === "deny" ? "blocked outright" : "forced to ask"} beyond what the mode already decides.</p>}
+                      >
+                        <div class="chip-stack">
+                          <For each={rulesFor(decision)}>{(r) => <RuleChip rule={r} />}</For>
+                        </div>
+                      </Show>
+                    </div>
+                  )}
+                </For>
+              </div>
+              <p class="dim">
+                Rules live in <code>config.toml</code> and are read-only here — editing them from a
+                browser session would let the console widen its own reach. See what each one grants a
+                given extension under <a href="#/integrations">Extensions</a>.
+              </p>
+            </Show>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title-row">
+              <div>
+                <h2>Maintenance</h2>
+                <p class="dim">Neither is destructive; both can take a moment on a large store.</p>
+              </div>
             </div>
             <div class="row-gap">
-              <button disabled={savingKey() || !providerKeyInput().trim()} onClick={saveKey}>
-                {savingKey() ? "Saving…" : "Set Key"}
+              <button class="ghost" disabled={runningDoctor()} onClick={() => void runDoctor()}>
+                {runningDoctor() ? "Diagnosing…" : "Run diagnostics"}
               </button>
-              <button class="danger small" onClick={deleteKey}>Revoke Key</button>
+              <button class="ghost" disabled={rebuilding()} onClick={() => void rebuild()}>
+                {rebuilding() ? "Reindexing…" : "Rebuild search index"}
+              </button>
             </div>
-          </Show>
-        </section>
+            <Show when={doctorReport()}>
+              <pre class="mono report-pre">{doctorReport()}</pre>
+              <div class="row-gap">
+                <button class="ghost small" onClick={() => setDoctorReport(null)}>Dismiss report</button>
+              </div>
+            </Show>
+          </section>
 
-        {/* Permissions & Governance */}
-        <section class="panel">
-          <h2>Permission Mode</h2>
-          <div class="mode-grid">
-            <For each={MODES}>
-              {(m) => (
-                <button
-                  class="mode-btn"
-                  classList={{ active: config()?.permission_mode === m }}
-                  onClick={() => switchMode(m)}
-                  disabled={config()?.permission_mode === m}
-                >
-                  <span class="mode-name">{m}</span>
-                  <span class="mode-desc">
-                    {m === "ReadOnly" && "Read-only tools; writes denied"}
-                    {m === "WorkspaceWrite" && "Writes confined to workspace"}
-                    {m === "FullAccess" && "Unsandboxed — explicit trust"}
-                  </span>
-                </button>
-              )}
-            </For>
-          </div>
-
-          <h2 style="margin-top:20px">Diagnostics &amp; System Health</h2>
-          <div class="row-gap">
-            <button class="ghost" disabled={runningDoctor()} onClick={runDoctor}>
-              {runningDoctor() ? "Diagnosing…" : "Run Doctor Diagnostics"}
-            </button>
-            <button class="ghost" disabled={rebuilding()} onClick={rebuild}>
-              {rebuilding() ? "Rebuilding…" : "Rebuild Search Index"}
-            </button>
-          </div>
-          <Show when={doctorReport()}>
-            <pre class="mono" style="margin-top:10px; max-height:180px; overflow:auto; background:var(--bg); padding:8px; border-radius:6px">
-              {doctorReport()}
-            </pre>
-          </Show>
-
-          <h2 style="margin-top:20px">Appearance &amp; Theme</h2>
-          <div class="theme-grid">
-            <For
-              each={[
-                { id: "warm", label: "Warm dark (craft)", class: "" },
-                { id: "dark", label: "Midnight (slate)", class: "dark" },
-                { id: "contrast", label: "High contrast", class: "contrast" },
-              ] as const}
-            >
-              {(t) => (
-                <button
-                  class="theme-choice"
-                  classList={{ active: theme() === t.id }}
-                  onClick={() => setTheme(t.id)}
-                >
-                  <span class={`theme-preview ${t.class}`}>
-                    <i />
-                    <i />
-                    <i />
-                  </span>
-                  <strong>{t.label}</strong>
-                  <Show when={theme() === t.id}>
-                    <span class="chip-ok mono" style="font-size:10px; padding:1px 5px; border-radius:4px">active</span>
-                  </Show>
-                </button>
-              )}
-            </For>
-          </div>
-
-          <h2 style="margin-top:20px">Gateway &amp; Security</h2>
-          <Show when={!gateway.loading}>
-            <dl class="kv">
-              <dt>gateway</dt>
-              <dd><span class="chip" data-on={gateway()?.enabled}>{gateway()?.enabled ? "enabled" : "disabled"}</span></dd>
-              <dt>bindings</dt>
-              <dd>{gateway()?.bindings.length ? `${gateway()!.bindings.length} registered` : "none"}</dd>
-            </dl>
-          </Show>
-          <div class="row-gap" style="margin-top:16px">
-            <button class="danger" onClick={signOut}>Sign out</button>
-          </div>
-        </section>
+          <section class="panel">
+            <div class="panel-title-row">
+              <div>
+                <h2>This session</h2>
+                <p class="dim">
+                  Signing out clears the console cookie here. Runs already in flight keep going.
+                </p>
+              </div>
+            </div>
+            <div class="row-gap">
+              <button class="danger" onClick={() => void signOut()}>Sign out</button>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
   );
@@ -2998,18 +3710,38 @@ interface NavItem {
   badge?: () => string;
   /// Sub-destinations, rendered in the sidebar while the section is open.
   children?: readonly { readonly hash: string; readonly label: string }[];
+  /// Which child is current. A section with children owns this, because only
+  /// it knows how its sub-routes resolve (a bare section hash is its own
+  /// first tab, not "no tab").
+  activeChild?: () => string;
 }
 
 const NAV: NavItem[] = [
   { hash: "#/overview", label: "Overview", icon: ICONS.overview },
   { hash: "#/sessions", label: "Sessions", icon: ICONS.sessions },
-  { hash: "#/integrations", label: "Integrations", icon: ICONS.integrations },
+  // Extensions are four distinct governance questions — what external
+  // processes can be started, what instructions are loaded, what intercepts
+  // a run, what runs unattended — and they read as four screens for the
+  // same reason the Gateway does.
+  {
+    hash: "#/integrations",
+    label: "Extensions",
+    icon: ICONS.integrations,
+    children: EXTENSION_TABS,
+    activeChild: extensionsTab,
+  },
   // The gateway is four distinct jobs, not one page: watch the channels
   // you have, walk a new one in, handle credentials, check routing and
   // pool health. The sub-rows expand in place when the section is open so
   // the destination is nameable from the nav rather than found by
   // scrolling one long view.
-  { hash: "#/gateway", label: "Gateway", icon: ICONS.gateway, children: GATEWAY_TABS },
+  {
+    hash: "#/gateway",
+    label: "Gateway",
+    icon: ICONS.gateway,
+    children: GATEWAY_TABS,
+    activeChild: gatewayTab,
+  },
   { hash: "#/memory", label: "Memory", icon: ICONS.memory },
   { hash: "#/search", label: "Search", icon: ICONS.search },
   { hash: "#/inbox", label: "Inbox", icon: ICONS.inbox, badge: () => unread().toString() || "" },
@@ -3105,7 +3837,7 @@ export default function App() {
                             <a
                               class="sub"
                               href={child.hash}
-                              classList={{ active: gatewayTab() === child.hash }}
+                              classList={{ active: item.activeChild?.() === child.hash }}
                             >
                               {child.label}
                             </a>
@@ -3129,7 +3861,7 @@ export default function App() {
               <Match when={currentRoute() === "transcript"}>
                 <Transcript sessionId={route().slice("#/sessions/".length)} />
               </Match>
-              <Match when={currentRoute() === "#/integrations"}><IntegrationsView /></Match>
+              <Match when={currentRoute() === "#/integrations"}><ExtensionsSection /></Match>
               <Match when={currentRoute() === "#/gateway"}><GatewaySection /></Match>
               <Match when={currentRoute() === "#/memory"}><MemoryView /></Match>
               <Match when={currentRoute() === "#/search"}><SearchView /></Match>

@@ -474,6 +474,7 @@ pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serd
     // overrides applied by PATCH /config and POST /config/mode are accurately returned.
     crate::refresh_control_plane(&state);
     let route = state.core.effective_route();
+    let cfg = state.core.config();
     Json(serde_json::json!({
         "provider": route.provider,
         "model": route.model,
@@ -483,6 +484,17 @@ pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serd
         "max_turns": state.core.effective_max_turns(),
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
         "theme": state.core.effective_theme(),
+        // The resolved rule lists the permission engine actually evaluates
+        // (vak_permission::Rule syntax: `Tool`, `Tool(glob)`, with a
+        // `+`/`?`/`-` prefix for allow/ask/deny). The admin console shows
+        // these verbatim and derives per-extension scope from them, so a
+        // reader can see what an MCP server or a hook is permitted to do
+        // rather than only that it is configured.
+        "permissions": {
+            "allow": cfg.allow,
+            "ask": cfg.ask,
+            "deny": cfg.deny,
+        },
     }))
 }
 

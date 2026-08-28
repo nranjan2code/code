@@ -183,6 +183,109 @@ Toasts surface high-signal events everywhere (runs finished, gates
 waiting, security alerts); the sidebar dot shows hub connection state
 with exponential-backoff reconnect.
 
+## Extensions: visibility and scope
+
+The Gateway split answered "who may talk to this agent, and under what
+permission". Extensions answers the same question for everything else that
+widens what the agent can do. `#/integrations` is four hash routes —
+`#/integrations` (MCP servers), `/skills`, `/hooks`, `/tasks` — presented in
+a tab bar and as sidebar sub-rows, structurally identical to the Gateway
+section so the two governance surfaces read as one system.
+
+Each screen is a scan-first table with its add-form demoted to a
+`<details>`, matching the Channels pattern: what is configured reads first,
+the form appears on demand.
+
+### What backs the scope column
+
+Nothing here is inferred where it could be read.
+
+- **Permission rules** come from `GET /admin/api/config`'s `permissions`
+  object (`allow`/`ask`/`deny`), added for this view. The console parses each
+  string with the same grammar as `vak_permission::rules::Rule::parse` — a
+  `+`/`?`/`-` prefix selects allow/ask/deny, a bare rule allows, `Tool(glob)`
+  scopes to matching arguments and `Tool` covers every call.
+- **Which rules reach an MCP server** follows the engine's own matching:
+  `arg_candidates` renders an MCP call as the literal `server/tool`, so a
+  rule reaches a server when it is blanket (`mcp`) or when the server half of
+  its pattern globs to that name.
+- **The fallthrough** is the mode arm of `PermissionEngine::evaluate`. `mcp`
+  is neither a read nor a write tool, so an uncovered call is `allow` under
+  full-access, `deny` under read-only, `ask` under workspace-write. The UI
+  names that decision rather than leaving the cell blank.
+- **MCP network and environment** are already on `McpServerConfig`
+  (`network`, `env`) and come back from `GET /config/mcp`. Environment is
+  shown as key names only; values live in `config.toml` and are not rendered.
+- **Hook scope** is the hook's own matcher, which `vak-core` parses into a
+  `Rule` before `vak-hooks` matches it. It prints verbatim, and a matcher
+  that does not parse is flagged rather than hidden.
+- **Skill provenance** comes from `GET /skills`, extended with `path` and a
+  `scope` of `workspace` (`<cwd>/.vak/skills`) or `user`.
+
+### What is deliberately not shown
+
+- **Live MCP tool lists.** `McpManager` spawns a server lazily, per run;
+  the server process holds no persistent client to enumerate. Listing a
+  server's real tools means starting it, which is a side effect an admin
+  read should not have. A route that does this deliberately is a separate
+  decision, not something to fake with a config echo.
+- **Rule editing.** The rule lists render read-only in Settings. A console
+  session that can rewrite `allow` can widen its own reach; that belongs in
+  the file and the trust prompt.
+- **A per-tool effective decision.** A rule may cover only some of a
+  server's tools (`mcp(github/read_*)`), so a single verdict per server would
+  be a lie. The matching rules and the fallthrough are shown side by side
+  instead, with the precedence stated: among rules matching one call, deny
+  outranks ask outranks allow, and config order never decides it.
+
+An older server omits `permissions` entirely. The console renders "scope not
+reported" in that case, never an empty rule list — the difference between an
+unknown scope and an unrestricted one is the whole point of the screen.
+
+## Paths and tables at scale
+
+A filesystem path in a table cell is not free text. `word-break: break-all`
+in the Channels workspace column split `/Users/nisheethranjan/Projects/
+vakcoder` across three lines mid-word; every row became a different height
+and the column read as damage.
+
+Paths render through one primitive (`truncatePath` / `PathCell`) with three
+properties:
+
+1. **Whole segments are dropped, never split.** The head is spent first
+   because workspaces share their `/Users/<name>` prefix and differ in the
+   tail.
+2. **The budget is characters, not segments.** A segment-counted result can
+   still overflow its column and be clipped from the right by CSS, throwing
+   away the very tail that distinguishes two workspaces. Fitting a character
+   budget means the CSS ellipsis is only a backstop for a single segment
+   wider than the whole column. `PathCell` derives its `max-width` from the
+   same budget, so the two can never disagree.
+3. **Nothing is lost.** The full path is on the `title` and is selectable.
+
+Applied wherever a path sits in a constrained cell: Channels, Core pool,
+skill sources, the Overview workspace, the routing summary, Best-of-N repos.
+`.wrap` remains for genuinely free text, but breaks at spaces before it
+breaks a word.
+
+Tables that scroll keep their headers: `.table` carried `overflow: hidden`
+purely to round two corners, which made it a scroll container and silently
+disabled `position: sticky` on `thead th`. Corners are rounded per-cell now.
+Chips no longer wrap, so one two-word label cannot make its row taller than
+its neighbours.
+
+Measured at 100 rows against real payload shapes: uniform row height, sticky
+header holding after a 1200px scroll, client-side filter at under 4ms, no
+horizontal body overflow.
+
+**Known limit.** `GET /admin/api/gateway/allowlist` and the bindings in
+`GET /admin/api/gateway/status` return everything in one response with no
+`limit`/`offset`/`q`. The table handles a hundred rows comfortably and the
+filter is client-side over the full set, which is honest while the API is
+unpaginated. Several thousand channels would want server-side paging and
+search first; a paginated UI has not been built over an API that cannot
+page, because it would have to invent the pages.
+
 ## Invariants
 
 1. **JSONL is truth.** `store.db*` are derived artifacts: excluded from

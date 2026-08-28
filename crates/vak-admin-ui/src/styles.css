@@ -303,7 +303,30 @@ html, body {
 .spacer { flex: 1; }
 .dim { color: var(--muted); }
 .mono { font-family: var(--mono); font-size: 12.5px; }
-.wrap { word-break: break-all; }
+/* Free-form text (a security event's detail, an error) that may contain one
+   very long unbroken token. Break at spaces first and split a word only when
+   there is genuinely nowhere else to go -- `break-all` chops every line at
+   the column edge whether or not a space was available. Paths do not use
+   this; they use `.path`. */
+.wrap { overflow-wrap: anywhere; word-break: normal; }
+
+/* A filesystem path. Never wraps, so a table row stays one line tall no
+   matter how deep the path is: whole middle segments are dropped in JS
+   (truncatePath) and anything still too wide is clipped here. The full value
+   is on the title attribute. */
+.path {
+  display: block;
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+/* PathCell sets its own max-width from the character budget it fitted
+   the text to. This is only for the raw `.path` spans that are not a
+   PathCell -- a command line, which has no segment structure to elide. */
+td.col-command .path { max-width: 38ch; }
 .row-gap { display: flex; gap: 8px; align-items: center; }
 .empty {
   color: var(--faint);
@@ -490,11 +513,16 @@ button.approve:hover:not(:disabled) { background: #88c298; border-color: #88c298
 
 .table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
+  /* Deliberately NOT `overflow: hidden`. That clipped the corners for free,
+     but it also made the table its own scroll container, which silently
+     kills `position: sticky` on the header. Corners are rounded per-cell
+     below instead, so the header can stick to the top of `.main` while a
+     long list scrolls under it. */
 }
 .table th {
   text-align: left;
@@ -506,7 +534,16 @@ button.approve:hover:not(:disabled) { background: #88c298; border-color: #88c298
   border-bottom: 1px solid var(--border-soft);
   font-weight: 600;
   background: var(--surface-raised);
+  /* A hundred channels is a realistic count and the whole page scrolls, so
+     the column names have to survive the trip down the list. */
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
+.table thead tr:first-child th:first-child { border-top-left-radius: var(--radius); }
+.table thead tr:first-child th:last-child { border-top-right-radius: var(--radius); }
+.table tbody tr:last-child td:first-child { border-bottom-left-radius: var(--radius); }
+.table tbody tr:last-child td:last-child { border-bottom-right-radius: var(--radius); }
 .table td {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border-soft);
@@ -529,6 +566,9 @@ button.approve:hover:not(:disabled) { background: #88c298; border-color: #88c298
   color: var(--muted);
   border: 1px solid var(--border-soft);
   text-transform: lowercase;
+  /* A two-word chip ("outbound allowed") wrapping makes its row taller than
+     every other row in the table. Chips are labels, not paragraphs. */
+  white-space: nowrap;
 }
 .chip-mode { background: var(--accent-wash); color: var(--accent-bright); border-color: rgba(223, 121, 95, 0.25); }
 .chip-tool { background: var(--green-soft); color: var(--green); border-color: rgba(115, 169, 130, 0.25); }
@@ -765,6 +805,10 @@ button.approve:hover:not(:disabled) { background: #88c298; border-color: #88c298
 .chip-tone-warning { color: var(--amber); background: var(--amber-soft); }
 .chip-tone-success { color: var(--green); background: var(--green-soft); }
 .chip-tone-danger { color: var(--red); background: var(--red-soft); }
+/* The fourth tone the vocabulary was already being asked for by name (the
+   inbox's `proposal_opened`) but never had. Blue is the one semantic token
+   not yet spoken for, and reads as informational rather than actionable. */
+.chip-tone-info { color: var(--blue); background: var(--blue-soft); }
 /* Per-surface badge (docs/design/34 Phase 3): a mixed Telegram/Discord/
    Slack deployment must read at a glance, not by parsing key prefixes. */
 .chip-surface { letter-spacing: 0.02em; }
@@ -1110,3 +1154,106 @@ a.tab-btn {
 .step-body > p { margin: 0; max-width: 74ch; font-size: 12.5px; }
 .step[data-state="done"] .step-body h3 { color: var(--text-soft); }
 .waiting-line { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+
+/* ---- extensions: scope chips, detail panes, stacked panels ---- */
+
+/* Several rule chips in one cell, wrapping rather than forcing the column
+   wider. Chips are the same object here as in the gateway tables, so a
+   permission decision reads identically wherever it appears. */
+.chip-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+.detail-grid p { margin: 6px 0 0; font-size: 12.5px; color: var(--muted); max-width: 60ch; }
+.detail-pre {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Row count next to a tab label. Dimmer than the label so the name still
+   leads, and it disappears while the resource is loading rather than
+   flashing a zero that is not true yet. */
+.tab-count {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* A column of independent panels. Each is one concern; the gap is the same
+   as the grid between columns so the page reads as a single field of cards. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.rule-lists {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+}
+.rule-lists .eyebrow { margin-bottom: 5px; }
+.rule-lists p { margin: 0; font-size: 12.5px; color: var(--muted); }
+
+.report-pre {
+  margin: 12px 0 10px;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- corrections found in live inspection ---- */
+
+/* Chips normally lowercase a one-word status, which is right for `warm` or
+   `pending`. It is wrong the moment a chip carries an identifier copied from
+   config: an env var name (TAVILY_API_KEY) and a rule's glob (`Bash(git *)`)
+   are both case-significant, and rendering them lowercased makes the console
+   disagree with the file it is reporting. Mono chips print verbatim. */
+.chip.mono { text-transform: none; }
+
+/* The permission panel lives in one column of a two-column page, so three
+   modes side by side leaves each ~90px wide and the description sets as a
+   ragged tower. Stack them: one mode per row, name and consequence on one
+   readable line. */
+.stack .mode-grid { grid-template-columns: 1fr; }
+
+/* The current mode is disabled because there is nothing to switch to -- but
+   `disabled` dims it, which reads as "unavailable" on the one option that is
+   actually in force. Selected wins over disabled. */
+.mode-btn.active:disabled { opacity: 1; cursor: default; }
+
+/* Inline links in body copy. The sidebar and tab bar style their own anchors;
+   these are the ones inside a sentence, and without this they inherit the
+   browser's blue-and-underlined default, which belongs to no theme here. */
+.panel p a,
+.empty p a {
+  color: var(--accent-bright);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: rgba(238, 146, 120, 0.4);
+}
+.panel p a:hover, .empty p a:hover { text-decoration-color: currentColor; }

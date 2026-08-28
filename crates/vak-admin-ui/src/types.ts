@@ -71,6 +71,14 @@ export interface ConfigInfo {
   max_turns: number;
   permission_mode: string;
   theme: string;
+  /** Resolved permission rule lists, exactly as the engine evaluates them. */
+  permissions?: PermissionRules;
+}
+
+export interface PermissionRules {
+  allow: string[];
+  ask: string[];
+  deny: string[];
 }
 
 export interface RouteInfo {
@@ -278,6 +286,8 @@ export interface SkillItem {
   name: string;
   path?: string;
   description?: string;
+  /** Discovery root the skill came from: `<cwd>/.vak/skills` or the user home. */
+  scope?: "workspace" | "user";
 }
 
 export interface SkillProposal {

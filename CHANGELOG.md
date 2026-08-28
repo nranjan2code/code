@@ -2,6 +2,90 @@
 
 ## 0.11.0 — 2026-08-28
 
+### Extensions: what is loaded, and what it is allowed to do
+
+Gateway channels had a screen that said who may talk to the agent and under
+what permission. The agent's other extension points had no equivalent. MCP
+servers, hooks, and skills were four local tabs on one `Integrations` view,
+each a list beside an add-form, and none of them said what an extension was
+permitted to do once loaded — only that it existed.
+
+`Integrations` becomes `Extensions`, four hash routes shown in a tab bar and
+as sidebar sub-rows the same way Gateway's are: `#/integrations` (MCP
+servers), `/skills`, `/hooks`, `/tasks`. Each is a scan-first table with the
+add-form demoted to a `<details>`, so the configured state reads first.
+
+Each extension now reports its scope from real config:
+
+- **MCP servers** show whether outbound network is permitted, how many
+  environment variables are injected (names only in the detail pane; values
+  stay in `config.toml` and never cross the wire), and every `mcp(server/*)`
+  rule that reaches them, colour-coded allow/ask/deny. Where no rule reaches
+  a server, the mode default is named instead — `ask` under workspace-write,
+  `deny` under read-only, `allow` under full-access, which is exactly what
+  `PermissionEngine::evaluate` does for a tool that is neither read nor write.
+- **Hooks** print their matcher verbatim — it is a permission rule, parsed by
+  the same `Rule::parse` — and say plainly that a hook is the one extension
+  that governs rather than being governed: it runs as the vak process,
+  outside the permission engine, and `pre_tool_use` can block a call.
+- **Skills** report the discovery root they came from. A workspace skill and
+  a user-wide one are different trust propositions.
+
+`GET /admin/api/config` now reports the resolved `allow`/`ask`/`deny` lists,
+and `GET /skills` reports each skill's `path` and `scope`. The console
+derives scope from these rather than guessing. An older server that omits
+`permissions` renders "scope not reported" — an unknown scope must never be
+drawn as an unrestricted one.
+
+### Workspace paths stopped shredding themselves in table cells
+
+The Channels table's `WORKSPACE` column carried `word-break: break-all`, so
+`/Users/nisheethranjan/Projects/vakcoder` set as three lines broken
+mid-word — `/Users/nis` / `heethranja` / `n/Projects/vakcoder`. With one
+channel it looked untidy; the table is built for a hundred.
+
+Paths now render through one primitive that drops whole middle segments and
+never breaks one, budgeted in characters so the trailing directory — the half
+that actually distinguishes two workspaces — survives to the last possible
+character, with the full path on the title attribute. Applied everywhere a
+path sits in a constrained cell: Channels, Core pool, skill sources, the
+Overview workspace, the routing summary, and Best-of-N repos. `.wrap` keeps
+its job for free text but breaks at spaces first now.
+
+Table headers stick while a long list scrolls (`.table`'s `overflow: hidden`,
+there only to round two corners, had been silently disabling `position:
+sticky`), and chips no longer wrap and drag a row taller than its neighbours.
+Verified at 100 rows against real payload shapes: every row one line, filter
+under 4ms, no horizontal overflow.
+
+`GET /admin/api/gateway/allowlist` and the gateway status bindings are still
+unpaginated — everything is returned in one response. A hundred rows is fine;
+several thousand would want a server-side page and search, and no paginated
+UI has been built over an API that cannot page.
+
+### Settings is six panels that each answer one question
+
+Settings had six `h2`s inside two panels — `h2` is the panel-title element
+everywhere else — a "Gateway & Security" box restating what the Gateway
+section owns, and Sign out parked at the bottom of it. It is now Model,
+Provider key, Appearance, Permissions, Maintenance, and This session, each a
+real panel, with the duplicate gateway summary dropped in favour of the
+section that owns it. Permissions gained the resolved rule lists and states
+the precedence the engine actually applies: deny outranks ask outranks allow
+among matching rules, and config order never decides it. Rules are read-only
+here on purpose — a console that could widen its own reach is not a control.
+
+### Chip tones that named colours the stylesheet never defined
+
+`INBOX_KIND_TONE` mapped `approval_denied` and `budget_alert` to `alert`, and
+`approval_pending` to `warn`. Neither class exists — the vocabulary is
+`warning`/`success`/`danger` — so the two inbox entries most worth catching
+the eye rendered in the same muted grey as a heartbeat. `proposal_opened`
+asked for an `info` tone that was never defined; it exists now, in blue. Mono
+chips also stopped being lowercased: they carry identifiers copied from
+config (`TAVILY_API_KEY`, `Bash(git *)`) where case is significant, and the
+console must not disagree with the file it is reporting.
+
 ### The login screen's own logo was 401ing on every fresh login
 
 `auth_exempt_path` allowlisted `/admin/favicon.svg` and everything under
