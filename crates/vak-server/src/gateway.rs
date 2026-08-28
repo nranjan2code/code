@@ -152,12 +152,20 @@ pub struct AllowlistEntry {
     /// never grant more than a local `vak` run in that workspace has.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_mode: Option<vak_config::PermissionMode>,
+    /// Per-channel capability restrictions. Each `None` field inherits the
+    /// selected workspace; an explicit empty allow list denies that class.
+    #[serde(default, skip_serializing_if = "is_default_channel_policy")]
+    pub policy: vak_config::ChannelPolicy,
     pub added_at: String,
     pub added_by: String,
     /// Only meaningful while `status == Pending` — the first message text
     /// that triggered this entry, truncated for operator review.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_seen_text: Option<String>,
+}
+
+fn is_default_channel_policy(policy: &vak_config::ChannelPolicy) -> bool {
+    policy == &vak_config::ChannelPolicy::default()
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -291,6 +299,7 @@ impl GatewayState {
                                 workspace: None,
                                 route: None,
                                 permission_mode: None,
+                                policy: vak_config::ChannelPolicy::default(),
                                 added_at: now.clone(),
                                 added_by: "config_import".into(),
                                 first_seen_text: None,
@@ -364,10 +373,19 @@ impl GatewayState {
         // never reaches dispatch, but reading the field unconditionally
         // would make the pool key depend on a non-authoritative record.
         let permission_override = entry
+            .as_ref()
             .filter(|e| e.status == AllowlistStatus::Allowed)
             .and_then(|e| e.permission_mode);
-        self.core_pool
-            .resolve_at(&workspace, permission_override, std::time::Instant::now())
+        self.core_pool.resolve_at_with_policy(
+            &workspace,
+            permission_override,
+            entry
+                .as_ref()
+                .filter(|e| e.status == AllowlistStatus::Allowed)
+                .map(|e| e.policy.clone())
+                .unwrap_or_default(),
+            std::time::Instant::now(),
+        )
     }
 
     pub(crate) fn set_enabled(&mut self, enabled: bool) {
@@ -593,6 +611,7 @@ impl GatewayState {
                         workspace: None,
                         route: None,
                         permission_mode: None,
+                        policy: vak_config::ChannelPolicy::default(),
                         added_at: chrono::Utc::now().to_rfc3339(),
                         added_by: "gateway".into(),
                         first_seen_text: Some(truncated),
@@ -610,6 +629,7 @@ impl GatewayState {
 
     /// Approve a key: pending or unknown → allowed, with an explicit
     /// workspace (never silently inherited) and optional route override.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn allowlist_approve(
         &self,
         core: &Core,
@@ -617,6 +637,7 @@ impl GatewayState {
         workspace: PathBuf,
         route: Option<AllowlistRoute>,
         permission_mode: Option<vak_config::PermissionMode>,
+        policy: vak_config::ChannelPolicy,
         added_by: &str,
     ) -> AllowlistEntry {
         let entry = {
@@ -630,6 +651,7 @@ impl GatewayState {
                 workspace: Some(workspace),
                 route,
                 permission_mode,
+                policy,
                 added_at: chrono::Utc::now().to_rfc3339(),
                 added_by: added_by.to_string(),
                 first_seen_text: None,
@@ -654,6 +676,7 @@ impl GatewayState {
                 workspace: None,
                 route: None,
                 permission_mode: None,
+                policy: vak_config::ChannelPolicy::default(),
                 added_at: chrono::Utc::now().to_rfc3339(),
                 added_by: added_by.to_string(),
                 first_seen_text: None,
@@ -683,6 +706,7 @@ impl GatewayState {
         workspace: Option<PathBuf>,
         route: Option<AllowlistRoute>,
         permission_mode: Option<vak_config::PermissionMode>,
+        policy: vak_config::ChannelPolicy,
     ) -> Option<AllowlistEntry> {
         let entry = {
             let mut map = self
@@ -696,6 +720,7 @@ impl GatewayState {
             entry.workspace = workspace;
             entry.route = route;
             entry.permission_mode = permission_mode;
+            entry.policy = policy;
             entry.clone()
         };
         persist_allowlist(core, self);
@@ -722,8 +747,15 @@ impl GatewayState {
         // Preserve the permission override: the binding editor only ever
         // speaks about routes, so it must not silently clear a channel's
         // pinned permission mode as a side effect.
-        self.allowlist_patch(core, key, entry.workspace, route, entry.permission_mode)
-            .is_some()
+        self.allowlist_patch(
+            core,
+            key,
+            entry.workspace,
+            route,
+            entry.permission_mode,
+            entry.policy,
+        )
+        .is_some()
     }
 
     /// Auto-deny every `pending` entry older than `max_age`, stamping
@@ -2176,6 +2208,7 @@ mod tests {
                 model: "sonnet".into(),
             }),
             None,
+            vak_config::ChannelPolicy::default(),
             "admin",
         );
         assert_eq!(approved.status, AllowlistStatus::Allowed);
@@ -2235,6 +2268,7 @@ mod tests {
             core.cwd().clone(),
             None,
             None,
+            vak_config::ChannelPolicy::default(),
             "admin",
         );
         assert!(matches!(

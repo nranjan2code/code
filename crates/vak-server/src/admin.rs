@@ -808,6 +808,7 @@ fn allowlist_entry_json(e: &crate::gateway::AllowlistEntry) -> serde_json::Value
         "workspace_permission_mode": resolved.as_ref().map(|r| r.workspace_mode),
         "effective_permission_mode": resolved.as_ref().map(|r| r.effective),
         "permission_capped": resolved.as_ref().is_some_and(|r| r.was_capped()),
+        "policy": e.policy,
         "added_at": e.added_at,
         "added_by": e.added_by,
         "first_seen_text": e.first_seen_text,
@@ -849,6 +850,8 @@ pub(crate) struct AllowlistApproveBody {
     /// request as `route` rather than on an endpoint of its own.
     #[serde(default)]
     permission_mode: Option<String>,
+    #[serde(default)]
+    policy: Option<vak_config::ChannelPolicy>,
 }
 
 /// Audit an override that the workspace's own boundary will cap down, at
@@ -923,6 +926,7 @@ pub(crate) async fn approve_gateway_allowlist(
         workspace,
         route,
         permission_mode,
+        body.policy.unwrap_or_default(),
         "admin",
     );
     vak_core::security_events::record(
@@ -970,6 +974,8 @@ pub(crate) struct AllowlistPatchBody {
     /// mirroring how an empty `route` object clears a pinned route.
     #[serde(default)]
     permission_mode: Option<String>,
+    #[serde(default)]
+    policy: Option<vak_config::ChannelPolicy>,
 }
 
 /// `PATCH /admin/api/gateway/allowlist/{key}` (docs/design/34 "Editing an
@@ -1039,11 +1045,17 @@ pub(crate) async fn patch_gateway_allowlist(
         Ok(m) => m,
         Err(()) => return StatusCode::BAD_REQUEST.into_response(),
     };
-    let Some(entry) =
-        state
-            .gateway
-            .allowlist_patch(&state.core, &key, workspace, route, permission_mode)
-    else {
+    let existing = state.gateway.allowlist_get(&key);
+    let Some(entry) = state.gateway.allowlist_patch(
+        &state.core,
+        &key,
+        workspace,
+        route,
+        permission_mode,
+        body.policy
+            .or_else(|| existing.as_ref().map(|e| e.policy.clone()))
+            .unwrap_or_default(),
+    ) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     record_permission_cap(&state, &key, &entry);
@@ -1714,6 +1726,7 @@ mod tests {
             ws.path().to_path_buf(),
             None,
             Some(vak_config::PermissionMode::ReadOnly),
+            vak_config::ChannelPolicy::default(),
             "admin",
         );
         state.gateway.allowlist_patch_route_if_allowed(

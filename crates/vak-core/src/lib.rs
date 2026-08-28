@@ -148,6 +148,8 @@ struct CoreInner {
     /// Runtime hook override (desktop/TUI management surface).
     hooks_override: std::sync::Mutex<Option<Vec<vak_config::HookConfig>>>,
     hooks_runtime_pinned: std::sync::atomic::AtomicBool,
+    /// Restrictive overlay applied only to a gateway channel Core.
+    channel_policy: std::sync::Mutex<Option<vak_config::ChannelPolicy>>,
     /// Session-scoped domain-weighted doubt per (provider, model) leg
     /// (Phase R). Fed from work receipts at run end; read at ladder
     /// admission.
@@ -320,6 +322,7 @@ impl Core {
                 mcp_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 hooks_override: std::sync::Mutex::new(None),
                 hooks_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
+                channel_policy: std::sync::Mutex::new(None),
                 beliefs: Arc::new(routing::BeliefState::new()),
             }),
         })
@@ -492,7 +495,8 @@ impl Core {
             .ok()
             .map(|worker| worker.clone())
             .unwrap_or_else(|| PathBuf::from("__vak_tool_worker_unavailable__"));
-        vak_tools::brokered_default_tools(worker)
+        let tools = vak_tools::brokered_default_tools(worker);
+        self.filter_builtin_tools(tools)
     }
 
     pub fn agent_read_only_tools(&self) -> Vec<Arc<dyn vak_tools::Tool>> {
@@ -503,7 +507,21 @@ impl Core {
             .ok()
             .map(|worker| worker.clone())
             .unwrap_or_else(|| PathBuf::from("__vak_tool_worker_unavailable__"));
-        vak_tools::brokered_read_only_tools(worker)
+        let tools = vak_tools::brokered_read_only_tools(worker);
+        self.filter_builtin_tools(tools)
+    }
+
+    fn filter_builtin_tools(
+        &self,
+        tools: Vec<Arc<dyn vak_tools::Tool>>,
+    ) -> Vec<Arc<dyn vak_tools::Tool>> {
+        let Some(policy) = self.channel_policy() else {
+            return tools;
+        };
+        tools
+            .into_iter()
+            .filter(|tool| Self::allowed_by(&policy.tools_allow, &policy.tools_deny, tool.name()))
+            .collect()
     }
 
     pub fn agent_sandbox(&self) -> Option<Arc<dyn vak_tools::sandbox::Sandbox>> {
@@ -579,9 +597,60 @@ impl Core {
         if let Ok(c) = self.inner.mcp_override.lock()
             && let Some(cfg) = c.as_ref()
         {
-            return cfg.clone();
+            return self.filter_mcp(cfg.clone());
         }
-        self.inner.config.mcp.clone()
+        self.filter_mcp(self.inner.config.mcp.clone())
+    }
+
+    pub fn apply_channel_policy(&self, policy: vak_config::ChannelPolicy) {
+        if let Ok(mut current) = self.inner.channel_policy.lock() {
+            *current = Some(policy);
+        }
+        if let Ok(mut inventory) = self.inner.mcp_inventory.lock() {
+            *inventory = None;
+        }
+    }
+
+    pub fn channel_policy(&self) -> Option<vak_config::ChannelPolicy> {
+        self.inner
+            .channel_policy
+            .lock()
+            .ok()
+            .and_then(|p| p.clone())
+    }
+
+    fn policy_matches(patterns: &[String], value: &str) -> bool {
+        patterns.iter().any(|pattern| {
+            globset::Glob::new(pattern)
+                .ok()
+                .is_some_and(|glob| glob.compile_matcher().is_match(value))
+        })
+    }
+
+    fn allowed_by(allow: &Option<Vec<String>>, deny: &[String], value: &str) -> bool {
+        !Self::policy_matches(deny, value)
+            && allow
+                .as_ref()
+                .is_none_or(|patterns| Self::policy_matches(patterns, value))
+    }
+
+    fn filter_mcp(&self, mut config: vak_config::McpConfig) -> vak_config::McpConfig {
+        let Some(policy) = self.channel_policy() else {
+            return config;
+        };
+        config.servers.retain(|name, _| {
+            let server_pattern = format!("{name}/*");
+            if Self::policy_matches(&policy.mcp_deny, &server_pattern) {
+                return false;
+            }
+            policy.mcp_allow.as_ref().is_none_or(|allow| {
+                Self::policy_matches(allow, &server_pattern)
+                    || allow
+                        .iter()
+                        .any(|pattern| pattern.starts_with(&format!("{name}/")))
+            })
+        });
+        config
     }
 
     /// Replace lifecycle hooks for subsequent turns without restarting the
@@ -607,12 +676,23 @@ impl Core {
     }
 
     pub fn effective_hooks(&self) -> Vec<vak_config::HookConfig> {
-        if let Ok(current) = self.inner.hooks_override.lock()
+        let hooks = if let Ok(current) = self.inner.hooks_override.lock()
             && let Some(hooks) = current.as_ref()
         {
-            return hooks.clone();
-        }
-        self.inner.config.hooks.clone()
+            hooks.clone()
+        } else {
+            self.inner.config.hooks.clone()
+        };
+        let Some(policy) = self.channel_policy() else {
+            return hooks;
+        };
+        hooks
+            .into_iter()
+            .filter(|hook| {
+                let identity = format!("{}/{}", hook.event, hook.command);
+                Self::allowed_by(&policy.hooks_allow, &policy.hooks_deny, &identity)
+            })
+            .collect()
     }
 
     pub fn set_theme(&self, theme: String) {
@@ -819,7 +899,16 @@ impl Core {
     }
 
     pub fn skills(&self) -> Vec<skills::Skill> {
-        skills::discover(&self.inner.cwd, &self.inner.sessions_home)
+        let skills = skills::discover(&self.inner.cwd, &self.inner.sessions_home);
+        let Some(policy) = self.channel_policy() else {
+            return skills;
+        };
+        skills
+            .into_iter()
+            .filter(|skill| {
+                Self::allowed_by(&policy.skills_allow, &policy.skills_deny, &skill.name)
+            })
+            .collect()
     }
 
     /// Live subagents spawned by this Core's runs, for attach/steer UIs.
@@ -1061,6 +1150,27 @@ impl Core {
             // If it still resolves, it comes from the process environment.
             shadowed_by_env: vak_config::get_var(env).is_some(),
         })
+    }
+
+    /// Store an MCP credential in the shared user secret file and register it
+    /// as a runtime override. The MCP config should contain a `${VAR}`
+    /// reference, never the credential itself.
+    pub fn set_mcp_secret(&self, env_var: &str, key: &str) -> Result<(), CoreError> {
+        let env_var = env_var.trim();
+        let key = key.trim();
+        if env_var.is_empty()
+            || !env_var
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+            || key.is_empty()
+        {
+            return Err(CoreError::InvalidConfig("invalid MCP secret".into()));
+        }
+        let path = self.user_env_file();
+        vak_config::upsert_env_file(&path, env_var, key)
+            .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))?;
+        vak_config::set_override(env_var, key);
+        Ok(())
     }
 
     /// The env var that authenticates the Telegram bridge. Not a "provider"
@@ -1504,11 +1614,44 @@ impl Core {
             vak_config::PermissionMode::WorkspaceWrite => vak_permission::Mode::WorkspaceWrite,
             vak_config::PermissionMode::FullAccess => vak_permission::Mode::FullAccess,
         };
+        let mut permission_rules = self.extra_allow_snapshot();
+        if let Some(policy) = self.channel_policy() {
+            if let Some(allow) = policy.tools_allow {
+                if allow.is_empty() {
+                    permission_rules.extend(
+                        ["read", "write", "edit", "bash", "glob", "grep"]
+                            .into_iter()
+                            .map(|tool| format!("-{tool}")),
+                    );
+                } else {
+                    permission_rules.extend(allow.into_iter().map(|pattern| format!("+{pattern}")));
+                }
+            }
+            permission_rules.extend(
+                policy
+                    .tools_deny
+                    .into_iter()
+                    .map(|pattern| format!("-{pattern}")),
+            );
+            if let Some(allow) = policy.mcp_allow {
+                if allow.is_empty() {
+                    permission_rules.push("-mcp".into());
+                } else {
+                    permission_rules.push("+mcp".into());
+                }
+            }
+            permission_rules.extend(
+                policy
+                    .mcp_deny
+                    .into_iter()
+                    .map(|pattern| format!("-mcp({pattern})")),
+            );
+        }
         cfg.permission = Some(match permission {
             Some(p) => p,
             None => std::sync::Arc::new(build_engine_for_mode(
                 &self.inner.config,
-                &self.extra_allow_snapshot(),
+                &permission_rules,
                 self.effective_permission_mode(),
             )?),
         });
@@ -1623,7 +1766,12 @@ impl Core {
             if let Some(sec) = cached {
                 cfg.system_prompt.push_str(&sec);
             }
-            tools.push(Arc::new(vak_mcp::McpTool::new(manager)));
+            let policy = self.channel_policy().unwrap_or_default();
+            tools.push(Arc::new(vak_mcp::McpTool::with_policy(
+                manager,
+                policy.mcp_allow,
+                policy.mcp_deny,
+            )));
         }
         if self.inner.config.memory.search_enabled {
             let exclude = session

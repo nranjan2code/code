@@ -147,6 +147,17 @@ export interface AllowlistRoute {
 /// Wire form of `vak_config::PermissionMode` (serde kebab-case).
 export type PermissionMode = "read-only" | "workspace-write" | "full-access";
 
+export interface ChannelPolicy {
+  tools_allow: string[] | null;
+  tools_deny: string[];
+  mcp_allow: string[] | null;
+  mcp_deny: string[];
+  skills_allow: string[] | null;
+  skills_deny: string[];
+  hooks_allow: string[] | null;
+  hooks_deny: string[];
+}
+
 export interface AllowlistEntry {
   key: string;
   status: AllowlistStatus;
@@ -162,6 +173,7 @@ export interface AllowlistEntry {
   /// True when the pin asked for more than the workspace allows and was
   /// reduced — the console must not show it as a live grant.
   permission_capped: boolean;
+  policy: ChannelPolicy;
   added_at: string;
   added_by: string;
   first_seen_text: string | null;
@@ -272,6 +284,13 @@ export interface McpServerConfig {
 
 export interface McpListResponse {
   servers: Record<string, McpServerConfig>;
+}
+
+export interface TavilyStatus {
+  enabled: boolean;
+  key_present: boolean;
+  network: boolean;
+  env_var: string;
 }
 
 export interface HookConfig {

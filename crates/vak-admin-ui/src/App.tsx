@@ -6,7 +6,7 @@ import {
   route, sessionsVersion, setAuthed, statsVersion, toasts,
 } from "./store";
 import type {
-  AllowlistEntry, BestOfNRun, ChatSurfaceStatus, ConfigInfo, CorePoolEntry, DiscoveredModelsResponse, FinOpsStatus, HookConfig,
+  AllowlistEntry, BestOfNRun, ChannelPolicy, ChatSurfaceStatus, ConfigInfo, CorePoolEntry, DiscoveredModelsResponse, FinOpsStatus, HookConfig,
   GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval,
   PermissionMode, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
@@ -1015,6 +1015,9 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
   const [newCmd, setNewCmd] = createSignal("");
   const [newArgs, setNewArgs] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  const [tavilyKey, setTavilyKey] = createSignal("");
+  const [tavilyBusy, setTavilyBusy] = createSignal(false);
+  const [tavily, { refetch: refetchTavily }] = createResource(() => api.tavily().catch(() => null));
 
   const servers = createMemo(() => Object.entries(props.ctx.mcp()) as [string, McpServerConfig][]);
 
@@ -1054,12 +1057,86 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     }
   };
 
+  const saveTavily = async () => {
+    if (!tavilyKey().trim() || tavilyBusy()) return;
+    setTavilyBusy(true);
+    try {
+      await api.enableTavily(tavilyKey());
+      setTavilyKey("");
+      pushToast("info", "Tavily enabled — the key is stored securely and never displayed");
+      refetchTavily();
+      props.ctx.refetchMcp();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setTavilyBusy(false);
+    }
+  };
+
+  const disableTavily = async () => {
+    if (tavilyBusy()) return;
+    setTavilyBusy(true);
+    try {
+      await api.disableTavily();
+      pushToast("info", "Tavily disabled; its stored key was retained");
+      refetchTavily();
+      props.ctx.refetchMcp();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setTavilyBusy(false);
+    }
+  };
+
   return (
     <>
       <div class="toolbar">
         <span class="spacer" />
         <button class="ghost" onClick={() => props.ctx.refetchMcp()}>Refresh</button>
       </div>
+
+      <section class="panel" style="margin-bottom:14px">
+        <div class="panel-title-row">
+          <div>
+            <h2>Tavily web search</h2>
+            <p class="dim">
+              Add your Tavily key here. Vak stores it in the protected user secret store, passes it
+              only to <code>tavily-mcp</code>, and enables outbound network access automatically.
+            </p>
+          </div>
+          <Show when={tavily()?.enabled}>
+            <span class="chip chip-tone-success">enabled</span>
+          </Show>
+        </div>
+        <Show when={tavily()?.enabled} fallback={
+          <div class="form-row">
+            <label for="tavily-key">API key</label>
+            <input
+              id="tavily-key"
+              type="password"
+              autocomplete="off"
+              placeholder="tvly-…"
+              value={tavilyKey()}
+              onInput={(e) => setTavilyKey(e.currentTarget.value)}
+              onKeyDown={(e) => e.key === "Enter" && void saveTavily()}
+            />
+            <button disabled={tavilyBusy() || !tavilyKey().trim()} onClick={() => void saveTavily()}>
+              {tavilyBusy() ? "Saving…" : "Save & enable"}
+            </button>
+          </div>
+        }>
+          <div class="binding-meta">
+            Key present · network enabled · configured as <code>tavily-mcp</code>
+          </div>
+          <div class="row-gap" style="margin-top:10px">
+            <button class="danger small" disabled={tavilyBusy()} onClick={() => void disableTavily()}>
+              {tavilyBusy() ? "Disabling…" : "Disable Tavily"}
+            </button>
+          </div>
+        </Show>
+      </section>
 
       <section class="panel">
         <div class="panel-title-row">
@@ -2395,6 +2472,19 @@ const CHANNEL_MODES: { value: PermissionMode; label: string; desc: string }[] = 
   { value: "full-access", label: "FullAccess", desc: "Unsandboxed — explicit trust" },
 ];
 
+function defaultChannelPolicy(): ChannelPolicy {
+  return {
+    tools_allow: null,
+    tools_deny: [],
+    mcp_allow: null,
+    mcp_deny: [],
+    skills_allow: null,
+    skills_deny: [],
+    hooks_allow: null,
+    hooks_deny: [],
+  };
+}
+
 /// Optional per-channel permission pin, parallel to the "Pin a specific
 /// provider / model" checkbox. Unchecked means inherit the workspace's own
 /// configured mode, which is the default and today's behavior.
@@ -2453,6 +2543,66 @@ function ChannelPermissionPicker(props: {
   );
 }
 
+function ChannelCapabilityPolicy(props: {
+  value: ChannelPolicy;
+  onChange: (value: ChannelPolicy) => void;
+}) {
+  const [mcp] = createResource(() => api.mcpServers().catch(() => ({ servers: {} })));
+  const [skills] = createResource(() => api.skills().catch(() => ({ skills: [] })));
+  const csv = (value: string) => value.split(/[\n,]/).map((v) => v.trim()).filter(Boolean);
+  const update = (patch: Partial<ChannelPolicy>) => props.onChange({ ...props.value, ...patch });
+  const list = (values: string[] | null) => values?.join(", ") ?? "";
+  return (
+    <section class="channel-capabilities">
+      <div class="binding-meta">
+        Channel capability restrictions. Unchecked allow lists inherit the workspace; selecting a
+        block-all control or adding a deny pattern can only reduce access.
+      </div>
+      <div class="capability-grid">
+        <div>
+          <label class="eyebrow">Built-in tools</label>
+          <label class="inherit-toggle"><input type="checkbox" checked={props.value.tools_allow?.length === 0}
+            onChange={(e) => update({ tools_allow: e.currentTarget.checked ? [] : null })} /> Block all built-in tools</label>
+          <input class="mono" placeholder="inherit — e.g. read, grep" value={list(props.value.tools_allow)}
+            onInput={(e) => update({ tools_allow: e.currentTarget.value.trim() ? csv(e.currentTarget.value) : null })} />
+          <input class="mono" placeholder="deny tools, e.g. bash" value={list(props.value.tools_deny)}
+            onInput={(e) => update({ tools_deny: csv(e.currentTarget.value) })} />
+        </div>
+        <div>
+          <label class="eyebrow">MCP tools</label>
+          <label class="inherit-toggle"><input type="checkbox" checked={props.value.mcp_allow?.length === 0}
+            onChange={(e) => update({ mcp_allow: e.currentTarget.checked ? [] : null })} /> Block all MCP</label>
+          <input class="mono" placeholder="inherit — e.g. tavily/*" value={list(props.value.mcp_allow)}
+            onInput={(e) => update({ mcp_allow: e.currentTarget.value.trim() ? csv(e.currentTarget.value) : null })} />
+          <div class="binding-meta">Allow patterns; available: {Object.keys(mcp()?.servers ?? {}).join(", ") || "none"}</div>
+          <input class="mono" placeholder="deny patterns, e.g. github/*" value={list(props.value.mcp_deny)}
+            onInput={(e) => update({ mcp_deny: csv(e.currentTarget.value) })} />
+        </div>
+        <div>
+          <label class="eyebrow">Skills visible to the agent</label>
+          <label class="inherit-toggle"><input type="checkbox" checked={props.value.skills_allow?.length === 0}
+            onChange={(e) => update({ skills_allow: e.currentTarget.checked ? [] : null })} /> Hide all skills</label>
+          <input class="mono" placeholder="inherit — e.g. research" value={list(props.value.skills_allow)}
+            onInput={(e) => update({ skills_allow: e.currentTarget.value.trim() ? csv(e.currentTarget.value) : null })} />
+          <div class="binding-meta">Instruction visibility only; available: {(skills()?.skills ?? []).map((s) => s.name).join(", ") || "none"}</div>
+          <input class="mono" placeholder="deny skill names" value={list(props.value.skills_deny)}
+            onInput={(e) => update({ skills_deny: csv(e.currentTarget.value) })} />
+        </div>
+        <div>
+          <label class="eyebrow">Hooks assigned by admin</label>
+          <label class="inherit-toggle"><input type="checkbox" checked={props.value.hooks_allow?.length === 0}
+            onChange={(e) => update({ hooks_allow: e.currentTarget.checked ? [] : null })} /> Disable all hooks</label>
+          <input class="mono" placeholder="inherit — e.g. pre_tool_use/*" value={list(props.value.hooks_allow)}
+            onInput={(e) => update({ hooks_allow: e.currentTarget.value.trim() ? csv(e.currentTarget.value) : null })} />
+          <div class="binding-meta">Hooks remain trusted admin shell policy; secrets are never channel-owned.</div>
+          <input class="mono" placeholder="deny hook patterns" value={list(props.value.hooks_deny)}
+            onInput={(e) => update({ hooks_deny: csv(e.currentTarget.value) })} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /// Re-point an already-allowed channel's workspace/route in place
 /// (`PATCH .../allowlist/{key}`) instead of revoke-and-re-approve, which
 /// would lose the added_at/added_by provenance and 403 the channel in
@@ -2476,6 +2626,7 @@ function ChannelAccessEditor(props: {
   const [perm, setPerm] = createSignal<PermissionMode>(
     props.entry.permission_mode ?? props.entry.workspace_permission_mode ?? "workspace-write",
   );
+  const [policy, setPolicy] = createSignal<ChannelPolicy>(props.entry.policy ?? defaultChannelPolicy());
 
   createEffect(async () => {
     if (!pinRoute() || !provider()) return;
@@ -2496,6 +2647,7 @@ function ChannelAccessEditor(props: {
         route: pinRoute() && provider() && model() ? { provider: provider(), model: model() } : {},
         // "" clears the pin back to inheriting the workspace default.
         permission_mode: pinPerm() ? perm() : "",
+        policy: policy(),
       });
       pushToast("info", `Updated ${props.entry.key} — the next message rotates to a fresh session`);
       props.refresh();
@@ -2544,6 +2696,7 @@ function ChannelAccessEditor(props: {
         setMode={setPerm}
         ceiling={props.entry.workspace_permission_mode}
       />
+      <ChannelCapabilityPolicy value={policy()} onChange={setPolicy} />
       <div class="row-gap">
         <button disabled={busy()} onClick={save}>Save access</button>
       </div>
@@ -2567,6 +2720,7 @@ function PendingChannelCard(props: {
   const [busy, setBusy] = createSignal(false);
   const [pinPerm, setPinPerm] = createSignal(false);
   const [perm, setPerm] = createSignal<PermissionMode>("workspace-write");
+  const [policy, setPolicy] = createSignal<ChannelPolicy>(props.entry.policy ?? defaultChannelPolicy());
 
   createEffect(async () => {
     if (!pinRoute() || !provider()) return;
@@ -2586,6 +2740,7 @@ function PendingChannelCard(props: {
         workspace: workspace().trim() || undefined,
         route: pinRoute() && provider() && model() ? { provider: provider(), model: model() } : undefined,
         permission_mode: pinPerm() ? perm() : undefined,
+        policy: policy(),
       });
       // Surface a capped grant at the moment it happens: the server
       // reduces an over-broad pin to the workspace's own mode, and an
@@ -2667,6 +2822,7 @@ function PendingChannelCard(props: {
         mode={perm()}
         setMode={setPerm}
       />
+      <ChannelCapabilityPolicy value={policy()} onChange={setPolicy} />
 
       <div class="row-gap">
         <button disabled={busy()} onClick={approve}>Approve</button>

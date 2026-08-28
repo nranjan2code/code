@@ -350,6 +350,11 @@ fn router_with_state(state: AppState) -> Router {
         .route("/config", get(get_config).patch(patch_config))
         .route("/config/mode", post(set_permission_mode))
         .route("/config/mcp", get(get_mcp_servers).put(put_mcp_servers))
+        .route(
+            "/config/integrations/tavily",
+            get(get_tavily).put(put_tavily),
+        )
+        .route("/config/integrations/tavily/disable", post(disable_tavily))
         .route("/config/hooks", get(get_hooks).put(put_hooks))
         .route(
             "/config/key",
@@ -3358,6 +3363,146 @@ async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatc
 async fn get_mcp_servers(State(state): State<AppState>) -> Json<serde_json::Value> {
     let mcp = state.core.effective_mcp();
     Json(serde_json::json!({ "servers": mcp.servers }))
+}
+
+async fn get_tavily(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let mcp = state.core.effective_mcp();
+    let configured = vak_config::get_var("TAVILY_API_KEY").is_some_and(|v| !v.trim().is_empty());
+    let enabled = mcp.servers.get("tavily").is_some_and(|server| {
+        server.command == "npx"
+            && server.args == ["-y", "tavily-mcp"]
+            && server.network
+            && server.env.get("TAVILY_API_KEY") == Some(&"${TAVILY_API_KEY}".to_string())
+    });
+    Json(serde_json::json!({
+        "enabled": enabled,
+        "key_present": configured,
+        "network": enabled,
+        "env_var": "TAVILY_API_KEY"
+    }))
+}
+
+#[derive(serde::Deserialize)]
+struct TavilyPutBody {
+    key: String,
+}
+
+async fn put_tavily(
+    State(state): State<AppState>,
+    Json(body): Json<TavilyPutBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(e) = state.core.set_mcp_secret("TAVILY_API_KEY", &body.key) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response();
+    }
+    let mut servers = state
+        .core
+        .effective_mcp()
+        .servers
+        .into_iter()
+        .map(|(name, server)| {
+            (
+                name,
+                McpServerInput {
+                    command: server.command,
+                    args: server.args,
+                    env: server.env,
+                    network: server.network,
+                },
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    servers.insert(
+        "tavily".into(),
+        McpServerInput {
+            command: "npx".into(),
+            args: vec!["-y".into(), "tavily-mcp".into()],
+            env: [("TAVILY_API_KEY".into(), "${TAVILY_API_KEY}".into())]
+                .into_iter()
+                .collect(),
+            network: true,
+        },
+    );
+    if let Err(e) = persist_mcp_to_project_config(state.core.cwd(), &servers) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response();
+    }
+    state
+        .core
+        .apply_persisted_mcp_servers(vak_config::McpConfig {
+            servers: servers
+                .into_iter()
+                .map(|(name, server)| {
+                    (
+                        name,
+                        vak_config::McpServerConfig {
+                            command: server.command,
+                            args: server.args,
+                            env: server.env,
+                            network: server.network,
+                        },
+                    )
+                })
+                .collect(),
+        });
+    state.hub.emit_config_changed("tavily_updated", "tavily");
+    Json(serde_json::json!({ "enabled": true, "key_present": true })).into_response()
+}
+
+async fn disable_tavily(State(state): State<AppState>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let mut servers = state
+        .core
+        .effective_mcp()
+        .servers
+        .into_iter()
+        .map(|(name, server)| {
+            (
+                name,
+                McpServerInput {
+                    command: server.command,
+                    args: server.args,
+                    env: server.env,
+                    network: server.network,
+                },
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    servers.remove("tavily");
+    if let Err(e) = persist_mcp_to_project_config(state.core.cwd(), &servers) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response();
+    }
+    state
+        .core
+        .apply_persisted_mcp_servers(vak_config::McpConfig {
+            servers: servers
+                .into_iter()
+                .map(|(name, server)| {
+                    (
+                        name,
+                        vak_config::McpServerConfig {
+                            command: server.command,
+                            args: server.args,
+                            env: server.env,
+                            network: server.network,
+                        },
+                    )
+                })
+                .collect(),
+        });
+    state.hub.emit_config_changed("tavily_disabled", "tavily");
+    Json(serde_json::json!({ "enabled": false })).into_response()
 }
 
 #[derive(serde::Deserialize, Clone)]

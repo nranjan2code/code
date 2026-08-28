@@ -1,6 +1,7 @@
 import type {
   AllowlistEntry,
   AllowlistRoute,
+  ChannelPolicy,
   BestOfNRun,
   ChatSurfaceStatus,
   ConfigInfo,
@@ -131,7 +132,7 @@ export const api = {
 
   approveGatewayAllowlist: (
     key: string,
-    body: { workspace?: string; route?: AllowlistRoute; permission_mode?: PermissionMode } = {},
+    body: { workspace?: string; route?: AllowlistRoute; permission_mode?: PermissionMode; policy?: ChannelPolicy } = {},
   ): Promise<AllowlistEntry> =>
     fetch(`/admin/api/gateway/allowlist/${encodeURIComponent(key)}/approve`, {
       method: "POST",
@@ -146,6 +147,7 @@ export const api = {
       route?: AllowlistRoute | Record<string, never>;
       // Omitted / empty clears the pin back to "inherit the workspace".
       permission_mode?: PermissionMode | "";
+      policy?: ChannelPolicy;
     },
   ): Promise<AllowlistEntry> =>
     fetch(`/admin/api/gateway/allowlist/${encodeURIComponent(key)}`, {
@@ -277,6 +279,19 @@ export const api = {
 
   mcpServers: (): Promise<McpListResponse> =>
     fetch("/config/mcp").then((r) => handle(r)),
+
+  tavily: (): Promise<{ enabled: boolean; key_present: boolean; network: boolean; env_var: string }> =>
+    fetch("/config/integrations/tavily").then((r) => handle(r)),
+
+  enableTavily: (key: string): Promise<void> =>
+    fetch("/config/integrations/tavily", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key }),
+    }).then((r) => void handle(r)),
+
+  disableTavily: (): Promise<void> =>
+    fetch("/config/integrations/tavily/disable", { method: "POST" }).then((r) => void handle(r)),
 
   putMcpServers: (servers: Record<string, McpServerConfig>): Promise<void> =>
     fetch("/config/mcp", {

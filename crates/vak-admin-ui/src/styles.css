@@ -255,6 +255,12 @@ html, body {
 .dot-live { background: var(--green); box-shadow: 0 0 6px rgba(115, 169, 130, 0.5); }
 .dot-connecting { background: var(--amber); animation: pulse 1s infinite alternate; }
 .dot-down { background: var(--red); }
+
+.channel-capabilities { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-soft); }
+.capability-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+.capability-grid > div { display: flex; flex-direction: column; gap: 5px; }
+.capability-grid input { width: 100%; }
+@media (max-width: 900px) { .capability-grid { grid-template-columns: 1fr; } }
 @keyframes pulse { to { opacity: 0.35; } }
 
 .main {

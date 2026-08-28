@@ -23,6 +23,18 @@ capabilities.
 
 ## Security and configuration invariants
 
+### Gateway capability overlays
+
+An approved gateway channel may carry a restrictive capability overlay. The
+overlay inherits the selected workspace by default and may reduce built-in
+tools, MCP server/tool patterns, visible skills, or assigned hooks. An
+explicit empty allow list denies that category; a deny pattern always wins.
+The overlay is stored with the allowlist entry and included in the CorePool
+key, so channels sharing a workspace cannot share a Core with different
+capabilities. Enforcement happens before dispatch and again inside the MCP
+meta-tool. Secrets remain owned by the workspace integration and are never
+stored in or returned to a channel overlay.
+
 1. Every admin mutation requires the existing authenticated admin route and
    is written through the same atomic configuration path as `/config/mcp`.
 2. The key is stored only in the canonical user secret file,

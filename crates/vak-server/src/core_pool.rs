@@ -37,7 +37,7 @@ use vak_core::Core;
 /// own configured mode" — today's behavior and the key the gateway's own
 /// default entry always uses, so an un-overridden channel keeps sharing
 /// the exact `Core` it shares now.
-type PoolKey = (PathBuf, Option<PermissionMode>);
+type PoolKey = (PathBuf, Option<PermissionMode>, String);
 
 struct PooledEntry {
     core: Core,
@@ -100,7 +100,7 @@ impl CorePool {
         let default_workspace = canonical(default_core.cwd());
         let mut entries = HashMap::new();
         entries.insert(
-            (default_workspace.clone(), None),
+            (default_workspace.clone(), None, String::new()),
             PooledEntry {
                 core: default_core,
                 last_active: Instant::now(),
@@ -133,13 +133,34 @@ impl CorePool {
     /// so a channel asking for a different mode never shares an instance
     /// with one asking for another, and it is capped to the workspace's
     /// own resolved mode before being pinned onto the fresh `Core`.
+    #[allow(dead_code)]
     pub fn resolve_at(
         &self,
         workspace: &Path,
         permission_override: Option<PermissionMode>,
         now: Instant,
     ) -> Result<Core, String> {
-        let key: PoolKey = (canonical(workspace), permission_override);
+        self.resolve_at_with_policy(
+            workspace,
+            permission_override,
+            vak_config::ChannelPolicy::default(),
+            now,
+        )
+    }
+
+    pub fn resolve_at_with_policy(
+        &self,
+        workspace: &Path,
+        permission_override: Option<PermissionMode>,
+        policy: vak_config::ChannelPolicy,
+        now: Instant,
+    ) -> Result<Core, String> {
+        let policy_key = if policy == vak_config::ChannelPolicy::default() {
+            String::new()
+        } else {
+            serde_json::to_string(&policy).map_err(|e| e.to_string())?
+        };
+        let key: PoolKey = (canonical(workspace), permission_override, policy_key);
         {
             let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
             self.evict_idle_locked(&mut entries, now);
@@ -151,6 +172,9 @@ impl CorePool {
         // Start outside the lock: `Core::new_with_trust` does filesystem IO
         // (config load) and must not hold up every other pool lookup.
         let core = Core::new_with_trust(key.0.clone(), true).map_err(|e| e.to_string())?;
+        if policy != vak_config::ChannelPolicy::default() {
+            core.apply_channel_policy(policy);
+        }
         // Cap and pin before the instance is ever published to the map, so
         // no other request can observe it at the un-capped default.
         if let Some(requested) = permission_override
@@ -202,7 +226,7 @@ impl CorePool {
     /// permission override. A same-workspace *override* entry is an
     /// ordinary evictable entry — it is not the gateway's own Core.
     fn default_key(&self) -> PoolKey {
-        (self.default_workspace.clone(), None)
+        (self.default_workspace.clone(), None, String::new())
     }
 
     /// Cap enforcement: drop the least-recently-active non-default entry.
@@ -521,5 +545,29 @@ mod tests {
         assert!(paths.contains(&pool.default_workspace().to_path_buf()));
         assert!(paths.contains(&canonical(dir_b.path())));
         assert!(!paths.contains(&canonical(dir_a.path())));
+    }
+
+    #[test]
+    fn distinct_channel_policies_get_distinct_pool_entries() {
+        let default_dir = tempfile::tempdir().unwrap();
+        let pool = CorePool::new(test_core(default_dir.path()), 8, Duration::from_secs(1800));
+        let allow_tavily = vak_config::ChannelPolicy {
+            mcp_allow: Some(vec!["tavily/*".into()]),
+            ..Default::default()
+        };
+        let deny_mcp = vak_config::ChannelPolicy {
+            mcp_allow: Some(Vec::new()),
+            ..Default::default()
+        };
+        pool.resolve_at_with_policy(default_dir.path(), None, allow_tavily, Instant::now())
+            .unwrap();
+        pool.resolve_at_with_policy(
+            default_dir.path(),
+            None,
+            deny_mcp,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap();
+        assert_eq!(pool.len(), 3);
     }
 }

@@ -389,6 +389,21 @@ pub struct McpServerConfig {
     pub network: bool,
 }
 
+/// Restrictive capability overlay for a gateway channel. `None` means inherit
+/// the workspace policy; `Some([])` means deny everything in that category.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct ChannelPolicy {
+    pub tools_allow: Option<Vec<String>>,
+    pub tools_deny: Vec<String>,
+    pub mcp_allow: Option<Vec<String>>,
+    pub mcp_deny: Vec<String>,
+    pub skills_allow: Option<Vec<String>>,
+    pub skills_deny: Vec<String>,
+    pub hooks_allow: Option<Vec<String>>,
+    pub hooks_deny: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct HookConfig {
     pub event: String,

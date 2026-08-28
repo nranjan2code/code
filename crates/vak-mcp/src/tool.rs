@@ -11,11 +11,46 @@ use crate::manager::McpManager;
 /// descriptions into context. The model lists on demand, then calls.
 pub struct McpTool {
     manager: Arc<McpManager>,
+    allow: Option<Vec<String>>,
+    deny: Vec<String>,
 }
 
 impl McpTool {
     pub fn new(manager: Arc<McpManager>) -> Self {
-        McpTool { manager }
+        McpTool {
+            manager,
+            allow: None,
+            deny: Vec::new(),
+        }
+    }
+
+    pub fn with_policy(
+        manager: Arc<McpManager>,
+        allow: Option<Vec<String>>,
+        deny: Vec<String>,
+    ) -> Self {
+        McpTool {
+            manager,
+            allow,
+            deny,
+        }
+    }
+
+    fn matches(patterns: &[String], value: &str) -> bool {
+        patterns.iter().any(|pattern| {
+            globset::Glob::new(pattern)
+                .ok()
+                .is_some_and(|glob| glob.compile_matcher().is_match(value))
+        })
+    }
+
+    fn allowed(&self, server: &str, tool: &str) -> bool {
+        let value = format!("{server}/{tool}");
+        !Self::matches(&self.deny, &value)
+            && self
+                .allow
+                .as_ref()
+                .is_none_or(|allow| Self::matches(allow, &value))
     }
 }
 
@@ -62,6 +97,9 @@ impl McpTool {
                     Ok(tools) if tools.is_empty() => out.push_str("  (no tools)\n"),
                     Ok(tools) => {
                         for t in tools {
+                            if !self.allowed(&server, &t.name) {
+                                continue;
+                            }
                             let desc: String = t.description.chars().take(100).collect();
                             out.push_str(&format!("  {} — {desc}\n", t.name));
                         }
@@ -88,6 +126,12 @@ impl McpTool {
             .get("arguments")
             .cloned()
             .unwrap_or(Value::Object(Default::default()));
+
+        if !self.allowed(server, tool) {
+            return ToolOutput::error(format!(
+                "MCP capability denied by channel policy: {server}/{tool}"
+            ));
+        }
 
         let client = match self.manager.get(server).await {
             Ok(c) => c,
