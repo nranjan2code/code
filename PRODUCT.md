@@ -1,0 +1,58 @@
+# Product
+
+<!-- impeccable:product-schema 1 -->
+
+## Platform
+
+web
+
+## Users
+
+Primary user: a solo, security-conscious developer who wants powerful coding-agent automation but refuses to give up inspectability and control. They run vakcoder against their own machine and codebase, want to see what the agent actually did, and want to constrain what it's allowed to do before it does it.
+
+## Product Purpose
+
+vakcoder is a local-first Rust harness for running coding agents without giving up the receipts. It lets a developer delegate real coding work (fix, plan, refactor) to an agent while retaining an inspectable, constrainable system: every session is reconstructable, every effect is permission-gated, and failures are handled explicitly rather than silently.
+
+## Positioning
+
+vakcoder's mechanism is "one core, many surfaces": a single auditable, policy-gated core (append-only session ledgers, permission-before-dispatch on every effect, receipts for every provider dispatch) drives a CLI, a Tauri desktop app, an HTTP/SSE server, and chat gateways. Other agent tools bolt safety or transparency onto individual surfaces; vakcoder enforces the same policy engine and produces the same reconstructable record everywhere the agent runs, so behavior and auditability don't vary by which surface you're using.
+
+## Operating Context
+
+- Runs locally against the developer's own machine and codebase; provider credentials come from a gitignored project `.env`, a user secret store, or the environment.
+- Sessions are append-only JSONL ledgers; branching and compaction append rather than rewrite history.
+- Agent turns, tools, subagents, flows, plans, evals, server runs, and desktop runs all pass through the same permission/policy engine before any effect.
+- Supports multiple model providers (Anthropic, OpenAI, OpenRouter, OpenCode Zen, Gemini, Ollama for local use).
+- Extensibility (skills, hooks, MCP servers, custom commands, flows) is additive and does not bloat the core.
+- Can run as a durable background service (macOS LaunchAgent / Linux systemd user service) via the server, in addition to interactive CLI/desktop use.
+
+## Capabilities and Constraints
+
+- CLI (`vakcoder exec`, `vakcoder plan`, `vakcoder config dump`, etc.) is the headless surface.
+- Tauri 2 desktop app (`crates/vak-desktop`, UI in `crates/vak-desktop/ui`): isolated worktrees, streaming chat, diff review, editor, PTY terminal, previews, side chats, best-of-N comparison.
+- Admin UI (`crates/vak-admin-ui`): in scope for design work alongside the desktop app.
+- HTTP/SSE server (`crates/vak-server`) exposes the same session, run, approval, transcript, diff, and steering contracts used by the desktop app.
+- Requires a stable Rust toolchain and Git to build; desktop client additionally requires Node.js/npm.
+- Terminology: "receipts" (auditable record of provider dispatch), "ledger" (append-only session record), "surfaces" (CLI/desktop/server/gateways sharing one core).
+
+## Brand Commitments
+
+- Product name: vakcoder.
+- Existing tagline: "A coding agent you can inspect, constrain, and extend."
+- Existing README hero/surfaces illustrations use a flat editorial illustration style (`docs/assets/vakcoder-hero.webp`, `docs/assets/vakcoder-surfaces.webp`) with badge colors E66A2C (version), 2B2B2B (Rust), 536B58 (license), 384A6B (safety) — treat as existing brand evidence, not yet confirmed as binding design tokens.
+
+## Evidence on Hand
+
+- README.md documents quick start, architecture ("one core, many surfaces"), and a features/documentation index.
+- `docs/design/` contains architecture design docs (e.g. `20-tauri-desktop.md`, `24-agent-security.md`, `00-roadmap.md`).
+- No testimonials, customer names, benchmarks, or pricing exist; future work must not fabricate them.
+- Current version: 0.8.0 (per README badge and CHANGELOG), actively developed.
+
+## Product Principles
+
+1. Auditability is not a feature bolt-on — every surface must produce the same reconstructable, inspectable record.
+2. Nothing acts without permission — every effect (tool, subagent, flow, server run) passes the same policy gate before dispatch, and this must stay visible/legible in the UI, not just enforced invisibly.
+3. Failure is part of the contract — typed errors, partial-work preservation, and explicit failure states are first-class, not edge cases to hide.
+4. One core, many surfaces — design consistency and behavioral consistency across CLI, desktop, server, and gateways matters more than any single surface's polish in isolation.
+5. Local-first and user-controlled — the developer's own machine, keys, and codebase; the product should never feel like it's phoning home or acting behind the user's back.

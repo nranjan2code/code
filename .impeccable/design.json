@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-28T00:00:00.000Z",
+  "title": "Design System: vakcoder",
+  "extensions": {
+    "colorMeta": {
+      "bg": { "role": "neutral", "displayName": "Void", "canonical": "#171714", "tonalRamp": ["#0b0b0a", "#121412", "#171714", "#1c1c19", "#22221f", "#292925", "#34342f", "#68665f"] },
+      "surface": { "role": "neutral", "displayName": "Surface", "canonical": "#1c1c19", "tonalRamp": ["#0f0f0d", "#171714", "#1c1c19", "#22221f", "#292925", "#30302b", "#464640", "#918e86"] },
+      "surface-raised": { "role": "neutral", "displayName": "Surface Raised", "canonical": "#22221f", "tonalRamp": ["#141412", "#1c1c19", "#22221f", "#292925", "#30302b", "#3b3b36", "#68665f", "#c4c0b8"] },
+      "text": { "role": "neutral", "displayName": "Warm Paper", "canonical": "#eeeae2", "tonalRamp": ["#68665f", "#918e86", "#c4c0b8", "#d8d5ce", "#e4e0d7", "#eeeae2", "#f4f1ea", "#faf8f4"] },
+      "burnt-terracotta": { "role": "primary", "displayName": "Burnt Terracotta", "canonical": "#df795f", "tonalRamp": ["#3a1f16", "#5c2f21", "#8a4632", "#b85f44", "#df795f", "#ee9278", "#f3ab95", "#f9d2c4"] },
+      "burnt-terracotta-bright": { "role": "primary", "displayName": "Burnt Terracotta Bright", "canonical": "#ee9278", "tonalRamp": ["#4a2519", "#6e3527", "#a2543c", "#cf7359", "#ee9278", "#f4ac96", "#f8c4b3", "#fce2d8"] },
+      "green": { "role": "status", "displayName": "Signal Green", "canonical": "#73a982", "tonalRamp": ["#1c2d20", "#2c4732", "#457055", "#5c8e6c", "#73a982", "#93c0a1", "#b8d8c2", "#dceee2"] },
+      "yellow": { "role": "status", "displayName": "Signal Amber", "canonical": "#d4a85d", "tonalRamp": ["#3a2c14", "#5c451f", "#8c6a2e", "#b28a44", "#d4a85d", "#e0bd82", "#ecd4ab", "#f7ead4"] },
+      "red": { "role": "status", "displayName": "Signal Red", "canonical": "#d86f72", "tonalRamp": ["#3a1817", "#5c2624", "#8c3a38", "#b25350", "#d86f72", "#e38f91", "#eeb2b3", "#f8dadb"] },
+      "blue": { "role": "status", "displayName": "Signal Blue", "canonical": "#7c9fc9", "tonalRamp": ["#1a222d", "#293646", "#3e5570", "#5a7a9a", "#7c9fc9", "#9fb8d6", "#c2d1e4", "#e2ebf3"] }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "Empty-state headers only (e.g. chat empty state)." },
+      "title": { "displayName": "Title", "purpose": "Workspace title bar, modal titles." },
+      "body": { "displayName": "Body", "purpose": "Default UI text, messages, descriptions." },
+      "label": { "displayName": "Label", "purpose": "Sidebar items, badges, hints, timestamps, micro-UI." },
+      "mono": { "displayName": "Mono", "purpose": "Code blocks, receipts, terminal, raw data." }
+    },
+    "shadows": [
+      { "name": "shadow-lg", "value": "0 24px 70px rgba(0, 0, 0, 0.42), 0 2px 10px rgba(0, 0, 0, 0.22)", "purpose": "Standard overlay shadow for modals, mention menu, toasts, tooltips-in-panels." },
+      { "name": "ambient-pill", "value": "0 4px 8px rgba(0,0,0,.28)", "purpose": "Small transient floating elements (workspace-switching indicator)." },
+      { "name": "ambient-lift", "value": "0 7px 22px rgba(0,0,0,.3)", "purpose": "Scroll-to-latest pill and similar low-priority floating affordances." }
+    ],
+    "motion": [
+      { "name": "ease-control", "value": "120ms ease", "purpose": "Default transition for buttons, chips, icon-buttons, nav items (color/background/border/transform)." },
+      { "name": "ease-panel", "value": "140ms ease", "purpose": "Composer box border/shadow transition on focus." },
+      { "name": "pulse", "value": "1.8s ease-in-out infinite", "purpose": "Running-session status dot pulse." }
+    ],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Solid accent action button — save, send, confirm.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Save changes</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 30px; padding: 5px 11px; border: 1px solid transparent; border-radius: 7px; font-weight: 550; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Segoe UI', sans-serif; font-size: 13px; transition: border-color 120ms ease, background 120ms ease, color 120ms ease, transform 120ms ease; cursor: pointer; } .ds-btn-primary { background: #df795f; border-color: #df795f; color: #201713; } .ds-btn-primary:hover { background: #ee9278; border-color: #ee9278; } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:focus-visible { outline: 2px solid rgba(238, 146, 120, .75); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Default neutral action button.",
+      "html": "<button class=\"ds-btn ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn-secondary { background: #22221f; border: 1px solid #34342f; color: #c4c0b8; } .ds-btn-secondary:hover { background: #292925; color: #eeeae2; border-color: #464640; }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Destructive action — tinted wash, not solid fill.",
+      "html": "<button class=\"ds-btn ds-btn-danger\">Delete session</button>",
+      "css": ".ds-btn-danger { background: rgba(216, 111, 114, 0.09); color: #e58d90; border: 1px solid rgba(216, 111, 114, 0.3); }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Filled text input used in search/composer/settings.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Search sessions…\" />",
+      "css": ".ds-input { width: 100%; height: 33px; padding: 5px 10px; outline: none; border: 1px solid transparent; border-radius: 8px; background: #292925; color: #eeeae2; font: inherit; font-size: 13px; } .ds-input::placeholder { color: #68665f; } .ds-input:focus { border-color: #4b4b44; background: #2c2c28; }"
+    },
+    {
+      "name": "Chip (active)",
+      "kind": "chip",
+      "refersTo": "chip-active",
+      "description": "Pill-shaped filter/status toggle in its selected state.",
+      "html": "<button class=\"ds-chip ds-chip-on\">Running</button>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; justify-content: center; min-height: 25px; padding: 2px 8px; border: 1px solid #34342f; border-radius: 999px; color: #918e86; font-size: 11.5px; background: transparent; } .ds-chip-on { color: #eeeae2; border-color: #484841; background: #30302b; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Resting content panel — flat, tonal, no shadow.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-title\">Session receipts</div><div class=\"ds-card-body\">Every provider dispatch, reconstructable.</div></div>",
+      "css": ".ds-card { padding: 13px; border: 1px solid #34342f; border-radius: 10px; background: #1c1c19; } .ds-card-title { color: #eeeae2; font-weight: 620; font-size: 13.5px; margin-bottom: 6px; } .ds-card-body { color: #c4c0b8; font-size: 13px; line-height: 1.5; }"
+    },
+    {
+      "name": "Status Dot",
+      "kind": "custom",
+      "refersTo": "status-dot",
+      "description": "6px run-state indicator; pulses green while a session is active.",
+      "html": "<span class=\"ds-dot ds-dot-run\"></span>",
+      "css": ".ds-dot { width: 6px; height: 6px; display: inline-block; border-radius: 50%; background: #68665f; } .ds-dot-run { background: #73a982; box-shadow: 0 0 0 3px rgba(115, 169, 130, 0.12); animation: ds-pulse 1.8s ease-in-out infinite; } @keyframes ds-pulse { 50% { opacity: .55; } }"
+    },
+    {
+      "name": "Modal",
+      "kind": "custom",
+      "refersTo": "modal",
+      "description": "Floating overlay panel — the one place shadow-lg and larger radius apply.",
+      "html": "<div class=\"ds-modal-back\"><div class=\"ds-modal\"><h3 class=\"ds-modal-title\">Confirm action</h3><p class=\"ds-modal-body\">This can't be undone.</p></div></div>",
+      "css": ".ds-modal-back { position: relative; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(10,10,8,.72); border-radius: 10px; } .ds-modal { min-width: 320px; padding: 21px 22px; border: 1px solid #41413b; border-radius: 15px; background: #22221f; box-shadow: 0 24px 70px rgba(0,0,0,.42), 0 2px 10px rgba(0,0,0,.22); } .ds-modal-title { margin: 0 0 10px; color: #eeeae2; font-size: 15px; font-weight: 620; } .ds-modal-body { margin: 0; color: #c4c0b8; font-size: 13px; line-height: 1.5; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Auditor's Desk",
+    "overview": "vakcoder's UI is a quiet, focused workspace for someone reviewing serious work — the desktop client and admin portal both read as instruments for a practiced hand, not showrooms for a brand. Density is high but never cramped: an odd, deliberately calibrated type scale (font-weights like 540, 560, 580, 620 rather than round hundreds) and tight, consistent spacing give every control the feel of having been tuned, not eyeballed. The palette stays almost entirely neutral — warm near-blacks and soft off-whites — so that the single accent, a burnt terracotta, reads as a genuine signal every time it appears: a brand mark, a primary action, an active nav item, a running session's pulse dot. Depth is conveyed through tonal layering (background → surface → surface-raised → surface-hover) rather than shadow; shadow is reserved for things that must visibly float above the layout. The system deliberately rejects the generic flat-blue enterprise SaaS look, and it rejects skeuomorphism, heavy gradients, or glassmorphic chrome. Nothing is decorative. Every visual choice — a border color, a radius, a font-weight — is there to make dense, high-stakes information (diffs, approvals, receipts, permission state) scannable at speed without shouting.",
+    "keyCharacteristics": [
+      "Dark-first, warm near-black surfaces with tonal (not shadow-based) depth at rest",
+      "One accent color, spent sparingly, so it always means something",
+      "A dense, odd-weight type scale tuned in single-digit increments, not round steps",
+      "Flat by default; box-shadow appears only on things that float (modals, toasts, popovers)",
+      "SF Mono / system-mono for anything code- or receipt-shaped; system sans everywhere else"
+    ],
+    "rules": [
+      { "name": "The One Accent Rule", "body": "Burnt Terracotta is the only color used to mean \"this is the primary thing\" or \"this is active.\" It never doubles as decoration; if a new element needs emphasis, reach for a status color (if it's stateful) or a tonal layer (if it's structural) before reaching for the accent again.", "section": "colors" },
+      { "name": "The Odd-Weight Rule", "body": "Font-weights are tuned in single-digit steps (500, 540, 550, 560, 570, 580, 600, 620, 650) rather than snapped to round hundreds. Treat existing weights as calibrated values to reuse, not round to the nearest 100.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Surfaces at rest are flat and distinguished only by tone. Shadow is added exclusively as a response to an element leaving the document's normal stacking context (fixed/absolute overlays), never as decoration on a resting card or button.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do reserve Burnt Terracotta for primary actions and active/running state; everything else stays neutral or a fixed status color.",
+      "Do express depth with tonal layering (bg/surface/surface-raised/surface-hover/surface-active) and reach for --shadow-lg only when an element leaves normal document flow (modal, toast, popover, floating pill).",
+      "Do keep the type scale's odd weights and half-pixel sizes (540/560/580/620; 10.5px/11.5px/12.5px) rather than rounding to nearest 100/whole pixel.",
+      "Do pair micro-label text (timestamps, hints, badges) with --muted or --faint, never full --text color.",
+      "Do keep the desktop and admin surfaces on the same token set — the admin UI is explicitly built to match vak-desktop, not to diverge stylistically."
+    ],
+    "donts": [
+      "Don't add box-shadow to resting cards, buttons, or sidebar items — shadow means \"this is floating,\" not \"this is important.\"",
+      "Don't introduce a second accent color or use a status color (green/yellow/red/blue) decoratively outside its state meaning.",
+      "Don't reach for gradients or glassmorphic blur outside the few already-established floating overlays (toast, scroll-latest pill, mention menu) that use backdrop-filter: blur(...) deliberately.",
+      "Don't use pure black/white; every \"black\" is the warm --bg (#171714) family and every \"white\" is warm --text (#eeeae2), never #000/#fff."
+    ]
+  }
+}
