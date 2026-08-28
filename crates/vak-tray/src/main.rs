@@ -361,10 +361,7 @@ fn pinned_gateway_token() -> Option<String> {
 fn open_admin_console() {
     let cfg = vak_ops::OpsConfig::detect();
     if vak_ops::status(vak_ops::Service::Gateway, &cfg) != vak_ops::State::Running {
-        notify(
-            "vak",
-            "start the gateway service first (Gateway → Start)",
-        );
+        notify("vak", "start the gateway service first (Gateway → Start)");
         return;
     }
     let url = match pinned_gateway_token() {
@@ -387,10 +384,7 @@ fn open_admin_console() {
 
 fn open_desktop() {
     let Some(bin) = desktop_binary() else {
-        notify(
-            "vak",
-            "Vak desktop app not found next to the tray binary",
-        );
+        notify("vak", "Vak desktop app not found next to the tray binary");
         return;
     };
     if let Err(e) = std::process::Command::new(bin).spawn() {

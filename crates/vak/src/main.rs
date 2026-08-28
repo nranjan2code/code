@@ -1477,7 +1477,9 @@ async fn run_telegram(server: String, token_flag: Option<String>) -> i32 {
             let hint = vak_config::user_env_path()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "the user .env".into());
-            eprintln!("error: gateway token missing — set VAK_GATEWAY_TOKEN in {hint} or pass --token");
+            eprintln!(
+                "error: gateway token missing — set VAK_GATEWAY_TOKEN in {hint} or pass --token"
+            );
             String::new()
         }),
     };

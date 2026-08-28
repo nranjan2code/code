@@ -152,8 +152,7 @@ impl Sandbox for Landlock {
             // Without a resolvable executable the containment cannot be
             // established; refuse to run rather than escape the sandbox.
             Err(_) => {
-                return "echo 'vak sandbox: cannot locate executable' >&2; exit 126"
-                    .to_string();
+                return "echo 'vak sandbox: cannot locate executable' >&2; exit 126".to_string();
             }
         };
         let mut parts = vec![shell_quote(&exe), SANDBOX_SUBCOMMAND.to_string()];

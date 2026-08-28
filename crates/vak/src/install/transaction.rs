@@ -233,8 +233,7 @@ mod tests {
         let a = root.bin_dir().join("vak");
         let b = root.bin_dir().join("vak-tray");
         let mut tx = Transaction::begin(&root).unwrap();
-        tx.stage_bytes("vak", b"new-cli", a.clone(), true)
-            .unwrap();
+        tx.stage_bytes("vak", b"new-cli", a.clone(), true).unwrap();
         tx.stage_bytes("vak-tray", b"new-tray", b.clone(), true)
             .unwrap();
         tx.commit().unwrap();
@@ -268,10 +267,7 @@ mod tests {
             .unwrap();
         let err = tx.commit().unwrap_err();
 
-        assert!(
-            err.contains("vak-tray"),
-            "error names the failure: {err}"
-        );
+        assert!(err.contains("vak-tray"), "error names the failure: {err}");
         assert_eq!(
             std::fs::read(&good).unwrap(),
             b"old-cli",
@@ -289,8 +285,7 @@ mod tests {
         std::fs::write(&target, b"old").unwrap();
         {
             let mut tx = Transaction::begin(&root).unwrap();
-            tx.stage_bytes("vak", b"new", target.clone(), true)
-                .unwrap();
+            tx.stage_bytes("vak", b"new", target.clone(), true).unwrap();
             // No commit: the guard must undo staging on the way out.
         }
         assert_eq!(std::fs::read(&target).unwrap(), b"old");

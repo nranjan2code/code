@@ -244,10 +244,7 @@ fn open_admin_console() {
         None => format!("http://127.0.0.1:{}/admin", config.port),
     };
     if let Err(error) = std::process::Command::new("open").arg(url).spawn() {
-        notify(
-            "Vak",
-            &format!("Could not open the admin console: {error}"),
-        );
+        notify("Vak", &format!("Could not open the admin console: {error}"));
     }
 }
 

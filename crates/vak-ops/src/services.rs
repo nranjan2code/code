@@ -776,13 +776,11 @@ mod tests {
     /// where services silently executed stale images from ad-hoc paths.
     #[test]
     fn resolved_specs_never_reference_legacy_dotdir_or_build_trees() {
-        let specs: Vec<ServiceSpec> = resolve_specs(
-            Path::new("/Applications/vak.app/Contents/MacOS/vak"),
-            &[],
-        )
-        .into_iter()
-        .flatten()
-        .collect();
+        let specs: Vec<ServiceSpec> =
+            resolve_specs(Path::new("/Applications/vak.app/Contents/MacOS/vak"), &[])
+                .into_iter()
+                .flatten()
+                .collect();
         for spec in specs {
             let log = spec.log_path.to_string_lossy();
             let bin = spec.bin_path.to_string_lossy();
