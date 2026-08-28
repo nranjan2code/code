@@ -235,8 +235,13 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      cron+script-watchdog scheduler w/ catch-up and model
                      pinning, heartbeat proactive check-ins, budget-alert
                      delivery-to-surface, approval forwarding with
-                     addressed-gate resolution, semantic adapter registry,
-                     Telegram/webhook transports, and outbox replay
+                     addressed-gate resolution (Telegram forwards render as
+                     inline-keyboard buttons via TelegramAdapter, resolved
+                     through the same verdict-text path a typed yes/no
+                     uses), semantic adapter registry, Telegram document
+                     attachments inlined as text (image attachments stay
+                     vision content), Telegram/webhook transports, and
+                     outbox replay
                      (docs/design/22-gateway.md, 28-operations.md,
                      29-personal-os.md, 30-output-engineering.md) +
                      admin console: global event hub + SSE, cookie login
