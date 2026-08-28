@@ -6,13 +6,7 @@ use std::path::{Path, PathBuf};
 
 use vak_session::SessionLog;
 
-use crate::{APP_VERSION, Core};
-
-/// Where `self install` records the deployed release
-/// (docs/design/32-release-engineering.md).
-pub fn install_manifest_path(home: &Path) -> PathBuf {
-    home.join("local/release/install.json")
-}
+use crate::{APP_VERSION, Core, install};
 
 fn user_home() -> PathBuf {
     std::env::var_os("HOME")
@@ -93,11 +87,13 @@ pub struct HealthReport {
 
 /// "Self version parity" (docs/design/32-release-engineering.md): the
 /// running build vs the installed-release manifest. A missing manifest
-/// passes — nothing is managed yet, so nothing can drift.
-pub fn version_parity_check(home: &Path) -> HealthCheck {
+/// passes — nothing is managed yet, so nothing can drift. `manifest` is
+/// the resolved install manifest path (see [`install::resolve_manifest_path`]),
+/// which — unlike a bare `$HOME`-relative join — accounts for the macOS
+/// app-bundle layout that `self install` actually writes to.
+pub fn version_parity_check(manifest: &Path) -> HealthCheck {
     let label = "self version parity".to_string();
-    let manifest = install_manifest_path(home);
-    let Ok(text) = std::fs::read_to_string(&manifest) else {
+    let Ok(text) = std::fs::read_to_string(manifest) else {
         return HealthCheck {
             label,
             detail: Ok("no installed release manifest".into()),
@@ -161,7 +157,7 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
         },
     });
     checks.push(layout_check());
-    checks.push(version_parity_check(&user_home()));
+    checks.push(version_parity_check(&install::resolve_manifest_path(None)));
     let failures = checks.iter().filter(|c| c.failed()).count();
 
     let mut facts = vec![
@@ -315,7 +311,8 @@ mod tests {
     #[test]
     fn parity_passes_without_manifest() {
         let home = tempfile::tempdir().unwrap();
-        let check = version_parity_check(home.path());
+        let manifest = home.path().join("install.json");
+        let check = version_parity_check(&manifest);
         assert_eq!(check.label, "self version parity");
         assert!(check.detail.is_ok());
     }
@@ -323,26 +320,37 @@ mod tests {
     #[test]
     fn parity_matches_installed_and_flags_drift() {
         let home = tempfile::tempdir().unwrap();
-        let manifest = install_manifest_path(home.path());
-        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        let manifest = home.path().join("install.json");
 
         std::fs::write(
             &manifest,
             format!(r#"{{"version":"{APP_VERSION}","git_sha":"deadbeef"}}"#),
         )
         .unwrap();
-        let ok = version_parity_check(home.path());
+        let ok = version_parity_check(&manifest);
         assert!(ok.detail.is_ok());
 
         std::fs::write(&manifest, r#"{"version":"0.0.9-legacy"}"#).unwrap();
-        let drifted = version_parity_check(home.path());
+        let drifted = version_parity_check(&manifest);
         assert_eq!(
             drifted.detail.as_ref().err(),
             Some(&format!("build {APP_VERSION} != installed 0.0.9-legacy"))
         );
 
         std::fs::write(&manifest, "not json").unwrap();
-        assert!(version_parity_check(home.path()).detail.is_err());
+        assert!(version_parity_check(&manifest).detail.is_err());
+    }
+
+    #[test]
+    fn resolve_manifest_path_uses_bundle_layout_on_macos() {
+        // Guards the bug this module exists to fix: health::collect must
+        // resolve the same manifest path `self install` actually writes
+        // to, not a hardcoded Linux-style join.
+        let manifest = install::resolve_manifest_path(Some(PathBuf::from("/Applications/Vak.app")));
+        assert_eq!(
+            manifest,
+            PathBuf::from("/Applications/Vak.app/Contents/Resources/install.json")
+        );
     }
 
     #[test]

@@ -8,20 +8,13 @@
 
 use std::path::{Path, PathBuf};
 
-/// Application bundle name on macOS. Matches `productName` in
-/// `tauri.conf.json`; the desktop bundle and the managed install are the
-/// same directory, so the two spellings must never diverge. Note that
-/// macOS volumes are case-insensitive by default — `Vak.app` and
-/// `vak.app` are the same path, so a second spelling is not a
-/// second location, it is a collision.
-pub const BUNDLE_NAME: &str = "Vak.app";
+use vak_core::install as core_install;
 
 /// Overrides the install prefix without threading `--prefix` through
 /// every invocation. Useful for staging and for tests.
-pub const PREFIX_ENV: &str = "VAK_PREFIX";
+pub const PREFIX_ENV: &str = core_install::PREFIX_ENV;
 
 const BIN_DIR: &str = "bin";
-const MANIFEST_FILE: &str = "install.json";
 const STAGING_DIR: &str = ".staging";
 const BACKUP_DIR: &str = ".backup";
 
@@ -72,14 +65,7 @@ impl InstallRoot {
     }
 
     pub fn manifest_path(&self) -> PathBuf {
-        if self.bundle {
-            self.prefix
-                .join("Contents")
-                .join("Resources")
-                .join(MANIFEST_FILE)
-        } else {
-            self.prefix.join(MANIFEST_FILE)
-        }
+        core_install::manifest_path_for_prefix(&self.prefix)
     }
 
     /// Frontend assets and the manifest live here in a bundle; plain
@@ -113,38 +99,15 @@ impl InstallRoot {
 /// Platform default install root. macOS gets a real application bundle so
 /// the app is launchable from Finder; other platforms get a managed
 /// prefix under the data home.
+///
+/// Delegates to `vak_core::install`, the single source of truth shared
+/// with `vak_core::health`'s "self version parity" check.
 fn platform_default() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        let system = PathBuf::from("/Applications").join(BUNDLE_NAME);
-        if system.exists() || dir_writable(Path::new("/Applications")) {
-            return system;
-        }
-        if let Some(h) = std::env::var_os("HOME") {
-            return PathBuf::from(h).join("Applications").join(BUNDLE_NAME);
-        }
-        system
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        vak_config::paths::data_home().join("local").join("release")
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn dir_writable(dir: &Path) -> bool {
-    let probe = dir.join(format!(".vak-write-probe-{}", std::process::id()));
-    match std::fs::write(&probe, b"") {
-        Ok(()) => {
-            let _ = std::fs::remove_file(&probe);
-            true
-        }
-        Err(_) => false,
-    }
+    core_install::platform_default_prefix()
 }
 
 fn is_bundle(root: &Path) -> bool {
-    root.extension().and_then(|e| e.to_str()) == Some("app")
+    core_install::is_bundle(root)
 }
 
 #[cfg(test)]

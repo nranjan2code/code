@@ -10,6 +10,7 @@ pub mod files;
 pub mod finops;
 pub mod health;
 pub mod inbox;
+pub mod install;
 pub mod learning;
 pub mod memory;
 pub mod reflection;
