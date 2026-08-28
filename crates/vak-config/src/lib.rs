@@ -757,6 +757,102 @@ pub fn project_path(cwd: &Path) -> PathBuf {
     cwd.join(".vak/config.toml")
 }
 
+/// Atomically replace the MCP table at one explicit configuration scope.
+/// The caller selects either [`global_path`] or [`project_path`]; no values
+/// are inferred from the process directory. Other TOML keys are preserved.
+pub fn persist_mcp_servers(
+    path: &Path,
+    servers: &std::collections::BTreeMap<String, McpServerConfig>,
+) -> Result<(), ConfigError> {
+    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = WRITE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut root = if path.is_file() {
+        let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let Some(table) = root.as_table_mut() else {
+        return Err(ConfigError::Write {
+            path: path.to_path_buf(),
+            source: std::io::Error::other("top-level config must be a TOML table"),
+        });
+    };
+    let entries = servers
+        .iter()
+        .map(|(name, server)| {
+            let mut value = toml::map::Map::new();
+            value.insert(
+                "command".into(),
+                toml::Value::String(server.command.clone()),
+            );
+            value.insert(
+                "args".into(),
+                toml::Value::Array(
+                    server
+                        .args
+                        .iter()
+                        .cloned()
+                        .map(toml::Value::String)
+                        .collect(),
+                ),
+            );
+            if !server.env.is_empty() {
+                value.insert(
+                    "env".into(),
+                    toml::Value::Table(
+                        server
+                            .env
+                            .iter()
+                            .map(|(key, value)| (key.clone(), toml::Value::String(value.clone())))
+                            .collect(),
+                    ),
+                );
+            }
+            if server.network {
+                value.insert("network".into(), toml::Value::Boolean(true));
+            }
+            (name.clone(), toml::Value::Table(value))
+        })
+        .collect();
+    table.insert(
+        "mcp".into(),
+        toml::Value::Table(
+            std::iter::once(("servers".into(), toml::Value::Table(entries))).collect(),
+        ),
+    );
+    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other(error.to_string()),
+    })?;
+    let parent = path.parent().ok_or_else(|| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other("config has no parent directory"),
+    })?;
+    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
+    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, path).map_err(|source| ConfigError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
 /// Persist user-selected agent preferences without disturbing unrelated
 /// project configuration. The write is atomic so every client sees either
 /// the old or the new complete document, never a partial TOML file.
@@ -768,12 +864,45 @@ pub fn persist_project_preferences(
     permission_mode: Option<PermissionMode>,
     theme: Option<&str>,
 ) -> Result<(), ConfigError> {
+    persist_preferences_at(
+        project_path(cwd),
+        provider,
+        model,
+        max_turns,
+        permission_mode,
+        theme,
+    )
+}
+
+/// Persist user-level defaults. Project configurations inherit these values
+/// through [`load_with_trust`] until they set their own scoped override.
+pub fn persist_global_preferences(
+    provider: Option<&str>,
+    model: Option<&str>,
+    max_turns: Option<usize>,
+    permission_mode: Option<PermissionMode>,
+    theme: Option<&str>,
+) -> Result<(), ConfigError> {
+    let path = global_path().ok_or_else(|| ConfigError::Write {
+        path: PathBuf::from("<user-config>"),
+        source: std::io::Error::other("user home is unavailable"),
+    })?;
+    persist_preferences_at(path, provider, model, max_turns, permission_mode, theme)
+}
+
+fn persist_preferences_at(
+    path: PathBuf,
+    provider: Option<&str>,
+    model: Option<&str>,
+    max_turns: Option<usize>,
+    permission_mode: Option<PermissionMode>,
+    theme: Option<&str>,
+) -> Result<(), ConfigError> {
     static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     let _guard = WRITE_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let path = project_path(cwd);
     let mut root = if path.is_file() {
         let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
             path: path.clone(),

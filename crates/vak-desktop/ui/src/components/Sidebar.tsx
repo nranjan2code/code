@@ -12,6 +12,7 @@ import {
   setSidebarOpen,
   setNotice,
   setSettingsOpen,
+  setSettingsScope,
   setTasksOpen,
   workspaceSwitching,
 } from "../store";
@@ -198,7 +199,7 @@ export default function Sidebar() {
       </div>
 
       <div class="sidebar-footer">
-        <button class="sidebar-settings" onClick={() => setSettingsOpen(true)}><Icon name="gear" /><span>Settings</span><kbd>⌘,</kbd></button>
+        <button class="sidebar-settings" onClick={() => { setSettingsScope("user"); setSettingsOpen(true); }}><Icon name="gear" /><span>Settings</span><kbd>⌘,</kbd></button>
         <button class="sidebar-help has-tooltip" data-tooltip="Keyboard shortcuts" aria-label="Keyboard shortcuts" onClick={() => setShowShortcuts(true)}><span>?</span></button>
       </div>
     </aside>

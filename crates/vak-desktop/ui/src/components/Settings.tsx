@@ -10,6 +10,7 @@ import {
   setNotice,
   setProviders,
   setSettingsOpen,
+  settingsScope,
   setSetupNeeded,
   setShowShortcuts,
   uiPreferences,
@@ -60,6 +61,7 @@ function fmt(value: number): string {
 }
 
 export default function Settings() {
+  const scope = () => settingsScope();
   const [page, setPage] = createSignal<Page>(pendingSettingsPage() ?? "general");
   const [query, setQuery] = createSignal("");
   const [config, setConfig] = createSignal<ConfigSnapshot | null>(null);
@@ -172,7 +174,7 @@ export default function Settings() {
 
   async function refreshMcp() {
     try {
-      const res = await api.getMcpServers();
+      const res = scope() === "user" ? await api.getGlobalMcpServers() : await api.getMcpServers();
       setMcpServers(res.servers ?? {});
       setMcpDirty(false);
     } catch (e) {
@@ -182,7 +184,7 @@ export default function Settings() {
 
   async function refreshCapabilities() {
     try {
-      const [skillResult, hookResult] = await Promise.all([api.listSkills(), api.getHooks()]);
+      const [skillResult, hookResult] = await Promise.all([api.listSkills(), scope() === "user" ? api.getGlobalHooks() : api.getHooks()]);
       setSkills(skillResult.skills ?? []);
       setHooks(hookResult.hooks ?? []);
       setHooksDirty(false);
@@ -194,9 +196,10 @@ export default function Settings() {
   async function saveHooks() {
     setHooksSaving(true);
     try {
-      await api.putHooks(hooks());
+      if (scope() === "user") await api.putGlobalHooks(hooks());
+      else await api.putHooks(hooks());
       setHooksDirty(false);
-      setNotice({ kind: "info", text: `Saved ${hooks().length} hook${hooks().length === 1 ? "" : "s"} — active for new turns` });
+      setNotice({ kind: "info", text: scope() === "user" ? `Saved ${hooks().length} shared hook${hooks().length === 1 ? "" : "s"} — inherited by projects` : `Saved ${hooks().length} project hook${hooks().length === 1 ? "" : "s"} — active for new turns` });
     } catch (e) {
       setNotice({ kind: "error", text: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -223,9 +226,10 @@ export default function Settings() {
     const servers = mcpServers() ?? {};
     setMcpSaving(true);
     try {
-      await api.putMcpServers(servers);
+      if (scope() === "user") await api.putGlobalMcpServers(servers);
+      else await api.putMcpServers(servers);
       setMcpDirty(false);
-      setNotice({ kind: "info", text: `Saved ${Object.keys(servers).length} MCP server(s) — applied to new turns` });
+      setNotice({ kind: "info", text: scope() === "user" ? `Saved ${Object.keys(servers).length} shared MCP server(s) — inherited by new projects and applied here now` : `Saved ${Object.keys(servers).length} project MCP server(s) — applied to new turns` });
     } catch (e) {
       setNotice({ kind: "error", text: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -489,7 +493,8 @@ export default function Settings() {
   const applyAgent = async () => {
     setSaving(true);
     try {
-      await api.patchConfig({ provider: provider(), model: model(), max_turns: maxTurns() });
+      if (scope() === "user") await api.patchGlobalConfig({ provider: provider(), model: model(), max_turns: maxTurns() });
+      else await api.patchConfig({ provider: provider(), model: model(), max_turns: maxTurns() });
       await Promise.all([load(), loadHealth()]);
       setNotice({ kind: "info", text: "Agent defaults updated for new tasks." });
     } catch (error) {
@@ -600,7 +605,8 @@ export default function Settings() {
   const changePermission = async (mode: ConfigSnapshot["permission_mode"]) => {
     const wire = mode === "ReadOnly" ? "read-only" : mode === "WorkspaceWrite" ? "workspace-write" : "full-access";
     try {
-      await api.patchConfig({ permission_mode: wire });
+      if (scope() === "user") await api.patchGlobalConfig({ permission_mode: wire });
+      else await api.patchConfig({ permission_mode: wire });
       setConfig((current) => current ? { ...current, permission_mode: mode } : current);
       await loadHealth();
     } catch (error) {
@@ -625,7 +631,7 @@ export default function Settings() {
       <aside class="settings-nav">
         <button class="settings-back" onClick={() => setSettingsOpen(false)}><Icon name="chevron" /><span>Back to Vak</span></button>
         <div class="settings-search"><Icon name="search" /><input aria-label="Search settings" placeholder="Search settings…" value={query()} onInput={(event) => setQuery(event.currentTarget.value)} /></div>
-        <div class="settings-nav-label">Workspace</div>
+        <div class="settings-nav-label">{scope() === "user" ? "User settings" : "Project settings"}</div>
         <nav>
           <For each={visiblePages()} fallback={<div class="settings-no-results">No matching settings</div>}>
             {(item) => <button classList={{ active: page() === item.id }} onClick={() => { setPage(item.id); setQuery(""); }}><Icon name={item.icon} /><span>{item.label}</span></button>}
@@ -644,16 +650,16 @@ export default function Settings() {
         <div class="settings-content">
           <Show when={!loading()} fallback={<div class="settings-loading"><span /><span /><span /></div>}>
             <Show when={page() === "general"}>
-              <header><h1>General</h1><p>Choose how Vak behaves across projects.</p></header>
+              <header><h1>{scope() === "user" ? "User settings" : "Project settings"}</h1><p>{scope() === "user" ? "Shared defaults and capabilities inherited by your projects." : "Overrides for this folder. Unchanged settings inherit your user defaults."}</p></header>
               <Group title="Experience">
                 <Row title="Desktop notifications" description="Notify when the active task finishes while Vak is in the background."><Switch label="Desktop notifications" checked={uiPreferences.notifications} onChange={(value) => updateUiPreference("notifications", value)} /></Row>
                 <Row title="Suggested prompts" description="Show useful starting points when a task has no conversation yet."><Switch label="Suggested prompts" checked={uiPreferences.suggestions} onChange={(value) => updateUiPreference("suggestions", value)} /></Row>
                 <Row title="Transcript detail" description="Control how much agent activity appears in conversations."><select value={density()} onChange={(event) => setDensity(event.currentTarget.value as Density)}><option value="summary">Summary</option><option value="normal">Normal</option><option value="verbose">Verbose</option></select></Row>
                 <Row title="Keyboard shortcuts" description="See every shortcut for navigation, tasks, and workspace tools."><button class="settings-button" onClick={() => { setSettingsOpen(false); setShowShortcuts(true); }}>View shortcuts</button></Row>
               </Group>
-              <Group title="Project">
-                <Row title="Current workspace" description={config()?.paths.cwd ?? ""}><span class="settings-value">Local</span></Row>
-                <Row title="Project configuration" description="Persistent agent and tool settings for this repository."><button class="settings-button" onClick={() => void openProjectConfig()}>Open config</button></Row>
+              <Group title={scope() === "user" ? "Desktop" : "Project"}>
+                <Row title={scope() === "user" ? "Inheritance" : "Current workspace"} description={scope() === "user" ? "Projects inherit this scope unless their project settings override a value." : (config()?.paths.cwd ?? "")}><span class="settings-value">{scope() === "user" ? "Shared" : "Local"}</span></Row>
+                <Show when={scope() === "project"}><Row title="Project configuration" description="Persistent agent and tool settings for this repository."><button class="settings-button" onClick={() => void openProjectConfig()}>Open config</button></Row></Show>
               </Group>
             </Show>
 
@@ -971,7 +977,7 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "integrations"}>
-              <header><h1>Capabilities</h1><p>Connect tools, automate lifecycle events, and manage the instructions available to your agent.</p></header>
+              <header><h1>Capabilities</h1><p>{scope() === "user" ? "Shared capabilities inherited by every project. Secrets stay in the protected user store." : "This project's effective capabilities. Add or change a server here only when this project needs an override."}</p></header>
               <nav class="capability-tabs" aria-label="Capability types">
                 <button classList={{ active: capabilityTab() === "mcp" }} onClick={() => setCapabilityTab("mcp")}><Icon name="plug" /><span>MCP servers</span><em>{Object.keys(mcpServers() ?? {}).length}</em></button>
                 <button classList={{ active: capabilityTab() === "skills" }} onClick={() => setCapabilityTab("skills")}><Icon name="spark" /><span>Skills</span><em>{skills().length}</em></button>
@@ -988,12 +994,12 @@ export default function Settings() {
                       </div>}</For>
                     </Show>
                     <div class="settings-actions"><button class="btn" onClick={addServer}><Icon name="add" /> Add server</button><button class="btn primary" disabled={!mcpDirty() || mcpSaving()} onClick={() => void saveMcp()}>{mcpSaving() ? "Saving…" : "Save & apply"}</button><Show when={mcpDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
-                    <p class="settings-hint">Servers run in a sandbox. Network access is off unless you explicitly enable it. Secrets are referenced by name and never shown here.</p>
+                    <p class="settings-hint">{scope() === "user" ? "These are user-owned server definitions, shared by projects. Secrets are referenced by name and never shown here." : "Project definitions override a same-named shared server. Network access is off unless explicitly enabled; secrets remain user-owned."}</p>
                   </div>
                 </Show></Group>
               </Show>
               <Show when={capabilityTab() === "skills"}>
-                <Group title={`Discovered skills (${skills().length})`}><Show when={skills().length > 0} fallback={<div class="capability-empty"><Icon name="spark" /><strong>No skills discovered</strong><span>Add a SKILL.md under the project or your Vak home directory, then reload this page.</span></div>}><div class="capability-list"><For each={skills()}>{(skill) => <details class="capability-item"><summary><span><strong>{skill.name}</strong><small>{skill.scope ?? "Project or user"}</small></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show><button class="settings-button" onClick={() => setNotice({ kind: "info", text: `${skill.name} is available from the task composer.` })}>Use in a task</button></div></details>}</For></div></Show></Group>
+                <Group title={`Discovered skills (${skills().length})`}><Show when={skills().length > 0} fallback={<div class="capability-empty"><Icon name="spark" /><strong>No skills discovered</strong><span>Add a SKILL.md under the project or your Vak home directory, then reload this page.</span></div>}><p class="settings-hint">Skills are source-controlled instruction files. Their displayed scope is real: user skills are inherited; project skills belong only to this folder.</p><div class="capability-list"><For each={skills()}>{(skill) => <details class="capability-item"><summary><span><strong>{skill.name}</strong><small>{skill.scope ?? "Project or user"}</small></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show><button class="settings-button" onClick={() => setNotice({ kind: "info", text: `${skill.name} is available from the task composer.` })}>Use in a task</button></div></details>}</For></div></Show></Group>
                 <Group title={`Pending proposals (${proposals().length})`}><Show when={proposals().length > 0} fallback={<Row title="No proposals waiting" description="The agent can suggest reusable skills; they stay inactive until you review them."><span class="settings-status good">Clear</span></Row>}><For each={proposals()}>{(proposal) => <div class="setting-row"><div class="setting-copy"><strong>{proposal.name}</strong><span>{proposal.description}</span></div><div class="setting-control"><button class="settings-button" onClick={() => void promote(proposal.id)}>Review & promote</button><button class="settings-button danger" onClick={() => void reject(proposal.id)}>Reject</button></div></div>}</For></Show></Group>
               </Show>
               <Show when={capabilityTab() === "hooks"}>

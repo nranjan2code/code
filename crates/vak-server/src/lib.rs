@@ -348,14 +348,23 @@ fn router_with_state(state: AppState) -> Router {
         .route("/fs/file", get(read_file).put(write_file))
         .route("/fs/tree", get(fs_tree))
         .route("/config", get(get_config).patch(patch_config))
+        .route("/config/global", axum::routing::patch(patch_global_config))
         .route("/config/mode", post(set_permission_mode))
         .route("/config/mcp", get(get_mcp_servers).put(put_mcp_servers))
+        .route(
+            "/config/mcp/global",
+            get(get_global_mcp_servers).put(put_global_mcp_servers),
+        )
         .route(
             "/config/integrations/tavily",
             get(get_tavily).put(put_tavily),
         )
         .route("/config/integrations/tavily/disable", post(disable_tavily))
         .route("/config/hooks", get(get_hooks).put(put_hooks))
+        .route(
+            "/config/hooks/global",
+            get(get_global_hooks).put(put_global_hooks),
+        )
         .route(
             "/config/key",
             put(put_provider_key).delete(delete_provider_key),
@@ -3247,6 +3256,17 @@ struct ConfigPatch {
 }
 
 async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatch>) -> StatusCode {
+    patch_config_scope(state, body, false).await
+}
+
+async fn patch_global_config(
+    State(state): State<AppState>,
+    Json(body): Json<ConfigPatch>,
+) -> StatusCode {
+    patch_config_scope(state, body, true).await
+}
+
+async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) -> StatusCode {
     if body
         .provider
         .as_deref()
@@ -3291,14 +3311,24 @@ async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatc
         || body.max_turns.is_some()
         || permission_mode.is_some()
         || body.theme.is_some())
-        && vak_config::persist_project_preferences(
-            state.core.cwd(),
-            provider.as_deref(),
-            model.as_deref(),
-            body.max_turns,
-            permission_mode,
-            body.theme.as_deref(),
-        )
+        && (if global {
+            vak_config::persist_global_preferences(
+                provider.as_deref(),
+                model.as_deref(),
+                body.max_turns,
+                permission_mode,
+                body.theme.as_deref(),
+            )
+        } else {
+            vak_config::persist_project_preferences(
+                state.core.cwd(),
+                provider.as_deref(),
+                model.as_deref(),
+                body.max_turns,
+                permission_mode,
+                body.theme.as_deref(),
+            )
+        })
         .is_err()
     {
         return StatusCode::INTERNAL_SERVER_ERROR;
@@ -3545,6 +3575,141 @@ async fn get_hooks(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({ "hooks": hooks }))
 }
 
+async fn get_global_hooks() -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(path) = vak_config::global_path() else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "user home unavailable").into_response();
+    };
+    let hooks = if path.is_file() {
+        match std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| toml::from_str::<vak_config::FileConfig>(&raw).ok())
+        {
+            Some(config) => config.hooks,
+            None => return (StatusCode::BAD_REQUEST, "user config is invalid").into_response(),
+        }
+    } else {
+        Vec::new()
+    };
+    Json(serde_json::json!({ "scope": "user", "hooks": hooks.into_iter().map(|h| serde_json::json!({ "event": h.event, "matcher": h.matcher, "command": h.command, "timeout_ms": h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS), "enabled": true })).collect::<Vec<_>>() })).into_response()
+}
+
+async fn put_global_hooks(
+    State(state): State<AppState>,
+    Json(body): Json<HooksPutBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(path) = vak_config::global_path() else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "user home unavailable").into_response();
+    };
+    let hooks = match validated_hook_configs(&body.hooks) {
+        Ok(hooks) => hooks,
+        Err(message) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": message })),
+            )
+                .into_response();
+        }
+    };
+    if let Err(error) = persist_hooks_to_config(&path, &hooks) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response();
+    }
+    if state.core.refresh_persisted_preferences().is_err() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not apply user hooks",
+        )
+            .into_response();
+    }
+    Json(serde_json::json!({ "saved": true, "scope": "user", "count": hooks.len() }))
+        .into_response()
+}
+
+fn validated_hook_configs(hooks: &[HookInput]) -> Result<Vec<vak_config::HookConfig>, String> {
+    hooks
+        .iter()
+        .map(|hook| {
+            if !matches!(
+                hook.event.as_str(),
+                "session_start"
+                    | "session-start"
+                    | "pre_tool_use"
+                    | "pre-tool-use"
+                    | "post_tool_use"
+                    | "post-tool-use"
+                    | "stop"
+            ) {
+                return Err(format!("unknown hook event '{}'", hook.event));
+            }
+            if hook.enabled && hook.command.trim().is_empty() {
+                return Err("enabled hooks need a command".into());
+            }
+            let timeout_ms = hook.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS);
+            if timeout_ms == 0 {
+                return Err("hook timeout must be greater than zero".into());
+            }
+            Ok(vak_config::HookConfig {
+                event: hook.event.clone(),
+                matcher: hook
+                    .matcher
+                    .clone()
+                    .filter(|matcher| !matcher.trim().is_empty()),
+                command: hook.command.trim().to_string(),
+                timeout_ms: Some(timeout_ms),
+            })
+        })
+        .collect()
+}
+
+fn persist_hooks_to_config(
+    path: &std::path::Path,
+    hooks: &[vak_config::HookConfig],
+) -> Result<(), String> {
+    let mut root = if path.is_file() {
+        let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+        toml::from_str::<toml::Value>(&raw).map_err(|error| error.to_string())?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let Some(table) = root.as_table_mut() else {
+        return Err("config root is not a table".into());
+    };
+    table.insert(
+        "hooks".into(),
+        toml::Value::Array(
+            hooks
+                .iter()
+                .map(|hook| {
+                    let mut value = toml::map::Map::new();
+                    value.insert("event".into(), toml::Value::String(hook.event.clone()));
+                    value.insert("command".into(), toml::Value::String(hook.command.clone()));
+                    if let Some(matcher) = &hook.matcher {
+                        value.insert("match".into(), toml::Value::String(matcher.clone()));
+                    }
+                    value.insert(
+                        "timeout_ms".into(),
+                        toml::Value::Integer(
+                            hook.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS) as i64,
+                        ),
+                    );
+                    toml::Value::Table(value)
+                })
+                .collect(),
+        ),
+    );
+    let text = toml::to_string_pretty(&root).map_err(|error| error.to_string())?;
+    let parent = path.parent().ok_or("config has no parent")?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
+    std::fs::write(&temp, text).map_err(|error| error.to_string())?;
+    std::fs::rename(temp, path).map_err(|error| error.to_string())
+}
+
 async fn put_hooks(
     State(state): State<AppState>,
     Json(body): Json<HooksPutBody>,
@@ -3710,50 +3875,113 @@ fn persist_mcp_to_project_config(
     cwd: &std::path::Path,
     servers: &std::collections::BTreeMap<String, McpServerInput>,
 ) -> Result<std::path::PathBuf, String> {
-    let path = cwd.join(".vak/config.toml");
-    let mut root: toml::Value = if path.exists() {
-        let raw =
-            std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
-        // A config we cannot parse is never silently replaced.
-        toml::from_str(&raw).map_err(|e| format!("parse {}: {e}", path.display()))?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let mut servers_table = toml::map::Map::new();
-    for (name, s) in servers {
-        let mut entry = toml::map::Map::new();
-        entry.insert("command".into(), toml::Value::String(s.command.clone()));
-        entry.insert(
-            "args".into(),
-            toml::Value::Array(s.args.iter().cloned().map(toml::Value::String).collect()),
-        );
-        if !s.env.is_empty() {
-            entry.insert(
-                "env".into(),
-                toml::Value::Table(
-                    s.env
-                        .iter()
-                        .map(|(k, v)| (k.clone(), toml::Value::String(v.clone())))
-                        .collect(),
-                ),
-            );
-        }
-        if s.network {
-            entry.insert("network".into(), toml::Value::Boolean(true));
-        }
-        servers_table.insert(name.clone(), toml::Value::Table(entry));
-    }
-    let mut mcp_table = toml::map::Map::new();
-    mcp_table.insert("servers".into(), toml::Value::Table(servers_table));
-    root.as_table_mut()
-        .ok_or("config root is not a table")?
-        .insert("mcp".into(), toml::Value::Table(mcp_table));
-    let out = toml::to_string_pretty(&root).map_err(|e| format!("serialize config: {e}"))?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
-    }
-    std::fs::write(&path, out).map_err(|e| format!("write {}: {e}", path.display()))?;
+    let path = vak_config::project_path(cwd);
+    let config = mcp_config_from_input(servers);
+    vak_config::persist_mcp_servers(&path, &config.servers).map_err(|error| error.to_string())?;
     Ok(path)
+}
+
+fn mcp_config_from_input(
+    servers: &std::collections::BTreeMap<String, McpServerInput>,
+) -> vak_config::McpConfig {
+    vak_config::McpConfig {
+        servers: servers
+            .iter()
+            .map(|(name, server)| {
+                (
+                    name.clone(),
+                    vak_config::McpServerConfig {
+                        command: server.command.trim().to_string(),
+                        args: server.args.clone(),
+                        env: server.env.clone(),
+                        network: server.network,
+                    },
+                )
+            })
+            .collect(),
+    }
+}
+
+fn read_mcp_config(path: &std::path::Path) -> Result<vak_config::McpConfig, String> {
+    if !path.is_file() {
+        return Ok(vak_config::McpConfig::default());
+    }
+    let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    toml::from_str::<vak_config::FileConfig>(&raw)
+        .map(|config| config.mcp)
+        .map_err(|error| error.to_string())
+}
+
+async fn get_global_mcp_servers() -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(path) = vak_config::global_path() else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "user home unavailable").into_response();
+    };
+    match read_mcp_config(&path) {
+        Ok(mcp) => {
+            Json(serde_json::json!({ "scope": "user", "path": path, "servers": mcp.servers }))
+                .into_response()
+        }
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+async fn put_global_mcp_servers(
+    State(state): State<AppState>,
+    Json(body): Json<McpPutBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(error) = validate_mcp_servers(&body.servers) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response();
+    }
+    let Some(path) = vak_config::global_path() else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "user home unavailable").into_response();
+    };
+    let config = mcp_config_from_input(&body.servers);
+    if let Err(error) = vak_config::persist_mcp_servers(&path, &config.servers) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response();
+    }
+    if state.core.refresh_persisted_preferences().is_err() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not apply user capability configuration",
+        )
+            .into_response();
+    }
+    state.hub.emit_config_changed(
+        "global_mcp_servers_updated",
+        &format!("count={}", body.servers.len()),
+    );
+    Json(serde_json::json!({ "saved": true, "scope": "user", "count": body.servers.len() }))
+        .into_response()
+}
+
+fn validate_mcp_servers(
+    servers: &std::collections::BTreeMap<String, McpServerInput>,
+) -> Result<(), String> {
+    for name in servers.keys() {
+        if !valid_server_name(name) {
+            return Err(format!("invalid server name '{name}'"));
+        }
+    }
+    for (name, server) in servers {
+        if server.command.trim().is_empty() {
+            return Err(format!("server '{name}' needs a command"));
+        }
+    }
+    Ok(())
 }
 
 async fn put_mcp_servers(
@@ -3761,23 +3989,12 @@ async fn put_mcp_servers(
     Json(body): Json<McpPutBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    for name in body.servers.keys() {
-        if !valid_server_name(name) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": format!("invalid server name '{name}'") })),
-            )
-                .into_response();
-        }
-    }
-    for (name, s) in &body.servers {
-        if s.command.trim().is_empty() {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": format!("server '{name}' needs a command") })),
-            )
-                .into_response();
-        }
+    if let Err(error) = validate_mcp_servers(&body.servers) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response();
     }
     match persist_mcp_to_project_config(state.core.cwd(), &body.servers) {
         Ok(_) => {}
@@ -3789,22 +4006,10 @@ async fn put_mcp_servers(
                 .into_response();
         }
     }
-    let cfg = vak_config::McpConfig {
-        servers: body
-            .servers
-            .iter()
-            .map(|(name, s)| {
-                (
-                    name.clone(),
-                    vak_config::McpServerConfig {
-                        command: s.command.trim().to_string(),
-                        args: s.args.clone(),
-                        env: s.env.clone(),
-                        network: s.network,
-                    },
-                )
-            })
-            .collect(),
+    let cfg = vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted())
+        .map(|config| config.mcp);
+    let Ok(cfg) = cfg else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     state.core.apply_persisted_mcp_servers(cfg);
     vak_core::security_events::record(

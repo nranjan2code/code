@@ -413,6 +413,27 @@ export function putMcpServers(servers: Record<string, McpServerDef>): Promise<{ 
   return req("/config/mcp", { method: "PUT", body: JSON.stringify({ servers }) });
 }
 
+/** User-scope inventory inherited by every project unless that project overrides it. */
+export function getGlobalMcpServers(): Promise<{ scope: "user"; path: string; servers: Record<string, McpServerDef> }> {
+  return req("/config/mcp/global");
+}
+
+export function putGlobalMcpServers(servers: Record<string, McpServerDef>): Promise<{ saved: boolean; scope: "user"; count: number }> {
+  return req("/config/mcp/global", { method: "PUT", body: JSON.stringify({ servers }) });
+}
+
+export function patchGlobalConfig(body: ConfigPatch): Promise<void> {
+  return req("/config/global", { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function getGlobalHooks(): Promise<{ scope: "user"; hooks: HookConfig[] }> {
+  return req("/config/hooks/global");
+}
+
+export function putGlobalHooks(hooks: HookConfig[]): Promise<{ saved: boolean; scope: "user"; count: number }> {
+  return req("/config/hooks/global", { method: "PUT", body: JSON.stringify({ hooks }) });
+}
+
 export function readDiff(id: string): Promise<DiffResponse> {
   return req(`/sessions/${id}/diff`);
 }

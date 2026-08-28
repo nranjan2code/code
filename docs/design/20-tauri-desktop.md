@@ -455,3 +455,22 @@ and a keyboard-accessible divider persists its ratio).
 Next up (in steal-list order): browser preview/auto-verify — the last major
 item. Everything else from the Claude/Codex/Cursor steal-lists that fits our
 no-cloud, local-first thesis is now shipped.
+
+### User scope and project scope
+
+Desktop deliberately has two configuration entry points. The **Settings**
+button at the bottom of the left sidebar opens *User settings*: provider and
+model defaults, permission defaults, and the shared MCP registry stored in
+the user's global `config.toml`. The gear in the workspace header opens
+*Project settings*: the active folder's `.vak/config.toml` overlay. A project
+inherits the user layer through `vak_config::load_with_trust`; a project value
+overrides the corresponding user value and no project selection ever changes
+the user default by accident.
+
+The API makes this distinction explicit: `PATCH /config/global` and
+`GET|PUT /config/mcp/global` mutate the user layer; `PATCH /config` and
+`GET|PUT /config/mcp` address the active project. Writes are atomic and reload
+the running Core before responding, so Desktop, Admin, gateway cores, and
+future turns all observe the same real configuration. Secrets remain in the
+user `.env`/secret store and MCP configuration only contains an environment
+variable reference such as `${TAVILY_API_KEY}`.

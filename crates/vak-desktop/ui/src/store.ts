@@ -50,6 +50,9 @@ export const [density, setDensity] = createSignal<Density>("normal");
 export const [dockTab, setDockTab] = createSignal<"preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | null>(null);
 export const [showShortcuts, setShowShortcuts] = createSignal(false);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
+/** Left navigation manages user-wide defaults; the workspace header manages
+ * the active project's overlay. The server remains the single source of truth. */
+export const [settingsScope, setSettingsScope] = createSignal<"user" | "project">("user");
 export const [hydratingId, setHydratingId] = createSignal<string | null>(null);
 export const [sidebarOpen, setSidebarOpen] = createSignal(true);
 export const [sidebarWidth, setSidebarWidth] = createSignal(252);

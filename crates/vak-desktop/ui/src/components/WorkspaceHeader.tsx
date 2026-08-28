@@ -18,6 +18,7 @@ import {
   setReceiptsOpen,
   setSearchOpen,
   setSettingsOpen,
+  setSettingsScope,
   setSideOpen,
   setSidebarOpen,
   sideOpen,
@@ -226,9 +227,9 @@ export default function WorkspaceHeader() {
         <span class="action-separator" aria-hidden="true" />
         <button
           class="icon-button has-tooltip"
-          data-tooltip="Settings ⌘,"
-          aria-label="Open settings"
-          onClick={() => setSettingsOpen(true)}
+          data-tooltip="Project settings"
+          aria-label="Open project settings"
+          onClick={() => { setSettingsScope("project"); setSettingsOpen(true); }}
         >
           <Icon name="gear" />
         </button>

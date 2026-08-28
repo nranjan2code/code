@@ -91,6 +91,8 @@ is bounded by `[gateway.rate_limit]`.
 | `/store/rebuild` | POST | Full index rebuild (mutation ⇒ POST) |
 | `/store/import/:id` | POST | Import one session's JSONL |
 | `/config` | GET | Effective config snapshot, including provider/model provenance |
+| `/config/global` | PATCH | User-level defaults inherited by project workspaces |
+| `/config/mcp/global` | GET, PUT | Shared user MCP registry; values never expose secrets |
 | `/gateway/status` | GET | Default route + provenance, binding contracts, stale reasons, allowlist |
 | `/gateway/bindings/:key` | PATCH | Set provider/model pair, or `{}` to inherit workspace default |
 | `/gateway/bindings/:key/rotate` | POST | Detach session; preserve ledger; create fresh on next inbound |
