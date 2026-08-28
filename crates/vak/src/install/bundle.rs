@@ -44,6 +44,7 @@ pub fn info_plist(version: &str) -> String {
   <key>CFBundleShortVersionString</key><string>{version}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>vak-desktop</string>
+  <key>CFBundleIconFile</key><string>icon.icns</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict>
@@ -86,6 +87,13 @@ pub fn write_metadata(
         }
         atomic::copy_dir(dist, &root.resources_dir())?;
     }
+    // A bundle whose Info.plist names an icon (above) but never carries
+    // one shows Finder's generic placeholder — silently, since a missing
+    // CFBundleIconFile target is not an error macOS surfaces anywhere.
+    if let Some(icon) = locate_icon() {
+        std::fs::copy(&icon, contents.join("Resources/icon.icns"))
+            .map_err(|e| format!("copy icon {}: {e}", icon.display()))?;
+    }
     Ok(())
 }
 
@@ -93,10 +101,21 @@ pub fn write_metadata(
 /// covering both a dev tree (`target/release/vak`) and an installed
 /// bundle (`Contents/MacOS/vak`).
 pub fn locate_frontend_assets() -> Option<std::path::PathBuf> {
+    locate_repo_relative("crates/vak-desktop/ui/dist")
+}
+
+/// Locate the app icon (`.icns`), same search shape as
+/// [`locate_frontend_assets`] — both are repo-relative resources a
+/// release binary needs to find without knowing where the checkout is.
+pub fn locate_icon() -> Option<std::path::PathBuf> {
+    locate_repo_relative("crates/vak-desktop/icons/icon.icns")
+}
+
+fn locate_repo_relative(rel: &str) -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let mut dir = exe.parent()?.to_path_buf();
     for _ in 0..5 {
-        let candidate = dir.join("crates/vak-desktop/ui/dist");
+        let candidate = dir.join(rel);
         if candidate.exists() {
             return Some(candidate);
         }
@@ -147,6 +166,26 @@ mod tests {
         write_metadata(&root, "0.8.0", None).unwrap();
         let plist = std::fs::read_to_string(root.prefix().join("Contents/Info.plist")).unwrap();
         assert!(plist.contains("0.8.0"));
+        assert!(
+            plist.contains("<key>CFBundleIconFile</key><string>icon.icns</string>"),
+            "a bundle with no icon key falls back to Finder's generic placeholder"
+        );
+    }
+
+    #[test]
+    fn bundle_metadata_carries_the_real_icon_when_one_is_found_relative_to_the_test_binary() {
+        // This test binary runs from target/debug, still inside the real
+        // checkout, so locate_icon() finds the genuine icon the same way
+        // a release binary would -- proving the copy actually happens,
+        // not just that the plist names a file that isn't there.
+        let d = tempfile::tempdir().unwrap();
+        let root = InstallRoot::at(d.path().join("Vak.app"));
+        write_metadata(&root, "0.8.0", None).unwrap();
+        if locate_icon().is_some() {
+            let copied = root.prefix().join("Contents/Resources/icon.icns");
+            assert!(copied.is_file(), "icon.icns must be copied into the bundle");
+            assert!(std::fs::metadata(&copied).unwrap().len() > 0);
+        }
     }
 
     #[test]

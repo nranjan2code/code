@@ -292,6 +292,39 @@ pub fn version_parity_check(manifest: &Path) -> HealthCheck {
     }
 }
 
+/// `core.provider()` failing only ever means the *effective* provider
+/// (whatever `Config::default()` or workspace config currently names —
+/// `anthropic` out of the box) lacks a credential. Left as-is, that reads
+/// as "you must use Anthropic," which is false: it says so because that
+/// happens to be today's built-in default, not because it's the only
+/// supported option. This surfaces what else is actually usable right
+/// now — any other provider with a real credential already set, plus
+/// Ollama, which needs none — so the fix on offer is "point config at
+/// what you already have" as often as it is "set a key."
+fn missing_provider_detail(core: &Core, base: &str) -> String {
+    let effective = core.effective_provider();
+    let mut usable: Vec<String> = core
+        .provider_names()
+        .into_iter()
+        .filter(|p| p != &effective && core.provider_configured(p))
+        .collect();
+    usable.sort();
+    if usable.is_empty() {
+        format!(
+            "{base} — no other provider is configured either; set a credential \
+             (ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, \
+             OPENCODE_API_KEY) or point config at a local, keyless provider \
+             (provider = \"ollama\")"
+        )
+    } else {
+        format!(
+            "{base} — already usable without changes: {} (switch via `vak config` \
+             or the admin console instead of setting a credential for '{effective}')",
+            usable.join(", ")
+        )
+    }
+}
+
 /// Collect everything `/doctor` reports. `session` optionally adds the
 /// frozen-ladder section for the active session. Never panics; every
 /// failure mode lands as a failed check or an empty fact.
@@ -300,7 +333,7 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
 
     let provider_detail = match core.provider() {
         Ok(p) => Ok(format!("{} ready", p.name())),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(missing_provider_detail(core, &e.to_string())),
     };
     checks.push(HealthCheck {
         label: "provider".into(),

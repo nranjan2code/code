@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Fresh-install fixes: reachable admin console, real icon, honest provider errors
+
+`self install` now leaves the gateway server running after bootstrapping
+the default workspace (`~/vak-home`) — a fresh install previously
+generated and then immediately stopped the service, so opening the admin
+console needed an extra manual step just to configure anything.
+Unattended remote chat surfaces stay fail-closed regardless (empty
+`gateway.chat_allowlist`); this only affects whether the loopback,
+bearer-token-gated HTTP server itself is reachable. Telegram still stays
+stopped until a bot token is actually configured — starting it with none
+would just crash-loop.
+
+Fixed the installed `.app` bundle never carrying an icon: `Info.plist` had
+no `CFBundleIconFile` key and nothing copied `icon.icns` into
+`Contents/Resources`, so Finder always showed the generic placeholder.
+
+`vak doctor`'s "provider" check no longer implies Anthropic is the only
+option when its credential is missing — it now names whichever other
+providers are actually already usable (including Ollama, which needs no
+credential) so the fix on offer is "point config at what you have"
+as often as "set a key."
+
 ### Channel onboarding: editing, doctor/repair, Discord + Slack bridges
 
 **Editing an already-allowed channel.** `PATCH

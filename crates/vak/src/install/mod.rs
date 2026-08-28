@@ -103,9 +103,12 @@ pub fn run_install(prefix: Option<PathBuf>, force: bool) -> i32 {
 /// Only acts when NEITHER service is configured with the platform
 /// service manager yet (`vak_ops::status` reports `NotInstalled` for
 /// both) — an operator who already made a workspace choice, on this
-/// install or an earlier one, is never silently rebound. Units are
-/// synced but not started: the gateway stays opt-in
-/// (`AGENTS.md` invariant 15, "unattended surfaces fail closed").
+/// install or an earlier one, is never silently rebound. The gateway
+/// server is left running so the admin console is reachable right away;
+/// unattended remote chat surfaces stay fail-closed on their own axis
+/// (empty `gateway.chat_allowlist`, `AGENTS.md` invariant 15) regardless
+/// of whether the server process itself is up. Telegram stays stopped
+/// until a bot token is actually configured.
 fn bootstrap_default_workspace_if_fresh() {
     let cfg = vak_ops::OpsConfig::detect();
     let already_configured = vak_ops::status(vak_ops::Service::Gateway, &cfg)
@@ -139,24 +142,29 @@ fn bootstrap_default_workspace_if_fresh() {
     if let Some(cwd) = original_cwd {
         let _ = std::env::set_current_dir(cwd);
     }
-    // `services_sync` bootstraps/enables the unit, and the generated
-    // plist/unit has RunAtLoad/WantedBy, so registering it launches the
-    // process immediately — an install-time side effect, not an operator
-    // decision. `stop` (launchctl bootout / systemctl stop) is the only
-    // primitive that actually un-launches it, but it also fully
-    // unregisters the job from the service manager — there is no
-    // "loaded but idle" state to land in between. That's fine here: the
-    // plist/unit file stays correctly generated on disk, pointed at this
-    // workspace, so the tray's "Install service" (or `self
-    // services-sync` again) picks it up correctly and registers +
-    // starts it on the operator's own action — "gateway ships disabled"
-    // (AGENTS.md invariant 15) holds until then.
-    vak_ops::stop(vak_ops::Service::Gateway, &cfg);
+    // Leave the gateway server running: it's what serves the admin
+    // console, and an operator needs that reachable right after install
+    // to actually configure anything (provider key, channels) — a
+    // service that's "stopped until you dig up a separate start step"
+    // just moves the same footgun one step later. This does not weaken
+    // "gateway ships disabled" (AGENTS.md invariant 15): that invariant
+    // is about *unattended remote surfaces* accepting inbound chat, which
+    // stays fail-closed on its own axis — `gateway.chat_allowlist` is
+    // empty on a fresh install, so every inbound message still gets
+    // rejected into `pending` until an operator approves one via the
+    // admin console this server now makes reachable. The HTTP server
+    // itself is loopback-only and bearer-token gated regardless.
+    //
+    // The Telegram bridge is different: with no bot token configured yet
+    // it has nothing to poll and would just crash-loop under KeepAlive,
+    // so it's stopped (not started) until a token is set — the same
+    // point where Desktop Settings / the admin console already restarts
+    // it automatically on save.
     vak_ops::stop(vak_ops::Service::Telegram, &cfg);
     if code == 0 {
         println!(
-            "gateway/telegram service files point at {} — not running; \
-             start them from the tray (Install service) when you're ready",
+            "gateway is running at {} — open the admin console to set a provider key \
+             and approve channels; Telegram stays stopped until a bot token is configured",
             workspace.display()
         );
     }
