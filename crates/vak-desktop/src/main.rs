@@ -30,6 +30,23 @@ struct TrayState {
     last_rendered: Mutex<Option<([vak_ops::State; 2], bool)>>,
 }
 
+/// Start with the menu-bar icon only, leaving the main window hidden.
+///
+/// The `com.vak.desktop` / `vak-desktop.service` unit passes this so a
+/// login launch restores the tray without throwing a window on screen at
+/// every boot. Every other way in — double-click, Dock, `Open Vak`, a
+/// second launch handed over by the single-instance plugin — reveals the
+/// window, so the flag only suppresses the one startup nobody asked for.
+const TRAY_FLAG: &str = "--tray";
+
+/// The window is created hidden (`visible: false` in `tauri.conf.json`)
+/// and revealed here, rather than created visible and hidden again: the
+/// latter flashes a full-size window on screen before the setup hook can
+/// run.
+fn tray_only_start() -> bool {
+    std::env::args_os().any(|arg| arg == std::ffi::OsStr::new(TRAY_FLAG))
+}
+
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -727,6 +744,11 @@ fn main() {
         .manage(pty::PtyMap::default())
         .setup(|app| {
             install_tray(app)?;
+            // The window ships hidden so a `--tray` login launch never
+            // flashes one; an ordinary launch reveals it right here.
+            if !tray_only_start() {
+                show_main_window(app.handle());
+            }
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 // Same secret-loading contract as the CLI: user-level

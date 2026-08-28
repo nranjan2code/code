@@ -37,6 +37,19 @@ cd /path/to/the/workspace-the-gateway-should-serve
 - Linux → systemd user units `vak-gateway.service` /
   `vak-telegram.service` (`systemctl --user ...`, enable lingering for
   boot start: `sudo loginctl enable-linger $USER`).
+- The desktop app gets a unit too — `com.vak.desktop` /
+  `vak-desktop.service` — so the menu-bar icon comes back at login and
+  survives a reboot. It starts as `vak-desktop --tray`: menu-bar icon
+  only, no window until you open one (Dock, Finder, or the tray's
+  `Open Vak`). Unlike the headless pair it is **not** kept alive, so the
+  tray's `Quit Vak` actually quits; the next login or `self services-sync`
+  brings it back.
+- On a headless server there is no `vak-desktop` binary in the release,
+  and the unit is skipped. If you installed a desktop build on a machine
+  with no display, drop just that one:
+  `launchctl bootout gui/$UID/com.vak.desktop` /
+  `systemctl --user disable --now vak-desktop.service` — re-running
+  `self services-sync` will recreate it.
 - Put `VAK_GATEWAY_TOKEN` and channel credentials in `data_home()/.env`
   before starting services so bridges keep working across restarts.
 - Re-run `self install` after upgrading binaries and `self services-sync` after

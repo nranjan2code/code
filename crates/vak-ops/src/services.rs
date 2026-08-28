@@ -46,6 +46,10 @@ pub struct ServiceSpec {
     /// User home required by platform path resolution in the sanitized
     /// service-manager environment. This is operational state, not a secret.
     pub home_dir: PathBuf,
+    /// Whether the manager should resurrect the process when it exits
+    /// (launchd `KeepAlive`, systemd `Restart=always`). False for GUI
+    /// services, where an explicit user quit must actually quit.
+    pub keep_alive: bool,
 }
 
 /// Static template table behind [`ServiceSpec`].
@@ -57,6 +61,18 @@ pub struct ServiceDef {
     pub args: &'static [&'static str],
     /// Log file name under `<vak-home>/logs`.
     pub log_file: &'static str,
+    /// Manager-level resurrection (launchd `KeepAlive`, systemd
+    /// `Restart=always`).
+    pub keep_alive: bool,
+    /// Whether the unit must be pinned to the workspace `services-sync`
+    /// was run from. Headless servers load that workspace's config and
+    /// project `.env`; a GUI app that picks its own project in-app must
+    /// not be silently bound to one directory.
+    pub workspace_scoped: bool,
+    /// The binary ships only when the build produced it (see `COMPONENTS`
+    /// in the installer). A unit exec'ing a path that does not exist is
+    /// worse than no unit, so these are skipped when absent.
+    pub optional: bool,
 }
 
 pub const SERVICES: &[ServiceDef] = &[
@@ -65,12 +81,42 @@ pub const SERVICES: &[ServiceDef] = &[
         bin_file: "vak",
         args: &["serve", "--gateway", "--trust"],
         log_file: "gateway.log",
+        keep_alive: true,
+        workspace_scoped: true,
+        optional: false,
     },
     ServiceDef {
         name: "com.vak.telegram",
         bin_file: "vak",
         args: &["telegram", "--server", "http://127.0.0.1:8901"],
         log_file: "telegram.log",
+        keep_alive: true,
+        workspace_scoped: true,
+        optional: false,
+    },
+    // The desktop app is what puts the menu-bar icon on screen; without a
+    // unit nothing brings it back after a logout or reboot, so the tray —
+    // the surface that starts and stops everything else — was the one
+    // thing that did not survive one.
+    //
+    // KeepAlive is deliberately OFF, unlike the headless services above.
+    // The tray menu's `Quit Vak` calls `app.exit(0)`; under KeepAlive
+    // launchd would relaunch it a second later and Quit would visibly not
+    // quit. RunAtLoad still gives the "back after login/reboot" behaviour
+    // that is the whole point, and a genuinely crashed GUI app is better
+    // left down than silently respawned in a loop the user cannot see.
+    //
+    // `--tray` starts with the window hidden: a login-launched app that
+    // threw a 1440x900 window on screen at every boot would be a worse
+    // regression than the missing persistence it fixes.
+    ServiceDef {
+        name: "com.vak.desktop",
+        bin_file: "vak-desktop",
+        args: &["--tray"],
+        log_file: "desktop.log",
+        keep_alive: false,
+        workspace_scoped: false,
+        optional: true,
     },
 ];
 
@@ -89,8 +135,17 @@ impl ServiceDef {
             bin_path: bin_dir.join(self.bin_file),
             args: self.args.iter().map(|a| (*a).to_string()).collect(),
             log_path: vak_config::paths::logs_dir().join(self.log_file),
-            working_dir: working_dir.to_path_buf(),
+            // Non-workspace-scoped services get the account home: they
+            // choose their own project at runtime, so inheriting whichever
+            // directory `services-sync` happened to run from would record
+            // a workspace they never honour.
+            working_dir: if self.workspace_scoped {
+                working_dir.to_path_buf()
+            } else {
+                home_dir.to_path_buf()
+            },
             home_dir: home_dir.to_path_buf(),
+            keep_alive: self.keep_alive,
         }
     }
 
@@ -128,7 +183,8 @@ fn xml_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// launchd property list: RunAtLoad + KeepAlive, stdout/stderr to the stable
+/// launchd property list: RunAtLoad always, KeepAlive per definition
+/// (off for GUI services so an explicit quit sticks), stdout/stderr to the stable
 /// log, with only non-secret HOME in the environment so canonical path
 /// resolution cannot mistake the workspace for the user home. Credentials
 /// still come from the user env file loaded by the binary itself.
@@ -146,7 +202,7 @@ pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
 <plist version="1.0">
 <dict>
 	<key>KeepAlive</key>
-	<true/>
+	<{}/>
 	<key>Label</key>
 	<string>{}</string>
 	<key>ProgramArguments</key>
@@ -168,6 +224,7 @@ pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
 </dict>
 </plist>
 "#,
+        if spec.keep_alive { "true" } else { "false" },
         xml_escape(spec.name),
         prog_args,
         xml_escape(&spec.home_dir.to_string_lossy()),
@@ -177,7 +234,7 @@ pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
     )
 }
 
-/// systemd user unit: Restart=always, journald bypassed in favour of the same
+/// systemd user unit: Restart per definition, journald bypassed in favour of the same
 /// stable log files launchd uses, and no Environment= lines.
 pub fn render_systemd_unit(spec: &ServiceSpec) -> String {
     let mut exec = spec.bin_path.to_string_lossy().into_owned();
@@ -197,7 +254,7 @@ pub fn render_systemd_unit(spec: &ServiceSpec) -> String {
          ExecStart={exec}\n\
          Environment=HOME={}\n\
          WorkingDirectory={}\n\
-         Restart=always\n\
+         Restart={}\n\
          StandardOutput=append:{log}\n\
          StandardError=append:{log}\n\
          \n\
@@ -206,6 +263,7 @@ pub fn render_systemd_unit(spec: &ServiceSpec) -> String {
         short_name(spec.name),
         spec.home_dir.display(),
         spec.working_dir.display(),
+        if spec.keep_alive { "always" } else { "no" },
     )
 }
 
@@ -628,6 +686,19 @@ pub fn services_uninstall(
     }
 }
 
+/// Every service that should be synced for an install rooted at
+/// `bin_path`. Optional services whose binary the build did not produce
+/// are left out: writing a unit that exec's a missing path only buys a
+/// permanently-failing service the operator has to go and delete.
+pub fn default_service_names(bin_path: &Path) -> Vec<&'static str> {
+    let bin_dir = bin_path.parent().unwrap_or(Path::new("/"));
+    SERVICES
+        .iter()
+        .filter(|def| !def.optional || bin_dir.join(def.bin_file).exists())
+        .map(|def| def.name)
+        .collect()
+}
+
 /// Resolve `names` against [`SERVICES`], preserving order. Unknown names land
 /// as Err entries so callers can report them individually.
 pub fn resolve_specs(bin_path: &Path, names: &[&str]) -> Vec<Result<ServiceSpec, String>> {
@@ -743,7 +814,102 @@ mod tests {
             log_path: log_dir.join(def.log_file),
             working_dir: PathBuf::from("/workspace"),
             home_dir: PathBuf::from("/Users/x"),
+            keep_alive: def.keep_alive,
         }
+    }
+
+    fn def_named(name: &str) -> &'static ServiceDef {
+        SERVICES
+            .iter()
+            .find(|d| d.name == name)
+            .expect("service must exist")
+    }
+
+    /// The desktop app is a GUI service, and the two ways it differs from
+    /// the headless ones are both load-bearing:
+    ///
+    /// * `RunAtLoad` is the whole point — nothing else brings the menu-bar
+    ///   icon back after a logout or reboot.
+    /// * `KeepAlive` must be off. The tray's `Quit Vak` calls
+    ///   `app.exit(0)`; with KeepAlive on, launchd relaunches a second
+    ///   later and Quit visibly does not quit.
+    #[test]
+    fn desktop_unit_launches_at_login_hidden_and_is_not_kept_alive() {
+        let def = def_named("com.vak.desktop");
+        let spec = spec_for(def, Path::new("/opt/vak/bin"), Path::new("/l"));
+
+        let plist = render_launchd_plist(&spec);
+        assert!(plist.contains("<string>/opt/vak/bin/vak-desktop</string>"));
+        assert!(
+            plist.contains("<key>RunAtLoad</key>\n\t<true/>"),
+            "the desktop service exists to come back at login: {plist}"
+        );
+        assert!(
+            plist.contains("<key>KeepAlive</key>\n\t<false/>"),
+            "KeepAlive would defeat the tray's Quit Vak: {plist}"
+        );
+        assert!(
+            plist.contains("<string>--tray</string>"),
+            "a login launch must not throw a window on screen: {plist}"
+        );
+        assert!(plist.contains("/l/desktop.log"));
+
+        let unit = render_systemd_unit(&spec);
+        assert_eq!(def.systemd_unit(), "vak-desktop.service");
+        assert!(
+            unit.contains("ExecStart=/opt/vak/bin/vak-desktop --tray"),
+            "{unit}"
+        );
+        assert!(
+            unit.contains("Restart=no"),
+            "the systemd analogue of KeepAlive=false: {unit}"
+        );
+        assert!(unit.contains("WantedBy=default.target"), "{unit}");
+    }
+
+    /// Headless services keep the resurrecting behaviour they have always
+    /// had — the GUI exception must not leak into them.
+    #[test]
+    fn headless_services_are_still_kept_alive() {
+        for name in ["com.vak.gateway", "com.vak.telegram"] {
+            let spec = spec_for(def_named(name), Path::new("/b"), Path::new("/l"));
+            assert!(render_launchd_plist(&spec).contains("<key>KeepAlive</key>\n\t<true/>"));
+            assert!(render_systemd_unit(&spec).contains("Restart=always"));
+        }
+    }
+
+    /// `services-sync` records the workspace it ran from, so the gateway
+    /// serves that project. The desktop app picks its project in its own
+    /// UI, so binding it to whichever directory happened to be current
+    /// would record a workspace it never honours.
+    #[test]
+    fn only_workspace_scoped_services_capture_the_sync_directory() {
+        let home = Path::new("/Users/x");
+        let cwd = Path::new("/some/workspace");
+        for def in SERVICES {
+            let spec = def.spec(Path::new("/b"), home, cwd);
+            let expected = if def.workspace_scoped { cwd } else { home };
+            assert_eq!(spec.working_dir, expected, "{}", def.name);
+        }
+    }
+
+    /// An optional component the build never produced must not get a unit
+    /// pointing at a path that does not exist.
+    #[test]
+    fn optional_services_are_skipped_when_their_binary_is_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let cli = dir.path().join("vak");
+        std::fs::write(&cli, b"cli").unwrap();
+
+        let without = default_service_names(&cli);
+        assert!(without.contains(&"com.vak.gateway"));
+        assert!(
+            !without.contains(&"com.vak.desktop"),
+            "no vak-desktop binary shipped, so no unit: {without:?}"
+        );
+
+        std::fs::write(dir.path().join("vak-desktop"), b"gui").unwrap();
+        assert!(default_service_names(&cli).contains(&"com.vak.desktop"));
     }
 
     #[test]

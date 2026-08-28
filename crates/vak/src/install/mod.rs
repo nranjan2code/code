@@ -161,6 +161,13 @@ fn bootstrap_default_workspace_if_fresh() {
     // point where Desktop Settings / the admin console already restarts
     // it automatically on save.
     vak_ops::stop(vak_ops::Service::Telegram, &cfg);
+    // The desktop service needs no special handling here: it is in
+    // SERVICES, so the sync above wrote and loaded its unit, and its
+    // RunAtLoad started it — with `--tray`, so a fresh install ends with a
+    // live menu-bar icon and no window the operator did not ask for. It is
+    // skipped entirely when the build shipped no `vak-desktop` binary
+    // (`default_service_names`), which is what keeps a headless server from
+    // acquiring a GUI unit that could only ever fail.
     if code == 0 {
         println!(
             "gateway is running at {} — open the admin console to set a provider key \
@@ -431,10 +438,10 @@ pub fn run_status(prefix: Option<PathBuf>) -> i32 {
     };
     let rows = vak_ops::services::services_status(
         &cli,
-        &vak_ops::services::SERVICES
-            .iter()
-            .map(|d| d.name)
-            .collect::<Vec<_>>(),
+        // Same set `services-sync` would write, so an optional component
+        // this build never shipped is not reported as an unregistered
+        // service the operator is told to go and sync.
+        &vak_ops::services::default_service_names(&cli),
         &vak_ops::services::Paths::default(),
         &vak_ops::services::SystemRunner,
     );
@@ -523,7 +530,7 @@ pub fn run_services_sync(prefix: Option<PathBuf>, names: Vec<String>) -> i32 {
         {
             eprintln!("warning: retired tray teardown incomplete: {e}");
         }
-        vak_ops::services::SERVICES.iter().map(|d| d.name).collect()
+        vak_ops::services::default_service_names(&cli)
     } else {
         names.iter().map(String::as_str).collect()
     };

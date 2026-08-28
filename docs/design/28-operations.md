@@ -31,18 +31,81 @@ Rules:
 
 ## Tray (owned by `vak-desktop`)
 
-The desktop process owns the menu-bar icon and the visible window. It never
-runs as a separate launchd service: a tray executable launched independently
-from inside the same `.app` bundle can cause LaunchServices to activate that
-background-only process when the user opens Vak. Close hides the main
-window; Dock/Finder re-open, tray Open, and repeated launches all reveal and
-focus that same window. Gateway and Telegram remain the only durable services.
+The desktop process owns the menu-bar icon and the visible window. Close
+hides the main window; Dock/Finder re-open, tray Open, and repeated
+launches all reveal and focus that same window.
 
 - A left click and the `Open Vak` menu item reveal and focus the main
   window; `Quit Vak` ends the desktop process explicitly.
 - Closing the main window hides it, preserving the local embedded backend and
   the tray until the user explicitly quits. Durable gateway and Telegram work
   remains independently supervised by the platform service manager.
+
+### `com.vak.desktop`: the tray is a durable service too
+
+The desktop app is the surface that starts, stops and watches everything
+else, so it is the one thing that must not disappear at a logout. It has
+its own unit (`com.vak.desktop` / `vak-desktop.service`) alongside the
+headless pair, generated the same way. It differs from them in four ways,
+each deliberate:
+
+| | gateway/telegram | desktop |
+|---|---|---|
+| `RunAtLoad` / `WantedBy` | yes | yes — the whole point |
+| `KeepAlive` / `Restart` | `true` / `always` | `false` / `no` |
+| `WorkingDirectory` | the workspace `services-sync` ran from | the account home |
+| shipped always | yes | only when the build produced `vak-desktop` |
+
+**KeepAlive is off** because the tray's `Quit Vak` calls `app.exit(0)`:
+under KeepAlive launchd would relaunch a second later and Quit would
+visibly not quit. Rule 1 above still holds — the manager is still the only
+supervisor — it is just told, correctly, that this process exiting is
+usually a decision rather than a fault. A crashed GUI app respawning in a
+loop the user cannot see is worse than one that stays down until the next
+`services-sync` or launch.
+
+**The working directory is the account home**, not a workspace: the
+desktop app picks its project in its own UI (`ProjectGate` /
+`recent_projects` in `desktop.json`), so recording a workspace would
+record one it never honours.
+
+**It is skipped when `vak-desktop` was not built.** A unit exec'ing a
+missing path is worse than no unit; on a headless server it could only
+ever fail.
+
+### Why this is not the `com.vak.tray` bug again
+
+The retired `com.vak.tray` broke Finder double-click: the bundle's
+`CFBundleExecutable` and a launchd service were the same binary, so macOS
+answered a double-click by activating the already-running process instead
+of launching one — and that process was window-less and had no reopen
+handling, so nothing visible happened at all. `com.vak.desktop`
+reproduces the structure (same binary, both identities) but not the
+failure, because both halves of the cause are gone:
+
+1. `RunEvent::Reopen` reveals and focuses the main window, so an
+   activation of the running instance does what the double-click asked.
+2. If macOS launches a second process instead,
+   `tauri_plugin_single_instance` hands its argv to the live one, which
+   also reveals the window — and no second menu-bar icon appears.
+
+Exactly one of those two paths runs for any given launch, and both end
+with a window on screen. The launchd instance is a normal (not
+`Accessory`, not `LSUIElement`) app so it keeps a Dock icon and its
+ordinary LaunchServices registration; the bundle-wide `LSUIElement` that
+made the old tray invisible to all of this is still forbidden
+(`install::bundle`).
+
+### `--tray`
+
+`vak-desktop --tray` starts with the menu-bar icon and no window. The
+main window is created hidden (`visible: false` in `tauri.conf.json`) and
+revealed in `setup` on an ordinary launch, so nothing flashes on screen
+in either mode. Only the unit passes `--tray`; every other entry point —
+double-click, Dock, `Open Vak`, a handed-over second launch — reveals the
+window. Without it, login-launching the app would throw a 1440×900 window
+at the user on every boot, a worse regression than the missing
+persistence it fixes.
 
 ## Token pinning
 
