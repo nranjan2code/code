@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.11.12 — 2026-08-28
+
+### Desktop: the project gate now releases to the workspace
+
+Opening a project appeared to do nothing. The backend booted correctly
+every time — listening on its port, serving `/providers` — but the
+window stayed on the welcome screen, on launch with a saved project and
+after picking a folder in the dialog.
+
+`ChatPane` used `activeId()` without importing it. `vite build` does not
+typecheck, so the missing binding shipped and only failed at runtime,
+when the workspace first mounts. Because Solid runs dependent renders
+synchronously inside `setBackend()`, the `ReferenceError` propagated
+into `refreshBackend`'s catch, which returns `false` silently — no
+banner, no console output, no way to tell the boot had actually
+succeeded.
+
+`npm run build` now runs `tsc --noEmit` first, so a missing import
+cannot reach a bundle again.
+
 ## 0.11.2 — 2026-08-28
 
 ### Admin Extensions console
