@@ -315,10 +315,14 @@ function StatCard(props: { label: string; value: string | number; sub?: string; 
 
 function Overview() {
   const [health, healthActions] = createResource(statsVersion, () => api.health());
-  const [sessions] = createResource(statsVersion, () => api.sessions());
+  const [sessions, sessionsActions] = createResource(statsVersion, () => api.sessions());
   const [security] = createResource(statsVersion, () => api.security(500));
   const [finops] = createResource(statsVersion, () => api.finops().catch(() => null));
   const [ops] = createResource(statsVersion, () => api.opsStatus().catch(() => null));
+  const [config] = createResource(statsVersion, () => api.config().catch(() => null));
+  const [gateway] = createResource(statsVersion, () => api.gatewayStatus().catch(() => null));
+  const [approvals] = createResource(approvalsVersion, () => api.approvals());
+  const [bestofn] = createResource(statsVersion, () => api.bestofn().catch(() => ({ runs: [], total: 0 })));
 
   const recentSecurity = createMemo(
     () =>
@@ -335,9 +339,58 @@ function Overview() {
     return cap && cap > 0 ? (spendUSD() / cap) * 100 : undefined;
   });
 
+  const recentSessions = createMemo(() =>
+    [...(sessions()?.sessions ?? [])].sort((a, b) => new Date(b.last_ts).getTime() - new Date(a.last_ts).getTime()).slice(0, 5),
+  );
+  const recentWarnings = createMemo(() => health()?.warnings ?? []);
+  const attentionCount = createMemo(() =>
+    (approvals()?.total ?? 0) + (bestofn()?.total ?? 0) + recentWarnings().length + recentSecurity(),
+  );
+  const activityCounts = createMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of feed()) counts.set(item.event.type, (counts.get(item.event.type) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  });
+
+  const newSession = async () => {
+    try {
+      const { session_id } = await api.createSession();
+      navigate(`#/sessions/${session_id}`);
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    }
+  };
+
+  const refresh = () => {
+    healthActions.refetch();
+    sessionsActions.refetch();
+    pushToast("info", "Overview refreshed");
+  };
+
   return (
     <div class="view">
-      <PageHeader title="Overview" description="A live readout of sessions, approvals, system health, and recent activity." />
+      <PageHeader
+        title="Operator overview"
+        description="A live command center for the work, policy, and runtime state behind vak."
+        actions={<>
+          <button class="ghost" onClick={refresh}>Refresh</button>
+          <button onClick={newSession}>+ New session</button>
+        </>}
+      />
+      <section class="overview-hero">
+        <div>
+          <div class="hero-kicker"><span class={`dot dot-${conn()}`} /> {conn() === "live" ? "Live telemetry" : `Telemetry ${conn()}`}</div>
+          <h2>{attentionCount() === 0 ? "Everything is clear." : `${attentionCount()} signals need a look.`}</h2>
+          <p>{attentionCount() === 0 ? "No approvals, warnings, candidate runs, or security events are waiting in the current readout." : "Start with the attention queue, then use the reporting panels to understand what changed."}</p>
+        </div>
+        <div class="hero-route">
+          <span class="hero-route-label">Current route</span>
+          <strong>{config()?.provider ?? health()?.provider ?? "Loading…"}</strong>
+          <span class="mono">{config()?.model ?? health()?.model ?? ""}</span>
+          <button class="text-action" onClick={() => navigate("#/settings")}>Configure route →</button>
+        </div>
+      </section>
       <div class="stats-row">
         <StatCard label="Sessions indexed" value={sessions()?.sessions.length ?? "…"} />
         <StatCard
@@ -357,6 +410,24 @@ function Overview() {
           tone={recentSecurity() > 0 ? "warn" : undefined}
         />
       </div>
+
+      <section class="attention-panel panel">
+        <div class="panel-title-row">
+          <div><h2>Attention queue</h2><p>Items that can block work or change the system’s trust boundary.</p></div>
+          <span class={`chip ${attentionCount() > 0 ? "chip-warn" : "chip-ok"}`}>{attentionCount()} open</span>
+        </div>
+        <div class="attention-grid">
+          <button class="attention-item" onClick={() => navigate("#/inbox")}>
+            <span class="attention-icon warning">!</span><span><strong>{approvals()?.total ?? "…"} pending approvals</strong><small>Review gated tool calls in Inbox</small></span><span class="chev">›</span>
+          </button>
+          <button class="attention-item" onClick={() => navigate("#/sessions")}>
+            <span class="attention-icon info">◆</span><span><strong>{bestofn()?.total ?? "…"} candidate runs</strong><small>Compare or discard best-of-N work</small></span><span class="chev">›</span>
+          </button>
+          <button class="attention-item" onClick={() => navigate("#/security")}>
+            <span class="attention-icon danger">⌁</span><span><strong>{recentSecurity()} security events</strong><small>Inspect the audit ledger from the last 24h</small></span><span class="chev">›</span>
+          </button>
+        </div>
+      </section>
 
       <ApprovalsCard />
 
@@ -398,7 +469,39 @@ function Overview() {
         </section>
 
         <section class="panel">
-          <h2>Live activity</h2>
+          <div class="panel-title-row"><div><h2>Runtime posture</h2><p>Services and policy currently in force.</p></div><button class="ghost small" onClick={() => navigate("#/gateway")}>Open gateway</button></div>
+          <div class="posture-list">
+            <div><span class={`status-mark ${health()?.status === "ok" ? "good" : "bad"}`} /> <span>Core health</span><strong>{health()?.status ?? "Loading…"}</strong></div>
+            <div><span class={`status-mark ${ops()?.gateway_healthy ? "good" : "bad"}`} /> <span>Gateway service</span><strong>{ops()?.gateway?.state ?? "Unknown"}</strong></div>
+            <div><span class={`status-mark ${gateway()?.enabled ? "good" : "neutral"}`} /> <span>Channel bindings</span><strong>{gateway()?.bindings.length ?? "…"}</strong></div>
+            <div><span class="status-mark neutral" /> <span>Permission mode</span><strong>{config()?.permission_mode ?? health()?.permission_mode ?? "…"}</strong></div>
+          </div>
+          <Show when={recentWarnings().length > 0}>
+            <div class="posture-warning">{recentWarnings()[0]} <button class="text-action" onClick={() => navigate("#/settings")}>Review settings →</button></div>
+          </Show>
+        </section>
+
+        <section class="panel recent-panel">
+          <div class="panel-title-row"><div><h2>Recent sessions</h2><p>Latest ledger activity across all workspaces.</p></div><button class="ghost small" onClick={() => navigate("#/sessions")}>View all</button></div>
+          <Show when={recentSessions().length > 0} fallback={<div class="empty">No sessions yet.</div>}>
+            <div class="recent-sessions">
+              <For each={recentSessions()}>{(session) => <button class="recent-session" onClick={() => navigate(`#/sessions/${session.session_id}`)}>
+                <span class="session-pulse" /><span class="mono">{shortId(session.session_id)}</span><span class="session-entries">{session.entry_count} entries</span><span class="when">{timeAgo(session.last_ts)}</span>
+              </button>}</For>
+            </div>
+          </Show>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title-row"><div><h2>Activity report</h2><p>Event mix from this connection.</p></div><span class="chip chip-tone-info">{feed().length} events</span></div>
+          <Show when={activityCounts().length > 0} fallback={<div class="empty">Waiting for events…</div>}>
+            <div class="activity-report"><For each={activityCounts()}>{([kind, count]) => <div class="activity-row"><span>{kind}</span><div class="activity-track"><i style={{ width: `${Math.max(8, (count / Math.max(1, feed().length)) * 100)}%` }} /></div><strong>{count}</strong></div>}</For></div>
+          </Show>
+          <button class="text-action report-link" onClick={() => navigate("#/security")}>Open full event ledger →</button>
+        </section>
+
+        <section class="panel live-panel">
+          <div class="panel-title-row"><div><h2>Live activity</h2><p>Newest events arrive here as the server emits them.</p></div><span class="chip chip-tone-success">streaming</span></div>
           <Show
             when={feedItems().length > 0}
             fallback={<div class="empty">Waiting for events… they will appear here in real time.</div>}
