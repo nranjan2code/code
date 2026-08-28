@@ -82,6 +82,7 @@ pub fn run_install(prefix: Option<PathBuf>, force: bool) -> i32 {
             for c in &m.components {
                 println!("  {:<22} {}", c.name, c.path.display());
             }
+            bootstrap_default_workspace_if_fresh();
             report_next_steps(&root);
             0
         }
@@ -89,6 +90,61 @@ pub fn run_install(prefix: Option<PathBuf>, force: bool) -> i32 {
             eprintln!("error: {e}");
             1
         }
+    }
+}
+
+/// Points the durable-service units at a real workspace on a truly fresh
+/// install, instead of leaving "which directory" to whatever cwd
+/// `self services-sync` is later run from (docs/design/32 invariant 3 is
+/// correct as a mechanism, but named no default — an operator who ran
+/// `services-sync` from inside the vak source checkout while developing
+/// it got an always-on Telegram bridge silently bound to the dev repo).
+///
+/// Only acts when NEITHER service is configured with the platform
+/// service manager yet (`vak_ops::status` reports `NotInstalled` for
+/// both) — an operator who already made a workspace choice, on this
+/// install or an earlier one, is never silently rebound. Units are
+/// synced but not started: the gateway stays opt-in
+/// (`AGENTS.md` invariant 15, "unattended surfaces fail closed").
+fn bootstrap_default_workspace_if_fresh() {
+    let cfg = vak_ops::OpsConfig::detect();
+    let already_configured = vak_ops::status(vak_ops::Service::Gateway, &cfg)
+        != vak_ops::State::NotInstalled
+        || vak_ops::status(vak_ops::Service::Telegram, &cfg) != vak_ops::State::NotInstalled;
+    if already_configured {
+        return;
+    }
+    let workspace = vak_config::paths::default_workspace();
+    if let Err(e) = std::fs::create_dir_all(&workspace) {
+        eprintln!(
+            "warning: could not create default workspace {}: {e}",
+            workspace.display()
+        );
+        return;
+    }
+    let original_cwd = std::env::current_dir().ok();
+    if std::env::set_current_dir(&workspace).is_err() {
+        eprintln!(
+            "warning: could not switch into default workspace {}",
+            workspace.display()
+        );
+        return;
+    }
+    println!();
+    println!(
+        "no services configured yet — bootstrapping the default workspace at {}",
+        workspace.display()
+    );
+    let code = run_services_sync(None, Vec::new());
+    if let Some(cwd) = original_cwd {
+        let _ = std::env::set_current_dir(cwd);
+    }
+    if code == 0 {
+        println!(
+            "gateway/telegram units point at {} — still stopped until you start them \
+             (tray menu, or your platform's service manager)",
+            workspace.display()
+        );
     }
 }
 

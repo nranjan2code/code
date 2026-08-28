@@ -120,7 +120,7 @@ vak exec "explain this workspace" \
 - **Web admin console** at `/admin` on the secured server — live activity feed, session transcripts with search, approval gates, config editing, prompt/steering/best-of-N from any browser (cookie login; see `docs/design/33-admin-console.md`)
 - Headless `exec` and `plan` commands for scripts and CI
 - HTTP + SSE server for custom clients
-- Always-on gateway with Telegram and outbound webhooks, including fail-closed approval forwarding
+- Always-on gateway with Telegram, Discord, and Slack bridges plus outbound webhooks, including fail-closed approval forwarding. Every unknown chat lands as a reviewable pending request — approve, deny, or edit access from the admin console or desktop settings, never a config-file hand-edit (`docs/design/34-channel-onboarding.md`)
 
 ### Multi-provider without a static catalogue
 

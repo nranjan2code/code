@@ -39,6 +39,27 @@ pub fn logs_dir() -> PathBuf {
     resolve(get_var("VAK_HOME").as_deref()).logs
 }
 
+/// The canonical **project workspace** a fresh install brings up its
+/// durable services against — `~/vak-home`, a plain directory a person
+/// can `cd` into, distinct from `data_home()` (which holds sessions,
+/// config, and other application-managed state, not something a user
+/// browses or edits directly).
+///
+/// This exists because nothing previously named a workspace at install
+/// time: `self install` placed binaries, and `self services-sync`
+/// captured whatever directory it happened to be run from as the
+/// gateway's workspace (docs/design/32 invariant 3) — correct as a
+/// mechanism, but with no answer to "which directory" until an operator
+/// picked one. A real incident: services-sync was run from inside the
+/// vak *source checkout* while developing it, silently binding an
+/// always-on Telegram bridge to the tool's own dev repo. `self install`
+/// now creates this directory and syncs services against it on a truly
+/// fresh install (no prior units), so there is always a sane, isolated
+/// default — never the workspace a person happened to be standing in.
+pub fn default_workspace() -> PathBuf {
+    base_home().join("vak-home")
+}
+
 /// All three homes derived from one override decision. Pure so tests can
 /// exercise both branches without touching process-global environment.
 struct Homes {
@@ -194,6 +215,17 @@ mod tests {
             "overridden homes are self-contained"
         );
         assert_eq!(h.cache, h.data.join("cache"));
+    }
+
+    #[test]
+    fn default_workspace_is_a_plain_dir_under_the_account_home_not_data_home() {
+        let ws = default_workspace();
+        assert_eq!(ws, base_home().join("vak-home"));
+        assert_ne!(
+            ws,
+            resolve(None).data,
+            "the default workspace must never collide with the app's own data home"
+        );
     }
 
     #[test]
