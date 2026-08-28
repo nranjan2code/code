@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 — 2026-08-28
 
 ### The login screen's own logo was 401ing on every fresh login
 
