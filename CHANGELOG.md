@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### The login screen's own logo was 401ing on every fresh login
+
+`auth_exempt_path` allowlisted `/admin/favicon.svg` and everything under
+`/admin/assets/` (the hashed JS/CSS bundle) as reachable before a cookie
+exists to authenticate the request that would fetch them, but not the
+`vak-icon.png` the login screen's `<img>` references — a root-level dist
+file outside `assets/`. A brand-new visitor with no cookie yet always saw
+a broken image on the one screen that's supposed to work before login.
+
 ### The Gateway page is four screens, one per job
 
 Gateway had accreted into a single scroll: routing summary, Core pool, bot

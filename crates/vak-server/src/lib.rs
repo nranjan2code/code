@@ -982,9 +982,32 @@ fn auth_exempt_path(path: &str) -> bool {
         || path == "/admin/"
         || path == "/admin/login"
         || path == "/admin/favicon.svg"
+        || path == "/admin/vak-icon.png"
         || path.starts_with("/admin/assets/")
         || path == "/favicon.ico"
         || path == "/favicon.svg"
+}
+
+#[cfg(test)]
+mod auth_exempt_path_tests {
+    use super::auth_exempt_path;
+
+    /// The login screen's own logo must be reachable before a cookie
+    /// exists to authenticate the request that would fetch it — the same
+    /// reasoning that already exempts favicon.svg. This regressed once
+    /// already: the admin console shipped a login-screen `<img>` pointing
+    /// at a root-level dist file, and only /admin/assets/* (the hashed
+    /// JS/CSS bundle) was exempt, so the logo 401'd on every fresh login.
+    #[test]
+    fn login_screen_logo_is_exempt() {
+        assert!(auth_exempt_path("/admin/vak-icon.png"));
+    }
+
+    #[test]
+    fn admin_api_routes_still_require_auth() {
+        assert!(!auth_exempt_path("/admin/api/config"));
+        assert!(!auth_exempt_path("/admin/api/gateway/status"));
+    }
 }
 
 pub(crate) async fn require_bearer(
