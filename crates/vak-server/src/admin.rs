@@ -505,7 +505,9 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
     crate::refresh_control_plane(&state);
     let default_route = state.core.effective_route();
     let mut bindings = Vec::new();
+    let mut bound_targets = std::collections::HashSet::new();
     for (target, binding) in gw.bindings_snapshot() {
+        bound_targets.insert(target.clone());
         let channel_override = binding.provider.clone().zip(binding.model.clone());
         let (provider, model, source, revision) = match &channel_override {
             Some((provider, model)) => (
@@ -581,6 +583,57 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
             })),
             "stale": !stale_reasons.is_empty(),
             "stale_reasons": stale_reasons,
+        }));
+    }
+    // An approved channel does not acquire a runtime binding until its first
+    // accepted message creates a session. Keep that approved-but-cold channel
+    // visible in the same table so the Admin UI does not claim it disappeared.
+    for entry in gw.allowlist_snapshot() {
+        if entry.status != crate::gateway::AllowlistStatus::Allowed
+            || bound_targets.contains(&entry.key)
+        {
+            continue;
+        }
+        let channel_override = entry
+            .route
+            .as_ref()
+            .map(|route| (route.provider.clone(), route.model.clone()));
+        let (provider, model, source, revision) = match &channel_override {
+            Some((provider, model)) => (
+                provider.clone(),
+                model.clone(),
+                "channel_override",
+                format!("channel:{provider}:{model}"),
+            ),
+            None => (
+                default_route.provider.clone(),
+                default_route.model.clone(),
+                "workspace_default",
+                default_route.revision.clone(),
+            ),
+        };
+        let workspace = entry
+            .workspace
+            .clone()
+            .unwrap_or_else(|| state.core.cwd().to_path_buf());
+        bindings.push(serde_json::json!({
+            "target": entry.key,
+            "session_id": null,
+            "workspace": workspace,
+            "configured_workspace": entry.workspace,
+            "override": channel_override.map(|(provider, model)| serde_json::json!({
+                "provider": provider,
+                "model": model,
+            })),
+            "effective_route": {
+                "provider": provider,
+                "model": model,
+                "source": source,
+                "revision": revision,
+            },
+            "session_contract": null,
+            "stale": false,
+            "stale_reasons": [],
         }));
     }
     bindings.sort_by(|a, b| a["target"].as_str().cmp(&b["target"].as_str()));
@@ -1950,6 +2003,28 @@ mod tests {
                 .any(|w| w.as_str() == Some(&state.core.cwd().display().to_string())),
             "the gateway's own workspace must always be offered"
         );
+    }
+
+    #[tokio::test]
+    async fn gateway_status_lists_allowed_channel_before_first_message() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        approve(&app, &token, "telegram%3A67", r#"{}"#).await;
+        let req = Request::builder()
+            .uri("/admin/api/gateway/status")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let json = body_json(app.oneshot(req).await.unwrap()).await;
+        let binding = json["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|binding| binding["target"] == "telegram:67")
+            .expect("approved cold channel must be visible");
+        assert!(binding["session_id"].is_null());
+        assert_eq!(binding["stale"], false);
     }
 
     #[tokio::test]
