@@ -1,0 +1,622 @@
+<title>vak Layered Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+<style>
+  :root {
+    --bg: #f4f2ec;
+    --surface: #fbfaf6;
+    --surface-2: #ffffff;
+    --surface-3: #f0ede4;
+    --border: #ddd8cb;
+    --border-soft: #e7e3d8;
+    --text: #232019;
+    --text-soft: #4f4a3f;
+    --muted: #7c7565;
+    --faint: #9a9384;
+    --accent: #c85a3c;
+    --accent-bright: #b64d31;
+    --accent-wash: rgba(200, 90, 60, 0.10);
+    --green: #4f8a5f;
+    --yellow: #b0842f;
+    --red: #c1494c;
+    --blue: #4d76ad;
+    --shadow: 0 1px 2px rgba(40,34,22,.05), 0 8px 24px rgba(40,34,22,.06);
+    --mono: 'IBM Plex Mono', 'SF Mono', ui-monospace, Menlo, monospace;
+    --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #171714;
+      --surface: #1c1c19;
+      --surface-2: #22221f;
+      --surface-3: #292925;
+      --border: #34342f;
+      --border-soft: #2a2a26;
+      --text: #eeeae2;
+      --text-soft: #c4c0b8;
+      --muted: #918e86;
+      --faint: #68665f;
+      --accent: #df795f;
+      --accent-bright: #ee9278;
+      --accent-wash: rgba(223, 121, 95, 0.13);
+      --green: #73a982;
+      --yellow: #d4a85d;
+      --red: #d86f72;
+      --blue: #7c9fc9;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 14px 40px rgba(0,0,0,.34);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #171714;
+    --surface: #1c1c19;
+    --surface-2: #22221f;
+    --surface-3: #292925;
+    --border: #34342f;
+    --border-soft: #2a2a26;
+    --text: #eeeae2;
+    --text-soft: #c4c0b8;
+    --muted: #918e86;
+    --faint: #68665f;
+    --accent: #df795f;
+    --accent-bright: #ee9278;
+    --accent-wash: rgba(223, 121, 95, 0.13);
+    --green: #73a982;
+    --yellow: #d4a85d;
+    --red: #d86f72;
+    --blue: #7c9fc9;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 14px 40px rgba(0,0,0,.34);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1140px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---- header ---- */
+  header.masthead {
+    border-bottom: 1px solid var(--border);
+    background:
+      radial-gradient(120% 140% at 85% -20%, var(--accent-wash), transparent 60%),
+      var(--surface);
+  }
+  .masthead-inner { padding: 54px 0 42px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 18px;
+  }
+  h1 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: clamp(30px, 5vw, 46px);
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+    margin: 0 0 16px;
+    text-wrap: balance;
+    max-width: 20ch;
+  }
+  .lede {
+    font-size: 17px;
+    color: var(--text-soft);
+    max-width: 62ch;
+    margin: 0 0 26px;
+  }
+  .meta-row {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    font-family: var(--mono); font-size: 12px;
+  }
+  .tag {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 11px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text-soft);
+  }
+  .tag b { color: var(--text); font-weight: 600; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+  /* ---- section scaffolding ---- */
+  section { padding: 48px 0; border-bottom: 1px solid var(--border-soft); }
+  .sec-head { margin-bottom: 30px; max-width: 70ch; }
+  .sec-kicker {
+    font-family: var(--mono); font-size: 11.5px; font-weight: 500;
+    letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted);
+    margin: 0 0 10px;
+  }
+  h2 {
+    font-size: 25px; font-weight: 600; letter-spacing: -0.02em;
+    margin: 0 0 10px; line-height: 1.2; text-wrap: balance;
+  }
+  .sec-head p { margin: 0; color: var(--text-soft); font-size: 15px; }
+
+  /* ---- the stack diagram ---- */
+  .stack { display: flex; flex-direction: column; gap: 12px; }
+  .flow-note {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+    letter-spacing: 0.04em; margin: 2px 0 6px;
+  }
+  .flow-note .line { height: 1px; width: 46px; background: var(--border); }
+  .layer {
+    display: grid;
+    grid-template-columns: 132px 1fr;
+    gap: 18px;
+    align-items: stretch;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .layer-label {
+    padding: 16px 14px;
+    background: var(--surface-3);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; justify-content: center; gap: 4px;
+  }
+  .layer-num {
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    letter-spacing: 0.1em; color: var(--accent);
+  }
+  .layer-name { font-weight: 600; font-size: 14.5px; letter-spacing: -0.01em; line-height: 1.25; }
+  .layer-sub { font-size: 12px; color: var(--muted); line-height: 1.4; }
+  .layer-body { padding: 13px; display: flex; flex-wrap: wrap; gap: 8px; align-content: center; }
+  .node {
+    font-family: var(--mono); font-size: 12.5px; font-weight: 500;
+    padding: 6px 11px; border-radius: 8px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--text); white-space: nowrap;
+  }
+  .node.surface-node { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
+  .node small { color: var(--faint); font-weight: 400; margin-left: 6px; }
+
+  /* ---- crate detail cards ---- */
+  .layer-block { margin-top: 34px; }
+  .layer-block:first-of-type { margin-top: 0; }
+  .block-head {
+    display: flex; align-items: baseline; gap: 14px;
+    padding-bottom: 12px; margin-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .block-head .n {
+    font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--accent);
+  }
+  .block-head h3 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: -0.015em; }
+  .block-head .tail { margin-left: auto; font-size: 13px; color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .card {
+    border: 1px solid var(--border); border-radius: 12px;
+    background: var(--surface); padding: 16px 17px;
+    display: flex; flex-direction: column; gap: 9px;
+  }
+  .card-top { display: flex; align-items: center; gap: 9px; }
+  .crate {
+    font-family: var(--mono); font-size: 13.5px; font-weight: 600; color: var(--text);
+  }
+  .pill {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 500;
+    letter-spacing: 0.03em; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--muted);
+    margin-left: auto; white-space: nowrap;
+  }
+  .pill.rust { color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 40%, var(--border)); }
+  .pill.ui { color: var(--blue); border-color: color-mix(in srgb, var(--blue) 40%, var(--border)); }
+  .pill.bin { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, var(--border)); }
+  .card p { margin: 0; font-size: 13.5px; color: var(--text-soft); line-height: 1.5; }
+  .card .modules {
+    font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+    line-height: 1.7; margin-top: 2px;
+  }
+  .card .modules b { color: var(--faint); font-weight: 500; }
+  .deps { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .deps b { color: var(--muted); font-weight: 500; }
+
+  /* ---- cross-cutting ---- */
+  .cc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+  .cc {
+    border: 1px solid var(--border); border-radius: 12px; padding: 16px;
+    background: var(--surface); border-left: 3px solid var(--accent);
+  }
+  .cc h4 { margin: 0 0 6px; font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em; }
+  .cc p { margin: 0; font-size: 13px; color: var(--text-soft); line-height: 1.5; }
+  .cc.g { border-left-color: var(--green); }
+  .cc.b { border-left-color: var(--blue); }
+  .cc.y { border-left-color: var(--yellow); }
+  .cc.r { border-left-color: var(--red); }
+
+  /* ---- permission table ---- */
+  .tbl-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 13.5px; }
+  th, td { text-align: left; padding: 12px 15px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  thead th {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; background: var(--surface-3);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td code, .mode {
+    font-family: var(--mono); font-size: 12.5px; color: var(--accent); font-weight: 500;
+  }
+  td b { font-weight: 600; }
+
+  /* ---- config ladder ---- */
+  .ladder { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-family: var(--mono); font-size: 13px; }
+  .ladder .step { padding: 7px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+  .ladder .step.win { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
+  .ladder .arw { color: var(--faint); }
+
+  footer { padding: 34px 0 60px; color: var(--muted); font-size: 13px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; }
+  footer b { color: var(--text-soft); font-weight: 500; }
+
+  a.src { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; }
+  a.src:hover { border-bottom-color: var(--accent); }
+
+  @media (max-width: 620px) {
+    .layer { grid-template-columns: 1fr; }
+    .layer-label { border-right: none; border-bottom: 1px solid var(--border); flex-direction: row; align-items: baseline; gap: 10px; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .node, .card { transition: border-color .14s ease; }
+  }
+</style>
+
+<header class="masthead">
+  <div class="wrap masthead-inner">
+    <p class="eyebrow">Architecture Reference · v0.11.7</p>
+    <h1>vak — a layered map of every component</h1>
+    <p class="lede">vak is a local-first Rust harness for running coding agents without giving up the receipts. Its mechanism is <b>one core, many surfaces</b>: a single auditable, policy-gated core drives a CLI, a Tauri desktop app, an HTTP/SSE server, and chat gateways. This document lays out all 18 workspace crates plus the two web frontends as a dependency-ordered stack — foundations at the bottom, surfaces on top.</p>
+    <div class="meta-row">
+      <span class="tag"><span class="dot"></span><b>18</b>&nbsp;Rust crates</span>
+      <span class="tag"><b>2</b>&nbsp;SolidJS frontends</span>
+      <span class="tag"><b>4</b>&nbsp;surfaces</span>
+      <span class="tag">edition&nbsp;<b>2024</b></span>
+      <span class="tag">tokio async runtime</span>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<!-- ============ THE STACK ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">The dependency stack</p>
+      <h2>Five layers, one direction of trust</h2>
+      <p>Each layer depends only on the ones beneath it. Effects flow downward through the same gates on every path; the surfaces at the top implement no privileged shortcuts of their own — they compose the core, the permission engine, the brokered tool registry, and the append-only ledger.</p>
+    </div>
+
+    <div class="stack">
+
+      <div class="layer">
+        <div class="layer-label">
+          <span class="layer-num">L4</span>
+          <span class="layer-name">Surfaces</span>
+          <span class="layer-sub">Where humans and gateways enter</span>
+        </div>
+        <div class="layer-body">
+          <span class="node surface-node">vak <small>CLI</small></span>
+          <span class="node surface-node">vak-server <small>HTTP/SSE + gateways</small></span>
+          <span class="node surface-node">vak-desktop <small>Tauri 2</small></span>
+          <span class="node surface-node">vak-tray</span>
+          <span class="node surface-node">vak-desktop/ui <small>SolidJS</small></span>
+          <span class="node surface-node">vak-admin-ui <small>SolidJS</small></span>
+        </div>
+      </div>
+
+      <div class="flow-note"><span class="line"></span>compose &amp; expose ↓<span class="line"></span></div>
+
+      <div class="layer">
+        <div class="layer-label">
+          <span class="layer-num">L3</span>
+          <span class="layer-name">Orchestration</span>
+          <span class="layer-sub">Assembles the running system</span>
+        </div>
+        <div class="layer-body">
+          <span class="node">vak-core</span>
+          <span class="node">vak-flow</span>
+          <span class="node">vak-eval</span>
+          <span class="node">vak-ops</span>
+        </div>
+      </div>
+
+      <div class="flow-note"><span class="line"></span>drive ↓<span class="line"></span></div>
+
+      <div class="layer">
+        <div class="layer-label">
+          <span class="layer-num">L2</span>
+          <span class="layer-name">Capability engines</span>
+          <span class="layer-sub">The agent and its extensions</span>
+        </div>
+        <div class="layer-body">
+          <span class="node">vak-agent</span>
+          <span class="node">vak-mcp</span>
+          <span class="node">vak-store</span>
+        </div>
+      </div>
+
+      <div class="flow-note"><span class="line"></span>build on ↓<span class="line"></span></div>
+
+      <div class="layer">
+        <div class="layer-label">
+          <span class="layer-num">L1</span>
+          <span class="layer-name">Records &amp; primitives</span>
+          <span class="layer-sub">Ledger, config, tools, hooks</span>
+        </div>
+        <div class="layer-body">
+          <span class="node">vak-session</span>
+          <span class="node">vak-tools</span>
+          <span class="node">vak-config</span>
+          <span class="node">vak-hooks</span>
+        </div>
+      </div>
+
+      <div class="flow-note"><span class="line"></span>rest on ↓<span class="line"></span></div>
+
+      <div class="layer">
+        <div class="layer-label">
+          <span class="layer-num">L0</span>
+          <span class="layer-name">Foundations</span>
+          <span class="layer-sub">No internal dependencies</span>
+        </div>
+        <div class="layer-body">
+          <span class="node">vak-llm</span>
+          <span class="node">vak-permission</span>
+          <span class="node">vak-delivery</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============ CRATE DETAIL ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">Component catalogue</p>
+      <h2>What each crate does</h2>
+      <p>Grouped by layer, bottom-up. Every crate names its principal source modules so the map points straight into the tree.</p>
+    </div>
+
+    <!-- L0 -->
+    <div class="layer-block">
+      <div class="block-head"><span class="n">L0</span><h3>Foundations</h3><span class="tail">No internal dependencies — the trusted base</span></div>
+      <div class="grid">
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-llm</span><span class="pill rust">crate</span></div>
+          <p>Provider clients, streaming, model routing, and usage accounting. The one thing nearly every other crate depends on.</p>
+          <div class="modules"><b>modules:</b> anthropic · openai · openai_responses · google · registry · route · sse · stream · models · work</div>
+        </div>
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-permission</span><span class="pill rust">crate</span></div>
+          <p>The policy engine every effect passes through before dispatch. Rules in, allow/deny/prompt out — the heart of "nothing acts without permission."</p>
+          <div class="modules"><b>modules:</b> engine · rules</div>
+        </div>
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-delivery</span><span class="pill rust">crate</span></div>
+          <p>Outbound message transport with a durable outbox and templating — the wire chat gateways and notifications send over.</p>
+          <div class="modules"><b>modules:</b> client · outbox · telegram · templates</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- L1 -->
+    <div class="layer-block">
+      <div class="block-head"><span class="n">L1</span><h3>Records &amp; primitives</h3><span class="tail">Depend only on foundations</span></div>
+      <div class="grid">
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-session</span><span class="pill rust">crate</span></div>
+          <p>The append-only JSONL ledger: event types, contracts, receipts, and recall. Branching and compaction append rather than rewrite, so every session is reconstructable.</p>
+          <div class="modules"><b>modules:</b> log · index · search · types</div>
+          <div class="deps"><b>uses:</b> vak-llm</div>
+        </div>
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-tools</span><span class="pill rust">crate</span></div>
+          <p>The built-in tool set plus the broker and sandbox boundary: filesystem, shell, search, and web, each brokered through the permission gate. Landlock enforces containment on Linux.</p>
+          <div class="modules"><b>modules:</b> bash · edit · read · write · grep · glob · broker · sandbox · landlock · webfetch · webbrowse</div>
+          <div class="deps"><b>uses:</b> vak-llm</div>
+        </div>
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-config</span><span class="pill rust">crate</span></div>
+          <p>The layered configuration model — defaults through user, project, environment, and CLI — with unknown keys warning rather than failing startup.</p>
+          <div class="deps"><b>uses:</b> vak-llm</div>
+        </div>
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-hooks</span><span class="pill rust">crate</span></div>
+          <p>Lifecycle hook dispatch — user-supplied extension points around agent events, themselves policy-gated.</p>
+          <div class="deps"><b>uses:</b> vak-permission</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- L2 -->
+    <div class="layer-block">
+      <div class="block-head"><span class="n">L2</span><h3>Capability engines</h3><span class="tail">The agent loop and its extensions</span></div>
+      <div class="grid">
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-agent</span><span class="pill rust">crate</span></div>
+          <p>The agent turn loop: goal tracking, steering, spend limits, a failure circuit-breaker, and stop policy. Where a session's model calls and tool dispatches are actually driven.</p>
+          <div class="modules"><b>modules:</b> goal · task · steering · spend · circuit · stop_policy · context · workspace</div>
+          <div class="deps"><b>uses:</b> session · tools · hooks · permission · llm</div>
+        </div>
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-mcp</span><span class="pill rust">crate</span></div>
+          <p>Model Context Protocol client and manager — external MCP servers surfaced as brokered tools, so extensions get the same gate as built-ins.</p>
+          <div class="modules"><b>modules:</b> client · manager · tool</div>
+          <div class="deps"><b>uses:</b> vak-tools</div>
+        </div>
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-store</span><span class="pill rust">crate</span></div>
+          <p>A SQLite FTS5 rebuildable index over the JSONL ledgers — full-text session search and recall that can always be regenerated from the source of truth.</p>
+          <div class="deps"><b>uses:</b> vak-session · vak-llm</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- L3 -->
+    <div class="layer-block">
+      <div class="block-head"><span class="n">L3</span><h3>Orchestration</h3><span class="tail">Assemble the running system from the engines below</span></div>
+      <div class="grid">
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-core</span><span class="pill rust">crate</span></div>
+          <p>The composed core the surfaces share: checkpoints, memory, worktrees, FinOps, routing, the Docker sandbox, skills, learning, tasks, transcripts, and the system prompt. This is the "one core."</p>
+          <div class="modules"><b>modules:</b> checkpoints · memory · worktree · finops · routing · sandbox_docker · skills · learning · reflection · tasks · digest · inbox · transcript_md · custom_commands · security_events · health · backup</div>
+          <div class="deps"><b>uses:</b> agent · config · hooks · llm · mcp · permission · session · tools</div>
+        </div>
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-flow</span><span class="pill rust">crate</span></div>
+          <p>Static, declarative multi-step flows — checked and run through the same agent and permission machinery as an interactive turn.</p>
+          <div class="deps"><b>uses:</b> agent · llm · permission · session · tools</div>
+        </div>
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-eval</span><span class="pill rust">crate</span></div>
+          <p>Deterministic and live evaluation harness — exercises the agent against fixtures or real providers, gated identically to production runs.</p>
+          <div class="deps"><b>uses:</b> agent · llm · permission · session · tools</div>
+        </div>
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-ops</span><span class="pill rust">crate</span></div>
+          <p>Service lifecycle management — installing and controlling vak as a durable background service (macOS LaunchAgent / Linux systemd user unit).</p>
+          <div class="modules"><b>modules:</b> services</div>
+          <div class="deps"><b>uses:</b> vak-config</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- L4 -->
+    <div class="layer-block">
+      <div class="block-head"><span class="n">L4</span><h3>Surfaces</h3><span class="tail">The four ways in — same core behind each</span></div>
+      <div class="grid">
+        <div class="card">
+          <div class="card-top"><span class="crate">vak</span><span class="pill bin">CLI binary</span></div>
+          <p>The headless surface: <code>vak exec</code>, <code>plan</code>, <code>flow</code>, <code>eval</code>, <code>config dump</code>, sessions, checkpoints, memory, and a doctor. Depends on nearly every crate.</p>
+          <div class="modules"><b>modules:</b> cli · doctor · install · backup · digest · inbox · memory · tasks · format</div>
+          <div class="deps"><b>uses:</b> agent · config · core · delivery · eval · flow · llm · server · session · ops · permission · tools</div>
+        </div>
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-server</span><span class="pill bin">HTTP/SSE + gateways</span></div>
+          <p>Exposes the session, run, approval, transcript, diff, and steering contracts over HTTP/SSE, plus chat gateways (Slack, Discord, Telegram), an admin API, rate limiting, and a core pool.</p>
+          <div class="modules"><b>modules:</b> gateway · channels · slack · discord · telegram · events · admin · admin_ui · core_pool · rate_limit · heartbeat · delivery</div>
+          <div class="deps"><b>uses:</b> agent · config · core · delivery · llm · ops · session · store · flow · hooks · tools</div>
+        </div>
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-desktop</span><span class="pill bin">Tauri 2</span></div>
+          <p>The native client host: isolated worktrees, streaming chat, diff review, an editor, a PTY terminal, previews, side chats, and best-of-N comparison. Embeds the server contracts.</p>
+          <div class="modules"><b>modules:</b> main · pty</div>
+          <div class="deps"><b>uses:</b> core · delivery · config · ops · server · tools</div>
+        </div>
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-desktop/ui</span><span class="pill ui">SolidJS</span></div>
+          <p>The desktop front end (package <code>vak-ui</code>): SolidJS + Vite, xterm.js terminal, Shiki syntax highlighting, and the chat, composer, and diff components.</p>
+          <div class="modules"><b>stack:</b> solid-js · vite · @xterm/xterm · shiki · @tauri-apps/api</div>
+        </div>
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-admin-ui</span><span class="pill ui">SolidJS</span></div>
+          <p>The admin console front end, built on the same token set as the desktop UI so the two surfaces read as one product. Served by the server's admin API.</p>
+          <div class="modules"><b>stack:</b> solid-js · vite · typescript</div>
+        </div>
+        <div class="card">
+          <div class="card-top"><span class="crate">vak-tray</span><span class="pill bin">tray app</span></div>
+          <p>A menu-bar / system-tray companion for controlling the background service without a full window.</p>
+          <div class="deps"><b>uses:</b> vak-ops · vak-config</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ============ CROSS-CUTTING ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">Cross-cutting mechanisms</p>
+      <h2>The five things every surface shares</h2>
+      <p>These are the product's load-bearing guarantees. They live in the lower layers precisely so no surface can route around them.</p>
+    </div>
+    <div class="cc-grid">
+      <div class="cc">
+        <h4>Append-only ledger</h4>
+        <p>Every session is a JSONL event log. Branching and compaction append; nothing is rewritten, so any state is reconstructable. <span style="color:var(--faint)">vak-session · vak-store</span></p>
+      </div>
+      <div class="cc g">
+        <h4>Permission before dispatch</h4>
+        <p>Tools, subagents, flows, plans, evals, and server runs all clear the same policy engine before any effect. Missing containment fails closed. <span style="color:var(--faint)">vak-permission · vak-tools broker</span></p>
+      </div>
+      <div class="cc b">
+        <h4>Receipts for every dispatch</h4>
+        <p>Each provider call and tool run leaves an auditable receipt in the ledger — usage, cost, and outcome — so behavior doesn't vary by surface. <span style="color:var(--faint)">vak-llm · vak-session</span></p>
+      </div>
+      <div class="cc y">
+        <h4>Sandbox boundary</h4>
+        <p>Filesystem and command effects run inside a brokered boundary: Linux Landlock, an optional Docker sandbox, and workspace-scoped writes. <span style="color:var(--faint)">vak-tools · vak-core sandbox_docker</span></p>
+      </div>
+      <div class="cc r">
+        <h4>Typed failure</h4>
+        <p>Errors are typed, partial work is preserved, and failure states are explicit — a first-class contract, not an edge case to hide. <span style="color:var(--faint)">across every layer</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PERMISSION MODES ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">Policy surface</p>
+      <h2>Three permission modes</h2>
+      <p>The gate every effect passes through resolves against one of three modes. <code class="mode">full-access</code> is never selected automatically after a denial, failure, retry, prompt, or model recommendation.</p>
+    </div>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>Mode</th><th>Filesystem</th><th>Commands</th><th>Intended use</th></tr></thead>
+        <tbody>
+          <tr><td><code>read-only</code></td><td>Workspace reads only</td><td>Restricted</td><td>Audits, exploration, review</td></tr>
+          <tr><td><code>workspace-write</code></td><td>Reads and writes inside the canonical workspace</td><td>Sandboxed and policy-gated</td><td><b>Everyday coding — the default</b></td></tr>
+          <tr><td><code>full-access</code></td><td>Unrestricted host access</td><td>Unsandboxed, still rule-gated</td><td>Explicitly trusted, supervised work</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CONFIG LADDER ============ -->
+<section style="border-bottom:none;">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">Configuration</p>
+      <h2>Layered, predictable resolution</h2>
+      <p>Configuration merges left-to-right; later sources win. Privileged project keys — permissions, hooks, MCP servers, gateway, sandbox, provider endpoints — require workspace trust.</p>
+    </div>
+    <div class="ladder">
+      <span class="step">defaults</span><span class="arw">‹</span>
+      <span class="step">~/.config/vak/config.toml</span><span class="arw">‹</span>
+      <span class="step">.vak/config.toml</span><span class="arw">‹</span>
+      <span class="step">environment</span><span class="arw">‹</span>
+      <span class="step win">CLI</span>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span><b>vak 0.11.7</b></span>
+    <span>· Rust edition 2024 · tokio</span>
+    <span>· 18 crates + 2 SolidJS frontends</span>
+    <span>· Derived from the workspace manifests, README, PRODUCT.md &amp; DESIGN.md</span>
+  </div>
+</footer>

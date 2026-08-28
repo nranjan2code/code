@@ -1,0 +1,401 @@
+<title>vak Runtime Topology</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+<style>
+  :root {
+    --bg: #f4f2ec; --surface: #fbfaf6; --surface-2: #ffffff; --surface-3: #f0ede4;
+    --border: #ddd8cb; --border-soft: #e7e3d8;
+    --text: #232019; --text-soft: #4f4a3f; --muted: #7c7565; --faint: #9a9384;
+    --accent: #c85a3c; --accent-bright: #b64d31; --accent-wash: rgba(200,90,60,.10);
+    --green: #4f8a5f; --green-wash: rgba(79,138,95,.12);
+    --yellow: #b0842f; --yellow-wash: rgba(176,132,47,.13);
+    --red: #c1494c; --red-wash: rgba(193,73,76,.12);
+    --blue: #4d76ad; --blue-wash: rgba(77,118,173,.12);
+    --shadow: 0 1px 2px rgba(40,34,22,.05), 0 8px 24px rgba(40,34,22,.06);
+    --mono: 'IBM Plex Mono','SF Mono',ui-monospace,Menlo,monospace;
+    --sans: 'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#171714; --surface:#1c1c19; --surface-2:#22221f; --surface-3:#292925;
+      --border:#34342f; --border-soft:#2a2a26;
+      --text:#eeeae2; --text-soft:#c4c0b8; --muted:#918e86; --faint:#68665f;
+      --accent:#df795f; --accent-bright:#ee9278; --accent-wash:rgba(223,121,95,.13);
+      --green:#73a982; --green-wash:rgba(115,169,130,.14);
+      --yellow:#d4a85d; --yellow-wash:rgba(212,168,93,.14);
+      --red:#d86f72; --red-wash:rgba(216,111,114,.14);
+      --blue:#7c9fc9; --blue-wash:rgba(124,159,201,.14);
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 14px 40px rgba(0,0,0,.34);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#171714; --surface:#1c1c19; --surface-2:#22221f; --surface-3:#292925;
+    --border:#34342f; --border-soft:#2a2a26;
+    --text:#eeeae2; --text-soft:#c4c0b8; --muted:#918e86; --faint:#68665f;
+    --accent:#df795f; --accent-bright:#ee9278; --accent-wash:rgba(223,121,95,.13);
+    --green:#73a982; --green-wash:rgba(115,169,130,.14);
+    --yellow:#d4a85d; --yellow-wash:rgba(212,168,93,.14);
+    --red:#d86f72; --red-wash:rgba(216,111,114,.14);
+    --blue:#7c9fc9; --blue-wash:rgba(124,159,201,.14);
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 14px 40px rgba(0,0,0,.34);
+  }
+
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--sans);
+    font-size:15px; line-height:1.6; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1140px; margin:0 auto; padding:0 24px; }
+
+  header.masthead { border-bottom:1px solid var(--border);
+    background: radial-gradient(120% 140% at 85% -20%, var(--accent-wash), transparent 60%), var(--surface); }
+  .masthead-inner { padding:54px 0 42px; }
+  .eyebrow { font-family:var(--mono); font-size:12px; font-weight:500; letter-spacing:.18em;
+    text-transform:uppercase; color:var(--accent); margin:0 0 18px; }
+  h1 { font-weight:600; font-size:clamp(30px,5vw,46px); line-height:1.08; letter-spacing:-.025em;
+    margin:0 0 16px; text-wrap:balance; max-width:20ch; }
+  .lede { font-size:17px; color:var(--text-soft); max-width:64ch; margin:0 0 26px; }
+  .lede b { color:var(--text); font-weight:600; }
+  .meta-row { display:flex; flex-wrap:wrap; gap:8px; font-family:var(--mono); font-size:12px; }
+  .tag { display:inline-flex; align-items:center; gap:7px; padding:5px 11px; border:1px solid var(--border);
+    border-radius:999px; background:var(--surface-2); color:var(--text-soft); }
+  .tag b { color:var(--text); font-weight:600; }
+  .swatch { width:9px; height:9px; border-radius:3px; }
+  .sw-priv { background:var(--green); }
+  .sw-shared { background:var(--accent); }
+  .sw-ext { background:var(--blue); }
+
+  section { padding:48px 0; border-bottom:1px solid var(--border-soft); }
+  .sec-head { margin-bottom:30px; max-width:72ch; }
+  .sec-kicker { font-family:var(--mono); font-size:11.5px; font-weight:500; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--muted); margin:0 0 10px; }
+  h2 { font-size:25px; font-weight:600; letter-spacing:-.02em; margin:0 0 10px; line-height:1.2; text-wrap:balance; }
+  .sec-head p { margin:0; color:var(--text-soft); font-size:15px; }
+  .sec-head p + p { margin-top:10px; }
+  code.k { font-family:var(--mono); font-size:.88em; color:var(--accent); font-weight:500;
+    background:var(--accent-wash); padding:1px 5px; border-radius:5px; }
+
+  /* central object callout */
+  .keystone { display:grid; grid-template-columns:1fr; gap:0; border:1px solid var(--border);
+    border-radius:16px; overflow:hidden; background:var(--surface); }
+  .keystone-top { padding:22px 24px; background:var(--accent-wash); border-bottom:1px solid var(--border);
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .keystone-top .glyph { font-family:var(--mono); font-weight:600; font-size:15px; color:var(--accent);
+    border:1px solid var(--accent); border-radius:10px; padding:8px 13px; background:var(--surface-2); white-space:nowrap; }
+  .keystone-top div p { margin:0; }
+  .keystone-top .t { font-weight:600; font-size:16px; letter-spacing:-.01em; }
+  .keystone-top .s { font-size:13.5px; color:var(--text-soft); }
+  .keystone-body { padding:20px 24px; display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:18px; }
+  .keystone-body .item { }
+  .keystone-body h4 { margin:0 0 5px; font-size:13px; font-family:var(--mono); font-weight:600; color:var(--text); letter-spacing:-.01em; }
+  .keystone-body p { margin:0; font-size:13px; color:var(--text-soft); line-height:1.5; }
+
+  /* host cards */
+  .hosts { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:16px; }
+  .host { border:1px solid var(--border); border-radius:14px; background:var(--surface); overflow:hidden;
+    display:flex; flex-direction:column; }
+  .host-head { padding:14px 16px; display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--border-soft); }
+  .host-head .name { font-family:var(--mono); font-weight:600; font-size:14px; }
+  .badge { font-family:var(--mono); font-size:10.5px; font-weight:500; letter-spacing:.03em;
+    padding:3px 9px; border-radius:999px; margin-left:auto; white-space:nowrap; border:1px solid transparent; }
+  .badge.priv { color:var(--green); background:var(--green-wash); border-color:color-mix(in srgb,var(--green) 34%,transparent); }
+  .badge.shared { color:var(--accent); background:var(--accent-wash); border-color:color-mix(in srgb,var(--accent) 34%,transparent); }
+  .badge.ext { color:var(--blue); background:var(--blue-wash); border-color:color-mix(in srgb,var(--blue) 34%,transparent); }
+  .host-body { padding:14px 16px; display:flex; flex-direction:column; gap:11px; flex:1; }
+  .host-body p { margin:0; font-size:13.5px; color:var(--text-soft); line-height:1.5; }
+  .kv { display:grid; grid-template-columns:82px 1fr; gap:5px 12px; font-size:12.5px; margin-top:2px; }
+  .kv dt { font-family:var(--mono); font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .kv dd { margin:0; color:var(--text-soft); font-size:12.5px; }
+  .kv dd code { font-family:var(--mono); font-size:11.5px; color:var(--text); }
+
+  /* flow */
+  .flow { display:flex; flex-direction:column; gap:0; border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+  .frow { display:grid; grid-template-columns:44px 1fr; align-items:stretch; border-bottom:1px solid var(--border-soft); }
+  .frow:last-child { border-bottom:none; }
+  .fnum { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--accent);
+    background:var(--surface-3); display:flex; align-items:center; justify-content:center; border-right:1px solid var(--border); }
+  .fbody { padding:13px 16px; }
+  .fbody .ft { font-weight:600; font-size:14px; margin:0 0 3px; letter-spacing:-.01em; }
+  .fbody .ft code { font-family:var(--mono); font-weight:500; font-size:12.5px; color:var(--accent); background:none; padding:0; }
+  .fbody p { margin:0; font-size:13px; color:var(--text-soft); line-height:1.5; }
+
+  /* shared vs private split */
+  .split { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .col { border:1px solid var(--border); border-radius:14px; padding:18px; background:var(--surface); }
+  .col.a { border-top:3px solid var(--green); }
+  .col.b { border-top:3px solid var(--accent); }
+  .col h3 { margin:0 0 4px; font-size:16px; font-weight:600; letter-spacing:-.01em; display:flex; align-items:center; gap:9px; }
+  .col .cap { font-size:12.5px; color:var(--muted); margin:0 0 14px; font-family:var(--mono); }
+  .col ul { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:11px; }
+  .col li { display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start; font-size:13.5px; color:var(--text-soft); line-height:1.45; }
+  .col li .mk { width:6px; height:6px; border-radius:50%; margin-top:7px; }
+  .col.a .mk { background:var(--green); }
+  .col.b .mk { background:var(--accent); }
+  .col li b { color:var(--text); font-weight:600; }
+
+  .tbl-scroll { overflow-x:auto; border:1px solid var(--border); border-radius:12px; }
+  table { border-collapse:collapse; width:100%; min-width:680px; font-size:13px; }
+  th,td { text-align:left; padding:11px 14px; border-bottom:1px solid var(--border-soft); vertical-align:top; }
+  thead th { font-family:var(--mono); font-size:10.5px; letter-spacing:.07em; text-transform:uppercase;
+    color:var(--muted); font-weight:600; background:var(--surface-3); }
+  tbody tr:last-child td { border-bottom:none; }
+  td .c { font-family:var(--mono); font-size:12px; color:var(--text); font-weight:500; }
+  td .chip { display:inline-block; font-family:var(--mono); font-size:10.5px; padding:2px 8px; border-radius:999px; font-weight:500; }
+  .chip.priv { color:var(--green); background:var(--green-wash); }
+  .chip.shared { color:var(--accent); background:var(--accent-wash); }
+  .chip.ext { color:var(--blue); background:var(--blue-wash); }
+  td { color:var(--text-soft); }
+
+  .note { display:flex; gap:13px; align-items:flex-start; border:1px solid var(--border);
+    border-left:3px solid var(--yellow); border-radius:12px; padding:15px 17px; background:var(--surface); margin-top:20px; }
+  .note .lbl { font-family:var(--mono); font-size:11px; font-weight:600; color:var(--yellow); text-transform:uppercase;
+    letter-spacing:.06em; white-space:nowrap; padding-top:2px; }
+  .note p { margin:0; font-size:13.5px; color:var(--text-soft); line-height:1.55; }
+  .note b { color:var(--text); font-weight:600; }
+
+  footer { padding:34px 0 60px; color:var(--muted); font-size:13px; }
+  footer .wrap { display:flex; flex-wrap:wrap; gap:6px 18px; align-items:center; }
+  footer b { color:var(--text-soft); font-weight:500; }
+
+  @media (max-width:720px) { .split { grid-template-columns:1fr; } }
+</style>
+
+<header class="masthead">
+  <div class="wrap masthead-inner">
+    <p class="eyebrow">Runtime Topology · v0.11.7</p>
+    <h1>How the surfaces actually run together</h1>
+    <p class="lede">The static crate map shows what depends on what. This is the <b>runtime</b> view: which processes exist, who hosts whom, and what is a shared central service versus a private, local-only one. The whole picture turns on one fact — <b>the agent core is a shared object, not a shared server.</b> Every surface is a host process that constructs one or more cores in-process; the HTTP/SSE server is just a thin facade wrapped around a core.</p>
+    <div class="meta-row">
+      <span class="tag"><span class="swatch sw-priv"></span>Private / loopback</span>
+      <span class="tag"><span class="swatch sw-shared"></span>Shared / networked</span>
+      <span class="tag"><span class="swatch sw-ext"></span>External adapter</span>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<!-- KEYSTONE: the shared object -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">The center of everything</p>
+      <h2>One core, constructed in-process by whoever hosts it</h2>
+      <p><code class="k">vak_core::Core</code> is the single object that owns a session's real state. It is not a daemon you connect to — each host builds its own via <code class="k">Core::new_with_trust</code>, which resolves that workspace's trust, permission mode, and sandbox exactly as a local <code class="k">vak</code> run would. Pooling or gateways can never grant a core more access than a local session in the same workspace already has.</p>
+    </div>
+
+    <div class="keystone">
+      <div class="keystone-top">
+        <span class="glyph">vak_core::Core</span>
+        <div>
+          <p class="t">The auditable, policy-gated agent runtime</p>
+          <p class="s">Instantiated inside a host process — CLI, server, or desktop — never reached over a wire on its own.</p>
+        </div>
+      </div>
+      <div class="keystone-body">
+        <div class="item"><h4>ledger</h4><p>Append-only JSONL session log on the local disk under the user's home — the source of truth every surface reads and writes.</p></div>
+        <div class="item"><h4>permission engine</h4><p>Every tool, subagent, and flow clears the same gate before dispatch. Missing containment fails closed.</p></div>
+        <div class="item"><h4>tool broker + sandbox</h4><p>Filesystem, shell, and web effects run inside the brokered boundary the workspace resolved.</p></div>
+        <div class="item"><h4>memory &amp; checkpoints</h4><p>Recall, worktrees, and workspace snapshots — all local, all reconstructable.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOSTS -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">The processes</p>
+      <h2>Who hosts a core — and how reachable it is</h2>
+      <p>Four kinds of host process construct cores, plus the external chat adapters that never touch a core directly. The badge on each says whether that process is private to one user on the loopback interface, or a shared service bound to a network address.</p>
+    </div>
+
+    <div class="hosts">
+
+      <div class="host">
+        <div class="host-head"><span class="name">vak (CLI)</span><span class="badge priv">private · in-process</span></div>
+        <div class="host-body">
+          <p><code class="k">vak exec</code>, <code class="k">plan</code>, <code class="k">flow</code>, <code class="k">eval</code> build one core for the current workspace and call it directly — no network, no server. The session ledger is written to local disk and is fully reconstructable afterward.</p>
+          <dl class="kv">
+            <dt>hosts</dt><dd>1 core (cwd workspace)</dd>
+            <dt>reach</dt><dd>this invocation only</dd>
+            <dt>state</dt><dd>local JSONL ledger</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="host">
+        <div class="host-head"><span class="name">vak-desktop</span><span class="badge priv">private · loopback</span></div>
+        <div class="host-body">
+          <p>The Tauri shell embeds <code class="k">vak-server</code> on an <b>ephemeral loopback port</b> (<code>127.0.0.1:0</code>) guarded by a per-launch bearer token. The SolidJS webview is just an HTTP/SSE client of that private embedded server — same contracts as the networked one, reachable by nobody else.</p>
+          <dl class="kv">
+            <dt>hosts</dt><dd>embedded server + core(s)</dd>
+            <dt>reach</dt><dd>its own webview only</dd>
+            <dt>auth</dt><dd><code>loopback bearer token</code></dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="host">
+        <div class="host-head"><span class="name">vak serve</span><span class="badge shared">shared · networked</span></div>
+        <div class="host-body">
+          <p>The durable background service (macOS LaunchAgent / Linux systemd user unit). Boots <code class="k">vak-server</code> on a real TCP address and exposes the full session / run / approval / transcript / diff / steering contract. With <code class="k">--gateway</code> it also accepts inbound channel messages.</p>
+          <dl class="kv">
+            <dt>hosts</dt><dd>CorePool (many workspaces)</dd>
+            <dt>reach</dt><dd>web clients, IDEs, gateways</dd>
+            <dt>run as</dt><dd>foreground or service</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="host">
+        <div class="host-head"><span class="name">vak-tray</span><span class="badge priv">private · local</span></div>
+        <div class="host-body">
+          <p>A menu-bar / system-tray companion that starts, stops, and checks the background service through <code class="k">vak-ops</code>. It controls a host; it does not host a core of its own.</p>
+          <dl class="kv">
+            <dt>hosts</dt><dd>nothing — a controller</dd>
+            <dt>reach</dt><dd>local service lifecycle</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="host">
+        <div class="host-head"><span class="name">channel bridges</span><span class="badge ext">external adapter</span></div>
+        <div class="host-body">
+          <p><code class="k">vak slack</code>, <code class="k">vak discord</code>, <code class="k">vak telegram</code> are <b>separate client processes</b>. Each holds a bot token plus a gateway token, polls its chat platform, and forwards every message to the server as <code>POST /gateway/inbound</code>. They translate a chat platform into the gateway contract — they never construct a core.</p>
+          <dl class="kv">
+            <dt>hosts</dt><dd>nothing — a translator</dd>
+            <dt>talks to</dt><dd><code>vak serve --gateway</code></dd>
+            <dt>secrets</dt><dd>bot token + gateway token</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="host">
+        <div class="host-head"><span class="name">web / admin UI</span><span class="badge shared">served by the server</span></div>
+        <div class="host-body">
+          <p>The SolidJS admin console (and any web client) are pure HTTP/SSE consumers of a running server's endpoints — desktop's embedded one or a networked <code class="k">vak serve</code>. They render state; they never hold agent state themselves.</p>
+          <dl class="kv">
+            <dt>hosts</dt><dd>nothing — a view</dd>
+            <dt>talks to</dt><dd>server endpoints</dd>
+          </dl>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- GATEWAY FLOW -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">The gateway path</p>
+      <h2>How a Slack message becomes an agent turn</h2>
+      <p>Channels are the most involved path because the message originates outside vak entirely. It crosses from an external platform, through an adapter, into a persistent bound session on the shared server — and the reply travels back the same way.</p>
+    </div>
+
+    <div class="flow">
+      <div class="frow"><div class="fnum">1</div><div class="fbody">
+        <p class="ft">A person posts in a channel</p>
+        <p>Slack / Discord / Telegram holds the conversation. The bridge process is subscribed to it with its bot token.</p>
+      </div></div>
+      <div class="frow"><div class="fnum">2</div><div class="fbody">
+        <p class="ft">The bridge forwards it — <code>POST /gateway/inbound</code></p>
+        <p>The adapter builds a validated <code>{surface, chat, sender, text}</code> payload and sends it to the server's gateway endpoint, authenticated with the gateway token. The real remote identity in <code>chat</code>/<code>sender</code> is what the allowlist and binding depend on.</p>
+      </div></div>
+      <div class="frow"><div class="fnum">3</div><div class="fbody">
+        <p class="ft">The allowlist admits it, the binding resolves a session</p>
+        <p><code>gateway.chat_allowlist</code> gates whether that <code>surface:chat</code> may reach a workspace at all. A persisted map <code>(surface:chat) → session_id</code> in <code>&lt;home&gt;/gateway/bindings.json</code> ties the conversation to a durable session that survives restarts.</p>
+      </div></div>
+      <div class="frow"><div class="fnum">4</div><div class="fbody">
+        <p class="ft">The CorePool hands over the workspace's core</p>
+        <p>Keyed by <code>(workspace, permission-override)</code>, the pool lazily starts or reuses the right core — the default workspace pinned warm, others idle-evicted. Each is built through <code>Core::new_with_trust</code>; an override can only ever <b>reduce</b> access, never raise it.</p>
+      </div></div>
+      <div class="frow"><div class="fnum">5</div><div class="fbody">
+        <p class="ft">The turn runs — unattended, so it fails closed</p>
+        <p>Approval gates auto-deny and the denial is fed back to the model as a tool error. Messages that arrive mid-turn are queued as logged steering input and consumed between model steps — nothing typed while busy is dropped.</p>
+      </div></div>
+      <div class="frow"><div class="fnum">6</div><div class="fbody">
+        <p class="ft">The reply returns to the channel</p>
+        <p>The bridge either long-polled the final assistant text or the server pushes it back through <code class="k">vak-delivery</code>'s durable outbox — the same audited record every other surface produces.</p>
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<!-- SHARED VS PRIVATE -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">The dividing line</p>
+      <h2>Shared central vs. private &amp; local</h2>
+      <p>Nothing phones home. The only thing that is ever "central" is a server process the user chose to run and bind to a network address; everything else is a local, per-user, per-invocation host.</p>
+    </div>
+
+    <div class="split">
+      <div class="col a">
+        <h3><span class="swatch sw-priv" style="width:11px;height:11px;border-radius:3px;"></span>Private &amp; local</h3>
+        <p class="cap">per-user · per-invocation · loopback</p>
+        <ul>
+          <li><span class="mk"></span><span><b>Session ledgers &amp; memory</b> — JSONL files under the user's home; never uploaded, always reconstructable.</span></li>
+          <li><span class="mk"></span><span><b>CLI runs</b> — one core, this invocation, no network at all.</span></li>
+          <li><span class="mk"></span><span><b>The desktop app</b> — its embedded server is loopback-only and token-guarded; no other client can reach it.</span></li>
+          <li><span class="mk"></span><span><b>Credentials</b> — provider keys from a gitignored <code style="font-family:var(--mono);font-size:12px;">.env</code>, the user secret store, or the environment; stored <code style="font-family:var(--mono);font-size:12px;">0600</code>.</span></li>
+          <li><span class="mk"></span><span><b>Trust resolution</b> — every core resolves its own sandbox &amp; permission mode from local config.</span></li>
+        </ul>
+      </div>
+      <div class="col b">
+        <h3><span class="swatch sw-shared" style="width:11px;height:11px;border-radius:3px;"></span>Shared central</h3>
+        <p class="cap">opt-in · networked · multi-tenant</p>
+        <ul>
+          <li><span class="mk"></span><span><b>A networked <code style="font-family:var(--mono);font-size:12px;color:var(--accent);">vak serve</code></b> — the one long-running host multiple clients and channels hit.</span></li>
+          <li><span class="mk"></span><span><b>The CorePool</b> — one server, many workspaces, each an isolated core with its own trust ceiling.</span></li>
+          <li><span class="mk"></span><span><b>Per-conversation bindings</b> — each chat gets its own persistent bound session; they don't bleed together.</span></li>
+          <li><span class="mk"></span><span><b>The gateway endpoint</b> — the single door channels enter through, guarded by allowlist + gateway token.</span></li>
+          <li><span class="mk"></span><span><b>Still gated identically</b> — a shared server grants no shortcut a local run wouldn't; unattended turns fail closed.</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="note">
+      <span class="lbl">Key nuance</span>
+      <p><b>"Shared" is about isolation, not pooling risk.</b> Two channels on the same workspace but different permission overrides get <b>two distinct cores</b> — a core's permission mode is single shared mutable state, so one channel could otherwise dictate the other's access. The pool key is the <code style="font-family:var(--mono);font-size:12px;">(workspace, override)</code> pair precisely to keep them apart.</p>
+    </div>
+  </div>
+</section>
+
+<!-- SUMMARY TABLE -->
+<section style="border-bottom:none;">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">At a glance</p>
+      <h2>Every component, by hosting</h2>
+    </div>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>Component</th><th>Kind</th><th>Hosts a core?</th><th>Reachability</th><th>Shared / private</th></tr></thead>
+        <tbody>
+          <tr><td><span class="c">vak exec / plan / flow</span></td><td>CLI process</td><td>Yes — 1, in-process</td><td>This invocation</td><td><span class="chip priv">private</span></td></tr>
+          <tr><td><span class="c">vak-desktop</span></td><td>Tauri app</td><td>Yes — via embedded server</td><td>Loopback + token</td><td><span class="chip priv">private</span></td></tr>
+          <tr><td><span class="c">vak-desktop/ui · admin-ui</span></td><td>SolidJS client</td><td>No — a view</td><td>Its server's endpoints</td><td><span class="chip priv">private</span></td></tr>
+          <tr><td><span class="c">vak serve</span></td><td>HTTP/SSE service</td><td>Yes — CorePool</td><td>Network address</td><td><span class="chip shared">shared</span></td></tr>
+          <tr><td><span class="c">vak serve --gateway</span></td><td>Gateway service</td><td>Yes — pooled per workspace</td><td>+ /gateway/inbound</td><td><span class="chip shared">shared</span></td></tr>
+          <tr><td><span class="c">vak slack / discord / telegram</span></td><td>Channel bridge</td><td>No — a translator</td><td>Chat platform ↔ gateway</td><td><span class="chip ext">external</span></td></tr>
+          <tr><td><span class="c">vak-tray</span></td><td>Tray controller</td><td>No — a controller</td><td>Local service lifecycle</td><td><span class="chip priv">private</span></td></tr>
+          <tr><td><span class="c">session ledgers · memory</span></td><td>On-disk state</td><td>—</td><td>Local home dir</td><td><span class="chip priv">private</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span><b>vak 0.11.7</b></span>
+    <span>· Companion to the layered architecture map</span>
+    <span>· Derived from vak-server (lib · core_pool · gateway), vak-desktop/main.rs, vak/main.rs &amp; docs/design/22, 34</span>
+  </div>
+</footer>

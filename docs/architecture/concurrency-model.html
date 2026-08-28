@@ -1,0 +1,514 @@
+<title>vak Concurrency Model</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+<style>
+  :root {
+    --bg:#f4f2ec; --surface:#fbfaf6; --surface-2:#ffffff; --surface-3:#f0ede4;
+    --border:#ddd8cb; --border-soft:#e7e3d8;
+    --text:#232019; --text-soft:#4f4a3f; --muted:#7c7565; --faint:#9a9384;
+    --accent:#c85a3c; --accent-bright:#b64d31; --accent-wash:rgba(200,90,60,.10);
+    --green:#4f8a5f; --green-wash:rgba(79,138,95,.14);
+    --yellow:#b0842f; --yellow-wash:rgba(176,132,47,.15);
+    --red:#c1494c; --red-wash:rgba(193,73,76,.14);
+    --blue:#4d76ad; --blue-wash:rgba(77,118,173,.14);
+    --shadow:0 1px 2px rgba(40,34,22,.05),0 10px 30px rgba(40,34,22,.08);
+    --mono:'IBM Plex Mono','SF Mono',ui-monospace,Menlo,monospace;
+    --sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  }
+  @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+    --bg:#171714; --surface:#1c1c19; --surface-2:#22221f; --surface-3:#292925;
+    --border:#34342f; --border-soft:#2a2a26;
+    --text:#eeeae2; --text-soft:#c4c0b8; --muted:#918e86; --faint:#68665f;
+    --accent:#df795f; --accent-bright:#ee9278; --accent-wash:rgba(223,121,95,.14);
+    --green:#73a982; --green-wash:rgba(115,169,130,.16);
+    --yellow:#d4a85d; --yellow-wash:rgba(212,168,93,.16);
+    --red:#d86f72; --red-wash:rgba(216,111,114,.16);
+    --blue:#7c9fc9; --blue-wash:rgba(124,159,201,.16);
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 16px 44px rgba(0,0,0,.4);
+  }}
+  :root[data-theme="dark"]{
+    --bg:#171714; --surface:#1c1c19; --surface-2:#22221f; --surface-3:#292925;
+    --border:#34342f; --border-soft:#2a2a26;
+    --text:#eeeae2; --text-soft:#c4c0b8; --muted:#918e86; --faint:#68665f;
+    --accent:#df795f; --accent-bright:#ee9278; --accent-wash:rgba(223,121,95,.14);
+    --green:#73a982; --green-wash:rgba(115,169,130,.16);
+    --yellow:#d4a85d; --yellow-wash:rgba(212,168,93,.16);
+    --red:#d86f72; --red-wash:rgba(216,111,114,.16);
+    --blue:#7c9fc9; --blue-wash:rgba(124,159,201,.16);
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 16px 44px rgba(0,0,0,.4);
+  }
+
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--sans);
+    font-size:15px; line-height:1.6; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1080px; margin:0 auto; padding:0 22px; }
+
+  header.masthead { border-bottom:1px solid var(--border);
+    background:radial-gradient(120% 140% at 85% -20%,var(--accent-wash),transparent 60%),var(--surface); }
+  .masthead-inner { padding:44px 0 34px; }
+  .eyebrow { font-family:var(--mono); font-size:12px; font-weight:500; letter-spacing:.18em;
+    text-transform:uppercase; color:var(--accent); margin:0 0 15px; }
+  h1 { font-weight:600; font-size:clamp(28px,4.6vw,42px); line-height:1.08; letter-spacing:-.025em;
+    margin:0 0 14px; text-wrap:balance; max-width:22ch; }
+  .lede { font-size:16.5px; color:var(--text-soft); max-width:66ch; margin:0; }
+  .lede b { color:var(--text); font-weight:600; }
+  code.k { font-family:var(--mono); font-size:.86em; color:var(--accent);
+    background:var(--accent-wash); padding:1px 5px; border-radius:5px; }
+
+  /* ---- scenario tabs ---- */
+  .stage-sec { padding:30px 0 46px; }
+  .tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+  .tab { font-family:var(--sans); font-size:13.5px; font-weight:550; cursor:pointer;
+    border:1px solid var(--border); background:var(--surface); color:var(--text-soft);
+    border-radius:10px; padding:9px 14px; display:flex; align-items:center; gap:9px;
+    transition:border-color .14s, background .14s, color .14s; }
+  .tab:hover { background:var(--surface-3); color:var(--text); }
+  .tab[aria-selected="true"] { border-color:var(--accent); background:var(--accent-wash); color:var(--text); }
+  .tab .tnum { font-family:var(--mono); font-size:11px; font-weight:600; color:var(--accent); }
+  .tab small { color:var(--faint); font-weight:450; font-size:12px; }
+
+  /* ---- controls ---- */
+  .controls { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-bottom:14px; }
+  .btn { font-family:var(--sans); font-size:13.5px; font-weight:600; cursor:pointer;
+    border-radius:8px; padding:8px 16px; border:1px solid transparent; }
+  .btn.primary { background:var(--accent); color:#fff; }
+  .btn.primary:hover { background:var(--accent-bright); }
+  .btn.ghost { background:var(--surface-2); border-color:var(--border); color:var(--text-soft); }
+  .btn.ghost:hover { color:var(--text); background:var(--surface-3); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .legend { display:flex; flex-wrap:wrap; gap:6px 14px; margin-left:auto; font-family:var(--mono); font-size:11.5px; color:var(--muted); }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .swatch { width:9px; height:9px; border-radius:3px; flex:none; }
+  .sw-run { background:var(--green); } .sw-wait { background:var(--yellow); }
+  .sw-rej { background:var(--red); } .sw-idle { background:var(--faint); }
+
+  /* ---- stage ---- */
+  .stage { position:relative; border:1px solid var(--border); border-radius:16px;
+    background:var(--surface); box-shadow:var(--shadow); overflow:hidden; }
+  .stage-grid { display:grid; grid-template-columns:150px 1fr 1.15fr; min-height:430px; }
+  .col { padding:16px 15px; position:relative; }
+  .col + .col { border-left:1px solid var(--border-soft); }
+  .col-h { font-family:var(--mono); font-size:10.5px; font-weight:600; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--muted); margin:0 0 14px; }
+  .col-h b { color:var(--accent); font-weight:600; }
+
+  .ingress { display:flex; flex-direction:column; gap:7px; }
+  /* the gate column */
+  .gate { display:flex; flex-direction:column; gap:12px; }
+  .gate-box { border:1px dashed var(--border); border-radius:11px; padding:12px; background:var(--surface-2); }
+  .gate-box .gt { font-family:var(--mono); font-size:11px; color:var(--text-soft); font-weight:500; margin:0 0 3px; }
+  .gate-box .gs { font-size:11.5px; color:var(--muted); margin:0; line-height:1.4; }
+  .meter { height:6px; border-radius:999px; background:var(--surface-3); margin-top:9px; overflow:hidden; }
+  .meter i { display:block; height:100%; width:0%; background:var(--accent); border-radius:999px; transition:width .3s ease; }
+  .meter.warn i { background:var(--yellow); } .meter.over i { background:var(--red); }
+
+  .lanes { display:flex; flex-direction:column; gap:9px; }
+  .lane { border:1px solid var(--border-soft); border-radius:10px; background:var(--surface-2);
+    padding:9px 11px; display:flex; align-items:center; gap:10px; min-height:44px; transition:border-color .2s, opacity .3s, background .2s; }
+  .lane.hot { border-color:var(--green); background:var(--green-wash); }
+  .lane.pinned { border-color:var(--accent); }
+  .lane.evicted { opacity:.32; }
+  .lane .lname { font-family:var(--mono); font-size:11.5px; font-weight:600; color:var(--text); white-space:nowrap; }
+  .lane .lname small { display:block; color:var(--faint); font-weight:450; font-size:10px; }
+  .lane .lstate { margin-left:auto; font-family:var(--mono); font-size:10px; color:var(--muted); }
+  .lane .bar { flex:1; height:5px; border-radius:999px; background:var(--surface-3); overflow:hidden; position:relative; max-width:120px; }
+  .lane .bar i { position:absolute; left:0; top:0; bottom:0; width:0%; background:var(--green); border-radius:999px; }
+  .lane.hot .bar i { animation:fill 1.8s linear forwards; }
+  @keyframes fill { from{width:6%;} to{width:100%;} }
+
+  /* queue inside a lane (steering) */
+  .queue { display:flex; gap:4px; }
+  .qdot { width:12px; height:12px; border-radius:4px; background:var(--yellow-wash); border:1px solid var(--yellow); }
+
+  /* ---- tokens (absolute overlay) ---- */
+  .tokens { position:absolute; inset:0; pointer-events:none; z-index:5; }
+  .tok { position:absolute; width:26px; height:26px; border-radius:8px; display:flex; align-items:center; justify-content:center;
+    font-family:var(--mono); font-size:11px; font-weight:600;
+    background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+    transform:translate(-50%,-50%); transition:left .5s cubic-bezier(.4,.05,.2,1), top .5s cubic-bezier(.4,.05,.2,1), background .3s, border-color .3s, opacity .3s, color .3s; }
+  .tok.run { border-color:var(--green); background:var(--green-wash); color:var(--green); }
+  .tok.wait { border-color:var(--yellow); background:var(--yellow-wash); color:var(--yellow); }
+  .tok.rej { border-color:var(--red); background:var(--red-wash); color:var(--red); }
+  .tok.gone { opacity:0; }
+
+  .req { height:26px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2);
+    font-family:var(--mono); font-size:11px; color:var(--faint); display:flex; align-items:center; padding:0 9px; gap:7px; }
+  .req .rc { width:12px; height:12px; border-radius:4px; border:1px solid var(--border); }
+
+  /* caption */
+  .caption { border-top:1px solid var(--border-soft); padding:15px 18px; background:var(--surface-3);
+    font-size:13.5px; color:var(--text-soft); line-height:1.55; min-height:58px; }
+  .caption b { color:var(--text); font-weight:600; }
+  .caption code { font-family:var(--mono); font-size:12px; color:var(--accent); }
+
+  /* ---- outcomes summary ---- */
+  section { padding:44px 0; border-top:1px solid var(--border-soft); }
+  .sec-head { margin-bottom:26px; max-width:70ch; }
+  .sec-kicker { font-family:var(--mono); font-size:11.5px; font-weight:500; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--muted); margin:0 0 10px; }
+  h2 { font-size:24px; font-weight:600; letter-spacing:-.02em; margin:0 0 9px; line-height:1.2; text-wrap:balance; }
+  .sec-head p { margin:0; color:var(--text-soft); }
+
+  .cases { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:15px; }
+  .case { border:1px solid var(--border); border-radius:13px; background:var(--surface); padding:17px; border-top:3px solid var(--accent); }
+  .case.g { border-top-color:var(--green); } .case.b { border-top-color:var(--blue); }
+  .case h3 { margin:0 0 4px; font-size:15px; font-weight:600; letter-spacing:-.01em; }
+  .case .sub { font-family:var(--mono); font-size:11px; color:var(--muted); margin:0 0 12px; }
+  .case p { margin:0; font-size:13.5px; color:var(--text-soft); line-height:1.5; }
+  .case .verdict { margin-top:11px; font-family:var(--mono); font-size:12px; font-weight:500;
+    padding:6px 10px; border-radius:8px; display:inline-block; }
+  .v-run { color:var(--green); background:var(--green-wash); }
+  .v-mix { color:var(--yellow); background:var(--yellow-wash); }
+
+  .tbl-scroll { overflow-x:auto; border:1px solid var(--border); border-radius:12px; margin-top:20px; }
+  table { border-collapse:collapse; width:100%; min-width:520px; font-size:13.5px; }
+  th,td { text-align:left; padding:11px 15px; border-bottom:1px solid var(--border-soft); }
+  thead th { font-family:var(--mono); font-size:10.5px; letter-spacing:.07em; text-transform:uppercase;
+    color:var(--muted); font-weight:600; background:var(--surface-3); }
+  tbody tr:last-child td { border-bottom:none; }
+  td .c { font-family:var(--mono); font-size:12px; color:var(--accent); font-weight:500; }
+  td { color:var(--text-soft); } td b { color:var(--text); }
+
+  footer { padding:30px 0 56px; color:var(--muted); font-size:13px; }
+  footer .wrap { display:flex; flex-wrap:wrap; gap:6px 16px; align-items:center; }
+  footer b { color:var(--text-soft); font-weight:500; }
+
+  @media (max-width:760px){ .stage-grid { grid-template-columns:1fr; }
+    .col + .col { border-left:none; border-top:1px solid var(--border-soft); }
+    .legend { width:100%; margin-left:0; } }
+  @media (prefers-reduced-motion: reduce){ .tok { transition:opacity .2s, background .2s, border-color .2s; }
+    .lane.hot .bar i { animation:none; width:100%; } }
+</style>
+
+<header class="masthead">
+  <div class="wrap masthead-inner">
+    <p class="eyebrow">Concurrency Model · v0.11.7</p>
+    <h1>What happens when 10 calls arrive at once</h1>
+    <p class="lede">It depends on <b>where</b> they land. A session's ledger is a single-owner file lock — <code class="k">Mutex&lt;Option&lt;SessionLog&gt;&gt;</code> that a run <code class="k">.take()</code>s — so <b>one run per session at a time</b>. Ten calls to one session, ten sessions in one workspace, and ten different workspaces behave completely differently. Pick a scenario and press play.</p>
+  </div>
+</header>
+
+<main>
+<div class="stage-sec"><div class="wrap">
+
+  <div class="tabs" role="tablist" aria-label="Scenario">
+    <button class="tab" role="tab" aria-selected="true" data-s="0"><span class="tnum">A</span> Same session <small>10 → 1 ledger</small></button>
+    <button class="tab" role="tab" aria-selected="false" data-s="1"><span class="tnum">B</span> Many sessions <small>1 workspace · 1 core</small></button>
+    <button class="tab" role="tab" aria-selected="false" data-s="2"><span class="tnum">C</span> Many workspaces <small>gateway · CorePool</small></button>
+  </div>
+
+  <div class="controls">
+    <button class="btn primary" id="play">▶ Play</button>
+    <button class="btn ghost" id="reset">Reset</button>
+    <div class="legend">
+      <span><i class="swatch sw-run"></i>running</span>
+      <span><i class="swatch sw-wait"></i>queued</span>
+      <span><i class="swatch sw-rej"></i>rejected</span>
+      <span><i class="swatch sw-idle"></i>idle / evicted</span>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="stage-grid">
+      <div class="col">
+        <p class="col-h">Ingress · <b>10 calls</b></p>
+        <div class="ingress" id="ingress"></div>
+      </div>
+      <div class="col">
+        <p class="col-h" id="gateH">Gate</p>
+        <div class="gate" id="gate"></div>
+      </div>
+      <div class="col">
+        <p class="col-h" id="laneH">Session lanes</p>
+        <div class="lanes" id="lanes"></div>
+      </div>
+    </div>
+    <div class="tokens" id="tokens"></div>
+    <div class="caption" id="caption">Choose a scenario and press <b>Play</b>.</div>
+  </div>
+
+</div></div>
+
+<section><div class="wrap">
+  <div class="sec-head">
+    <p class="sec-kicker">The three answers</p>
+    <h2>Same code path, three outcomes</h2>
+    <p>What decides the result is the identity the 10 calls resolve to — one ledger, ten ledgers in one core, or ten workspaces in the pool.</p>
+  </div>
+  <div class="cases">
+    <div class="case">
+      <h3>A · Same session</h3>
+      <p class="sub">10 → one ledger</p>
+      <p>The first call <code style="font-family:var(--mono);color:var(--accent)">.take()</code>s the ledger and runs. The other nine find <code style="font-family:var(--mono);color:var(--accent)">None</code> and get <b>409&nbsp;CONFLICT</b> — "run already active." The intended way to add to a live conversation is <code style="font-family:var(--mono);color:var(--accent)">/steering</code>, which queues input consumed between model steps. Nothing typed while busy is dropped.</p>
+      <span class="verdict v-mix">1 runs · 9 → 409 (or steer)</span>
+    </div>
+    <div class="case g">
+      <h3>B · Many sessions, one workspace</h3>
+      <p class="sub">10 ledgers · 1 shared core</p>
+      <p>Each session owns its own ledger lock, so all ten <code style="font-family:var(--mono);color:var(--accent)">.take()</code> succeed and run as ten concurrent async tasks over one <code style="font-family:var(--mono);color:var(--accent)">Core</code>. The ceiling is the per-IP rate limiter: <b>runs_per_min = 10</b> by default, so the 11th in a 60s window gets <b>429</b> with a retry-after.</p>
+      <span class="verdict v-run">10 run in parallel</span>
+    </div>
+    <div class="case b">
+      <h3>C · Many workspaces (gateway)</h3>
+      <p class="sub">CorePool · bounded + idle-evicted</p>
+      <p>The pool lazily starts a <code style="font-family:var(--mono);color:var(--accent)">Core</code> per workspace, keyed by <code style="font-family:var(--mono);color:var(--accent)">(workspace, override)</code>. The default workspace is pinned warm; when the pool hits capacity, the oldest idle core is evicted to admit the next. Each is built via <code style="font-family:var(--mono);color:var(--accent)">Core::new_with_trust</code> — no shared shortcut.</p>
+      <span class="verdict v-run">capacity-bounded parallelism</span>
+    </div>
+  </div>
+
+  <div class="tbl-scroll">
+    <table>
+      <thead><tr><th>Endpoint</th><th>Default limit</th><th>On excess</th></tr></thead>
+      <tbody>
+        <tr><td><span class="c">POST /sessions/:id/run</span></td><td><b>10</b> / min / IP</td><td>429 + retry-after</td></tr>
+        <tr><td><span class="c">POST /sessions</span></td><td><b>5</b> / min / IP</td><td>429 + retry-after</td></tr>
+        <tr><td><span class="c">POST /gateway/inbound</span></td><td><b>30</b> / min / IP</td><td>429 + retry-after</td></tr>
+        <tr><td><span class="c">other POST</span></td><td><b>20</b> / min / IP</td><td>429 + retry-after</td></tr>
+        <tr><td>second run on a busy session</td><td>—</td><td><b>409 CONFLICT</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div></section>
+</main>
+
+<footer><div class="wrap">
+  <span><b>vak 0.11.7</b></span>
+  <span>· Derived from vak-server: lib.rs (run_prompt) · rate_limit.rs · core_pool.rs · gateway.rs</span>
+</div></footer>
+
+<script>
+(function(){
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var ingress = document.getElementById('ingress');
+  var gate = document.getElementById('gate');
+  var lanes = document.getElementById('lanes');
+  var tokens = document.getElementById('tokens');
+  var stage = tokens.parentElement;
+  var caption = document.getElementById('caption');
+  var gateH = document.getElementById('gateH');
+  var laneH = document.getElementById('laneH');
+  var playBtn = document.getElementById('play');
+  var resetBtn = document.getElementById('reset');
+  var scenario = 0;
+  var running = false;
+  var timers = [];
+  var N = 10;
+
+  function sleep(ms){ return new Promise(function(res){ var t=setTimeout(res, reduce?Math.min(ms,120):ms); timers.push(t); }); }
+  function clearTimers(){ timers.forEach(clearTimeout); timers = []; }
+
+  // center of an element relative to the stage
+  function center(el){
+    var s = stage.getBoundingClientRect(), r = el.getBoundingClientRect();
+    return { x: r.left - s.left + r.width/2, y: r.top - s.top + r.height/2 };
+  }
+  function place(tok, el){ var c = center(el); tok.style.left = c.x+'px'; tok.style.top = c.y+'px'; }
+
+  function buildIngress(){
+    ingress.innerHTML='';
+    for(var i=0;i<N;i++){
+      var d=document.createElement('div'); d.className='req';
+      d.innerHTML='<span class="rc"></span>call '+(i+1);
+      d.id='req'+i; ingress.appendChild(d);
+    }
+  }
+
+  function makeTokens(){
+    tokens.innerHTML='';
+    var arr=[];
+    for(var i=0;i<N;i++){
+      var t=document.createElement('div'); t.className='tok'; t.textContent=(i+1);
+      t.id='tok'+i; tokens.appendChild(t); place(t, document.getElementById('req'+i));
+      arr.push(t);
+    }
+    return arr;
+  }
+
+  var CFG = {
+    0: { gateH:'Session · <b>1 ledger</b>', laneH:'The one run',
+         gate:[['ledger lock','Mutex&lt;Option&lt;SessionLog&gt;&gt; — one owner. .take() → Some or None.']],
+         lanes:[{name:'session A<small>the bound conversation</small>'},
+                {name:'steering queue<small>/steering — drains into the live turn</small>', queue:true}] },
+    1: { gateH:'Rate limiter · <b>10/min</b>', laneH:'Ten sessions · one core',
+         gate:[['per-IP window','runs_per_min = 10. 11th in 60s → 429.']],
+         lanes:null },
+    2: { gateH:'CorePool · <b>cap 4</b>', laneH:'Workspaces (cores)',
+         gate:[['(workspace, override) key','lazily start · idle-evict · default pinned']],
+         lanes:null }
+  };
+
+  function renderScaffold(){
+    var c = CFG[scenario];
+    gateH.innerHTML = c.gateH; laneH.innerHTML = c.laneH;
+    gate.innerHTML='';
+    c.gate.forEach(function(g){
+      var b=document.createElement('div'); b.className='gate-box';
+      b.innerHTML='<p class="gt">'+g[0]+'</p><p class="gs">'+g[1]+'</p>'+
+        (scenario===1?'<div class="meter" id="meter"><i></i></div>':'');
+      gate.appendChild(b);
+    });
+    lanes.innerHTML='';
+    if(scenario===0){
+      c.lanes.forEach(function(l,idx){
+        var d=document.createElement('div'); d.className='lane'; d.id='lane'+idx;
+        d.innerHTML='<span class="lname">'+l.name+'</span>'+
+          (l.queue?'<span class="queue" id="q"></span>':'<span class="bar"><i></i></span>')+
+          '<span class="lstate" id="ls'+idx+'"></span>';
+        lanes.appendChild(d);
+      });
+    } else if(scenario===1){
+      for(var i=0;i<N;i++){
+        var d=document.createElement('div'); d.className='lane'; d.id='lane'+i;
+        d.innerHTML='<span class="lname">session '+(i+1)+'</span><span class="bar"><i></i></span><span class="lstate" id="ls'+i+'"></span>';
+        lanes.appendChild(d);
+      }
+    } else {
+      var names=['default ws','api-svc','web-app','infra','billing','docs','mobile','data'];
+      for(var i=0;i<5;i++){
+        var d=document.createElement('div'); d.className='lane'+(i===0?' pinned':''); d.id='lane'+i;
+        d.innerHTML='<span class="lname">'+names[i]+(i===0?'<small>pinned · never evicted</small>':'<small>slot '+i+'</small>')+
+          '</span><span class="bar"><i></i></span><span class="lstate" id="ls'+i+'">'+(i===0?'warm':'—')+'</span>';
+        lanes.appendChild(d);
+      }
+    }
+  }
+
+  function setCap(t){ caption.innerHTML=t; }
+  function say(el, txt){ if(el) el.textContent=txt; }
+
+  async function runScenarioA(toks){
+    setCap('Ten calls hit the same session. The first to acquire the ledger wins.');
+    // token 0 -> ledger lock -> session A running
+    place(toks[0], document.querySelector('.gate-box'));
+    await sleep(520);
+    toks[0].classList.add('run');
+    var laneA=document.getElementById('lane0'); laneA.classList.add('hot');
+    place(toks[0], laneA); say(document.getElementById('ls0'),'running');
+    setCap('<b>Call 1</b> <code>.take()</code>s the ledger → <code>Some(log)</code> → the turn runs. The ledger slot is now <code>None</code>.');
+    await sleep(900);
+    // the other 9: try /run -> 409 ; a few reroute as steering
+    for(var i=1;i<N;i++){
+      var t=toks[i]; place(t, document.querySelector('.gate-box'));
+    }
+    await sleep(520);
+    setCap('The other nine find <code>None</code>. As <code>/run</code> they get <b>409 CONFLICT</b>; the right move is <code>/steering</code>.');
+    // 5 rejected, 4 steer into queue
+    var q=document.getElementById('q');
+    for(var i=1;i<N;i++){
+      (function(i){
+        var t=toks[i];
+        if(i<=5){ t.classList.add('rej'); place(t, document.getElementById('req'+i)); // bounce back
+          setTimeout(function(){ t.classList.add('gone'); }, 700);
+        } else {
+          t.classList.add('wait'); place(t, document.getElementById('lane1'));
+          setTimeout(function(){ if(q){var qd=document.createElement('span'); qd.className='qdot'; q.appendChild(qd);} t.classList.add('gone'); }, 520);
+        }
+      })(i);
+    }
+    await sleep(1100);
+    say(document.getElementById('ls1'),'queued → drains');
+    setCap('<b>Result:</b> 1 run active, 5 calls rejected with <b>409</b>, 4 rerouted to the <b>steering queue</b> — consumed between model steps, in order, none dropped.');
+  }
+
+  async function runScenarioB(toks){
+    setCap('Ten calls, ten <b>different</b> sessions in one workspace — ten independent ledger locks.');
+    var meter=document.getElementById('meter'); var mi=meter?meter.querySelector('i'):null;
+    for(var i=0;i<N;i++){
+      (function(i){
+        var t=toks[i]; var lane=document.getElementById('lane'+i);
+        setTimeout(function(){
+          place(t, document.querySelector('.gate-box'));
+          if(mi){ mi.style.width=((i+1)*10)+'%'; if(i>=8) meter.classList.add('warn'); }
+        }, i*130);
+        setTimeout(function(){
+          t.classList.add('run'); lane.classList.add('hot'); place(t, lane);
+          say(document.getElementById('ls'+i),'running');
+          setTimeout(function(){ t.classList.add('gone'); }, 500);
+        }, i*130+560);
+      })(i);
+    }
+    await sleep(N*130+1400);
+    setCap('<b>Result:</b> all ten <code>.take()</code> their own ledger and run as ten concurrent tasks over one shared <code>Core</code>. The limiter sits at <b>10/10</b> — an 11th call this minute would get <b>429</b>.');
+  }
+
+  async function runScenarioC(toks){
+    setCap('Ten calls target ten different workspaces through the gateway. The pool holds a default + 4 slots.');
+    // default already warm. Route calls; first 4 fill slots, then eviction.
+    var order=[1,2,3,4]; // slots to fill
+    for(var i=0;i<N;i++){
+      (function(i){
+        var t=toks[i];
+        setTimeout(function(){ place(t, document.querySelector('.gate-box')); }, i*150);
+      })(i);
+    }
+    await sleep(700);
+    // fill slots 1..4 with first four
+    for(var s=1;s<=4;s++){
+      var lane=document.getElementById('lane'+s);
+      lane.classList.add('hot'); say(document.getElementById('ls'+s),'warming');
+      place(toks[s-1], lane);
+      await sleep(320);
+    }
+    setCap('Four workspaces spin up cores into the four slots; the default stays pinned. The pool is now at capacity.');
+    await sleep(700);
+    // evict oldest idle (slot1) to admit call5
+    var l1=document.getElementById('lane1'); l1.classList.remove('hot'); l1.classList.add('evicted');
+    say(document.getElementById('ls1'),'evicted (idle)');
+    toks[0].classList.add('gone');
+    await sleep(500);
+    l1.classList.remove('evicted'); l1.classList.add('hot');
+    l1.querySelector('.lname').innerHTML='analytics<small>slot 1 · reused</small>';
+    say(document.getElementById('ls1'),'warming');
+    place(toks[4], l1);
+    setCap('Call 5 needs a slot. The <b>oldest idle</b> core (never the pinned default) is evicted and its slot reused — <code>Core::new_with_trust</code> re-resolves that workspace\'s own trust.');
+    await sleep(900);
+    // remaining calls queue behind capacity
+    for(var i=5;i<N;i++){
+      toks[i].classList.add('wait'); place(toks[i], document.querySelector('.gate-box'));
+    }
+    await sleep(600);
+    setCap('<b>Result:</b> parallelism is bounded by pool capacity, not by call count. Extra workspaces wait; idle cores evict to make room; the default and each core\'s trust ceiling never move.');
+  }
+
+  async function play(){
+    if(running) return;
+    running=true; playBtn.disabled=true; resetBtn.disabled=false;
+    reset(false);
+    var toks=makeTokens();
+    await sleep(120);
+    try {
+      if(scenario===0) await runScenarioA(toks);
+      else if(scenario===1) await runScenarioB(toks);
+      else await runScenarioC(toks);
+    } catch(e){}
+    running=false; playBtn.disabled=false;
+  }
+
+  function reset(full){
+    clearTimers();
+    running=false; playBtn.disabled=false;
+    renderScaffold();
+    tokens.innerHTML='';
+    if(full!==false) setCap('Press <b>Play</b> to run scenario '+String.fromCharCode(65+scenario)+'.');
+    // reposition ingress reference tokens implicitly on next play
+    requestAnimationFrame(function(){ /* layout settle */ });
+  }
+
+  document.querySelectorAll('.tab').forEach(function(tab){
+    tab.addEventListener('click', function(){
+      document.querySelectorAll('.tab').forEach(function(t){ t.setAttribute('aria-selected','false'); });
+      tab.setAttribute('aria-selected','true');
+      scenario=parseInt(tab.dataset.s,10);
+      reset(true);
+    });
+  });
+  playBtn.addEventListener('click', play);
+  resetBtn.addEventListener('click', function(){ reset(true); });
+  window.addEventListener('resize', function(){ if(!running){ /* keep scaffold */ } });
+
+  buildIngress();
+  renderScaffold();
+  setCap('Choose a scenario and press <b>Play</b>. Scenario A is loaded.');
+})();
+</script>
