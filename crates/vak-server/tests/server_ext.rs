@@ -147,22 +147,22 @@ async fn secured_router_enforces_token_and_cors() {
         .unwrap();
     assert_eq!(wrong.status(), 401);
 
-    // The webview origin must be allowed through CORS preflight.
-    let preflight = reqwest::Client::new()
-        .request(reqwest::Method::OPTIONS, format!("{base}/sessions"))
-        .header(reqwest::header::ORIGIN, "tauri://localhost")
-        .header(reqwest::header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        preflight
-            .headers()
-            .get(reqwest::header::ACCESS_CONTROL_ALLOW_ORIGIN),
-        Some(&reqwest::header::HeaderValue::from_static(
-            "tauri://localhost"
-        )),
-    );
+    // Both Tauri webview origins must be allowed through CORS preflight.
+    for origin in ["tauri://localhost", "http://tauri.localhost"] {
+        let preflight = reqwest::Client::new()
+            .request(reqwest::Method::OPTIONS, format!("{base}/sessions"))
+            .header(reqwest::header::ORIGIN, origin)
+            .header(reqwest::header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            preflight
+                .headers()
+                .get(reqwest::header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            Some(&reqwest::header::HeaderValue::from_bytes(origin.as_bytes()).unwrap()),
+        );
+    }
 
     // The real token grants access.
     let ok = client_with(&token)

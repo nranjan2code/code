@@ -871,10 +871,11 @@ pub fn secured_router(core: Core) -> (Router, String) {
 /// long-lived clients can survive process restarts. Otherwise a fresh
 /// per-process token is minted as before. The variable is never logged.
 pub fn secured_router_with(core: Core, force_gateway: bool) -> (Router, String) {
-    // Webview origins: tauri://localhost (macOS/Linux), https://tauri.localhost
-    // (Windows), plus vite dev servers.
+    // Tauri can use either its custom scheme or the loopback-style origin,
+    // depending on the platform and WebView runtime, plus vite dev servers.
     let origins = [
         "tauri://localhost",
+        "http://tauri.localhost",
         "https://tauri.localhost",
         "http://localhost:1420",
         "http://127.0.0.1:1420",
