@@ -1,6 +1,8 @@
 # 34 — Channel onboarding: lifecycle, governance, admin/desktop UX
 
-Status: **proposed**, not yet implemented. Written after a live incident
+Status: **proposed**, not yet implemented (Phase 1: allowlist lifecycle +
+Admin UI; Phase 2: multi-tenant Core pool; Phase 3: Discord/Slack
+bridges — see phase sections below). Written after a live incident
 (2026-08-28): the Telegram bridge returned `403` for a chat that used to
 work, because `gateway.chat_allowlist` is a config-file-only setting with
 no UI, no runtime API, and no visible pending-request state — the operator
@@ -163,10 +165,114 @@ phone's chat id.
    actually been run in" would prevent typo'd paths creating a binding
    that silently 500s.
 
-## Non-goals for this phase
+## Phase 1 scope vs. later phases
 
-- No multi-tenant workspace isolation (one gateway process still serves
-  one Core; per-channel `workspace` picks which existing workspace's
-  config/route to use, it doesn't spin up isolated Cores per channel).
-- No Discord/Slack-specific UI; the lifecycle is surface-agnostic by
-  construction (`key = "{surface}:{chat}"`), same as bindings today.
+Phase 1 (this doc's original scope: allowlist store, admin API, Admin UI
+pending/approve/deny/revoke) does not include real multi-tenant Core
+isolation or Discord/Slack bridges — those were flagged as non-goals, then
+promoted to Phase 2/3 below once it was clear "control surface" means all
+three need to exist for the feature to be complete, not just the
+allowlist mechanics.
+
+## Phase 2: multi-tenant Core isolation
+
+Today: one gateway process = one `Core` = one `cwd`, fixed at process
+start. A channel's `workspace` field (Phase 1) only *selects* which
+already-loaded workspace's config/route to route to — it doesn't run that
+workspace's own Core. That's a real gap: a channel approved for
+`/Users/x/Projects/other-repo` while the gateway process's own Core is
+rooted at a different cwd has no way to actually get that other
+workspace's tools, sandbox, permission mode, or session ledger — only its
+provider/model pair, via the existing route-override mechanism. It cannot
+actually work as designed without this.
+
+**Design**: `GatewayState` holds a `CorePool` — a map from canonical
+workspace path to a lazily-started `Core` instance, instead of the single
+`state.core` it holds today (which becomes the pool's entry for the
+gateway's own default workspace). On inbound dispatch, after allowlist
+resolution, look up the entry's `workspace`; if it's not the default,
+resolve (or start) that workspace's `Core` from the pool instead of using
+`state.core` directly. Each pooled `Core` gets its own:
+
+- session ledger home (already implied — sessions are keyed by cwd today,
+  per docs/design/22's "Sessions remain append-only JSONL trees keyed
+  per-cwd" — this phase makes that actually reachable from a remote
+  channel instead of only from a local CLI/desktop client already sitting
+  in that cwd).
+- permission mode / sandbox / trust resolution, loaded the normal way
+  `Core::new_with_trust` already does for any workspace.
+- idle eviction: a pooled Core with no active binding and no recent
+  activity (default: 30 min, configurable) is dropped, so a gateway
+  fielding channels for a dozen workspaces doesn't hold a dozen live
+  Cores (and their sandboxes/file watchers) forever. Re-approving or the
+  next inbound message on that channel simply re-starts it.
+- resource bounds: a process-wide cap on concurrently pooled Cores
+  (default TBD, propose 8) with the oldest-idle evicted first when the
+  cap is hit — prevents an approval mistake (or a compromised approver)
+  from turning the gateway into an unbounded fork bomb of Core instances.
+
+**What stays single-process**: this is still one `vak serve --gateway`
+process, one bearer token, one admin surface — it pools *Core* instances
+(the per-workspace session/tool/permission engine), not processes. A
+workspace that genuinely needs process-level isolation (a different user
+account, a different machine) is out of scope here — that's still "run
+another gateway process," unchanged from today.
+
+**Admin UI**: the Gateway page's workspace picker (Phase 1's approve
+flow) needs a live indicator of which workspaces currently have a pooled
+Core running (vs. cold, will start on next message) — reuses the existing
+`ops` status pattern already shown elsewhere in the admin console
+(`GATEWAY routing control`'s summary strip).
+
+**Security**: a pooled Core for workspace W still goes through the exact
+same trust/permission resolution as running `vak` locally in W — pooling
+does not grant a channel more access than a local session in that
+workspace would already have; the *approval* step (Phase 1) is what gates
+a channel getting there at all.
+
+## Phase 3: Discord/Slack bridges + per-surface admin UI
+
+The routing model is already surface-agnostic by construction
+(`key = "{surface}:{chat}"`, `InboundChannel` trait per docs/design/22's
+"Inbound channel identity" section) — Phase 3 is adding the actual bridge
+clients and their onboarding UI, following the Telegram bridge
+(`crates/vak-server/src/telegram.rs` server-side adapter,
+`vak telegram` CLI bridge process) as the template for both.
+
+**Discord bridge**: a `vak discord --server <url> --token <bot-token>`
+bridge process (new binary or `vak` subcommand, matching `vak telegram`'s
+shape), long-polling or gateway-websocket per Discord's bot API,
+implementing `InboundChannel` with `chat` = Discord channel id, `sender`
+= Discord user id. Delivery adapter registered in
+`crates/vak-server/src/delivery.rs` alongside the existing
+`TelegramAdapter`, for forwarded-approval inline components (Discord
+buttons are the equivalent of Telegram's inline keyboard).
+
+**Slack bridge**: a `vak slack` bridge using Slack's Events API +
+`chat.postMessage`, same `InboundChannel` shape, `chat` = Slack
+channel/DM id, `sender` = Slack user id. Slack's interactive Block Kit
+buttons play the same role as Telegram's inline keyboard for approvals.
+
+**Per-surface admin/desktop UI**: extends the Phase 1 Pending
+channels/Registered channels panels (which are already surface-agnostic
+in rendering, since they key everything off `surface:chat`) with:
+- a bot-token field per surface in Desktop Settings, mirroring the
+  existing Telegram token field exactly (same storage convention:
+  `.env` at the user data home, owner-only permissions, save restarts the
+  bridge).
+- a surface icon/label in the Admin UI channel list so a mixed
+  Telegram+Discord+Slack deployment reads clearly at a glance (the
+  `gateway` icon path already in App.tsx's icon map is generic; add
+  per-surface icons or at minimum a text badge).
+- no new *allowlist* concept — Phase 1's pending/approve/deny/revoke
+  lifecycle already applies uniformly to any surface's `key`, exactly as
+  designed; Phase 3 only adds the bridges that can actually deliver a
+  `surface:chat` key from Discord/Slack in the first place.
+
+## Non-goals (still, even after phases 2-3)
+
+- No cross-machine/cross-account process isolation (see Phase 2's "what
+  stays single-process").
+- No email, SMS, or other non-chat surfaces — deferred until a concrete
+  need names one; the `InboundChannel` trait doesn't preclude it, but
+  nothing here designs for it yet.
