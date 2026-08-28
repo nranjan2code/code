@@ -14,7 +14,7 @@
     --text:#232019; --text-soft:#4f4a3f; --muted:#7c7565; --faint:#9a9384;
     --accent:#c85a3c; --accent-bright:#b64d31; --accent-wash:rgba(200,90,60,.10);
     --green:#4f8a5f; --yellow:#b0842f; --red:#c1494c; --blue:#4d76ad;
-    --ground:#e9e5da; --ground2:#e2ddcf; --wall:#ffffff; --wallv:#efeade;
+    --ground:#e9e5da; --ground2:#e3ded0; --outside:#ded9cb; --wall:#ffffff; --wallv:#efeade;
     --shadow:0 1px 2px rgba(40,34,22,.05),0 10px 30px rgba(40,34,22,.08);
     --mono:'IBM Plex Mono','SF Mono',ui-monospace,Menlo,monospace;
     --sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
@@ -25,7 +25,7 @@
     --text:#eeeae2; --text-soft:#c4c0b8; --muted:#918e86; --faint:#68665f;
     --accent:#df795f; --accent-bright:#ee9278; --accent-wash:rgba(223,121,95,.14);
     --green:#73a982; --yellow:#d4a85d; --red:#d86f72; --blue:#7c9fc9;
-    --ground:#1f1f1c; --ground2:#232320; --wall:#2a2a26; --wallv:#22221f;
+    --ground:#1f1f1c; --ground2:#242421; --outside:#191916; --wall:#2a2a26; --wallv:#22221f;
     --shadow:0 1px 2px rgba(0,0,0,.3),0 16px 44px rgba(0,0,0,.4);
   }}
   :root[data-theme="dark"]{
@@ -34,19 +34,19 @@
     --text:#eeeae2; --text-soft:#c4c0b8; --muted:#918e86; --faint:#68665f;
     --accent:#df795f; --accent-bright:#ee9278; --accent-wash:rgba(223,121,95,.14);
     --green:#73a982; --yellow:#d4a85d; --red:#d86f72; --blue:#7c9fc9;
-    --ground:#1f1f1c; --ground2:#232320; --wall:#2a2a26; --wallv:#22221f;
+    --ground:#1f1f1c; --ground2:#242421; --outside:#191916; --wall:#2a2a26; --wallv:#22221f;
     --shadow:0 1px 2px rgba(0,0,0,.3),0 16px 44px rgba(0,0,0,.4);
   }
   *{box-sizing:border-box}
   html,body{margin:0}
   body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
-  .wrap{max-width:1320px;margin:0 auto;padding:0 18px}
+  .wrap{max-width:1400px;margin:0 auto;padding:0 18px}
 
   header.mast{border-bottom:1px solid var(--border);background:radial-gradient(120% 150% at 90% -30%,var(--accent-wash),transparent 60%),var(--surface)}
   .mast-in{padding:22px 0 18px;display:flex;align-items:flex-end;gap:20px;flex-wrap:wrap}
   .eyebrow{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);margin:0 0 8px}
   h1{font-weight:600;font-size:clamp(23px,3.2vw,31px);line-height:1.05;letter-spacing:-.025em;margin:0 0 6px}
-  .sub{font-size:14px;color:var(--text-soft);max-width:70ch;margin:0}
+  .sub{font-size:14px;color:var(--text-soft);max-width:74ch;margin:0}
   .sub b{color:var(--text);font-weight:600}
   .clockbox{margin-left:auto;text-align:right}
   .clockbox .t{font-family:var(--mono);font-weight:600;font-size:32px;letter-spacing:-.02em;line-height:1;font-variant-numeric:tabular-nums}
@@ -66,8 +66,8 @@
   .ev.warn .d{background:var(--yellow)}.ev.alert .d{background:var(--red)}
   .ev .l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-  .layout{display:grid;grid-template-columns:1fr 320px;gap:14px;margin:14px 0 8px}
-  @media (max-width:1020px){.layout{grid-template-columns:1fr}}
+  .layout{display:grid;grid-template-columns:1fr 326px;gap:14px;margin:14px 0 8px}
+  @media (max-width:1080px){.layout{grid-template-columns:1fr}}
   .worldbox{border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:var(--shadow);overflow:hidden;position:relative}
   canvas{width:100%;display:block;cursor:crosshair}
 
@@ -81,7 +81,7 @@
   .tally .v{font-family:var(--mono);font-weight:600;font-size:19px;font-variant-numeric:tabular-nums;line-height:1.15}
   .v.g{color:var(--green)}.v.r{color:var(--red)}.v.y{color:var(--yellow)}.v.a{color:var(--accent)}
 
-  #tracelog{max-height:330px;overflow-y:auto;padding:4px 0}
+  #tracelog{max-height:340px;overflow-y:auto;padding:4px 0}
   .tl{display:grid;grid-template-columns:20px 1fr;gap:9px;padding:7px 13px;border-bottom:1px solid var(--border-soft);font-size:12px}
   .tl:last-child{border-bottom:none}
   .tl .n{font-family:var(--mono);font-size:10px;color:var(--faint);padding-top:2px}
@@ -91,7 +91,7 @@
   .tl.ok .h{color:var(--green)}.tl.no .h{color:var(--red)}.tl.wt .h{color:var(--yellow)}.tl.bd .h{color:var(--accent)}
   .empty{padding:16px 13px;color:var(--faint);font-size:12.5px;line-height:1.5}
 
-  .legend{display:flex;flex-wrap:wrap;gap:6px 13px;padding:10px 13px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .legend{display:flex;flex-wrap:wrap;gap:6px 13px;padding:10px 13px;font-family:var(--mono);font-size:11px;color:var(--muted);border-top:1px solid var(--border-soft)}
   .legend span{display:inline-flex;align-items:center;gap:6px}
   .legend i{width:9px;height:9px;border-radius:3px;flex:none}
 
@@ -107,7 +107,7 @@
   <div>
     <p class="eyebrow">Playable Internals · v0.11.7</p>
     <h1>The vak Works</h1>
-    <p class="sub">Every component is a <b>building</b>; every message is a <b>courier</b> who walks the route. Cores get <b>built</b> and <b>demolished</b>; the ledger only ever <b>grows</b> — because it is append-only. Runs on the same 24-hour clock and the same incidents as the ops simulation. Hit <b>Trace a message</b> to follow one courier's whole life.</p>
+    <p class="sub">Every component is a <b>building</b>; every message is a <b>courier</b> who walks the route. Channels live <b>outside the perimeter</b> and reach you only through a bridge and the gatehouse. Cores get <b>built</b> and <b>demolished</b>; the ledger only ever <b>grows</b> — because it is append-only. Same 24-hour clock and incidents as the ops simulation. Hit <b>Trace a message</b> to follow one courier's entire life.</p>
   </div>
   <div class="clockbox"><div class="t" id="clock">00:00</div><div class="p" id="phase">night · quiet</div></div>
 </div></header>
@@ -126,7 +126,7 @@
   </div>
 
   <div class="layout">
-    <div class="worldbox"><canvas id="world" height="640"></canvas></div>
+    <div class="worldbox"><canvas id="world" height="700"></canvas></div>
 
     <div class="side">
       <div class="panel">
@@ -150,7 +150,7 @@
 
       <div class="panel">
         <h3>Life of a message <span class="pill" id="tracetag">idle</span></h3>
-        <div id="tracelog"><div class="empty">Press <b>Trace a message</b> — the next courier through the gate gets a spotlight, and every step of their life is logged here with the real mechanism behind it.</div></div>
+        <div id="tracelog"><div class="empty">Press <b>Trace a message</b> — the next courier arriving from a channel gets a spotlight, and every step of their life is logged here with the real mechanism behind it. You can also click any courier to pick them up mid-route.</div></div>
       </div>
     </div>
   </div>
@@ -158,14 +158,13 @@
 
 <footer><div class="wrap">
   <span><b>vak 0.11.7</b></span>
-  <span>· Buildings and couriers map 1:1 to <code>gateway.rs</code>, <code>rate_limit.rs</code>, <code>core_pool.rs</code>, <code>vak-permission</code>, <code>vak-tools</code> sandbox, and the <code>vak-session</code> ledger</span>
+  <span>· Buildings map 1:1 to <code>slack/discord/telegram</code> bridges, <code>gateway.rs</code> (allowlist + bindings.json), <code>rate_limit.rs</code>, <code>core_pool.rs</code>, <code>vak-permission</code>, <code>vak-tools</code> sandbox, <code>vak-session</code> ledger and the <code>vak-delivery</code> outbox</span>
   <span>· Illustrative simulation, not measured telemetry</span>
 </div></footer>
 
 <script>
 (function(){
 "use strict";
-var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* ============================ shared day model ============================ */
 var DAY=1440;
@@ -197,9 +196,9 @@ function phaseOf(m){var h=m/60;
 
 /* ============================== canvas setup ============================== */
 var cvs=document.getElementById('world'), ctx=cvs.getContext('2d');
-var VW=1180, VH=640, scale=1, dpr=Math.max(1,window.devicePixelRatio||1);
+var VW=1300, VH=700, scale=1, dpr=Math.max(1,window.devicePixelRatio||1);
 function sizeCanvas(){
-  var cw=cvs.clientWidth||900;
+  var cw=cvs.clientWidth||1000;
   scale=cw/VW;
   cvs.width=Math.round(cw*dpr);
   cvs.height=Math.round(VH*scale*dpr);
@@ -208,7 +207,6 @@ function sizeCanvas(){
 }
 function cv(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
 var MONO="'IBM Plex Mono',ui-monospace,Menlo,monospace";
-var SANS="'IBM Plex Sans',-apple-system,sans-serif";
 
 function rr(x,y,w,h,r){
   r=Math.min(r,w/2,h/2);
@@ -216,30 +214,44 @@ function rr(x,y,w,h,r){
   ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
   ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
 }
-function txt(s,x,y,size,color,weight,align,font){
+function txt(s,x,y,size,color,weight,align){
   ctx.fillStyle=color; ctx.textAlign=align||'left'; ctx.textBaseline='alphabetic';
-  ctx.font=(weight||500)+' '+size+'px '+(font||MONO); ctx.fillText(s,x,y);
+  ctx.font=(weight||500)+' '+size+'px '+MONO; ctx.fillText(s,x,y);
 }
 
-/* ================================= world ================================= */
-// huts (ingress). gateway surfaces walk the long route; cli/desktop are local.
-var HUTS=[
-  {id:'slack',   label:'Slack',    sub:'bridge',   col:'--blue',   x:74, y:96,  gw:true,  share:.30},
-  {id:'discord', label:'Discord',  sub:'bridge',   col:'--accent', x:74, y:200, gw:true,  share:.14},
-  {id:'telegram',label:'Telegram', sub:'bridge',   col:'--green',  x:74, y:304, gw:true,  share:.10},
-  {id:'desktop', label:'Desktop',  sub:'loopback', col:'--yellow', x:74, y:424, gw:false, share:.16},
-  {id:'cli',     label:'CLI',      sub:'in-proc',  col:'--muted',  x:74, y:528, gw:false, share:.12}
+/* ================================= world map ============================== */
+/* zone 1: external channel platforms (outside the perimeter)                */
+var CHAN=[
+  {id:'slack',    label:'Slack',    col:'--blue',   x:16, y:96,  w:88,h:60},
+  {id:'discord',  label:'Discord',  col:'--accent', x:16, y:214, w:88,h:60},
+  {id:'telegram', label:'Telegram', col:'--green',  x:16, y:332, w:88,h:60}
 ];
-var GATE   ={x:286,y:186,w:118,h:96};   // gatehouse: allowlist + binding
-var TURN   ={x:286,y:344,w:118,h:86};   // rate limiter turnstile
-var BAYX=520, BAYY0=64, BAYW=150, BAYH=92, BAYGAP=14;
-var PERM   ={x:760,y:70, w:132,h:104};  // permission tower
-var SBOX   ={x:760,y:236,w:132,h:120};  // sandbox yard
-var MAST   ={x:986,y:70, w:126,h:150};  // provider mast
-var LEDGER ={x:986,y:300,w:126,h:290};  // append-only archive
+var PERIM=126;                                   /* the trust boundary       */
+/* zone 2: bridge processes (hold bot token + gateway token; host no Core)   */
+var BRIDGE=[
+  {id:'slack',    label:'slack bridge',    col:'--blue',   x:146,y:88, w:120,h:74},
+  {id:'discord',  label:'discord bridge',  col:'--accent', x:146,y:206,w:120,h:74},
+  {id:'telegram', label:'telegram bridge', col:'--green',  x:146,y:324,w:120,h:74}
+];
+/* local surfaces: no bridge, no gate, no rate limit                          */
+var LOCAL=[
+  {id:'desktop', label:'Desktop', sub:'loopback + token', col:'--yellow', x:146,y:448,w:120,h:66},
+  {id:'cli',     label:'CLI',     sub:'in-process Core',  col:'--muted',  x:146,y:544,w:120,h:66}
+];
+var GATE  ={x:312,y:150,w:132,h:104};   /* gatehouse: allowlist            */
+var BOARD ={x:312,y:286,w:132,h:128};   /* bindings.json board             */
+var TURN  ={x:490,y:186,w:112,h:96};    /* rate limiter turnstile          */
+var BAYX=650, BAYY0=52, BAYW=152, BAYH=88, BAYGAP=12;
+var PERM  ={x:848,y:64, w:134,h:104};   /* permission gate                 */
+var SBOX  ={x:848,y:214,w:134,h:120};   /* sandbox yard                    */
+var OUTBOX={x:848,y:392,w:134,h:96};    /* vak-delivery outbox             */
+var MAST  ={x:1032,y:64,w:126,h:156};   /* providers                       */
+var LEDGER={x:1032,y:262,w:126,h:330};  /* append-only archive             */
 
 var WS_NAMES=['default','api-svc','web-app','infra','billing','docs','mobile','data'];
-var bays=[]; // 5 slots
+var CHATS=['C042','C118','D7','#ops','#eng','@dm'];
+
+var bays=[], bindings=[];
 function resetBays(){
   bays=[];
   for(var i=0;i<5;i++){
@@ -248,30 +260,25 @@ function resetBays(){
       state:(i===0?'warm':'empty'), grow:(i===0?1:0), idle:0, busy:0, flash:0});
   }
 }
-
-/* stats */
-var stats, particles, couriers, ledgerBlocks, ledgerPop;
+var stats, particles, couriers, ledgerBlocks;
 function resetWorld(){
-  resetBays();
+  resetBays(); bindings=[];
   stats={ledger:0,built:1,evict:0,turn:0,allow:0,deny:0};
-  particles=[]; couriers=[]; ledgerBlocks=0; ledgerPop=0;
-  traceId=null; traceSteps=[]; renderTrace();
+  particles=[]; couriers=[]; ledgerBlocks=0;
+  traceSteps=[]; renderTrace();
 }
 
 /* ============================== particles =============================== */
 function puff(x,y,color,n,spread){
-  for(var i=0;i<(n||8);i++){
+  for(var i=0;i<(n||8);i++)
     particles.push({x:x,y:y,vx:(Math.random()-.5)*(spread||42),vy:(Math.random()-.5)*(spread||42)-18,
       life:1,r:2+Math.random()*3,c:color});
-  }
 }
-function floatText(x,y,s,color){
-  particles.push({x:x,y:y,text:s,c:color,life:1,vy:-26,vx:0});
-}
+function floatText(x,y,s,color){ particles.push({x:x,y:y,text:s,c:color,life:1,vy:-26,vx:0}); }
 function updateParticles(dt){
   for(var i=particles.length-1;i>=0;i--){
     var p=particles[i];
-    p.x+=p.vx*dt; p.y+=p.vy*dt; if(!p.text){p.vy+=42*dt;}
+    p.x+=p.vx*dt; p.y+=p.vy*dt; if(!p.text) p.vy+=42*dt;
     p.life-=dt*(p.text?0.8:1.5);
     if(p.life<=0) particles.splice(i,1);
   }
@@ -279,94 +286,127 @@ function updateParticles(dt){
 function drawParticles(){
   for(var i=0;i<particles.length;i++){
     var p=particles[i]; ctx.globalAlpha=Math.max(0,p.life);
-    if(p.text){ txt(p.text,p.x,p.y,10.5,cv(p.c),600,'center'); }
+    if(p.text) txt(p.text,p.x,p.y,10.5,cv(p.c),600,'center');
     else { ctx.fillStyle=cv(p.c); ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,7); ctx.fill(); }
     ctx.globalAlpha=1;
   }
 }
 
 /* ============================== couriers ================================ */
-var cid=0, traceId=null, traceSteps=[], traceArmed=false;
-
+var cid=0, traceSteps=[], traceArmed=false;
 function pickWorkspace(fan){
+  /* more distinct workspaces than there are slots, so the pool genuinely churns */
   if(fan) return WS_NAMES[1+Math.floor(Math.random()*(WS_NAMES.length-1))];
-  var r=Math.random();
-  if(r<0.55) return 'default';
-  return WS_NAMES[1+Math.floor(Math.random()*4)];
+  return Math.random()<0.42 ? 'default' : WS_NAMES[1+Math.floor(Math.random()*6)];
 }
+function findB(id,arr){ for(var i=0;i<arr.length;i++) if(arr[i].id===id) return arr[i]; return arr[0]; }
 
 function spawn(minute){
   var ev=evAt(minute);
-  // pick surface by share
-  var r=Math.random(), acc=0, hut=HUTS[0];
-  for(var i=0;i<HUTS.length;i++){ acc+=HUTS[i].share; if(r<=acc){hut=HUTS[i];break;} }
+  var pool=[['slack',.28],['discord',.13],['telegram',.10],['desktop',.17],['cli',.12]];
+  var r=Math.random()*0.80, acc=0, pick='slack';
+  for(var i=0;i<pool.length;i++){ acc+=pool[i][1]; if(r<=acc){ pick=pool[i][0]; break; } }
+  var gw=(pick==='slack'||pick==='discord'||pick==='telegram');
+  var home = gw ? findB(pick,CHAN) : findB(pick,LOCAL);
   var c={
-    id:++cid, hut:hut, col:hut.col, gw:hut.gw,
-    ws: hut.gw? pickWorkspace(ev&&ev.fan) : (hut.id==='cli'?'default':pickWorkspace(false)),
-    unattended: !!(ev&&ev.deny) && hut.gw,
-    x:hut.x+26, y:hut.y+30, route:[], ri:0, dwell:0, si:0, steps:[],
-    bay:null, carry:null, dead:false, alpha:1, bob:Math.random()*6, spd:112+Math.random()*26,
-    traced:false, tint:null
+    id:++cid, surface:pick, gw:gw, home:home,
+    col: gw? findB(pick,CHAN).col : findB(pick,LOCAL).col,
+    chat: CHATS[Math.floor(Math.random()*CHATS.length)],
+    ws: gw ? pickWorkspace(ev&&ev.fan) : (pick==='cli'?'default':pickWorkspace(false)),
+    unattended: !!(ev&&ev.deny) && gw,
+    x:home.x+home.w/2, y:home.y+home.h/2,
+    route:[], ri:0, dwell:0, si:-1, steps:[], bay:null, carry:null,
+    dead:false, alpha:1, bob:Math.random()*6, spd:118+Math.random()*26,
+    traced:false, tint:null, dwellExtra:0
   };
-  c.steps = c.gw ? gatewaySteps(c) : localSteps(c);
-  if(traceArmed && c.gw){ traceArmed=false; traceId=c.id; c.traced=true; traceSteps=[];
-    document.getElementById('tracetag').textContent='#'+c.id+' · '+hut.label; }
+  c.steps = gw ? gatewaySteps(c) : localSteps(c);
+  if(traceArmed && gw){
+    traceArmed=false; c.traced=true; traceSteps=[];
+    document.getElementById('tracetag').textContent='#'+c.id+' · '+pick;
+    log(c,'bd','A person posts in '+c.chat,'On '+pick+' — outside the perimeter. vak has not seen anything yet.');
+  }
   couriers.push(c);
   goToStep(c);
   return c;
 }
-
 function log(c,kind,head,sub){
   if(!c.traced) return;
-  traceSteps.push({kind:kind,head:head,sub:sub,t:clockStr()});
+  traceSteps.push({kind:kind,head:head,sub:sub});
   renderTrace();
 }
-
-/* --- step builders. each step: {at:{x,y}, dwell, act(c) } --- */
 function P(o,dx,dy){ return {x:o.x+(dx===undefined?o.w/2:dx), y:o.y+(dy===undefined?o.h/2:dy)}; }
 
+/* ---------- gateway / channel route (the long, interesting one) ---------- */
 function gatewaySteps(c){
-  var s=[];
-  s.push({at:P(GATE), dwell:.45, act:function(cc){
-    log(cc,'bd','POST /gateway/inbound','Bridge forwards {surface, chat, sender, text} with the gateway token.');
-    // allowlist
-    if(Math.random()<0.04){
-      log(cc,'no','Allowlist rejected','gateway.chat_allowlist has no entry for this surface:chat — turned away.');
-      stats.turn++; floatText(cc.x,cc.y-16,'NOT ALLOWED',' --red'.trim()); puff(cc.x,cc.y,'--red',8);
+  var br=findB(c.surface,BRIDGE), s=[];
+
+  s.push({at:P(br), dwell:.45, act:function(cc){
+    log(cc,'bd','Bridge picks it up — separate process',
+      'vak '+cc.surface+' polls the platform with its bot token. The bridge hosts no Core; it only translates.');
+    cc.carry='token';
+    floatText(cc.x,cc.y-18,'gateway token','--muted');
+  }});
+
+  s.push({at:P(GATE), dwell:.5, act:function(cc){
+    log(cc,'bd','Crosses the perimeter → POST /gateway/inbound',
+      'Validated {surface, chat, sender, text}. Real remote identity matters: the allowlist and binding depend on it.');
+    if(Math.random()<0.05){
+      log(cc,'no','Allowlist rejected','gateway.chat_allowlist has no entry for '+cc.surface+':'+cc.chat+' — it never reaches a workspace.');
+      stats.turn++; floatText(cc.x,cc.y-18,'NOT ALLOWED','--red'); puff(cc.x,cc.y,'--red',9);
       bounce(cc); return;
     }
-    log(cc,'ok','Allowlist ✓ · binding resolved','(surface:chat) → session_id, persisted in gateway/bindings.json.');
-    cc.carry='badge';
-    floatText(cc.x,cc.y-16,'bound','--green');
+    log(cc,'ok','Allowlist ✓ admitted','This surface:chat is approved to reach a workspace.');
   }});
+
+  s.push({at:P(BOARD), dwell:.45, act:function(cc){
+    var key=cc.surface+':'+cc.chat, found=null;
+    for(var i=0;i<bindings.length;i++) if(bindings[i].key===key) found=bindings[i];
+    if(found){
+      found.hits++; found.flash=1; cc.session=found.session;
+      log(cc,'ok','Binding found → '+found.session,'(surface:chat) → session_id already in gateway/bindings.json — the conversation continues.');
+    } else {
+      var sid='s_'+(1000+Math.floor(Math.random()*8999));
+      var b={key:key,session:sid,ws:cc.ws,hits:1,flash:1};
+      bindings.push(b); if(bindings.length>5) bindings.shift();
+      cc.session=sid;
+      log(cc,'bd','New binding written → '+sid,'Persisted to gateway/bindings.json so the conversation survives a restart.');
+      floatText(cc.x,cc.y-20,'bound','--green');
+    }
+    cc.carry='badge';
+  }});
+
   s.push({at:P(TURN), dwell:.35, act:function(cc){
     var ev=evAt(Math.floor(simMin));
-    var pressure=(ev&&ev.burst)?0.42:(demandNow>28?0.12:0.015);
+    var pressure=(ev&&ev.burst)?0.40:(demandNow>28?0.10:0.015);
     if(Math.random()<pressure){
-      log(cc,'no','429 Too Many Requests','Per-IP window exceeded (inbound 30/min). Retry-after returned.');
-      stats.turn++; floatText(cc.x,cc.y-16,'429','--red'); puff(cc.x,cc.y,'--red',9);
+      log(cc,'no','429 Too Many Requests','Per-IP window exceeded (inbound 30/min). Retry-After returned to the bridge.');
+      stats.turn++; floatText(cc.x,cc.y-18,'429','--red'); puff(cc.x,cc.y,'--red',9);
       bounce(cc); return;
     }
-    log(cc,'ok','Rate limiter ✓ admitted','Under the per-IP budget for this window.');
+    log(cc,'ok','Rate limiter ✓ admitted','Inside the per-IP budget for this window.');
   }});
-  pushCoreAndBeyond(s,c);
+
+  coreAndBeyond(s,c,true);
   return s;
 }
+/* ---------------- local surfaces: a deliberately shorter path ------------- */
 function localSteps(c){
   var s=[];
-  s.push({at:{x:GATE.x+GATE.w/2, y:TURN.y+TURN.h+46}, dwell:.28, act:function(cc){
-    if(cc.hut.id==='desktop') log(cc,'ok','Loopback + bearer token','Desktop embeds vak-server on 127.0.0.1:0 — no gate, no rate limit.');
-    else log(cc,'ok','In-process Core','CLI builds its own Core directly — no server, no network at all.');
+  s.push({at:{x:GATE.x+GATE.w/2, y:BOARD.y+BOARD.h+64}, dwell:.3, act:function(cc){
+    if(cc.surface==='desktop')
+      log(cc,'ok','Loopback + bearer token','Desktop embeds vak-server on 127.0.0.1:0. No bridge, no gatehouse, no rate limit.');
+    else
+      log(cc,'ok','In-process Core','The CLI builds its own Core directly — no server and no network at all.');
   }});
-  pushCoreAndBeyond(s,c);
+  coreAndBeyond(s,c,false);
   return s;
 }
-function pushCoreAndBeyond(s,c){
-  // core bay
-  s.push({at:{x:BAYX-46,y:VH/2}, dwell:.2, act:function(cc){
+/* ------------------- shared tail: core → tools → provider ---------------- */
+function coreAndBeyond(s,c,viaOutbox){
+  s.push({at:{x:BAYX-52,y:VH/2}, dwell:.2, act:function(cc){
     var bay=acquireBay(cc.ws,cc);
     if(!bay){
-      log(cc,'wt','Pool at capacity — waiting','All slots busy; this run queues until a Core frees up.');
+      log(cc,'wt','Pool at capacity — queued','Every slot is busy; this run waits for a Core rather than starting a sixth.');
       floatText(cc.x,cc.y-16,'queued','--yellow'); bounce(cc); return;
     }
     cc.bay=bay; bay.busy++;
@@ -374,86 +414,87 @@ function pushCoreAndBeyond(s,c){
   }});
   s.push({at:{x:BAYX+BAYW/2,y:VH/2}, dwell:.5, act:function(cc){
     log(cc,'bd','Core::new_with_trust — workspace "'+cc.ws+'"',
-      'CorePool key is (workspace, override). Trust, permission mode and sandbox resolve exactly as a local run.');
+      'CorePool key is (workspace, override). Trust, permission mode and sandbox resolve exactly as a local run would.');
     appendLedger(cc,'UserMessage');
   }});
-  // permission
   s.push({at:P(PERM), dwell:.5, act:function(cc){
     if(cc.unattended){
-      log(cc,'wt','Unattended → auto-deny','Gateway turns fail closed: the approval gate is auto-denied and fed back as a tool error.');
+      log(cc,'wt','Unattended → AUTO-DENY','Gateway turns fail closed: the approval gate is auto-denied and fed back to the model as a tool error.');
       stats.deny++; floatText(cc.x,cc.y-18,'AUTO-DENY','--yellow'); puff(cc.x,cc.y,'--yellow',7);
       appendLedger(cc,'ApprovalDenied');
-    } else if(Math.random()<0.14){
-      log(cc,'no','Permission DENIED','Rule matched a gated effect outside workspace-write. Denial is logged and returned to the model.');
+    } else if(Math.random()<0.13){
+      log(cc,'no','Permission DENIED','A rule matched a gated effect outside workspace-write. The denial is logged and returned.');
       stats.deny++; floatText(cc.x,cc.y-18,'DENY','--red'); puff(cc.x,cc.y,'--red',7);
       appendLedger(cc,'ToolDenied');
     } else {
-      log(cc,'ok','Permission ALLOW','Effect cleared the policy gate before dispatch (workspace-write).');
+      log(cc,'ok','Permission ALLOW','The effect cleared the policy gate before dispatch (workspace-write).');
       stats.allow++; floatText(cc.x,cc.y-18,'ALLOW','--green');
       appendLedger(cc,'ToolCall');
     }
   }});
-  // sandbox
-  s.push({at:P(SBOX), dwell:.55, act:function(cc){
-    log(cc,'ok','Sandbox — brokered execution','Landlock/Seatbelt scope writes to the workspace; escapes fail closed.');
+  s.push({at:P(SBOX), dwell:.5, act:function(cc){
+    log(cc,'ok','Sandbox — brokered execution','Landlock/Seatbelt scope writes to the workspace; traversal escapes fail closed.');
     appendLedger(cc,'ToolResult');
   }});
-  // provider mast
-  s.push({at:P(MAST,MAST.w/2,MAST.h-26), dwell:.6, act:function(cc){
+  s.push({at:P(MAST,MAST.w/2,MAST.h-30), dwell:.55, act:function(cc){
     if(circuit===2){
-      log(cc,'no','Circuit OPEN — fail fast','Breaker is open on fresh evidence of a dead route; the call is refused immediately, not queued.');
+      log(cc,'no','Circuit OPEN — fail fast','The breaker refuses immediately on fresh evidence of a dead route, instead of queueing behind a timeout.');
       floatText(cc.x,cc.y-18,'FAIL FAST','--red'); puff(cc.x,cc.y,'--red',9);
       appendLedger(cc,'RunFailed'); leaveBay(cc); bounce(cc); return;
     }
     if(faultNow && Math.random()<0.6){
-      log(cc,'wt','429 from provider → RetryScheduled','Backoff with jitter, capped at 30s; server Retry-After wins. Turn budget is not consumed.');
+      log(cc,'wt','Provider 429 → RetryScheduled','Backoff with jitter capped at 30s; a server Retry-After wins. Turn budget is not consumed by infrastructure pain.');
       floatText(cc.x,cc.y-18,'retry','--yellow'); cc.dwellExtra=0.7;
       appendLedger(cc,'RetryScheduled');
     }
     log(cc,'ok','Provider dispatch + receipt','Usage, cost and outcome recorded as a receipt in the ledger.');
     appendLedger(cc,'Receipt');
   }});
-  // ledger + home
-  s.push({at:P(LEDGER,LEDGER.w/2,30), dwell:.45, act:function(cc){
+  s.push({at:P(LEDGER,LEDGER.w/2,34), dwell:.4, act:function(cc){
     appendLedger(cc,'RunFinished');
-    log(cc,'bd','RunFinished — ledger sealed','The whole turn is reconstructable from the append-only JSONL. Nothing was rewritten.');
-    leaveBay(cc);
-    cc.carry='reply';
+    log(cc,'bd','RunFinished — the turn is sealed','Reconstructable from the append-only JSONL. Nothing was ever rewritten.');
+    leaveBay(cc); cc.carry='reply';
   }});
-  s.push({at:{x:c.hut.x+26,y:c.hut.y+30}, dwell:.1, act:function(cc){
-    log(cc,'ok','Reply delivered','Returned through the bridge outbox to the original conversation.');
+  if(viaOutbox){
+    s.push({at:P(OUTBOX), dwell:.4, act:function(cc){
+      log(cc,'bd','Handed to the delivery outbox','vak-delivery durably queues the reply so a flaky channel cannot lose it.');
+      floatText(cc.x,cc.y-18,'queued reply','--accent');
+    }});
+    s.push({at:P(findB(c.surface,BRIDGE)), dwell:.25, act:function(cc){
+      log(cc,'ok','Bridge posts it back','Translated to the platform API and sent to '+cc.chat+'.');
+    }});
+  }
+  s.push({at:{x:c.home.x+c.home.w/2,y:c.home.y+c.home.h/2}, dwell:.1, act:function(cc){
+    log(cc,'ok','Reply lands in '+cc.chat,'The person sees an answer. The whole life of this message is on disk, in order.');
     cc.dead=true;
   }});
 }
 
 function bounce(c){
   c.tint='--red';
-  c.steps=[{at:{x:c.hut.x+26,y:c.hut.y+30},dwell:.05,act:function(cc){cc.dead=true;}}];
+  c.steps=[{at:{x:c.home.x+c.home.w/2,y:c.home.y+c.home.h/2},dwell:.05,act:function(cc){cc.dead=true;}}];
   c.si=-1; goToStep(c);
 }
-
 function acquireBay(ws,c){
   var i,b;
-  for(i=0;i<bays.length;i++){ if(bays[i].state==='warm'&&bays[i].ws===ws){ bays[i].idle=0; return bays[i]; } }
-  for(i=0;i<bays.length;i++){ if(bays[i].state==='empty'){ return buildBay(bays[i],ws,c); } }
-  // evict oldest idle non-pinned
+  for(i=0;i<bays.length;i++) if(bays[i].state==='warm'&&bays[i].ws===ws){ bays[i].idle=0; return bays[i]; }
+  for(i=0;i<bays.length;i++) if(bays[i].state==='empty') return buildBay(bays[i],ws,c);
   var best=null;
   for(i=0;i<bays.length;i++){ b=bays[i];
     if(b.pinned||b.busy>0) continue;
     if(!best||b.idle>best.idle) best=b;
   }
   if(best){
-    log(c,'wt','Pool full → evicting "'+best.ws+'"','Oldest idle Core is demolished to make room. The pinned default is never evicted.');
+    log(c,'wt','Pool full → evicting "'+best.ws+'"','The oldest idle Core is demolished to make room. The pinned default is never evicted.');
     demolishBay(best); return buildBay(best,ws,c);
   }
   return null;
 }
 function buildBay(b,ws,c){
-  b.ws=ws; b.state='warm'; b.grow=0; b.idle=0; b.flash=1;
-  stats.built++;
+  b.ws=ws; b.state='warm'; b.grow=0; b.idle=0; b.flash=1; stats.built++;
   puff(b.x+b.w/2,b.y+b.h/2,'--green',10,30);
   floatText(b.x+b.w/2,b.y-6,'BUILT '+ws,'--green');
-  if(c) log(c,'bd','Core BUILT — slot '+(b.i)+' ("'+ws+'")','Lazily started on first use; resolved through Core::new_with_trust.');
+  if(c) log(c,'bd','Core BUILT — slot '+b.i+' ("'+ws+'")','Lazily started on first use, through Core::new_with_trust.');
   return b;
 }
 function demolishBay(b){
@@ -464,106 +505,130 @@ function demolishBay(b){
 }
 function leaveBay(c){ if(c.bay){ c.bay.busy=Math.max(0,c.bay.busy-1); c.bay=null; } }
 function appendLedger(c,kind){
-  ledgerBlocks++; stats.ledger++; ledgerPop=1;
-  particles.push({x:LEDGER.x+LEDGER.w/2+(Math.random()-.5)*20,y:LEDGER.y+34,vx:0,vy:-14,life:.8,r:2.4,c:'--green'});
+  ledgerBlocks++; stats.ledger++;
+  particles.push({x:LEDGER.x+LEDGER.w/2+(Math.random()-.5)*20,y:LEDGER.y+40,vx:0,vy:-14,life:.8,r:2.4,c:'--green'});
   if(c&&c.traced) log(c,'ok','ledger ← '+kind,'Append-only JSONL: the record grows, it is never rewritten.');
 }
-
-/* routing: L-shaped corridor walk so couriers appear to walk "around" */
 function goToStep(c){
   c.si++;
   if(c.si>=c.steps.length){ c.dead=true; return; }
-  var t=c.steps[c.si].at;
-  var midx=(c.x+t.x)/2;
+  var t=c.steps[c.si].at, midx=(c.x+t.x)/2;
   c.route=[{x:midx,y:c.y},{x:midx,y:t.y},{x:t.x,y:t.y}];
   c.ri=0; c.dwell=0;
 }
 function updateCourier(c,dt){
   if(c.dead){ c.alpha-=dt*2.6; return; }
-  if(c.dwell>0){ c.dwell-=dt; if(c.dwell<=0){ goToStep(c);} return; }
+  if(c.dwell>0){ c.dwell-=dt; if(c.dwell<=0) goToStep(c); return; }
   if(c.ri<c.route.length){
-    var t=c.route[c.ri], dx=t.x-c.x, dy=t.y-c.y, d=Math.hypot(dx,dy);
-    var step=c.spd*dt*speedMul;
-    if(d<=step){ c.x=t.x; c.y=t.y; c.ri++; }
-    else { c.x+=dx/d*step; c.y+=dy/d*step; }
+    var t=c.route[c.ri], dx=t.x-c.x, dy=t.y-c.y, d=Math.hypot(dx,dy), step=c.spd*dt*speedMul;
+    if(d<=step){ c.x=t.x; c.y=t.y; c.ri++; } else { c.x+=dx/d*step; c.y+=dy/d*step; }
     c.bob+=dt*13*speedMul;
   } else {
     var st=c.steps[c.si];
-    if(st && !st.done){ st.done=true; st.act(c); }
+    if(st&&!st.done){ st.done=true; st.act(c); }
     if(c.dead) return;
     c.dwell=(st?st.dwell:.2)+(c.dwellExtra||0); c.dwellExtra=0;
     if(c.dwell<=0) goToStep(c);
   }
 }
 
-/* ============================== drawing ================================ */
+/* ================================ drawing ================================ */
 function building(x,y,w,h,label,sub,accent,opts){
   opts=opts||{};
   ctx.save();
   ctx.shadowColor='rgba(0,0,0,.16)'; ctx.shadowBlur=10; ctx.shadowOffsetY=3;
   rr(x,y,w,h,10); ctx.fillStyle=cv(opts.fill||'--wall'); ctx.fill();
   ctx.restore();
-  rr(x,y,w,h,10); ctx.strokeStyle=cv(opts.stroke||accent||'--border'); ctx.lineWidth=opts.lw||1.3; ctx.stroke();
-  // roof band
-  rr(x,y,w,20,10); ctx.fillStyle=cv(accent||'--border'); ctx.globalAlpha=opts.band===false?0:.16; ctx.fill(); ctx.globalAlpha=1;
-  txt(label,x+10,y+14,10.5,cv(accent||'--text'),600,'left');
-  if(sub) txt(sub,x+10,y+32,9.5,cv('--faint'),400,'left');
-  return {x:x,y:y,w:w,h:h};
+  rr(x,y,w,h,10); ctx.strokeStyle=cv(opts.stroke||accent||'--border');
+  ctx.lineWidth=opts.lw||1.3; if(opts.dash){ctx.setLineDash([5,4]);} ctx.stroke(); ctx.setLineDash([]);
+  rr(x,y,w,20,10); ctx.fillStyle=cv(accent||'--border'); ctx.globalAlpha=.16; ctx.fill(); ctx.globalAlpha=1;
+  txt(label,x+10,y+14,10.5,cv(accent||'--text'),600);
+  if(sub) txt(sub,x+10,y+32,9,cv('--faint'),400);
 }
-function drawHuts(){
-  for(var i=0;i<HUTS.length;i++){
-    var hh=HUTS[i];
-    building(hh.x,hh.y,132,66,hh.label,hh.sub,hh.col);
-    // little door
-    ctx.fillStyle=cv(hh.col); ctx.globalAlpha=.5;
-    rr(hh.x+108,hh.y+38,16,20,4); ctx.fill(); ctx.globalAlpha=1;
+function drawGround(){
+  ctx.fillStyle=cv('--ground'); ctx.fillRect(0,0,VW,VH);
+  ctx.fillStyle=cv('--outside'); ctx.fillRect(0,0,PERIM,VH);
+  // perimeter fence
+  ctx.strokeStyle=cv('--accent'); ctx.globalAlpha=.55; ctx.lineWidth=1.6; ctx.setLineDash([7,6]);
+  ctx.beginPath(); ctx.moveTo(PERIM,10); ctx.lineTo(PERIM,VH-10); ctx.stroke();
+  ctx.setLineDash([]); ctx.globalAlpha=1;
+  ctx.save(); ctx.translate(PERIM-9,VH/2); ctx.rotate(-Math.PI/2);
+  txt('TRUST PERIMETER  ·  your host starts here',0,0,9.5,cv('--accent'),600,'center'); ctx.restore();
+  // corridor
+  ctx.strokeStyle=cv('--ground2'); ctx.lineWidth=28;
+  ctx.beginPath(); ctx.moveTo(300,VH/2); ctx.lineTo(1120,VH/2); ctx.stroke();
+  txt('EXTERNAL',16,72,9.5,cv('--faint'),600);
+  txt('BRIDGES  ·  separate processes',146,72,9.5,cv('--faint'),600);
+  txt('ADMISSION',312,132,9.5,cv('--faint'),600);
+  txt('EXECUTION',848,46,9.5,cv('--faint'),600);
+  txt('RECORD',1032,46,9.5,cv('--faint'),600);
+}
+function drawChannels(){
+  for(var i=0;i<CHAN.length;i++){
+    var c=CHAN[i];
+    building(c.x,c.y,c.w,c.h,c.label,'platform',c.col,{fill:'--wallv',dash:true});
+    txt('#chat',c.x+10,c.y+50,9,cv('--muted'),500);
+  }
+}
+function drawBridges(){
+  for(var i=0;i<BRIDGE.length;i++){
+    var b=BRIDGE[i];
+    building(b.x,b.y,b.w,b.h,b.label,'bot + gateway token',b.col);
+    txt('hosts no Core',b.x+10,b.y+50,9,cv('--faint'),500);
+    ctx.fillStyle=cv(b.col); ctx.globalAlpha=.5; rr(b.x+b.w-22,b.y+42,12,14,3); ctx.fill(); ctx.globalAlpha=1;
+  }
+  for(var j=0;j<LOCAL.length;j++){
+    var l=LOCAL[j];
+    building(l.x,l.y,l.w,l.h,l.label,l.sub,l.col);
+    txt('skips the gate',l.x+10,l.y+52,9,cv('--faint'),500);
   }
 }
 function drawGate(){
-  var b=building(GATE.x,GATE.y,GATE.w,GATE.h,'GATEHOUSE','allowlist + binding','--accent');
+  building(GATE.x,GATE.y,GATE.w,GATE.h,'GATEHOUSE','chat_allowlist','--accent');
   txt('/gateway/inbound',GATE.x+10,GATE.y+52,9,cv('--muted'),500);
-  // arch
   ctx.strokeStyle=cv('--accent'); ctx.globalAlpha=.5; ctx.lineWidth=2;
   ctx.beginPath(); ctx.arc(GATE.x+GATE.w/2,GATE.y+GATE.h-6,20,Math.PI,0); ctx.stroke(); ctx.globalAlpha=1;
 }
+function drawBoard(dt){
+  building(BOARD.x,BOARD.y,BOARD.w,BOARD.h,'BINDINGS','bindings.json','--green',{fill:'--wallv'});
+  txt('surface:chat → session',BOARD.x+10,BOARD.y+46,8.5,cv('--faint'),500);
+  for(var i=0;i<bindings.length;i++){
+    var b=bindings[i], y=BOARD.y+62+i*13;
+    if(y>BOARD.y+BOARD.h-8) break;
+    if(b.flash>0) b.flash-=dt*1.4;
+    ctx.globalAlpha=b.flash>0?1:.72;
+    txt(b.key.slice(0,9)+'→'+b.session.slice(0,5),BOARD.x+10,y,8.5,cv(b.flash>0?'--green':'--muted'),500);
+    ctx.globalAlpha=1;
+  }
+  if(!bindings.length) txt('(empty)',BOARD.x+10,BOARD.y+64,9,cv('--faint'),400);
+}
 function drawTurnstile(){
   building(TURN.x,TURN.y,TURN.w,TURN.h,'TURNSTILE','rate limiter','--yellow');
-  var ev=evAt(Math.floor(simMin)); var hot=!!(ev&&ev.burst);
+  var ev=evAt(Math.floor(simMin)), hot=!!(ev&&ev.burst);
   txt(hot?'SHEDDING 429':'admitting',TURN.x+10,TURN.y+52,9.5,cv(hot?'--red':'--green'),600);
-  // bars
   for(var i=0;i<3;i++){
     ctx.strokeStyle=cv(hot?'--red':'--border'); ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(TURN.x+22+i*34,TURN.y+62); ctx.lineTo(TURN.x+22+i*34,TURN.y+80); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(TURN.x+22+i*32,TURN.y+66); ctx.lineTo(TURN.x+22+i*32,TURN.y+84); ctx.stroke();
   }
 }
 function drawBays(dt){
-  txt('CORE POOL  ·  1 pinned + 4 slots',BAYX,BAYY0-14,10,cv('--muted'),600);
+  txt('CORE POOL  ·  1 pinned + 4 slots',BAYX,BAYY0-12,10,cv('--muted'),600);
   for(var i=0;i<bays.length;i++){
     var b=bays[i];
-    if(b.state==='warm'){ b.grow=Math.min(1,b.grow+dt*3.2); b.idle+=dt*(b.busy?0:1); }
+    if(b.state==='warm'){ b.grow=Math.min(1,b.grow+dt*3.2); b.idle+=b.busy?0:dt*9.6*speedMul; }
     if(b.flash>0) b.flash-=dt*1.6;
-    var g=b.state==='warm'?b.grow:0;
-    // plot outline always
     ctx.setLineDash([4,4]); rr(b.x,b.y,b.w,b.h,10);
     ctx.strokeStyle=cv('--border-soft'); ctx.lineWidth=1; ctx.stroke(); ctx.setLineDash([]);
-    if(g<=0.01){
-      txt('slot '+i+' · empty',b.x+10,b.y+b.h/2+4,9.5,cv('--faint'),500);
-      continue;
-    }
-    var hh=b.h*g, yy=b.y+(b.h-hh);
+    if(b.state!=='warm'||b.grow<=0.01){ txt('slot '+i+' · empty',b.x+10,b.y+b.h/2+4,9.5,cv('--faint'),500); continue; }
+    var hh=b.h*b.grow, yy=b.y+(b.h-hh);
     ctx.save(); ctx.beginPath(); rr(b.x,yy,b.w,hh,10); ctx.clip();
-    var acc=b.pinned?'--accent':(b.busy?'--green':'--border');
-    building(b.x,b.y,b.w,b.h,(b.ws||'').toUpperCase(),b.pinned?'pinned · never evicted':'idle '+Math.floor(b.idle)+'s',acc,
-      {fill:b.busy?'--wallv':'--wall'});
+    building(b.x,b.y,b.w,b.h,(b.ws||'').toUpperCase(),
+      b.pinned?'pinned · never evicted':(b.busy?'running':'idle '+Math.floor(b.idle)+'m'),
+      b.pinned?'--accent':(b.busy?'--green':'--border'),{fill:b.busy?'--wallv':'--wall'});
     ctx.restore();
-    if(b.busy){
-      // working indicator
-      var n=Math.min(b.busy,4);
-      for(var k=0;k<n;k++){
-        ctx.fillStyle=cv('--green');
-        ctx.globalAlpha=.55+.45*Math.sin(now*4+k);
-        ctx.beginPath(); ctx.arc(b.x+b.w-16-k*11,b.y+14,3.2,0,7); ctx.fill(); ctx.globalAlpha=1;
-      }
+    for(var k=0;k<Math.min(b.busy,4);k++){
+      ctx.fillStyle=cv('--green'); ctx.globalAlpha=.55+.45*Math.sin(now*4+k);
+      ctx.beginPath(); ctx.arc(b.x+b.w-16-k*11,b.y+13,3.2,0,7); ctx.fill(); ctx.globalAlpha=1;
     }
     if(b.flash>0){ rr(b.x,b.y,b.w,b.h,10); ctx.strokeStyle=cv('--green');
       ctx.globalAlpha=b.flash; ctx.lineWidth=2.4; ctx.stroke(); ctx.globalAlpha=1; }
@@ -571,149 +636,120 @@ function drawBays(dt){
 }
 function drawPerm(){
   building(PERM.x,PERM.y,PERM.w,PERM.h,'PERMISSION','gate before dispatch','--green');
-  // stamp
-  ctx.strokeStyle=cv('--green'); ctx.globalAlpha=.55; ctx.lineWidth=2;
+  ctx.strokeStyle=cv('--green'); ctx.globalAlpha=.5; ctx.lineWidth=2;
   rr(PERM.x+18,PERM.y+52,PERM.w-36,34,7); ctx.stroke(); ctx.globalAlpha=1;
   txt('ALLOW / DENY',PERM.x+PERM.w/2,PERM.y+73,10,cv('--green'),600,'center');
 }
 function drawSandbox(){
   building(SBOX.x,SBOX.y,SBOX.w,SBOX.h,'SANDBOX','landlock · seatbelt','--blue',{fill:'--wallv'});
-  // wall hatching
   ctx.strokeStyle=cv('--blue'); ctx.globalAlpha=.22; ctx.lineWidth=1;
-  for(var i=0;i<7;i++){ ctx.beginPath(); ctx.moveTo(SBOX.x+8,SBOX.y+44+i*10); ctx.lineTo(SBOX.x+SBOX.w-8,SBOX.y+40+i*10); ctx.stroke(); }
+  for(var i=0;i<6;i++){ ctx.beginPath(); ctx.moveTo(SBOX.x+8,SBOX.y+48+i*11); ctx.lineTo(SBOX.x+SBOX.w-8,SBOX.y+44+i*11); ctx.stroke(); }
   ctx.globalAlpha=1;
-  txt('writes confined',SBOX.x+SBOX.w/2,SBOX.y+SBOX.h-12,9.5,cv('--faint'),500,'center');
+  txt('writes confined',SBOX.x+SBOX.w/2,SBOX.y+SBOX.h-11,9.5,cv('--faint'),500,'center');
+}
+function drawOutbox(){
+  building(OUTBOX.x,OUTBOX.y,OUTBOX.w,OUTBOX.h,'OUTBOX','vak-delivery','--accent',{fill:'--wallv'});
+  txt('durable replies',OUTBOX.x+10,OUTBOX.y+50,9,cv('--faint'),500);
+  for(var i=0;i<3;i++){
+    ctx.fillStyle=cv('--accent'); ctx.globalAlpha=.30+i*.16;
+    rr(OUTBOX.x+14+i*30,OUTBOX.y+64,24,16,3); ctx.fill(); ctx.globalAlpha=1;
+  }
 }
 function drawMast(){
   var dark=(circuit===2), warn=(circuit===1)||faultNow;
   var acc=dark?'--red':(warn?'--yellow':'--accent');
   building(MAST.x,MAST.y,MAST.w,MAST.h,'PROVIDERS','route ladder',acc);
-  // antenna
-  var cx=MAST.x+MAST.w/2, top=MAST.y+40;
+  var cx=MAST.x+MAST.w/2, top=MAST.y+44;
   ctx.strokeStyle=cv(acc); ctx.lineWidth=2;
-  ctx.beginPath(); ctx.moveTo(cx,top+58); ctx.lineTo(cx,top); ctx.stroke();
-  // signal arcs
+  ctx.beginPath(); ctx.moveTo(cx,top+62); ctx.lineTo(cx,top); ctx.stroke();
   for(var i=1;i<=3;i++){
     ctx.globalAlpha=dark?0.12:(0.55-(i*0.12))*(0.6+0.4*Math.sin(now*3-i));
     ctx.strokeStyle=cv(acc); ctx.lineWidth=1.6;
     ctx.beginPath(); ctx.arc(cx,top,10*i,-2.4,-0.75); ctx.stroke();
   }
   ctx.globalAlpha=1;
-  var lbl=dark?'CIRCUIT OPEN':(circuit===1?'HALF-OPEN':(faultNow?'RETRYING':'healthy'));
-  txt(lbl,cx,MAST.y+MAST.h-12,10,cv(dark?'--red':(warn?'--yellow':'--green')),600,'center');
+  txt(dark?'CIRCUIT OPEN':(circuit===1?'HALF-OPEN':(faultNow?'RETRYING':'healthy')),
+      cx,MAST.y+MAST.h-12,10,cv(dark?'--red':(warn?'--yellow':'--green')),600,'center');
 }
 function drawLedger(){
   building(LEDGER.x,LEDGER.y,LEDGER.w,LEDGER.h,'LEDGER','append-only · JSONL','--green',{fill:'--wallv'});
-  var bw=(LEDGER.w-26)/4, bh=9, maxRows=Math.floor((LEDGER.h-70)/(bh+3));
+  var bw=(LEDGER.w-26)/4, bh=8, maxRows=Math.floor((LEDGER.h-80)/(bh+3));
   var total=ledgerBlocks, rows=Math.min(maxRows,Math.ceil(total/4));
-  for(var r=0;r<rows;r++){
-    for(var c2=0;c2<4;c2++){
-      var idx=r*4+c2; if(idx>=total) break;
-      var x=LEDGER.x+13+c2*(bw+2), y=LEDGER.y+LEDGER.h-24-(r+1)*(bh+3);
-      rr(x,y,bw,bh,2.5);
-      ctx.fillStyle=cv('--green'); ctx.globalAlpha=0.20+0.5*Math.min(1,(idx/Math.max(1,total)));
-      ctx.fill(); ctx.globalAlpha=1;
-    }
+  for(var r=0;r<rows;r++) for(var c2=0;c2<4;c2++){
+    var idx=r*4+c2; if(idx>=total) break;
+    var x=LEDGER.x+13+c2*(bw+2), y=LEDGER.y+LEDGER.h-22-(r+1)*(bh+3);
+    rr(x,y,bw,bh,2.5); ctx.fillStyle=cv('--green');
+    ctx.globalAlpha=0.20+0.5*Math.min(1,idx/Math.max(1,total)); ctx.fill(); ctx.globalAlpha=1;
   }
-  if(ledgerPop>0){ ledgerPop-=0.03; }
-  txt(total+' blocks',LEDGER.x+LEDGER.w/2,LEDGER.y+48,11.5,cv('--green'),600,'center');
-  txt('never rewritten',LEDGER.x+LEDGER.w/2,LEDGER.y+62,9,cv('--faint'),400,'center');
+  txt(total+' blocks',LEDGER.x+LEDGER.w/2,LEDGER.y+50,11.5,cv('--green'),600,'center');
+  txt('never rewritten',LEDGER.x+LEDGER.w/2,LEDGER.y+64,9,cv('--faint'),400,'center');
 }
 function drawCourier(c){
-  var bobY=Math.sin(c.bob)*1.8;
-  var col=cv(c.tint||c.col);
+  var bobY=Math.sin(c.bob)*1.8, col=cv(c.tint||c.col);
   ctx.globalAlpha=Math.max(0,c.alpha);
-  // spotlight for traced
   if(c.traced&&!c.dead){
-    ctx.globalAlpha=0.18*Math.max(0,c.alpha);
-    ctx.fillStyle=cv('--accent'); ctx.beginPath(); ctx.arc(c.x,c.y+bobY,20+Math.sin(now*4)*2,0,7); ctx.fill();
+    ctx.globalAlpha=0.18*Math.max(0,c.alpha); ctx.fillStyle=cv('--accent');
+    ctx.beginPath(); ctx.arc(c.x,c.y+bobY,20+Math.sin(now*4)*2,0,7); ctx.fill();
     ctx.globalAlpha=Math.max(0,c.alpha);
   }
-  // shadow
   ctx.fillStyle='rgba(0,0,0,.18)'; ctx.beginPath(); ctx.ellipse(c.x,c.y+9,6,2.4,0,0,7); ctx.fill();
-  // body
   rr(c.x-4.5,c.y-4+bobY,9,11,3.5); ctx.fillStyle=col; ctx.fill();
-  // head
   ctx.beginPath(); ctx.arc(c.x,c.y-8+bobY,3.6,0,7); ctx.fillStyle=col; ctx.fill();
-  // legs
   var lp=Math.sin(c.bob)*2.2;
   ctx.strokeStyle=col; ctx.lineWidth=1.6;
   ctx.beginPath(); ctx.moveTo(c.x-2,c.y+7+bobY); ctx.lineTo(c.x-2+lp,c.y+11+bobY);
   ctx.moveTo(c.x+2,c.y+7+bobY); ctx.lineTo(c.x+2-lp,c.y+11+bobY); ctx.stroke();
-  // carrying
+  if(c.carry==='token'){ ctx.fillStyle=cv('--muted'); rr(c.x+5,c.y-3+bobY,5,4,1.5); ctx.fill(); }
   if(c.carry==='badge'){ ctx.fillStyle=cv('--green'); rr(c.x+5,c.y-3+bobY,5,4,1.5); ctx.fill(); }
   if(c.carry==='reply'){ ctx.fillStyle=cv('--accent'); rr(c.x+5,c.y-4+bobY,6,5,1.5); ctx.fill(); }
-  if(c.traced){ txt('#'+c.id,c.x,c.y-15+bobY,8.5,cv('--accent'),600,'center'); }
+  if(c.traced) txt('#'+c.id,c.x,c.y-15+bobY,8.5,cv('--accent'),600,'center');
   ctx.globalAlpha=1;
-}
-function drawGround(){
-  ctx.fillStyle=cv('--ground'); ctx.fillRect(0,0,VW,VH);
-  // faint corridor lanes
-  ctx.strokeStyle=cv('--ground2'); ctx.lineWidth=26; ctx.globalAlpha=1;
-  ctx.beginPath(); ctx.moveTo(220,VH/2); ctx.lineTo(1100,VH/2); ctx.stroke();
-  ctx.globalAlpha=1;
-  // zone labels
-  txt('INGRESS',74,58,9.5,cv('--faint'),600);
-  txt('ADMISSION',286,166,9.5,cv('--faint'),600);
-  txt('EXECUTION',760,52,9.5,cv('--faint'),600);
-  txt('RECORD',986,282,9.5,cv('--faint'),600);
 }
 
-/* ============================== driver ================================= */
+/* ================================ driver ================================ */
 var simMin=0, playing=false, speedMul=1, raf=null, lastT=0, now=0;
 var demandNow=0, spawnAcc=0, faultNow=false, circuit=0, errAcc=0, ctimer=0;
-
-function clockStr(){ var m=Math.floor(simMin), h=Math.floor(m/60), mm=m%60;
+function clockStr(){ var m=Math.floor(simMin),h=Math.floor(m/60),mm=m%60;
   return (h<10?'0':'')+h+':'+(mm<10?'0':'')+mm; }
 
 function updateSim(dt){
-  // 1x: whole day in ~150s => 9.6 sim-min per real second
   simMin += dt*9.6*speedMul;
   if(simMin>=DAY){ simMin=DAY-0.01; pause(); document.getElementById('play').innerHTML='▶ Replay day'; }
   var m=Math.floor(simMin), ev=evAt(m);
-  demandNow = Math.max(0, baseDemand(m)+(ev&&ev.dem?ev.dem:0));
-  faultNow = !!(ev&&ev.fault);
-
-  // circuit breaker
+  demandNow=Math.max(0,baseDemand(m)+(ev&&ev.dem?ev.dem:0));
+  faultNow=!!(ev&&ev.fault);
   if(faultNow) errAcc+=dt*3.2; else errAcc=Math.max(0,errAcc-dt*2.2);
-  if(circuit===0 && errAcc>2.2){ circuit=2; ctimer=2.6; }
-  else if(circuit===2){ ctimer-=dt; if(ctimer<=0){ circuit=1; } }
-  else if(circuit===1){ if(faultNow){ circuit=2; ctimer=2.6; } else if(errAcc<0.4){ circuit=0; } }
+  if(circuit===0&&errAcc>2.2){ circuit=2; ctimer=2.6; }
+  else if(circuit===2){ ctimer-=dt; if(ctimer<=0) circuit=1; }
+  else if(circuit===1){ if(faultNow){circuit=2;ctimer=2.6;} else if(errAcc<0.4) circuit=0; }
 
-  // spawn couriers proportional to demand (visual cap)
   var live=0; for(var i=0;i<couriers.length;i++) if(!couriers[i].dead) live++;
-  spawnAcc += dt*speedMul*(demandNow*0.42);
-  while(spawnAcc>=1){
-    spawnAcc-=1;
-    if(live<26){ spawn(m); live++; }
-  }
+  spawnAcc+=dt*speedMul*(demandNow*0.30);
+  while(spawnAcc>=1){ spawnAcc-=1; if(live<24){ spawn(m); live++; } }
 
-  // update couriers
   for(var j=couriers.length-1;j>=0;j--){
     updateCourier(couriers[j],dt);
-    if(couriers[j].dead && couriers[j].alpha<=0){ leaveBay(couriers[j]); couriers.splice(j,1); }
+    if(couriers[j].dead&&couriers[j].alpha<=0){ leaveBay(couriers[j]); couriers.splice(j,1); }
   }
-  // idle eviction sweep
   for(var k=0;k<bays.length;k++){
     var b=bays[k];
-    if(b.state==='warm'&&!b.pinned&&b.busy===0&&b.idle>16){ demolishBay(b); }
+    if(b.state==='warm'&&!b.pinned&&b.busy===0&&b.idle>45) demolishBay(b);
   }
   updateParticles(dt);
 }
 function render(dt){
-  drawGround();
-  drawHuts(); drawGate(); drawTurnstile(); drawBays(dt);
-  drawPerm(); drawSandbox(); drawMast(); drawLedger();
+  drawGround(); drawChannels(); drawBridges(); drawGate(); drawBoard(dt); drawTurnstile();
+  drawBays(dt); drawPerm(); drawSandbox(); drawOutbox(); drawMast(); drawLedger();
   for(var i=0;i<couriers.length;i++) drawCourier(couriers[i]);
   drawParticles();
 }
 function paintHUD(){
   var m=Math.floor(simMin);
   document.getElementById('clock').textContent=clockStr();
-  var ph=phaseOf(m); var pe=document.getElementById('phase'); pe.textContent=ph[0]; pe.style.color=ph[1];
+  var ph=phaseOf(m), pe=document.getElementById('phase'); pe.textContent=ph[0]; pe.style.color=ph[1];
   var ev=evAt(m), box=document.getElementById('ev');
   box.className='ev'+(ev?(ev.kind==='alert'?' alert':ev.kind==='warn'?' warn':''):'');
-  box.querySelector('.l').textContent = ev?ev.name:'Nominal — steady state';
+  box.querySelector('.l').textContent=ev?ev.name:'Nominal — steady state';
   document.getElementById('t-ledger').textContent=stats.ledger;
   document.getElementById('t-built').textContent=stats.built;
   document.getElementById('t-evict').textContent=stats.evict;
@@ -724,7 +760,7 @@ function paintHUD(){
 function renderTrace(){
   var el=document.getElementById('tracelog');
   if(!traceSteps.length){
-    el.innerHTML='<div class="empty">Press <b>Trace a message</b> — the next courier through the gate gets a spotlight, and every step of their life is logged here with the real mechanism behind it.</div>';
+    el.innerHTML='<div class="empty">Press <b>Trace a message</b> — the next courier arriving from a channel gets a spotlight, and every step of their life is logged here with the real mechanism behind it. You can also click any courier to pick them up mid-route.</div>';
     return;
   }
   var h='';
@@ -734,7 +770,6 @@ function renderTrace(){
   }
   el.innerHTML=h; el.scrollTop=el.scrollHeight;
 }
-
 function frame(ts){
   if(!playing) return;
   if(!lastT) lastT=ts;
@@ -746,19 +781,18 @@ function play(){ if(simMin>=DAY-0.05) restart(); playing=true; lastT=0;
   document.getElementById('play').innerHTML='❚❚ Pause'; raf=requestAnimationFrame(frame); }
 function pause(){ playing=false; if(raf)cancelAnimationFrame(raf);
   document.getElementById('play').innerHTML='▶ Open the works'; }
-function restart(){ pause(); simMin=0; now=0; spawnAcc=0; circuit=0; errAcc=0; cid=0;
-  traceArmed=false; document.getElementById('tracetag').textContent='idle';
+function restart(){ pause(); simMin=0; now=0; spawnAcc=0; circuit=0; errAcc=0; cid=0; traceArmed=false;
+  document.getElementById('tracetag').textContent='idle';
   resetWorld(); render(0.016); paintHUD();
   document.getElementById('play').innerHTML='▶ Open the works'; }
 
 document.getElementById('play').addEventListener('click',function(){ playing?pause():play(); });
 document.getElementById('restart').addEventListener('click',restart);
 document.getElementById('trace').addEventListener('click',function(){
-  traceArmed=true; traceSteps=[]; traceId=null;
+  traceArmed=true; traceSteps=[];
   for(var i=0;i<couriers.length;i++) couriers[i].traced=false;
   document.getElementById('tracetag').textContent='armed…';
-  renderTrace();
-  if(!playing) play();
+  renderTrace(); if(!playing) play();
 });
 document.querySelectorAll('.speed').forEach(function(b){
   b.addEventListener('click',function(){
@@ -766,10 +800,8 @@ document.querySelectorAll('.speed').forEach(function(b){
     b.setAttribute('aria-pressed','true'); speedMul=parseInt(b.dataset.x,10);
   });
 });
-// click a courier to trace them mid-life
 cvs.addEventListener('click',function(e){
-  var r=cvs.getBoundingClientRect();
-  var mx=(e.clientX-r.left)/scale, my=(e.clientY-r.top)/scale;
+  var r=cvs.getBoundingClientRect(), mx=(e.clientX-r.left)/scale, my=(e.clientY-r.top)/scale;
   var best=null,bd=22;
   for(var i=0;i<couriers.length;i++){
     var c=couriers[i]; if(c.dead) continue;
@@ -777,10 +809,10 @@ cvs.addEventListener('click',function(e){
   }
   if(best){
     for(var j=0;j<couriers.length;j++) couriers[j].traced=false;
-    best.traced=true; traceId=best.id; traceArmed=false;
+    best.traced=true; traceArmed=false;
     traceSteps=[{kind:'bd',head:'Picked up mid-route — courier #'+best.id,
-      sub:'Surface: '+best.hut.label+' · workspace "'+best.ws+'". Steps from here on are logged.'}];
-    document.getElementById('tracetag').textContent='#'+best.id+' · '+best.hut.label;
+      sub:'Surface: '+best.surface+(best.gw?(' · chat '+best.chat):'')+' · workspace "'+best.ws+'". Every step from here is logged.'}];
+    document.getElementById('tracetag').textContent='#'+best.id+' · '+best.surface;
     renderTrace();
   }
 });
