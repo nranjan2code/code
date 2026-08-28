@@ -422,7 +422,9 @@ export function putGlobalMcpServers(servers: Record<string, McpServerDef>): Prom
   return req("/config/mcp/global", { method: "PUT", body: JSON.stringify({ servers }) });
 }
 
-export function patchGlobalConfig(body: ConfigPatch): Promise<void> {
+export function patchGlobalConfig(
+  body: { provider?: string; model?: string; max_turns?: number; permission_mode?: string; theme?: string },
+): Promise<void> {
   return req("/config/global", { method: "PATCH", body: JSON.stringify(body) });
 }
 

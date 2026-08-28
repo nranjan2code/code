@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 1420 --strictPort",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
-import { density, itemsOf, hydratingId, openInEditor, type Item } from "../store";
+import { activeId, density, itemsOf, hydratingId, openInEditor, type Item } from "../store";
 import { approve, openFileSmart } from "../App";
 import { renderMarkdown } from "../md";
 import { highlight, languageForFence } from "../highlight";
