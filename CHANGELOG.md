@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.2 — 2026-08-28
+
+### Admin Extensions console
+
+- Expanded the admin console with dedicated MCP servers, Skills, Hooks, and Scheduled Tasks views.
+- Added extension permission-scope reporting, MCP network posture, injected environment-variable names, and resolved MCP rules.
+- Added resolved permission-rule visibility in Settings and improved workspace-path/table rendering.
+
 ## 0.11.0 — 2026-08-28
 
 ### Extensions: what is loaded, and what it is allowed to do
