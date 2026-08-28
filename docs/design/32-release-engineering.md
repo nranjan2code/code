@@ -23,7 +23,13 @@ no plists pointing into build trees, no spot-fixing deploys.
    unloads stale units, loads the new ones. Sync is idempotent: identical
    content + healthy process ⇒ no-op. The working directory is part of the
    service contract so gateway config and project `.env` are not replaced by
-   the service manager's `/` default.
+   the service manager's `/` default. Generated units also carry the invoking
+   user's non-secret `HOME`; without it, canonical path resolution can mistake
+   the working directory for the user home and migrate `.vakcoder` out of the
+   project. The shared path resolver independently falls back to the operating
+   system account home when GUI launch environments omit `HOME`, and fails
+   closed to an absolute root rather than treating the current workspace as a
+   home directory.
 4. **Drift is detectable.** `self status` prints build vs manifest vs
    per-service versions and exits non-zero on mismatch; `/doctor`
    surfaces the same check so any surface reveals drift.

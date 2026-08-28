@@ -26,6 +26,18 @@ silently collapse every remote user into one session. The Telegram
 bridge now sends the message sender's real Telegram user id instead of
 a fixed `"telegram"` placeholder.
 
+## 0.8.12 — 2026-08-28
+
+### Canonical service home
+
+Generated launchd/systemd units now preserve the invoking user's non-secret
+`HOME` alongside the workspace. This prevents a sanitized service-manager
+environment from treating the workspace as the user home and relocating
+project `.vakcoder/config.toml` into a nested platform-data directory. The
+canonical path resolver also falls back to the operating-system account home
+when GUI launch environments omit `HOME`; it never falls back to the current
+workspace.
+
 ## 0.8.11 — 2026-08-28
 
 ### System-wide route control plane

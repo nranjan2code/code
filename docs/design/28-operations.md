@@ -49,7 +49,10 @@ focus that same window. Gateway and Telegram remain the only durable services.
 Bridges must survive gateway restarts without human help:
 `VAKCODER_GATEWAY_TOKEN` (from the user `.env`) overrides the random
 per-process bearer token. The value is honoured verbatim and never logged;
-when absent, behaviour is unchanged (fresh token printed once).
+when absent, a fresh token is printed only to an interactive terminal and is
+suppressed in service logs. Generated service units carry only non-secret
+operational environment such as `HOME`; credentials remain file-loaded by the
+recipient process.
 
 ## Surfaces
 

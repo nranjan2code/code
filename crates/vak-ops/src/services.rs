@@ -44,6 +44,9 @@ pub struct ServiceSpec {
     pub log_path: PathBuf,
     /// Workspace the service must load for config and project-local `.env`.
     pub working_dir: PathBuf,
+    /// User home required by platform path resolution in the sanitized
+    /// service-manager environment. This is operational state, not a secret.
+    pub home_dir: PathBuf,
 }
 
 /// Static template table behind [`ServiceSpec`].
@@ -81,13 +84,14 @@ impl ServiceDef {
     /// Resolve against an install prefix: `bin_dir` holds the release
     /// binaries; logs land in the canonical platform logs dir
     /// (`~/Library/Logs/vakcoder` / XDG state) — never inside data.
-    pub fn spec(&self, bin_dir: &Path, _vak_home: &Path, working_dir: &Path) -> ServiceSpec {
+    pub fn spec(&self, bin_dir: &Path, home_dir: &Path, working_dir: &Path) -> ServiceSpec {
         ServiceSpec {
             name: self.name,
             bin_path: bin_dir.join(self.bin_file),
             args: self.args.iter().map(|a| (*a).to_string()).collect(),
             log_path: vak_config::paths::logs_dir().join(self.log_file),
             working_dir: working_dir.to_path_buf(),
+            home_dir: home_dir.to_path_buf(),
         }
     }
 
@@ -126,8 +130,9 @@ fn xml_escape(s: &str) -> String {
 }
 
 /// launchd property list: RunAtLoad + KeepAlive, stdout/stderr to the stable
-/// log, and deliberately no EnvironmentVariables block (secrets come from
-/// `~/.vakcoder/.env`, loaded by the binary itself).
+/// log, with only non-secret HOME in the environment so canonical path
+/// resolution cannot mistake the workspace for the user home. Credentials
+/// still come from the user env file loaded by the binary itself.
 pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
     let mut prog_args = String::new();
     let bin = xml_escape(&spec.bin_path.to_string_lossy());
@@ -150,6 +155,11 @@ pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>{}</string>
+	</dict>
 	<key>WorkingDirectory</key>
 	<string>{}</string>
 	<key>StandardErrorPath</key>
@@ -161,6 +171,7 @@ pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
 "#,
         xml_escape(spec.name),
         prog_args,
+        xml_escape(&spec.home_dir.to_string_lossy()),
         xml_escape(&spec.working_dir.to_string_lossy()),
         log,
         log
@@ -185,6 +196,7 @@ pub fn render_systemd_unit(spec: &ServiceSpec) -> String {
          \n\
          [Service]\n\
          ExecStart={exec}\n\
+         Environment=HOME={}\n\
          WorkingDirectory={}\n\
          Restart=always\n\
          StandardOutput=append:{log}\n\
@@ -193,6 +205,7 @@ pub fn render_systemd_unit(spec: &ServiceSpec) -> String {
          [Install]\n\
          WantedBy=default.target\n",
         short_name(spec.name),
+        spec.home_dir.display(),
         spec.working_dir.display(),
     )
 }
@@ -621,16 +634,14 @@ pub fn services_uninstall(
 pub fn resolve_specs(bin_path: &Path, names: &[&str]) -> Vec<Result<ServiceSpec, String>> {
     let bin_dir = bin_path.parent().unwrap_or(Path::new("/"));
     let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-    // Canonical data home (doc 32) — service logs live under the
-    // platform logs dir; specs only need a base for their log paths.
-    let vak_home = vak_config::paths::data_home();
+    let home_dir = super::home();
     names
         .iter()
         .map(|name| {
             SERVICES
                 .iter()
                 .find(|def| def.name == *name)
-                .map(|def| def.spec(bin_dir, &vak_home, &working_dir))
+                .map(|def| def.spec(bin_dir, &home_dir, &working_dir))
                 .ok_or_else(|| format!("unknown service: {name}"))
         })
         .collect()
@@ -732,6 +743,7 @@ mod tests {
             args: def.args.iter().map(|a| (*a).to_string()).collect(),
             log_path: log_dir.join(def.log_file),
             working_dir: PathBuf::from("/workspace"),
+            home_dir: PathBuf::from("/Users/x"),
         }
     }
 
@@ -751,8 +763,10 @@ mod tests {
         assert!(plist.contains("/Users/x/.vakcoder/logs/gateway.log"));
         assert!(plist.contains("KeepAlive"));
         assert!(plist.contains("RunAtLoad"));
+        assert!(plist.contains("<key>HOME</key>"));
+        assert!(plist.contains("<string>/Users/x</string>"));
         // Update safety (doc 32): units never embed credentials.
-        for secret in ["TOKEN", "SECRET", "BOT_TOKEN", "EnvironmentVariables"] {
+        for secret in ["TOKEN", "SECRET", "BOT_TOKEN"] {
             assert!(!plist.contains(secret), "unit must not contain {secret}");
         }
     }

@@ -95,10 +95,17 @@ fn app_dir_name() -> &'static str {
 }
 
 fn base_home() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    let environment_home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    #[allow(deprecated)]
+    let account_home = std::env::home_dir();
+    resolve_base_home(environment_home.map(PathBuf::from), account_home)
+}
+
+fn resolve_base_home(environment_home: Option<PathBuf>, account_home: Option<PathBuf>) -> PathBuf {
+    environment_home
+        .filter(|path| path.is_absolute())
+        .or_else(|| account_home.filter(|path| path.is_absolute()))
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 #[cfg(target_os = "macos")]
@@ -219,6 +226,18 @@ mod tests {
         assert!(
             !h.data.to_string_lossy().contains("/cache"),
             "empty string must fall through to the platform layout"
+        );
+    }
+
+    #[test]
+    fn missing_environment_home_uses_absolute_account_home() {
+        assert_eq!(
+            resolve_base_home(None, Some(PathBuf::from("/Users/example"))),
+            PathBuf::from("/Users/example")
+        );
+        assert_eq!(
+            resolve_base_home(Some(PathBuf::from("relative")), None),
+            PathBuf::from("/")
         );
     }
 }

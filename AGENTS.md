@@ -9,7 +9,7 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v0.8.11 — all roadmap phases implemented and live-tested.**
+**Status: v0.8.12 — all roadmap phases implemented and live-tested.**
 See `docs/design/00-roadmap.md` for the phase history and
 `docs/design/15-reliability.md` for the failure-handling matrix. Security work
 must also follow the threat model and priority order in
@@ -158,7 +158,12 @@ security/inbox), operation (approvals/config/cancel), and interaction
 18. **Durable services retain workspace identity.** Generated launchd/systemd
     units must execute from the workspace captured by `self services-sync` so
     gateway and Telegram runs load that workspace's config and project `.env`,
-    rather than the service manager's default directory.
+    rather than the service manager's default directory. Units must also carry
+    the invoking user's non-secret `HOME`; a sanitized manager environment may
+    otherwise resolve the workspace as the platform data home and migrate its
+    `.vakcoder` directory away. Canonical path resolution must never use the
+    current working directory as a missing-home fallback; GUI launches use the
+    OS account home and otherwise fail closed to an absolute path.
 
 ## Code rules
 
