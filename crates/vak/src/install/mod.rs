@@ -139,10 +139,24 @@ fn bootstrap_default_workspace_if_fresh() {
     if let Some(cwd) = original_cwd {
         let _ = std::env::set_current_dir(cwd);
     }
+    // `services_sync` bootstraps/enables the unit, and the generated
+    // plist/unit has RunAtLoad/WantedBy, so registering it launches the
+    // process immediately — an install-time side effect, not an operator
+    // decision. `stop` (launchctl bootout / systemctl stop) is the only
+    // primitive that actually un-launches it, but it also fully
+    // unregisters the job from the service manager — there is no
+    // "loaded but idle" state to land in between. That's fine here: the
+    // plist/unit file stays correctly generated on disk, pointed at this
+    // workspace, so the tray's "Install service" (or `self
+    // services-sync` again) picks it up correctly and registers +
+    // starts it on the operator's own action — "gateway ships disabled"
+    // (AGENTS.md invariant 15) holds until then.
+    vak_ops::stop(vak_ops::Service::Gateway, &cfg);
+    vak_ops::stop(vak_ops::Service::Telegram, &cfg);
     if code == 0 {
         println!(
-            "gateway/telegram units point at {} — still stopped until you start them \
-             (tray menu, or your platform's service manager)",
+            "gateway/telegram service files point at {} — not running; \
+             start them from the tray (Install service) when you're ready",
             workspace.display()
         );
     }
