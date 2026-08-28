@@ -57,6 +57,14 @@ fn is_tray_launch<S: AsRef<std::ffi::OsStr>>(args: impl IntoIterator<Item = S>) 
         .any(|arg| arg.as_ref() == std::ffi::OsStr::new(TRAY_FLAG))
 }
 
+fn requested_project<S: AsRef<std::ffi::OsStr>>(
+    args: impl IntoIterator<Item = S>,
+) -> Option<PathBuf> {
+    args.into_iter()
+        .map(|arg| PathBuf::from(arg.as_ref()))
+        .find(|path| path.is_dir())
+}
+
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -534,7 +542,7 @@ async fn boot_backend(cwd: PathBuf) -> Result<Running, String> {
 
 fn install_backend(
     app: &AppHandle,
-    state: &State<'_, BackendState>,
+    state: &BackendState,
     mut running: Running,
     persist: bool,
 ) -> BackendInfo {
@@ -556,18 +564,18 @@ fn install_backend(
     info
 }
 
-#[tauri::command]
-async fn start_backend(
+async fn start_project_backend(
     app: AppHandle,
-    state: State<'_, BackendState>,
+    state: &BackendState,
     cwd: String,
+    persist: bool,
 ) -> Result<BackendInfo, String> {
     let path = PathBuf::from(&cwd);
     let path = match path.canonicalize() {
         Ok(path) if path.is_dir() => path,
         _ => {
             let msg = format!("not a directory: {cwd}");
-            set_boot_error(&state, Some(msg.clone()));
+            set_boot_error(state, Some(msg.clone()));
             return Err(msg);
         }
     };
@@ -594,8 +602,8 @@ async fn start_backend(
     load_workspace_env(&path);
     match boot_backend(path).await {
         Ok(running) => {
-            let info = install_backend(&app, &state, running, true);
-            set_boot_error(&state, None);
+            let info = install_backend(&app, state, running, persist);
+            set_boot_error(state, None);
             Ok(info)
         }
         Err(e) => {
@@ -604,13 +612,22 @@ async fn start_backend(
             } else {
                 vak_config::replace_env_files(&[vak_home().join(".env").as_path()]);
             }
-            set_boot_error(&state, Some(e.clone()));
+            set_boot_error(state, Some(e.clone()));
             Err(e)
         }
     }
 }
 
-fn set_boot_error(state: &State<'_, BackendState>, error: Option<String>) {
+#[tauri::command]
+async fn start_backend(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    cwd: String,
+) -> Result<BackendInfo, String> {
+    start_project_backend(app, &state, cwd, true).await
+}
+
+fn set_boot_error(state: &BackendState, error: Option<String>) {
     if let Ok(mut guard) = state.running.lock() {
         if error.is_some() && guard.as_ref().is_some_and(|r| r.info.ready) {
             return; // a live backend outranks a stale failure note
@@ -743,6 +760,7 @@ fn main() {
         tray_only_start(),
         std::env::args().skip(1).collect::<Vec<_>>()
     );
+    let launch_project = requested_project(std::env::args_os());
     tauri::Builder::default()
         // Exactly one instance ever runs: a second launch hands its argv to
         // the live process and refocuses that window instead of starting a
@@ -757,6 +775,22 @@ fn main() {
         // what `--tray` exists to prevent. Every human second launch
         // (Dock, Finder, `open`) still carries no flag and still reveals.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(project) = requested_project(&argv) {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = handle.state::<BackendState>();
+                    if let Err(e) = start_project_backend(
+                        handle.clone(),
+                        &state,
+                        project.to_string_lossy().into_owned(),
+                        true,
+                    )
+                    .await
+                    {
+                        eprintln!("project launch failed: {e}");
+                    }
+                });
+            }
             if !is_tray_launch(&argv) {
                 show_main_window(app);
             }
@@ -772,7 +806,7 @@ fn main() {
             last_rendered: Mutex::new(None),
         })
         .manage(pty::PtyMap::default())
-        .setup(|app| {
+        .setup(move |app| {
             install_tray(app)?;
             // The window ships hidden so a `--tray` login launch never
             // flashes one; an ordinary launch reveals it right here.
@@ -785,21 +819,16 @@ fn main() {
                 // .env always; the picked workspace's own .env too (the
                 // folder was explicitly chosen, so it is trusted).
                 vak_config::replace_env_files(&[vak_home().join(".env").as_path()]);
-                if let Some(cwd) = last_project() {
+                let explicit_project = launch_project;
+                if let Some(cwd) = explicit_project.clone().or_else(last_project) {
                     let state = handle.state::<BackendState>();
-                    let _switch = state.switching.lock().await;
-                    if state
-                        .running
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .is_some()
-                    {
-                        return;
-                    }
-                    load_workspace_env(&cwd);
-                    if let Err(e) = boot_backend(cwd)
-                        .await
-                        .map(|running| install_backend(&handle, &state, running, false))
+                    if let Err(e) = start_project_backend(
+                        handle.clone(),
+                        &state,
+                        cwd.to_string_lossy().into_owned(),
+                        explicit_project.is_some(),
+                    )
+                    .await
                     {
                         eprintln!("backend boot failed: {e}");
                         // Surface it to the project gate; a bundled app has
@@ -843,7 +872,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{TRAY_FLAG, is_tray_launch};
+    use super::{TRAY_FLAG, is_tray_launch, requested_project};
 
     /// The single-instance plugin hands a second process's whole argv
     /// (program name included) to the live app. A login launch from the
@@ -867,6 +896,16 @@ mod tests {
         assert!(
             !is_tray_launch(["vak-desktop", "--traypad"]),
             "the flag must match whole arguments, not prefixes"
+        );
+    }
+
+    #[test]
+    fn project_argument_is_selected_without_treating_flags_as_paths() {
+        let project = std::env::current_dir().expect("test has a current directory");
+        let project_text = project.to_string_lossy().into_owned();
+        assert_eq!(
+            requested_project(["vak-desktop", "--tray", project_text.as_str()]),
+            Some(project)
         );
     }
 }
