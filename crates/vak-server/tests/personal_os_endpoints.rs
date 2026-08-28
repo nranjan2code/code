@@ -441,7 +441,22 @@ async fn doctor_reports_checks_facts_and_optional_ladder() {
             .iter()
             .any(|f| f.as_str().unwrap().starts_with("model "))
     );
-    assert_eq!(body["failures"], 0);
+    // Every check must pass except "self version parity", which compares
+    // this build against whatever release is installed on the machine
+    // running the suite. Mid-release — built 0.11.12, installed 0.11.11 —
+    // that check legitimately fails, and asserting a bare zero here made
+    // the suite a function of host state rather than of this code.
+    let failed: Vec<&str> = body["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["ok"] == serde_json::Value::Bool(false))
+        .map(|c| c["label"].as_str().unwrap())
+        .collect();
+    assert!(
+        failed.iter().all(|l| *l == "self version parity"),
+        "unexpected doctor failures: {failed:?}"
+    );
     assert!(body["ladder"].is_null(), "no session requested");
 
     // With a session, the frozen-ladder section appears.
