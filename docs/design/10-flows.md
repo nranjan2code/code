@@ -2,7 +2,7 @@
 
 ## Format
 
-`.vakcoder/flows/<name>.toml` (project) or `data_home()/flows/` (user):
+`.vak/flows/<name>.toml` (project) or `data_home()/flows/` (user):
 
 ```toml
 [flow]
@@ -52,9 +52,9 @@ report when upstream failed).
 ## CLI
 
 ```
-vakcoder flow list
-vakcoder flow check <name>     # validate + print layers
-vakcoder flow run <name> [--resume] [--yes]
+vak flow list
+vak flow check <name>     # validate + print layers
+vak flow run <name> [--resume] [--yes]
 ```
 
 Ctrl-C aborts cleanly; the ledger allows resuming later.

@@ -66,7 +66,7 @@ struct Server {
 async fn spawn_server(config_toml: &str) -> Server {
     let dir = Arc::new(tempfile::tempdir().unwrap());
     let cwd = dir.path().to_path_buf();
-    let project = cwd.join(".vakcoder");
+    let project = cwd.join(".vak");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("config.toml"),

@@ -392,7 +392,7 @@ fn with_duplicate_note(description: &str, dup: Option<&str>) -> String {
 /// (name, instructions) pairs for every discovered project/user skill — the
 /// same roots skills::discover walks, read-only from this side.
 fn accepted_skill_bodies(home: &Path, cwd: &Path) -> Vec<(String, String)> {
-    let mut roots = vec![cwd.join(".vakcoder/skills"), home.join("skills")];
+    let mut roots = vec![cwd.join(".vak/skills"), home.join("skills")];
     roots.dedup();
     let mut out: Vec<(String, String)> = Vec::new();
     for root in roots {

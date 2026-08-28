@@ -1,7 +1,7 @@
 # 13 — Server mode
 
 The client/server bet from the original architecture: one headless agent
-core, many surfaces. `vakcoder serve --port 8901` exposes vak-core over
+core, many surfaces. `vak serve --port 8901` exposes vak-core over
 HTTP+SSE; the TUI, web clients, IDE extensions, and curl are all equal
 consumers.
 
@@ -37,7 +37,7 @@ consumers.
 | POST | `/sessions/:id/pr/merge` `{number,method}` | `gh pr merge --auto` (squash/merge/rebase) |
 | GET/POST | `/tasks`, PATCH/DELETE `/tasks/:id` | scheduled-task CRUD (persisted in the data home); additive `schedule` (5-field cron), `script` (zero-token watchdog), `model_pin` fields validated via `TaskDef::validate` → 400 |
 | POST | `/tasks/:id/run-now` | fire immediately; resets schedule |
-| GET | `/sessions/:id/launch` | dev-server configs (`.vakcoder/launch.toml` + npm autodetect) |
+| GET | `/sessions/:id/launch` | dev-server configs (`.vak/launch.toml` + npm autodetect) |
 | POST | `/sessions/:id/launch/start\|stop` `{name}` | manage a dev server process |
 | GET | `/sessions/:id/launch/logs?name=` | ring-buffered output tail |
 | GET | `/sessions/:id/subagents` | live children spawned by this session (parent-scoped) |

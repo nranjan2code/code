@@ -11,14 +11,14 @@ use std::path::{Path, PathBuf};
 /// Application bundle name on macOS. Matches `productName` in
 /// `tauri.conf.json`; the desktop bundle and the managed install are the
 /// same directory, so the two spellings must never diverge. Note that
-/// macOS volumes are case-insensitive by default — `VakCoder.app` and
-/// `vakcoder.app` are the same path, so a second spelling is not a
+/// macOS volumes are case-insensitive by default — `Vak.app` and
+/// `vak.app` are the same path, so a second spelling is not a
 /// second location, it is a collision.
-pub const BUNDLE_NAME: &str = "VakCoder.app";
+pub const BUNDLE_NAME: &str = "Vak.app";
 
 /// Overrides the install prefix without threading `--prefix` through
 /// every invocation. Useful for staging and for tests.
-pub const PREFIX_ENV: &str = "VAKCODER_PREFIX";
+pub const PREFIX_ENV: &str = "VAK_PREFIX";
 
 const BIN_DIR: &str = "bin";
 const MANIFEST_FILE: &str = "install.json";
@@ -34,7 +34,7 @@ pub struct InstallRoot {
 
 impl InstallRoot {
     /// Resolve the install root, in precedence order:
-    /// explicit `--prefix`, then `VAKCODER_PREFIX`, then the platform
+    /// explicit `--prefix`, then `VAK_PREFIX`, then the platform
     /// default. The first two are taken literally so callers can install
     /// to a plain directory on any platform.
     pub fn resolve(explicit: Option<PathBuf>) -> Self {
@@ -166,15 +166,15 @@ mod tests {
 
     #[test]
     fn bundle_layout_puts_binaries_and_manifest_inside_contents() {
-        let root = InstallRoot::at(PathBuf::from("/Applications/VakCoder.app"));
+        let root = InstallRoot::at(PathBuf::from("/Applications/Vak.app"));
         assert!(root.is_bundle());
         assert_eq!(
             root.bin_dir(),
-            PathBuf::from("/Applications/VakCoder.app/Contents/MacOS")
+            PathBuf::from("/Applications/Vak.app/Contents/MacOS")
         );
         assert_eq!(
             root.manifest_path(),
-            PathBuf::from("/Applications/VakCoder.app/Contents/Resources/install.json")
+            PathBuf::from("/Applications/Vak.app/Contents/Resources/install.json")
         );
     }
 

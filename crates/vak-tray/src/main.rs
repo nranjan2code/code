@@ -1,11 +1,11 @@
-//! vakcoder-tray: the app bundle's actual entry point (`Info.plist`
-//! `CFBundleExecutable`), so double-clicking VakCoder.app or clicking it
+//! vak-tray: the app bundle's actual entry point (`Info.plist`
+//! `CFBundleExecutable`), so double-clicking Vak.app or clicking it
 //! in Spotlight runs this binary, not `vak-desktop`.
 //!
 //! The icon is the same brand mark as the desktop app (`brand_icon`,
 //! downsampled from `crates/vak-desktop/icons/icon.png`) — a menu-bar
 //! controller with no window of its own was otherwise the one surface a
-//! user could not visually tie back to "VakCoder" at a glance. "One
+//! user could not visually tie back to "Vak" at a glance. "One
 //! glance answers is my agent alive?" now lives in the tooltip
 //! (`status_tooltip`) instead of an icon-color swap: gateway/telegram
 //! status in words on hover, not a color the user has to remember the
@@ -22,10 +22,10 @@
 //! `vak-desktop` guards itself with `tauri_plugin_single_instance`, so
 //! spawning it when a window is already open just refocuses that window
 //! rather than duplicating it — both the automatic launch below and the
-//! always-present "Open VakCoder" menu item rely on that guarantee.
+//! always-present "Open Vak" menu item rely on that guarantee.
 //! "Open Admin Console" opens a pre-authenticated link built from the
 //! gateway token `self install` pins into the canonical `.env`
-//! (`ensure_gateway_token`, crates/vakcoder/src/install/mod.rs) — see
+//! (`ensure_gateway_token`, crates/vak/src/install/mod.rs) — see
 //! `open_admin_console` for why that has to be a query param and not a
 //! URL fragment.
 
@@ -104,7 +104,7 @@ const BRAND_ICON_PNG: &[u8] = include_bytes!(concat!(
 /// The tray's glyph, downsampled from the real brand icon rather than a
 /// plain colour dot: a menu-bar controller with no other window is
 /// otherwise the one surface a user cannot visually tie back to
-/// "VakCoder" at a glance. 512 -> 32 is an exact 16:1 block average
+/// "Vak" at a glance. 512 -> 32 is an exact 16:1 block average
 /// (not a naive nearest-neighbour point sample), which is close to an
 /// ideal filter at this ratio and keeps the downsized glyph legible
 /// rather than aliased. 16x16 was tried first and rejected by actually
@@ -243,7 +243,7 @@ impl Ui {
             }
             ACT_INSTALL => {
                 if let Err(e) = vak_ops::install(service(slot), &cfg) {
-                    notify("vakcoder", &e);
+                    notify("vak", &e);
                 }
             }
             ACT_UNINSTALL => {
@@ -275,7 +275,7 @@ const ACT_OPEN_DESKTOP: u32 = 9;
 const ACT_OPEN_ADMIN: u32 = 10;
 
 fn persist_watchdog(on: bool) {
-    // home() is already the canonical data home; a further ".vakcoder"
+    // home() is already the canonical data home; a further ".vak"
     // segment here would nest a bogus nested legacy-named directory
     // inside it rather than writing there directly.
     let path = home().join("tray.json");
@@ -294,7 +294,7 @@ fn load_watchdog() -> bool {
 }
 
 fn home() -> std::path::PathBuf {
-    // Canonical data home (doc 32) — never hand-roll HOME/.vakcoder.
+    // Canonical data home (doc 32) — never hand-roll HOME/.vak.
     vak_config::paths::data_home()
 }
 
@@ -328,7 +328,7 @@ fn desktop_binary() -> Option<std::path::PathBuf> {
 const GATEWAY_PORT: u16 = 8901;
 
 /// The token pinned into the canonical `.env` at `self install`
-/// (`ensure_gateway_token`, crates/vakcoder/src/install/mod.rs). `None`
+/// (`ensure_gateway_token`, crates/vak/src/install/mod.rs). `None`
 /// on an install that predates that pinning step -- the token still
 /// exists (freshly minted on every boot), it is just not discoverable
 /// from outside the running process, so there is nothing to build a link
@@ -340,7 +340,7 @@ fn pinned_gateway_token() -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     text.lines().find_map(|line| {
         let (key, value) = line.split_once('=')?;
-        (key.trim() == "VAKCODER_GATEWAY_TOKEN")
+        (key.trim() == "VAK_GATEWAY_TOKEN")
             .then(|| value.trim().to_string())
             .filter(|v| !v.is_empty())
     })
@@ -362,7 +362,7 @@ fn open_admin_console() {
     let cfg = vak_ops::OpsConfig::detect();
     if vak_ops::status(vak_ops::Service::Gateway, &cfg) != vak_ops::State::Running {
         notify(
-            "vakcoder",
+            "vak",
             "start the gateway service first (Gateway → Start)",
         );
         return;
@@ -374,27 +374,27 @@ fn open_admin_console() {
             // with. The console still works -- open it to the manual
             // login form rather than not opening it at all.
             notify(
-                "vakcoder",
+                "vak",
                 "no pinned token found — reinstall to enable one-click login; opening manual login",
             );
             format!("http://127.0.0.1:{GATEWAY_PORT}/admin")
         }
     };
     if let Err(e) = std::process::Command::new("open").arg(url).spawn() {
-        notify("vakcoder", &format!("could not open admin console: {e}"));
+        notify("vak", &format!("could not open admin console: {e}"));
     }
 }
 
 fn open_desktop() {
     let Some(bin) = desktop_binary() else {
         notify(
-            "vakcoder",
-            "VakCoder desktop app not found next to the tray binary",
+            "vak",
+            "Vak desktop app not found next to the tray binary",
         );
         return;
     };
     if let Err(e) = std::process::Command::new(bin).spawn() {
-        notify("vakcoder", &format!("could not open VakCoder: {e}"));
+        notify("vak", &format!("could not open Vak: {e}"));
     }
 }
 
@@ -402,9 +402,9 @@ fn open_desktop() {
 /// lifetime by whichever tray started first.
 ///
 /// The bundle's `CFBundleExecutable` is this binary, and
-/// `com.vakcoder.tray` also runs it as a launchd service with
+/// `com.vak.tray` also runs it as a launchd service with
 /// `RunAtLoad`. So the ordinary path -- install, `services-sync`, then
-/// open VakCoder from Finder, Spotlight, or the Dock -- started a
+/// open Vak from Finder, Spotlight, or the Dock -- started a
 /// *second* tray and put two identical icons in the menu bar, with no
 /// guard anywhere against it.
 ///
@@ -528,7 +528,7 @@ fn main() {
                     {
                         let _ = vak_ops::start(service(i), &cfg);
                         notify(
-                            "vakcoder watchdog",
+                            "vak watchdog",
                             &format!("{} went down — restarting", service(i).label()),
                         );
                         last_down_notify = std::time::Instant::now();
@@ -552,10 +552,10 @@ fn main() {
         .expect("tray built");
 
     // Deliberately does NOT open the chat window here. This process is a
-    // background service (com.vakcoder.tray, RunAtLoad), so doing so
+    // background service (com.vak.tray, RunAtLoad), so doing so
     // would throw a window in the user's face at every login. Opening
     // the app is now the bundle's job -- its CFBundleExecutable is
-    // vak-desktop -- and "Open VakCoder" in the menu covers the rest.
+    // vak-desktop -- and "Open Vak" in the menu covers the rest.
 
     let mut ui = Ui {
         tray,
@@ -596,7 +596,7 @@ fn states_now() -> [vak_ops::State; 2] {
 fn status_tooltip(states: &[vak_ops::State; 2]) -> String {
     // State's Display already renders lowercase ("running", "stopped", …).
     format!(
-        "vakcoder — gateway {}, telegram {}",
+        "vak — gateway {}, telegram {}",
         states[GATEWAY], states[TELEGRAM]
     )
 }
@@ -605,7 +605,7 @@ fn build_menu(states: &[vak_ops::State; 2], watchdog_on: bool) -> Menu {
     let menu = Menu::new();
     // Top of the menu, always present: the two actions a user is
     // actually looking for. Everything below is service plumbing.
-    let open = MenuItem::with_id(ACT_OPEN_DESKTOP.to_string(), "Open VakCoder", true, None);
+    let open = MenuItem::with_id(ACT_OPEN_DESKTOP.to_string(), "Open Vak", true, None);
     let _ = menu.append(&open);
     let admin = MenuItem::with_id(ACT_OPEN_ADMIN.to_string(), "Open Admin Console", true, None);
     let _ = menu.append(&admin);

@@ -104,7 +104,7 @@ export default function SetupCard() {  const [dismissed, setDismissed] = createS
         <Show when={error()}>
           <div class="gate-err setup-card-error">{error()}</div>
         </Show>
-        <p class="setup-card-note">Stored in ~/.vakcoder/.env on this device only.</p>
+        <p class="setup-card-note">Stored in ~/.vak/.env on this device only.</p>
       </section>
     </Show>
   );

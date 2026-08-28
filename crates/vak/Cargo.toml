@@ -1,11 +1,11 @@
 [package]
-name = "vakcoder"
+name = "vak"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "vakcoder"
+name = "vak"
 path = "src/main.rs"
 
 [dependencies]

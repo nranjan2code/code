@@ -1,8 +1,8 @@
 #!/bin/sh
-# Verifies Landlock containment end-to-end against a built vakcoder binary.
-# Requires Linux 5.13+. Usage: scripts/landlock_smoke.sh path/to/vakcoder
+# Verifies Landlock containment end-to-end against a built vak binary.
+# Requires Linux 5.13+. Usage: scripts/landlock_smoke.sh path/to/vak
 set -u
-BIN="${1:?usage: landlock_smoke.sh <vakcoder-binary>}"
+BIN="${1:?usage: landlock_smoke.sh <vak-binary>}"
 WS="$(mktemp -d)"
 OUTSIDE="$(mktemp -d)"
 trap 'rm -rf "$WS" "$OUTSIDE"' EXIT

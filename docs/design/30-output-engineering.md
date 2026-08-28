@@ -41,7 +41,7 @@ the complete assistant output. Delivery is a derived projection.
 
 User and trusted-project configuration can select a template by ID and replace
 it without changing Rust code. Files are loaded from `<home>/output.toml` and
-trusted `<cwd>/.vakcoder/output.toml`; user definitions win by ID:
+trusted `<cwd>/.vak/output.toml`; user definitions win by ID:
 
 ```toml
 [templates.compact-result]

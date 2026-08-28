@@ -7,7 +7,7 @@ fn project_layer_retry_keys_reach_effective_config() {
     // Regression: merge_into dropped run_retry_* when layering project over
     // user config, so the file value silently fell back to the default.
     let dir = tempfile::tempdir().unwrap();
-    let project = dir.path().join(".vakcoder");
+    let project = dir.path().join(".vak");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("config.toml"),
@@ -23,7 +23,7 @@ fn project_layer_retry_keys_reach_effective_config() {
 #[test]
 fn unknown_config_keys_warn_instead_of_failing() {
     let dir = tempfile::tempdir().unwrap();
-    let project = dir.path().join(".vakcoder");
+    let project = dir.path().join(".vak");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("config.toml"),
@@ -42,7 +42,7 @@ fn unknown_config_keys_warn_instead_of_failing() {
 #[test]
 fn ui_defaults_apply_when_section_absent() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join(".vakcoder")).unwrap();
+    std::fs::create_dir_all(dir.path().join(".vak")).unwrap();
 
     let cfg = load_with_trust(dir.path(), true).unwrap();
     assert_eq!(cfg.ui.theme, "dark");
@@ -53,7 +53,7 @@ fn ui_defaults_apply_when_section_absent() {
 #[test]
 fn ui_keymap_overrides_merge_project_over_user() {
     let dir = tempfile::tempdir().unwrap();
-    let project = dir.path().join(".vakcoder");
+    let project = dir.path().join(".vak");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("config.toml"),
@@ -70,7 +70,7 @@ fn ui_keymap_overrides_merge_project_over_user() {
 #[test]
 fn ui_layer_overrides_and_unknown_theme_normalizes_to_dark() {
     let dir = tempfile::tempdir().unwrap();
-    let project = dir.path().join(".vakcoder");
+    let project = dir.path().join(".vak");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("config.toml"),
@@ -108,7 +108,7 @@ fn designed_ui_themes_are_valid_config_values() {
         "forest",
     ] {
         let dir = tempfile::tempdir().unwrap();
-        let project = dir.path().join(".vakcoder");
+        let project = dir.path().join(".vak");
         std::fs::create_dir_all(&project).unwrap();
         std::fs::write(
             project.join("config.toml"),
@@ -123,7 +123,7 @@ fn designed_ui_themes_are_valid_config_values() {
 #[test]
 fn custom_theme_names_resolve_without_warning() {
     let dir = tempfile::tempdir().unwrap();
-    let project = dir.path().join(".vakcoder");
+    let project = dir.path().join(".vak");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("config.toml"),
@@ -148,7 +148,7 @@ fn custom_theme_names_resolve_without_warning() {
 #[test]
 fn composer_osc52_and_accessibility_layers_apply() {
     let dir = tempfile::tempdir().unwrap();
-    let project = dir.path().join(".vakcoder");
+    let project = dir.path().join(".vak");
     std::fs::create_dir_all(&project).unwrap();
 
     let cfg = load_with_trust(dir.path(), true).unwrap();
@@ -188,7 +188,7 @@ fn stop_policy_defaults_on_and_layer_overrides_apply() {
     assert!(cfg.stop_policy.enabled);
     assert_eq!(cfg.stop_policy.max_blocks, 2);
 
-    let project = dir.path().join(".vakcoder");
+    let project = dir.path().join(".vak");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("config.toml"),
@@ -220,7 +220,7 @@ fn finops_caps_and_overrides_layer_with_unknown_key_warning() {
     assert!(cfg.finops.max_run_usd.is_none());
     assert!(cfg.finops.price_overrides.is_empty());
 
-    let project = dir.path().join(".vakcoder");
+    let project = dir.path().join(".vak");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("config.toml"),

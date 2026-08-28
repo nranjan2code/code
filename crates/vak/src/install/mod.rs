@@ -40,7 +40,7 @@ struct ComponentSpec {
 
 const COMPONENTS: &[ComponentSpec] = &[
     ComponentSpec {
-        name: "vakcoder",
+        name: "vak",
         required: true,
     },
     ComponentSpec {
@@ -144,7 +144,7 @@ fn install_into(root: &InstallRoot, force: bool) -> Result<Manifest, String> {
     for spec in COMPONENTS {
         // The CLI is the binary we are running; siblings come from the
         // same build directory.
-        let source = if spec.name == "vakcoder" {
+        let source = if spec.name == "vak" {
             exe.clone()
         } else {
             build_dir.join(spec.name)
@@ -219,7 +219,7 @@ fn retire_legacy_tray(root: &InstallRoot) {
             &vak_ops::services::SystemRunner,
         );
     }
-    let obsolete_binary = root.bin_dir().join("vakcoder-tray");
+    let obsolete_binary = root.bin_dir().join("vak-tray");
     if let Err(e) = std::fs::remove_file(&obsolete_binary)
         && e.kind() != std::io::ErrorKind::NotFound
     {
@@ -230,7 +230,7 @@ fn retire_legacy_tray(root: &InstallRoot) {
     }
 }
 
-/// Ensure `VAKCODER_GATEWAY_TOKEN` is set in the canonical `.env`,
+/// Ensure `VAK_GATEWAY_TOKEN` is set in the canonical `.env`,
 /// generating one only if the key is entirely absent (an existing empty
 /// value is left as-is too -- that is an explicit "unpinned" choice, not
 /// something install should override).
@@ -241,18 +241,18 @@ fn ensure_gateway_token() -> Result<(), String> {
     let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
     let already_set = existing.lines().any(|line| {
         line.split_once('=')
-            .is_some_and(|(k, _)| k.trim() == "VAKCODER_GATEWAY_TOKEN")
+            .is_some_and(|(k, _)| k.trim() == "VAK_GATEWAY_TOKEN")
     });
     if already_set {
         return Ok(());
     }
     let token = format!("vk_{}", uuid::Uuid::now_v7());
-    vak_config::upsert_env_file(&env_path, "VAKCODER_GATEWAY_TOKEN", &token)
+    vak_config::upsert_env_file(&env_path, "VAK_GATEWAY_TOKEN", &token)
         .map_err(|e| format!("writing {}: {e}", env_path.display()))
 }
 
 fn report_next_steps(root: &InstallRoot) {
-    let cli = root.bin_dir().join("vakcoder");
+    let cli = root.bin_dir().join("vak");
     let on_path = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).any(|d| d == root.bin_dir()))
         .unwrap_or(false);
@@ -261,10 +261,10 @@ fn report_next_steps(root: &InstallRoot) {
         println!("the CLI is not on PATH; either add it:");
         println!("  export PATH=\"{}:$PATH\"", root.bin_dir().display());
         println!("or link it:");
-        println!("  ln -sf {} /usr/local/bin/vakcoder", cli.display());
+        println!("  ln -sf {} /usr/local/bin/vak", cli.display());
     }
     println!();
-    println!("next: vakcoder self services-sync");
+    println!("next: vak self services-sync");
 }
 
 // ----------------------------------------------------------------- verify
@@ -299,7 +299,7 @@ pub fn run_verify(prefix: Option<PathBuf>) -> i32 {
         for d in &defects {
             eprintln!("defect: {d}");
         }
-        eprintln!("repair with: vakcoder self reinstall");
+        eprintln!("repair with: vak self reinstall");
         1
     }
 }
@@ -689,7 +689,7 @@ mod tests {
             .collect();
         assert_eq!(
             required,
-            vec!["vakcoder"],
+            vec!["vak"],
             "only the CLI is required; the rest ride along when built"
         );
     }

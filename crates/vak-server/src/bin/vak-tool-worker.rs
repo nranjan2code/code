@@ -1,5 +1,5 @@
 //! Standalone `__tool_worker` broker endpoint. The server process itself
-//! doubles as the worker in production (the `vakcoder` binary wires the
+//! doubles as the worker in production (the `vak` binary wires the
 //! same subcommand); this tiny binary exists so tests can pin a REAL
 //! worker executable via `Core::set_tool_worker_exe` — a cargo test
 //! harness cannot speak the broker protocol.

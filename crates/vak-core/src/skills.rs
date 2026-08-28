@@ -1,5 +1,5 @@
 //! Skills: markdown packages with frontmatter, discovered from
-//! `.vakcoder/skills/<name>/SKILL.md` (project) and
+//! `.vak/skills/<name>/SKILL.md` (project) and
 //! `<home>/skills/<name>/SKILL.md` (user). Only names + descriptions enter
 //! the system prompt; the model reads the file when it needs the content.
 
@@ -13,7 +13,7 @@ pub struct Skill {
 }
 
 pub fn discover(cwd: &Path, home: &Path) -> Vec<Skill> {
-    let mut roots = vec![cwd.join(".vakcoder/skills"), home.join("skills")];
+    let mut roots = vec![cwd.join(".vak/skills"), home.join("skills")];
     roots.dedup();
     let mut out = Vec::new();
     for root in roots {

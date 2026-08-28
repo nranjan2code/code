@@ -17,7 +17,7 @@ Tools never panic and never return `Err`. Every failure is a
 | glob | globset with literal_separator, ignores .git/node_modules/target |
 | grep | regex over text files, include-glob filter, match cap |
 | webfetch | GET-only bounded fetch (docs/design/29 P4): SSRF guard fail-closed pre-connect + per-redirect re-screen, ≤3 hops, 15s timeout, 512KiB cap, content-type filter, no credentials; classified network-capable ⇒ Ask outside FullAccess |
-| browse | headless local Chrome-family `--dump-dom` (JS-rendered DOM) from inside the worker: browser discovery fail-closed (`VAKCODER_BROWSER` override), same SSRF guard on the target, file-based DOM/stderr capture with closed-html sentinel, direct-pid SIGKILL (macOS re-exec), 20s deadline; same permission posture as webfetch |
+| browse | headless local Chrome-family `--dump-dom` (JS-rendered DOM) from inside the worker: browser discovery fail-closed (`VAK_BROWSER` override), same SSRF guard on the target, file-based DOM/stderr capture with closed-html sentinel, direct-pid SIGKILL (macOS re-exec), 20s deadline; same permission posture as webfetch |
 
 ## Output hygiene
 

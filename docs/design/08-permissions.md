@@ -73,13 +73,13 @@ constrains *what the process can touch* even when allowed.
   workers; a pinned Linux worker image is required before the full protocol can
   move into the container. See `25-docker-sandbox.md`.
 - Derived automatically from the effective permission mode
-  (`full-access` ⇒ off); visible via `vakcoder config dump`
+  (`full-access` ⇒ off); visible via `vak config dump`
   (`sandbox = seatbelt | landlock | off`).
 - Linux backend (`vak-tools/src/landlock.rs`): Landlock LSM (kernel 5.13+)
   via the safe `landlock` crate — reads+execute are limited to explicit OS,
   workspace, toolchain, executable, and temp roots; writes are limited to the
   canonicalized cwd and temp in workspace-write mode. `wrap()` re-executes the
-  vakcoder binary with a hidden `__sandbox` subcommand that applies the
+  vak binary with a hidden `__sandbox` subcommand that applies the
   ruleset to itself before running the command, so children inherit it.
   The probe is never applied to the long-lived broker. Unsupported enforcement
   makes the disposable worker exit 126; it never falls back to host execution.
@@ -109,7 +109,7 @@ constrains *what the process can touch* even when allowed.
 - Learned allow rules: pressing `[p]` on an approval persists a SCOPED rule
   derived from the call — `bash(<first-word> *)`, `<write|edit>(<path>)`,
   `mcp(<server>/*)`, `task(<label>)` — into
-  `.vakcoder/permissions.local.toml` (trusted workspaces only). Every spec
+  `.vak/permissions.local.toml` (trusted workspaces only). Every spec
   is round-trip validated (must parse AND match the triggering call) before
   it is written. Loaded at Core startup for trusted workspaces and merged
   into every engine build (`exec`/`plan` included); because evaluation is

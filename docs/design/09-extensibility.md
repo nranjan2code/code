@@ -2,9 +2,9 @@
 
 ## Skills (shipped)
 
-Markdown packages: `.vakcoder/skills/<name>/SKILL.md` (project) and
+Markdown packages: `.vak/skills/<name>/SKILL.md` (project) and
 `data_home()/skills/<name>/SKILL.md` (user; `~/Library/Application Support/
-vakcoder/skills` on macOS, `~/.local/share/vakcoder/skills` on Linux).
+vak/skills` on macOS, `~/.local/share/vak/skills` on Linux).
 Frontmatter `name:` +
 `description:` (name falls back to directory). Only the name/description/
 path line enters the system prompt; the model reads the file with `read`
@@ -109,8 +109,8 @@ namespaces with project > plugin > user precedence on name collision:
 
 | Namespace | Location | Label |
 |---|---|---|
-| Project | `.vakcoder/commands/<name>.md` | `project` |
-| Plugin | `.vakcoder/plugins/<plugin>/commands/<name>.md` | `plugin:<name>` |
+| Project | `.vak/commands/<name>.md` | `project` |
+| Plugin | `.vak/plugins/<plugin>/commands/<name>.md` | `plugin:<name>` |
 | User | `<home>/commands/<name>.md` | `user` |
 
 - File stem is the command name (ascii alnum, `-`, `_` only); names must be

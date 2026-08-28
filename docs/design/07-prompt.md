@@ -1,7 +1,7 @@
 # 07 — System prompt
 
 Current prompt: `crates/vak-core/src/system-prompt.md` (~120 tokens).
-Override per project via `.vakcoder/SYSTEM.md`.
+Override per project via `.vak/SYSTEM.md`.
 
 ## Diff notes
 

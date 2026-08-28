@@ -10,17 +10,17 @@ use super::atomic;
 use super::layout::InstallRoot;
 
 /// Bundle identifier, matching `tauri.conf.json`.
-pub const IDENTIFIER: &str = "dev.vakcoder.desktop";
+pub const IDENTIFIER: &str = "dev.vak.desktop";
 
 /// The bundle launches `vak-desktop`, the actual application.
 ///
-/// It used to launch `vakcoder-tray` with `LSUIElement`, which made the
+/// It used to launch `vak-tray` with `LSUIElement`, which made the
 /// whole `.app` a background menu-bar agent. That had a fatal
-/// consequence: `com.vakcoder.tray` runs the same binary as a launchd
+/// consequence: `com.vak.tray` runs the same binary as a launchd
 /// service, so macOS considered the app already running and answered a
 /// double-click in Finder by sending an activate event to that existing
 /// process rather than launching anything. No new process meant no code
-/// of ours ran at all -- double-clicking VakCoder did nothing visible,
+/// of ours ran at all -- double-clicking Vak did nothing visible,
 /// and no amount of logic inside the tray's startup could have fixed it,
 /// because startup never happened.
 ///
@@ -37,8 +37,8 @@ pub fn info_plist(version: &str) -> String {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>VakCoder</string>
-  <key>CFBundleDisplayName</key><string>VakCoder</string>
+  <key>CFBundleName</key><string>Vak</string>
+  <key>CFBundleDisplayName</key><string>Vak</string>
   <key>CFBundleIdentifier</key><string>{IDENTIFIER}</string>
   <key>CFBundleVersion</key><string>{version}</string>
   <key>CFBundleShortVersionString</key><string>{version}</string>
@@ -90,8 +90,8 @@ pub fn write_metadata(
 }
 
 /// Locate the built desktop frontend relative to the running binary,
-/// covering both a dev tree (`target/release/vakcoder`) and an installed
-/// bundle (`Contents/MacOS/vakcoder`).
+/// covering both a dev tree (`target/release/vak`) and an installed
+/// bundle (`Contents/MacOS/vak`).
 pub fn locate_frontend_assets() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let mut dir = exe.parent()?.to_path_buf();
@@ -120,7 +120,7 @@ mod tests {
         // LSUIElement, macOS treated the app as already running (the
         // tray also runs as a launchd service) and answered a
         // double-click by activating that process instead of launching
-        // anything -- so opening VakCoder did nothing at all.
+        // anything -- so opening Vak did nothing at all.
         assert!(
             p.contains("<key>CFBundleExecutable</key><string>vak-desktop</string>"),
             "the bundle must launch the desktop app"
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn bundle_metadata_writes_a_launchable_plist() {
         let d = tempfile::tempdir().unwrap();
-        let root = InstallRoot::at(d.path().join("VakCoder.app"));
+        let root = InstallRoot::at(d.path().join("Vak.app"));
         write_metadata(&root, "0.8.0", None).unwrap();
         let plist = std::fs::read_to_string(root.prefix().join("Contents/Info.plist")).unwrap();
         assert!(plist.contains("0.8.0"));
@@ -156,7 +156,7 @@ mod tests {
         // clearing the destination first, a reinstall accumulated every
         // prior build's JS and CSS forever.
         let d = tempfile::tempdir().unwrap();
-        let root = InstallRoot::at(d.path().join("VakCoder.app"));
+        let root = InstallRoot::at(d.path().join("Vak.app"));
 
         let first_dist = d.path().join("dist-v1");
         std::fs::create_dir_all(first_dist.join("assets")).unwrap();

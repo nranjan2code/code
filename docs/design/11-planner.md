@@ -1,7 +1,7 @@
 # 11 — Dynamic planner
 
 For open-ended tasks where a hand-authored flow does not exist,
-`vakcoder plan "<task>" [--yes]` invokes the dynamic planner.
+`vak plan "<task>" [--yes]` invokes the dynamic planner.
 
 ## Loop
 

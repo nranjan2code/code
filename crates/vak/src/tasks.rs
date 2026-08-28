@@ -1,5 +1,5 @@
-//! `vakcoder tasks` (docs/design/29-personal-os.md P2): CRUD over
-//! `vak_core::tasks::TaskStore` (~/.vakcoder/tasks.json) without the
+//! `vak tasks` (docs/design/29-personal-os.md P2): CRUD over
+//! `vak_core::tasks::TaskStore` (~/.vak/tasks.json) without the
 //! server. Validation and cron math live in the library; this module only
 //! maps flags onto `TaskDef` and renders the table.
 
@@ -214,7 +214,7 @@ const TASK_PRESETS: &[TaskPreset] = &[TaskPreset {
     name: "weekly-digest",
     args: &["digest", "--days", "7"],
     schedule: "0 9 * * 1",
-    deliver_default: "log:vakcoder",
+    deliver_default: "log:vak",
 }];
 
 #[derive(Debug)]
@@ -565,13 +565,13 @@ mod tests {
 
     #[test]
     fn weekly_digest_preset_expands_fully() {
-        let task = weekly_digest_task(Path::new("/opt/bin/vakcoder"));
+        let task = weekly_digest_task(Path::new("/opt/bin/vak"));
         assert_eq!(task.name, "weekly-digest");
         assert_eq!(task.schedule.as_deref(), Some("0 9 * * 1"));
-        assert_eq!(task.deliver_to.as_deref(), Some("log:vakcoder"));
+        assert_eq!(task.deliver_to.as_deref(), Some("log:vak"));
         assert_eq!(
             task.script.as_deref(),
-            Some("'/opt/bin/vakcoder' digest --days 7")
+            Some("'/opt/bin/vak' digest --days 7")
         );
         assert!(task.prompt.is_empty());
         assert!(task.model_pin.is_none());
@@ -601,7 +601,7 @@ mod tests {
     #[test]
     fn expanded_preset_roundtrips_through_store() {
         let dir = tempfile::tempdir().unwrap();
-        let mut task = weekly_digest_task(Path::new("/opt/bin/vakcoder"));
+        let mut task = weekly_digest_task(Path::new("/opt/bin/vak"));
         task.id = "preset-rt".into();
         let mut store = TaskStore::load(dir.path()).unwrap();
         store.put(task.clone());
@@ -624,17 +624,17 @@ mod tests {
 
     #[test]
     fn weekly_digest_next_fire_lands_on_monday() {
-        let task = weekly_digest_task(Path::new("/opt/bin/vakcoder"));
+        let task = weekly_digest_task(Path::new("/opt/bin/vak"));
         let preview = next_fire_preview(&task, chrono::Local::now());
         assert!(preview.ends_with("(Mon)"), "{preview}");
     }
 
     #[test]
     fn add_detail_includes_schedule_script_and_delivery() {
-        let task = weekly_digest_task(Path::new("/opt/bin/vakcoder"));
+        let task = weekly_digest_task(Path::new("/opt/bin/vak"));
         let detail = add_detail(&task);
         assert!(detail.contains("schedule 0 9 * * 1"), "{detail}");
         assert!(detail.contains("digest --days 7"), "{detail}");
-        assert!(detail.contains("deliver log:vakcoder"), "{detail}");
+        assert!(detail.contains("deliver log:vak"), "{detail}");
     }
 }

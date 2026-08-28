@@ -155,7 +155,7 @@ struct CoreInner {
 
 /// Learned permission rules live outside the main config so they can be
 /// written at runtime without touching (possibly committed) project config.
-pub const PERMISSIONS_LOCAL_FILE: &str = ".vakcoder/permissions.local.toml";
+pub const PERMISSIONS_LOCAL_FILE: &str = ".vak/permissions.local.toml";
 
 #[derive(serde::Deserialize, Default)]
 struct PermissionsLocal {
@@ -232,8 +232,8 @@ fn route_revision(
 
 fn route_source(cwd: &std::path::Path, key: &str) -> String {
     let env_set = match key {
-        "provider" => std::env::var("VAKCODER_PROVIDER").is_ok(),
-        "model" => std::env::var("VAKCODER_MODEL").is_ok(),
+        "provider" => std::env::var("VAK_PROVIDER").is_ok(),
+        "model" => std::env::var("VAK_MODEL").is_ok(),
         _ => false,
     };
     if env_set {
@@ -269,11 +269,11 @@ impl Core {
         // Canonical layout (doc 32): one resolver for the whole workspace.
         // The cwd fallback covers exotic environments with no HOME.
         let sessions_home = vak_config::paths::data_home();
-        let sessions_home = if std::env::var_os("VAKCODER_HOME").is_none()
+        let sessions_home = if std::env::var_os("VAK_HOME").is_none()
             && std::env::var_os("HOME").is_none()
             && std::env::var_os("USERPROFILE").is_none()
         {
-            cwd.join(".vakcoder")
+            cwd.join(".vak")
         } else {
             sessions_home
         };
@@ -311,7 +311,7 @@ impl Core {
                 user_env_override: std::sync::Mutex::new(None),
                 tool_worker_exe: std::sync::Mutex::new(
                     std::env::current_exe()
-                        .unwrap_or_else(|_| PathBuf::from("__vakcoder_tool_worker_unavailable__")),
+                        .unwrap_or_else(|_| PathBuf::from("__vak_tool_worker_unavailable__")),
                 ),
                 models_cache: std::sync::Mutex::new(HashMap::new()),
                 mcp_inventory: std::sync::Mutex::new(None),
@@ -490,7 +490,7 @@ impl Core {
             .lock()
             .ok()
             .map(|worker| worker.clone())
-            .unwrap_or_else(|| PathBuf::from("__vakcoder_tool_worker_unavailable__"));
+            .unwrap_or_else(|| PathBuf::from("__vak_tool_worker_unavailable__"));
         vak_tools::brokered_default_tools(worker)
     }
 
@@ -501,7 +501,7 @@ impl Core {
             .lock()
             .ok()
             .map(|worker| worker.clone())
-            .unwrap_or_else(|| PathBuf::from("__vakcoder_tool_worker_unavailable__"));
+            .unwrap_or_else(|| PathBuf::from("__vak_tool_worker_unavailable__"));
         vak_tools::brokered_read_only_tools(worker)
     }
 
@@ -673,7 +673,7 @@ impl Core {
         Ok(config.permission_mode)
     }
 
-    /// Persists a learned allow rule to `.vakcoder/permissions.local.toml`
+    /// Persists a learned allow rule to `.vak/permissions.local.toml`
     /// (and this process's in-memory engine inputs). Trusted workspaces only:
     /// an untrusted session must not be able to write grant files. Rules are
     /// severity-aggregated by the engine, so a learned Allow can never
@@ -798,7 +798,7 @@ impl Core {
     }
 
     pub fn system_prompt(&self) -> String {
-        let project_prompt = self.inner.cwd.join(".vakcoder/SYSTEM.md");
+        let project_prompt = self.inner.cwd.join(".vak/SYSTEM.md");
         let base = if project_prompt.is_file()
             && let Ok(custom) = std::fs::read_to_string(&project_prompt)
         {
@@ -881,7 +881,7 @@ impl Core {
                         .config
                         .anthropic_base_url
                         .clone()
-                        .or_else(|| vak_config::get_var("VAKCODER_ANTHROPIC_BASE_URL")),
+                        .or_else(|| vak_config::get_var("VAK_ANTHROPIC_BASE_URL")),
                 })
             }
             "google" => {
@@ -895,7 +895,7 @@ impl Core {
                     })?;
                 Ok(ProviderAuth {
                     api_key,
-                    base_url: vak_config::get_var("VAKCODER_GOOGLE_BASE_URL").or_else(|| {
+                    base_url: vak_config::get_var("VAK_GOOGLE_BASE_URL").or_else(|| {
                         Some("https://generativelanguage.googleapis.com/v1beta".into())
                     }),
                 })
@@ -904,7 +904,7 @@ impl Core {
                 let api_key = required_key("OPENAI_API_KEY", "openai-responses")?;
                 Ok(ProviderAuth {
                     api_key,
-                    base_url: vak_config::get_var("VAKCODER_OPENAI_BASE_URL")
+                    base_url: vak_config::get_var("VAK_OPENAI_BASE_URL")
                         .or_else(|| Some("https://api.openai.com/v1".into())),
                 })
             }
@@ -915,13 +915,13 @@ impl Core {
                     (
                         "OPENAI_API_KEY",
                         "https://api.openai.com/v1",
-                        "VAKCODER_OPENAI_BASE_URL",
+                        "VAK_OPENAI_BASE_URL",
                     )
                 } else {
                     (
                         "OPENROUTER_API_KEY",
                         "https://openrouter.ai/api/v1",
-                        "VAKCODER_OPENROUTER_BASE_URL",
+                        "VAK_OPENROUTER_BASE_URL",
                     )
                 };
                 let api_key = required_key(env, &provider)?;
@@ -935,13 +935,13 @@ impl Core {
                 let api_key = required_key("OPENCODE_API_KEY", "opencode-zen")?;
                 Ok(ProviderAuth {
                     api_key,
-                    base_url: vak_config::get_var("VAKCODER_OPENCODE_ZEN_BASE_URL")
+                    base_url: vak_config::get_var("VAK_OPENCODE_ZEN_BASE_URL")
                         .or_else(|| Some("https://opencode.ai/zen/v1".into())),
                 })
             }
             "ollama" => Ok(ProviderAuth {
                 api_key: "ollama".into(),
-                base_url: vak_config::get_var("VAKCODER_OLLAMA_BASE_URL")
+                base_url: vak_config::get_var("VAK_OLLAMA_BASE_URL")
                     .or_else(|| Some("http://localhost:11434/v1".into())),
             }),
             other => Err(CoreError::MissingAuth {
@@ -2218,7 +2218,7 @@ fn config_profile_has_key(path: &std::path::Path, key: &str) -> bool {
 }
 
 fn self_path() -> std::path::PathBuf {
-    std::path::PathBuf::from(".vakcoder/config.toml")
+    std::path::PathBuf::from(".vak/config.toml")
 }
 
 /// Resolve `${NAME}` references in an MCP server env value through

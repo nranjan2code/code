@@ -61,9 +61,9 @@ async fn gateway_inbound_carries_images_to_the_model() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
     // Hermetic against the developer's global config (reflection=true):
-    let _ = std::fs::create_dir_all(cwd.join(".vakcoder"));
+    let _ = std::fs::create_dir_all(cwd.join(".vak"));
     let _ = std::fs::write(
-        cwd.join(".vakcoder/config.toml"),
+        cwd.join(".vak/config.toml"),
         "[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
     );
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();

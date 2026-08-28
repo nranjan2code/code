@@ -4,7 +4,7 @@
 //!
 //! The gateway stays transport-agnostic; this client runs anywhere it can
 //! reach both Telegram and a vak-server — laptop, VPS, sidecar. Launched via
-//! `vakcoder telegram --server URL --token GATEWAY_TOKEN` with
+//! `vak telegram --server URL --token GATEWAY_TOKEN` with
 //! `TELEGRAM_BOT_TOKEN` in the environment (.env included).
 
 use serde_json::Value;
@@ -40,7 +40,7 @@ pub struct TelegramBridge {
     pub gateway_url: String,
     pub gateway_token: String,
     /// Directory for the per-token single-instance lock
-    /// (`$VAKCODER_HOME/locks`). None skips locking (tests only).
+    /// (`$VAK_HOME/locks`). None skips locking (tests only).
     pub locks_dir: Option<PathBuf>,
 }
 
@@ -132,10 +132,10 @@ impl InstanceLock {
             .find_map(|t| t.parse::<u32>().ok());
         match pid {
             Some(p) if Self::pid_alive(p) => Err(format!(
-                "another vakcoder telegram bridge already owns this bot\n  \
+                "another vak telegram bridge already owns this bot\n  \
                  lock: {}\n  \
                  holder pid: {p}\n  \
-                 stop it first (launchctl kickstart -k gui/$(id -u)/com.vakcoder.telegram,\n  \
+                 stop it first (launchctl kickstart -k gui/$(id -u)/com.vak.telegram,\n  \
                  or kill the stale process); rotating TELEGRAM_BOT_TOKEN also helps",
                 path.display()
             )),

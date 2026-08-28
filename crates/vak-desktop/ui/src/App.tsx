@@ -227,7 +227,7 @@ function onFinished(id: string, summary: string) {
   void refreshSessions();
   if (document.hidden && id === activeId()) {
     const s = sessions().find((x) => x.session_id === id);
-    void notify("VakCoder run finished", `${s?.title ?? "Session"} — ${summary}`);
+    void notify("Vak run finished", `${s?.title ?? "Session"} — ${summary}`);
   }
 }
 
@@ -588,7 +588,7 @@ function SplitPanes() {
 
   const persistRatio = (next: number) => {
     setSplitRatio(next);
-    localStorage.setItem("vakcoder.splitRatio", String(next));
+    localStorage.setItem("vak.splitRatio", String(next));
   };
 
   const beginDrag = (event: PointerEvent) => {
@@ -653,8 +653,8 @@ function SplitPanes() {
 
 export default function App() {
   onMount(() => {
-    const savedSidebar = Number(localStorage.getItem("vakcoder.sidebarWidth"));
-    const savedDock = Number(localStorage.getItem("vakcoder.dockWidth"));
+    const savedSidebar = Number(localStorage.getItem("vak.sidebarWidth"));
+    const savedDock = Number(localStorage.getItem("vak.dockWidth"));
     if (savedSidebar >= 220 && savedSidebar <= 360) setSidebarWidth(savedSidebar);
     if (savedDock >= 340 && savedDock <= window.innerWidth * 0.7) setDockWidth(savedDock);
     // Register the listener before the first probe: the shell boots the

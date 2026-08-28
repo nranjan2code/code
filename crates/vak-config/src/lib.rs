@@ -678,11 +678,11 @@ pub enum ConfigError {
 }
 
 pub fn global_path() -> Option<PathBuf> {
-    dirs_home().map(|h| h.join(".config/vakcoder/config.toml"))
+    dirs_home().map(|h| h.join(".config/vak/config.toml"))
 }
 
 pub fn project_path(cwd: &Path) -> PathBuf {
-    cwd.join(".vakcoder/config.toml")
+    cwd.join(".vak/config.toml")
 }
 
 /// Persist user-selected agent preferences without disturbing unrelated
@@ -823,7 +823,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
                 fc.sandbox = SandboxSettings::default();
             }
             warnings.push(format!(
-                "project .vakcoder/config.toml is not trusted for this workspace; \
+                "project .vak/config.toml is not trusted for this workspace; \
                  ignored privileged keys ({PRIVILEGED_KEYS_NOTICE}). \
                  Re-run and confirm the workspace prompt, or pass --trust, to apply them."
             ));
@@ -836,10 +836,10 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         merge_into(&mut merged, layer);
     }
 
-    if let Ok(m) = std::env::var("VAKCODER_MODEL") {
+    if let Ok(m) = std::env::var("VAK_MODEL") {
         merged.model = Some(m);
     }
-    if let Ok(p) = std::env::var("VAKCODER_PROVIDER") {
+    if let Ok(p) = std::env::var("VAK_PROVIDER") {
         merged.provider = Some(p);
     }
 
@@ -1866,7 +1866,7 @@ mod tests {
     use super::*;
 
     fn write_project_config(dir: &Path, text: &str) {
-        let project = dir.join(".vakcoder");
+        let project = dir.join(".vak");
         std::fs::create_dir_all(&project).expect("project dir");
         std::fs::write(project.join("config.toml"), text).expect("write config");
     }

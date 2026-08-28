@@ -52,10 +52,10 @@ async fn spawn_secured(
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
     // Isolate from the developer's real global config: layered config
-    // loads $HOME/.config/vakcoder/config.toml, and a personal
+    // loads $HOME/.config/vak/config.toml, and a personal
     // `[memory] reflection = true` would make the post-turn reflection
     // seam consume scripted provider responses mid-test.
-    let project = cwd.join(".vakcoder");
+    let project = cwd.join(".vak");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("config.toml"),
@@ -426,7 +426,7 @@ async fn mode_switch_and_diff_endpoint() {
             .as_str()
             .is_some_and(|r| r.starts_with('r'))
     );
-    let persisted = tokio::fs::read_to_string(cwd.join(".vakcoder/config.toml"))
+    let persisted = tokio::fs::read_to_string(cwd.join(".vak/config.toml"))
         .await
         .unwrap();
     assert!(persisted.contains("provider = \"google\""));
@@ -697,7 +697,7 @@ async fn bestofn_fans_out_keep_and_discard() {
     let runs = body["runs"].as_array().unwrap().clone();
     assert_eq!(runs.len(), 2);
 
-    let wt_root = cwd.join(".vakcoder/worktrees");
+    let wt_root = cwd.join(".vak/worktrees");
     let wait_child = |cid: String| {
         let client = client.clone();
         let base = base.clone();
@@ -745,7 +745,7 @@ async fn bestofn_fans_out_keep_and_discard() {
     );
     let branches = {
         let o = std::process::Command::new("git")
-            .args(["branch", "--list", "vakcoder/*"])
+            .args(["branch", "--list", "vak/*"])
             .current_dir(&cwd)
             .output()
             .unwrap();
@@ -913,7 +913,7 @@ async fn scheduled_tasks_crud_runnow_and_worktree_churn() {
     }
     let ct = wait_transcript(&client, &base, &child_id).await;
     assert_eq!(ct["count"].as_u64(), Some(2));
-    let wt_root = cwd.join(".vakcoder/worktrees");
+    let wt_root = cwd.join(".vak/worktrees");
     assert_eq!(std::fs::read_dir(&wt_root).unwrap().count(), 1);
 
     // Second run replaces the worktree (latest-only retention).
@@ -987,9 +987,9 @@ async fn launch_config_and_process_lifecycle() {
         .unwrap();
     assert_eq!(empty["servers"].as_array().unwrap().len(), 0);
 
-    std::fs::create_dir_all(cwd.join(".vakcoder")).unwrap();
+    std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
-        cwd.join(".vakcoder/launch.toml"),
+        cwd.join(".vak/launch.toml"),
         "[[server]]\nname = \"static\"\ncmd = \"python3\"\nargs = [\"-m\", \"http.server\", \"4519\"]\nport = 4519\n",
     )
     .unwrap();
@@ -1252,7 +1252,7 @@ async fn archive_toggle_is_reflected_in_session_list() {
 async fn skills_listing_and_pascalcase_mode() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
-    let skill_dir = cwd.join(".vakcoder/skills/tdd");
+    let skill_dir = cwd.join(".vak/skills/tdd");
     std::fs::create_dir_all(&skill_dir).unwrap();
     std::fs::write(
         skill_dir.join("SKILL.md"),
@@ -1324,8 +1324,8 @@ async fn providers_listing_and_key_storage_roundtrip() {
 
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(cwd.join("home"));
-    // Hermetic secret store: never touch the developer's real ~/.vakcoder.
-    let user_env = cwd.join("user-home/.vakcoder/.env");
+    // Hermetic secret store: never touch the developer's real ~/.vak.
+    let user_env = cwd.join("user-home/.vak/.env");
     core.set_user_env_path(user_env.clone());
     // Pin the current provider so the assertion reflects THIS fixture, not
     // whatever default the developer's global config selects.
@@ -1509,8 +1509,8 @@ async fn telegram_token_storage_roundtrip() {
 
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(cwd.join("home"));
-    // Hermetic secret store: never touch the developer's real ~/.vakcoder.
-    let user_env = cwd.join("user-home/.vakcoder/.env");
+    // Hermetic secret store: never touch the developer's real ~/.vak.
+    let user_env = cwd.join("user-home/.vak/.env");
     core.set_user_env_path(user_env.clone());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

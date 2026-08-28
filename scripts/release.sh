@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a release and emit the feed `vakcoder self update` consumes.
+# Build a release and emit the feed `vak self update` consumes.
 #
 # Produces, under dist/<version>/:
 #   <component>                 the release binaries
@@ -22,7 +22,7 @@ BASE_URL=""
 ALLOW_DIRTY=false
 BUILD=true
 SKIP_CHECKS=false
-TEST_TIMEOUT="${VAKCODER_TEST_TIMEOUT:-900}"
+TEST_TIMEOUT="${VAK_TEST_TIMEOUT:-900}"
 
 while (($# > 0)); do
     case "$1" in
@@ -139,7 +139,7 @@ if [[ "$BUILD" == true ]]; then
     printf '\n== build ==\n'
     # The binary stamps this into its own manifest, so an installed
     # build can be traced back to a commit.
-    VAKCODER_GIT_SHA="$GIT_SHA" cargo build --release --workspace
+    VAK_GIT_SHA="$GIT_SHA" cargo build --release --workspace
 else
     printf '\n== build skipped ==\n'
 fi
@@ -147,9 +147,9 @@ fi
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-# Components, mirroring COMPONENTS in crates/vakcoder/src/install/mod.rs.
-# Only vakcoder is required; the rest ship when the build produced them.
-REQUIRED=("vakcoder")
+# Components, mirroring COMPONENTS in crates/vak/src/install/mod.rs.
+# Only vak is required; the rest ship when the build produced them.
+REQUIRED=("vak")
 OPTIONAL=("vak-desktop" "vak-delivery-worker")
 
 collected=()
@@ -226,6 +226,6 @@ printf 'platform  %s\n' "$KEY"
 printf 'output    %s\n' "$OUT"
 printf '\nexercise the update path against these artifacts:\n'
 printf '  (cd %s && python3 -m http.server 8899) &\n' "$ROOT_DIR/dist"
-printf '  vakcoder self update --url %s/%s/release.json --dry-run\n' "${BASE_URL%/}" "$VERSION"
+printf '  vak self update --url %s/%s/release.json --dry-run\n' "${BASE_URL%/}" "$VERSION"
 printf '\npublish, then tag:\n'
 printf '  git tag -a v%s -m "release %s" && git push origin v%s\n' "$VERSION" "$VERSION" "$VERSION"

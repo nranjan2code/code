@@ -1,4 +1,4 @@
-//! `vakcoder backup export|import` (docs/design/29-personal-os.md P3) over
+//! `vak backup export|import` (docs/design/29-personal-os.md P3) over
 //! `vak_core::backup`. The CLI layer adds the human guardrails the library
 //! deliberately leaves out: refusing to export onto (or import from) the
 //! live home itself, and a loud terminal warning when secrets ride along.
@@ -43,7 +43,7 @@ fn parse_conflict(word: &str) -> Option<Conflict> {
 fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
     if same_dir(dir, home) {
         eprintln!(
-            "error: refusing to export into the live vakcoder home ({}) — pick a directory outside it",
+            "error: refusing to export into the live vak home ({}) — pick a directory outside it",
             home.display()
         );
         return 2;
@@ -79,7 +79,7 @@ fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
 fn import(home: &Path, dir: &Path, conflict: Conflict) -> i32 {
     if same_dir(dir, home) {
         eprintln!(
-            "error: refusing to import from the live vakcoder home ({}) — pick a backup directory outside it",
+            "error: refusing to import from the live vak home ({}) — pick a backup directory outside it",
             home.display()
         );
         return 2;

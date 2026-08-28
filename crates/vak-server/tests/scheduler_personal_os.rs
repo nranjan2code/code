@@ -123,9 +123,9 @@ async fn spawn_full(
 ) -> Fixture {
     let dir = Arc::new(tempfile::tempdir().unwrap());
     let ws = dir.path().join("ws");
-    std::fs::create_dir_all(ws.join(".vakcoder")).unwrap();
+    std::fs::create_dir_all(ws.join(".vak")).unwrap();
     std::fs::write(
-        ws.join(".vakcoder/config.toml"),
+        ws.join(".vak/config.toml"),
         format!("[memory]\nreflection = false\n{config_toml}"),
     )
     .unwrap();
@@ -440,8 +440,8 @@ async fn missing_worker_delivers_typed_error_not_silence() {
     // the failure must land as a DELIVERED alert, never silence.
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().join("ws");
-    std::fs::create_dir_all(cwd.join(".vakcoder")).unwrap();
-    std::fs::write(cwd.join(".vakcoder/config.toml"), "").unwrap();
+    std::fs::create_dir_all(cwd.join(".vak")).unwrap();
+    std::fs::write(cwd.join(".vak/config.toml"), "").unwrap();
     let home = dir.path().join("home");
     let core = Core::new_with_trust(cwd, true).unwrap();
     core.set_sessions_home(home.clone());

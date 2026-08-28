@@ -1,22 +1,22 @@
 //! Canonical install/data layout (docs/design/32-release-engineering.md,
 //! "Canonical layout" section). THE single source of truth for where
-//! vakcoder puts binaries, data, caches, and logs on each platform.
+//! vak puts binaries, data, caches, and logs on each platform.
 //!
 //! Every crate resolves paths through these functions — never by hand-
-//! rolling `HOME/.vakcoder` again. The 0.7 drift incident (services kept
+//! rolling `HOME/.vak` again. The 0.7 drift incident (services kept
 //! executing an old image while five call sites disagreed about home)
 //! is the standing reason this module exists.
 //!
 //! macOS (Apple File System Programming Guide):
-//!   data   ~/Library/Application Support/vakcoder
-//!   cache  ~/Library/Caches/vakcoder
-//!   logs   ~/Library/Logs/vakcoder
+//!   data   ~/Library/Application Support/vak
+//!   cache  ~/Library/Caches/vak
+//!   logs   ~/Library/Logs/vak
 //! Linux (XDG Base Directory Specification):
-//!   data   $XDG_DATA_HOME/vakcoder        (~/.local/share/vakcoder)
-//!   cache  $XDG_CACHE_HOME/vakcoder       (~/.cache/vakcoder)
-//!   logs   $XDG_STATE_HOME/vakcoder/logs  (~/.local/state/vakcoder/logs)
+//!   data   $XDG_DATA_HOME/vak        (~/.local/share/vak)
+//!   cache  $XDG_CACHE_HOME/vak       (~/.cache/vak)
+//!   logs   $XDG_STATE_HOME/vak/logs  (~/.local/state/vak/logs)
 //!
-//! `VAKCODER_HOME` overrides the DATA home everywhere and disables the
+//! `VAK_HOME` overrides the DATA home everywhere and disables the
 //! legacy migration — an explicit override is the user's layout choice.
 
 use std::path::PathBuf;
@@ -25,18 +25,18 @@ use crate::get_var;
 
 /// The user data home: sessions, memory, tasks, config state, audit logs.
 pub fn data_home() -> PathBuf {
-    resolve(get_var("VAKCODER_HOME").as_deref()).data
+    resolve(get_var("VAK_HOME").as_deref()).data
 }
 
 /// Rebuildable artifacts only (the SQLite FTS index and WAL sidecars).
 /// Deleting this directory must always be safe; it is rebuilt from JSONL.
 pub fn cache_home() -> PathBuf {
-    resolve(get_var("VAKCODER_HOME").as_deref()).cache
+    resolve(get_var("VAK_HOME").as_deref()).cache
 }
 
 /// Service + CLI log files (Console.app-visible on macOS).
 pub fn logs_dir() -> PathBuf {
-    resolve(get_var("VAKCODER_HOME").as_deref()).logs
+    resolve(get_var("VAK_HOME").as_deref()).logs
 }
 
 /// All three homes derived from one override decision. Pure so tests can
@@ -91,7 +91,7 @@ fn xdg(base: &std::path::Path, env_key: &str, default_suffix: &str) -> PathBuf {
 }
 
 fn app_dir_name() -> &'static str {
-    "vakcoder"
+    "vak"
 }
 
 fn base_home() -> PathBuf {
@@ -109,17 +109,17 @@ fn resolve_base_home(environment_home: Option<PathBuf>, account_home: Option<Pat
 }
 
 #[cfg(target_os = "macos")]
-const LEGACY_HOME_SUFFIX: &str = ".vakcoder";
+const LEGACY_HOME_SUFFIX: &str = ".vak";
 
 /// One-time migration of the pre-0.8 dotdir layout into the canonical
-/// Library/XDG locations. Renames `~/.vakcoder` → data home (atomic when
+/// Library/XDG locations. Renames `~/.vak` → data home (atomic when
 /// both sit under $HOME), then relocates rebuildable store artifacts to
-/// the cache home. Skipped entirely when VAKCODER_HOME overrides the
+/// the cache home. Skipped entirely when VAK_HOME overrides the
 /// location, when the legacy dir is absent, or when the target already
 /// exists. Never deletes data: if any step fails the legacy tree stays
 /// put and the caller surfaces a warning.
 pub fn migrate_legacy_home() -> Result<(), String> {
-    if get_var("VAKCODER_HOME").is_some() {
+    if get_var("VAK_HOME").is_some() {
         return Ok(());
     }
     let legacy = base_home().join(LEGACY_HOME_SUFFIX);
@@ -202,9 +202,9 @@ mod tests {
         let base = base_home();
         #[cfg(target_os = "macos")]
         {
-            assert_eq!(h.data, base.join("Library/Application Support/vakcoder"));
-            assert_eq!(h.cache, base.join("Library/Caches/vakcoder"));
-            assert_eq!(h.logs, base.join("Library/Logs/vakcoder"));
+            assert_eq!(h.data, base.join("Library/Application Support/vak"));
+            assert_eq!(h.cache, base.join("Library/Caches/vak"));
+            assert_eq!(h.logs, base.join("Library/Logs/vak"));
         }
         // Invariants that hold on every platform:
         assert!(
@@ -213,7 +213,7 @@ mod tests {
         );
         for p in [&h.data, &h.cache, &h.logs] {
             assert!(
-                !p.to_string_lossy().contains("/.vakcoder"),
+                !p.to_string_lossy().contains("/.vak"),
                 "canonical layout must not use the legacy dotdir: {}",
                 p.display()
             );

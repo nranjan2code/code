@@ -141,10 +141,10 @@ impl AppState {
         // Token selection lives here so every router flavor (plain,
         // gateway, secured) shares one identity for auth + login.
         let auth_token = Arc::new(
-            std::env::var("VAKCODER_GATEWAY_TOKEN")
+            std::env::var("VAK_GATEWAY_TOKEN")
                 .ok()
                 .filter(|t| !t.trim().is_empty())
-                .or_else(|| vak_config::get_var("VAKCODER_GATEWAY_TOKEN"))
+                .or_else(|| vak_config::get_var("VAK_GATEWAY_TOKEN"))
                 .filter(|t| !t.trim().is_empty())
                 .unwrap_or_else(|| format!("vk_{}", uuid::Uuid::now_v7())),
         );
@@ -843,7 +843,7 @@ pub fn secured_router(core: Core) -> (Router, String) {
 
 /// Same stack with a CLI-level gateway override (`serve --gateway`).
 ///
-/// Token selection: when `VAKCODER_GATEWAY_TOKEN` is set in the
+/// Token selection: when `VAK_GATEWAY_TOKEN` is set in the
 /// environment, it is used verbatim so service-managed bridges and other
 /// long-lived clients can survive process restarts. Otherwise a fresh
 /// per-process token is minted as before. The variable is never logged.
@@ -933,9 +933,9 @@ pub async fn serve_with(
     // bearer token; /health stays open.
     let (app, token) = secured_router_with(core, force_gateway);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    eprintln!("VakCoder server listening on http://{addr}");
-    if std::env::var("VAKCODER_GATEWAY_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
-        eprintln!("auth token: (pinned via VAKCODER_GATEWAY_TOKEN)");
+    eprintln!("Vak server listening on http://{addr}");
+    if std::env::var("VAK_GATEWAY_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
+        eprintln!("auth token: (pinned via VAK_GATEWAY_TOKEN)");
     } else if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
         eprintln!("auth token: {token}");
         eprintln!("clients must send 'Authorization: Bearer {token}' (or ?token=)");
@@ -2133,7 +2133,7 @@ async fn backup_export(
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
-                "error": "backup destination must differ from the vakcoder home itself"
+                "error": "backup destination must differ from the vak home itself"
             })),
         )
             .into_response();
@@ -2175,7 +2175,7 @@ async fn backup_import(
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
-                "error": "backup source must differ from the vakcoder home itself"
+                "error": "backup source must differ from the vak home itself"
             })),
         )
             .into_response();
@@ -3268,7 +3268,7 @@ async fn put_hooks(
                 .into_response();
         }
     }
-    let path = state.core.cwd().join(".vakcoder/config.toml");
+    let path = state.core.cwd().join(".vak/config.toml");
     let mut root: toml::Value = if path.exists() {
         match std::fs::read_to_string(&path)
             .ok()
@@ -3394,7 +3394,7 @@ fn persist_mcp_to_project_config(
     cwd: &std::path::Path,
     servers: &std::collections::BTreeMap<String, McpServerInput>,
 ) -> Result<std::path::PathBuf, String> {
-    let path = cwd.join(".vakcoder/config.toml");
+    let path = cwd.join(".vak/config.toml");
     let mut root: toml::Value = if path.exists() {
         let raw =
             std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
@@ -3538,7 +3538,7 @@ async fn fs_tree(
         ".venv",
         "venv",
         "__pycache__",
-        ".vakcoder",
+        ".vak",
         ".next",
         ".cache",
         "coverage",
@@ -4691,7 +4691,7 @@ const SCRIPT_TIMEOUT_MS: u64 = 120_000;
 const REFLECTION_CALL_TIMEOUT: Duration = Duration::from_secs(120);
 /// Fallback delivery surface for error alerts when a watchdog has no
 /// `deliver_to`: failures are never silent.
-pub(crate) const FALLBACK_ALERT_TARGET: &str = "log:vakcoder";
+pub(crate) const FALLBACK_ALERT_TARGET: &str = "log:vak";
 
 /// Extract the stdout section from BashTool's combined report
 /// ("[stdout]\n…\n[stderr]\n…" or "(no output)"). A literal "[stderr]"
@@ -5075,7 +5075,7 @@ struct ManagedProc {
 }
 
 fn parse_launch_toml(cwd: &std::path::Path) -> Result<Vec<LaunchConfig>, String> {
-    let path = cwd.join(".vakcoder/launch.toml");
+    let path = cwd.join(".vak/launch.toml");
     if !path.exists() {
         return Ok(Vec::new());
     }

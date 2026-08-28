@@ -64,7 +64,7 @@ impl Provider for Counting {
 const GOOD_REPLY: &str = r#"{"notes":[{"note":"the release pipeline pauses before every rollback window","kind":"decision","tag":"releases"}],"skill":{"name":"ship-guarded","description":"Ship with rollbacks guarded","instructions":"Run scripts/ship.sh after checks"}}"#;
 
 fn core_in(dir: &tempfile::TempDir, project_config: &str) -> vak_core::Core {
-    let project = dir.path().join(".vakcoder");
+    let project = dir.path().join(".vak");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(project.join("config.toml"), project_config).unwrap();
     let core = vak_core::Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();

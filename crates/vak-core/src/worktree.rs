@@ -42,16 +42,16 @@ pub struct Worktree {
     pub branch: String,
 }
 
-/// Creates `.vakcoder/worktrees/<run_id>` on branch `vakcoder/<run_id>`.
+/// Creates `.vak/worktrees/<run_id>` on branch `vak/<run_id>`.
 pub fn create(repo: &Path, run_id: &str) -> Result<Worktree, WorktreeError> {
     if !is_git_repo(repo) {
         return Err(WorktreeError::NotARepo);
     }
-    let path = repo.join(".vakcoder/worktrees").join(run_id);
+    let path = repo.join(".vak/worktrees").join(run_id);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let branch = format!("vakcoder/{run_id}");
+    let branch = format!("vak/{run_id}");
     git(
         repo,
         &[

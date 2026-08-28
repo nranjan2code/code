@@ -78,7 +78,7 @@ struct Gateway {
 async fn spawn_with_config(provider: Arc<dyn Provider>, gateway_toml: &str) -> Gateway {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
-    let project = cwd.join(".vakcoder");
+    let project = cwd.join(".vak");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(project.join("config.toml"), gateway_toml).unwrap();
 

@@ -1,4 +1,4 @@
-//! `vakcoder doctor` (docs/design/29-personal-os.md P3): CLI parity with the
+//! `vak doctor` (docs/design/29-personal-os.md P3): CLI parity with the
 //! TUI's `/doctor`, rendered from the same `vak_core::health::collect`
 //! report — checks first (failures last), facts, then the frozen route
 //! ladder when one is on record.

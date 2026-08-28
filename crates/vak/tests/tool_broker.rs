@@ -9,7 +9,7 @@ use vak_tools::sandbox::{Sandbox, SandboxMode, SandboxTarget, Seatbelt};
 use vak_tools::{ToolContext, brokered_default_tools};
 
 fn worker() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_vakcoder"))
+    PathBuf::from(env!("CARGO_BIN_EXE_vak"))
 }
 
 fn tool(name: &str) -> Arc<dyn vak_tools::Tool> {

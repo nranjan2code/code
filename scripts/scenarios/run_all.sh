@@ -6,7 +6,7 @@ FAILED=0
 for s in "$HERE"/s*.sh; do
   name=$(basename "$s")
   echo "── scenario: $name"
-  if BIN="${BIN:-$HERE/../../target/release/vakcoder}" bash "$s"; then
+  if BIN="${BIN:-$HERE/../../target/release/vak}" bash "$s"; then
     echo "   ✓ $name"
   else
     echo "   ✗ $name"; FAILED=1

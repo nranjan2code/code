@@ -45,7 +45,7 @@ json_version() {
 
 lock_version() {
     awk '
-        /^name = "vakcoder"$/ {
+        /^name = "vak"$/ {
             getline
             sub(/^version[[:space:]]*=[[:space:]]*"/, "")
             sub(/".*$/, "")

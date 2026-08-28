@@ -6,11 +6,11 @@ export default function ResizeHandle(props: { side: "sidebar" | "dock" }) {
     if (props.side === "sidebar") {
       const next = Math.max(220, Math.min(360, width));
       setSidebarWidth(next);
-      localStorage.setItem("vakcoder.sidebarWidth", String(next));
+      localStorage.setItem("vak.sidebarWidth", String(next));
     } else {
       const next = Math.max(340, Math.min(window.innerWidth * 0.62, width));
       setDockWidth(next);
-      localStorage.setItem("vakcoder.dockWidth", String(next));
+      localStorage.setItem("vak.dockWidth", String(next));
     }
   };
 

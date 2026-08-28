@@ -1,6 +1,6 @@
 <div align="center">
 
-# vakcoder
+# vak
 
 ### A coding agent you can inspect, constrain, and extend.
 
@@ -11,13 +11,13 @@
 [![License](https://img.shields.io/badge/license-MIT-536B58?style=flat-square)](Cargo.toml)
 [![Safety](https://img.shields.io/badge/safety-fail--closed-384A6B?style=flat-square)](docs/design/24-agent-security.md)
 
-[Quick start](#quick-start) · [Why vakcoder](#why-vakcoder) · [Features](#what-you-get) · [Architecture](#one-core-many-surfaces) · [Documentation](#documentation)
+[Quick start](#quick-start) · [Why vak](#why-vak) · [Features](#what-you-get) · [Architecture](#one-core-many-surfaces) · [Documentation](#documentation)
 
 </div>
 
-![An editorial illustration of vakcoder moving a coding task through an auditable ledger, permission gate, sandboxed execution, and verified patch](docs/assets/vakcoder-hero.webp)
+![An editorial illustration of vak moving a coding task through an auditable ledger, permission gate, sandboxed execution, and verified patch](docs/assets/vak-hero.webp)
 
-vakcoder is an open-source coding-agent runtime for people who want powerful automation **and** a system they can reason about. It combines a native desktop app, a headless CLI, flows, an HTTP/SSE server, and chat gateways on top of one auditable core.
+vak is an open-source coding-agent runtime for people who want powerful automation **and** a system they can reason about. It combines a native desktop app, a headless CLI, flows, an HTTP/SSE server, and chat gateways on top of one auditable core.
 
 Its thesis is simple: **Codex-grade safety, pi-grade transparency, Claude Code-grade extensibility, and opencode-grade simplicity.**
 
@@ -25,9 +25,9 @@ The result is not another thin model wrapper. Sessions are append-only ledgers, 
 
 > **Project status:** v0.8.0. The core roadmap is implemented and live-tested. The project is actively developed; see the [roadmap](docs/design/00-roadmap.md) and [changelog](CHANGELOG.md).
 
-## Why vakcoder
+## Why vak
 
-Most coding agents make you choose between capability and legibility. vakcoder is built around the idea that the agent can be ambitious while the runtime remains explicit.
+Most coding agents make you choose between capability and legibility. vak is built around the idea that the agent can be ambitious while the runtime remains explicit.
 
 | Principle | What it means in practice |
 |---|---|
@@ -45,19 +45,19 @@ Most coding agents make you choose between capability and legibility. vakcoder i
 You need a [stable Rust toolchain](https://www.rust-lang.org/tools/install) and Git.
 
 ```bash
-git clone https://github.com/vakcoder/vakcoder.git
-cd vakcoder
-cargo build --release -p vakcoder
-cargo install --path crates/vakcoder
+git clone https://github.com/vak/vak.git
+cd vak
+cargo build --release -p vak
+cargo install --path crates/vak
 ```
 
-`cargo install` places the `vakcoder` binary in Cargo's bin directory. You can also run every command from the repository with `cargo run --bin vakcoder -- <command>`.
+`cargo install` places the `vak` binary in Cargo's bin directory. You can also run every command from the repository with `cargo run --bin vak -- <command>`.
 
 ### 2. Add a provider key
 
 Put credentials in a gitignored project `.env`, in the user secret store at
-`data_home()/.env` (`~/Library/Application Support/vakcoder/.env` on macOS,
-`~/.local/share/vakcoder/.env` on Linux), or in your environment. Real
+`data_home()/.env` (`~/Library/Application Support/vak/.env` on macOS,
+`~/.local/share/vak/.env` on Linux), or in your environment. Real
 environment variables take precedence.
 
 ```bash
@@ -74,15 +74,15 @@ Secrets are never forwarded as ambient Bash or MCP subprocess state. Project `.e
 ### 3. Start coding
 
 ```bash
-vakcoder exec "fix the failing test"
-vakcoder plan "add rate limiting to the API"
-vakcoder config dump             # inspect the effective configuration
+vak exec "fix the failing test"
+vak plan "add rate limiting to the API"
+vak config dump             # inspect the effective configuration
 ```
 
 The default provider is Anthropic. Select another provider and one of the models discovered for your key through configuration, environment variables, or command flags:
 
 ```bash
-vakcoder exec "explain this workspace" \
+vak exec "explain this workspace" \
   --provider openai-responses \
   --model YOUR_DISCOVERED_MODEL
 ```
@@ -134,16 +134,16 @@ vakcoder exec "explain this workspace" \
 | `google` | Gemini |
 | `ollama` | Local OpenAI-compatible Ollama endpoint |
 
-vakcoder asks the provider for the models available to your key and caches the result briefly. It does not bake yesterday's model list into the binary.
+vak asks the provider for the models available to your key and caches the result briefly. It does not bake yesterday's model list into the binary.
 
 ## Choose your surface
 
 ### Headless and goal mode
 
 ```bash
-vakcoder exec "refactor the parser" --worktree
+vak exec "refactor the parser" --worktree
 
-vakcoder exec "ship the parser fix" \
+vak exec "ship the parser fix" \
   --goal "the parser handles empty input without regressions" \
   --criteria "verify:cargo test -p vak-parser,errors remain typed"
 ```
@@ -177,10 +177,10 @@ default. Every `self` subcommand accepts the same `--prefix`, so a custom
 install stays inspectable and removable:
 
 ```bash
-vakcoder self status      # build vs manifest vs service units
-vakcoder self verify      # every component against its recorded digest
-vakcoder self reinstall   # clear the prefix and place a fresh build
-vakcoder self uninstall   # remove it; --purge also deletes the data home
+vak self status      # build vs manifest vs service units
+vak self verify      # every component against its recorded digest
+vak self reinstall   # clear the prefix and place a fresh build
+vak self uninstall   # remove it; --purge also deletes the data home
 ```
 
 ### Release
@@ -197,25 +197,25 @@ the private frontend packages stay pinned at `0.0.0`. `check-version.sh`
 fails if a second stamp reappears anywhere.
 
 `release.sh` builds, checksums each artifact, and writes
-`dist/<version>/release.json` — the feed `vakcoder self update` reads. Every
+`dist/<version>/release.json` — the feed `vak self update` reads. Every
 artifact carries a SHA-256 that `self update` verifies before installing;
 an artifact without one is refused.
 
 ### Server and gateway
 
 ```bash
-vakcoder serve --port 8901
-vakcoder serve --gateway --trust
+vak serve --port 8901
+vak serve --gateway --trust
 ```
 
 The server exposes the same session, run, approval, transcript, diff, and steering contracts used by the desktop app. For a durable macOS LaunchAgent or Linux systemd user service, follow the [hosting guide](docs/hosting.md).
 
 ## One core, many surfaces
 
-![A flat editorial diagram showing a shared auditable vakcoder core connected to terminal, desktop, server, and chat interfaces](docs/assets/vakcoder-surfaces.webp)
+![A flat editorial diagram showing a shared auditable vak core connected to terminal, desktop, server, and chat interfaces](docs/assets/vak-surfaces.webp)
 
 ```text
-vakcoder CLI              Tauri desktop        HTTP + SSE / gateway
+vak CLI              Tauri desktop        HTTP + SSE / gateway
          \                    |                    /
           └──────────────── vak-core ─────────────┘
                                |
@@ -250,38 +250,38 @@ See the [threat model](docs/design/24-agent-security.md), [permission design](do
 
 ```bash
 # Sessions and checkpoints
-vakcoder sessions
-vakcoder checkpoints list
-vakcoder checkpoints restore SESSION_ID SEQUENCE
+vak sessions
+vak checkpoints list
+vak checkpoints restore SESSION_ID SEQUENCE
 
 # Static flows
-vakcoder flow list
-vakcoder flow check FLOW_NAME
-vakcoder flow run FLOW_NAME
+vak flow list
+vak flow check FLOW_NAME
+vak flow run FLOW_NAME
 
 # Memory and reviewed learning
-vakcoder memory
-vakcoder skills-review list
+vak memory
+vak skills-review list
 
 # Deterministic and live evaluation
-vakcoder eval
-vakcoder eval --live --provider PROVIDER --model MODEL
+vak eval
+vak eval --live --provider PROVIDER --model MODEL
 ```
 
-Run `vakcoder --help` or `vakcoder <command> --help` for the complete flags.
+Run `vak --help` or `vak <command> --help` for the complete flags.
 
 ## Configuration
 
 Configuration is layered predictably:
 
 ```text
-defaults < ~/.config/vakcoder/config.toml < .vakcoder/config.toml < environment < CLI
+defaults < ~/.config/vak/config.toml < .vak/config.toml < environment < CLI
 ```
 
 Unknown keys warn instead of preventing startup. Privileged project keys—permissions, hooks, MCP servers, gateway, sandbox, and provider endpoint overrides—require workspace trust. Start with:
 
 ```bash
-vakcoder config dump
+vak config dump
 ```
 
 Then use the [configuration reference](docs/design/05-config.md) for provider, retry, context, UI, permission, hooks, MCP, FinOps, gateway, memory, and sandbox settings.
@@ -297,7 +297,7 @@ Then use the [configuration reference](docs/design/05-config.md) for provider, r
 
 The expected behavior for overloads, network loss, malformed streams, cancellation, open circuits, and other failures is documented in the [failure-handling matrix](docs/design/15-reliability.md).
 
-## Extending vakcoder
+## Extending vak
 
 Keep the core small; add specialized behavior at the edges:
 
@@ -323,13 +323,13 @@ cargo test --workspace
 The deterministic eval suite runs offline in roughly 100 ms:
 
 ```bash
-cargo run --bin vakcoder -- eval
+cargo run --bin vak -- eval
 ```
 
 Live checks need a configured provider key:
 
 ```bash
-cargo run --bin vakcoder -- eval --live --provider PROVIDER --model MODEL
+cargo run --bin vak -- eval --live --provider PROVIDER --model MODEL
 ```
 
 Read [AGENTS.md](AGENTS.md) before changing the agent loop, tool boundary, sessions, permissions, providers, gateway, or sandbox. Its invariants are part of the product contract.

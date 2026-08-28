@@ -157,7 +157,7 @@ Mechanics:
    written into the frozen header.
 2. Dispatch walks the ladder top-down on typed failures (Phase A
    domains). Success commits; the receipt records the full walk.
-3. **Evidence ledger** (`$VAKCODER_HOME/routing-evidence.jsonl`):
+3. **Evidence ledger** (`$VAK_HOME/routing-evidence.jsonl`):
    append-only `(provider, model) -> {success, failure, UNKNOWN}` outcome
    counts + p50 latency, TTL-decayed, cleared by success. Billing without
    a rated outcome contributes **unknown**, never zero ("being billed
@@ -217,7 +217,7 @@ first billable non-token integration.
 Unattended gateway surfaces currently spend with no cap. Budget admission
 is therefore security work, aligned with `24-agent-security.md`.
 
-1. **Cost ledger** `$VAKCODER_HOME/cost-log.jsonl`: every settled
+1. **Cost ledger** `$VAK_HOME/cost-log.jsonl`: every settled
    dispatch appends `{provider, model, usage, usd, source: actual|estimated,
    attribution: {session_id, task_id?, delivery_surface?}, ts}`.
    Attribution joins by durable ids only; unattributed rows stay
@@ -253,7 +253,7 @@ audited, best-of-N proves keep=merge promotion.
 
 1. **Builder**: `flows adopt --from <session>` (and HTTP endpoint)
    inspects a completed session/plan ledger, extracts the settled step
-   sequence into `.vakcoder/flows/<name>.toml` with parameterized inputs.
+   sequence into `.vak/flows/<name>.toml` with parameterized inputs.
    Provider/model come **only** from receipts (Phase A), never caller hints.
 2. **Frozen snapshot per run**: flow runs already store
    `definition_toml`; make explicit that resume/repair executes against

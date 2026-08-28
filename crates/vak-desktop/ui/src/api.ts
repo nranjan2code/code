@@ -519,7 +519,7 @@ export function openEventStream(
     } catch (err) {
       // Report and move on rather than either vanish (the defect this
       // replaces) or take the whole stream down over one bad event.
-      console.error("vakcoder: error handling agent event", parsed, err);
+      console.error("vak: error handling agent event", parsed, err);
     }
   };
   es.onerror = () => onError?.();

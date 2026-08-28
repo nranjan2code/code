@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "VakCoder", version, about = "A coding agent harness")]
+#[command(name = "Vak", version, about = "A coding agent harness")]
 pub(crate) struct Cli {
     #[command(subcommand)]
     pub(crate) command: Option<Command>,
@@ -118,7 +118,7 @@ pub(crate) enum Command {
         /// Gateway base URL, e.g. http://127.0.0.1:8901
         #[arg(long)]
         server: String,
-        /// Gateway bearer token (overrides VAKCODER_GATEWAY_TOKEN; the
+        /// Gateway bearer token (overrides VAK_GATEWAY_TOKEN; the
         /// env var is the normal path so secrets never appear in `ps`)
         #[arg(long)]
         token: Option<String>,
@@ -129,7 +129,7 @@ pub(crate) enum Command {
         #[arg(long)]
         trust: bool,
     },
-    /// Backup your vakcoder home: export or import a directory copy
+    /// Backup your vak home: export or import a directory copy
     Backup {
         #[command(subcommand)]
         action: BackupAction,
@@ -140,7 +140,7 @@ pub(crate) enum Command {
         #[arg(long, default_value_t = 7)]
         days: u32,
     },
-    /// Scheduled tasks stored in ~/.vakcoder/tasks.json: CRUD without the server
+    /// Scheduled tasks stored in ~/.vak/tasks.json: CRUD without the server
     Tasks {
         #[command(subcommand)]
         action: TasksAction,
@@ -235,13 +235,13 @@ pub(crate) enum InboxAction {
 pub(crate) enum BackupAction {
     /// Copy sessions/memory/checkpoints/ledgers into a directory
     Export {
-        /// Destination directory (must not be the vakcoder home itself)
+        /// Destination directory (must not be the vak home itself)
         dir: PathBuf,
-        /// Include ~/.vakcoder/.env secrets (a WARNING.txt travels beside them)
+        /// Include ~/.vak/.env secrets (a WARNING.txt travels beside them)
         #[arg(long)]
         include_secrets: bool,
     },
-    /// Restore a backup directory into the vakcoder home
+    /// Restore a backup directory into the vak home
     Import {
         /// Source directory containing manifest.json
         dir: PathBuf,
@@ -342,7 +342,7 @@ pub(crate) enum FlowAction {
         /// Ledger JSON path, or a session id whose green bash commands
         /// become a chained bash flow.
         from: String,
-        /// Name for the adopted flow (written to .vakcoder/flows/)
+        /// Name for the adopted flow (written to .vak/flows/)
         #[arg(long)]
         name: String,
         /// Overwrite an existing flow file of the same name
@@ -411,7 +411,7 @@ mod tests {
     use clap::CommandFactory;
 
     fn parse(args: &[&str]) -> Command {
-        Cli::try_parse_from(std::iter::once("vakcoder").chain(args.iter().copied()))
+        Cli::try_parse_from(std::iter::once("vak").chain(args.iter().copied()))
             .unwrap_or_else(|e| panic!("parse {args:?} failed: {e}"))
             .command
             .expect("subcommand present")
@@ -569,7 +569,7 @@ mod tests {
                 .into_iter()
                 .chain(extra.iter().copied())
                 .collect();
-            let err = Cli::try_parse_from(std::iter::once("vakcoder").chain(args))
+            let err = Cli::try_parse_from(std::iter::once("vak").chain(args))
                 .expect_err("preset must reject conflicting flag");
             assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
         }
@@ -577,7 +577,7 @@ mod tests {
 
     #[test]
     fn tasks_add_requires_name_without_preset() {
-        let err = Cli::try_parse_from(["vakcoder", "tasks", "add"])
+        let err = Cli::try_parse_from(["vak", "tasks", "add"])
             .expect_err("--name is required without --preset");
         assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }

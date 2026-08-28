@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCEN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$(dirname "$SCEN_DIR")")"
-BIN="${BIN:-$ROOT/target/release/vakcoder}"
+BIN="${BIN:-$ROOT/target/release/vak}"
 PORT="${SCENARIO_PORT:-8931}"
 MOCK_PID=""
 
@@ -22,18 +22,18 @@ trap cleanup EXIT
 
 new_workspace() {
   WORK_DIR="$(mktemp -d /tmp/vak-scenario.XXXXXX)"
-  mkdir -p "$WORK_DIR/.vakcoder" "$WORK_DIR/home"
-  echo 'permission_mode = "full-access"' > "$WORK_DIR/.vakcoder/config.toml"
+  mkdir -p "$WORK_DIR/.vak" "$WORK_DIR/home"
+  echo 'permission_mode = "full-access"' > "$WORK_DIR/.vak/config.toml"
 }
 
 # Offline lane: anthropic-shaped mock, pinned provider. Exported so every
 # later `$BIN` invocation inherits the lane.
 setup_offline() {
-  export VAKCODER_PROVIDER=anthropic
-  export VAKCODER_MODEL=claude-sonnet-4-5
+  export VAK_PROVIDER=anthropic
+  export VAK_MODEL=claude-sonnet-4-5
   export ANTHROPIC_API_KEY=test
-  export VAKCODER_ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT"
-  export VAKCODER_HOME="$WORK_DIR/home"
+  export VAK_ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT"
+  export VAK_HOME="$WORK_DIR/home"
 }
 
 pass() { printf 'PASS: %s\n' "$1"; }

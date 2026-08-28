@@ -114,7 +114,7 @@ async fn docker_readonly_mode_blocks_workspace_writes() {
 fn effective_sandbox_name_reports_docker_when_selected() {
     // Config-level selection flows through Core without needing a daemon.
     let dir = tempfile::tempdir().unwrap();
-    let project = dir.path().join(".vakcoder");
+    let project = dir.path().join(".vak");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("config.toml"),

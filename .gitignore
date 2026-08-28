@@ -5,7 +5,7 @@ Cargo.lock.orig
 .env
 .env.*
 !.env.example
-.vakcoder/sessions/
+.vak/sessions/
 dist/
 # Admin SPA: built assets ARE committed so `cargo build` needs no node.
 !crates/vak-admin-ui/dist/

@@ -42,15 +42,15 @@ impl Service {
 
     pub fn launchd_label(self) -> &'static str {
         match self {
-            Service::Gateway => "com.vakcoder.gateway",
-            Service::Telegram => "com.vakcoder.telegram",
+            Service::Gateway => "com.vak.gateway",
+            Service::Telegram => "com.vak.telegram",
         }
     }
 
     pub fn systemd_unit(self) -> &'static str {
         match self {
-            Service::Gateway => "vakcoder-gateway.service",
-            Service::Telegram => "vakcoder-telegram.service",
+            Service::Gateway => "vak-gateway.service",
+            Service::Telegram => "vak-telegram.service",
         }
     }
 }
@@ -89,7 +89,7 @@ impl Default for OpsConfig {
 impl OpsConfig {
     pub fn detect() -> Self {
         OpsConfig {
-            port: std::env::var("VAKCODER_PORT")
+            port: std::env::var("VAK_PORT")
                 .ok()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(8901),
@@ -157,7 +157,7 @@ pub fn install(service: Service, cfg: &OpsConfig) -> Result<(), String> {
     }
 }
 
-/// Stop and deregister. Files under ~/.vakcoder are never touched.
+/// Stop and deregister. Files under ~/.vak are never touched.
 pub fn uninstall(service: Service, cfg: &OpsConfig) -> Result<(), String> {
     stop(service, cfg);
     #[cfg(target_os = "macos")]
@@ -280,7 +280,7 @@ pub fn restart(service: Service, cfg: &OpsConfig) -> bool {
 pub fn open_log(service: Service) {
     #[cfg(target_os = "macos")]
     {
-        // Canonical logs home (doc 32): ~/Library/Logs/vakcoder —
+        // Canonical logs home (doc 32): ~/Library/Logs/vak —
         // Console.app-visible. Overridden homes keep self-contained logs.
         let log = vak_config::paths::logs_dir().join(match service {
             Service::Gateway => "gateway.log",
@@ -297,8 +297,8 @@ pub fn open_log(service: Service) {
     #[cfg(not(target_os = "macos"))]
     {
         let unit = match service {
-            Service::Gateway => "vakcoder-gateway",
-            Service::Telegram => "vakcoder-telegram",
+            Service::Gateway => "vak-gateway",
+            Service::Telegram => "vak-telegram",
         };
         run(Command::new("sh").arg("-c").arg(format!(
             "journalctl --user -u {unit} -n 200 --no-pager 2>/dev/null || true"

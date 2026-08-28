@@ -55,7 +55,7 @@ fn text(t: &str) -> AssistantMessage {
 async fn mcp_servers_get_put_roundtrip_and_persist() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
-    let project = cwd.join(".vakcoder");
+    let project = cwd.join(".vak");
     std::fs::create_dir_all(&project).unwrap();
     // Pre-existing config with a comment-bearing key we must not destroy.
     std::fs::write(
@@ -125,7 +125,7 @@ async fn mcp_servers_get_put_roundtrip_and_persist() {
     );
 
     // Persisted into the project config without destroying other keys.
-    let raw = std::fs::read_to_string(cwd.join(".vakcoder/config.toml")).unwrap();
+    let raw = std::fs::read_to_string(cwd.join(".vak/config.toml")).unwrap();
     let parsed: toml::Value = toml::from_str(&raw).unwrap();
     assert_eq!(
         parsed["model"],

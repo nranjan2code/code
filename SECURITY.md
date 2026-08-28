@@ -9,13 +9,13 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in vakcoder, please report it
+If you discover a security vulnerability in vak, please report it
 responsibly:
 
 1. **Do not** open a public GitHub issue for security vulnerabilities.
 2. Email the maintainers at the address listed in `Cargo.toml` or open a
    **private** security advisory at
-   <https://github.com/anomalyco/vakcoder/security/advisories/new>.
+   <https://github.com/anomalyco/vak/security/advisories/new>.
 3. Include: description, steps to reproduce, potential impact, and any
    suggested fix.
 4. You will receive an initial acknowledgement within 72 hours.

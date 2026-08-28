@@ -6,10 +6,10 @@
 use vak_llm::{ContentBlock, Message, Role};
 
 /// Render a projected message list exactly as `export_transcript` has
-/// always written it: `# VakCoder transcript`, then one `## {idx} · {role}`
+/// always written it: `# Vak transcript`, then one `## {idx} · {role}`
 /// section per message with block-level lines between.
 pub fn render_markdown(msgs: &[Message]) -> String {
-    let mut out = String::from("# VakCoder transcript\n\n");
+    let mut out = String::from("# Vak transcript\n\n");
     for (idx, m) in msgs.iter().enumerate() {
         let role = match m.role {
             Role::User => "user",
@@ -89,7 +89,7 @@ mod tests {
         // replaces (note: `text.trim()` keeps interior line-trailing
         // spaces, and each message section ends with a blank line); any
         // divergence from it is a parity bug.
-        let expected = "# VakCoder transcript\n\
+        let expected = "# Vak transcript\n\
 \n\
 ## 0 · user\n\
 \n\
@@ -112,6 +112,6 @@ done.\n\
 
     #[test]
     fn empty_transcript_renders_header_only() {
-        assert_eq!(render_markdown(&[]), "# VakCoder transcript\n\n");
+        assert_eq!(render_markdown(&[]), "# Vak transcript\n\n");
     }
 }

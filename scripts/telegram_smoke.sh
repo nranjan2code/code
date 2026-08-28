@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Live Telegram end-to-end smoke (docs/design/22-gateway.md G1).
-# Requires: TELEGRAM_BOT_TOKEN in env or ~/.vakcoder/.env, and a running
+# Requires: TELEGRAM_BOT_TOKEN in env or ~/.vak/.env, and a running
 # gateway. Sends a text message to YOUR chat via the bot? No — the bridge
 # pulls messages FROM Telegram; so this script starts both processes and
 # waits for you to message the bot, printing what happens.
 set -euo pipefail
 
 PORT="${PORT:-8901}"
-TOKEN_FILE="${HOME}/.vakcoder/.env"
+TOKEN_FILE="${HOME}/.vak/.env"
 
 if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]]; then
   if [[ -f "$TOKEN_FILE" ]] && grep -q '^TELEGRAM_BOT_TOKEN=' "$TOKEN_FILE"; then
@@ -18,10 +18,10 @@ if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]]; then
   fi
 fi
 
-BIN="${BIN:-target/debug/vakcoder}"
+BIN="${BIN:-target/debug/vak}"
 if [[ ! -x "$BIN" ]]; then
   echo "building..."
-  cargo build -p vakcoder
+  cargo build -p vak
 fi
 
 cleanup() {

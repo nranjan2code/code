@@ -8,10 +8,10 @@ import threading
 import time
 import urllib.request
 
-BIN = os.environ.get("VAK_BIN", "target/debug/vakcoder")
+BIN = os.environ.get("VAK_BIN", "target/debug/vak")
 CWD = os.environ.get("VAK_CHAOS_CWD", "/tmp/vak-chaos-workspace")
 PROXY = "http://127.0.0.1:8930"
-CONFIG = f"{CWD}/.vakcoder/config.toml"
+CONFIG = f"{CWD}/.vak/config.toml"
 RESULTS = []
 
 
@@ -63,7 +63,7 @@ def write_config(extra):
 
 def run(sid, prompt, extra_config="", timeout=900, expect_completed=True):
     write_config(extra_config)
-    env = {**os.environ, "VAKCODER_OPENCODE_ZEN_BASE_URL": "http://127.0.0.1:8930"}
+    env = {**os.environ, "VAK_OPENCODE_ZEN_BASE_URL": "http://127.0.0.1:8930"}
     try:
         p = subprocess.run(
             [BIN, "exec", "--session", sid, "--trust", "--yes", "--max-turns", "25", prompt],

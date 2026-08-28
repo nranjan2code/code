@@ -34,12 +34,12 @@ Rules:
 The desktop process owns the menu-bar icon and the visible window. It never
 runs as a separate launchd service: a tray executable launched independently
 from inside the same `.app` bundle can cause LaunchServices to activate that
-background-only process when the user opens VakCoder. Close hides the main
+background-only process when the user opens Vak. Close hides the main
 window; Dock/Finder re-open, tray Open, and repeated launches all reveal and
 focus that same window. Gateway and Telegram remain the only durable services.
 
-- A left click and the `Open VakCoder` menu item reveal and focus the main
-  window; `Quit VakCoder` ends the desktop process explicitly.
+- A left click and the `Open Vak` menu item reveal and focus the main
+  window; `Quit Vak` ends the desktop process explicitly.
 - Closing the main window hides it, preserving the local embedded backend and
   the tray until the user explicitly quits. Durable gateway and Telegram work
   remains independently supervised by the platform service manager.
@@ -47,7 +47,7 @@ focus that same window. Gateway and Telegram remain the only durable services.
 ## Token pinning
 
 Bridges must survive gateway restarts without human help:
-`VAKCODER_GATEWAY_TOKEN` (from the user `.env`) overrides the random
+`VAK_GATEWAY_TOKEN` (from the user `.env`) overrides the random
 per-process bearer token. The value is honoured verbatim and never logged;
 when absent, a fresh token is printed only to an interactive terminal and is
 suppressed in service logs. Generated service units carry only non-secret
@@ -67,6 +67,6 @@ recipient process.
 
 Fixtures that drive gateway turns must be hermetic against the developer's
 global config (which may legitimately enable `reflection = true`): write a
-project `.vakcoder/config.toml` disabling learning flags and construct
+project `.vak/config.toml` disabling learning flags and construct
 `Core::new_with_trust(.., true)`. See any `tests/*.rs` spawn helper using
 the HERMETIC pattern.

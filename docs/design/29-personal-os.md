@@ -4,7 +4,7 @@ Personal-use completion pass. Source: 2026 market study (OpenClaw complaint
 taxonomy, Hermes Agent feature set, Claude Code friction) cross-referenced
 against a codebase inventory. Enterprise concerns are explicitly deferred.
 
-Thesis: vakcoder already neutralizes the two worst failure modes in the
+Thesis: vak already neutralizes the two worst failure modes in the
 category — **lying** (stop-gate, audited goal completion, receipts) and
 **money burn** (SpendGate, day caps). This doc closes the remaining gaps so
 the system compounds for a single person: memory that follows the user,
@@ -29,7 +29,7 @@ self-curating skills.
 |---|---|---|
 | **P1 ✅** | Memory that compounds: global `USER.md` profile tier (`<home>/memory/user/USER.md`), `MemoryStore::forget`/`amend` with rewrite-not-tombstone semantics (memory files are hand-editable by design; sessions stay append-only), reflection hook available on every surface behind `[memory] reflection`, M1 mtime-keyed search index, TUI `/search`, `search_all` across projects | warm 10k-line store searched < 50ms; forget removes exactly one block; USER.md notes outrank equal transcript hits; fmt/clippy/tests green |
 | **P2 ✅** | Automation you can trust: 5-field cron expressions (`m h dom mon dow`, numbers, `*`, lists, ranges, steps; local time) beside existing intervals, CLI+TUI task CRUD without the server, `script:` watchdog tasks (brokered bash; empty stdout = silent tick = zero tokens; nonzero exit = error alert), per-task `model:` pinning (pinned task dispatches only that model — never escalates), missed-run catch-up on startup, budget alerts via delivery transports once per threshold window | cron next-fire unit matrix green; watchdog task with failing script delivers alert and costs 0 tokens; pinned task receipt shows pinned model only |
-| **P3 ✅** | Daily-driver trust: `vakcoder doctor` (health module extracted from TUI), first-run wizard (tty-only provider-key setup, skippable, marker file), opt-in `[update] url` version check (off by default, banner once/day, never auto-installs), `vakcoder backup export/import <dir>` (directory copy of sessions/memory/config/checkpoints; secrets excluded unless `--include-secrets`; import conflicts skip-or-rename), `vakcoder digest [--days N]` weekly usage report | doctor parity TUI/CLI; wizard runs once; export→import round-trip preserves ledgers byte-identical; digest math matches ledger |
+| **P3 ✅** | Daily-driver trust: `vak doctor` (health module extracted from TUI), first-run wizard (tty-only provider-key setup, skippable, marker file), opt-in `[update] url` version check (off by default, banner once/day, never auto-installs), `vak backup export/import <dir>` (directory copy of sessions/memory/config/checkpoints; secrets excluded unless `--include-secrets`; import conflicts skip-or-rename), `vak digest [--days N]` weekly usage report | doctor parity TUI/CLI; wizard runs once; export→import round-trip preserves ledgers byte-identical; digest math matches ledger |
 | **P4 ✅** | Reach: bounded `webfetch` tool (GET only, ≤3 redirects, 15s timeout, 512KB cap, SSRF guard rejecting private/link-local/loopback resolutions fail-closed, no credentials ever attached, permission-classified network-capable ⇒ Ask in restricted modes, Allow only in FullAccess or by explicit rule; ordinary logged tool result per invariant 1), headless `browse` tool driving local Chrome-family binaries from inside the broker worker (`--dump-dom`, sentinel completion, direct-pid SIGKILL — doc 04), server-side markdown transcript export reusing one shared renderer with the TUI, global `/search?all=true` | SSRF unit matrix (localhost/metadata/link-local denied); fetch lands on ledger; live browse probe: sentinel ~2s against real Chrome, zero orphan processes; exported md equals TUI export for same session |
 | **P5 ✅** | Skill curation: proposal-time similarity screen (Jaccard vs existing accepted skills ≥ threshold ⇒ tagged `duplicate-of`), consolidation proposals into the existing human-gated review queue — no auto-promotion, no auto-deletion | duplicate skill proposal is flagged at submit; consolidate run produces reviewable merge entries only |
 | **P6 ✅** | Inbox — the durable attention layer: every `gateway::deliver` also records an append-only `<home>/inbox.jsonl` entry (`task_summary · approval_pending · approval_denied · budget_alert · digest · heartbeat · proposal_opened`), read-state via ack tombstones (never delete), surfaces: desktop Inbox page + badge, TUI `/inbox`, CLI `inbox list/show/ack`; unattended signals survive without any chat channel configured | delivery chokepoint proven: a watchdog summary exists in inbox even with zero transports configured; unread math + idempotent ack unit-tested; each surface shows identical unread set |
@@ -42,16 +42,16 @@ phase: CLI/TUI, desktop SPA, and gateway channels where delivery applies.
 
 | Capability | TUI/CLI | Desktop | Channels |
 |---|---|---|---|
-| Memory profile + forget/amend | `/memory`, `vakcoder memory` | Learning page: profile tier tab, forget (confirm), inline amend | — |
+| Memory profile + forget/amend | `/memory`, `vak memory` | Learning page: profile tier tab, forget (confirm), inline amend | — |
 | Cross-project search | `/search --all`, CLI | Search page w/ global toggle | — |
-| Tasks/cron/watchdog/pinning | `/tasks`, `vakcoder tasks` | TasksModal: schedule grammar field, script field, model pin, catch-up badge | watchdog + task summaries delivered via existing transports |
+| Tasks/cron/watchdog/pinning | `/tasks`, `vak tasks` | TasksModal: schedule grammar field, script field, model pin, catch-up badge | watchdog + task summaries delivered via existing transports |
 | Budget alerts | TUI status strip marker | Budget card alert state | 80%/100% push once per window |
-| Doctor/health | `vakcoder doctor`, `/doctor` | Services panel diagnostics section | — |
-| Backup export/import | `vakcoder backup …` | Settings: folder picker → export/import buttons | — |
-| Weekly digest | `vakcoder digest` | Digest card | scheduled digest as an ordinary task (`deliver_to`) |
+| Doctor/health | `vak doctor`, `/doctor` | Services panel diagnostics section | — |
+| Backup export/import | `vak backup …` | Settings: folder picker → export/import buttons | — |
+| Weekly digest | `vak digest` | Digest card | scheduled digest as an ordinary task (`deliver_to`) |
 | webfetch / browse | approval prompt + transcript (url shown) | approval queue w/ URL shown | forwarded gates per doc 22 rules |
 | Skill curation | `skills-review consolidate` | Learning page duplicate badges + merge review | — |
-| Inbox | `/inbox`, `vakcoder inbox list/show/ack/count` | InboxPage + bell badge + ack/ack-all | entries mirror every delivery (single chokepoint) |
+| Inbox | `/inbox`, `vak inbox list/show/ack/count` | InboxPage + bell badge + ack/ack-all | entries mirror every delivery (single chokepoint) |
 | Heartbeat | status-row ✉ badge when findings unread | inbox kind chip + native notification while hidden | URGENT findings push; everything else parks |
 
 Server gains the backing endpoints so the embedded router inside desktop

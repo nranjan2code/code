@@ -220,7 +220,7 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
 fn apply_preferences(core: &Core, mut profile: DeliveryProfile) -> DeliveryProfile {
     let loaded = load_layers(
         &core.sessions_home().join("output.toml"),
-        &core.cwd().join(".vakcoder").join("output.toml"),
+        &core.cwd().join(".vak").join("output.toml"),
         core.project_config_trusted(),
     );
     for warning in loaded.warnings {

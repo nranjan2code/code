@@ -53,8 +53,8 @@ mod tests {
     fn file_and_bytes_digests_agree() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("f");
-        std::fs::write(&p, b"vakcoder").unwrap();
-        assert_eq!(of_file(&p).unwrap(), of_bytes(b"vakcoder"));
+        std::fs::write(&p, b"vak").unwrap();
+        assert_eq!(of_file(&p).unwrap(), of_bytes(b"vak"));
     }
 
     #[test]

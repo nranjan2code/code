@@ -1,7 +1,7 @@
 # 33 — Admin console
 
 One binary, one URL, full control. The web admin console (`/admin` on the
-secured server) is the canonical management surface for vakcoder:
+secured server) is the canonical management surface for vak:
 observation, operation, and interaction against the same audited core the
 TUI and desktop use.
 
@@ -159,7 +159,7 @@ with exponential-backoff reconnect.
 - Rust unit tests cover store schema/import/search/idempotency, hub
   delivery, login→cookie→authenticated-call flow, unauthenticated 401s,
   POST-only mutations, approvals aggregation.
-- End-to-end smoke: boot `vakcoder serve --port P`, verify health open,
+- End-to-end smoke: boot `vak serve --port P`, verify health open,
   shell serves unauthenticated, API 401 without auth, login sets working
   cookie, SSE delivers a triggered security event in real time, refresh=
   true surfaces just-appended entries.

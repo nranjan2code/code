@@ -5665,6 +5665,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "vak"
+version = "0.9.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "futures",
+ "hex",
+ "reqwest 0.12.28",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "uuid",
+ "vak-agent",
+ "vak-config",
+ "vak-core",
+ "vak-delivery",
+ "vak-eval",
+ "vak-flow",
+ "vak-llm",
+ "vak-ops",
+ "vak-permission",
+ "vak-server",
+ "vak-session",
+ "vak-tools",
+]
+
+[[package]]
 name = "vak-agent"
 version = "0.9.0"
 dependencies = [
@@ -5963,38 +5995,6 @@ dependencies = [
  "vak-config",
  "vak-ops",
  "winit",
-]
-
-[[package]]
-name = "vakcoder"
-version = "0.9.0"
-dependencies = [
- "chrono",
- "clap",
- "futures",
- "hex",
- "reqwest 0.12.28",
- "semver",
- "serde",
- "serde_json",
- "sha2",
- "similar",
- "tempfile",
- "tokio",
- "tokio-util",
- "uuid",
- "vak-agent",
- "vak-config",
- "vak-core",
- "vak-delivery",
- "vak-eval",
- "vak-flow",
- "vak-llm",
- "vak-ops",
- "vak-permission",
- "vak-server",
- "vak-session",
- "vak-tools",
 ]
 
 [[package]]

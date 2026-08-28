@@ -1,7 +1,7 @@
 # 12 — Eval harness
 
 The Binding-Constraint Thesis (harness variance beats model variance) made
-operational: `vakcoder eval` runs a deterministic suite that exercises the
+operational: `vak eval` runs a deterministic suite that exercises the
 production agent loop, tools, permissions, and session ledger — only the
 provider is scripted.
 
@@ -39,7 +39,7 @@ The suite also runs as a `cargo test --workspace` integration test
 `general_suite()` proves the harness is a general agent, not a code-only
 one: the same six-tool kernel driven through research, data-analysis,
 writing, conversion, and inventory scenarios. Also runs as an integration
-test (`general_suite_fully_green`) and in the default `vakcoder eval`.
+test (`general_suite_fully_green`) and in the default `vak eval`.
 
 | case | scenario domain exercised |
 |---|---|
@@ -58,7 +58,7 @@ raw JSONL), MCP meta-tool lookups, and read-only mode denials.
 
 ## Live-model evals
 
-`vakcoder eval --live` runs `live_suite()` (create-file, sort-lines,
+`vak eval --live` runs `live_suite()` (create-file, sort-lines,
 json-edit — small, verifiable, environment-independent) against the
 configured provider with no scripted trajectory: the model must genuinely
 solve each task. Same report format, same token/cost accounting, so nightly

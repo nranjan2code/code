@@ -180,7 +180,7 @@ async fn main() {
 
     // User-level secrets always load. The PROJECT .env is only loaded for
     // trusted workspaces: a cloned repository must not be able to inject
-    // VAKCODER_*_BASE_URL (credential redirection) or other env on first
+    // VAK_*_BASE_URL (credential redirection) or other env on first
     // run.
     if let Some(env_path) = vak_config::user_env_path() {
         vak_config::load_env_file(&env_path);
@@ -192,8 +192,8 @@ async fn main() {
             cli::Cli::command().print_help().ok();
             println!();
             println!(
-                "vakcoder is a headless CLI/automation runtime. Try `vakcoder exec \"<prompt>\"` \
-                 or `vakcoder plan` — for an interactive GUI use the vak-desktop app."
+                "vak is a headless CLI/automation runtime. Try `vak exec \"<prompt>\"` \
+                 or `vak plan` — for an interactive GUI use the vak-desktop app."
             );
             0
         }
@@ -316,10 +316,10 @@ async fn main() {
 }
 
 // ---------------------------------------------------------------------------
-// Workspace trust: a project's .vakcoder/config.toml and .env can grant
+// Workspace trust: a project's .vak/config.toml and .env can grant
 // execution power (permission mode, allow rules, hooks, MCP servers, base
 // URL redirection). First use of an untrusted workspace demotes those keys
-// until the user confirms — per-directory, remembered under ~/.vakcoder.
+// until the user confirms — per-directory, remembered under ~/.vak.
 // ---------------------------------------------------------------------------
 
 /// Release feed URL for `self update`: the flag when given, otherwise the
@@ -345,7 +345,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 fn trust_marker_path(cwd: &std::path::Path) -> Option<PathBuf> {
     std::env::var_os("HOME").map(|h| {
         PathBuf::from(h)
-            .join(".vakcoder/trusted")
+            .join(".vak/trusted")
             .join(format!("{:016x}", fnv1a(cwd.to_string_lossy().as_bytes())))
     })
 }
@@ -365,10 +365,10 @@ fn resolve_trust(cwd: &std::path::Path, flag: bool, interactive: bool) -> bool {
     if interactive && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         eprintln!();
         eprintln!(
-            "This directory ({}) contains a project-level VakCoder",
+            "This directory ({}) contains a project-level Vak",
             cwd.display()
         );
-        eprintln!("config (.vakcoder/config.toml) and/or .env that can run commands,");
+        eprintln!("config (.vak/config.toml) and/or .env that can run commands,");
         eprintln!("auto-approve tools, or redirect API traffic.");
         eprint!("Trust this workspace? [y/N] ");
         let _ = std::io::stderr().flush();
@@ -398,10 +398,10 @@ pub(crate) fn print_config_warnings(core: &Core) {
 }
 
 fn flow_dirs(cwd: &std::path::Path) -> Vec<PathBuf> {
-    let mut dirs = vec![cwd.join(".vakcoder/flows")];
-    if let Some(home) = std::env::var_os("VAKCODER_HOME")
+    let mut dirs = vec![cwd.join(".vak/flows")];
+    if let Some(home) = std::env::var_os("VAK_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".vakcoder")))
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".vak")))
     {
         dirs.push(home.join("flows"));
     }
@@ -436,7 +436,7 @@ async fn run_flow(cwd: PathBuf, action: FlowAction) -> i32 {
         FlowAction::List => {
             let flows = discover_flows(&cwd);
             if flows.is_empty() {
-                println!("no flows found (.vakcoder/flows/*.toml)");
+                println!("no flows found (.vak/flows/*.toml)");
                 return 0;
             }
             for (name, path) in flows {
@@ -445,7 +445,7 @@ async fn run_flow(cwd: PathBuf, action: FlowAction) -> i32 {
             0
         }
         FlowAction::Adopt { from, name, force } => {
-            let flows_dir = cwd.join(".vakcoder/flows");
+            let flows_dir = cwd.join(".vak/flows");
             let out_path = flows_dir.join(format!("{name}.toml"));
             if out_path.exists() && !force {
                 eprintln!(
@@ -497,7 +497,7 @@ async fn run_flow(cwd: PathBuf, action: FlowAction) -> i32 {
                     for w in a.warnings {
                         println!("  warning: {w}");
                     }
-                    println!("  next: vakcoder flow check {name} && vakcoder flow run {name}");
+                    println!("  next: vak flow check {name} && vak flow run {name}");
                     0
                 }
                 Err(e) => {
@@ -791,11 +791,11 @@ async fn run_flow_exec(
             }
             vak_flow::FlowOutcome::Failed { node, reason, .. } => {
                 eprintln!("── flow failed at '{node}': {reason}");
-                eprintln!("   resume with: VakCoder flow run {name} --resume");
+                eprintln!("   resume with: Vak flow run {name} --resume");
                 1
             }
             vak_flow::FlowOutcome::Aborted => {
-                eprintln!("── flow aborted · resume with: VakCoder flow run {name} --resume");
+                eprintln!("── flow aborted · resume with: Vak flow run {name} --resume");
                 1
             }
         },
@@ -1121,7 +1121,7 @@ fn exec_reflection_line(outcome: &vak_core::reflection::ReflectionOutcome) -> Op
 fn run_config_dump(cwd: PathBuf) {
     match Core::new(cwd.clone()) {
         Ok(core) => {
-            println!("# VakCoder effective config");
+            println!("# Vak effective config");
             println!("version          = {}", vak_core::APP_VERSION);
             println!("cwd              = {}", core.cwd().display());
             println!("provider         = {}", core.effective_provider());
@@ -1473,11 +1473,11 @@ async fn run_telegram(server: String, token_flag: Option<String>) -> i32 {
     // Env-first so the gateway token stays out of `ps`/plist arguments.
     let token = match token_flag {
         Some(t) => t,
-        None => vak_config::get_var("VAKCODER_GATEWAY_TOKEN").unwrap_or_else(|| {
+        None => vak_config::get_var("VAK_GATEWAY_TOKEN").unwrap_or_else(|| {
             let hint = vak_config::user_env_path()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "the user .env".into());
-            eprintln!("error: gateway token missing — set VAKCODER_GATEWAY_TOKEN in {hint} or pass --token");
+            eprintln!("error: gateway token missing — set VAK_GATEWAY_TOKEN in {hint} or pass --token");
             String::new()
         }),
     };

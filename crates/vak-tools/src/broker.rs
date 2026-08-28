@@ -11,7 +11,7 @@ use crate::sandbox::SandboxTarget;
 use crate::{Tool, ToolContext, ToolOutput};
 
 pub const WORKER_SUBCOMMAND: &str = "__tool_worker";
-pub(crate) const WORKER_ENV: &str = "VAKCODER_INTERNAL_TOOL_WORKER";
+pub(crate) const WORKER_ENV: &str = "VAK_INTERNAL_TOOL_WORKER";
 const PROTOCOL_VERSION: u8 = 1;
 const MAX_PROTOCOL_BYTES: u64 = 2 * 1024 * 1024;
 

@@ -1,4 +1,4 @@
-# Achievements — vakcoder v0.1.x
+# Achievements — vak v0.1.x
 
 What has been built, verified, and survived contact with a real model.
 Companion to `00-roadmap.md` (plan) and `15-reliability.md` (failure matrix).
@@ -155,7 +155,7 @@ MCP, hooks, steering, breaker.
 ## Chaos endurance campaign (Ox Alpha Free, same night)
 
 Full-binary fault-injection: a reverse proxy (`scripts/fault_proxy.py`)
-sits between vakcoder and Zen injecting failures mid-work while a 10-phase
+sits between vak and Zen injecting failures mid-work while a 10-phase
 driver (`scripts/chaos_driver.py`) builds a real package on one append-only
 ledger. **Final result: 11/11 PASS** (after harness fixes below).
 

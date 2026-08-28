@@ -7,7 +7,7 @@ run (`run_turn_with`), stored under
 `data_home()/checkpoints/<session-id>/<seq>.json`.
 
 - **Scope**: every regular file under cwd, excluding `.git`, `target`,
-  `node_modules`, `.vakcoder`, `dist`; per-file cap 8MB, total cap 64MB.
+  `node_modules`, `.vak`, `dist`; per-file cap 8MB, total cap 64MB.
   Contents are base64 in the ledger JSON.
 - **Restore semantics**: rewrite all snapshotted files (recreating deleted
   ones) and delete any tracked file that did not exist at capture time.
@@ -19,14 +19,14 @@ run (`run_turn_with`), stored under
 CLI:
 
 ```
-vakcoder checkpoints list [--session <id>]
-vakcoder checkpoints restore <session> <seq>
+vak checkpoints list [--session <id>]
+vak checkpoints restore <session> <seq>
 ```
 
 ## Worktree isolation
 
 `exec --worktree` / `plan --worktree` create
-`.vakcoder/worktrees/<run-id>` on branch `vakcoder/<run-id>` off HEAD and run
+`.vak/worktrees/<run-id>` on branch `vak/<run-id>` off HEAD and run
 there. The main checkout is never touched; on success the worktree is kept
 for inspection (path printed), on failure it is removed. Non-repos fail fast
 with a typed error. Cleanup: `git worktree remove --force` + branch delete.

@@ -10,7 +10,7 @@ boundary. A model can misunderstand a command, hide behavior behind an
 interpreter or wrapper, or persuade a user to approve an unsafe operation.
 
 The protected assets are host files outside the workspace, credentials,
-VakCoder's policy and session control plane, network identities, external
+Vak's policy and session control plane, network identities, external
 services, and host availability. Restricted modes must remain safe when the
 model deliberately tries to escape them.
 

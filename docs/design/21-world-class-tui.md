@@ -66,7 +66,7 @@ of issuing and flushing cursor commands from every key handler. Agent/server
 work runs in `packages/opencode/src/cli/tui/worker.ts`, isolated from terminal
 input and rendering. Prompt autocomplete, permission dialogs, keymap contexts,
 selection, and focus are renderable components rather than competing print
-loops. vakcoder keeps native scrollback, but adopts the underlying rule: one
+loops. vak keeps native scrollback, but adopts the underlying rule: one
 bounded transient state tree, one focus owner, and at most one atomic terminal
 write for a changed frame.
 
@@ -129,7 +129,7 @@ Issue sources:
 - https://github.com/anomalyco/opencode/issues/30994
 - https://github.com/anomalyco/opencode/issues/40793
 
-## The vakcoder interaction architecture
+## The vak interaction architecture
 
 ### 1. Retained full-screen workspace
 
@@ -241,8 +241,8 @@ transport.
   Ctrl-C still interrupts. Mode tag renders in the composer footer.
 - ✅ Custom commands, project command namespaces, and plugin-contributed
   palette actions: markdown prompt templates discovered from
-  `.vakcoder/commands/*.md` (project), `data_home()/commands/*.md` (user), and
-  `.vakcoder/plugins/<plugin>/commands/*.md` (labeled `plugin:<name>`),
+  `.vak/commands/*.md` (project), `data_home()/commands/*.md` (user), and
+  `.vak/plugins/<plugin>/commands/*.md` (labeled `plugin:<name>`),
   with project > plugin > user precedence. `$ARGUMENTS` substitutes the
   invocation args (appended when the template has no placeholder). They
   appear in slash completion, the palette, `/help`, and expand into real

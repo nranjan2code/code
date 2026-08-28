@@ -102,7 +102,7 @@ impl ToolContext {
 fn write_spill_file(n: u64, content: &str) -> Option<PathBuf> {
     static SPILL_DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     let dir = SPILL_DIR.get_or_init(|| {
-        let dir = std::env::temp_dir().join(format!("vakcoder-spill-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("vak-spill-{}", std::process::id()));
         std::fs::create_dir_all(&dir).ok()?;
         #[cfg(unix)]
         {

@@ -1,4 +1,4 @@
-# Hosting your vakcoder core
+# Hosting your vak core
 
 The architectural bet of this project: **the core is headless and runs
 anywhere; TUI, desktop and chat bridges are just clients.** This guide makes
@@ -8,7 +8,7 @@ that concrete — from laptop LaunchAgent to a $5 VPS.
 
 ```
 ┌────────────── any machine ──────────────┐     ┌── your phone ──┐
-│ vakcoder serve --gateway --trust :8901  │◀────│ Telegram bot    │
+│ vak serve --gateway --trust :8901  │◀────│ Telegram bot    │
 │ ▲ bearer token (pinned)                 │     │ (bridge process │
 │ └── sessions/, memory/, tasks/ live here │     │  can run anywhere)│
 └──────────────────────────────────────────┘     └────────────────┘
@@ -24,20 +24,20 @@ that concrete — from laptop LaunchAgent to a $5 VPS.
 
 ```bash
 scripts/release.sh
-target/release/vakcoder self install --force
+target/release/vak self install --force
 cd /path/to/the/workspace-the-gateway-should-serve
-/Applications/VakCoder.app/Contents/MacOS/vakcoder self services-sync  # macOS
-# ~/.local/share/vakcoder/bin/vakcoder self services-sync              # Linux
+/Applications/Vak.app/Contents/MacOS/vak self services-sync  # macOS
+# ~/.local/share/vak/bin/vak self services-sync              # Linux
 ```
 
 - `self install` places one verified manifest of the CLI, desktop, and workers
   in the managed platform prefix; services never run from `target/`.
-- macOS → LaunchAgents `com.vakcoder.gateway` / `com.vakcoder.telegram`
+- macOS → LaunchAgents `com.vak.gateway` / `com.vak.telegram`
   (KeepAlive + RunAtLoad; survives reboot & crashes).
-- Linux → systemd user units `vakcoder-gateway.service` /
-  `vakcoder-telegram.service` (`systemctl --user ...`, enable lingering for
+- Linux → systemd user units `vak-gateway.service` /
+  `vak-telegram.service` (`systemctl --user ...`, enable lingering for
   boot start: `sudo loginctl enable-linger $USER`).
-- Put `VAKCODER_GATEWAY_TOKEN` and channel credentials in `data_home()/.env`
+- Put `VAK_GATEWAY_TOKEN` and channel credentials in `data_home()/.env`
   before starting services so bridges keep working across restarts.
 - Re-run `self install` after upgrading binaries and `self services-sync` after
   changing the served workspace or generated-unit contract.
@@ -51,9 +51,9 @@ cd /path/to/the/workspace-the-gateway-should-serve
 ## Secrets
 
 All user-level secrets live in `data_home()/.env` (0600)—
-`~/Library/Application Support/vakcoder/.env` on macOS or
-`~/.local/share/vakcoder/.env` on Linux—including provider keys,
-`TELEGRAM_BOT_TOKEN`, and `VAKCODER_GATEWAY_TOKEN`. Nothing secret is written
+`~/Library/Application Support/vak/.env` on macOS or
+`~/.local/share/vak/.env` on Linux—including provider keys,
+`TELEGRAM_BOT_TOKEN`, and `VAK_GATEWAY_TOKEN`. Nothing secret is written
 to config.toml, generated units, the repo, or logs. Generated bearer tokens are
 printed only to an interactive terminal; Telegram HTTP errors omit Bot API URLs.
 
@@ -69,16 +69,16 @@ printed only to an interactive terminal; Telegram HTTP errors omit Bot API URLs.
 4. Unattended turns auto-deny approval gates unless you configure
    `approvals = "forward"` with an approver surface (docs/design/
    22-gateway.md G2).
-5. Backups = copy `<home>` (the data home: `~/Library/Application Support/vakcoder` on macOS, `~/.local/share/vakcoder` on Linux): sessions, memory,
+5. Backups = copy `<home>` (the data home: `~/Library/Application Support/vak` on macOS, `~/.local/share/vak` on Linux): sessions, memory,
    tasks, bindings are all plain files.
 
 ## Updating
 
 ```bash
-git pull && cargo build --release -p vakcoder
-target/release/vakcoder self install --force
+git pull && cargo build --release -p vak
+target/release/vak self install --force
 cd /path/to/served/workspace
-/Applications/VakCoder.app/Contents/MacOS/vakcoder self services-sync
+/Applications/Vak.app/Contents/MacOS/vak self services-sync
 ```
 
 Sessions and memory are append-only JSONL/markdown — upgrades require no
@@ -88,11 +88,11 @@ migration.
 
 | Symptom | Check |
 |---|---|
-| bridge replies "(gateway unreachable)" | gateway down or token mismatch — compare `VAKCODER_GATEWAY_TOKEN` in `.env` vs the gateway's launchd environment |
-| replies "(aborted)" | pre-0.3.0 bug; upgrade. Also check `~/Library/Logs/vakcoder/gateway.log` (macOS) or `~/.local/state/vakcoder/logs/gateway.log` (Linux) |
+| bridge replies "(gateway unreachable)" | gateway down or token mismatch — compare `VAK_GATEWAY_TOKEN` in `.env` vs the gateway's launchd environment |
+| replies "(aborted)" | pre-0.3.0 bug; upgrade. Also check `~/Library/Logs/vak/gateway.log` (macOS) or `~/.local/state/vak/logs/gateway.log` (Linux) |
 | tool calls denied on phone | expected in default deny mode; configure an approver surface or use TUI/desktop for escalations |
 | model errors | `/health` shows effective provider/model plus provenance/revision; keys live in `data_home()/.env` |
 | MCP server "spawn failed" / dies at handshake | under service managers PATH is minimal: use the absolute interpreter path (`which npx`) in `[mcp.servers.*].command`; network-client tools also need `network = true` |
 | Tavily/web search denied on phone | add `allow = ["+mcp(tavily/*)"]` to trusted config — scoped to that server |
 
-Telegram bridges are single-consumer per bot token: local duplicates fail fast via `$VAKCODER_HOME/locks`, cross-machine rivals put the local bridge into hot-standby with automatic takeover (`docs/design/22-gateway.md` § Telegram bot ownership).
+Telegram bridges are single-consumer per bot token: local duplicates fail fast via `$VAK_HOME/locks`, cross-machine rivals put the local bridge into hot-standby with automatic takeover (`docs/design/22-gateway.md` § Telegram bot ownership).

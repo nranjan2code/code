@@ -82,9 +82,9 @@ async fn spawn_full_seeded(
 ) -> Fixture {
     let dir = Arc::new(tempfile::tempdir().unwrap());
     let ws = dir.path().join("ws");
-    std::fs::create_dir_all(ws.join(".vakcoder")).unwrap();
+    std::fs::create_dir_all(ws.join(".vak")).unwrap();
     std::fs::write(
-        ws.join(".vakcoder/config.toml"),
+        ws.join(".vak/config.toml"),
         format!("[memory]\nreflection = false\n{config_toml}"),
     )
     .unwrap();
@@ -226,7 +226,7 @@ async fn urgent_finding_adds_exactly_one_delivery_and_strips_markers() {
     )
     .await;
 
-    // No tasks configured, so the urgent beat falls back to log:vakcoder.
+    // No tasks configured, so the urgent beat falls back to log:vak.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     loop {
         assert!(

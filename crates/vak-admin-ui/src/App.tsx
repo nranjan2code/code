@@ -83,8 +83,8 @@ function Login() {
     <div class="login-wrap">
       <form class="login-card" onSubmit={submit}>
         <div class="login-logo">◆</div>
-        <h1>vakcoder admin</h1>
-        <p class="hint">Paste the token printed by <code>vakcoder serve</code></p>
+        <h1>vak admin</h1>
+        <p class="hint">Paste the token printed by <code>vak serve</code></p>
         <input
           type="password"
           placeholder="access token"
@@ -977,7 +977,7 @@ function IntegrationsView() {
             <section class="panel">
               <h2>Registered MCP Servers</h2>
               <Show when={!mcpData.loading} fallback={<div class="empty">Loading MCP servers…</div>}>
-                <Show when={Object.keys(mcpData()?.servers ?? {}).length > 0} fallback={<div class="empty">No MCP servers registered in .vakcoder/config.toml</div>}>
+                <Show when={Object.keys(mcpData()?.servers ?? {}).length > 0} fallback={<div class="empty">No MCP servers registered in .vak/config.toml</div>}>
                   <table class="table">
                     <thead><tr><th>name</th><th>command</th><th /></tr></thead>
                     <tbody>
@@ -2036,7 +2036,7 @@ export default function App() {
       <Match when={authed() === true}>
         <div class="shell">
           <aside class="sidebar">
-            <div class="brand"><span class="brand-mark">◆</span> vakcoder</div>
+            <div class="brand"><span class="brand-mark">◆</span> vak</div>
             <nav>
               <For each={NAV}>
                 {(item) => (

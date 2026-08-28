@@ -1,4 +1,4 @@
-//! `vakcoder digest [--days N]` (docs/design/29-personal-os.md P3): the
+//! `vak digest [--days N]` (docs/design/29-personal-os.md P3): the
 //! weekly usage report rendered as aligned plain text from
 //! `vak_core::digest`. Pure rendering; all math lives in the library.
 

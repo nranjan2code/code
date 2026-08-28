@@ -170,8 +170,8 @@ mod tests {
                 "macos/aarch64".to_string(),
                 Platform {
                     components: vec![Artifact {
-                        name: "vakcoder".into(),
-                        url: "https://example.invalid/vakcoder".into(),
+                        name: "vak".into(),
+                        url: "https://example.invalid/vak".into(),
                         sha256: "ab".repeat(32),
                         required: true,
                     }],

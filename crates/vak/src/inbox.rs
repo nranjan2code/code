@@ -1,4 +1,4 @@
-//! `vakcoder inbox` (docs/design/29-personal-os.md P6): list/show/ack/count
+//! `vak inbox` (docs/design/29-personal-os.md P6): list/show/ack/count
 //! over `vak_core::inbox` (`<home>/inbox.jsonl`) without the server, the way
 //! `tasks`/`memory` read their stores directly. Row/footer/count rendering
 //! lives in pure helpers so tests assert strings instead of captured stdout.

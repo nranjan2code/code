@@ -1,6 +1,6 @@
 # 20 — Tauri desktop app: competitive research & architecture
 
-Goal: a native desktop orchestrator for vakcoder in **Tauri 2**, built by
+Goal: a native desktop orchestrator for vak in **Tauri 2**, built by
 unapologetically copying the best features of Claude Code Desktop, OpenAI's
 Codex desktop app, and Cursor 3's Agents Window — then beating them where our
 architecture already wins. Sources: official docs/changelogs/blogs for all
@@ -108,7 +108,7 @@ advantages transfer directly:
 │ webview UI (SolidJS + Vite SPA, CodeMirror 6, xterm.js)         │
 │   │  HTTP+SSE 127.0.0.1:<ephemeral> + loopback token            │
 │   │  = the existing vak-server contract (docs/design/13)        │
-│ ├─ sidecar: `vakcoder serve --port 0` (bundled binary)          │
+│ ├─ sidecar: `vak serve --port 0` (bundled binary)          │
 │ │    health-gated startup; owns sessions/runs/approvals         │
 │ ├─ native commands (Rust): PTY terminal, dialogs, notifications,│
 │ │    deep links (gh OAuth), global shortcuts, tray              │
@@ -288,8 +288,8 @@ Shipped in `crates/vak-desktop` (+ additive `vak-server` endpoints):
   unchanged while the JSONL retains question+answer.
 
 - **Best-of-N runner**: `POST /sessions/{id}/bestofn` fans the prompt across
-  1–4 isolated git worktrees (`.vakcoder/worktrees/<rid>`, branch
-  `vakcoder/<rid>`), each a fully registered session with its own Core,
+  1–4 isolated git worktrees (`.vak/worktrees/<rid>`, branch
+  `vak/<rid>`), each a fully registered session with its own Core,
   provider, event stream, and cwd — the diff endpoint is now per-session so
   each candidate's changes render in the diff pane. `POST /{child}/keep`
   merges the branch into the checkout (conflicts → merge aborted + error
@@ -320,7 +320,7 @@ Shipped in `crates/vak-desktop` (+ additive `vak-server` endpoints):
   CRUD + run-now end-to-end incl. worktree churn and cleanup.
 
 - **Preview pane + dev-server lifecycle** (dock tab `preview`): launch
-  configs from `.vakcoder/launch.toml` (`[[server]] name/cmd/args/port`),
+  configs from `.vak/launch.toml` (`[[server]] name/cmd/args/port`),
   auto-detecting `npm run dev` as fallback. Start waits up to 15s for the
   declared port to bind, then an interactive iframe renders the app (CSP
   frame-src scoped to loopback); logs tail into a ring buffer viewable
@@ -357,7 +357,7 @@ deliberately returns only a safe, secret-free configuration projection.
 Reliability, integration, context, and path pages expose the effective runtime
 configuration without
 pretending read-only values are editable. Persistent project settings open the
-workspace-confined `.vakcoder/config.toml`, creating a minimal starter only when
+workspace-confined `.vak/config.toml`, creating a minimal starter only when
 the file does not already exist. The Reliability page also carries a Route
 ladder group (Phase R): the frozen objective, the cross-model fallback
 allowlist, and the ladder length cap.

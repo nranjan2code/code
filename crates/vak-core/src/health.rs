@@ -26,9 +26,9 @@ fn user_home() -> PathBuf {
 /// invisible to the rest of the stack.
 fn layout_check() -> HealthCheck {
     let label = "install layout".to_string();
-    let overridden = std::env::var_os("VAKCODER_HOME").is_some();
+    let overridden = std::env::var_os("VAK_HOME").is_some();
     let canonical = vak_config::paths::data_home();
-    let legacy = user_home().join(".vakcoder");
+    let legacy = user_home().join(".vak");
     if overridden {
         return HealthCheck {
             label,
@@ -42,7 +42,7 @@ fn layout_check() -> HealthCheck {
         return HealthCheck {
             label,
             detail: Err(format!(
-                "sessions found in legacy {} — run vakcoder once to migrate to {}",
+                "sessions found in legacy {} — run vak once to migrate to {}",
                 legacy_sessions.display(),
                 canonical.join("sessions").display()
             )),

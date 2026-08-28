@@ -41,7 +41,7 @@ fn worktree_create_and_remove_lifecycle() {
     assert!(worktree::is_git_repo(&repo));
     let wt = worktree::create(&repo, "run-1").unwrap();
     assert!(wt.path.is_dir());
-    assert_eq!(wt.branch, "vakcoder/run-1");
+    assert_eq!(wt.branch, "vak/run-1");
     assert!(
         wt.path.join("base.txt").exists(),
         "worktree must contain committed files"
@@ -55,7 +55,7 @@ fn worktree_create_and_remove_lifecycle() {
     assert!(!wt.path.exists());
     let branches = Command::new("git")
         .current_dir(&repo)
-        .args(["branch", "--list", "vakcoder/run-1"])
+        .args(["branch", "--list", "vak/run-1"])
         .output()
         .unwrap();
     assert!(

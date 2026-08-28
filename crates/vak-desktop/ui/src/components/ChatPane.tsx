@@ -21,7 +21,7 @@ function EmptyChat() {
     <div class="chat-empty">
       <div class="chat-empty-mark"><Icon name="spark" size={24} /></div>
       <h2>Start with an outcome</h2>
-      <p>Tell VakCoder what should be true when you are done. It will inspect the workspace, make changes, and verify the result.</p>
+      <p>Tell Vak what should be true when you are done. It will inspect the workspace, make changes, and verify the result.</p>
       <Show when={uiPreferences.suggestions}><div class="starter-grid">
         <For each={starters}>
           {(starter) => (

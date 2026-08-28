@@ -69,7 +69,7 @@ image   = "alpine:3.20"   # default alpine:3.20
 - Built-in file tools run in disposable local workers under canonical
   workspace permission checks; Docker currently contains Bash, while
   Seatbelt/Landlock can contain the entire local worker. A future worker image
-  can move the complete protocol server into the container once vakcoder ships
+  can move the complete protocol server into the container once vak ships
   a pinned Linux worker artifact for each supported architecture.
 - No `--user` mapping yet: on Linux hosts with plain dockerd, container
   writes are root-owned. macOS/Windows Desktop handle this transparently;

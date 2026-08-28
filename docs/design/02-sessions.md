@@ -3,7 +3,7 @@
 ## Format
 
 One JSONL file per session at
-`$VAKCODER_HOME/sessions/<cwd-hash>/<session-id>.jsonl`. Every line:
+`$VAK_HOME/sessions/<cwd-hash>/<session-id>.jsonl`. Every line:
 
 ```json
 {"id":"…","parent_id":"…|null","ts":"…","kind":"header|message|compaction|receipt|goal", …}

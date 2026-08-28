@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Build VakCoder and, optionally, place it through the managed installer.
+# Build Vak and, optionally, place it through the managed installer.
 #
-# Placement is deliberately NOT done by this script. `vakcoder self
+# Placement is deliberately NOT done by this script. `vak self
 # install` owns the install root, writes the manifest, records a digest
 # per component, and is what `status`, `verify`, `update`, and
 # `uninstall` read. A script that copied a bundle into place behind the
@@ -61,10 +61,10 @@ fi
 printf '\n== build (%s) ==\n' "$PROFILE"
 GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 if [[ "$PROFILE" == release ]]; then
-    VAKCODER_GIT_SHA="$GIT_SHA" cargo build --release --workspace
+    VAK_GIT_SHA="$GIT_SHA" cargo build --release --workspace
     BIN_DIR="$ROOT_DIR/target/release"
 else
-    VAKCODER_GIT_SHA="$GIT_SHA" cargo build --workspace
+    VAK_GIT_SHA="$GIT_SHA" cargo build --workspace
     BIN_DIR="$ROOT_DIR/target/debug"
 fi
 
@@ -77,9 +77,9 @@ printf '\n== install ==\n'
 # One writer: the freshly built CLI installs itself and its siblings.
 install_args=(self install --force)
 [[ -n "$PREFIX" ]] && install_args+=(--prefix "$PREFIX")
-"$BIN_DIR/vakcoder" "${install_args[@]}"
+"$BIN_DIR/vak" "${install_args[@]}"
 
 printf '\n== verify ==\n'
 verify_args=(self verify)
 [[ -n "$PREFIX" ]] && verify_args+=(--prefix "$PREFIX")
-"$BIN_DIR/vakcoder" "${verify_args[@]}"
+"$BIN_DIR/vak" "${verify_args[@]}"

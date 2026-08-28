@@ -72,9 +72,9 @@ export default function ProjectGate() {
   return (
     <div class="gate">
       <div class="gate-card">
-        <div class="gate-mark"><img src="/vakcoder-icon.png" alt="" /></div>
+        <div class="gate-mark"><img src="/vak-icon.png" alt="" /></div>
         <Show when={showPicker()}>
-          <h1>VakCoder</h1>
+          <h1>Vak</h1>
           <p class="gate-lead">Your code, your machine, your agent.</p>
           <div class="gate-features">
             <span><Icon name="check" size={15} /> Isolated tasks and worktrees</span>

@@ -5,7 +5,7 @@ Closes the platform gap versus OpenClaw / Hermes-agent (see research notes in
 core differentiator is a gateway that routes many chat surfaces to persistent
 agent sessions, plus unattended scheduled work with delivery back out.
 
-vakcoder's structural advantage: **the core was always headless.** TUI and
+vak's structural advantage: **the core was always headless.** TUI and
 desktop were built as consumers of the server contract from day one. The
 gateway is therefore not a new product bolted on the side (OpenClaw's mistake
 — its gateway owns everything) but one more consumer of the exact same
@@ -19,7 +19,7 @@ consumer gets `409 Conflict` for as long as both run. The bridge treats
 ownership as first-class state:
 
 - **Local mutual exclusion** — an O_EXCL marker at
-  `$VAKCODER_HOME/locks/telegram-<fnv(token)>.lock` records holder
+  `$VAK_HOME/locks/telegram-<fnv(token)>.lock` records holder
   host+pid. A second bridge on the same machine fails fast naming the
   holder; a stale marker (crashed process) is detected via pid liveness
   and taken over.
@@ -206,7 +206,7 @@ approver  = "telegram:48211"   # required for "forward"; <surface>:<chat>
 approval_timeout_secs = 300    # min 5
 
 [gateway.outbound.webhooks.ci]
-url       = "https://ci.example.com/vakcoder"
+url       = "https://ci.example.com/vak"
 token_env = "CI_HOOK_TOKEN"   # name only; value resolved per delivery
 
 chat_allowlist = ["telegram:48211", "log:ops"]  # empty fails closed (0c-02)
@@ -232,9 +232,9 @@ Bridges are thin clients of the HTTP contract and can run anywhere the bot
 API and the gateway are both reachable:
 
 ```bash
-vakcoder serve --gateway --trust          # process 1: hosted core
+vak serve --gateway --trust          # process 1: hosted core
 TELEGRAM_BOT_TOKEN=123:abc \
-vakcoder telegram --server http://10.0.0.5:8901 --token vk_...   # process 2
+vak telegram --server http://10.0.0.5:8901 --token vk_...   # process 2
 ```
 
 The Telegram bridge long-polls `getUpdates`, routes each text/photo/document
@@ -321,7 +321,7 @@ Lessons from OpenClaw's incident history, inverted:
 | Phase | Delivers | Exit criterion |
 |---|---|---|
 | **G0 ✅** | HTTP inbound + wait mode, bindings persistence, steering-busy path + continuation, AutoDeny unattended turns, log surface, `TaskDef.deliver_to`, `[gateway]` config, `serve --gateway` | e2e tests: roundtrip, reuse, busy-steering, disabled-gateway 409, cron delivery; fmt/clippy/tests green |
-| **G1 ✅** | Outbound webhook transport (`webhook:<name>`) with fail-closed bearer auth; Telegram bridge client + `vakcoder telegram` subcommand; real-text routine summaries; restart-resilience proof; scheduler-free `gateway_router()` for embedders | offline e2e vs mock Bot API and webhook receiver; missing-credential fail-closed test; bindings survive simulated process restart |
+| **G1 ✅** | Outbound webhook transport (`webhook:<name>`) with fail-closed bearer auth; Telegram bridge client + `vak telegram` subcommand; real-text routine summaries; restart-resilience proof; scheduler-free `gateway_router()` for embedders | offline e2e vs mock Bot API and webhook receiver; missing-credential fail-closed test; bindings survive simulated process restart |
 | **G2 ✅** | Approval forwarding: `[gateway] approvals = "forward"` + `approver` target + `approval_timeout_secs`; gates announced via any delivery transport, resolved by strict yes/no replies from the approver chat only; timeout/silence fails closed, late replies resolve nothing. **Media passthrough**: inbound attachments ride the ledger as native image blocks — Anthropic/OpenAI/Google wire formats all supported, Telegram photos auto-downloaded (largest variant) | gateway_approvals.rs e2e: forward→yes→tool really runs; unanswered gate times out and a late "yes" resolves nothing; deny mode never announces; media_passthrough.rs proves image reaches request AND ledger; bridge photo flow vs mock Bot API (getFile→download→base64) |
 | **G3 ✅** | Remote exec backends behind the Sandbox seam — Docker implemented in vak-core, see docs/design/25-docker-sandbox.md (same-path bind mount, no-network container, read-only root, caps, fail-closed daemon probe); `[sandbox] backend/image` privileged config | live e2e vs real daemon: exec, mount visibility, network deny, RO enforcement, config-flow naming |
 | G4 | Cross-session memory & recall: FTS index + logged `session_search` tool | recall across restarts auditable in transcript |

@@ -14,7 +14,7 @@ pub fn maybe_check_update(config: &Config) {
     let Some(url) = config.update.url.clone() else {
         return;
     };
-    let Some(home) = vakcoder_home() else {
+    let Some(home) = vak_home() else {
         return;
     };
     let cache_path = home.join("update-check.json");
@@ -37,7 +37,7 @@ pub fn maybe_check_update(config: &Config) {
         && version_newer(latest, env!("CARGO_PKG_VERSION"))
     {
         eprintln!(
-            "note: VakCoder {} is available (installed {}) — install manually; nothing is auto-updated",
+            "note: Vak {} is available (installed {}) — install manually; nothing is auto-updated",
             format_version(latest),
             env!("CARGO_PKG_VERSION")
         );
@@ -68,10 +68,10 @@ fn write_cache_timestamp(cache_path: &std::path::Path) {
     }
 }
 
-fn vakcoder_home() -> Option<PathBuf> {
-    std::env::var_os("VAKCODER_HOME")
+fn vak_home() -> Option<PathBuf> {
+    std::env::var_os("VAK_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".vakcoder")))
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".vak")))
 }
 
 fn fetch_latest_version(url: &str) -> Option<(u64, u64, u64)> {

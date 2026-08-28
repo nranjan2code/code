@@ -83,9 +83,9 @@ async fn headless_tool_turn_survives_without_subscribers() {
     let cwd = dir.path().to_path_buf();
     // Hermetic against the developer's global config (e.g. reflection=true):
     // pin learning flags off for deterministic scripted flows.
-    let _ = std::fs::create_dir_all(cwd.join(".vakcoder"));
+    let _ = std::fs::create_dir_all(cwd.join(".vak"));
     let _ = std::fs::write(
-        cwd.join(".vakcoder/config.toml"),
+        cwd.join(".vak/config.toml"),
         "[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
     );
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();

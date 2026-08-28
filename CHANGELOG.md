@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Rebrand: VakCoder → Vak
+
+The project and CLI are renamed from "VakCoder"/`vakcoder` to "Vak"/`vak`
+across source, docs, config, and CI. The umbrella CLI crate moves from
+`crates/vakcoder` to `crates/vak` (package and binary both `vak`); the
+tray helper binary is now `vak-tray` (was `vakcoder-tray`). The Tauri
+desktop app identifier moves to `dev.vak.desktop`. The on-disk config/data
+layout already used `~/Library/Application Support/vak` (etc.) as of the
+0.8 release with its own `~/.vak` legacy-dotdir migration
+(`crates/vak-config/src/paths.rs`), so no further path migration was
+needed here. Older `vakcoder`-named artifacts (release archives, prior
+changelog entries) are left as historical record.
+
 ## 0.9.0 — 2026-08-28
 
 ### Telegram document attachments and inline-keyboard approvals
@@ -35,7 +50,7 @@ a fixed `"telegram"` placeholder.
 Generated launchd/systemd units now preserve the invoking user's non-secret
 `HOME` alongside the workspace. This prevents a sanitized service-manager
 environment from treating the workspace as the user home and relocating
-project `.vakcoder/config.toml` into a nested platform-data directory. The
+project `.vak/config.toml` into a nested platform-data directory. The
 canonical path resolver also falls back to the operating-system account home
 when GUI launch environments omit `HOME`; it never falls back to the current
 workspace.
@@ -140,10 +155,10 @@ none of them was ever tested against the actual event stream.
 
 ### Two menu-bar icons, and an app that opened nothing
 
-The bundle's `CFBundleExecutable` is `vakcoder-tray`, and
-`com.vakcoder.tray` also runs it as a launchd service with `RunAtLoad`.
+The bundle's `CFBundleExecutable` is `vak-tray`, and
+`com.vak.tray` also runs it as a launchd service with `RunAtLoad`.
 Nothing guarded against both. The ordinary path -- install,
-`services-sync`, then open VakCoder from Finder or Spotlight -- produced
+`services-sync`, then open Vak from Finder or Spotlight -- produced
 two identical menu-bar icons; and once macOS began merely re-activating
 the already-running app rather than spawning a new process, launching it
 did nothing visible at all, because the tray only opens the chat window
@@ -272,7 +287,7 @@ live gateway instead of guessing.
 
 - Fixed the desktop app being unable to see a provider credential saved
   anywhere else. `vak-desktop` hardcoded its own data home as
-  `~/.vakcoder`; the wizard and the TUI's `/key` command save through
+  `~/.vak`; the wizard and the TUI's `/key` command save through
   `Core::set_provider_key`, which writes to the canonical home
   (`vak_config::paths::data_home()`, doc 32). Those are different
   directories, so a key saved through either path was invisible to a
@@ -332,8 +347,8 @@ live gateway instead of guessing.
   "not registered — run `self services-sync`".
 
 - Removed the second installer. `build-install.sh` copied a Tauri bundle
-  to `~/Applications/VakCoder.app` while `self install` managed
-  `vakcoder.app` — the same directory on a case-insensitive volume, which
+  to `~/Applications/Vak.app` while `self install` managed
+  `vak.app` — the same directory on a case-insensitive volume, which
   every macOS default is. The script's `rm -rf` destroyed the manifest of
   a managed install, after which `status` reported nothing installed and
   `uninstall` could not clean up. Placement is now solely `self install`;
@@ -370,7 +385,7 @@ live gateway instead of guessing.
 - Downloaded artifacts are verified against a SHA-256 from the feed
   before anything is written. A feed entry without a digest is refused
   rather than trusted.
-- Update replaces every component in the release, not only `vakcoder`.
+- Update replaces every component in the release, not only `vak`.
   Previously the manifest version was rewritten while the tray, desktop,
   and worker stayed on the old build, so `status` reported a clean
   install that was actually mixed-version.
@@ -397,30 +412,30 @@ live gateway instead of guessing.
 ## 0.8.0 — canonical layout release
 
 Platform-standard filesystem locations. One-time automatic migration from
-`~/.vakcoder` to `~/Library/Application Support/vakcoder` (macOS) or
-`~/.local/share/vakcoder` (Linux). Logs to `~/Library/Logs/vakcoder`,
-cache (store.db) to `~/Library/Caches/vakcoder`. Desktop app now ships
+`~/.vak` to `~/Library/Application Support/vak` (macOS) or
+`~/.local/share/vak` (Linux). Logs to `~/Library/Logs/vak`,
+cache (store.db) to `~/Library/Caches/vak`. Desktop app now ships
 in the install bundle with frontend assets.
 
 - **`vak-config::paths` module**: single source of truth for data home,
-  cache home, and log directory. `VAKCODER_HOME` override nests everything
+  cache home, and log directory. `VAK_HOME` override nests everything
   under one directory for tests and portable installs.
 - **`user_env_path()` follows data home**: secrets live in
-  `data_home()/.env`, not a hardcoded `~/.vakcoder/.env`.
+  `data_home()/.env`, not a hardcoded `~/.vak/.env`.
 - **Desktop in bundle**: `self install` copies `vak-desktop` binary and
   frontend assets into the app bundle. `Resources/` now contains the
   SolidJS SPA.
 - **Stale reference purge**: 36 files changed — all user-facing
-  `~/.vakcoder` strings replaced in source code, 19 doc references fixed
+  `~/.vak` strings replaced in source code, 19 doc references fixed
   across 16 design docs, AGENTS.md, SECURITY.md, README.md, hosting.md.
-- **Legacy migration**: one-time rename of `~/.vakcoder` → canonical data
+- **Legacy migration**: one-time rename of `~/.vak` → canonical data
   home. store.db* → cache. logs → Library/Logs. Skipped when
-  `VAKCODER_HOME` is set. Called at all binary entry points.
+  `VAK_HOME` is set. Called at all binary entry points.
 
 ## 0.7.0 — admin console release
 
 The web admin console: one binary, one URL, full control of a running
-vakcoder from any browser (docs/design/33-admin-console.md).
+vak from any browser (docs/design/33-admin-console.md).
 
 - **`vak-store` crate**: SQLite FTS5 rebuildable index over session JSONL.
   BM25 full-text search with snippets across ALL content blocks (tool
@@ -495,7 +510,7 @@ one headless core, many surfaces, durable services.
   surfaces to persistent sessions; bindings survive restarts; busy turns
   queue as logged steering; unattended approvals fail closed by default or
   forward to an approver surface (`approvals = "forward"`, timeout-deny).
-- **Transports**: Telegram bridge (`vakcoder telegram`) and outbound
+- **Transports**: Telegram bridge (`vak telegram`) and outbound
   webhook targets with fail-closed bearer auth; cron routines push real
   final answers to any surface (`TaskDef.deliver_to`).
 - **Media passthrough**: images from chat reach vision models as native
@@ -512,9 +527,9 @@ one headless core, many surfaces, durable services.
   environments, workspace-rooted restricted reads, permission-change
   revocation, threat model in docs/design/24-agent-security.md.
 - **Operations**: `scripts/install_gateway_service.sh` installs
-  launchd/systemd services; `vakcoder-tray` menu-bar controller with live
+  launchd/systemd services; `vak-tray` menu-bar controller with live
   indicators and a watchdog that auto-restarts crashed services;
-  `VAKCODER_GATEWAY_TOKEN` pins auth across restarts; hosting guide in
+  `VAK_GATEWAY_TOKEN` pins auth across restarts; hosting guide in
   docs/hosting.md.
 - **Reliability fix found in production**: OpenAI-compatible endpoints that
   close tool-call turns without canonical finish reasons no longer strand
@@ -565,7 +580,7 @@ one headless core, many surfaces, durable services.
   `/emacs`) with normal-mode motions, operator+motion edits, yank/paste
   register, and undo/redo.
 - **Custom slash commands**: markdown prompt templates from
-  `.vakcoder/commands/*.md` (project), `.vakcoder/plugins/*/commands/*.md`
+  `.vak/commands/*.md` (project), `.vak/plugins/*/commands/*.md`
   (plugin-contributed palette actions), and user `commands/*.md`;
   `$ARGUMENTS` substitution; project > plugin > user precedence; wired into
   completion, the Ctrl-P palette, and `/help`.
@@ -589,7 +604,7 @@ one headless core, many surfaces, durable services.
   dogfooding — the sandbox was doing its job a little too well.
 - **Learned allow rules**: `[p]` on an approval persists a scoped rule
   (`bash(cargo *)`, `edit(src/x.rs)`, `mcp(server/*)`, …) to
-  `.vakcoder/permissions.local.toml`; loaded into every future run in that
+  `.vak/permissions.local.toml`; loaded into every future run in that
   workspace (trusted only), round-trip validated, and unable to shadow
   explicit denies. `[a]` stays session-only for unscopeable calls.
 - Sandbox network parity: all sandboxed modes now deny TCP bind/connect —

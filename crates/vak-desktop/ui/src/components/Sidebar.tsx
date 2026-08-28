@@ -85,9 +85,9 @@ export default function Sidebar() {
   return (
     <aside class="sidebar">
       <div class="sb-head">
-        <div class="brand" aria-label="VakCoder">
+        <div class="brand" aria-label="Vak">
           <span class="brand-mark"><Icon name="spark" size={17} /></span>
-          <span>vakcoder</span>
+          <span>vak</span>
         </div>
         <div class="sb-head-actions">
           <button

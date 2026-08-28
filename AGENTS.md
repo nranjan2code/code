@@ -1,10 +1,10 @@
-# vakcoder — Agent Engineering Contract
+# vak — Agent Engineering Contract
 
 Rules for every AI agent (and human) working in this repository.
 
 ## Identity
 
-vakcoder is a Rust coding-agent harness. Thesis: Codex-grade safety, pi-grade
+vak is a Rust coding-agent harness. Thesis: Codex-grade safety, pi-grade
 transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
@@ -141,7 +141,7 @@ security/inbox), operation (approvals/config/cancel), and interaction
     evaluating `PermissionEngine` and resolving `Ask` through its approver.
 17. **Configuration has one contract across every surface.** Persistent
     workspace preferences changed through authenticated `/config` are written
-    atomically to `.vakcoder/config.toml` before the live Core override is
+    atomically to `.vak/config.toml` before the live Core override is
     applied. `/health`, `/config`, `/providers`, admin snapshots, and session
     transcripts must report effective values and their source where relevant.
     CLI flags, task pins, heartbeat pins, and subagent pins are scoped
@@ -161,7 +161,7 @@ security/inbox), operation (approvals/config/cancel), and interaction
     rather than the service manager's default directory. Units must also carry
     the invoking user's non-secret `HOME`; a sanitized manager environment may
     otherwise resolve the workspace as the platform data home and migrate its
-    `.vakcoder` directory away. Canonical path resolution must never use the
+    `.vak` directory away. Canonical path resolution must never use the
     current working directory as a missing-home fallback; GUI launches use the
     OS account home and otherwise fail closed to an absolute path.
 
@@ -277,7 +277,7 @@ crates/vak-ops       service-control layer over launchd/systemd — status,
 crates/vak-tray      menu-bar controller: colour-coded service dot,
                      start/stop/restart/install/uninstall, logs, watchdog
                      with auto-restart + notifications
-crates/vakcoder      binary: tui / exec / plan / flow / serve [--gateway] /
+crates/vak      binary: tui / exec / plan / flow / serve [--gateway] /
                      telegram / eval / checkpoints / config dump / sessions
                      / doctor / backup / digest / tasks / memory / inbox
                      (+ first-run wizard, opt-in update check)
@@ -295,11 +295,11 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 Live checks (needs API key in `.env`):
 
 ```
-target/debug/vakcoder eval                    # deterministic suite, ~100ms
-target/debug/vakcoder eval --live             # real model benchmark
+target/debug/vak eval                    # deterministic suite, ~100ms
+target/debug/vak eval --live             # real model benchmark
 ```
 
 ## Parallel agents
 
 Only touch files you changed in this session. Sessions are per-cwd-hashed;
-never edit another session's files under the data home (`~/Library/Application Support/vakcoder` on macOS, `~/.local/share/vakcoder` on Linux).
+never edit another session's files under the data home (`~/Library/Application Support/vak` on macOS, `~/.local/share/vak` on Linux).

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive the vakcoder TUI through a real PTY and assert on rendered output."""
+"""Drive the vak TUI through a real PTY and assert on rendered output."""
 import os
 import pty
 import select
@@ -14,10 +14,10 @@ BIN = sys.argv[1]
 ENV = {
     **os.environ,
     "ANTHROPIC_API_KEY": "test",
-    "VAKCODER_PROVIDER": "anthropic",
-    "VAKCODER_MODEL": "claude-sonnet-4-5",
-    "VAKCODER_ANTHROPIC_BASE_URL": sys.argv[2],
-    "VAKCODER_HOME": "/tmp/vak-smoke/home",
+    "VAK_PROVIDER": "anthropic",
+    "VAK_MODEL": "claude-sonnet-4-5",
+    "VAK_ANTHROPIC_BASE_URL": sys.argv[2],
+    "VAK_HOME": "/tmp/vak-smoke/home",
     "TERM": "xterm-256color",
 }
 

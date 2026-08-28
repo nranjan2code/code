@@ -63,7 +63,7 @@ export const [dockWidth, setDockWidth] = createSignal(520);
  */
 export const [splitId, setSplitId] = createSignal<string | null>(null);
 export const [splitFocused, setSplitFocused] = createSignal(false);
-const storedSplitRatio = Number(localStorage.getItem("vakcoder.splitRatio"));
+const storedSplitRatio = Number(localStorage.getItem("vak.splitRatio"));
 export const [splitRatio, setSplitRatio] = createSignal(
   Number.isFinite(storedSplitRatio) && storedSplitRatio >= 0.25 && storedSplitRatio <= 0.75 ? storedSplitRatio : 0.5,
 );
@@ -119,7 +119,7 @@ const defaultUiPreferences: UiPreferences = {
 
 function loadUiPreferences(): UiPreferences {
   try {
-    return { ...defaultUiPreferences, ...JSON.parse(localStorage.getItem("vakcoder.uiPreferences") ?? "{}") };
+    return { ...defaultUiPreferences, ...JSON.parse(localStorage.getItem("vak.uiPreferences") ?? "{}") };
   } catch {
     return defaultUiPreferences;
   }
@@ -129,7 +129,7 @@ export const [uiPreferences, setUiPreferences] = createStore<UiPreferences>(load
 
 export function updateUiPreference<K extends keyof UiPreferences>(key: K, value: UiPreferences[K]) {
   setUiPreferences(key, value);
-  localStorage.setItem("vakcoder.uiPreferences", JSON.stringify({ ...uiPreferences, [key]: value }));
+  localStorage.setItem("vak.uiPreferences", JSON.stringify({ ...uiPreferences, [key]: value }));
 }
 // File-editor pane target; set from anywhere (chat links, diff headers…).
 export const [editorPath, setEditorPath] = createSignal<string | null>(null);

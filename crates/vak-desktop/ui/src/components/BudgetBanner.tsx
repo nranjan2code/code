@@ -30,11 +30,11 @@ export default function BudgetBanner() {
       setCap(f.day_cap_usd);
       setRatio(f.day_usd / f.day_cap_usd);
       // A stale dismissal from an earlier day must not mute today.
-      if (sessionStorage.getItem("vakcoder.budgetDismissed") === todayKey()) {
+      if (sessionStorage.getItem("vak.budgetDismissed") === todayKey()) {
         setDismissedDay(todayKey());
       } else {
         setDismissedDay(null);
-        sessionStorage.removeItem("vakcoder.budgetDismissed");
+        sessionStorage.removeItem("vak.budgetDismissed");
       }
     } catch {
       /* backend down — banner simply stays quiet */
@@ -60,7 +60,7 @@ export default function BudgetBanner() {
       void import("../App").then((m) =>
         m.notifyOnce(
           "budget-red",
-          "VakCoder day budget exceeded",
+          "Vak day budget exceeded",
           `$${spent().toFixed(2)} of $${cap().toFixed(2)} — new runs may be denied.`,
         ),
       );
@@ -68,7 +68,7 @@ export default function BudgetBanner() {
   });
 
   const dismiss = () => {
-    sessionStorage.setItem("vakcoder.budgetDismissed", todayKey());
+    sessionStorage.setItem("vak.budgetDismissed", todayKey());
     setDismissedDay(todayKey());
   };
 

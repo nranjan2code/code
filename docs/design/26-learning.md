@@ -58,7 +58,7 @@ text of the preceding block — hand-edits never lose data.
 
 | Tool | Args | Effect | Permission |
 |---|---|---|---|
-| `remember` | `note` (req), `kind` (fact\|decision\|preference\|reference), `tag` | append block | Allowed in WorkspaceWrite+ (journaling into vakcoder's own per-workspace store, like session ledgers themselves); denied in ReadOnly |
+| `remember` | `note` (req), `kind` (fact\|decision\|preference\|reference), `tag` | append block | Allowed in WorkspaceWrite+ (journaling into vak's own per-workspace store, like session ledgers themselves); denied in ReadOnly |
 | `propose_skill` | `name`, `description`, `instructions` | queue file | Same |
 
 The permission engine classifies both explicitly so they do not fall into
@@ -80,7 +80,7 @@ parsed MEMORY.md entries in.
   `<home>/skills/<name>/SKILL.md`; refuses silent overwrite of an existing
   skill name.
 - `POST /skills/proposals/{id}/reject` — deletes the pending file.
-- CLI mirrors: `vakcoder skills-review list|promote|reject`, `vakcoder memory`.
+- CLI mirrors: `vak skills-review list|promote|reject`, `vak memory`.
 
 Provenance footer (HTML comment) survives inside SKILL.md harmlessly:
 `<!-- proposed-by: <session-id> at <ts> -->`.

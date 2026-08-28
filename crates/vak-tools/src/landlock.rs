@@ -152,7 +152,7 @@ impl Sandbox for Landlock {
             // Without a resolvable executable the containment cannot be
             // established; refuse to run rather than escape the sandbox.
             Err(_) => {
-                return "echo 'vakcoder sandbox: cannot locate executable' >&2; exit 126"
+                return "echo 'vak sandbox: cannot locate executable' >&2; exit 126"
                     .to_string();
             }
         };
@@ -256,7 +256,7 @@ mod tests {
     fn wrap_fails_closed_without_resolvable_exe() {
         // current_exe virtually never fails; the fail-closed string is still
         // part of the contract, so verify it directly through formatting.
-        let cmd = "echo 'vakcoder sandbox: cannot locate executable' >&2; exit 126";
+        let cmd = "echo 'vak sandbox: cannot locate executable' >&2; exit 126";
         assert!(cmd.contains("exit 126"));
     }
 }

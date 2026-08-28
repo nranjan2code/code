@@ -18,7 +18,7 @@ pub struct PermissionEngine {
 const READ_TOOLS: [&str; 6] = ["read", "glob", "grep", "ls", "search", "session_search"];
 const PATH_SCOPED_READ_TOOLS: [&str; 4] = ["read", "glob", "grep", "ls"];
 const WRITE_TOOLS: [&str; 2] = ["write", "edit"];
-/// Learning-loop journaling into vakcoder's own per-workspace store
+/// Learning-loop journaling into vak's own per-workspace store
 /// (docs/design/26-learning.md): sanctioned under workspace-write, still
 /// denied by read-only's default arm below.
 const LEARNING_TOOLS: [&str; 2] = ["remember", "propose_skill"];

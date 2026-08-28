@@ -90,7 +90,7 @@ impl Manifest {
         let path = root.manifest_path();
         let raw = std::fs::read(&path).map_err(|_| {
             format!(
-                "no managed install at {} — run `vakcoder self install`",
+                "no managed install at {} — run `vak self install`",
                 root.prefix().display()
             )
         })?;
@@ -117,7 +117,7 @@ impl Manifest {
             .into_iter()
             .map(|(name, path)| {
                 let sha256 = digest::of_file(&path).unwrap_or_default();
-                let required = name == "vakcoder";
+                let required = name == "vak";
                 Component {
                     name,
                     path,
@@ -140,9 +140,9 @@ impl Manifest {
 
     /// Path of the installed CLI, which every service unit execs.
     pub fn cli_path(&self) -> Result<PathBuf, String> {
-        self.component("vakcoder")
+        self.component("vak")
             .map(|c| c.path.clone())
-            .ok_or_else(|| "manifest lacks a vakcoder entry — reinstall to repair".into())
+            .ok_or_else(|| "manifest lacks a vak entry — reinstall to repair".into())
     }
 
     /// Check every recorded component against the filesystem. An empty
@@ -187,7 +187,7 @@ pub fn build_version() -> &'static str {
 
 /// Commit the running binary was built from, when the build recorded one.
 pub fn build_git_sha() -> String {
-    option_env!("VAKCODER_GIT_SHA")
+    option_env!("VAK_GIT_SHA")
         .map(str::to_string)
         .unwrap_or_else(|| "unknown".into())
 }
@@ -213,14 +213,14 @@ mod tests {
     #[test]
     fn v1_manifest_migrates_and_keeps_the_install_manageable() {
         let (_d, root) = temp_root("v1");
-        let bin = root.bin_dir().join("vakcoder");
+        let bin = root.bin_dir().join("vak");
         std::fs::create_dir_all(root.bin_dir()).unwrap();
         std::fs::write(&bin, b"binary").unwrap();
         let v1 = serde_json::json!({
             "version": "0.8.0",
             "git_sha": "abc",
             "installed_at": "2026-01-01T00:00:00Z",
-            "binaries": [["vakcoder", bin]],
+            "binaries": [["vak", bin]],
         });
         std::fs::create_dir_all(root.manifest_path().parent().unwrap()).unwrap();
         std::fs::write(root.manifest_path(), v1.to_string()).unwrap();
@@ -229,7 +229,7 @@ mod tests {
         assert_eq!(m.schema, SCHEMA, "v1 must be folded into the current shape");
         assert_eq!(m.cli_path().unwrap(), bin);
         assert_eq!(
-            m.component("vakcoder").unwrap().sha256,
+            m.component("vak").unwrap().sha256,
             digest::of_file(&bin).unwrap()
         );
         assert!(m.verify().is_empty(), "a migrated install verifies clean");
@@ -239,7 +239,7 @@ mod tests {
     fn verify_reports_a_component_whose_bytes_changed() {
         let (_d, root) = temp_root("corrupt");
         std::fs::create_dir_all(root.bin_dir()).unwrap();
-        let bin = root.bin_dir().join("vakcoder");
+        let bin = root.bin_dir().join("vak");
         std::fs::write(&bin, b"original").unwrap();
         let m = Manifest {
             schema: SCHEMA,
@@ -248,7 +248,7 @@ mod tests {
             installed_at: now_rfc3339(),
             prefix: root.prefix().to_path_buf(),
             components: vec![Component {
-                name: "vakcoder".into(),
+                name: "vak".into(),
                 path: bin.clone(),
                 sha256: digest::of_file(&bin).unwrap(),
                 required: true,
@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(
             m.verify(),
             vec![Defect::Corrupt {
-                name: "vakcoder".into(),
+                name: "vak".into(),
                 path: bin
             }]
         );
@@ -270,8 +270,8 @@ mod tests {
     #[test]
     fn verify_reports_a_missing_required_component_but_tolerates_optional() {
         let (_d, root) = temp_root("missing");
-        let required = root.bin_dir().join("vakcoder");
-        let optional = root.bin_dir().join("vakcoder-tray");
+        let required = root.bin_dir().join("vak");
+        let optional = root.bin_dir().join("vak-tray");
         let m = Manifest {
             schema: SCHEMA,
             version: "0.8.0".into(),
@@ -280,13 +280,13 @@ mod tests {
             prefix: root.prefix().to_path_buf(),
             components: vec![
                 Component {
-                    name: "vakcoder".into(),
+                    name: "vak".into(),
                     path: required.clone(),
                     sha256: "deadbeef".into(),
                     required: true,
                 },
                 Component {
-                    name: "vakcoder-tray".into(),
+                    name: "vak-tray".into(),
                     path: optional,
                     sha256: "deadbeef".into(),
                     required: false,
@@ -297,7 +297,7 @@ mod tests {
         assert_eq!(
             m.verify(),
             vec![Defect::Missing {
-                name: "vakcoder".into(),
+                name: "vak".into(),
                 path: required
             }],
             "an absent optional component is not a defect"

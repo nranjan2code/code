@@ -17,7 +17,7 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 
-const TRAY_ID: &str = "vakcoder";
+const TRAY_ID: &str = "vak";
 const TRAY_OPEN_ID: &str = "desktop.open";
 const TRAY_ADMIN_ID: &str = "desktop.admin";
 const TRAY_WATCHDOG_ID: &str = "desktop.watchdog";
@@ -38,7 +38,7 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
-/// The desktop process is VakCoder's only GUI lifecycle owner. Keeping the
+/// The desktop process is Vak's only GUI lifecycle owner. Keeping the
 /// tray here means a Dock/Finder activation and a tray activation target the
 /// same process and always have a window to reveal.
 fn service(index: usize) -> vak_ops::Service {
@@ -59,7 +59,7 @@ fn states_now() -> [vak_ops::State; 2] {
 
 fn status_tooltip(states: &[vak_ops::State; 2]) -> String {
     format!(
-        "VakCoder — gateway {}, telegram {}",
+        "Vak — gateway {}, telegram {}",
         states[GATEWAY], states[TELEGRAM]
     )
 }
@@ -138,7 +138,7 @@ fn build_tray_menu(
     states: &[vak_ops::State; 2],
     watchdog_on: bool,
 ) -> tauri::Result<Menu<tauri::Wry>> {
-    let open = MenuItem::with_id(app, TRAY_OPEN_ID, "Open VakCoder", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, TRAY_OPEN_ID, "Open Vak", true, None::<&str>)?;
     let admin = MenuItem::with_id(app, TRAY_ADMIN_ID, "Open Admin Console", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let gateway = service_menu(app, GATEWAY, states[GATEWAY])?;
@@ -154,7 +154,7 @@ fn build_tray_menu(
         None::<&str>,
     )?;
     let separator_watchdog = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, TRAY_QUIT_ID, "Quit VakCoder", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, TRAY_QUIT_ID, "Quit Vak", true, None::<&str>)?;
     let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&open, &admin, &separator];
     items.extend(
         gateway
@@ -227,7 +227,7 @@ fn pinned_gateway_token() -> Option<String> {
         .lines()
         .find_map(|line| {
             let (key, value) = line.split_once('=')?;
-            (key.trim() == "VAKCODER_GATEWAY_TOKEN")
+            (key.trim() == "VAK_GATEWAY_TOKEN")
                 .then(|| value.trim().to_string())
                 .filter(|value| !value.is_empty())
         })
@@ -236,7 +236,7 @@ fn pinned_gateway_token() -> Option<String> {
 fn open_admin_console() {
     let config = vak_ops::OpsConfig::detect();
     if vak_ops::status(vak_ops::Service::Gateway, &config) != vak_ops::State::Running {
-        notify("VakCoder", "Start the gateway service first.");
+        notify("Vak", "Start the gateway service first.");
         return;
     }
     let url = match pinned_gateway_token() {
@@ -245,7 +245,7 @@ fn open_admin_console() {
     };
     if let Err(error) = std::process::Command::new("open").arg(url).spawn() {
         notify(
-            "VakCoder",
+            "Vak",
             &format!("Could not open the admin console: {error}"),
         );
     }
@@ -268,7 +268,7 @@ fn run_service_action(app: &AppHandle, service: vak_ops::Service, action: &str) 
         _ => None,
     };
     if let Some(problem) = problem {
-        notify("VakCoder", &format!("{}: {problem}", service.label()));
+        notify("Vak", &format!("{}: {problem}", service.label()));
     }
     refresh_tray(app);
 }
@@ -315,7 +315,7 @@ fn start_tray_monitor(app: AppHandle) {
                     if last_running[index] && !running {
                         if vak_ops::start(service(index), &config) {
                             notify(
-                                "VakCoder watchdog",
+                                "Vak watchdog",
                                 &format!("{} went down — restarting", service(index).label()),
                             );
                             states[index] = vak_ops::status(service(index), &config);
@@ -339,7 +339,7 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
     let states = states_now();
     let watchdog_on = app.state::<TrayState>().watchdog.load(Ordering::SeqCst);
     let menu = build_tray_menu(app.handle(), &states, watchdog_on)?;
-    let mut tray = TrayIconBuilder::with_id("vakcoder")
+    let mut tray = TrayIconBuilder::with_id("vak")
         .menu(&menu)
         .tooltip(status_tooltip(&states))
         .show_menu_on_left_click(false)
@@ -404,7 +404,7 @@ struct DesktopPrefs {
 /// The same canonical data home the CLI, TUI, and wizard use
 /// (`vak_config::paths::data_home`, doc 32) — never a hand-rolled path.
 ///
-/// This used to hardcode `~/.vakcoder`, the pre-canonical-layout location.
+/// This used to hardcode `~/.vak`, the pre-canonical-layout location.
 /// `Core::set_provider_key` — the wizard, and the TUI's `/key` command —
 /// write credentials through `Core::user_env_file()`, which resolves to
 /// the canonical home. A desktop launch reading `.env` from the old
@@ -613,7 +613,7 @@ fn set_boot_error(state: &State<'_, BackendState>, error: Option<String>) {
 /// Thin proxy for appending to the global USER.md memory tier: the embedded
 /// router exposes list/forget/amend but no append, and memory stores are
 /// plain hand-editable markdown by design (docs/design/29-personal-os.md
-/// P1), so this mirrors what `vakcoder memory add --profile` does locally.
+/// P1), so this mirrors what `vak memory add --profile` does locally.
 #[derive(Deserialize)]
 struct ProfileNoteDraft {
     kind: String,

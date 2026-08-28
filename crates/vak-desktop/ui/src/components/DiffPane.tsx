@@ -108,7 +108,7 @@ export default function DiffPane(props: { sessionId: string | null }) {
           <Show when={props.sessionId ?? activeId()}>
             <button
               class="chip sm"
-              title="Ask VakCoder to review these changes (logic + security)"
+              title="Ask Vak to review these changes (logic + security)"
               disabled={isRunning(props.sessionId) || !entries().length}
               onClick={reviewChanges}
             >

@@ -1,4 +1,4 @@
-//! Backup export/import over the vakcoder home directory
+//! Backup export/import over the vak home directory
 //! (docs/design/29-personal-os.md P3): a plain directory copy of sessions,
 //! memory, checkpoints, skill proposals, trust data, and ledgers. Secrets
 //! (.env) are excluded unless explicitly requested — and then a loud

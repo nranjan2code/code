@@ -1,6 +1,6 @@
 //! Custom slash commands: markdown prompt templates discovered from
-//! `.vakcoder/commands/*.md` (project), `<home>/commands/*.md` (user), and
-//! `.vakcoder/plugins/<plugin>/commands/*.md` (plugin-contributed palette
+//! `.vak/commands/*.md` (project), `<home>/commands/*.md` (user), and
+//! `.vak/plugins/<plugin>/commands/*.md` (plugin-contributed palette
 //! actions). Project wins over plugin wins over user on name collision.
 
 use std::path::Path;
@@ -17,8 +17,8 @@ pub struct CustomCommand {
 pub fn discover(cwd: &Path, home: &Path) -> Vec<CustomCommand> {
     let mut out = Vec::new();
     let mut roots: Vec<(std::path::PathBuf, String)> = vec![
-        (cwd.join(".vakcoder/plugins"), String::new()),
-        (cwd.join(".vakcoder/commands"), "project".to_string()),
+        (cwd.join(".vak/plugins"), String::new()),
+        (cwd.join(".vak/commands"), "project".to_string()),
         (home.join("commands"), "user".to_string()),
     ];
     roots.dedup();
@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn discovery_precedence_project_over_user_and_valid_names_only() {
         let dir = tempfile::tempdir().unwrap();
-        let project = dir.path().join(".vakcoder/commands");
+        let project = dir.path().join(".vak/commands");
         let user = dir.path().join("home/commands");
         std::fs::create_dir_all(&project).unwrap();
         std::fs::create_dir_all(&user).unwrap();
@@ -167,7 +167,7 @@ mod tests {
     #[test]
     fn plugin_commands_are_discovered_with_namespace_label() {
         let dir = tempfile::tempdir().unwrap();
-        let plugin = dir.path().join(".vakcoder/plugins/acme/commands");
+        let plugin = dir.path().join(".vak/plugins/acme/commands");
         std::fs::create_dir_all(&plugin).unwrap();
         std::fs::write(plugin.join("deploy.md"), "# Ship it\nAll steps").unwrap();
 

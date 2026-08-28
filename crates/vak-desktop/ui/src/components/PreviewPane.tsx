@@ -122,7 +122,7 @@ export default function PreviewPane() {
 
       <Show when={!error()} fallback={<div class="dock-empty">{error()}</div>}>
         <div class="prev-servers">
-          <For each={servers()} fallback={<div class="hint" style="padding:4px 10px">No dev server configured — add .vakcoder/launch.toml</div>}>
+          <For each={servers()} fallback={<div class="hint" style="padding:4px 10px">No dev server configured — add .vak/launch.toml</div>}>
             {(s) => (
               <div class="prev-row">
                 <span

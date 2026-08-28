@@ -35,6 +35,6 @@ jobs:
       run: python3 scripts/check_doc_paths.py
       - name: Landlock sandbox smoke (Linux 5.13+ runners)
         run: |
-          cargo build -p vakcoder
+          cargo build -p vak
           chmod +x scripts/landlock_smoke.sh
-          ./scripts/landlock_smoke.sh target/debug/vakcoder
+          ./scripts/landlock_smoke.sh target/debug/vak

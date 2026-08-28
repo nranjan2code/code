@@ -404,7 +404,7 @@ export default function Settings() {
 
   const deleteTask = async (id: string) => {
     const task = archivedSessions().find((session) => session.session_id === id);
-    if (!window.confirm(`Delete “${task?.title || "Untitled task"}”? This cannot be undone in VakCoder.`)) return;
+    if (!window.confirm(`Delete “${task?.title || "Untitled task"}”? This cannot be undone in Vak.`)) return;
     try {
       await api.deleteSession(id);
       await refreshSessions();
@@ -415,7 +415,7 @@ export default function Settings() {
   };
 
   const deleteAllArchived = async () => {
-    if (!archivedSessions().length || !window.confirm(`Delete all ${archivedSessions().length} archived tasks? This cannot be undone in VakCoder.`)) return;
+    if (!archivedSessions().length || !window.confirm(`Delete all ${archivedSessions().length} archived tasks? This cannot be undone in Vak.`)) return;
     try {
       const result = await api.deleteAllArchived();
       await refreshSessions();
@@ -550,7 +550,7 @@ export default function Settings() {
       setNotice({
         kind: "info",
         text: res.shadowed_by_env
-          ? `Removed from ~/.vakcoder/.env, but ${res.env_var} is still set in the real environment.`
+          ? `Removed from ~/.vak/.env, but ${res.env_var} is still set in the real environment.`
           : res.restarted
             ? "Telegram token removed and the bridge was restarted."
             : "Telegram token removed.",
@@ -595,7 +595,7 @@ export default function Settings() {
   };
 
   const openProjectConfig = async () => {
-    const relative = ".vakcoder/config.toml";
+    const relative = ".vak/config.toml";
     try {
       await api.readFile(relative);
     } catch {
@@ -609,7 +609,7 @@ export default function Settings() {
   return (
     <div class="settings-shell" role="dialog" aria-modal="true" aria-label="Settings">
       <aside class="settings-nav">
-        <button class="settings-back" onClick={() => setSettingsOpen(false)}><Icon name="chevron" /><span>Back to VakCoder</span></button>
+        <button class="settings-back" onClick={() => setSettingsOpen(false)}><Icon name="chevron" /><span>Back to Vak</span></button>
         <div class="settings-search"><Icon name="search" /><input aria-label="Search settings" placeholder="Search settings…" value={query()} onInput={(event) => setQuery(event.currentTarget.value)} /></div>
         <div class="settings-nav-label">Workspace</div>
         <nav>
@@ -623,16 +623,16 @@ export default function Settings() {
             <button classList={{ active: page() === "archived" }} onClick={() => { setPage("archived"); setQuery(""); }}><Icon name="archive" /><span>Archived tasks</span></button>
           </nav>
         </Show>
-        <div class="settings-nav-foot"><div class="settings-app-mark"><img src="/vakcoder-icon.png" alt="" /></div><div><strong>VakCoder</strong><span>Version 0.2.0</span></div></div>
+        <div class="settings-nav-foot"><div class="settings-app-mark"><img src="/vak-icon.png" alt="" /></div><div><strong>Vak</strong><span>Version 0.2.0</span></div></div>
       </aside>
 
       <main class="settings-main">
         <div class="settings-content">
           <Show when={!loading()} fallback={<div class="settings-loading"><span /><span /><span /></div>}>
             <Show when={page() === "general"}>
-              <header><h1>General</h1><p>Choose how VakCoder behaves across projects.</p></header>
+              <header><h1>General</h1><p>Choose how Vak behaves across projects.</p></header>
               <Group title="Experience">
-                <Row title="Desktop notifications" description="Notify when the active task finishes while VakCoder is in the background."><Switch label="Desktop notifications" checked={uiPreferences.notifications} onChange={(value) => updateUiPreference("notifications", value)} /></Row>
+                <Row title="Desktop notifications" description="Notify when the active task finishes while Vak is in the background."><Switch label="Desktop notifications" checked={uiPreferences.notifications} onChange={(value) => updateUiPreference("notifications", value)} /></Row>
                 <Row title="Suggested prompts" description="Show useful starting points when a task has no conversation yet."><Switch label="Suggested prompts" checked={uiPreferences.suggestions} onChange={(value) => updateUiPreference("suggestions", value)} /></Row>
                 <Row title="Transcript detail" description="Control how much agent activity appears in conversations."><select value={density()} onChange={(event) => setDensity(event.currentTarget.value as Density)}><option value="summary">Summary</option><option value="normal">Normal</option><option value="verbose">Verbose</option></select></Row>
                 <Row title="Keyboard shortcuts" description="See every shortcut for navigation, tasks, and workspace tools."><button class="settings-button" onClick={() => { setSettingsOpen(false); setShowShortcuts(true); }}>View shortcuts</button></Row>
@@ -645,7 +645,7 @@ export default function Settings() {
 
             <Show when={page() === "archived"}>
               <header class="archived-header"><div><h1>Archived tasks</h1><p>Hidden from the sidebar until you restore them.</p></div><button class="settings-button danger" disabled={!archivedSessions().length} onClick={() => void deleteAllArchived()}><Icon name="trash" size={14} /> Delete all</button></header>
-              <div class="settings-callout"><Icon name="archive" /><div><strong>Archive is reversible</strong><span>Restore a task any time. Deleting removes it from VakCoder’s task history; the append-only session ledger remains untouched on disk.</span></div></div>
+              <div class="settings-callout"><Icon name="archive" /><div><strong>Archive is reversible</strong><span>Restore a task any time. Deleting removes it from Vak’s task history; the append-only session ledger remains untouched on disk.</span></div></div>
               <Show when={archivedSessions().length} fallback={<div class="archived-empty"><Icon name="archive" size={24} /><strong>No archived tasks</strong><span>Tasks you archive from the sidebar will appear here.</span></div>}>
                 <section class="archived-list" aria-label="Archived tasks">
                   <For each={archivedSessions()}>{(session) => <div class="archived-item"><span class="archived-item-icon"><Icon name="chat" size={15} /></span><span class="archived-item-copy"><strong>{session.title || "Untitled task"}</strong><span>{session.updated_at ? new Date(session.updated_at).toLocaleString() : ""} · {session.entries ?? 0} events</span></span><button class="settings-button" onClick={() => void restoreTask(session.session_id)}><Icon name="restore" size={13} /> Restore</button><button class="icon-button subtle danger has-tooltip" data-tooltip="Delete task" aria-label={`Delete ${session.title || "untitled task"}`} onClick={() => void deleteTask(session.session_id)}><Icon name="trash" size={14} /></button></div>}</For>
@@ -731,7 +731,7 @@ export default function Settings() {
                   title={`${keyProvider()} — ${currentProviderInfo()?.env_var ?? "no key needed"}`}
                   description={
                     currentProviderInfo()?.requires_key
-                      ? `${currentProviderInfo()?.configured ? "Saved on this device" : "Not set yet"} · stored in ~/.vakcoder/.env with owner-only permissions. A real environment variable takes precedence.`
+                      ? `${currentProviderInfo()?.configured ? "Saved on this device" : "Not set yet"} · stored in ~/.vak/.env with owner-only permissions. A real environment variable takes precedence.`
                       : `${keyProvider()} runs locally and needs no key.`
                   }
                 >
@@ -757,7 +757,7 @@ export default function Settings() {
                 </Row>
                 <Row
                   title={`Telegram bridge — ${config()?.telegram.env_var ?? "TELEGRAM_BOT_TOKEN"}`}
-                  description={`${config()?.telegram.configured ? "Saved on this device" : "Not set yet"} · stored in ~/.vakcoder/.env with owner-only permissions. Saving restarts the bridge automatically.`}
+                  description={`${config()?.telegram.configured ? "Saved on this device" : "Not set yet"} · stored in ~/.vak/.env with owner-only permissions. Saving restarts the bridge automatically.`}
                 >
                   <Show
                     when={telegramDraft() === null}
@@ -799,7 +799,7 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "reliability"}>
-              <header><h1>Reliability</h1><p>Understand how VakCoder recovers from provider and task failures.</p></header>
+              <header><h1>Reliability</h1><p>Understand how Vak recovers from provider and task failures.</p></header>
               <Group title="Request recovery">
                 <Row title="Provider retries" description={`Initial backoff ${fmt(config()?.retry_base_backoff_ms ?? 0)} ms.`}><span class="metric">{config()?.max_retries}</span></Row>
                 <Row title="Request watchdog" description="Maximum time for a single provider step."><span class="metric">{config()?.request_timeout_secs}s</span></Row>
@@ -906,7 +906,7 @@ export default function Settings() {
                 </Show>
                 <Show
                   when={tierNotes().length > 0}
-                  fallback={<Row title={tier() === "profile" ? "No profile notes yet" : "No notes yet"} description={tier() === "profile" ? "Add a preference once and every workspace benefits." : "Chat with reflection enabled — durable decisions land here as plain markdown you can edit in ~/.vakcoder/memory/."}><span class="settings-status good">{tier() === "profile" ? "Ready" : "Ready"}</span></Row>}
+                  fallback={<Row title={tier() === "profile" ? "No profile notes yet" : "No notes yet"} description={tier() === "profile" ? "Add a preference once and every workspace benefits." : "Chat with reflection enabled — durable decisions land here as plain markdown you can edit in ~/.vak/memory/."}><span class="settings-status good">{tier() === "profile" ? "Ready" : "Ready"}</span></Row>}
                 >
                   <div class="archived-list" aria-label="Memory notes">
                     <For each={tierNotes().slice().reverse()}>
@@ -974,7 +974,7 @@ export default function Settings() {
                 </Show></Group>
               </Show>
               <Show when={capabilityTab() === "skills"}>
-                <Group title={`Discovered skills (${skills().length})`}><Show when={skills().length > 0} fallback={<div class="capability-empty"><Icon name="spark" /><strong>No skills discovered</strong><span>Add a SKILL.md under the project or your VakCoder home directory, then reload this page.</span></div>}><div class="capability-list"><For each={skills()}>{(skill) => <details class="capability-item"><summary><span><strong>{skill.name}</strong><small>{skill.scope ?? "Project or user"}</small></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show><button class="settings-button" onClick={() => setNotice({ kind: "info", text: `${skill.name} is available from the task composer.` })}>Use in a task</button></div></details>}</For></div></Show></Group>
+                <Group title={`Discovered skills (${skills().length})`}><Show when={skills().length > 0} fallback={<div class="capability-empty"><Icon name="spark" /><strong>No skills discovered</strong><span>Add a SKILL.md under the project or your Vak home directory, then reload this page.</span></div>}><div class="capability-list"><For each={skills()}>{(skill) => <details class="capability-item"><summary><span><strong>{skill.name}</strong><small>{skill.scope ?? "Project or user"}</small></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show><button class="settings-button" onClick={() => setNotice({ kind: "info", text: `${skill.name} is available from the task composer.` })}>Use in a task</button></div></details>}</For></div></Show></Group>
                 <Group title={`Pending proposals (${proposals().length})`}><Show when={proposals().length > 0} fallback={<Row title="No proposals waiting" description="The agent can suggest reusable skills; they stay inactive until you review them."><span class="settings-status good">Clear</span></Row>}><For each={proposals()}>{(proposal) => <div class="setting-row"><div class="setting-copy"><strong>{proposal.name}</strong><span>{proposal.description}</span></div><div class="setting-control"><button class="settings-button" onClick={() => void promote(proposal.id)}>Review & promote</button><button class="settings-button danger" onClick={() => void reject(proposal.id)}>Reject</button></div></div>}</For></Show></Group>
               </Show>
               <Show when={capabilityTab() === "hooks"}>
@@ -994,7 +994,7 @@ export default function Settings() {
                 <Row title="Session store" description={config()?.paths.sessions_home ?? ""}><button class="settings-button" onClick={() => void navigator.clipboard.writeText(config()?.paths.sessions_home ?? "")}>Copy path</button></Row>
               </Group>
               <Group title="Data & backup">
-                <div class="settings-callout"><Icon name="shield" /><div><strong>Backups copy your VakCoder home.</strong><span>Sessions, memory, config, and checkpoints go to a plain folder you choose. Secrets are excluded unless you explicitly opt in below.</span></div></div>
+                <div class="settings-callout"><Icon name="shield" /><div><strong>Backups copy your Vak home.</strong><span>Sessions, memory, config, and checkpoints go to a plain folder you choose. Secrets are excluded unless you explicitly opt in below.</span></div></div>
                 <Row
                   title="Export backup"
                   description="Pick a destination folder (or type a path), then export."

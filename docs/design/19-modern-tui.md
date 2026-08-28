@@ -65,7 +65,7 @@ streams, retry/compaction/stop-hook event surfacing.
 | double-Esc transcript walk-back + fork | ❌ | ✅ | ❌ (branch machinery exists unused) |
 | external `$EDITOR` handoff | ✅ | ✅ Ctrl-G | ❌ |
 | model picker dialog + favorites/recents | ✅ | ✅ | ❌ arg-only `/model` |
-| pattern-scoped persistent allow rules | ✅ | ✅ granular policies | ✅ `[p]` learned rules → `.vakcoder/permissions.local.toml` |
+| pattern-scoped persistent allow rules | ✅ | ✅ granular policies | ✅ `[p]` learned rules → `.vak/permissions.local.toml` |
 | doom-loop guard (repeat-call asks) | ✅ 3× rule | policy-based | ✅ 3× identical call re-routes through approval |
 | collapsible tool-output detail | ✅ /details | undocumented | fixed last-6-lines |
 | thinking visibility toggle | ✅ | ✅ | one-line indicator only |

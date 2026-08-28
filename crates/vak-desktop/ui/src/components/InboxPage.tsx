@@ -83,7 +83,7 @@ export default function InboxPage() {
             entry.kind === "heartbeat"
           ) {
             void import("../App").then((m) =>
-              m.notifyOnce(`inbox:${e}`, `VakCoder ${entry.kind.replace(/_/g, " ")}`, entry.title),
+              m.notifyOnce(`inbox:${e}`, `Vak ${entry.kind.replace(/_/g, " ")}`, entry.title),
             );
           }
         }

@@ -3,10 +3,10 @@
 import os, pty, select, subprocess, sys, time, fcntl, struct, termios
 BIN=sys.argv[1]
 ENV={**os.environ,
- "VAKCODER_HOME":"/tmp/vak-live/home",
+ "VAK_HOME":"/tmp/vak-live/home",
  "TERM":"xterm-256color"}
-os.makedirs("/tmp/vak-live/goalproj/.vakcoder",exist_ok=True)
-open("/tmp/vak-live/goalproj/.vakcoder/config.toml","w").write('permission_mode = "full-access"\n')
+os.makedirs("/tmp/vak-live/goalproj/.vak",exist_ok=True)
+open("/tmp/vak-live/goalproj/.vak/config.toml","w").write('permission_mode = "full-access"\n')
 master,slave=pty.openpty()
 fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack("HHHH",50,120,0,0))
 p=subprocess.Popen([BIN,"tui","--trust"],stdin=slave,stdout=slave,stderr=open("/tmp/tui_stderr.txt","ab",0),env=ENV,cwd="/tmp/vak-live/goalproj",close_fds=True)

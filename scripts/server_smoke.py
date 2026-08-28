@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Drive vakcoder serve over HTTP+SSE end-to-end against the mock provider.
+"""Drive vak serve over HTTP+SSE end-to-end against the mock provider.
 
-Usage: server_smoke.py <vakcoder-binary> <mock-port>
+Usage: server_smoke.py <vak-binary> <mock-port>
 """
 import json
 import os
@@ -21,10 +21,10 @@ env = {
     "ANTHROPIC_API_KEY": "test",
     # Pin the lane so user-level .env (opencode-zen etc.) can't hijack
     # this offline run into a live provider.
-    "VAKCODER_PROVIDER": "anthropic",
-    "VAKCODER_MODEL": "claude-sonnet-4-5",
-    "VAKCODER_ANTHROPIC_BASE_URL": f"http://127.0.0.1:{MOCK_PORT}",
-    "VAKCODER_HOME": "/tmp/vak-smoke/home",
+    "VAK_PROVIDER": "anthropic",
+    "VAK_MODEL": "claude-sonnet-4-5",
+    "VAK_ANTHROPIC_BASE_URL": f"http://127.0.0.1:{MOCK_PORT}",
+    "VAK_HOME": "/tmp/vak-smoke/home",
 }
 
 mock = subprocess.Popen(

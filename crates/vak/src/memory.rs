@@ -1,4 +1,4 @@
-//! `vakcoder memory` (docs/design/29-personal-os.md P1): list/add/forget/
+//! `vak memory` (docs/design/29-personal-os.md P1): list/add/forget/
 /// amend over the workspace MEMORY.md tier and the global USER.md profile
 /// tier, wired straight onto `vak_core::memory`. Ids are printed so they
 /// can be copied into forget/amend.

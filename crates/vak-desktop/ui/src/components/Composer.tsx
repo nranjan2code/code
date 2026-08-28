@@ -376,7 +376,7 @@ export default function Composer(props: { cwd: string }) {
         <textarea
           ref={ta}
           rows={1}
-          placeholder={activeId() && isRunning(activeId()) ? "Add direction while VakCoder is working…" : "Ask VakCoder to build, fix, or explain…"}
+          placeholder={activeId() && isRunning(activeId()) ? "Add direction while Vak is working…" : "Ask Vak to build, fix, or explain…"}
           value={text()}
           onInput={(event) => { setText(event.currentTarget.value); refreshMention(); grow(); }}
           onKeyUp={(event) => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) refreshMention(); }}
@@ -509,7 +509,7 @@ export default function Composer(props: { cwd: string }) {
       <Show when={composerError()}>
         <div class="composer-error" role="alert">{composerError()}</div>
       </Show>
-      <div class="composer-note">VakCoder can make mistakes. Review changes before you keep them.</div>
+      <div class="composer-note">Vak can make mistakes. Review changes before you keep them.</div>
     </div>
   );
 }

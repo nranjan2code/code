@@ -230,12 +230,12 @@ mod tests {
     #[test]
     fn commit_places_every_staged_file_and_clears_scratch() {
         let (_d, root) = root();
-        let a = root.bin_dir().join("vakcoder");
-        let b = root.bin_dir().join("vakcoder-tray");
+        let a = root.bin_dir().join("vak");
+        let b = root.bin_dir().join("vak-tray");
         let mut tx = Transaction::begin(&root).unwrap();
-        tx.stage_bytes("vakcoder", b"new-cli", a.clone(), true)
+        tx.stage_bytes("vak", b"new-cli", a.clone(), true)
             .unwrap();
-        tx.stage_bytes("vakcoder-tray", b"new-tray", b.clone(), true)
+        tx.stage_bytes("vak-tray", b"new-tray", b.clone(), true)
             .unwrap();
         tx.commit().unwrap();
 
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn a_failed_placement_restores_every_earlier_file() {
         let (_d, root) = root();
-        let good = root.bin_dir().join("vakcoder");
+        let good = root.bin_dir().join("vak");
         std::fs::create_dir_all(root.bin_dir()).unwrap();
         std::fs::write(&good, b"old-cli").unwrap();
 
@@ -259,17 +259,17 @@ mod tests {
         // placement would succeed.)
         let wall = root.bin_dir().join("not-a-dir");
         std::fs::write(&wall, b"regular file").unwrap();
-        let blocked = wall.join("vakcoder-tray");
+        let blocked = wall.join("vak-tray");
 
         let mut tx = Transaction::begin(&root).unwrap();
-        tx.stage_bytes("vakcoder", b"new-cli", good.clone(), true)
+        tx.stage_bytes("vak", b"new-cli", good.clone(), true)
             .unwrap();
-        tx.stage_bytes("vakcoder-tray", b"new-tray", blocked, true)
+        tx.stage_bytes("vak-tray", b"new-tray", blocked, true)
             .unwrap();
         let err = tx.commit().unwrap_err();
 
         assert!(
-            err.contains("vakcoder-tray"),
+            err.contains("vak-tray"),
             "error names the failure: {err}"
         );
         assert_eq!(
@@ -284,12 +284,12 @@ mod tests {
     #[test]
     fn dropping_without_commit_leaves_the_install_untouched() {
         let (_d, root) = root();
-        let target = root.bin_dir().join("vakcoder");
+        let target = root.bin_dir().join("vak");
         std::fs::create_dir_all(root.bin_dir()).unwrap();
         std::fs::write(&target, b"old").unwrap();
         {
             let mut tx = Transaction::begin(&root).unwrap();
-            tx.stage_bytes("vakcoder", b"new", target.clone(), true)
+            tx.stage_bytes("vak", b"new", target.clone(), true)
                 .unwrap();
             // No commit: the guard must undo staging on the way out.
         }

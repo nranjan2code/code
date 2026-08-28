@@ -13,8 +13,8 @@ no plists pointing into build trees, no spot-fixing deploys.
    at build/run time from the binary (`--version`, `env!("CARGO_PKG_VERSION")`).
 2. **Installed ≠ built.** Services never execute from `target/`.
    `self install` copies release artifacts into a managed prefix
-   (`/Applications/vakcoder.app/Contents/MacOS/` on macOS,
-   `~/.local/share/vakcoder/bin/` on Linux) plus an `install.json` manifest
+   (`/Applications/vak.app/Contents/MacOS/` on macOS,
+   `~/.local/share/vak/bin/` on Linux) plus an `install.json` manifest
    {version, git_sha, installed_at, binaries}. The build tree may be
    cleaned at any time without touching a running deployment.
 3. **Services are generated, never hand-edited.** `self services-sync`
@@ -25,7 +25,7 @@ no plists pointing into build trees, no spot-fixing deploys.
    service contract so gateway config and project `.env` are not replaced by
    the service manager's `/` default. Generated units also carry the invoking
    user's non-secret `HOME`; without it, canonical path resolution can mistake
-   the working directory for the user home and migrate `.vakcoder` out of the
+   the working directory for the user home and migrate `.vak` out of the
    project. The shared path resolver independently falls back to the operating
    system account home when GUI launch environments omit `HOME`, and fails
    closed to an absolute root rather than treating the current workspace as a
@@ -44,19 +44,19 @@ no plists pointing into build trees, no spot-fixing deploys.
 ## Command surface
 
 ```
-vakcoder self install   [--prefix DIR] [--force]   place this build + manifest
-vakcoder self reinstall [--prefix DIR] [-y]        clear the prefix, place fresh
-vakcoder self verify    [--prefix DIR]             components vs recorded digests
-vakcoder self status    [--prefix DIR]             drift matrix (exit != 0 on drift)
-vakcoder self services-sync [--prefix DIR] [NAME…] regenerate + reload units
+vak self install   [--prefix DIR] [--force]   place this build + manifest
+vak self reinstall [--prefix DIR] [-y]        clear the prefix, place fresh
+vak self verify    [--prefix DIR]             components vs recorded digests
+vak self status    [--prefix DIR]             drift matrix (exit != 0 on drift)
+vak self services-sync [--prefix DIR] [NAME…] regenerate + reload units
                                       (using the invoking workspace)
-vakcoder self uninstall [--prefix DIR] [-y] [--purge]  exact reverse of install
-vakcoder self update    [--prefix DIR] [--url URL] [-y] [--dry-run]
+vak self uninstall [--prefix DIR] [-y] [--purge]  exact reverse of install
+vak self update    [--prefix DIR] [--url URL] [-y] [--dry-run]
 ```
 
 `--prefix` is accepted by **every** subcommand and resolved in one place
 (`install::layout::InstallRoot::resolve`): explicit flag, then
-`VAKCODER_PREFIX`, then the platform default. A prefix only `install`
+`VAK_PREFIX`, then the platform default. A prefix only `install`
 understood produced installs that could not afterwards be inspected,
 updated, or removed.
 
@@ -107,35 +107,35 @@ clippy -D warnings`, `cargo test`, a clean working tree, and an unused
 ## Canonical filesystem layout
 
 `vak_config::paths` is the single source of truth for data, cache, and log
-homes. Project-local `.vakcoder/` and the CLI workspace-trust marker are
-separate scoped contracts; pre-0.8 `~/.vakcoder` references below describe
+homes. Project-local `.vak/` and the CLI workspace-trust marker are
+separate scoped contracts; pre-0.8 `~/.vak` references below describe
 legacy migration only.
 
 ### macOS (default)
 
 | Purpose | Path |
 |---------|------|
-| **Data home** | `~/Library/Application Support/vakcoder` |
-| **Cache** | `~/Library/Caches/vakcoder` |
-| **Logs** | `~/Library/Logs/vakcoder` |
+| **Data home** | `~/Library/Application Support/vak` |
+| **Cache** | `~/Library/Caches/vak` |
+| **Logs** | `~/Library/Logs/vak` |
 | **User secrets** | `<data_home>/.env` |
 | **Config state** | `<data_home>/` (sessions, memory, tasks, inbox) |
 | **Store DB** | `<cache>/store.db` (rebuildable from JSONL) |
-| **Binary bundle** | `/Applications/vakcoder.app/Contents/MacOS/` |
+| **Binary bundle** | `/Applications/vak.app/Contents/MacOS/` |
 
 ### Linux (default)
 
 | Purpose | Path |
 |---------|------|
-| **Data home** | `~/.local/share/vakcoder` |
-| **Cache** | `~/.cache/vakcoder` |
-| **Logs** | `~/.local/state/vakcoder/logs` |
+| **Data home** | `~/.local/share/vak` |
+| **Cache** | `~/.cache/vak` |
+| **Logs** | `~/.local/state/vak/logs` |
 | **User secrets** | `<data_home>/.env` |
-| **Installed binaries** | `~/.local/share/vakcoder/bin/` |
+| **Installed binaries** | `~/.local/share/vak/bin/` |
 
-### VAKCODER_HOME override
+### VAK_HOME override
 
-Setting `VAKCODER_HOME=/some/path` nests everything under that directory:
+Setting `VAK_HOME=/some/path` nests everything under that directory:
 `/some/path/`, `/some/path/cache/`, `/some/path/logs/`. Used for
 self-contained sandboxes (tests, portable installs).
 
@@ -165,19 +165,19 @@ Releases and updates must never lose data or credentials:
 
 ### Legacy migration (one-time, per machine)
 
-The pre-0.8 layout stored everything under `~/.vakcoder/`. On first run,
+The pre-0.8 layout stored everything under `~/.vak/`. On first run,
 `migrate_legacy_home()` performs a one-time rename:
 
-1. `~/.vakcoder` → the platform data home (atomic rename under `$HOME`).
+1. `~/.vak` → the platform data home (atomic rename under `$HOME`).
 2. `store.db*` → relocated to the cache home (rebuildable, not user data).
 3. `logs/` contents → relocated to `logs_dir()` so Console.app / journald
    keeps seeing them.
-4. When `VAKCODER_HOME` is set, migration is skipped (the override is
+4. When `VAK_HOME` is set, migration is skipped (the override is
    already self-contained).
 5. If both old and new locations exist, migration refuses to guess a merge
    order and surfaces an error for manual resolution.
 
-All entry points (vakcoder binary, vak-tray, vak-desktop) call migration
+All entry points (vak binary, vak-tray, vak-desktop) call migration
 at startup before any other logic.
 
 ## Migration of legacy deployments

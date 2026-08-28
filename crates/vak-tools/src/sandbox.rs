@@ -48,7 +48,7 @@ impl Sandbox for DenySandbox {
     fn wrap(&self, _command: &str) -> String {
         format!(
             "echo {} >&2; exit 126",
-            shell_quote(&format!("vakcoder sandbox unavailable: {}", self.reason))
+            shell_quote(&format!("vak sandbox unavailable: {}", self.reason))
         )
     }
 }

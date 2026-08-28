@@ -5,13 +5,13 @@ use std::fs;
 #[test]
 fn learned_rules_persist_reload_and_cannot_shadow_denies() {
     let dir = tempfile::tempdir().expect("tempdir");
-    fs::create_dir_all(dir.path().join(".vakcoder")).expect("mkdir");
+    fs::create_dir_all(dir.path().join(".vak")).expect("mkdir");
 
     let core = vak_core::Core::new_with_trust(dir.path().to_path_buf(), true).expect("core");
     core.learn_allow_rule("bash(cargo *)").expect("learn");
     core.learn_allow_rule("bash(cargo *)").expect("dedupe ok");
 
-    let file = dir.path().join(".vakcoder/permissions.local.toml");
+    let file = dir.path().join(".vak/permissions.local.toml");
     let text = fs::read_to_string(&file).expect("file written");
     assert!(text.contains(r#""bash(cargo *)""#));
 

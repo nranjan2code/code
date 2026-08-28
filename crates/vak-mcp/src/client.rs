@@ -179,7 +179,7 @@ impl McpClient {
                 serde_json::json!({
                     "protocolVersion": "2025-06-18",
                     "capabilities": {},
-                    "clientInfo": {"name": "vakcoder", "version": env!("CARGO_PKG_VERSION")},
+                    "clientInfo": {"name": "vak", "version": env!("CARGO_PKG_VERSION")},
                 }),
             )
             .await?;

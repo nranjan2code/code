@@ -33,7 +33,7 @@ const DEFAULT_WAIT_MS: u64 = 4000;
 const MAX_WAIT_MS: u64 = 10_000;
 const TOTAL_TIMEOUT_SECS: u64 = 20;
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(TOTAL_TIMEOUT_SECS);
-const BROWSER_ENV: &str = "VAKCODER_BROWSER";
+const BROWSER_ENV: &str = "VAK_BROWSER";
 
 pub struct WebBrowseTool;
 
@@ -54,7 +54,7 @@ const LINUX_NAMES: &[&str] = &[
     "brave-browser",
 ];
 
-/// Ordered candidate list: an explicit `VAKCODER_BROWSER` override walks
+/// Ordered candidate list: an explicit `VAK_BROWSER` override walks
 /// first; platform-native locations follow.
 fn default_candidates() -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = std::env::var_os(BROWSER_ENV)
@@ -128,7 +128,7 @@ static PROFILE_SEQ: AtomicU64 = AtomicU64::new(0);
 fn fresh_profile_dir() -> std::io::Result<PathBuf> {
     let n = PROFILE_SEQ.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "vakcoder-browse-{}-{}-{n}",
+        "vak-browse-{}-{}-{n}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

@@ -48,7 +48,7 @@ Registry names: `anthropic`, `openai`, `openai-responses`, `openrouter`,
 `opencode-zen`, `ollama`, `google` (lazy-built, cached). Auth via
 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` /
 `GEMINI_API_KEY` / `OPENCODE_API_KEY`; Ollama needs no key. Base-URL
-overrides: `VAKCODER_{ANTHROPIC,OPENAI,OPENROUTER,OLLAMA,GOOGLE,
+overrides: `VAK_{ANTHROPIC,OPENAI,OPENROUTER,OLLAMA,GOOGLE,
 OPENCODE_ZEN}_BASE_URL`.
 
 ## Model discovery
