@@ -1,40 +1,13 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
-import { density, itemsOf, activeId, hydratingId, openInEditor, uiPreferences, type Item } from "../store";
-import { approve, sendPrompt, newSession, openFileSmart } from "../App";
+import { density, itemsOf, hydratingId, openInEditor, type Item } from "../store";
+import { approve, openFileSmart } from "../App";
 import { renderMarkdown } from "../md";
 import { highlight, languageForFence } from "../highlight";
 import Icon from "./Icon";
 
-const starters = [
-  { eyebrow: "Inspect", prompt: "Map this codebase and explain the architecture, key flows, and highest-risk areas." },
-  { eyebrow: "Change", prompt: "Review this project deeply and implement the highest-impact quality improvement." },
-  { eyebrow: "Verify", prompt: "Find the most important unfinished feature, implement it, and verify it end to end." },
-];
-
 function EmptyChat() {
-  const start = async (prompt: string) => {
-    if (!activeId()) await newSession();
-    void sendPrompt(prompt);
-  };
-  return (
-    <div class="chat-empty">
-      <div class="chat-empty-mark"><Icon name="spark" size={24} /></div>
-      <h2>Start with an outcome</h2>
-      <p>Tell Vak what should be true when you are done. It will inspect the workspace, make changes, and verify the result.</p>
-      <Show when={uiPreferences.suggestions}><div class="starter-grid">
-        <For each={starters}>
-          {(starter) => (
-            <button class="prompt-chip" onClick={() => void start(starter.prompt)}>
-              <span>{starter.eyebrow}</span>
-              <strong>{starter.prompt}</strong>
-              <Icon name="chevron" size={14} />
-            </button>
-          )}
-        </For>
-      </div></Show>
-    </div>
-  );
+  return null;
 }
 
 function TranscriptSkeleton() {
