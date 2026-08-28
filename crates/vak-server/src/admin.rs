@@ -620,7 +620,7 @@ fn known_workspaces(state: &AppState) -> Vec<String> {
     use std::io::BufRead;
     let mut seen: Vec<String> = vec![state.core.cwd().display().to_string()];
     let mut push = |path: String| {
-        if !path.is_empty() && !seen.contains(&path) {
+        if !path.is_empty() && !seen.contains(&path) && !is_scratch_workspace(&path) {
             seen.push(path);
         }
     };
@@ -665,6 +665,29 @@ fn known_workspaces(state: &AppState) -> Vec<String> {
         }
     }
     seen
+}
+
+/// True for a path that's almost certainly test/build scratch rather than
+/// a real project — OS temp dirs and the `tempfile` crate's `.tmpXXXXXX`
+/// directory naming convention (used throughout this workspace's own test
+/// suite, which is exactly what was polluting `known_workspaces` with
+/// dozens of one-shot `cargo test` tempdirs on a dev machine). A path
+/// under a real project that happens to be named `tmp` is not excluded by
+/// this — only OS scratch roots and the tempfile-style random suffix are.
+fn is_scratch_workspace(path: &str) -> bool {
+    if path == "/tmp"
+        || path.starts_with("/tmp/")
+        || path == "/private/tmp"
+        || path.starts_with("/private/tmp/")
+        || path.starts_with("/var/folders/")
+        || path.starts_with("/private/var/folders/")
+    {
+        return true;
+    }
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|name| name.starts_with(".tmp"))
 }
 
 #[derive(serde::Deserialize)]
@@ -1557,6 +1580,21 @@ mod tests {
         );
         // The workspace is untouched by a route-only edit.
         assert_eq!(entry.workspace.unwrap().to_string_lossy(), "/tmp/one");
+    }
+
+    #[test]
+    fn scratch_workspace_detection() {
+        assert!(super::is_scratch_workspace("/tmp/foo"));
+        assert!(super::is_scratch_workspace("/private/tmp/foo"));
+        assert!(super::is_scratch_workspace(
+            "/var/folders/0g/xyz/T/.tmpAbC123"
+        ));
+        assert!(super::is_scratch_workspace(
+            "/private/var/folders/0g/xyz/T/.tmpAbC123"
+        ));
+        assert!(super::is_scratch_workspace("/Users/x/anywhere/.tmpZZZZZZ"));
+        assert!(!super::is_scratch_workspace("/Users/x/Projects/vakcoder"));
+        assert!(!super::is_scratch_workspace("/Users/x/Projects/tmp-tool"));
     }
 
     #[tokio::test]
