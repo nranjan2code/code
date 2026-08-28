@@ -1,5 +1,5 @@
 ---
-name: vakcoder
+name: vak
 description: A coding agent you can inspect, constrain, and extend.
 colors:
   bg: "#171714"
@@ -99,13 +99,13 @@ components:
     padding: "5px 10px"
 ---
 
-# Design System: vakcoder
+# Design System: vak
 
 ## Overview
 
 **Creative North Star: "The Auditor's Desk"**
 
-vakcoder's UI is a quiet, focused workspace for someone reviewing serious work — the desktop client and admin portal both read as instruments for a practiced hand, not showrooms for a brand. Density is high but never cramped: an odd, deliberately calibrated type scale (font-weights like 540, 560, 580, 620 rather than round hundreds) and tight, consistent spacing give every control the feel of having been tuned, not eyeballed. The palette stays almost entirely neutral — warm near-blacks and soft off-whites — so that the single accent, a burnt terracotta, reads as a genuine signal every time it appears: a brand mark, a primary action, an active nav item, a running session's pulse dot. Depth is conveyed through tonal layering (background → surface → surface-raised → surface-hover) rather than shadow; shadow is reserved for things that must visibly float above the layout.
+vak's UI is a quiet, focused workspace for someone reviewing serious work — the desktop client and admin portal both read as instruments for a practiced hand, not showrooms for a brand. Density is high but never cramped: an odd, deliberately calibrated type scale (font-weights like 540, 560, 580, 620 rather than round hundreds) and tight, consistent spacing give every control the feel of having been tuned, not eyeballed. The palette stays almost entirely neutral — warm near-blacks and soft off-whites — so that the single accent, a burnt terracotta, reads as a genuine signal every time it appears: a brand mark, a primary action, an active nav item, a running session's pulse dot. Depth is conveyed through tonal layering (background → surface → surface-raised → surface-hover) rather than shadow; shadow is reserved for things that must visibly float above the layout.
 
 The system deliberately rejects the generic flat-blue enterprise SaaS look, and it rejects skeuomorphism, heavy gradients, or glassmorphic chrome. Nothing is decorative. Every visual choice — a border color, a radius, a font-weight — is there to make dense, high-stakes information (diffs, approvals, receipts, permission state) scannable at speed without shouting.
 

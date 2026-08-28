@@ -8,15 +8,15 @@ web
 
 ## Users
 
-Primary user: a solo, security-conscious developer who wants powerful coding-agent automation but refuses to give up inspectability and control. They run vakcoder against their own machine and codebase, want to see what the agent actually did, and want to constrain what it's allowed to do before it does it.
+Primary user: a solo, security-conscious developer who wants powerful coding-agent automation but refuses to give up inspectability and control. They run vak against their own machine and codebase, want to see what the agent actually did, and want to constrain what it's allowed to do before it does it.
 
 ## Product Purpose
 
-vakcoder is a local-first Rust harness for running coding agents without giving up the receipts. It lets a developer delegate real coding work (fix, plan, refactor) to an agent while retaining an inspectable, constrainable system: every session is reconstructable, every effect is permission-gated, and failures are handled explicitly rather than silently.
+vak is a local-first Rust harness for running coding agents without giving up the receipts. It lets a developer delegate real coding work (fix, plan, refactor) to an agent while retaining an inspectable, constrainable system: every session is reconstructable, every effect is permission-gated, and failures are handled explicitly rather than silently.
 
 ## Positioning
 
-vakcoder's mechanism is "one core, many surfaces": a single auditable, policy-gated core (append-only session ledgers, permission-before-dispatch on every effect, receipts for every provider dispatch) drives a CLI, a Tauri desktop app, an HTTP/SSE server, and chat gateways. Other agent tools bolt safety or transparency onto individual surfaces; vakcoder enforces the same policy engine and produces the same reconstructable record everywhere the agent runs, so behavior and auditability don't vary by which surface you're using.
+vak's mechanism is "one core, many surfaces": a single auditable, policy-gated core (append-only session ledgers, permission-before-dispatch on every effect, receipts for every provider dispatch) drives a CLI, a Tauri desktop app, an HTTP/SSE server, and chat gateways. Other agent tools bolt safety or transparency onto individual surfaces; vak enforces the same policy engine and produces the same reconstructable record everywhere the agent runs, so behavior and auditability don't vary by which surface you're using.
 
 ## Operating Context
 
@@ -29,7 +29,7 @@ vakcoder's mechanism is "one core, many surfaces": a single auditable, policy-ga
 
 ## Capabilities and Constraints
 
-- CLI (`vakcoder exec`, `vakcoder plan`, `vakcoder config dump`, etc.) is the headless surface.
+- CLI (`vak exec`, `vak plan`, `vak config dump`, etc.) is the headless surface.
 - Tauri 2 desktop app (`crates/vak-desktop`, UI in `crates/vak-desktop/ui`): isolated worktrees, streaming chat, diff review, editor, PTY terminal, previews, side chats, best-of-N comparison.
 - Admin UI (`crates/vak-admin-ui`): in scope for design work alongside the desktop app.
 - HTTP/SSE server (`crates/vak-server`) exposes the same session, run, approval, transcript, diff, and steering contracts used by the desktop app.
@@ -38,9 +38,9 @@ vakcoder's mechanism is "one core, many surfaces": a single auditable, policy-ga
 
 ## Brand Commitments
 
-- Product name: vakcoder.
+- Product name: vak.
 - Existing tagline: "A coding agent you can inspect, constrain, and extend."
-- Existing README hero/surfaces illustrations use a flat editorial illustration style (`docs/assets/vakcoder-hero.webp`, `docs/assets/vakcoder-surfaces.webp`) with badge colors E66A2C (version), 2B2B2B (Rust), 536B58 (license), 384A6B (safety) — treat as existing brand evidence, not yet confirmed as binding design tokens.
+- Existing README hero/surfaces illustrations use a flat editorial illustration style (`docs/assets/vak-hero.webp`, `docs/assets/vak-surfaces.webp`) with badge colors E66A2C (version), 2B2B2B (Rust), 536B58 (license), 384A6B (safety) — treat as existing brand evidence, not yet confirmed as binding design tokens.
 
 ## Evidence on Hand
 
