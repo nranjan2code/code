@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Broken desktop welcome-screen icon, and the admin console silently going dead after a token change
+
+The desktop app's welcome screen (`ProjectGate`) has referenced
+`/vak-icon.png` since the rebrand, but the actual asset was never renamed
+from `vakcoder-icon.png` — a broken-image placeholder on every first
+launch. Renamed the file to match.
+
+The admin console's "unread count" poll swallowed a 401 silently instead
+of falling back to the login screen like every other API call site in the
+app does. In practice: any time the server's bearer token changes under
+an already-open tab (a restart with a fresh per-process token, or a full
+`self uninstall --purge` + reinstall), the page kept its stale-looking
+"live" UI forever, quietly failing every request in the background with
+nothing telling the operator to log back in.
+
 ### The menu bar now survives a logout
 
 `vak-desktop` owns the tray — the surface that starts, stops and watches

@@ -2390,7 +2390,14 @@ export default function App() {
       try {
         const { count } = await api.unreadCount();
         if (alive) setUnread(count);
-      } catch { /* transient */ }
+      } catch (err) {
+        // A cookie left over from before a server restart (a fresh
+        // token, or a full self uninstall --purge / reinstall) fails
+        // every request from here on, but nothing about the page looks
+        // broken -- it just quietly stops updating. Bounce back to the
+        // login screen instead of polling a dead session forever.
+        if (err instanceof AuthRequired) setAuthed(false);
+      }
     };
     void tick();
     const t = setInterval(tick, 30_000);
