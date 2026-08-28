@@ -270,6 +270,8 @@ async fn main() {
         Some(Command::SkillsReview { action }) => run_skills_review(cwd, action),
         Some(Command::Checkpoints { action }) => run_checkpoints(cwd, action).await,
         Some(Command::Telegram { server, token }) => run_telegram(server, token).await,
+        Some(Command::Discord { server, token }) => run_discord(server, token).await,
+        Some(Command::Slack { server, token }) => run_slack(server, token).await,
         Some(Command::Flow { action }) => run_flow(cwd, action).await,
         Some(Command::Doctor { trust, repair }) => {
             let trusted = resolve_trust(&cwd, trust, false);
@@ -1469,29 +1471,101 @@ async fn run_serve(cwd: PathBuf, port: u16, gateway: bool, trusted: bool) -> i32
     }
 }
 
-async fn run_telegram(server: String, token_flag: Option<String>) -> i32 {
-    // Env-first so the gateway token stays out of `ps`/plist arguments.
-    let token = match token_flag {
-        Some(t) => t,
-        None => vak_config::get_var("VAK_GATEWAY_TOKEN").unwrap_or_else(|| {
-            let hint = vak_config::user_env_path()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "the user .env".into());
-            eprintln!(
-                "error: gateway token missing — set VAK_GATEWAY_TOKEN in {hint} or pass --token"
-            );
-            String::new()
-        }),
-    };
-    if token.is_empty() {
-        return 2;
+/// The user `.env` path, or a generic phrase when it cannot be resolved —
+/// every bridge's "where do I put this token" hint reads the same.
+fn env_hint() -> String {
+    vak_config::user_env_path()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "the user .env".into())
+}
+
+/// Env-first gateway token so it stays out of `ps`/plist arguments,
+/// shared by every bridge subcommand.
+fn bridge_gateway_token(token_flag: Option<String>) -> Option<String> {
+    match token_flag {
+        Some(t) if !t.trim().is_empty() => Some(t),
+        _ => match vak_config::get_var("VAK_GATEWAY_TOKEN") {
+            Some(t) if !t.trim().is_empty() => Some(t),
+            _ => {
+                eprintln!(
+                    "error: gateway token missing — set VAK_GATEWAY_TOKEN in {} or pass --token",
+                    env_hint()
+                );
+                None
+            }
+        },
     }
-    // .env-aware lookup so the bot token never has to be exported by hand.
-    let Some(bot_token) = vak_config::get_var("TELEGRAM_BOT_TOKEN") else {
-        let hint = vak_config::user_env_path()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "the user .env".into());
-        eprintln!("error: TELEGRAM_BOT_TOKEN is not set (put it in .env or {hint})");
+}
+
+/// .env-aware bot-token lookup so a bridge credential never has to be
+/// exported by hand.
+fn bridge_bot_token(env_var: &str) -> Option<String> {
+    match vak_config::get_var(env_var) {
+        Some(t) if !t.trim().is_empty() => Some(t),
+        _ => {
+            eprintln!(
+                "error: {env_var} is not set (put it in .env or {})",
+                env_hint()
+            );
+            None
+        }
+    }
+}
+
+/// `vak discord` (docs/design/34 Phase 3) — same flag shape as
+/// `vak telegram`, same env-first credential handling.
+async fn run_discord(server: String, token_flag: Option<String>) -> i32 {
+    let (Some(token), Some(bot_token)) = (
+        bridge_gateway_token(token_flag),
+        bridge_bot_token("DISCORD_BOT_TOKEN"),
+    ) else {
+        return 2;
+    };
+    let bridge = vak_server::discord::DiscordBridge::from_env(server, token, bot_token);
+    println!(
+        "discord bridge: {} -> {} ({} channel(s))",
+        bridge.api_base,
+        bridge.gateway_url,
+        bridge.channel_ids.len()
+    );
+    match bridge.run().await {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("error: {e}");
+            1
+        }
+    }
+}
+
+/// `vak slack` (docs/design/34 Phase 3).
+async fn run_slack(server: String, token_flag: Option<String>) -> i32 {
+    let (Some(token), Some(bot_token)) = (
+        bridge_gateway_token(token_flag),
+        bridge_bot_token("SLACK_BOT_TOKEN"),
+    ) else {
+        return 2;
+    };
+    let bridge = vak_server::slack::SlackBridge::from_env(server, token, bot_token);
+    println!(
+        "slack bridge: {} -> {} ({} channel(s))",
+        bridge.api_base,
+        bridge.gateway_url,
+        bridge.channel_ids.len()
+    );
+    match bridge.run().await {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("error: {e}");
+            1
+        }
+    }
+}
+
+async fn run_telegram(server: String, token_flag: Option<String>) -> i32 {
+    let Some(token) = bridge_gateway_token(token_flag) else {
+        return 2;
+    };
+    let Some(bot_token) = bridge_bot_token("TELEGRAM_BOT_TOKEN") else {
         return 2;
     };
     let api_base = vak_config::get_var("TELEGRAM_API_BASE")

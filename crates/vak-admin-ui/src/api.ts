@@ -137,6 +137,16 @@ export const api = {
       body: JSON.stringify(body),
     }).then((r) => handle(r)),
 
+  patchGatewayAllowlist: (
+    key: string,
+    body: { workspace?: string; route?: AllowlistRoute | Record<string, never> },
+  ): Promise<AllowlistEntry> =>
+    fetch(`/admin/api/gateway/allowlist/${encodeURIComponent(key)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => handle(r)),
+
   denyGatewayAllowlist: (key: string): Promise<AllowlistEntry> =>
     fetch(`/admin/api/gateway/allowlist/${encodeURIComponent(key)}/deny`, { method: "POST" })
       .then((r) => handle(r)),

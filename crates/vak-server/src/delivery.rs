@@ -59,6 +59,23 @@ impl AdapterRegistry {
                 api_base,
             });
         }
+        // Same rule for the Phase 3 surfaces (docs/design/34): registered
+        // only when a bot token exists, so an unconfigured deployment
+        // still fails with the clear "unsupported gateway surface" error.
+        if let Some(bot_token) = vak_config::get_var("DISCORD_BOT_TOKEN") {
+            registry.register(DiscordAdapter {
+                bot_token,
+                api_base: vak_config::get_var("DISCORD_API_BASE")
+                    .unwrap_or_else(|| "https://discord.com/api/v10".into()),
+            });
+        }
+        if let Some(bot_token) = vak_config::get_var("SLACK_BOT_TOKEN") {
+            registry.register(SlackAdapter {
+                bot_token,
+                api_base: vak_config::get_var("SLACK_API_BASE")
+                    .unwrap_or_else(|| "https://slack.com/api".into()),
+            });
+        }
         registry
     }
 
@@ -188,6 +205,18 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
             surface: surface.into(),
             markup: Markup::TelegramHtml,
             max_chars: Some(4000),
+            supports_tables: false,
+            supports_code_blocks: true,
+            supports_links: true,
+            supports_actions: false,
+            template: None,
+        },
+        // docs/design/34 Phase 3: both take Markdown, differ only in the
+        // per-message cap each API enforces.
+        "discord" | "slack" => DeliveryProfile {
+            surface: surface.into(),
+            markup: Markup::Markdown,
+            max_chars: Some(if surface == "discord" { 1900 } else { 3900 }),
             supports_tables: false,
             supports_code_blocks: true,
             supports_links: true,
@@ -516,6 +545,154 @@ impl ChannelAdapter for TelegramAdapter {
     }
 }
 
+/// Forwarded-approval actions rendered as a typed-verdict prompt, for the
+/// surfaces that do not (yet) get interactive components here. This is the
+/// same fallback Telegram used before its inline keyboard: the reply text
+/// it asks for is exactly what `parse_verdict` in `gateway.rs` already
+/// understands, so approvals resolve through the one existing path.
+fn typed_verdict_prompt(actions: &[DeliveryAction]) -> Option<String> {
+    let request_id = actions
+        .iter()
+        .find_map(|action| action.data.get("request_id"))?;
+    Some(format!(
+        "\n\nReply `yes {request_id}` to approve or `no {request_id}` to deny."
+    ))
+}
+
+/// Proactive push to a Discord channel (docs/design/34 Phase 3): the async
+/// counterpart to the bridge's own reply, chiefly forwarded approval
+/// gates, which can open while the approver channel is not the one that
+/// triggered the turn.
+struct DiscordAdapter {
+    bot_token: String,
+    api_base: String,
+}
+
+#[async_trait]
+impl ChannelAdapter for DiscordAdapter {
+    fn scheme(&self) -> &'static str {
+        "discord"
+    }
+
+    fn profile(&self) -> DeliveryProfile {
+        DeliveryProfile {
+            surface: "discord".into(),
+            markup: Markup::Markdown,
+            max_chars: Some(1900),
+            supports_tables: false,
+            supports_code_blocks: true,
+            supports_links: true,
+            // Interactive components (Discord buttons) are a follow-up;
+            // approvals ship as the typed yes/no prompt below.
+            supports_actions: false,
+            template: None,
+        }
+    }
+
+    async fn send(&self, _core: &Core, packet: &DeliveryPacket) -> Result<(), String> {
+        let (_, channel_id) = packet
+            .target
+            .split_once(':')
+            .ok_or_else(|| "discord target has no channel id".to_string())?;
+        post_chunks(
+            packet,
+            |chunk, last| {
+                let mut content = chunk.to_string();
+                if last && let Some(prompt) = typed_verdict_prompt(&packet.actions) {
+                    content.push_str(&prompt);
+                }
+                (
+                    format!("{}/channels/{channel_id}/messages", self.api_base),
+                    serde_json::json!({ "content": content }),
+                )
+            },
+            |request| request.header("Authorization", format!("Bot {}", self.bot_token)),
+            "discord createMessage",
+        )
+        .await
+    }
+}
+
+/// Proactive push to a Slack channel/DM via `chat.postMessage`.
+struct SlackAdapter {
+    bot_token: String,
+    api_base: String,
+}
+
+#[async_trait]
+impl ChannelAdapter for SlackAdapter {
+    fn scheme(&self) -> &'static str {
+        "slack"
+    }
+
+    fn profile(&self) -> DeliveryProfile {
+        DeliveryProfile {
+            surface: "slack".into(),
+            markup: Markup::Markdown,
+            max_chars: Some(3900),
+            supports_tables: false,
+            supports_code_blocks: true,
+            supports_links: true,
+            // Block Kit buttons are a follow-up; see typed_verdict_prompt.
+            supports_actions: false,
+            template: None,
+        }
+    }
+
+    async fn send(&self, _core: &Core, packet: &DeliveryPacket) -> Result<(), String> {
+        let (_, channel_id) = packet
+            .target
+            .split_once(':')
+            .ok_or_else(|| "slack target has no channel id".to_string())?;
+        post_chunks(
+            packet,
+            |chunk, last| {
+                let mut text = chunk.to_string();
+                if last && let Some(prompt) = typed_verdict_prompt(&packet.actions) {
+                    text.push_str(&prompt);
+                }
+                (
+                    format!("{}/chat.postMessage", self.api_base),
+                    serde_json::json!({ "channel": channel_id, "text": text }),
+                )
+            },
+            |request| request.bearer_auth(&self.bot_token),
+            "slack chat.postMessage",
+        )
+        .await
+    }
+}
+
+/// Shared chunk-and-POST loop for the two Phase 3 adapters: `body` builds
+/// the (url, json) for one chunk and is told whether it is the last one,
+/// `auth` applies the surface's auth header.
+async fn post_chunks(
+    packet: &DeliveryPacket,
+    body: impl Fn(&str, bool) -> (String, serde_json::Value),
+    auth: impl Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
+    operation: &str,
+) -> Result<(), String> {
+    let chunks: Vec<&str> = if packet.chunks.is_empty() {
+        vec![packet.fallback_markdown.as_str()]
+    } else {
+        packet.chunks.iter().map(String::as_str).collect()
+    };
+    let client = reqwest::Client::new();
+    let last = chunks.len().saturating_sub(1);
+    for (i, chunk) in chunks.iter().enumerate() {
+        let (url, json) = body(chunk, i == last);
+        let resp = auth(client.post(url))
+            .json(&json)
+            .send()
+            .await
+            .map_err(|error| format!("{operation}: {error}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("{operation} returned {}", resp.status()));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -551,6 +728,36 @@ mod tests {
         assert_eq!(row[0]["callback_data"], "approve:abc123");
         assert_eq!(row[1]["text"], "Deny");
         assert_eq!(row[1]["callback_data"], "deny:abc123");
+    }
+
+    #[test]
+    fn typed_verdict_prompt_asks_for_the_text_parse_verdict_accepts() {
+        let prompt = typed_verdict_prompt(&approval_actions()).unwrap();
+        assert!(prompt.contains("yes abc123"));
+        assert!(prompt.contains("no abc123"));
+    }
+
+    #[test]
+    fn typed_verdict_prompt_is_absent_without_actions() {
+        assert!(typed_verdict_prompt(&[]).is_none());
+    }
+
+    #[test]
+    fn phase_three_surfaces_declare_no_interactive_components_yet() {
+        // Approvals ship as typed yes/no on these surfaces; the profile
+        // must say so or the renderer would emit buttons nothing draws.
+        let discord = DiscordAdapter {
+            bot_token: "t".into(),
+            api_base: "http://localhost".into(),
+        };
+        let slack = SlackAdapter {
+            bot_token: "t".into(),
+            api_base: "http://localhost".into(),
+        };
+        assert_eq!(discord.scheme(), "discord");
+        assert_eq!(slack.scheme(), "slack");
+        assert!(!discord.profile().supports_actions);
+        assert!(!slack.profile().supports_actions);
     }
 
     #[test]

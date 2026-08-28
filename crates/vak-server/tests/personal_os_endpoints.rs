@@ -427,6 +427,9 @@ async fn doctor_reports_checks_facts_and_optional_ladder() {
             "provider",
             "sessions home",
             "config warnings",
+            // docs/design/34: channel state is part of the health surface,
+            // not a config detail.
+            "gateway channels",
             "install layout",
             "self version parity"
         ]

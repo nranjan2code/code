@@ -1518,12 +1518,98 @@ const ALLOWLIST_CHIP_TONE: Record<string, string> = {
   denied: "danger",
 };
 
+// Per-surface badge so a mixed Telegram+Discord+Slack deployment reads at
+// a glance (docs/design/34 Phase 3). Everything else in these panels is
+// already surface-agnostic — it keys off `surface:chat` alone.
+const SURFACE_LABEL: Record<string, string> = {
+  telegram: "Telegram",
+  discord: "Discord",
+  slack: "Slack",
+};
+
+function SurfaceBadge(props: { channelKey: string }) {
+  const surface = () => props.channelKey.split(":")[0] ?? "";
+  return (
+    <span class="chip chip-surface" data-surface={surface()} title={`${surface()} channel`}>
+      {SURFACE_LABEL[surface()] ?? surface()}
+    </span>
+  );
+}
+
+const CUSTOM_WORKSPACE = "__custom__";
+
+/// Workspace picker: known workspaces first (paths vak has actually run
+/// in), with a custom-path fallback that says plainly it is unverified
+/// until a Core starts there — docs/design/34 open question 4. A typo'd
+/// path is what put a channel in the wrong workspace in the first place.
+function WorkspacePicker(props: {
+  value: string;
+  onChange: (value: string) => void;
+  known: string[];
+  corePool: CorePoolEntry[];
+}) {
+  const options = createMemo(() => {
+    const seen = props.known.filter(Boolean);
+    // A value already saved on the entry stays selectable even when it is
+    // not (or no longer) in the known list.
+    if (props.value && !seen.includes(props.value)) return [props.value, ...seen];
+    return seen;
+  });
+  const isCustom = () => !!props.value && !options().includes(props.value);
+  const [custom, setCustom] = createSignal(isCustom());
+  const warm = createMemo(() => props.corePool.some((e) => e.workspace === props.value.trim()));
+
+  return (
+    <div style="margin-bottom:8px">
+      <label class="inherit-toggle" style="margin-top:2px">
+        Workspace
+        <span class="chip" data-on={warm()} style="margin-left:6px">
+          {warm() ? "warm" : "cold — starts on next message"}
+        </span>
+      </label>
+      <select
+        class="mono"
+        style="width:100%"
+        value={custom() ? CUSTOM_WORKSPACE : props.value}
+        onChange={(e) => {
+          const next = e.currentTarget.value;
+          if (next === CUSTOM_WORKSPACE) {
+            setCustom(true);
+            return;
+          }
+          setCustom(false);
+          props.onChange(next);
+        }}
+      >
+        <For each={options()}>{(w) => <option value={w}>{w}</option>}</For>
+        <option value={CUSTOM_WORKSPACE}>Custom path…</option>
+      </select>
+      <Show when={custom()}>
+        <input
+          class="mono"
+          value={props.value}
+          onInput={(e) => props.onChange(e.currentTarget.value)}
+          placeholder="/absolute/path/to/workspace"
+          style="width:100%;margin-top:6px"
+        />
+        <div class="binding-meta">
+          Unverified: nothing has run here yet, so this path is only checked when the pool
+          actually starts a Core in it. A typo surfaces as a <code>vak doctor</code> failure.
+        </div>
+      </Show>
+    </div>
+  );
+}
+
 function GatewayBindingEditor(props: {
   binding: GatewayBinding;
   providers: ProviderSummary[];
   allowlistEntry: AllowlistEntry | undefined;
+  knownWorkspaces: string[];
+  corePool: CorePoolEntry[];
   refresh: () => void;
 }) {
+  const [editing, setEditing] = createSignal(false);
   const [inherit, setInherit] = createSignal(!props.binding.override);
   const [provider, setProvider] = createSignal(
     props.binding.override?.provider ?? props.binding.effective_route.provider,
@@ -1568,6 +1654,7 @@ function GatewayBindingEditor(props: {
           </div>
         </div>
         <div class="row-gap" style="gap:6px">
+          <SurfaceBadge channelKey={props.binding.target} />
           <Show when={props.allowlistEntry}>
             <span class={`chip chip-tone-${ALLOWLIST_CHIP_TONE[props.allowlistEntry!.status] ?? ""}`}>
               {props.allowlistEntry!.status}
@@ -1629,6 +1716,9 @@ function GatewayBindingEditor(props: {
         )}>Rotate now</button>
         <span class="spacer" />
         <Show when={props.allowlistEntry?.status === "allowed"}>
+          <button class="ghost small" disabled={busy()} onClick={() => setEditing((v) => !v)}>
+            {editing() ? "Close editor" : "Edit access"}
+          </button>
           <button class="danger small" disabled={busy()} onClick={() => {
             if (window.confirm(`Revoke allowlist access for ${props.binding.target}? The next message from this chat will be rejected and start a fresh pending review.`)) {
               void act(() => api.revokeGatewayAllowlist(props.binding.target), `Access revoked: ${props.binding.target}`);
@@ -1641,7 +1731,104 @@ function GatewayBindingEditor(props: {
           }
         }}>Remove binding</button>
       </div>
+      <Show when={editing() && props.allowlistEntry?.status === "allowed"}>
+        <ChannelAccessEditor
+          entry={props.allowlistEntry!}
+          providers={props.providers}
+          knownWorkspaces={props.knownWorkspaces}
+          corePool={props.corePool}
+          refresh={() => {
+            setEditing(false);
+            props.refresh();
+          }}
+        />
+      </Show>
     </article>
+  );
+}
+
+/// Re-point an already-allowed channel's workspace/route in place
+/// (`PATCH .../allowlist/{key}`) instead of revoke-and-re-approve, which
+/// would lose the added_at/added_by provenance and 403 the channel in
+/// between. The same form the approve flow uses, pre-filled.
+function ChannelAccessEditor(props: {
+  entry: AllowlistEntry;
+  providers: ProviderSummary[];
+  knownWorkspaces: string[];
+  corePool: CorePoolEntry[];
+  refresh: () => void;
+}) {
+  const [workspace, setWorkspace] = createSignal(props.entry.workspace ?? "");
+  const [pinRoute, setPinRoute] = createSignal(!!props.entry.route);
+  const [provider, setProvider] = createSignal(
+    props.entry.route?.provider ?? props.providers[0]?.name ?? "",
+  );
+  const [model, setModel] = createSignal(props.entry.route?.model ?? "");
+  const [models, setModels] = createSignal<string[]>([]);
+  const [busy, setBusy] = createSignal(false);
+
+  createEffect(async () => {
+    if (!pinRoute() || !provider()) return;
+    try {
+      const found = (await api.models(provider())).models ?? [];
+      setModels(found);
+      if (found.length && !found.includes(model())) setModel(found[0]);
+    } catch {
+      setModels([]);
+    }
+  });
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api.patchGatewayAllowlist(props.entry.key, {
+        workspace: workspace().trim() || undefined,
+        route: pinRoute() && provider() && model() ? { provider: provider(), model: model() } : {},
+      });
+      pushToast("info", `Updated ${props.entry.key} — the next message rotates to a fresh session`);
+      props.refresh();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div class="pending-card" style="margin-top:10px">
+      <div class="binding-meta" style="margin-bottom:6px">
+        Approved {timeAgo(props.entry.added_at)} by {props.entry.added_by} — editing keeps that
+        provenance. A changed workspace or route rotates to a new frozen session on the next
+        message; the existing ledger is preserved.
+      </div>
+      <WorkspacePicker
+        value={workspace()}
+        onChange={setWorkspace}
+        known={props.knownWorkspaces}
+        corePool={props.corePool}
+      />
+      <label class="inherit-toggle">
+        <input type="checkbox" checked={pinRoute()} onChange={(e) => setPinRoute(e.currentTarget.checked)} />
+        Pin a specific provider / model (otherwise inherits the workspace default)
+      </label>
+      <Show when={pinRoute()}>
+        <div class="binding-controls">
+          <select value={provider()} onChange={(e) => setProvider(e.currentTarget.value)}>
+            <For each={props.providers}>{(p) => <option value={p.name}>{p.name}</option>}</For>
+          </select>
+          <Show when={models().length} fallback={
+            <input class="mono" value={model()} onInput={(e) => setModel(e.currentTarget.value)} placeholder="model id" />
+          }>
+            <select class="mono" value={model()} onChange={(e) => setModel(e.currentTarget.value)}>
+              <For each={models()}>{(m) => <option value={m}>{m}</option>}</For>
+            </select>
+          </Show>
+        </div>
+      </Show>
+      <div class="row-gap">
+        <button disabled={busy()} onClick={save}>Save access</button>
+      </div>
+    </div>
   );
 }
 
@@ -1649,13 +1836,11 @@ function PendingChannelCard(props: {
   entry: AllowlistEntry;
   providers: ProviderSummary[];
   defaultWorkspace: string;
+  knownWorkspaces: string[];
   corePool: CorePoolEntry[];
   refresh: () => void;
 }) {
   const [workspace, setWorkspace] = createSignal(props.defaultWorkspace);
-  const poolMatch = createMemo(() =>
-    props.corePool.find((e) => e.workspace === workspace().trim()),
-  );
   const [pinRoute, setPinRoute] = createSignal(false);
   const [provider, setProvider] = createSignal(props.providers[0]?.name ?? "");
   const [model, setModel] = createSignal("");
@@ -1709,22 +1894,21 @@ function PendingChannelCard(props: {
           <strong class="mono">{props.entry.key}</strong>
           <div class="binding-meta">first seen {timeAgo(props.entry.added_at)}</div>
         </div>
-        <span class="chip chip-tone-warning">pending</span>
+        <div class="row-gap" style="gap:6px">
+          <SurfaceBadge channelKey={props.entry.key} />
+          <span class="chip chip-tone-warning">pending</span>
+        </div>
       </div>
 
       <Show when={props.entry.first_seen_text}>
         <div class="pending-first-seen">{props.entry.first_seen_text}</div>
       </Show>
 
-      <label class="inherit-toggle" style="margin-top:2px">
-        Workspace <span class="chip" data-on={!!poolMatch()} style="margin-left:6px">{poolMatch() ? "warm" : "cold — starts on next message"}</span>
-      </label>
-      <input
-        class="mono"
+      <WorkspacePicker
         value={workspace()}
-        onInput={(e) => setWorkspace(e.currentTarget.value)}
-        placeholder={props.defaultWorkspace}
-        style="width:100%;margin-bottom:8px"
+        onChange={setWorkspace}
+        known={props.knownWorkspaces}
+        corePool={props.corePool}
       />
 
       <label class="inherit-toggle">
@@ -1846,6 +2030,7 @@ function GatewayView() {
                 entry={entry}
                 providers={providers()?.providers ?? []}
                 defaultWorkspace={status()?.workspace ?? ""}
+                knownWorkspaces={status()?.known_workspaces ?? []}
                 corePool={status()?.core_pool.entries ?? []}
                 refresh={refreshAll}
               />
@@ -1869,6 +2054,8 @@ function GatewayView() {
                 binding={binding}
                 providers={providers()?.providers ?? []}
                 allowlistEntry={allowlistByKey().get(binding.target)}
+                knownWorkspaces={status()?.known_workspaces ?? []}
+                corePool={status()?.core_pool.entries ?? []}
                 refresh={refreshAll}
               />
             )}</For>

@@ -123,6 +123,26 @@ pub(crate) enum Command {
         #[arg(long)]
         token: Option<String>,
     },
+    /// Bridge a Discord bot to a running gateway (docs/design/34 Phase 3)
+    Discord {
+        /// Gateway base URL, e.g. http://127.0.0.1:8901
+        #[arg(long)]
+        server: String,
+        /// Gateway bearer token (overrides VAK_GATEWAY_TOKEN; the
+        /// env var is the normal path so secrets never appear in `ps`)
+        #[arg(long)]
+        token: Option<String>,
+    },
+    /// Bridge a Slack bot to a running gateway (docs/design/34 Phase 3)
+    Slack {
+        /// Gateway base URL, e.g. http://127.0.0.1:8901
+        #[arg(long)]
+        server: String,
+        /// Gateway bearer token (overrides VAK_GATEWAY_TOKEN; the
+        /// env var is the normal path so secrets never appear in `ps`)
+        #[arg(long)]
+        token: Option<String>,
+    },
     /// Diagnose provider auth, config warnings, and extensions
     Doctor {
         /// Trust this workspace's project config and .env

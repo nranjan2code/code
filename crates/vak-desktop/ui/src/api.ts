@@ -375,6 +375,26 @@ export function removeTelegramToken(): Promise<{ env_var: string; configured: bo
   return req("/config/telegram-token", { method: "DELETE" });
 }
 
+/** Store a chat bridge's bot token in the shared user `.env`. Restarts
+ * the bridge for surfaces that have a managed service unit (Telegram);
+ * the others are started by hand and report `restarted: false`. */
+export function putBotToken(
+  surface: string,
+  token: string,
+): Promise<{ surface: string; env_var: string; configured: boolean; restarted: boolean }> {
+  return req(`/config/bot-token/${encodeURIComponent(surface)}`, {
+    method: "PUT",
+    body: JSON.stringify({ token }),
+  });
+}
+
+/** Revoke a stored bot token. */
+export function removeBotToken(
+  surface: string,
+): Promise<{ surface: string; env_var: string; configured: boolean; shadowed_by_env: boolean; restarted: boolean }> {
+  return req(`/config/bot-token/${encodeURIComponent(surface)}`, { method: "DELETE" });
+}
+
 // ---- MCP server management ----------------------------------------------------
 
 export interface McpServerDef {

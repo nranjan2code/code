@@ -1073,11 +1073,36 @@ impl Core {
     /// `telegram_configured()` and any in-process check correct right away.
     /// The token itself never re-enters any response.
     pub fn set_telegram_token(&self, token: &str) -> Result<String, CoreError> {
+        self.set_bot_token(Self::TELEGRAM_TOKEN_ENV, token)
+    }
+
+    /// The env var that authenticates each chat bridge, by surface name
+    /// (docs/design/34 Phase 3). All three are stored identically: the
+    /// shared user `.env`, owner-only. `None` for an unknown surface, so a
+    /// typo'd path segment is a 400 rather than a new env var nothing
+    /// reads.
+    pub fn bot_token_env(surface: &str) -> Option<&'static str> {
+        match surface {
+            "telegram" => Some(Self::TELEGRAM_TOKEN_ENV),
+            "discord" => Some("DISCORD_BOT_TOKEN"),
+            "slack" => Some("SLACK_BOT_TOKEN"),
+            _ => None,
+        }
+    }
+
+    /// True when a bridge for `surface` launched right now would find a
+    /// token.
+    pub fn bot_token_configured(surface: &str) -> bool {
+        Self::bot_token_env(surface).is_some_and(|env| vak_config::get_var(env).is_some())
+    }
+
+    /// Generic form of [`Core::set_telegram_token`], shared by every chat
+    /// surface so one storage convention covers all of them.
+    pub fn set_bot_token(&self, env: &str, token: &str) -> Result<String, CoreError> {
         let token = token.trim();
         if token.is_empty() {
-            return Err(CoreError::InvalidConfig("empty telegram bot token".into()));
+            return Err(CoreError::InvalidConfig(format!("empty token for {env}")));
         }
-        let env = Self::TELEGRAM_TOKEN_ENV;
         let path = self.user_env_file();
         vak_config::upsert_env_file(&path, env, token)
             .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))?;
@@ -1090,7 +1115,11 @@ impl Core {
     /// environment cannot be unset from here — the caller is told so it can
     /// say as much.
     pub fn remove_telegram_token(&self) -> Result<RemovedKey, CoreError> {
-        let env = Self::TELEGRAM_TOKEN_ENV;
+        self.remove_bot_token(Self::TELEGRAM_TOKEN_ENV)
+    }
+
+    /// Generic form of [`Core::remove_telegram_token`].
+    pub fn remove_bot_token(&self, env: &str) -> Result<RemovedKey, CoreError> {
         let path = self.user_env_file();
         vak_config::remove_env_file_key(&path, env)
             .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))?;

@@ -158,6 +158,10 @@ pub struct GatewaySettings {
     /// Idle duration (seconds) after which a pooled non-default-workspace
     /// `Core` is evicted. Default 1800 (30 minutes).
     pub core_pool_idle_secs: Option<u64>,
+    /// Days a `pending` allowlist entry may sit unreviewed before
+    /// `vak doctor` flags it and `--repair` auto-denies it
+    /// (docs/design/34-channel-onboarding.md). Default 7.
+    pub pending_expiry_days: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -531,6 +535,9 @@ pub struct GatewayResolved {
     /// Idle duration after which a pooled non-default-workspace `Core` is
     /// evicted. Default 1800s (30 minutes).
     pub core_pool_idle_secs: u64,
+    /// Days a `pending` allowlist entry may sit unreviewed before it is
+    /// flagged by doctor and auto-denied by `--repair`. Default 7.
+    pub pending_expiry_days: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -656,6 +663,7 @@ impl Default for Config {
                 chat_allowlist_open: false,
                 core_pool_max: 8,
                 core_pool_idle_secs: 1800,
+                pending_expiry_days: 7,
             },
             memory: MemoryResolved {
                 search_enabled: true,
@@ -1051,6 +1059,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     cfg.gateway.chat_allowlist_open = merged.gateway.chat_allowlist_open.unwrap_or(false);
     cfg.gateway.core_pool_max = merged.gateway.core_pool_max.unwrap_or(8).max(1);
     cfg.gateway.core_pool_idle_secs = merged.gateway.core_pool_idle_secs.unwrap_or(1800).max(60);
+    cfg.gateway.pending_expiry_days = merged.gateway.pending_expiry_days.unwrap_or(7).max(1);
     if cfg.gateway.enabled
         && cfg.gateway.chat_allowlist.is_empty()
         && cfg.gateway.chat_allowlist_open
@@ -1246,6 +1255,7 @@ const KNOWN_GATEWAY_KEYS: &[&str] = &[
     "chat_allowlist_open",
     "core_pool_max",
     "core_pool_idle_secs",
+    "pending_expiry_days",
 ];
 const KNOWN_MEMORY_KEYS: &[&str] = &[
     "search_enabled",
@@ -1625,6 +1635,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.gateway.core_pool_idle_secs.is_some() {
         base.gateway.core_pool_idle_secs = over.gateway.core_pool_idle_secs;
+    }
+    if over.gateway.pending_expiry_days.is_some() {
+        base.gateway.pending_expiry_days = over.gateway.pending_expiry_days;
     }
     if over.memory.search_enabled.is_some() {
         base.memory.search_enabled = over.memory.search_enabled;

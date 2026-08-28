@@ -601,7 +601,70 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
             "idle_secs": state.core.config().gateway.core_pool_idle_secs,
             "entries": core_pool,
         },
+        // docs/design/34 open question 4: the workspace field is a picker
+        // of workspaces vak has actually run in, not unconstrained free
+        // text — a typo'd path is caught at entry time by offering
+        // known-good options first.
+        "known_workspaces": known_workspaces(&state),
     }))
+}
+
+/// Workspaces vak has session ledgers for, newest-first, plus the
+/// gateway's own cwd and any currently pooled workspace.
+///
+/// Sessions are stored per-cwd (`<home>/sessions/<hash>/<id>.jsonl`) and
+/// the real path lives in each ledger's header, so this reads only the
+/// first line of one file per project directory — no store rebuild, no
+/// `Core` start.
+fn known_workspaces(state: &AppState) -> Vec<String> {
+    use std::io::BufRead;
+    let mut seen: Vec<String> = vec![state.core.cwd().display().to_string()];
+    let mut push = |path: String| {
+        if !path.is_empty() && !seen.contains(&path) {
+            seen.push(path);
+        }
+    };
+    for entry in state
+        .gateway
+        .core_pool
+        .snapshot_at(std::time::Instant::now())
+    {
+        push(entry.workspace.display().to_string());
+    }
+    let root = state.core.sessions_home().join("sessions");
+    let Ok(projects) = std::fs::read_dir(&root) else {
+        return seen;
+    };
+    for project in projects.flatten() {
+        let Ok(files) = std::fs::read_dir(project.path()) else {
+            continue;
+        };
+        // Any ledger in the directory names the same cwd, so the first
+        // readable header is enough.
+        for file in files.flatten() {
+            let path = file.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Ok(handle) = std::fs::File::open(&path) else {
+                continue;
+            };
+            let mut first = String::new();
+            if std::io::BufReader::new(handle)
+                .read_line(&mut first)
+                .is_err()
+            {
+                continue;
+            }
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&first)
+                && let Some(cwd) = v["cwd"].as_str()
+            {
+                push(cwd.to_string());
+                break;
+            }
+        }
+    }
+    seen
 }
 
 #[derive(serde::Deserialize)]
@@ -636,9 +699,26 @@ pub(crate) async fn patch_gateway_binding(
     }) {
         return StatusCode::BAD_REQUEST;
     }
+    // One source of truth for "what does this channel route to"
+    // (docs/design/34 "Editing an already-allowed entry"): when an
+    // `allowed` allowlist entry exists for this key, the route lives there
+    // and this pre-existing surface writes through to it instead of
+    // parking a second, divergent value on the binding.
+    let mirrored = state.gateway.allowlist_patch_route_if_allowed(
+        &state.core,
+        &key,
+        route
+            .clone()
+            .map(|(provider, model)| crate::gateway::AllowlistRoute { provider, model }),
+    );
     state
         .gateway
         .set_route_override(&state.core, key.clone(), route);
+    if mirrored {
+        state
+            .hub
+            .emit_config_changed("gateway_allowlist_patched", &key);
+    }
     state.hub.emit_config_changed("gateway_binding_route", &key);
     StatusCode::OK
 }
@@ -775,6 +855,107 @@ pub(crate) async fn deny_gateway_allowlist(
     (StatusCode::OK, Json(allowlist_entry_json(&entry))).into_response()
 }
 
+#[derive(serde::Deserialize, Default)]
+pub(crate) struct AllowlistPatchBody {
+    #[serde(default)]
+    workspace: Option<String>,
+    #[serde(default)]
+    route: Option<GatewayRoutePatch>,
+}
+
+/// `PATCH /admin/api/gateway/allowlist/{key}` (docs/design/34 "Editing an
+/// already-allowed entry"): re-point an `allowed` channel's workspace
+/// and/or pinned route without revoking and re-approving it, which would
+/// lose `added_at`/`added_by` provenance and momentarily 403 the channel.
+///
+/// Only `allowed` entries are editable — pending/denied ones move through
+/// approve/deny, not here (404 otherwise, same as an unknown key).
+///
+/// The edit is *not* a second way to change a channel's effective route:
+/// the entry is the one source of truth `binding_route` already reads, and
+/// the binding's cached route revision is invalidated here so the change
+/// takes effect through the exact stale-session-rotation path
+/// `PATCH .../bindings/{key}` uses — the next inbound message rotates to a
+/// fresh frozen session, preserving the old append-only ledger.
+pub(crate) async fn patch_gateway_allowlist(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    if key.trim().is_empty() || !key.contains(':') {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let body: AllowlistPatchBody = if body.is_empty() {
+        AllowlistPatchBody::default()
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(b) => b,
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        }
+    };
+    let workspace = body
+        .workspace
+        .as_deref()
+        .map(str::trim)
+        .filter(|w| !w.is_empty())
+        .map(PathBuf::from);
+    let route = match body.route {
+        Some(GatewayRoutePatch {
+            provider: Some(provider),
+            model: Some(model),
+        }) if !provider.trim().is_empty() && !model.trim().is_empty() => {
+            if !state
+                .core
+                .provider_names()
+                .iter()
+                .any(|name| name == provider.trim())
+            {
+                return StatusCode::BAD_REQUEST.into_response();
+            }
+            Some(crate::gateway::AllowlistRoute {
+                provider: provider.trim().to_string(),
+                model: model.trim().to_string(),
+            })
+        }
+        // An explicitly empty route object clears the pin (inherit the
+        // workspace default) — the same shape `PATCH .../bindings` uses.
+        Some(GatewayRoutePatch {
+            provider: None,
+            model: None,
+        })
+        | None => None,
+        Some(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    let Some(entry) = state
+        .gateway
+        .allowlist_patch(&state.core, &key, workspace, route)
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    // Same stale-detection seam as the binding route editor: drop the
+    // cached revision (never the ledger) so the next message re-derives
+    // the effective route and rotates only if it really changed.
+    state.gateway.invalidate_binding_revision(&state.core, &key);
+    vak_core::security_events::record(
+        &state.core.sessions_home(),
+        vak_core::security_events::EventKind::ConfigChange,
+        "chat_edited",
+        &format!(
+            "key={key} workspace={}",
+            entry
+                .workspace
+                .as_ref()
+                .map(|w| w.display().to_string())
+                .unwrap_or_else(|| "(inherit)".into())
+        ),
+        None,
+    );
+    state
+        .hub
+        .emit_config_changed("gateway_allowlist_patched", &key);
+    (StatusCode::OK, Json(allowlist_entry_json(&entry))).into_response()
+}
+
 pub(crate) async fn revoke_gateway_allowlist(
     State(state): State<AppState>,
     Path(key): Path<String>,
@@ -840,7 +1021,7 @@ pub(crate) fn routes() -> axum::Router<AppState> {
         )
         .route(
             "/admin/api/gateway/allowlist/{key}",
-            axum::routing::delete(revoke_gateway_allowlist),
+            patch(patch_gateway_allowlist).delete(revoke_gateway_allowlist),
         )
 }
 
@@ -1190,6 +1371,212 @@ mod tests {
         assert_eq!(json["workspace"], "/tmp/somewhere");
         assert_eq!(json["route"]["provider"], "anthropic");
         assert_eq!(json["route"]["model"], "sonnet");
+    }
+
+    // ---- PATCH .../allowlist/{key} (docs/design/34 follow-up) ----------
+
+    async fn approve(app: &axum::Router, token: &str, key: &str, body: &str) {
+        let req = Request::builder()
+            .method("POST")
+            .uri(format!("/admin/api/gateway/allowlist/{key}/approve"))
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    async fn patch_allowlist(
+        app: &axum::Router,
+        token: &str,
+        key: &str,
+        body: &str,
+    ) -> axum::response::Response {
+        let req = Request::builder()
+            .method("PATCH")
+            .uri(format!("/admin/api/gateway/allowlist/{key}"))
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn allowlist_patch_edits_workspace_in_place_keeping_provenance() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        approve(&app, &token, "telegram%3A50", r#"{"workspace":"/tmp/one"}"#).await;
+        let before = state.gateway.allowlist_get("telegram:50").unwrap();
+
+        let resp =
+            patch_allowlist(&app, &token, "telegram%3A50", r#"{"workspace":"/tmp/two"}"#).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["workspace"], "/tmp/two");
+        // A re-point is not a re-approval: added_at/added_by must survive.
+        assert_eq!(json["added_at"], before.added_at);
+        assert_eq!(json["added_by"], before.added_by);
+        assert_eq!(json["status"], "allowed");
+    }
+
+    #[tokio::test]
+    async fn allowlist_patch_clears_a_pinned_route_with_an_empty_route_object() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        approve(
+            &app,
+            &token,
+            "telegram%3A51",
+            r#"{"workspace":"/tmp/one","route":{"provider":"anthropic","model":"sonnet"}}"#,
+        )
+        .await;
+        let resp = patch_allowlist(
+            &app,
+            &token,
+            "telegram%3A51",
+            r#"{"workspace":"/tmp/one","route":{}}"#,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(
+            state
+                .gateway
+                .allowlist_get("telegram:51")
+                .unwrap()
+                .route
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn allowlist_patch_rotates_through_the_existing_stale_detection_path() {
+        // docs/design/34: an edited workspace/route must take effect the
+        // way a stale binding already does — by dropping the cached route
+        // revision so the next inbound message re-derives it, never by
+        // mutating state the binding/session layer doesn't know about.
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        approve(&app, &token, "telegram%3A52", r#"{"workspace":"/tmp/one"}"#).await;
+        state.gateway.set_route_override(
+            &state.core,
+            "telegram:52".into(),
+            Some(("anthropic".into(), "sonnet".into())),
+        );
+        // A bound session with a frozen revision, as dispatch would leave it.
+        state
+            .gateway
+            .bind_for_test("telegram:52", "sess-1", "channel:anthropic:sonnet");
+        assert!(
+            state
+                .gateway
+                .route_revision_for_test("telegram:52")
+                .is_some()
+        );
+
+        let resp =
+            patch_allowlist(&app, &token, "telegram%3A52", r#"{"workspace":"/tmp/two"}"#).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(
+            state
+                .gateway
+                .route_revision_for_test("telegram:52")
+                .is_none()
+        );
+        // The ledger binding itself is preserved — rotation replaces the
+        // session on the next message, it never deletes history.
+        assert_eq!(
+            state.gateway.session_id_for_test("telegram:52").as_deref(),
+            Some("sess-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn allowlist_patch_is_404_for_unknown_and_non_allowed_keys() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let resp = patch_allowlist(
+            &app,
+            &token,
+            "telegram%3Anever-seen",
+            r#"{"workspace":"/tmp"}"#,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        // Denied entries move through approve/deny, never through edit.
+        state
+            .gateway
+            .allowlist_deny(&state.core, "telegram:53", "admin");
+        let resp = patch_allowlist(&app, &token, "telegram%3A53", r#"{"workspace":"/tmp"}"#).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn allowlist_patch_rejects_a_key_that_is_not_surface_chat() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let resp = patch_allowlist(&app, &token, "nocolon", r#"{"workspace":"/tmp"}"#).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn binding_route_patch_writes_through_to_the_allowed_entry() {
+        // One source of truth: changing the route from the pre-existing
+        // binding editor must not leave the allowlist entry holding a
+        // different, stale answer to "what does this channel route to".
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        approve(
+            &app,
+            &token,
+            "telegram%3A54",
+            r#"{"workspace":"/tmp/one","route":{"provider":"anthropic","model":"sonnet"}}"#,
+        )
+        .await;
+        let req = Request::builder()
+            .method("PATCH")
+            .uri("/admin/api/gateway/bindings/telegram%3A54")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{}"#))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let entry = state.gateway.allowlist_get("telegram:54").unwrap();
+        assert!(
+            entry.route.is_none(),
+            "entry kept a route the binding cleared"
+        );
+        // The workspace is untouched by a route-only edit.
+        assert_eq!(entry.workspace.unwrap().to_string_lossy(), "/tmp/one");
+    }
+
+    #[tokio::test]
+    async fn gateway_status_lists_known_workspaces_including_the_gateway_cwd() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        let req = Request::builder()
+            .uri("/admin/api/gateway/status")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let json = body_json(app.oneshot(req).await.unwrap()).await;
+        let known = json["known_workspaces"].as_array().unwrap();
+        assert!(
+            known
+                .iter()
+                .any(|w| w.as_str() == Some(&state.core.cwd().display().to_string())),
+            "the gateway's own workspace must always be offered"
+        );
     }
 
     #[tokio::test]

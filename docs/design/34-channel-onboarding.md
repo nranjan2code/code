@@ -1,21 +1,31 @@
 # 34 — Channel onboarding: lifecycle, governance, admin/desktop UX
 
-Status: **Phase 1 and Phase 2 implemented** (allowlist store, gateway
-pending lifecycle, admin API routes, Admin UI pending/approve/deny/revoke
-panels, and the multi-tenant `CorePool` that actually runs an approved
-entry's own workspace `Core` — `crates/vak-server/src/gateway.rs`,
-`crates/vak-server/src/admin.rs`, `crates/vak-server/src/core_pool.rs`,
-`crates/vak-admin-ui/src/App.tsx`). Phase 3 (Discord/Slack bridges)
-remains **proposed**, not yet implemented. A follow-up pass ("Editing an
-already-allowed entry", "Lifecycle completeness: doctor and repair"
-below) is designed but **not yet implemented**: `PATCH
-.../allowlist/{key}` for editing an already-allowed entry's
-workspace/route in place (unified with the existing binding
-route-override path, not a second divergent config), a `vak doctor`
-"gateway channels" health check with `--repair` wiring for expired
-pending entries, and a workspace picker (known-workspaces dropdown +
-warned free-text fallback) replacing unconstrained free text. See the
-phase sections below. Written after a live incident
+Status: **Phases 1, 2, and 3 implemented, and the follow-up pass
+implemented** — allowlist store, gateway pending lifecycle, admin API
+routes, Admin UI panels, the multi-tenant `CorePool`, the Discord and
+Slack bridges, `PATCH .../allowlist/{key}` (unified with the existing
+binding route-override path), the `vak doctor` "gateway channels" check
+with `--repair` wiring for expired pending entries, and the
+known-workspaces picker. See each phase section below for what landed.
+
+Two sub-pieces are deliberately **deferred**, not silently dropped:
+
+1. **Real-time transports for the new bridges.** Discord's gateway
+   websocket and Slack's Socket Mode would each add a websocket
+   dependency the workspace does not have today (no `tokio-tungstenite`
+   anywhere in `Cargo.lock`). Both bridges instead poll an explicitly
+   configured set of channel ids (`DISCORD_CHANNEL_IDS` /
+   `SLACK_CHANNEL_IDS`) — correct, dependency-free, and the same "watch
+   a few channels" shape the Telegram long poll has. The cost is that
+   channels must be named up front rather than DMs being auto-discovered.
+2. **Interactive approval components** on Discord/Slack. Forwarded
+   approval gates render as a typed yes/no prompt (`Reply \`yes <id>\``),
+   the same fallback Telegram used before its inline keyboard, resolving
+   through the one existing `parse_verdict` path. Discord buttons and
+   Slack Block Kit are the follow-up; the adapters declare
+   `supports_actions: false` so nothing renders buttons that do not exist.
+
+Written after a live incident
 (2026-08-28): the Telegram bridge returned `403` for a chat that used to
 work, because `gateway.chat_allowlist` is a config-file-only setting with
 no UI, no runtime API, and no visible pending-request state — the operator
@@ -194,6 +204,19 @@ correction to Phase 1/2's implementation, not just future work — worth
 checking before Phase 2 lands whether `AllowlistEntry.workspace` and
 `GatewayBinding.workspace` already risk this exact drift.)
 
+**Implemented.** The drift the parenthetical above warned about was real:
+`allowlist_approve` wrote `route` onto the entry, but `binding_route` at
+dispatch only ever read the *binding's* provider/model override, so the
+entry's pinned route was dead config. There is now exactly one resolver,
+`GatewayState::effective_route_override` — the allowed entry's route when
+it has one, the binding override otherwise — and
+`PATCH .../bindings/{key}` writes through to the entry when one exists, so
+neither surface can hold a stale answer. `PATCH .../allowlist/{key}`
+mutates the entry and then calls `invalidate_binding_revision`, the same
+"drop the cached revision, never the ledger" move `set_route_override`
+makes, so an edit takes effect through the existing rotation path on the
+next inbound message.
+
 **Workspace no longer resolvable** (directory moved, deleted, or a typo'd
 path was approved): the pool (Phase 2) fails to start a Core for it. This
 must not silently 500 on the next inbound message — it should reject with
@@ -223,6 +246,22 @@ matching mechanical fix for the one case that has one:
   call, not mechanical) — `doctor --repair` reports it and points at
   `PATCH .../allowlist/{key}` or the Admin UI, same as it already defers
   provider-auth and config-warning failures to the operator today.
+
+**Implemented.** `vak_core::health::gateway_channels_check` reads
+`<sessions_home>/gateway/allowlist.json` directly (no `Core` started per
+workspace just to test one) and is collected alongside the existing
+checks; `crates/vak/src/doctor.rs`'s `repair_known_failures` gained the
+matching case. `[gateway] pending_expiry_days` (default 7) is the window,
+following the `KNOWN_GATEWAY_KEYS` pattern.
+
+One implementation note worth stating plainly: `doctor --repair` runs in
+a *different process* from a live gateway, which holds the allowlist in
+memory. The repair therefore edits the store on disk (preserving unknown
+fields, temp-file+rename), and `GatewayState::load` applies the same
+expiry on startup — so a running gateway converges on the same state at
+its next restart rather than the two paths fighting. Expiring from inside
+a live gateway on a timer was not added; the startup pass plus doctor
+covers the case without a new background task.
 
 ## Open questions (resolved / for review before implementation)
 
@@ -262,8 +301,8 @@ three need to exist for the feature to be complete, not just the
 allowlist mechanics.
 
 **Implemented.** The allowlist store, gateway pending-lifecycle change,
-admin API routes, and Admin UI panels described above are built. Phase 2
-and 3 below are still only proposed.
+admin API routes, and Admin UI panels described above are built. Phases 2
+and 3 below are built too — see each section's own status note.
 
 ## Phase 2: multi-tenant Core isolation
 
@@ -369,6 +408,20 @@ in rendering, since they key everything off `surface:chat`) with:
   lifecycle already applies uniformly to any surface's `key`, exactly as
   designed; Phase 3 only adds the bridges that can actually deliver a
   `surface:chat` key from Discord/Slack in the first place.
+
+**Implemented.** `crates/vak-server/src/discord.rs` and
+`crates/vak-server/src/slack.rs` implement `InboundChannel`, driven by
+`vak discord` / `vak slack` (same flags and env-first credential handling
+as `vak telegram`); `DiscordAdapter` and `SlackAdapter` are registered in
+`delivery.rs` when their bot tokens are set. Phase 1's UI was confirmed
+surface-agnostic — nothing keyed on "telegram" — so the panels needed only
+a `SurfaceBadge`, not generalizing. Desktop Settings renders one
+Telegram-shaped token field per surface from `chat_surfaces` in
+`GET /config`, via `PUT/DELETE /config/bot-token/{surface}`; only Telegram
+has a managed service unit today, so the others say plainly that the
+bridge is started by hand rather than promising a restart that will not
+happen. See the two deferrals at the top of this doc for the polling
+transport and typed-verdict approvals.
 
 ## Non-goals (still, even after phases 2-3)
 

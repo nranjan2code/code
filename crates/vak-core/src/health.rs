@@ -48,6 +48,176 @@ fn layout_check() -> HealthCheck {
     }
 }
 
+/// Label of the gateway-channel check, shared with `vak doctor --repair`
+/// so the repair path matches on a constant rather than a copied string.
+pub const GATEWAY_CHANNELS_LABEL: &str = "gateway channels";
+
+/// One `allowed`/`pending` entry as doctor needs to see it. Parsed
+/// straight out of `<sessions_home>/gateway/allowlist.json` rather than
+/// through `vak-server` (which depends on this crate, not the reverse) —
+/// and deliberately without starting a `Core` for each workspace, since
+/// existence + readability is what the check actually asserts.
+#[derive(Debug, Clone)]
+pub struct ChannelEntry {
+    pub key: String,
+    pub status: String,
+    pub workspace: Option<PathBuf>,
+    pub added_at: String,
+}
+
+pub fn allowlist_path(sessions_home: &Path) -> PathBuf {
+    sessions_home.join("gateway").join("allowlist.json")
+}
+
+/// Read the allowlist store. A missing file is "no channels yet", not an
+/// error: a gateway that has never seen an inbound message is healthy.
+pub fn read_channel_entries(sessions_home: &Path) -> Vec<ChannelEntry> {
+    let Ok(raw) = std::fs::read_to_string(allowlist_path(sessions_home)) else {
+        return Vec::new();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Vec::new();
+    };
+    v["entries"]
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|e| {
+                    Some(ChannelEntry {
+                        key: e["key"].as_str()?.to_string(),
+                        status: e["status"].as_str()?.to_string(),
+                        workspace: e["workspace"].as_str().map(PathBuf::from),
+                        added_at: e["added_at"].as_str().unwrap_or_default().to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `gateway channels` (docs/design/34 "Lifecycle completeness"): an
+/// approved channel whose workspace has moved or been deleted will fail
+/// to start a Core on the next inbound message, and a pending request
+/// nobody acted on is an onboarding request quietly rotting. Both are
+/// caught here, before a user hits them.
+pub fn gateway_channels_check(sessions_home: &Path, expiry_days: u64) -> HealthCheck {
+    let label = GATEWAY_CHANNELS_LABEL.to_string();
+    let entries = read_channel_entries(sessions_home);
+    if entries.is_empty() {
+        return HealthCheck {
+            label,
+            detail: Ok("no channels onboarded".into()),
+        };
+    }
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(expiry_days as i64);
+    let mut unreachable = Vec::new();
+    let mut expired = Vec::new();
+    let mut allowed = 0usize;
+    let mut pending = 0usize;
+    let mut denied = 0usize;
+    for entry in &entries {
+        match entry.status.as_str() {
+            "allowed" => {
+                allowed += 1;
+                // No workspace = inherits the gateway's own cwd, which the
+                // "sessions home"/provider checks already cover.
+                if let Some(ws) = &entry.workspace
+                    && std::fs::read_dir(ws).is_err()
+                {
+                    unreachable.push(format!("{} → {}", entry.key, ws.display()));
+                }
+            }
+            "pending" => {
+                pending += 1;
+                if chrono::DateTime::parse_from_rfc3339(&entry.added_at)
+                    .is_ok_and(|ts| ts.with_timezone(&chrono::Utc) < cutoff)
+                {
+                    expired.push(entry.key.clone());
+                }
+            }
+            _ => denied += 1,
+        }
+    }
+    if unreachable.is_empty() && expired.is_empty() {
+        return HealthCheck {
+            label,
+            detail: Ok(format!(
+                "{allowed} allowed · {pending} pending · {denied} denied"
+            )),
+        };
+    }
+    let mut parts = Vec::new();
+    if !unreachable.is_empty() {
+        parts.push(format!("workspace unreachable: {}", unreachable.join(", ")));
+    }
+    if !expired.is_empty() {
+        parts.push(format!("pending >{expiry_days}d: {}", expired.join(", ")));
+    }
+    HealthCheck {
+        label,
+        detail: Err(parts.join(" · ")),
+    }
+}
+
+/// `--repair` half of [`gateway_channels_check`]: auto-deny every
+/// `pending` entry older than `expiry_days`, stamping `added_by =
+/// "expiry"` so it stays visibly distinct from an operator's own deny
+/// (never deleted — "why did this stop working" must have an answer).
+///
+/// Entries are edited as raw JSON so any field a newer schema adds
+/// survives the rewrite untouched. An `allowed` entry with an unreachable
+/// workspace is deliberately NOT repaired: re-pointing it is a judgment
+/// call, and doctor never guesses at those.
+pub fn expire_pending_entries(sessions_home: &Path, expiry_days: u64) -> Vec<String> {
+    let path = allowlist_path(sessions_home);
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let Ok(mut doc) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Vec::new();
+    };
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(expiry_days as i64);
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut denied = Vec::new();
+    let Some(entries) = doc["entries"].as_array_mut() else {
+        return Vec::new();
+    };
+    for entry in entries.iter_mut() {
+        let expired = entry["status"].as_str() == Some("pending")
+            && entry["added_at"]
+                .as_str()
+                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
+                .is_some_and(|ts| ts.with_timezone(&chrono::Utc) < cutoff);
+        if !expired {
+            continue;
+        }
+        if let Some(key) = entry["key"].as_str() {
+            denied.push(key.to_string());
+        }
+        entry["status"] = serde_json::Value::String("denied".into());
+        entry["added_by"] = serde_json::Value::String("expiry".into());
+        entry["added_at"] = serde_json::Value::String(now.clone());
+        if let Some(map) = entry.as_object_mut() {
+            map.remove("first_seen_text");
+            map.remove("workspace");
+            map.remove("route");
+        }
+    }
+    if denied.is_empty() {
+        return denied;
+    }
+    // Same temp-file+rename write the gateway itself uses, so a crash
+    // mid-repair can never leave a half-written allowlist.
+    if let Ok(json) = serde_json::to_string_pretty(&doc) {
+        let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        if std::fs::write(&temp, json).is_ok() {
+            let _ = std::fs::rename(temp, &path);
+        }
+    }
+    denied
+}
+
 #[derive(Debug, Clone)]
 pub struct HealthCheck {
     pub label: String,
@@ -156,6 +326,10 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
             Err(warnings.join("; "))
         },
     });
+    checks.push(gateway_channels_check(
+        &core.sessions_home(),
+        core.config().gateway.pending_expiry_days,
+    ));
     checks.push(layout_check());
     checks.push(version_parity_check(&install::resolve_manifest_path(None)));
     let failures = checks.iter().filter(|c| c.failed()).count();
@@ -241,6 +415,129 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
+    fn write_allowlist(home: &Path, entries: serde_json::Value) {
+        let path = allowlist_path(home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            serde_json::json!({ "schema": 1, "entries": entries }).to_string(),
+        )
+        .unwrap();
+    }
+
+    fn ago(days: i64) -> String {
+        (chrono::Utc::now() - chrono::Duration::days(days)).to_rfc3339()
+    }
+
+    #[test]
+    fn gateway_channels_passes_with_no_store_at_all() {
+        let home = tempfile::tempdir().unwrap();
+        let check = gateway_channels_check(home.path(), 7);
+        assert_eq!(check.detail.unwrap(), "no channels onboarded");
+    }
+
+    #[test]
+    fn gateway_channels_pass_detail_is_counts() {
+        let home = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        write_allowlist(
+            home.path(),
+            serde_json::json!([
+                { "key": "telegram:1", "status": "allowed", "workspace": workspace.path(), "added_at": ago(1), "added_by": "admin" },
+                { "key": "slack:C1", "status": "pending", "added_at": ago(1), "added_by": "gateway" },
+                { "key": "discord:9", "status": "denied", "added_at": ago(1), "added_by": "admin" },
+            ]),
+        );
+        let detail = gateway_channels_check(home.path(), 7).detail.unwrap();
+        assert_eq!(detail, "1 allowed \u{b7} 1 pending \u{b7} 1 denied");
+    }
+
+    #[test]
+    fn gateway_channels_fails_and_names_an_unreachable_workspace() {
+        let home = tempfile::tempdir().unwrap();
+        write_allowlist(
+            home.path(),
+            serde_json::json!([
+                { "key": "telegram:1", "status": "allowed", "workspace": "/definitely/not/here", "added_at": ago(1), "added_by": "admin" },
+            ]),
+        );
+        let detail = gateway_channels_check(home.path(), 7).detail.unwrap_err();
+        // Naming the key is the point: doctor output has to be actionable
+        // without a separate admin-console trip.
+        assert!(detail.contains("telegram:1"), "{detail}");
+        assert!(detail.contains("/definitely/not/here"), "{detail}");
+    }
+
+    #[test]
+    fn gateway_channels_fails_on_a_pending_entry_past_the_expiry_window() {
+        let home = tempfile::tempdir().unwrap();
+        write_allowlist(
+            home.path(),
+            serde_json::json!([
+                { "key": "slack:C9", "status": "pending", "added_at": ago(30), "added_by": "gateway" },
+            ]),
+        );
+        let detail = gateway_channels_check(home.path(), 7).detail.unwrap_err();
+        assert!(detail.contains("slack:C9"), "{detail}");
+        // A longer window makes the same entry healthy - the window is
+        // config, not a hardcoded 7.
+        assert!(gateway_channels_check(home.path(), 90).detail.is_ok());
+    }
+
+    #[test]
+    fn a_corrupt_timestamp_never_counts_as_expired() {
+        let home = tempfile::tempdir().unwrap();
+        write_allowlist(
+            home.path(),
+            serde_json::json!([
+                { "key": "slack:C9", "status": "pending", "added_at": "not-a-date", "added_by": "gateway" },
+            ]),
+        );
+        assert!(gateway_channels_check(home.path(), 7).detail.is_ok());
+        assert!(expire_pending_entries(home.path(), 7).is_empty());
+    }
+
+    #[test]
+    fn repair_auto_denies_expired_pending_entries_visibly() {
+        let home = tempfile::tempdir().unwrap();
+        write_allowlist(
+            home.path(),
+            serde_json::json!([
+                { "key": "slack:C9", "status": "pending", "added_at": ago(30), "added_by": "gateway", "first_seen_text": "hi" },
+                { "key": "slack:C1", "status": "pending", "added_at": ago(1), "added_by": "gateway" },
+            ]),
+        );
+        let denied = expire_pending_entries(home.path(), 7);
+        assert_eq!(denied, vec!["slack:C9".to_string()]);
+
+        let entries = read_channel_entries(home.path());
+        let expired = entries.iter().find(|e| e.key == "slack:C9").unwrap();
+        // Denied, not deleted: "why did this stop working" must have an
+        // answer, and `added_by` distinguishes it from an operator's deny.
+        assert_eq!(expired.status, "denied");
+        let raw = std::fs::read_to_string(allowlist_path(home.path())).unwrap();
+        assert!(raw.contains("\"added_by\": \"expiry\""), "{raw}");
+        // The fresh request is untouched.
+        let fresh = entries.iter().find(|e| e.key == "slack:C1").unwrap();
+        assert_eq!(fresh.status, "pending");
+        // And the check now passes.
+        assert!(gateway_channels_check(home.path(), 7).detail.is_ok());
+    }
+
+    #[test]
+    fn repair_leaves_an_unreachable_workspace_for_the_operator() {
+        let home = tempfile::tempdir().unwrap();
+        write_allowlist(
+            home.path(),
+            serde_json::json!([
+                { "key": "telegram:1", "status": "allowed", "workspace": "/definitely/not/here", "added_at": ago(1), "added_by": "admin" },
+            ]),
+        );
+        assert!(expire_pending_entries(home.path(), 7).is_empty());
+        // Re-pointing is a judgment call; the failure must survive repair.
+        assert!(gateway_channels_check(home.path(), 7).detail.is_err());
+    }
+
     #[test]
     fn report_mirrors_tui_doctor_shape() {
         let dir = tempfile::tempdir().unwrap();
@@ -260,6 +557,7 @@ mod tests {
                 "provider",
                 "sessions home",
                 "config warnings",
+                "gateway channels",
                 "install layout",
                 "self version parity"
             ]

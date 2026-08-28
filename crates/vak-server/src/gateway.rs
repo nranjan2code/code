@@ -296,7 +296,7 @@ impl GatewayState {
             }
         };
 
-        GatewayState {
+        let state = GatewayState {
             enabled: force || gw.enabled,
             bindings: Mutex::new(bindings),
             approvals: if forward_ok {
@@ -318,7 +318,24 @@ impl GatewayState {
                 gw.core_pool_max,
                 Duration::from_secs(gw.core_pool_idle_secs),
             ),
+        };
+        // docs/design/34: a pending request nobody acted on inside the
+        // expiry window auto-denies (visibly, `added_by = "expiry"`).
+        // `vak doctor --repair` does the same thing offline against the
+        // store; doing it here too means a restarted gateway self-heals
+        // and the two paths converge on the same state.
+        let expired = state
+            .allowlist_expire_pending(core, chrono::Duration::days(gw.pending_expiry_days as i64));
+        for key in expired {
+            vak_core::security_events::record(
+                &core.sessions_home(),
+                vak_core::security_events::EventKind::ChatDenied,
+                "chat_denied",
+                &format!("key={key} reason=expiry"),
+                None,
+            );
         }
+        state
     }
 
     /// Resolve the `Core` a channel's entry should actually run through:
@@ -628,6 +645,162 @@ impl GatewayState {
         entry
     }
 
+    /// Edit an already-`allowed` entry's `workspace`/`route` in place
+    /// (docs/design/34 "Editing an already-allowed entry"). Provenance
+    /// (`added_at`/`added_by`) is deliberately preserved — this is a
+    /// re-point, not a re-approval. `None` for either field clears it
+    /// (inherit the gateway workspace / the workspace's default route).
+    ///
+    /// The caller is expected to follow this with
+    /// [`GatewayState::invalidate_binding_revision`] so the change goes
+    /// through the same stale-session-rotation path
+    /// `PATCH .../bindings/{key}` already uses, rather than mutating
+    /// allowlist state the binding/session layer never learns about.
+    pub(crate) fn allowlist_patch(
+        &self,
+        core: &Core,
+        key: &str,
+        workspace: Option<PathBuf>,
+        route: Option<AllowlistRoute>,
+    ) -> Option<AllowlistEntry> {
+        let entry = {
+            let mut map = self
+                .allowlist
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let entry = map.get_mut(key)?;
+            if entry.status != AllowlistStatus::Allowed {
+                return None;
+            }
+            entry.workspace = workspace;
+            entry.route = route;
+            entry.clone()
+        };
+        persist_allowlist(core, self);
+        Some(entry)
+    }
+
+    /// Write-through for the pre-existing `PATCH .../bindings/{key}`
+    /// surface: when this key has an `allowed` entry, its route is the
+    /// source of truth, so a route change made from the binding editor
+    /// lands there too instead of drifting. Returns true when an entry was
+    /// actually updated.
+    pub(crate) fn allowlist_patch_route_if_allowed(
+        &self,
+        core: &Core,
+        key: &str,
+        route: Option<AllowlistRoute>,
+    ) -> bool {
+        let Some(entry) = self.allowlist_get(key) else {
+            return false;
+        };
+        if entry.status != AllowlistStatus::Allowed {
+            return false;
+        }
+        self.allowlist_patch(core, key, entry.workspace, route)
+            .is_some()
+    }
+
+    /// Auto-deny every `pending` entry older than `max_age`, stamping
+    /// `added_by = "expiry"` so an expired request stays visibly distinct
+    /// from an operator's own deny (docs/design/34 open question 1).
+    /// Returns the keys denied.
+    pub(crate) fn allowlist_expire_pending(
+        &self,
+        core: &Core,
+        max_age: chrono::Duration,
+    ) -> Vec<String> {
+        let cutoff = chrono::Utc::now() - max_age;
+        let expired: Vec<String> = self
+            .allowlist
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .filter(|e| {
+                e.status == AllowlistStatus::Pending && parse_added_at_before(&e.added_at, cutoff)
+            })
+            .map(|e| e.key.clone())
+            .collect();
+        for key in &expired {
+            self.allowlist_deny(core, key, "expiry");
+        }
+        expired
+    }
+
+    /// The single answer to "what does this channel route to": the
+    /// allowlist entry's pinned route when it has one (the Phase 1 admin
+    /// surface), otherwise the binding's own provider/model override (the
+    /// pre-existing `PATCH .../bindings/{key}` surface). One source of
+    /// truth read at dispatch, so the two admin surfaces cannot drift.
+    fn effective_route_override(&self, key: &str) -> Option<(String, String)> {
+        if let Some(route) = self
+            .allowlist_get(key)
+            .filter(|e| e.status == AllowlistStatus::Allowed)
+            .and_then(|e| e.route)
+        {
+            return Some((route.provider, route.model));
+        }
+        self.bindings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(key)
+            .and_then(|binding| Some((binding.provider.clone()?, binding.model.clone()?)))
+    }
+
+    /// Drop the cached route revision for `key` without dropping the
+    /// session id — exactly what `set_route_override` does — so the next
+    /// inbound message re-derives the effective route and rotates the
+    /// frozen session if (and only if) it actually changed.
+    pub(crate) fn invalidate_binding_revision(&self, core: &Core, key: &str) {
+        let touched = {
+            let mut bindings = self
+                .bindings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match bindings.get_mut(key) {
+                Some(binding) => {
+                    binding.route_revision = None;
+                    true
+                }
+                None => false,
+            }
+        };
+        if touched {
+            persist_bindings(core, self);
+        }
+    }
+
+    /// Test seam: plant a bound session with a frozen route revision, the
+    /// state dispatch leaves behind, without running a whole turn.
+    #[cfg(test)]
+    pub(crate) fn bind_for_test(&self, key: &str, session_id: &str, revision: &str) {
+        let mut bindings = self
+            .bindings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let binding = bindings.entry(key.to_string()).or_default();
+        binding.session_id = Some(session_id.to_string());
+        binding.route_revision = Some(revision.to_string());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn route_revision_for_test(&self, key: &str) -> Option<String> {
+        self.bindings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(key)
+            .and_then(|b| b.route_revision.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn session_id_for_test(&self, key: &str) -> Option<String> {
+        self.bindings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(key)
+            .and_then(|b| b.session_id.clone())
+    }
+
     /// Revoke an allowed entry: removes it from the store entirely (a
     /// future message from that key starts a fresh pending review, not a
     /// stale "denied" record masquerading as an audit trail).
@@ -646,6 +819,15 @@ impl GatewayState {
         }
         removed
     }
+}
+
+/// True when `added_at` parses as an RFC3339 stamp strictly older than
+/// `cutoff`. An unparseable stamp is never treated as expired: a corrupt
+/// timestamp must not silently auto-deny a live channel.
+fn parse_added_at_before(added_at: &str, cutoff: chrono::DateTime<chrono::Utc>) -> bool {
+    chrono::DateTime::parse_from_rfc3339(added_at)
+        .map(|ts| ts.with_timezone(&chrono::Utc) < cutoff)
+        .unwrap_or(false)
 }
 
 fn persist_bindings(core: &Core, gw: &GatewayState) {
@@ -1237,13 +1419,7 @@ fn binding_session(state: &AppState, key: &str) -> Option<String> {
 }
 
 fn binding_route(state: &AppState, core: &Core, key: &str) -> (String, String, String) {
-    let override_route = state
-        .gateway
-        .bindings
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(key)
-        .and_then(|binding| Some((binding.provider.clone()?, binding.model.clone()?)));
+    let override_route = state.gateway.effective_route_override(key);
     if let Some((provider, model)) = override_route {
         let revision = format!("channel:{}:{}", provider, model);
         return (provider, model, revision);

@@ -43,10 +43,12 @@ mod admin_ui;
 mod channels;
 mod core_pool;
 mod delivery;
+pub mod discord;
 mod events;
 mod gateway;
 mod heartbeat;
 mod rate_limit;
+pub mod slack;
 pub mod telegram;
 
 use std::collections::HashMap;
@@ -356,6 +358,12 @@ fn router_with_state(state: AppState) -> Router {
         .route(
             "/config/telegram-token",
             put(put_telegram_token).delete(delete_telegram_token),
+        )
+        // Per-surface form of the same thing (docs/design/34 Phase 3);
+        // the telegram-specific route above stays for compatibility.
+        .route(
+            "/config/bot-token/{surface}",
+            put(put_bot_token).delete(delete_bot_token),
         )
         .route("/providers", get(list_providers))
         .route("/providers/{name}/models", get(discover_models))
@@ -3006,6 +3014,113 @@ async fn delete_telegram_token(State(state): State<AppState>) -> axum::response:
     }
 }
 
+/// Per-surface bot token, stored exactly like the Telegram one: user-level
+/// `.env`, owner-only, accepted once and never echoed back
+/// (docs/design/34 Phase 3 "a bot-token field per surface").
+///
+/// Only Telegram has a managed service unit today, so `restarted` is true
+/// only for that surface; Discord/Slack bridges are started by hand
+/// (`vak discord --server ...`) and the caller says so.
+async fn put_bot_token(
+    State(state): State<AppState>,
+    axum::extract::Path(surface): axum::extract::Path<String>,
+    Json(body): Json<TelegramTokenBody>,
+) -> axum::response::Response {
+    let Some(env) = vak_core::Core::bot_token_env(&surface) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": format!("unknown chat surface '{surface}'") })),
+        )
+            .into_response();
+    };
+    match state.core.set_bot_token(env, &body.token) {
+        Ok(env_var) => {
+            vak_core::security_events::record(
+                &state.core.sessions_home(),
+                vak_core::security_events::EventKind::ProviderKeyChange,
+                "bot_token_set",
+                &surface,
+                None,
+            );
+            state.hub.emit_config_changed("bot_token_set", &surface);
+            let restarted = surface == "telegram"
+                && vak_ops::restart(vak_ops::Service::Telegram, &vak_ops::OpsConfig::detect());
+            Json(serde_json::json!({
+                "surface": surface,
+                "env_var": env_var,
+                "configured": true,
+                "restarted": restarted,
+            }))
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_bot_token(
+    State(state): State<AppState>,
+    axum::extract::Path(surface): axum::extract::Path<String>,
+) -> axum::response::Response {
+    let Some(env) = vak_core::Core::bot_token_env(&surface) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": format!("unknown chat surface '{surface}'") })),
+        )
+            .into_response();
+    };
+    match state.core.remove_bot_token(env) {
+        Ok(removed) => {
+            vak_core::security_events::record(
+                &state.core.sessions_home(),
+                vak_core::security_events::EventKind::ProviderKeyChange,
+                "bot_token_removed",
+                &format!("surface={surface} shadowed={}", removed.shadowed_by_env),
+                None,
+            );
+            state.hub.emit_config_changed("bot_token_removed", &surface);
+            let restarted = surface == "telegram"
+                && vak_ops::restart(vak_ops::Service::Telegram, &vak_ops::OpsConfig::detect());
+            Json(serde_json::json!({
+                "surface": surface,
+                "env_var": removed.env_var,
+                "configured": removed.shadowed_by_env,
+                "shadowed_by_env": removed.shadowed_by_env,
+                "restarted": restarted,
+            }))
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Every chat bridge's credential state in one shape, so Settings renders
+/// all three surfaces from one list instead of three copies of the
+/// Telegram block (docs/design/34 Phase 3).
+fn chat_surface_status() -> Vec<serde_json::Value> {
+    ["telegram", "discord", "slack"]
+        .iter()
+        .map(|surface| {
+            serde_json::json!({
+                "surface": surface,
+                "env_var": vak_core::Core::bot_token_env(surface),
+                "configured": vak_core::Core::bot_token_configured(surface),
+                // Only Telegram has a managed service unit today; the
+                // others are started by hand and the UI must not promise
+                // otherwise.
+                "managed_service": *surface == "telegram",
+            })
+        })
+        .collect()
+}
+
 async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
     refresh_control_plane(&state);
     let cfg = state.core.config();
@@ -3052,6 +3167,9 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
             "env_var": Core::TELEGRAM_TOKEN_ENV,
             "configured": state.core.telegram_configured(),
         },
+        // docs/design/34 Phase 3: same shape per surface, so Settings can
+        // render all three chat bridges from one list.
+        "chat_surfaces": chat_surface_status(),
         "paths": {
             "project_config": project_path,
             "global_config": vak_config::global_path(),

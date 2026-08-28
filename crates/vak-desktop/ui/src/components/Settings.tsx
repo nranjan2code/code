@@ -304,8 +304,10 @@ export default function Settings() {
   const [saving, setSaving] = createSignal(false);
   const [keyDraft, setKeyDraft] = createSignal<string | null>(null);
   const [keyBusy, setKeyBusy] = createSignal(false);
-  const [telegramDraft, setTelegramDraft] = createSignal<string | null>(null);
-  const [telegramBusy, setTelegramBusy] = createSignal(false);
+  // Per-surface token drafts, keyed by surface name — one Telegram-shaped
+  // field per chat bridge (docs/design/34 Phase 3) instead of three copies.
+  const [tokenDraft, setTokenDraft] = createSignal<Record<string, string>>({});
+  const [tokenBusy, setTokenBusy] = createSignal<string | null>(null);
 
   const loadProviders = async () => {
     try {
@@ -521,44 +523,56 @@ export default function Settings() {
     }
   };
 
-  const saveTelegramToken = async () => {
-    const draft = telegramDraft()?.trim();
+  const draftFor = (surface: string) => tokenDraft()[surface];
+
+  const setDraftFor = (surface: string, value: string | null) =>
+    setTokenDraft((prev) => {
+      const next = { ...prev };
+      if (value === null) delete next[surface];
+      else next[surface] = value;
+      return next;
+    });
+
+  const saveBotToken = async (surface: string, managed: boolean) => {
+    const draft = draftFor(surface)?.trim();
     if (!draft) return;
-    setTelegramBusy(true);
+    setTokenBusy(surface);
     try {
-      const res = await api.putTelegramToken(draft);
-      setTelegramDraft(null);
+      const res = await api.putBotToken(surface, draft);
+      setDraftFor(surface, null);
       await load();
       setNotice({
         kind: "info",
         text: res.restarted
-          ? `Telegram token stored locally (${res.env_var}) and the bridge was restarted with it.`
-          : `Telegram token stored locally (${res.env_var}). The bridge isn't installed as a service yet — start it from Operations to use it.`,
+          ? `${surface} token stored locally (${res.env_var}) and the bridge was restarted with it.`
+          : managed
+            ? `${surface} token stored locally (${res.env_var}). The bridge isn't installed as a service yet — start it from Operations to use it.`
+            : `${surface} token stored locally (${res.env_var}). Start the bridge with \`vak ${surface} --server <gateway-url>\` to use it.`,
       });
     } catch (error) {
-      setNotice({ kind: "error", text: `Could not store Telegram token: ${error instanceof Error ? error.message : String(error)}` });
+      setNotice({ kind: "error", text: `Could not store ${surface} token: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
-      setTelegramBusy(false);
+      setTokenBusy(null);
     }
   };
 
-  const removeTelegramToken = async () => {
-    setTelegramBusy(true);
+  const removeBotToken = async (surface: string) => {
+    setTokenBusy(surface);
     try {
-      const res = await api.removeTelegramToken();
+      const res = await api.removeBotToken(surface);
       await load();
       setNotice({
         kind: "info",
         text: res.shadowed_by_env
           ? `Removed from ~/.vak/.env, but ${res.env_var} is still set in the real environment.`
           : res.restarted
-            ? "Telegram token removed and the bridge was restarted."
-            : "Telegram token removed.",
+            ? `${surface} token removed and the bridge was restarted.`
+            : `${surface} token removed.`,
       });
     } catch (error) {
-      setNotice({ kind: "error", text: `Could not remove Telegram token: ${error instanceof Error ? error.message : String(error)}` });
+      setNotice({ kind: "error", text: `Could not remove ${surface} token: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
-      setTelegramBusy(false);
+      setTokenBusy(null);
     }
   };
 
@@ -755,28 +769,33 @@ export default function Settings() {
                     </Show>
                   </Show>
                 </Row>
+                {/* docs/design/34 Phase 3: one token field per chat
+                    surface, all stored the same way. Falls back to the
+                    Telegram-only shape when talking to an older server. */}
+                <For each={config()?.chat_surfaces ?? [{ surface: "telegram" as const, env_var: config()?.telegram.env_var ?? "TELEGRAM_BOT_TOKEN", configured: !!config()?.telegram.configured, managed_service: true }]}>{(chat) => (
                 <Row
-                  title={`Telegram bridge — ${config()?.telegram.env_var ?? "TELEGRAM_BOT_TOKEN"}`}
-                  description={`${config()?.telegram.configured ? "Saved on this device" : "Not set yet"} · stored in ~/.vak/.env with owner-only permissions. Saving restarts the bridge automatically.`}
+                  title={`${chat.surface} bridge — ${chat.env_var}`}
+                  description={`${chat.configured ? "Saved on this device" : "Not set yet"} · stored in ~/.vak/.env with owner-only permissions. ${chat.managed_service ? "Saving restarts the bridge automatically." : `Start it with \`vak ${chat.surface} --server <gateway-url>\` after saving.`}`}
                 >
                   <Show
-                    when={telegramDraft() === null}
+                    when={draftFor(chat.surface) === undefined}
                     fallback={
                       <span class="key-edit">
-                        <input type="password" autocomplete="off" spellcheck={false} placeholder="paste bot token from @BotFather" aria-label="Telegram bot token" value={telegramDraft() ?? ""} onInput={(e) => setTelegramDraft(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void saveTelegramToken()} />
-                        <button class="btn primary sm" disabled={telegramBusy() || !telegramDraft()?.trim()} onClick={() => void saveTelegramToken()}>{telegramBusy() ? "Saving…" : "Save"}</button>
-                        <button class="settings-button" onClick={() => setTelegramDraft(null)}>Cancel</button>
+                        <input type="password" autocomplete="off" spellcheck={false} placeholder={`paste ${chat.surface} bot token`} aria-label={`${chat.surface} bot token`} value={draftFor(chat.surface) ?? ""} onInput={(e) => setDraftFor(chat.surface, e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void saveBotToken(chat.surface, chat.managed_service)} />
+                        <button class="btn primary sm" disabled={tokenBusy() === chat.surface || !draftFor(chat.surface)?.trim()} onClick={() => void saveBotToken(chat.surface, chat.managed_service)}>{tokenBusy() === chat.surface ? "Saving…" : "Save"}</button>
+                        <button class="settings-button" onClick={() => setDraftFor(chat.surface, null)}>Cancel</button>
                       </span>
                     }
                   >
                     <span class="key-edit">
-                      <button class="settings-button" onClick={() => setTelegramDraft("")}>{config()?.telegram.configured ? "Replace token" : "Add token"}</button>
-                      <Show when={config()?.telegram.configured}>
-                        <button class="settings-button danger" disabled={telegramBusy()} onClick={() => void removeTelegramToken()}>Remove token</button>
+                      <button class="settings-button" onClick={() => setDraftFor(chat.surface, "")}>{chat.configured ? "Replace token" : "Add token"}</button>
+                      <Show when={chat.configured}>
+                        <button class="settings-button danger" disabled={tokenBusy() === chat.surface} onClick={() => void removeBotToken(chat.surface)}>Remove token</button>
                       </Show>
                     </span>
                   </Show>
                 </Row>
+                )}</For>
               </Group>
               <div class="settings-actions">
                 <button class="btn primary" disabled={saving() || !agentDirty() || !provider().trim() || !model().trim()} onClick={() => void applyAgent()}>{saving() ? "Applying…" : "Apply changes"}</button>

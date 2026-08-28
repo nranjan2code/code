@@ -754,6 +754,12 @@ button.approve:hover:not(:disabled) { background: #88c298; border-color: #88c298
 .chip-tone-warning { color: var(--amber); background: var(--amber-soft); }
 .chip-tone-success { color: var(--green); background: var(--green-soft); }
 .chip-tone-danger { color: var(--red); background: var(--red-soft); }
+/* Per-surface badge (docs/design/34 Phase 3): a mixed Telegram/Discord/
+   Slack deployment must read at a glance, not by parsing key prefixes. */
+.chip-surface { letter-spacing: 0.02em; }
+.chip-surface[data-surface="telegram"] { color: var(--blue, #3aa0e0); }
+.chip-surface[data-surface="discord"] { color: #8b93f8; }
+.chip-surface[data-surface="slack"] { color: #cf7ab5; }
 .pending-card { border-color: var(--amber); }
 .pending-card .binding-meta { white-space: pre-wrap; word-break: break-word; }
 .pending-first-seen {

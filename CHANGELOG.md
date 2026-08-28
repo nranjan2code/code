@@ -2,6 +2,69 @@
 
 ## Unreleased
 
+### Channel onboarding: editing, doctor/repair, Discord + Slack bridges
+
+**Editing an already-allowed channel.** `PATCH
+/admin/api/gateway/allowlist/{key}` re-points an `allowed` entry's
+`workspace`/`route` in place, preserving `added_at`/`added_by` — an
+operator can move a channel to another project or change its pinned model
+without revoke-and-re-approve, which lost provenance and 403'd the channel
+in between. Only `allowed` entries are editable (404 otherwise);
+pending/denied still move through approve/deny.
+
+This closes a real drift risk rather than adding a second config: the
+allowlist entry's `route` was written by Phase 1's approve flow but never
+read at dispatch, which only consulted the binding's own provider/model
+override. There is now one `effective_route_override` both surfaces
+resolve through — the entry's pinned route when it has one, the binding
+override otherwise — and `PATCH .../bindings/{key}` writes through to the
+entry when one exists, so the two admin surfaces can no longer disagree
+about what a channel routes to. The edit goes through the same
+stale-detection seam the binding editor already uses: the cached route
+revision is dropped (never the ledger), so the next inbound message
+rotates to a fresh frozen session only if the effective route really
+changed.
+
+**`vak doctor` gains a `gateway channels` check.** It fails when an
+`allowed` entry's workspace no longer exists or isn't readable, or when a
+`pending` entry has sat past the expiry window; the pass detail is counts,
+the failure detail names the offending keys. It reads the allowlist store
+directly — no `Core` is started per workspace just to check one.
+
+**`[gateway] pending_expiry_days`** (default 7) sets that window.
+`vak doctor --repair` auto-denies expired pending entries, stamping
+`added_by: "expiry"` so they stay visibly distinct from an operator's own
+deny rather than being silently deleted. A gateway applies the same expiry
+on startup, so the online and offline paths converge. An `allowed` entry
+with an unreachable workspace is deliberately *not* auto-repaired —
+re-pointing it is a judgment call — and `--repair` says so instead of
+guessing.
+
+**Workspace picker.** `GET /admin/api/gateway/status` now reports
+`known_workspaces` (workspaces vak has session ledgers for, plus the
+gateway's own cwd and any pooled workspace), and the Admin UI's approve
+and edit forms offer them as a dropdown with a "custom path" fallback that
+visibly notes the path is unverified until a Core actually starts there.
+
+**Discord and Slack bridges** (`vak discord` / `vak slack`, same flag
+shape as `vak telegram`) implement `InboundChannel` with `chat` = channel
+id and `sender` = user id, so Phase 1's pending/approve/deny/revoke
+lifecycle applies to them unchanged. Delivery adapters are registered
+alongside `TelegramAdapter` when `DISCORD_BOT_TOKEN` / `SLACK_BOT_TOKEN`
+are set. The Admin UI channel panels gain a per-surface badge.
+
+Desktop Settings now has a bot-token field per chat surface, all stored
+the same way as the existing Telegram one (user `.env`, owner-only), via
+new `PUT/DELETE /config/bot-token/{surface}` routes.
+
+Two deliberate limits, both noted in `docs/design/34`: the new bridges
+**poll** (`DISCORD_CHANNEL_IDS` / `SLACK_CHANNEL_IDS`) rather than using
+Discord's gateway websocket or Slack Socket Mode, which would add a
+websocket dependency the workspace does not have; and forwarded approvals
+on these surfaces are **typed yes/no prompts**, not interactive
+buttons/Block Kit — the same fallback Telegram used before its inline
+keyboard, resolving through the one existing `parse_verdict` path.
+
 ### Channel onboarding: live allowlist store + Admin UI approvals
 
 `gateway.chat_allowlist` is no longer a config-file-only, restart-required
