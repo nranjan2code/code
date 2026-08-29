@@ -157,6 +157,7 @@ async fn telegram_bridge_routes_message_and_delivers_reply() {
         bot_token: "bottok".into(),
         gateway_url: format!("http://{gw_addr}"),
         gateway_token: "vk_test".into(),
+        bot_id: None,
     };
 
     let next = bridge.tick(0).await.unwrap();
@@ -271,6 +272,7 @@ async fn bridge_survives_outage_window_and_resumes_cursor() {
         bot_token: "bottok".into(),
         gateway_url: format!("http://{gw_addr}"),
         gateway_token: "vk_test".into(),
+        bot_id: None,
     };
 
     // Ownership probe runs while "down" — must classify as transient, not

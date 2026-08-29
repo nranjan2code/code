@@ -1559,7 +1559,7 @@ async fn run_discord(server: String, token_flag: Option<String>, bot_id: Option<
     else {
         return 2;
     };
-    let bridge = vak_server::discord::DiscordBridge::from_env(server, token, bot_token);
+    let bridge = vak_server::discord::DiscordBridge::from_env(server, token, bot_token, bot_id);
     println!(
         "discord bridge: {} -> {} ({} channel(s))",
         bridge.api_base,
@@ -1585,7 +1585,7 @@ async fn run_slack(server: String, token_flag: Option<String>, bot_id: Option<St
     else {
         return 2;
     };
-    let bridge = vak_server::slack::SlackBridge::from_env(server, token, bot_token);
+    let bridge = vak_server::slack::SlackBridge::from_env(server, token, bot_token, bot_id);
     println!(
         "slack bridge: {} -> {} ({} channel(s))",
         bridge.api_base,
@@ -1622,6 +1622,7 @@ async fn run_telegram(server: String, token_flag: Option<String>, bot_id: Option
         gateway_url: server.trim_end_matches('/').to_string(),
         gateway_token: token,
         locks_dir,
+        bot_id,
     };
     println!(
         "telegram bridge: {} -> {}",

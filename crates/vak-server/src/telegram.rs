@@ -42,6 +42,11 @@ pub struct TelegramBridge {
     /// Directory for the per-token single-instance lock
     /// (`$VAK_HOME/locks`). None skips locking (tests only).
     pub locks_dir: Option<PathBuf>,
+    /// This bot's id in the admin console's Bots list (`--bot-id`), when
+    /// running the multi-bot path. Forwarded on every inbound message so a
+    /// chat's first-sight pending entry already knows which bot delivered
+    /// it (docs/design/34) — `None` for the legacy single-bot flow.
+    pub bot_id: Option<String>,
 }
 
 impl InboundChannel for TelegramBridge {
@@ -320,7 +325,8 @@ impl TelegramBridge {
                 .await;
         };
         let req =
-            InboundRequest::new(self, cb.chat_id.to_string(), cb.sender_id.to_string(), text)?;
+            InboundRequest::new(self, cb.chat_id.to_string(), cb.sender_id.to_string(), text)?
+                .with_bot_id(self.bot_id.clone());
         let res = http()
             .post(format!("{}/gateway/inbound", self.gateway_url))
             .bearer_auth(&self.gateway_token)
@@ -380,7 +386,10 @@ impl TelegramBridge {
             sender_id.to_string(),
             text.to_string(),
         ) {
-            Ok(req) => req.with_attachments(attachments.to_vec()).waiting(),
+            Ok(req) => req
+                .with_attachments(attachments.to_vec())
+                .waiting()
+                .with_bot_id(self.bot_id.clone()),
             Err(e) => {
                 return GatewayReply {
                     text: format!("(bridge refused to send: {e})"),

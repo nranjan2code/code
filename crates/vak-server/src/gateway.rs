@@ -56,6 +56,14 @@ pub struct InboundRequest {
     pub attachments: Vec<serde_json::Value>,
     #[serde(default)]
     pub wait: bool,
+    /// Which configured bot this bridge process is running as
+    /// (multi-bot-per-channel, docs/design/34), when it knows — set via
+    /// `--bot-id` on the CLI bridge. Lets a chat's first-sight pending
+    /// entry record the bot that actually delivered it, instead of
+    /// forcing the operator to pick one by hand for a fact the bridge
+    /// already had.
+    #[serde(default)]
+    pub bot_id: Option<String>,
 }
 
 impl InboundRequest {
@@ -89,6 +97,7 @@ impl InboundRequest {
             text: text.into(),
             attachments: Vec::new(),
             wait: false,
+            bot_id: None,
         })
     }
 
@@ -99,6 +108,13 @@ impl InboundRequest {
 
     pub fn waiting(mut self) -> Self {
         self.wait = true;
+        self
+    }
+
+    /// Tag this request with the bot identity the bridge is running as, if
+    /// any (see the `bot_id` field doc).
+    pub fn with_bot_id(mut self, bot_id: Option<String>) -> Self {
+        self.bot_id = bot_id;
         self
     }
 }
@@ -773,6 +789,7 @@ impl GatewayState {
         core: &Core,
         key: &str,
         first_seen_text: &str,
+        bot_id: Option<&str>,
     ) -> AllowlistDecision {
         let mut map = self
             .allowlist
@@ -799,7 +816,7 @@ impl GatewayState {
                         added_at: chrono::Utc::now().to_rfc3339(),
                         added_by: "gateway".into(),
                         first_seen_text: Some(truncated),
-                        bot_id: None,
+                        bot_id: bot_id.map(str::to_string),
                         inherit_bot_policy: true,
                     },
                 );
@@ -1257,6 +1274,9 @@ struct InboundBody {
     attachments: Vec<InboundAttachment>,
     #[serde(default)]
     capabilities: Option<crate::delivery::RequestedCapabilities>,
+    /// See [`InboundRequest::bot_id`].
+    #[serde(default)]
+    bot_id: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1472,9 +1492,12 @@ async fn gateway_inbound(
     // through" that isn't a hand-edited config file + process restart.
     // `chat_allowlist_open = true` still bypasses the store entirely.
     if !state.gateway.chat_allowlist_open() {
-        let decision = state
-            .gateway
-            .allowlist_resolve_inbound(&state.core, &key, &text);
+        let decision = state.gateway.allowlist_resolve_inbound(
+            &state.core,
+            &key,
+            &text,
+            body.bot_id.as_deref(),
+        );
         match decision {
             AllowlistDecision::Allowed => {}
             AllowlistDecision::Denied => {
@@ -2486,7 +2509,7 @@ mod tests {
         );
         let gw = GatewayState::load(&core, true);
 
-        let first = gw.allowlist_resolve_inbound(&core, "telegram:99", "hello there");
+        let first = gw.allowlist_resolve_inbound(&core, "telegram:99", "hello there", None);
         assert!(matches!(first, AllowlistDecision::NewlyPending));
         let entry = gw.allowlist_get("telegram:99").unwrap();
         assert_eq!(entry.status, AllowlistStatus::Pending);
@@ -2495,7 +2518,7 @@ mod tests {
 
         // A repeat message on the same pending key does not duplicate or
         // bump added_at.
-        let second = gw.allowlist_resolve_inbound(&core, "telegram:99", "hello again");
+        let second = gw.allowlist_resolve_inbound(&core, "telegram:99", "hello again", None);
         assert!(matches!(second, AllowlistDecision::StillPending));
         let entry2 = gw.allowlist_get("telegram:99").unwrap();
         assert_eq!(entry2.added_at, added_at);
@@ -2520,14 +2543,14 @@ mod tests {
             "admin",
         );
         assert!(matches!(
-            gw.allowlist_resolve_inbound(&core, "telegram:100", "hi"),
+            gw.allowlist_resolve_inbound(&core, "telegram:100", "hi", None),
             AllowlistDecision::Allowed
         ));
 
         // Denied key stays rejected.
         gw.allowlist_deny(&core, "telegram:101", "admin");
         assert!(matches!(
-            gw.allowlist_resolve_inbound(&core, "telegram:101", "hi"),
+            gw.allowlist_resolve_inbound(&core, "telegram:101", "hi", None),
             AllowlistDecision::Denied
         ));
     }
@@ -2537,7 +2560,7 @@ mod tests {
         let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
         let gw = GatewayState::load(&core, true);
         let long = "x".repeat(FIRST_SEEN_TEXT_MAX_CHARS + 50);
-        gw.allowlist_resolve_inbound(&core, "telegram:200", &long);
+        gw.allowlist_resolve_inbound(&core, "telegram:200", &long, None);
         let entry = gw.allowlist_get("telegram:200").unwrap();
         assert_eq!(
             entry.first_seen_text.unwrap().chars().count(),

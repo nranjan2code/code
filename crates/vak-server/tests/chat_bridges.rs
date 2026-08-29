@@ -177,6 +177,7 @@ async fn discord_bridge_routes_message_and_delivers_reply() {
         gateway_url,
         gateway_token: "vk_test".into(),
         poll_secs: 0,
+        bot_id: None,
     };
 
     // First pass seeds the cursor from the channel's latest message
@@ -203,6 +204,7 @@ async fn discord_bridge_replies_to_a_message_after_the_cursor() {
         gateway_url,
         gateway_token: "vk_test".into(),
         poll_secs: 0,
+        bot_id: None,
     };
     // Pre-seed the cursor so the scripted message counts as new.
     let mut cursors = HashMap::from([("555".to_string(), "1".to_string())]);
@@ -225,6 +227,7 @@ async fn slack_bridge_replies_to_a_message_after_the_cursor() {
         gateway_url,
         gateway_token: "vk_test".into(),
         poll_secs: 0,
+        bot_id: None,
     };
     let mut cursors = HashMap::from([("C1".to_string(), "1.0".to_string())]);
     bridge.tick(&mut cursors).await.unwrap();
@@ -250,6 +253,7 @@ async fn a_chat_not_on_the_allowlist_gets_a_rejection_not_an_agent_turn() {
         gateway_url,
         gateway_token: "vk_test".into(),
         poll_secs: 0,
+        bot_id: None,
     };
     let mut cursors = HashMap::from([("555".to_string(), "1".to_string())]);
     bridge.tick(&mut cursors).await.unwrap();

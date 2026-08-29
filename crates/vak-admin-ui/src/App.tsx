@@ -4208,11 +4208,29 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
     return map;
   });
 
+  // Multiple bots can share one surface (multi-bot-per-channel), so a chat
+  // list with no bot column reads as if every Telegram chat talks to the
+  // same bot. This resolves the label the row detail already lets you set
+  // (`GatewayBindingEditor`'s bot picker) so the list itself shows it too.
+  const botsById = createMemo(() => {
+    const map = new Map<string, Bot>();
+    for (const b of props.ctx.bots()) map.set(b.id, b);
+    return map;
+  });
+  const botLabel = (botId: string | null | undefined) =>
+    botId ? (botsById().get(botId)?.label ?? botId) : null;
+
   const rows = createMemo(() => {
     const needle = filter().trim().toLowerCase();
-    return (props.ctx.status()?.bindings ?? []).filter(
-      (b) => !needle || b.target.toLowerCase().includes(needle) || b.workspace.toLowerCase().includes(needle),
-    );
+    if (!needle) return props.ctx.status()?.bindings ?? [];
+    return (props.ctx.status()?.bindings ?? []).filter((b) => {
+      const label = botLabel(byKey().get(b.target)?.bot_id)?.toLowerCase() ?? "";
+      return (
+        b.target.toLowerCase().includes(needle) ||
+        b.workspace.toLowerCase().includes(needle) ||
+        label.includes(needle)
+      );
+    });
   });
 
   const registerManually = async () => {
@@ -4283,9 +4301,9 @@ One row per approved chat: which project it works in, which model answers, and w
           <Match when={props.ctx.statusLoading()}>
             <table class="table">
               <thead>
-                <tr><th>chat</th><th>app</th><th>project</th><th>model</th><th>can do</th><th>status</th><th /></tr>
+                <tr><th>chat</th><th>app</th><th>bot</th><th>project</th><th>model</th><th>can do</th><th>status</th><th /></tr>
               </thead>
-              <tbody><SkeletonRows cols={7} /></tbody>
+              <tbody><SkeletonRows cols={8} /></tbody>
             </table>
           </Match>
 
@@ -4311,7 +4329,7 @@ A connected chat â€” a Telegram group, a Discord channel, a Slack conversation â
           <Match when={rows().length > 0}>
             <table class="table">
               <thead>
-                <tr><th>chat</th><th>app</th><th>project</th><th>model</th><th>can do</th><th>status</th><th /></tr>
+                <tr><th>chat</th><th>app</th><th>bot</th><th>project</th><th>model</th><th>can do</th><th>status</th><th /></tr>
               </thead>
               <tbody>
                 <For each={rows()}>
@@ -4328,6 +4346,11 @@ A connected chat â€” a Telegram group, a Discord channel, a Slack conversation â
                         >
                           <td class="mono">{binding.target}</td>
                           <td><SurfaceBadge channelKey={binding.target} /></td>
+                          <td>
+                            <Show when={botLabel(entry()?.bot_id)} fallback={<span class="dim">â€”</span>}>
+                              <span class="chip chip-mode">{botLabel(entry()?.bot_id)}</span>
+                            </Show>
+                          </td>
                           <td class="dim col-path"><PathCell path={binding.workspace} /></td>
                           <td class="mono dim">
                             {binding.effective_route.provider} / {binding.effective_route.model}
@@ -4357,7 +4380,7 @@ A connected chat â€” a Telegram group, a Discord channel, a Slack conversation â
                         </tr>
                         <Show when={open()}>
                           <tr class="row-detail">
-                            <td colspan={7}>
+                            <td colspan={8}>
                               <GatewayBindingEditor
                                 binding={binding}
                                 providers={props.ctx.providers()}

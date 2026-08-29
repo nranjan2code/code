@@ -550,6 +550,31 @@ pub fn run_services_sync(prefix: Option<PathBuf>, names: Vec<String>) -> i32 {
             action => println!("✓ {}: {action:?}", o.name),
         }
     }
+
+    // Per-bot bridge units (docs/design/34, multi-bot-per-channel) aren't in
+    // the static SERVICES table above — there's no fixed count of them, so
+    // they're reconciled separately against bots.json every time services
+    // are synced (install, update, and manual `self services-sync` alike).
+    // Without this, a bot created before the binary that first understood
+    // multi-bot units would never get its unit spawned until the next admin
+    // console edit touched it.
+    let bot_outcomes = vak_ops::services::sync_bots(
+        &cli,
+        &vak_config::paths::data_home(),
+        &vak_ops::OpsConfig::detect().base_url(),
+        &vak_ops::services::Paths::default(),
+        &vak_ops::services::SystemRunner,
+    );
+    for o in bot_outcomes {
+        match o.action {
+            vak_ops::services::SyncAction::Failed(e) => {
+                failed = true;
+                println!("✗ {}: {e}", o.name);
+            }
+            action => println!("✓ {}: {action:?}", o.name),
+        }
+    }
+
     if failed { 1 } else { 0 }
 }
 

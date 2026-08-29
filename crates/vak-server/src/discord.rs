@@ -36,6 +36,8 @@ pub struct DiscordBridge {
     /// Seconds between polls. Discord's REST rate limits are generous at
     /// this cadence for a handful of channels.
     pub poll_secs: u64,
+    /// See `TelegramBridge::bot_id`.
+    pub bot_id: Option<String>,
 }
 
 impl InboundChannel for DiscordBridge {
@@ -105,7 +107,12 @@ pub fn backoff_secs(attempt: u32) -> u64 {
 }
 
 impl DiscordBridge {
-    pub fn from_env(gateway_url: String, gateway_token: String, bot_token: String) -> Self {
+    pub fn from_env(
+        gateway_url: String,
+        gateway_token: String,
+        bot_token: String,
+        bot_id: Option<String>,
+    ) -> Self {
         let channel_ids = vak_config::get_var("DISCORD_CHANNEL_IDS")
             .unwrap_or_default()
             .split(',')
@@ -120,6 +127,7 @@ impl DiscordBridge {
             gateway_url: gateway_url.trim_end_matches('/').to_string(),
             gateway_token,
             poll_secs: 3,
+            bot_id,
         }
     }
 
@@ -186,7 +194,7 @@ impl DiscordBridge {
             message.author_id.clone(),
             message.text.clone(),
         ) {
-            Ok(req) => req.waiting(),
+            Ok(req) => req.waiting().with_bot_id(self.bot_id.clone()),
             Err(e) => return format!("(bridge refused to send: {e})"),
         };
         let res = http()
@@ -301,6 +309,7 @@ mod tests {
             gateway_url: "http://localhost".into(),
             gateway_token: "g".into(),
             poll_secs: 1,
+            bot_id: None,
         }
     }
 
