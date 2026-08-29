@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 pub mod client;
 pub mod outbox;
 pub mod presentation;
+pub mod skills;
 pub mod telegram;
 pub mod templates;
 
@@ -20,6 +21,13 @@ pub use presentation::{
     OutputProvenance, OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline,
     PresentationDocument, SurfaceCapabilities, TableAlignment, compile_markdown, inline_text,
     safe_link,
+};
+pub use skills::{
+    ChartOutput, ChartPoint, ChartSeries, DecisionDisposition, LinkPreview, MediaOutput, Metric,
+    PRESENTATION_SKILL_API, PlanDiagnostic, PresentationDecision, PresentationPlan,
+    PresentationPlanner, PresentationRecipe, PresentationSkillManifest, RecipeCatalog,
+    RendererBinding, SkillError, SkillRegistry, StructuredOutput, built_in_recipes,
+    built_in_skill_registry, link_previews_from_text, signals_from_text,
 };
 
 pub const DELIVERY_SCHEMA_VERSION: u16 = 2;

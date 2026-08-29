@@ -214,6 +214,31 @@ Primary references:
 - Rendering is versioned. A packet records the renderer/schema version and
   degradation decisions for debugging and replay.
 
+## Governed presentation skills
+
+Presentation is extensible through the versioned `presentation.v1` skill
+contract. A skill registers typed semantic outputs (for example
+`link.preview`, `metric`, `chart`, or `media.image`) and a capability-scoped
+renderer binding. Skills contribute data and metadata only; they cannot ship
+executable UI code or mount raw HTML. The trusted renderer registry validates
+the closed payload schema, checks the target surface capabilities, and records
+the selected renderer or an explicit fallback diagnostic.
+
+The planner first extracts deterministic signals from the completed timeline,
+then selects the highest-specificity built-in recipe. Recipes are ordinary
+versioned data and are intentionally small: research, weather, coding change
+and test reports, approvals, and artifact collections are provided out of the
+box, while domain skills may register narrower recipes. If no recipe matches,
+`answer.basic` is used. The decision (recipe id/version, matched signals,
+renderer, and rejected candidates) is persisted in presentation metadata so a
+user can inspect “Why this rendering?” and an operator can reproduce it.
+
+Rich cards are therefore a projection, not a second transcript. Desktop may
+render trusted link previews, metrics, charts, and media; terminal and chat
+surfaces receive deterministic compact text or links when their capabilities
+do not include the richer component. The exact source Markdown remains the
+export and emergency fallback for every projection.
+
 ## Integration status
 
 1. Durable outbox records and a persistent worker supervisor: complete.

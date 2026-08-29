@@ -109,6 +109,10 @@ export interface UiPreferences {
   suggestions: boolean;
   notifications: boolean;
   reduceMotion: boolean;
+  richPreviews: boolean;
+  experimentalSkills: boolean;
+  externalMedia: boolean;
+  autoplayMedia: boolean;
 }
 
 const defaultUiPreferences: UiPreferences = {
@@ -119,6 +123,10 @@ const defaultUiPreferences: UiPreferences = {
   suggestions: true,
   notifications: true,
   reduceMotion: false,
+  richPreviews: true,
+  experimentalSkills: false,
+  externalMedia: true,
+  autoplayMedia: false,
 };
 
 function loadUiPreferences(): UiPreferences {

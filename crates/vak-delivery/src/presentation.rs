@@ -106,6 +106,11 @@ pub enum OutputContent {
     Artifact {
         artifact: ArtifactRef,
     },
+    /// Validated data supplied by an installed presentation skill. The
+    /// renderer registry, never the model, decides how this is displayed.
+    Structured {
+        output: crate::skills::StructuredOutput,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

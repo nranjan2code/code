@@ -7,7 +7,7 @@ import type {
   OutputTimeline,
   PresentationDocument,
 } from "../types";
-import { density, openInEditor } from "../store";
+import { density, openInEditor, uiPreferences } from "../store";
 import { approve, openFileSmart } from "../App";
 import Icon from "./Icon";
 import MarkdownView from "./MarkdownView";
@@ -143,14 +143,31 @@ function Blocks(props: { blocks: DocumentBlock[] }): JSX.Element {
 export function PresentationDocumentView(props: { document: PresentationDocument }) {
   const plain = () => props.document.blocks.every((block) => ["heading", "paragraph", "list", "quote", "rule"].includes(block.type));
   if (plain() && props.document.source_markdown.trim()) {
-    return <MarkdownView text={props.document.source_markdown} />;
+    return <><MarkdownView text={props.document.source_markdown} /><RenderAudit document={props.document} /></>;
   }
   return (
     <div class="semantic-document">
       <Blocks blocks={props.document.blocks} />
       <For each={props.document.diagnostics}>{(diagnostic) => <div class="semantic-diagnostic">{diagnostic}</div>}</For>
+      <RenderAudit document={props.document} />
     </div>
   );
+}
+
+function RenderAudit(props: { document: PresentationDocument }) {
+  const metadata = props.document.metadata;
+  const recipe = metadata.recipe_id;
+  return <Show when={recipe || props.document.diagnostics.length > 0}>
+    <details class="semantic-render-audit">
+      <summary>Why this rendering?</summary>
+      <dl>
+        <Show when={recipe}><div><dt>Recipe</dt><dd>{recipe} · {metadata.recipe_version ?? "unknown version"}</dd></div></Show>
+        <Show when={metadata.renderer}><div><dt>Renderer</dt><dd>{metadata.renderer}</dd></div></Show>
+        <Show when={metadata.matched_signals}><div><dt>Signals</dt><dd>{metadata.matched_signals}</dd></div></Show>
+        <Show when={props.document.diagnostics.length > 0}><div><dt>Diagnostics</dt><dd>{props.document.diagnostics.join("; ")}</dd></div></Show>
+      </dl>
+    </details>
+  </Show>;
 }
 
 function Artifact(props: { item: OutputItem }) {
@@ -199,6 +216,49 @@ function ActivityRow(props: { item: OutputItem }) {
   return <div class={`semantic-activity ${props.item.status}`}><span class="semantic-status-dot" /><strong>{label()}</strong><span>{props.item.fallback_text}</span><small>{props.item.status}</small></div>;
 }
 
+function StructuredView(props: { output: import("../types").StructuredOutput }) {
+  if (!uiPreferences.richPreviews) {
+    return <div class="rich-unsupported"><strong>{props.output.semantic_type}</strong><span>Rich rendering is disabled in Appearance settings.</span></div>;
+  }
+  const payload = props.output.payload;
+  if (props.output.semantic_type === "link.preview" && typeof payload.url === "string") {
+    return <a class="rich-link-card" href={safeUrl(payload.url) ? payload.url : undefined} target="_blank" rel="noreferrer">
+      <Show when={typeof payload.image_url === "string" && safeUrl(payload.image_url, true)}><img src={payload.image_url as string} alt="" /></Show>
+      <span><strong>{String(payload.title ?? payload.url)}</strong><small>{String(payload.description ?? payload.site_name ?? payload.url)}</small></span>
+    </a>;
+  }
+  if (props.output.semantic_type === "metric") {
+    return <div class="rich-metric"><small>{String(payload.label ?? "Metric")}</small><strong>{String(payload.value ?? "—")}{payload.unit ? ` ${String(payload.unit)}` : ""}</strong></div>;
+  }
+  if (props.output.semantic_type === "chart" && Array.isArray(payload.series)) {
+    const series = (payload.series as { name?: string; points?: { x?: unknown; y?: number }[] }[]).filter((item) => Array.isArray(item.points));
+    const points = series[0]?.points ?? [];
+    const values = points.map((point) => Number(point.y)).filter(Number.isFinite);
+    const max = Math.max(...values, 1);
+    const min = Math.min(...values, 0);
+    const range = Math.max(max - min, 1);
+    const width = 640;
+    const height = 220;
+    const path = values.map((value, index) => `${index ? "L" : "M"}${(index / Math.max(values.length - 1, 1)) * width},${height - ((value - min) / range) * (height - 24)}`).join(" ");
+    return <figure class="rich-chart" aria-label={String(payload.accessible_summary ?? payload.title ?? "Chart")}>
+      <Show when={payload.title}><figcaption>{String(payload.title)}</figcaption></Show>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-hidden="true" preserveAspectRatio="none">
+        <path d={`M0 ${height - 1}H${width}`} class="rich-chart-axis" />
+        <Show when={values.length > 1}><path d={path} class="rich-chart-line" /></Show>
+        <For each={values}>{(value, index) => <circle cx={(index() / Math.max(values.length - 1, 1)) * width} cy={height - ((value - min) / range) * (height - 24)} r="3.5" class="rich-chart-point"><title>{`${String(points[index()]?.x ?? index())}: ${value}`}</title></circle>}</For>
+      </svg>
+      <small>{String(payload.accessible_summary ?? "")}</small>
+    </figure>;
+  }
+  if (props.output.semantic_type.startsWith("media.") && uiPreferences.externalMedia && typeof payload.source === "string" && safeUrl(payload.source, true)) {
+    return payload.media_type === "image" || String(payload.media_type).startsWith("image/")
+      ? <figure class="rich-media"><img src={payload.source} alt={String(payload.alt ?? "")} /><Show when={payload.alt}><figcaption>{String(payload.alt)}</figcaption></Show></figure>
+      : String(payload.media_type).startsWith("video/") ? <video class="rich-video" src={payload.source} controls preload="metadata" autoplay={uiPreferences.autoplayMedia} aria-label={String(payload.alt ?? "Video")} />
+      : <a class="rich-media-link" href={payload.source} target="_blank" rel="noreferrer">Open {String(payload.media_type ?? "media")}</a>;
+  }
+  return <div class="rich-unsupported"><strong>{props.output.semantic_type}</strong><span>{JSON.stringify(payload)}</span></div>;
+}
+
 function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
   const users = () => props.items.filter((item) => item.role === "user" && item.content.type === "document");
   const outcomes = () => props.items.filter((item) => item.kind === "outcome" && item.content.type === "document");
@@ -206,11 +266,13 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
   const approvals = () => props.items.filter((item) => item.kind === "approval");
   const artifacts = () => props.items.filter((item) => item.kind === "artifact");
   const activity = () => props.items.filter((item) => ["progress", "retry", "information"].includes(item.kind));
+  const structured = () => props.items.filter((item) => item.content.type === "structured");
   return (
     <section class="semantic-turn" data-turn={props.id}>
       <For each={users()}>{(item) => item.content.type === "document" && <div class="semantic-user"><PresentationDocumentView document={item.content.document} /></div>}</For>
       <For each={approvals()}>{(item) => <SemanticApproval item={item} sessionId={props.sessionId} />}</For>
       <For each={outcomes()}>{(item) => item.content.type === "document" && <article class="semantic-outcome"><PresentationDocumentView document={item.content.document} /></article>}</For>
+      <For each={structured()}>{(item) => item.content.type === "structured" && <StructuredView output={item.content.output} />}</For>
       <For each={errors()}>{(item) => <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{item.fallback_text}</p></div></section>}</For>
       <Show when={artifacts().length > 0}><section class="artifact-shelf" aria-label="Artifacts"><div class="artifact-shelf-head">Artifacts <span>{artifacts().length}</span></div><For each={artifacts()}>{(item) => <Artifact item={item} />}</For></section></Show>
       <Show when={activity().length > 0 && density() !== "outcome"}>

@@ -71,6 +71,14 @@ export interface ArtifactRef {
   description?: string | null;
 }
 
+export interface StructuredOutput {
+  semantic_type: string;
+  schema_version: number;
+  skill_id: string;
+  skill_version: string;
+  payload: Record<string, unknown>;
+}
+
 export type DocumentBlock =
   | { type: "heading"; id: string; level: number; content: InlineNode[] }
   | { type: "paragraph"; id: string; content: InlineNode[] }
@@ -103,7 +111,8 @@ export type OutputContent =
   | { type: "retry"; attempt: number; delay_ms: number; reason: string }
   | { type: "error"; message: string; source?: string | null; retryable: boolean }
   | { type: "outcome"; summary: string; document?: PresentationDocument | null }
-  | { type: "artifact"; artifact: ArtifactRef };
+  | { type: "artifact"; artifact: ArtifactRef }
+  | { type: "structured"; output: StructuredOutput };
 
 export interface OutputAction {
   id: string;

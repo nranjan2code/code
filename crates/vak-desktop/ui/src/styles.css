@@ -355,6 +355,13 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .semantic-limited > span { color: var(--yellow); font-weight: 600; }
 .semantic-limited pre { margin: 7px 0; overflow: auto; white-space: pre-wrap; }
 .semantic-diagnostic { margin-top: 7px; color: var(--yellow); font-size: 11px; }
+.semantic-render-audit { margin-top: 12px; border-top: 1px solid var(--border-soft); color: var(--muted); font-size: 11px; }
+.semantic-render-audit summary { padding: 7px 0; cursor: pointer; color: var(--faint); }
+.semantic-render-audit summary:hover { color: var(--text-soft); }
+.semantic-render-audit dl { margin: 0 0 7px; }
+.semantic-render-audit dl > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; padding: 3px 0; }
+.semantic-render-audit dt { color: var(--faint); }
+.semantic-render-audit dd { margin: 0; overflow-wrap: anywhere; color: var(--text-soft); }
 
 .artifact-shelf { margin: 18px 0 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .artifact-shelf-head { display: flex; gap: 7px; padding: 8px 11px; border-bottom: 1px solid var(--border-soft); color: var(--text); font-size: 12px; font-weight: 600; }
@@ -382,6 +389,28 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .semantic-activity.succeeded .semantic-status-dot { background: var(--green); }
 .semantic-activity.failed .semantic-status-dot, .semantic-activity.denied .semantic-status-dot { background: var(--red); }
 .semantic-approval { max-width: none; margin-inline: 0; }
+.rich-link-card { display: flex; gap: 11px; max-width: 620px; margin: 12px 0; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); background: var(--surface); text-decoration: none; }
+.rich-link-card:hover { background: var(--surface-hover); }
+.rich-link-card img { width: 92px; height: 64px; flex: none; border-radius: var(--radius-sm); object-fit: cover; }
+.rich-link-card span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.rich-link-card strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rich-link-card small { color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.rich-metric { display: inline-flex; min-width: 150px; margin: 8px 8px 8px 0; padding: 10px 12px; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.rich-metric small { color: var(--muted); }
+.rich-metric strong { margin-top: 2px; color: var(--text); font-size: 18px; }
+.rich-media { margin: 12px 0; }
+.rich-media img { display: block; max-width: min(100%, 720px); max-height: 480px; border-radius: var(--radius); object-fit: contain; }
+.rich-media figcaption { margin-top: 4px; color: var(--muted); font-size: 11px; }
+.rich-chart { max-width: 720px; margin: 14px 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.rich-chart figcaption { margin-bottom: 8px; color: var(--text); font-weight: 600; }
+.rich-chart svg { display: block; width: 100%; height: 220px; overflow: visible; }
+.rich-chart-axis { stroke: var(--border); stroke-width: 1; }
+.rich-chart-line { fill: none; stroke: var(--accent-bright); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.rich-chart-point { fill: var(--surface); stroke: var(--accent-bright); stroke-width: 2; }
+.rich-chart small { display: block; margin-top: 8px; color: var(--muted); }
+.rich-video { display: block; max-width: min(100%, 720px); max-height: 480px; margin: 12px 0; border-radius: var(--radius); background: #000; }
+.rich-media-link, .rich-unsupported { display: inline-flex; gap: 7px; margin: 8px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--accent-bright); background: var(--surface); }
+.rich-unsupported { flex-direction: column; color: var(--muted); font-family: var(--mono); font-size: 11px; }
 
 @media (max-width: 720px) {
   .chat { padding-inline: 18px; }

@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, HashMap};
 use vak_agent::AgentEvent;
 use vak_delivery::{
     ArtifactRef, DeliveryAction, OutputContent, OutputItem, OutputKind, OutputProvenance,
-    OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline, compile_markdown,
+    OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline, built_in_recipes,
+    built_in_skill_registry, compile_markdown, link_previews_from_text, signals_from_text,
 };
 use vak_llm::{ContentBlock, Role};
 use vak_session::{ActivityKind, ActivityStatus, EntryPayload, SessionLog};
@@ -45,6 +46,17 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                     match block {
                         ContentBlock::Text { text } if !text.trim().is_empty() => {
                             let assistant = record.message.role == Role::Assistant;
+                            let link_previews = if assistant {
+                                link_previews_from_text(text)
+                            } else {
+                                Vec::new()
+                            };
+                            let planner = vak_delivery::PresentationPlanner {
+                                skills: built_in_skill_registry(),
+                                recipes: built_in_recipes(),
+                            };
+                            let signals = signals_from_text(text);
+                            let plan = planner.plan(&signals, "desktop", &[], &link_previews);
                             timeline.items.push(OutputItem {
                                 id: format!("{}-text-{index}", entry.id),
                                 timestamp: entry.ts.to_rfc3339(),
@@ -61,7 +73,33 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                                 },
                                 status: OutputStatus::Succeeded,
                                 content: OutputContent::Document {
-                                    document: compile_markdown(text.clone()),
+                                    document: {
+                                        let mut document = compile_markdown(text.clone());
+                                        if let Some(decision) = plan.recipe.as_ref() {
+                                            document.metadata.insert(
+                                                "recipe_id".into(),
+                                                decision.recipe_id.clone(),
+                                            );
+                                            document.metadata.insert(
+                                                "recipe_version".into(),
+                                                decision.recipe_version.clone(),
+                                            );
+                                            document.metadata.insert(
+                                                "matched_signals".into(),
+                                                decision.matched_signals.join(","),
+                                            );
+                                            document.metadata.insert(
+                                                "renderer".into(),
+                                                decision.renderer.clone(),
+                                            );
+                                        }
+                                        document.diagnostics.extend(plan.rejected.iter().map(
+                                            |item| {
+                                                format!("{}: {}", item.semantic_type, item.reason)
+                                            },
+                                        ));
+                                        document
+                                    },
                                 },
                                 provenance: Some(OutputProvenance {
                                     session_id: Some(session_id.into()),
@@ -72,6 +110,32 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                                 actions: Vec::new(),
                                 fallback_text: text.clone(),
                             });
+                            for (link_index, preview) in plan.accepted.into_iter().enumerate() {
+                                timeline.items.push(OutputItem {
+                                    id: format!("{}-link-{link_index}", entry.id),
+                                    timestamp: entry.ts.to_rfc3339(),
+                                    turn_id: turn_id.clone(),
+                                    role: OutputRole::Assistant,
+                                    kind: OutputKind::Information,
+                                    status: OutputStatus::Succeeded,
+                                    content: OutputContent::Structured {
+                                        output: preview.clone(),
+                                    },
+                                    provenance: Some(OutputProvenance {
+                                        session_id: Some(session_id.into()),
+                                        entry_id: Some(entry.id.clone()),
+                                        tool_call_id: None,
+                                        source: Some("link_extractor".into()),
+                                    }),
+                                    actions: Vec::new(),
+                                    fallback_text: preview
+                                        .payload
+                                        .get("url")
+                                        .and_then(serde_json::Value::as_str)
+                                        .unwrap_or_default()
+                                        .into(),
+                                });
+                            }
                         }
                         ContentBlock::ToolUse { id, name, input } => {
                             let result = tool_results.get(id);
@@ -744,7 +808,9 @@ mod tests {
                     name: "write".into(),
                     input: serde_json::json!({"path": "/tmp/report.md"}),
                 },
-                ContentBlock::text("## Done\n\nThe report is ready."),
+                ContentBlock::text(
+                    "## Done\n\nThe report is ready. See https://example.com/report",
+                ),
             ]),
             meta: None,
         })
@@ -797,6 +863,21 @@ mod tests {
         let OutputContent::Document { document } = &outcome.content else {
             panic!("assistant outcome must contain its document");
         };
-        assert_eq!(document.source_markdown, "## Done\n\nThe report is ready.");
+        assert_eq!(
+            document.source_markdown,
+            "## Done\n\nThe report is ready. See https://example.com/report"
+        );
+        assert_eq!(
+            document.metadata.get("recipe_id").map(String::as_str),
+            Some("answer.research")
+        );
+        assert_eq!(
+            document.metadata.get("renderer").map(String::as_str),
+            Some("builtin:generic")
+        );
+        assert!(first.items.iter().any(|item| matches!(
+            item.content,
+            OutputContent::Structured { ref output } if output.semantic_type == "link.preview"
+        )));
     }
 }
