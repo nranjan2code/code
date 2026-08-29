@@ -130,6 +130,10 @@ export interface UiPreferences {
   voiceEnabled: boolean;
   voiceName: string;
   voicePersona: string;
+  /** Short synthesized chime when a turn starts and when it finishes — the
+   * audible counterpart to the visual "working" indicators, independent of
+   * voice narration (which requires a round-trip to /voice/speak). */
+  soundCues: boolean;
 }
 
 const defaultUiPreferences: UiPreferences = {
@@ -147,6 +151,7 @@ const defaultUiPreferences: UiPreferences = {
   voiceEnabled: false,
   voiceName: "Kore",
   voicePersona: "",
+  soundCues: true,
 };
 
 function loadUiPreferences(): UiPreferences {
@@ -208,6 +213,61 @@ export interface BestRun {
 // Dialog lifecycle: closed → config form → starting ([] pending) → runs.
 export const [bestOfOpen, setBestOfOpen] = createSignal(false);
 export const [bestOfRuns, setBestOfRuns] = createSignal<BestRun[] | null>(null);
+
+// ---- sound cues --------------------------------------------------------
+//
+// Two short synthesized tones (WebAudio oscillators, no asset files, no
+// network round-trip) so a turn starting/finishing is audible even when the
+// user isn't looking at the window. Independent of voice narration below,
+// which requires a live backend and a TTS call and is meant for spoken
+// summaries, not a reflexive UI cue.
+
+let cueCtx: AudioContext | null = null;
+
+function audioCtx(): AudioContext | null {
+  if (!uiPreferences.soundCues) return null;
+  try {
+    cueCtx ??= new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    if (cueCtx.state === "suspended") void cueCtx.resume();
+    return cueCtx;
+  } catch {
+    return null; // WebAudio unavailable/blocked — cues are best-effort
+  }
+}
+
+/** A single soft, short sine-wave blip at `freq` Hz, fading in/out to avoid a click. */
+function tone(ctx: AudioContext, freq: number, startAt: number, duration = 0.09, gain = 0.05) {
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.value = freq;
+  g.gain.setValueAtTime(0, startAt);
+  g.gain.linearRampToValueAtTime(gain, startAt + 0.012);
+  g.gain.linearRampToValueAtTime(0, startAt + duration);
+  osc.connect(g).connect(ctx.destination);
+  osc.start(startAt);
+  osc.stop(startAt + duration + 0.02);
+}
+
+/** Rising two-note chime: a turn just started working. */
+export function cueTurnStart() {
+  const ctx = audioCtx();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  tone(ctx, 523.25, t); // C5
+  tone(ctx, 659.25, t + 0.08); // E5
+}
+
+/** Falling two-note chime: a turn finished (success). Errors stay silent
+ * here — a failed run already surfaces via the error note/banner and
+ * shouldn't sound identical to "done". */
+export function cueTurnFinish(isError: boolean) {
+  const ctx = audioCtx();
+  if (!ctx || isError) return;
+  const t = ctx.currentTime;
+  tone(ctx, 659.25, t); // E5
+  tone(ctx, 880, t + 0.08); // A5
+}
 
 // ---- voice narration (docs/design: Voice & Personality for vak) ------------
 
@@ -462,6 +522,7 @@ export function applyEvent(
   const b: Bucket = opts.bucket ?? "main";
   if ("TurnStart" in ev) {
     markRunning(id, true, b);
+    cueTurnStart();
   } else if ("Stream" in ev) {
     const s = ev.Stream;
     if ("TextDelta" in s) {
@@ -613,6 +674,7 @@ export function applyEvent(
     // Short narration only -- the full summary can run long and reads
     // awkwardly aloud; a one-word cue is enough to signal completion.
     void speak(ev.RunFinished.is_error ? "Task failed." : "Done.");
+    cueTurnFinish(ev.RunFinished.is_error);
     opts.onFinish?.(ev.RunFinished.summary);
   }
 }

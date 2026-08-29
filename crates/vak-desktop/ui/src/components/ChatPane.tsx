@@ -10,6 +10,31 @@ function EmptyChat() {
   return null;
 }
 
+/** True while a turn is running but nothing currently on screen shows its
+ * own activity (no streaming assistant text, no in-flight tool card) —
+ * i.e. the model is between tokens/tool calls with literally nothing
+ * animating. This is the gap that otherwise reads as a dead, stuck UI. */
+function awaitingNextOutput(id: string | null): boolean {
+  if (!isRunning(id)) return false;
+  const list = itemsOf(id);
+  const last = list[list.length - 1];
+  if (!last) return true;
+  if (last.kind === "assistant" && last.streaming) return false;
+  if (last.kind === "thinking" && !last.done) return false;
+  if (last.kind === "tool" && !last.done) return false;
+  return true;
+}
+
+function ThinkingIndicator() {
+  return (
+    <div class="thinking-row" aria-live="polite" aria-label="Working">
+      <span class="thinking-dots">
+        <span /><span /><span />
+      </span>
+    </div>
+  );
+}
+
 function TranscriptSkeleton() {
   return (
     <div class="transcript-skeleton" aria-label="Loading task">
@@ -308,10 +333,11 @@ export default function ChatPane(props: { sessionId?: string | null }) {
         <Show when={sid()} fallback={<EmptyChat />}>
           <Show when={hydratingId() !== sid()} fallback={<TranscriptSkeleton />}>
             <Show when={!isRunning(sid()) && hasSettledOutcome(sid())} fallback={
-              <Show when={visibleItems(itemsOf(sid())).length} fallback={<EmptyChat />}>
+              <Show when={visibleItems(itemsOf(sid())).length || awaitingNextOutput(sid())} fallback={<EmptyChat />}>
                 <For each={visibleItems(itemsOf(sid()))}>
                   {(it) => <ItemView item={it} sessionId={sid()} />}
                 </For>
+                <Show when={awaitingNextOutput(sid())}><ThinkingIndicator /></Show>
               </Show>
             }>
               <PresentationTimelineView timeline={presentationOf(sid())!} sessionId={sid()!} />

@@ -11,12 +11,7 @@ import { density, openInEditor, uiPreferences } from "../store";
 import { approve, openFileSmart } from "../App";
 import Icon from "./Icon";
 import MarkdownView from "./MarkdownView";
-
-function safeUrl(value: string, media = false): boolean {
-  const normalized = value.trim().toLowerCase();
-  if (media && normalized.startsWith("data:image/")) return true;
-  return normalized.startsWith("https://") || normalized.startsWith("http://") || normalized.startsWith("mailto:");
-}
+import { safeUrl } from "../safeUrl";
 
 function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
   return (

@@ -1,5 +1,16 @@
 // Minimal, injection-safe markdown renderer. Everything is escaped first;
 // only a fixed set of constructs produces markup.
+//
+// This renders the *live/streaming* half of assistant messages; once a turn
+// settles, ChatPane swaps to PresentationRenderer.tsx, which renders the
+// server's pulldown-cmark-compiled structured document instead. The two are
+// kept in feature/behavior parity deliberately (same link/image safety
+// policy via safeUrl.ts, same heading-level offset, same GFM surface: bold,
+// italic, strikethrough, task lists, nested lists, tables) so a message
+// doesn't visibly reflow the moment it settles. If you add a construct here,
+// add it to crates/vak-delivery/src/presentation.rs too (and vice versa).
+
+import { safeUrl } from "./safeUrl";
 
 function esc(s: string): string {
   return s
@@ -17,14 +28,25 @@ function inline(s: string): string {
       /^[\w@.-]+(\/[\w@.-]+)+$/.test(code) || /^\.[\w/-]+$/.test(code) || /\.\w{1,6}$/.test(code);
     return `<code class="ic"${isPath ? ' data-path="true" title="open in editor"' : ""}>${code}</code>`;
   });
-  // bold then italic
-  out = out.replace(/\*\*([^*\n][^*\n]*?)\*\*/g, "<strong>$1</strong>");
-  out = out.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
-  // links → non-navigating styled span (external nav needs the opener plugin)
-  out = out.replace(
-    /\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
-    '<span class="lnk" title="$2">$1</span>',
-  );
+  // bold then italic then strikethrough (order matters: bold before italic so
+  // `**x**` isn't first read as two adjacent `*x*` italics)
+  out = out.replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>");
+  out = out.replace(/(^|[\s(])\*([^*\n]+?)\*(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
+  out = out.replace(/~~([^~\n]+?)~~/g, "<del>$1</del>");
+  // images (before links — same `![...]` prefix distinguishes them), gated
+  // by the same policy PresentationRenderer.tsx uses for media
+  // `url` here is already HTML-escaped (entities), which is valid and safe
+  // inside a src/href attribute — do not escape it again.
+  out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt: string, url: string) => {
+    if (!safeUrl(url, true)) return m;
+    return `<img class="md-img" src="${url}" alt="${alt}" loading="lazy" />`;
+  });
+  // links → real anchors, gated by the same scheme allow-list as the settled
+  // (server-compiled) renderer, so behavior doesn't change once a turn settles
+  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label: string, url: string) => {
+    if (!safeUrl(url)) return m;
+    return `<a class="lnk" href="${url}" target="_blank" rel="noreferrer">${label}</a>`;
+  });
   return out;
 }
 
@@ -115,17 +137,46 @@ function renderTable(header: string[], aligns: Align[], body: string[][]): strin
   return `<div class="md-tablewrap"><table class="md-table">${head}<tbody>${rows}</tbody></table></div>`;
 }
 
+// ---- lists (nested, with GFM task-list checkboxes) -------------------------
+//
+// Depth is derived from leading-whitespace width, bucketed every 2 columns so
+// both 2-space and 4-space indented markdown nest predictably. A stack of
+// open `<ul>`/`<ol>` tags lets us open/close levels as indentation changes.
+
+type ListKind = "ul" | "ol";
+
+function listMatch(line: string): { indent: number; kind: ListKind; rest: string } | null {
+  const bullet = /^(\s*)[-*]\s+(.*)$/.exec(line);
+  if (bullet) return { indent: bullet[1].length, kind: "ul", rest: bullet[2] };
+  const ordered = /^(\s*)\d+[.)]\s+(.*)$/.exec(line);
+  if (ordered) return { indent: ordered[1].length, kind: "ol", rest: ordered[2] };
+  return null;
+}
+
+function renderListItem(rest: string): string {
+  const task = /^\[( |x|X)\]\s+(.*)$/.exec(rest);
+  if (task) {
+    const checked = task[1].toLowerCase() === "x";
+    return `<li class="md-task"><input type="checkbox" disabled${checked ? " checked" : ""}/>${inline(task[2])}</li>`;
+  }
+  return `<li>${inline(rest)}</li>`;
+}
+
 function block(text: string): string {
   const lines = text.split("\n");
   const out: string[] = [];
-  let list: "ul" | "ol" | null = null;
+  // Stack of currently-open list tags, one entry per nesting depth.
+  const listStack: { kind: ListKind; depth: number }[] = [];
 
-  const closeList = () => {
-    if (list) {
-      out.push(`</${list}>`);
-      list = null;
+  const closeListsDeeperThan = (depth: number | null) => {
+    while (
+      listStack.length &&
+      (depth === null || listStack[listStack.length - 1].depth > depth)
+    ) {
+      out.push(`</${listStack.pop()!.kind}>`);
     }
   };
+  const closeAllLists = () => closeListsDeeperThan(null);
 
   // Indexed rather than for-of: tables need to look ahead at the separator
   // row before deciding the current line starts a table at all.
@@ -133,7 +184,7 @@ function block(text: string): string {
     const raw = lines[i];
     const line = raw.trimEnd();
     if (isTableRow(line) && i + 1 < lines.length && isTableDivider(lines[i + 1])) {
-      closeList();
+      closeAllLists();
       const aligns = parseAlignments(lines[i + 1]);
       const header = splitRow(line);
       const body: string[][] = [];
@@ -148,46 +199,46 @@ function block(text: string): string {
     }
     const h = /^(#{1,4})\s+(.*)$/.exec(line);
     if (h) {
-      closeList();
+      closeAllLists();
       const lvl = h[1].length;
       out.push(`<h${lvl + 1} class="md-h">${inline(h[2])}</h${lvl + 1}>`);
       continue;
     }
-    if (/^\s*[-*]\s+/.test(line)) {
-      if (list !== "ul") {
-        closeList();
-        out.push('<ul class="md-ul">');
-        list = "ul";
+    const li = listMatch(line);
+    if (li) {
+      const depth = Math.floor(li.indent / 2);
+      // Close deeper/mismatched levels, then open new ones down to `depth`.
+      closeListsDeeperThan(depth);
+      const top = listStack[listStack.length - 1];
+      if (!top || top.depth < depth) {
+        out.push(li.kind === "ul" ? '<ul class="md-ul">' : '<ol class="md-ol">');
+        listStack.push({ kind: li.kind, depth });
+      } else if (top.kind !== li.kind) {
+        out.push(`</${top.kind}>`);
+        listStack.pop();
+        out.push(li.kind === "ul" ? '<ul class="md-ul">' : '<ol class="md-ol">');
+        listStack.push({ kind: li.kind, depth });
       }
-      out.push(`<li>${inline(line.replace(/^\s*[-*]\s+/, ""))}</li>`);
-      continue;
-    }
-    if (/^\s*\d+[.)]\s+/.test(line)) {
-      if (list !== "ol") {
-        closeList();
-        out.push('<ol class="md-ol">');
-        list = "ol";
-      }
-      out.push(`<li>${inline(line.replace(/^\s*\d+[.)]\s+/, ""))}</li>`);
+      out.push(renderListItem(li.rest));
       continue;
     }
     if (/^>\s?/.test(line)) {
-      closeList();
+      closeAllLists();
       out.push(`<blockquote class="md-bq">${inline(line.replace(/^>\s?/, ""))}</blockquote>`);
       continue;
     }
     if (/^\s*(---|\*\*\*)\s*$/.test(line)) {
-      closeList();
+      closeAllLists();
       out.push('<hr class="md-hr">');
       continue;
     }
     if (line.trim() === "") {
-      closeList();
+      closeAllLists();
       continue;
     }
-    closeList();
+    closeAllLists();
     out.push(`<p class="md-p">${inline(line)}</p>`);
   }
-  closeList();
+  closeAllLists();
   return out.join("");
 }
