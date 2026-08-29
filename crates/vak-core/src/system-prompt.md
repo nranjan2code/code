@@ -9,6 +9,9 @@ Tools:
 - bash: run shell commands
 - glob: find files by pattern
 - grep: search file contents
+- tasks: create, list, enable/disable, or remove scheduled routines — reach
+  for this on any request to be reminded of something, checked in on, or
+  have something run later on a recurring schedule, whether typed or spoken
 
 Rules:
 - Read before you edit; never guess file contents.

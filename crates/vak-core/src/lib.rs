@@ -20,6 +20,7 @@ pub mod security_events;
 pub mod session_search;
 pub mod skills;
 pub mod tasks;
+pub mod tools_tasks;
 pub mod transcript_md;
 pub mod worktree;
 
@@ -187,6 +188,14 @@ struct PermissionsLocal {
 #[derive(Clone)]
 pub struct Core {
     inner: Arc<CoreInner>,
+    /// `<surface>:<chat>` for the conversation this turn is running
+    /// inside, when known (set by the gateway per inbound message; unset
+    /// for the CLI and desktop app, which have no chat to reply into).
+    /// Read once, at tool-build time, as [`tasks::TasksTool`]'s default
+    /// `deliver_to` — so a task created by a prompt in that chat ("remind
+    /// me every Monday at 9am") reports back into the same chat without
+    /// the model having to know or guess its own channel address.
+    default_deliver_to: Option<String>,
 }
 
 /// One indivisible provider/model selection. A route is always read and
@@ -310,6 +319,7 @@ impl Core {
             Vec::new()
         };
         Ok(Core {
+            default_deliver_to: None,
             inner: Arc::new(CoreInner {
                 config,
                 cwd,
@@ -1032,6 +1042,16 @@ impl Core {
 
     pub fn cwd(&self) -> &PathBuf {
         &self.inner.cwd
+    }
+
+    /// Bind this turn to the chat it's replying into, as `<surface>:<chat>`
+    /// (the same shape `deliver_to` already uses everywhere). Cheap: an
+    /// `Arc` bump plus one `String`, so callers can clone-and-set per
+    /// inbound message without touching the shared workspace state the
+    /// `Arc<CoreInner>` carries.
+    pub fn with_default_deliver_to(mut self, target: Option<String>) -> Self {
+        self.default_deliver_to = target;
+        self
     }
 
     /// Reopens an existing session ledger for resumed runs.
@@ -1997,6 +2017,19 @@ impl Core {
                 exclude_session_id: exclude,
             }));
         }
+        // Scheduling from a plain-language request ("remind me every
+        // morning at 8"), from any surface — CLI, desktop, or a bound chat
+        // — since they all run this same turn assembly. Always on: unlike
+        // memory search/write there is no cost or drift risk to gate it
+        // behind, and a user who never asks for a schedule never triggers
+        // it. `default_deliver_to` (set per inbound message by the
+        // gateway) routes a task's result back into this conversation
+        // unless the model names a different one explicitly.
+        tools.push(Arc::new(tools_tasks::TasksTool {
+            sessions_home: self.sessions_home(),
+            cwd: self.inner.cwd.clone(),
+            default_deliver_to: self.default_deliver_to.clone(),
+        }));
         // Learning loop (docs/design/26-learning.md): journaling tools are
         // ordinary model-visible tools; promotion stays human-only.
         let current_session = session

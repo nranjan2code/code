@@ -1818,9 +1818,21 @@ async fn gateway_inbound(
         _ => text.clone(),
     };
     let prompt = compose_prompt(&attributed, &body.attachments);
+    // Bind this turn's `tasks` tool default (`Core::with_default_deliver_to`)
+    // to the chat it's actually running in, in the plain `<surface>:<chat>`
+    // shape `deliver_to` already uses everywhere — not the possibly
+    // bot-scoped three-part `key` used for allowlist/session lookups above.
+    // So "remind me every morning at 8" typed (or spoken, via Gemini Live
+    // transcription feeding the same turn) into this chat reports back into
+    // this same chat unless the model is told to route it elsewhere.
+    let core_for_turn = core.clone().with_default_deliver_to(Some(format!(
+        "{}:{}",
+        body.surface.trim(),
+        body.chat.trim()
+    )));
     start_turn_chain(
         &state,
-        &core,
+        &core_for_turn,
         handle,
         prompt,
         want_reply.then_some(reply_tx),
