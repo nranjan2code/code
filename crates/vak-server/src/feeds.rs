@@ -5,13 +5,13 @@
 //! scripts via subprocess execution.
 
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{delete, get, post},
-    Json, Router,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -60,7 +60,12 @@ async fn run_feed_script(
         .stderr(Stdio::piped())
         .output()
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to run feed script: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to run feed script: {e}"),
+            )
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -91,8 +96,12 @@ async fn run_feed_mcp_request(
         return Err((StatusCode::NOT_FOUND, "Feed MCP server not found".into()));
     }
 
-    let input = serde_json::to_string(request)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("JSON error: {e}")))?;
+    let input = serde_json::to_string(request).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("JSON error: {e}"),
+        )
+    })?;
 
     let mut child = Command::new("python3")
         .arg(&script)
@@ -102,23 +111,34 @@ async fn run_feed_mcp_request(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to spawn MCP: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to spawn MCP: {e}"),
+            )
+        })?;
 
     if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(input.as_bytes())
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("stdin write error: {e}")))?;
-        stdin
-            .shutdown()
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("stdin shutdown error: {e}")))?;
+        stdin.write_all(input.as_bytes()).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("stdin write error: {e}"),
+            )
+        })?;
+        stdin.shutdown().await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("stdin shutdown error: {e}"),
+            )
+        })?;
     }
 
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("MCP wait error: {e}")))?;
+    let output = child.wait_with_output().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("MCP wait error: {e}"),
+        )
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -178,9 +198,12 @@ pub async fn get_feed_config(
     let result = run_feed_script(cwd, "feed_ingest.py", &["--stats"]).await?;
 
     // Also read the config file for the full source list
-    let content = tokio::fs::read_to_string(&config_path)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to read config: {e}")))?;
+    let content = tokio::fs::read_to_string(&config_path).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to read config: {e}"),
+        )
+    })?;
 
     Ok(Json(json!({
         "config_path": config_path.to_string_lossy(),
@@ -195,7 +218,10 @@ pub async fn list_feed_items(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let cwd = state.core.cwd();
-    let limit = params.get("limit").and_then(|s| s.parse::<usize>().ok()).unwrap_or(50);
+    let limit = params
+        .get("limit")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(50);
     let source = params.get("source").map(|s| s.as_str()).unwrap_or("");
 
     // Use the MCP feed_latest tool to get items
@@ -244,7 +270,10 @@ pub async fn search_feed_items(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let query = params.get("q").map(|s| s.as_str()).unwrap_or("");
     if query.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "Missing query parameter 'q'".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Missing query parameter 'q'".into(),
+        ));
     }
 
     let cwd = state.core.cwd();
@@ -325,35 +354,61 @@ pub async fn add_feed_source(
 
     // Read existing config or create default
     let mut content = if config_path.exists() {
-        tokio::fs::read_to_string(&config_path)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to read config: {e}")))?
+        tokio::fs::read_to_string(&config_path).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to read config: {e}"),
+            )
+        })?
     } else {
         "[general]\ndefault_check_interval = \"30m\"\nmax_items_per_feed = 500\ndedup_window_days = 90\n\n".to_string()
     };
 
     // Extract fields from payload
-    let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("Untitled");
-    let source_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("rss");
+    let name = payload
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Untitled");
+    let source_type = payload
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("rss");
     let url = payload.get("url").and_then(|v| v.as_str()).unwrap_or("");
-    let interval = payload.get("interval").and_then(|v| v.as_str()).unwrap_or("1h");
+    let interval = payload
+        .get("interval")
+        .and_then(|v| v.as_str())
+        .unwrap_or("1h");
     let tags = payload.get("tags").and_then(|v| v.as_array()).map(|a| {
         a.iter()
             .filter_map(|v| v.as_str())
             .collect::<Vec<_>>()
             .join(", ")
     });
-    let trust = payload.get("trust").and_then(|v| v.as_str()).unwrap_or("medium");
+    let trust = payload
+        .get("trust")
+        .and_then(|v| v.as_str())
+        .unwrap_or("medium");
 
     // Build the new source block
-    let mut source_block = format!("\n[[sources]]\nname = \"{}\"\ntype = \"{}\"\n", escape_toml(name), escape_toml(source_type));
+    let mut source_block = format!(
+        "\n[[sources]]\nname = \"{}\"\ntype = \"{}\"\n",
+        escape_toml(name),
+        escape_toml(source_type)
+    );
     if !url.is_empty() {
         source_block.push_str(&format!("url = \"{}\"\n", escape_toml(url)));
     }
     source_block.push_str(&format!("interval = \"{}\"\n", escape_toml(interval)));
     if let Some(tags_str) = &tags {
         if !tags_str.is_empty() {
-            source_block.push_str(&format!("tags = [{}]\n", tags_str.split(", ").map(|t| format!("\"{}\"", escape_toml(t))).collect::<Vec<_>>().join(", ")));
+            source_block.push_str(&format!(
+                "tags = [{}]\n",
+                tags_str
+                    .split(", ")
+                    .map(|t| format!("\"{}\"", escape_toml(t)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
         }
     }
     source_block.push_str(&format!("trust = \"{}\"\n", escape_toml(trust)));
@@ -367,19 +422,30 @@ pub async fn add_feed_source(
 
     // Ensure parent directory exists
     if let Some(parent) = config_path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create config dir: {e}")))?;
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to create config dir: {e}"),
+            )
+        })?;
     }
 
     // Write config atomically
     let tmp_path = config_path.with_extension("toml.tmp");
-    tokio::fs::write(&tmp_path, &content)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write config: {e}")))?;
+    tokio::fs::write(&tmp_path, &content).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to write config: {e}"),
+        )
+    })?;
     tokio::fs::rename(&tmp_path, &config_path)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to rename config: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to rename config: {e}"),
+            )
+        })?;
 
     Ok(Json(json!({
         "status": "ok",
@@ -407,9 +473,12 @@ pub async fn delete_feed_source(
         return Err((StatusCode::NOT_FOUND, "Config file not found".into()));
     }
 
-    let content = tokio::fs::read_to_string(&config_path)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to read config: {e}")))?;
+    let content = tokio::fs::read_to_string(&config_path).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to read config: {e}"),
+        )
+    })?;
 
     // Find and remove the source block
     let marker_start = format!("[sources.{}]", name);
@@ -442,7 +511,10 @@ pub async fn delete_feed_source(
     }
 
     if !found {
-        return Err((StatusCode::NOT_FOUND, format!("Source '{}' not found", name)));
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("Source '{}' not found", name),
+        ));
     }
 
     let new_content = new_lines.join("\n");
@@ -451,10 +523,20 @@ pub async fn delete_feed_source(
     let tmp_path = config_path.with_extension("toml.tmp");
     tokio::fs::write(&tmp_path, &new_content)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write config: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to write config: {e}"),
+            )
+        })?;
     tokio::fs::rename(&tmp_path, &config_path)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to rename config: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to rename config: {e}"),
+            )
+        })?;
 
     Ok(Json(json!({
         "status": "ok",
@@ -465,7 +547,10 @@ pub async fn delete_feed_source(
 /// Build feed routes.
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/feeds/sources", get(list_source_types).post(add_feed_source))
+        .route(
+            "/feeds/sources",
+            get(list_source_types).post(add_feed_source),
+        )
         .route("/feeds/sources/{name}", delete(delete_feed_source))
         .route("/feeds/config", get(get_feed_config))
         .route("/feeds/items", get(list_feed_items))
