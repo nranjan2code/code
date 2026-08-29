@@ -1,86 +1,262 @@
 //! Telegram-safe HTML projection and standalone chunking.
 
 /// Convert a conservative GFM subset to Telegram-safe HTML.
+///
+/// Supports: headings (as bold), bold/italic/strikethrough/spoiler, inline
+/// code and fenced code blocks (with language hint preserved), links,
+/// blockquotes (merged across consecutive lines), bulleted and numbered
+/// lists (including nesting by indentation), horizontal rules, and
+/// GFM tables (rendered as an aligned monospace block).
 pub fn markdown_to_html(markdown: &str) -> String {
     let mut out = String::with_capacity(markdown.len() + 64);
     let mut in_fence = false;
+    let mut fence_lang = String::new();
     let mut fence = Vec::new();
     let mut table = Vec::new();
+    let mut quote = Vec::new();
+    let mut blank_pending = false;
 
     for line in markdown.lines() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
+
+        if let Some(lang) = trimmed.strip_prefix("```") {
+            flush_quote(&mut out, &mut quote);
             flush_table(&mut out, &mut table);
             if in_fence {
                 out.push_str("<pre>");
+                if fence_lang.is_empty() {
+                    out.push_str("<code>");
+                } else {
+                    out.push_str("<code class=\"language-");
+                    out.push_str(&escape_html(&fence_lang));
+                    out.push_str("\">");
+                }
                 out.push_str(&escape_html(&fence.join("\n")));
-                out.push_str("</pre>");
+                out.push_str("</code></pre>\n");
                 fence.clear();
+                fence_lang.clear();
+            } else {
+                fence_lang = lang.trim().to_string();
             }
             in_fence = !in_fence;
+            blank_pending = false;
             continue;
         }
         if in_fence {
             fence.push(line.to_string());
             continue;
         }
+
+        if trimmed.is_empty() {
+            flush_quote(&mut out, &mut quote);
+            flush_table(&mut out, &mut table);
+            blank_pending = !out.is_empty();
+            continue;
+        }
+
         if trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.len() > 1 {
+            flush_quote(&mut out, &mut quote);
+            if blank_pending {
+                out.push('\n');
+            }
+            blank_pending = false;
             table.push(trimmed.to_string());
             continue;
         }
         flush_table(&mut out, &mut table);
 
+        if is_horizontal_rule(trimmed) {
+            flush_quote(&mut out, &mut quote);
+            if blank_pending {
+                out.push('\n');
+            }
+            blank_pending = false;
+            out.push_str("──────────\n");
+            continue;
+        }
+
         if let Some(after) = trimmed.strip_prefix('#')
-            && after.starts_with(' ')
+            && (after.starts_with(' ') || after.starts_with('#'))
         {
+            let level = 1 + after.chars().take_while(|c| *c == '#').count();
             let text = after.trim().trim_start_matches('#').trim();
             if !text.is_empty() {
-                out.push_str("<b>");
-                out.push_str(&inline_markdown(&escape_html(text)));
-                out.push_str("</b>\n\n");
+                flush_quote(&mut out, &mut quote);
+                if blank_pending && !out.is_empty() {
+                    out.push('\n');
+                }
+                blank_pending = false;
+                let rendered = inline_markdown(&escape_html(text));
+                if level <= 2 {
+                    out.push_str("<b>");
+                    out.push_str(&rendered.to_uppercase());
+                    out.push_str("</b>\n\n");
+                } else {
+                    out.push_str("<b>");
+                    out.push_str(&rendered);
+                    out.push_str("</b>\n\n");
+                }
                 continue;
             }
         }
-        if let Some(quote) = trimmed.strip_prefix("> ") {
-            out.push_str("<blockquote>");
-            out.push_str(&inline_markdown(&escape_html(quote)));
-            out.push_str("</blockquote>\n");
+
+        if let Some(quote_line) = trimmed.strip_prefix("> ").or_else(|| {
+            if trimmed == ">" {
+                Some("")
+            } else {
+                None
+            }
+        }) {
+            if blank_pending {
+                flush_quote(&mut out, &mut quote);
+            }
+            blank_pending = false;
+            quote.push(inline_markdown(&escape_html(quote_line)));
             continue;
         }
+        flush_quote(&mut out, &mut quote);
+
+        let indent = line.len() - trimmed.len();
+        let depth = indent / 2;
+
         if let Some(item) = trimmed
             .strip_prefix("- ")
             .or_else(|| trimmed.strip_prefix("* "))
+            .or_else(|| trimmed.strip_prefix("+ "))
         {
-            out.push_str("• ");
+            blank_pending = false;
+            out.push_str(&"  ".repeat(depth));
+            out.push_str(bullet_for_depth(depth));
+            out.push(' ');
             out.push_str(&inline_markdown(&escape_html(item)));
             out.push('\n');
             continue;
         }
+
+        if let Some((number, rest)) = split_ordered_item(trimmed) {
+            blank_pending = false;
+            out.push_str(&"  ".repeat(depth));
+            out.push_str(&number);
+            out.push_str(". ");
+            out.push_str(&inline_markdown(&escape_html(rest)));
+            out.push('\n');
+            continue;
+        }
+
+        if blank_pending && !out.is_empty() {
+            out.push('\n');
+        }
+        blank_pending = false;
         out.push_str(&inline_markdown(&escape_html(line)));
         out.push('\n');
     }
     if in_fence {
         out.push_str("<pre>");
+        if fence_lang.is_empty() {
+            out.push_str("<code>");
+        } else {
+            out.push_str("<code class=\"language-");
+            out.push_str(&escape_html(&fence_lang));
+            out.push_str("\">");
+        }
         out.push_str(&escape_html(&fence.join("\n")));
-        out.push_str("</pre>");
+        out.push_str("</code></pre>\n");
     }
+    flush_quote(&mut out, &mut quote);
     flush_table(&mut out, &mut table);
     out.trim_end_matches('\n').to_string()
+}
+
+fn is_horizontal_rule(trimmed: &str) -> bool {
+    let compact: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+    compact.len() >= 3
+        && (compact.chars().all(|c| c == '-')
+            || compact.chars().all(|c| c == '*')
+            || compact.chars().all(|c| c == '_'))
+}
+
+fn split_ordered_item(trimmed: &str) -> Option<(String, &str)> {
+    let digits_end = trimmed.find(|c: char| !c.is_ascii_digit())?;
+    if digits_end == 0 {
+        return None;
+    }
+    let (number, rest) = trimmed.split_at(digits_end);
+    let rest = rest.strip_prefix(". ").or_else(|| rest.strip_prefix(") "))?;
+    Some((number.to_string(), rest))
+}
+
+fn bullet_for_depth(depth: usize) -> &'static str {
+    match depth % 3 {
+        0 => "•",
+        1 => "◦",
+        _ => "▪",
+    }
+}
+
+fn flush_quote(out: &mut String, lines: &mut Vec<String>) {
+    if lines.is_empty() {
+        return;
+    }
+    out.push_str("<blockquote>");
+    out.push_str(&lines.join("\n"));
+    out.push_str("</blockquote>\n");
+    lines.clear();
 }
 
 fn flush_table(out: &mut String, rows: &mut Vec<String>) {
     if rows.is_empty() {
         return;
     }
-    out.push_str("<pre>");
-    for row in rows.iter() {
-        if !row.replace(['|', '-', ' ', ':'], "").is_empty() {
-            out.push_str(&escape_html(row.trim()));
-            out.push('\n');
+    let parsed: Vec<Vec<String>> = rows
+        .iter()
+        .filter(|row| !is_separator_row(row))
+        .map(|row| {
+            row.trim()
+                .trim_matches('|')
+                .split('|')
+                .map(|cell| cell.trim().to_string())
+                .collect()
+        })
+        .collect();
+
+    if parsed.is_empty() {
+        rows.clear();
+        return;
+    }
+
+    let columns = parsed.iter().map(|row| row.len()).max().unwrap_or(0);
+    let mut widths = vec![0usize; columns];
+    for row in &parsed {
+        for (index, cell) in row.iter().enumerate() {
+            widths[index] = widths[index].max(cell.chars().count());
         }
     }
-    out.push_str("</pre>");
+
+    let mut body = String::new();
+    for (row_index, row) in parsed.iter().enumerate() {
+        for (index, width) in widths.iter().enumerate() {
+            let cell = row.get(index).map(String::as_str).unwrap_or("");
+            body.push_str(cell);
+            body.push_str(&" ".repeat(width.saturating_sub(cell.chars().count())));
+            if index + 1 < columns {
+                body.push_str("  ");
+            }
+        }
+        body.push('\n');
+        if row_index == 0 {
+            let underline: usize = widths.iter().sum::<usize>() + (columns.saturating_sub(1) * 2);
+            body.push_str(&"─".repeat(underline));
+            body.push('\n');
+        }
+    }
+    out.push_str("<pre>");
+    out.push_str(&escape_html(body.trim_end_matches('\n')));
+    out.push_str("</pre>\n");
     rows.clear();
+}
+
+fn is_separator_row(row: &str) -> bool {
+    row.replace(['|', '-', ' ', ':'], "").is_empty()
 }
 
 fn escape_html(value: &str) -> String {
@@ -94,6 +270,8 @@ fn inline_markdown(value: &str) -> String {
     let mut codes = Vec::new();
     let mut value = replace_code_spans(value, &mut codes);
     value = replace_links(&value);
+    value = replace_pairs(&value, "~~", "<s>", "</s>");
+    value = replace_pairs(&value, "||", "<tg-spoiler>", "</tg-spoiler>");
     value = replace_emphasis(&value, "**", "<b>", "</b>");
     value = replace_emphasis(&value, "__", "<b>", "</b>");
     value = replace_emphasis(&value, "*", "<i>", "</i>");
@@ -373,13 +551,65 @@ mod tests {
         let html = markdown_to_html(
             "# Title\n\n**bold** *it* `code` [site](https://x.com/a)\n\n> quoted\n- item",
         );
-        assert!(html.contains("<b>Title</b>"));
+        assert!(html.contains("<b>TITLE</b>"));
         assert!(html.contains("<b>bold</b>"));
         assert!(html.contains("<i>it</i>"));
         assert!(html.contains("<code>code</code>"));
         assert!(html.contains("<blockquote>quoted</blockquote>"));
         assert!(html.contains("• item"));
         assert!(!markdown_to_html("<script>x</script>").contains("<script>"));
+    }
+
+    #[test]
+    fn renders_strikethrough_and_spoiler() {
+        let html = markdown_to_html("~~gone~~ and ||hidden||");
+        assert!(html.contains("<s>gone</s>"));
+        assert!(html.contains("<tg-spoiler>hidden</tg-spoiler>"));
+    }
+
+    #[test]
+    fn renders_ordered_lists() {
+        let html = markdown_to_html("1. first\n2. second");
+        assert!(html.contains("1. first"));
+        assert!(html.contains("2. second"));
+    }
+
+    #[test]
+    fn renders_nested_bullets_with_distinct_markers() {
+        let html = markdown_to_html("- top\n  - nested\n    - deeper");
+        assert!(html.contains("• top"));
+        assert!(html.contains("◦ nested"));
+        assert!(html.contains("▪ deeper"));
+    }
+
+    #[test]
+    fn merges_consecutive_blockquote_lines() {
+        let html = markdown_to_html("> line one\n> line two");
+        assert_eq!(
+            html,
+            "<blockquote>line one\nline two</blockquote>".to_string()
+        );
+    }
+
+    #[test]
+    fn preserves_fence_language_as_code_class() {
+        let html = markdown_to_html("```rust\nfn main() {}\n```");
+        assert!(html.contains("<pre><code class=\"language-rust\">"));
+        assert!(html.contains("fn main() {}"));
+    }
+
+    #[test]
+    fn renders_horizontal_rule() {
+        let html = markdown_to_html("above\n\n---\n\nbelow");
+        assert!(html.contains("──────────"));
+    }
+
+    #[test]
+    fn renders_aligned_table() {
+        let html = markdown_to_html("| A | B |\n| - | - |\n| 1 | 22 |");
+        assert!(html.contains("<pre>"));
+        assert!(html.contains("A"));
+        assert!(html.contains("22"));
     }
 
     #[test]
