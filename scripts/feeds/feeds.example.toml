@@ -1,0 +1,64 @@
+# Example global feed configuration
+# Place at ~/.config/vak/feeds.toml
+
+[general]
+default_check_interval = "30m"
+max_items_per_feed = 500
+dedup_window_days = 90
+
+# Example sources — uncomment and customize
+
+# [[sources]]
+# name = "Hacker News"
+# type = "hacker_news"
+# driver = "hacker_news"
+# variant = "top"
+# interval = "15m"
+# tags = ["tech", "news"]
+# trust = "high"
+# enabled = true
+
+# [[sources]]
+# name = "TechCrunch"
+# type = "rss"
+# url = "https://techcrunch.com/feed/"
+# interval = "1h"
+# tags = ["tech", "startups"]
+# trust = "medium"
+# enabled = true
+
+# [[sources]]
+# name = "3Blue1Brown"
+# type = "youtube"
+# channel_id = "UCYO_jab_esuFRV4b17AJtAw"
+# interval = "6h"
+# tags = ["math", "education"]
+# trust = "high"
+# enabled = true
+
+# [[sources]]
+# name = "r/programming"
+# type = "reddit"
+# driver = "aggregator"
+# subreddit = "programming"
+# sort = "hot"
+# interval = "30m"
+# tags = ["programming"]
+# trust = "medium"
+# enabled = true
+
+# Example alerts — uncomment and customize
+
+# [[alerts]]
+# name = "security-alerts"
+# match = { keywords = ["CVE", "vulnerability", "exploit", "security"], tags = ["security"] }
+# action = "deliver"
+# deliver_to = "log:security"
+# cooldown_minutes = 60
+
+# [[alerts]]
+# name = "breaking-news"
+# match = { keywords = ["breaking", "urgent", "just in"] }
+# action = "hook"
+# hook_command = "python3 scripts/feeds/security_hook.py"
+# cooldown_minutes = 30

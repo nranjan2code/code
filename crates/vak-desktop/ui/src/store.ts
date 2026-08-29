@@ -48,7 +48,7 @@ export const [health, setHealth] = createSignal<Health | null>(null);
 export const [providers, setProviders] = createSignal<import("./types").ProvidersResponse | null>(null);
 export const [setupNeeded, setSetupNeeded] = createSignal(false);
 export const [density, setDensity] = createSignal<Density>("outcome");
-export const [dockTab, setDockTab] = createSignal<"preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | null>(null);
+export const [dockTab, setDockTab] = createSignal<"preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | "feeds" | null>(null);
 export const [showShortcuts, setShowShortcuts] = createSignal(false);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 /** Left navigation manages user-wide defaults; the workspace header manages
@@ -155,6 +155,8 @@ export const [searchOpen, setSearchOpen] = createSignal(false);
 // the header bell and the sidebar badge.
 export const [inboxOpen, setInboxOpen] = createSignal(false);
 export const [inboxUnread, setInboxUnread] = createSignal(0);
+// Feed pipeline modal.
+export const [feedsOpen, setFeedsOpen] = createSignal(false);
 // Settings page to land on when the next open happens (budget banner link).
 export type SettingsPageId =
   | "general"

@@ -127,6 +127,8 @@ pub struct FileConfig {
     pub tools: ToolsSettings,
     #[serde(default)]
     pub heartbeat: HeartbeatSettings,
+    #[serde(default)]
+    pub feeds: FeedSettings,
 }
 
 /// Cross-session recall (docs/design/23-memory.md). Read-only and
@@ -364,6 +366,35 @@ pub struct HeartbeatSettings {
     pub max_findings: Option<usize>,
 }
 
+/// Feed pipeline settings. Read-only and workspace-scoped.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct FeedSettings {
+    /// Enable the feed pipeline. Default false.
+    pub enabled: Option<bool>,
+    /// Path to feeds.toml config file. None = auto-detect.
+    pub config_path: Option<String>,
+    /// Path to the DuckDB database file. None = auto-detect.
+    pub db_path: Option<String>,
+    /// Default check interval for sources (e.g. "30m", "1h").
+    pub default_check_interval: Option<String>,
+    /// Maximum items to keep per feed.
+    pub max_items_per_feed: Option<u32>,
+    /// Days to keep dedup hashes.
+    pub dedup_window_days: Option<u32>,
+}
+
+/// Resolved feed pipeline settings.
+#[derive(Debug, Clone)]
+pub struct FeedResolved {
+    pub enabled: bool,
+    pub config_path: Option<String>,
+    pub db_path: Option<String>,
+    pub default_check_interval: String,
+    pub max_items_per_feed: u32,
+    pub dedup_window_days: u32,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct PriceEntry {
     pub input: f64,
@@ -463,6 +494,7 @@ pub struct Config {
     pub update: UpdateResolved,
     pub tools: ToolsResolved,
     pub heartbeat: HeartbeatResolved,
+    pub feeds: FeedResolved,
     pub warnings: Vec<String>,
 }
 
@@ -740,6 +772,14 @@ impl Default for Config {
             sandbox: SandboxResolved {
                 backend: "auto".into(),
                 image: None,
+            },
+            feeds: FeedResolved {
+                enabled: false,
+                config_path: None,
+                db_path: None,
+                default_check_interval: "30m".into(),
+                max_items_per_feed: 500,
+                dedup_window_days: 90,
             },
             warnings: Vec::new(),
         }
@@ -1318,6 +1358,16 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         Some(n) => cfg.heartbeat.max_findings = n,
         None => cfg.heartbeat.max_findings = 3,
     }
+    let fs = &merged.feeds;
+    cfg.feeds.enabled = fs.enabled.unwrap_or(false);
+    cfg.feeds.config_path = fs.config_path.clone();
+    cfg.feeds.db_path = fs.db_path.clone();
+    cfg.feeds.default_check_interval = fs
+        .default_check_interval
+        .clone()
+        .unwrap_or_else(|| "30m".into());
+    cfg.feeds.max_items_per_feed = fs.max_items_per_feed.unwrap_or(500);
+    cfg.feeds.dedup_window_days = fs.dedup_window_days.unwrap_or(90);
     for (name, hook) in merged.gateway.outbound.webhooks {
         if hook.url.trim().is_empty() {
             cfg.warnings.push(format!(
@@ -1928,6 +1978,24 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     for (name, hook) in over.gateway.outbound.webhooks {
         base.gateway.outbound.webhooks.insert(name, hook);
+    }
+    if over.feeds.enabled.is_some() {
+        base.feeds.enabled = over.feeds.enabled;
+    }
+    if over.feeds.config_path.is_some() {
+        base.feeds.config_path = over.feeds.config_path;
+    }
+    if over.feeds.db_path.is_some() {
+        base.feeds.db_path = over.feeds.db_path;
+    }
+    if over.feeds.default_check_interval.is_some() {
+        base.feeds.default_check_interval = over.feeds.default_check_interval;
+    }
+    if over.feeds.max_items_per_feed.is_some() {
+        base.feeds.max_items_per_feed = over.feeds.max_items_per_feed;
+    }
+    if over.feeds.dedup_window_days.is_some() {
+        base.feeds.dedup_window_days = over.feeds.dedup_window_days;
     }
     for (k, v) in over.profiles {
         base.profiles.insert(k, v);

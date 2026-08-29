@@ -1,0 +1,216 @@
+# Default source type registry for the feed pipeline.
+# Users can add custom source types in ~/.config/vak/feed_sources.toml.
+
+[[source_types]]
+id = "rss"
+name = "RSS / Atom Feed"
+icon = "rss"
+description = "Any RSS or Atom feed URL"
+fetcher = "rss"
+default_interval = "1h"
+
+[source_types.fields]
+url = { type = "url", label = "Feed URL", placeholder = "https://example.com/feed.xml", required = true }
+tags = { type = "tags", label = "Tags", placeholder = "tech, news" }
+trust = { type = "select", label = "Source trust", options = [
+    { value = "high", label = "High — established source" },
+    { value = "medium", label = "Medium — general source" },
+    { value = "low", label = "Low — unverified source" }
+], default = "medium" }
+
+[[source_types.wizard.steps]]
+id = "discover"
+title = "Find your feed"
+description = "Enter a website URL and we'll find the RSS feed for you"
+input = { type = "url", label = "Website or Feed URL", placeholder = "https://example.com" }
+action = "discover_feed"
+
+[[source_types.wizard.steps]]
+id = "preview"
+title = "Preview feed"
+description = "Here are the latest items from this feed"
+action = "preview_feed"
+
+[[source_types.wizard.steps]]
+id = "configure"
+title = "Set it up"
+description = "Name your feed and choose how often to check"
+fields = ["name", "tags", "trust", "interval"]
+
+[[source_types.wizard.steps]]
+id = "done"
+title = "All set!"
+description = "Your feed is now being monitored"
+
+[[source_types]]
+id = "youtube"
+name = "YouTube Channel"
+icon = "youtube"
+description = "Follow a YouTube channel's uploads"
+fetcher = "youtube"
+default_interval = "6h"
+
+[source_types.fields]
+channel_id = { type = "text", label = "Channel ID or URL", placeholder = "@3blue1brown or full URL" }
+tags = { type = "tags", label = "Tags", placeholder = "education, math" }
+trust = { type = "select", label = "Source trust", options = [
+    { value = "high", label = "High" },
+    { value = "medium", label = "Medium" },
+    { value = "low", label = "Low" }
+], default = "medium" }
+
+[[source_types.wizard.steps]]
+id = "search"
+title = "Find a channel"
+description = "Search by name or paste a channel URL"
+input = { type = "search", label = "Channel name or URL", placeholder = "3blue1brown" }
+action = "search_youtube"
+
+[[source_types.wizard.steps]]
+id = "select"
+title = "Pick a channel"
+description = "Which channel do you want to follow?"
+action = "select_channel"
+
+[[source_types.wizard.steps]]
+id = "configure"
+title = "Set it up"
+fields = ["name", "tags", "trust", "interval"]
+
+[[source_types.wizard.steps]]
+id = "done"
+title = "Following!"
+description = "New uploads will appear in your feed"
+
+[[source_types]]
+id = "hacker_news"
+name = "Hacker News"
+icon = "fire"
+description = "Top stories, best new, or Ask HN"
+fetcher = "aggregator"
+default_interval = "15m"
+
+[source_types.fields]
+variant = { type = "select", label = "Feed type", options = [
+    { value = "top", label = "Top Stories" },
+    { value = "new", label = "Newest" },
+    { value = "best", label = "Best" },
+    { value = "ask", label = "Ask HN" },
+    { value = "show", label = "Show HN" }
+]}
+tags = { type = "tags", label = "Tags", placeholder = "tech, programming" }
+trust = { type = "select", label = "Source trust", options = [
+    { value = "high", label = "High" },
+    { value = "medium", label = "Medium" },
+    { value = "low", label = "Low" }
+], default = "high" }
+
+[[source_types.wizard.steps]]
+id = "pick"
+title = "What interests you?"
+description = "Choose a feed type"
+input = { type = "select_cards", options = [
+    { value = "top", label = "Top Stories", icon = "fire", description = "Most popular right now" },
+    { value = "new", label = "Newest", icon = "clock", description = "Fresh submissions" },
+    { value = "best", label = "Best", icon = "star", description = "Highest rated" },
+    { value = "ask", label = "Ask HN", icon = "help", description = "Community questions" },
+    { value = "show", label = "Show HN", icon = "display", description = "Projects and demos" }
+]}
+
+[[source_types.wizard.steps]]
+id = "configure"
+fields = ["name", "tags", "trust", "interval"]
+
+[[source_types.wizard.steps]]
+id = "done"
+title = "You're set!"
+description = "Stories will appear as they're posted"
+
+[[source_types]]
+id = "reddit"
+name = "Reddit"
+icon = "reddit"
+description = "Follow subreddits for links and discussions"
+fetcher = "aggregator"
+default_interval = "30m"
+
+[source_types.fields]
+subreddit = { type = "text", label = "Subreddit", placeholder = "r/programming" }
+sort = { type = "select", label = "Sort", options = [
+    { value = "hot", label = "Hot" },
+    { value = "new", label = "New" },
+    { value = "top", label = "Top" },
+    { value = "rising", label = "Rising" }
+]}
+tags = { type = "tags", label = "Tags", placeholder = "programming, news" }
+trust = { type = "select", label = "Source trust", options = [
+    { value = "high", label = "High" },
+    { value = "medium", label = "Medium" },
+    { value = "low", label = "Low" }
+], default = "medium" }
+
+[[source_types.wizard.steps]]
+id = "search"
+title = "Find a subreddit"
+description = "Search by topic or name"
+input = { type = "search", label = "Subreddit or topic", placeholder = "programming" }
+action = "search_reddit"
+
+[[source_types.wizard.steps]]
+id = "select"
+title = "Pick subreddits"
+description = "Select one or more subreddits to follow"
+action = "select_reddit"
+
+[[source_types.wizard.steps]]
+id = "configure"
+fields = ["name", "tags", "trust", "interval"]
+
+[[source_types.wizard.steps]]
+id = "done"
+title = "Following!"
+description = "New posts will appear in your feed"
+
+[[source_types]]
+id = "custom_http"
+name = "Custom HTTP Source"
+icon = "globe"
+description = "Any HTTP endpoint returning JSON, RSS, or text"
+fetcher = "custom"
+default_interval = "1h"
+
+[source_types.fields]
+url = { type = "url", label = "Endpoint URL", required = true }
+format = { type = "select", label = "Response format", options = [
+    { value = "json", label = "JSON" },
+    { value = "rss", label = "RSS / Atom" },
+    { value = "text", label = "Plain text (line-delimited)" }
+]}
+json_path = { type = "text", label = "JSON path to items", placeholder = "data.results",
+  condition = { field = "format", value = "json" } }
+mapping = { type = "json", label = "Field mapping", placeholder = '{"title": "headline", "url": "link"}',
+  condition = { field = "format", value = "json" } }
+tags = { type = "tags", label = "Tags" }
+trust = { type = "select", label = "Source trust", options = [
+    { value = "high", label = "High" },
+    { value = "medium", label = "Medium" },
+    { value = "low", label = "Low" }
+], default = "medium" }
+
+[[source_types.wizard.steps]]
+id = "endpoint"
+title = "Enter endpoint"
+description = "Paste the URL of your data source"
+input = { type = "url", label = "Endpoint URL", placeholder = "https://api.example.com/feed" }
+action = "probe_endpoint"
+
+[[source_types.wizard.steps]]
+id = "configure"
+title = "Map the fields"
+description = "We detected the format. Map the fields to our schema."
+fields = ["format", "json_path", "mapping", "name", "tags", "trust", "interval"]
+
+[[source_types.wizard.steps]]
+id = "done"
+title = "Connected!"
+description = "Data will be fetched on your schedule"

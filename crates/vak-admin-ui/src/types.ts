@@ -377,3 +377,104 @@ export interface SessionCheckpoint {
   commit_hash?: string;
   message?: string;
 }
+
+export interface FeedSourceType {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  fetcher: string;
+  default_interval: string;
+}
+
+export interface FeedSource {
+  name: string;
+  type: string;
+  url?: string;
+  driver?: string;
+  channel_id?: string;
+  variant?: string;
+  tags?: string[];
+  trust?: string;
+  enabled?: boolean;
+  interval?: string;
+}
+
+export interface FeedItem {
+  id: number;
+  feed_id: number;
+  title: string;
+  url: string;
+  author?: string;
+  summary: string;
+  content?: string;
+  published_at?: string;
+  ingested_at?: string;
+  tags?: string[];
+  source_trust?: string;
+  word_count?: number;
+  source_name?: string;
+  source_type?: string;
+}
+
+export interface FeedSearchResult {
+  url: string;
+  title: string;
+  content: string;
+  score: number;
+  published_date?: string;
+  source_name?: string;
+  source_type?: string;
+  tags?: string[];
+  highlights?: string[];
+  evidence?: {
+    excerpts?: Array<{ text: string; relevance: number }>;
+    source_trust?: string;
+    freshness_hours?: number;
+    corroboration_count?: number;
+  };
+}
+
+export interface FeedSearchResponse {
+  query: string;
+  answer?: string;
+  follow_up_questions?: string[];
+  results: FeedSearchResult[];
+  meta: {
+    total_results: number;
+    returned_results: number;
+    search_time_ms: number;
+    sources_searched?: string[];
+    deduplicated?: number;
+  };
+}
+
+export interface FeedStats {
+  total_items: number;
+  total_feeds: number;
+  active_feeds: number;
+  total_alerts: number;
+  last_ingest?: string;
+  items_today: number;
+  sources?: Array<{
+    name: string;
+    type: string;
+    item_count: number;
+    last_item?: string;
+  }>;
+}
+
+export interface FeedAlertRule {
+  id: number;
+  name: string;
+  match_config?: {
+    keywords?: string[];
+    tags?: string[];
+    sources?: string[];
+  };
+  action?: string;
+  deliver_to?: string;
+  hook_command?: string;
+  cooldown_minutes?: number;
+  enabled?: boolean;
+}

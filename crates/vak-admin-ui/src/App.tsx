@@ -2,6 +2,11 @@ import { For, Match, Show, Switch, createEffect, createMemo, createResource, cre
 import { api, AuthRequired } from "./api";
 import { clock, shortId, timeAgo } from "./time";
 import {
+  AccessPicker, BUILTIN_TOOLS, MATCHER_TOOLS, MatcherBuilder, ScheduleBuilder,
+  describeDuration, describeMatcher, describeSchedule, shortDuration, syncSelect,
+} from "./controls";
+import type { AccessOption } from "./controls";
+import {
   approvalsVersion, authed, conn, connectEvents, disconnectEvents, feed, navigate, pushToast,
   route, sessionsVersion, setAuthed, statsVersion, toasts,
 } from "./store";
@@ -56,6 +61,7 @@ const ICONS = {
   integrations: "M16.5 9.4 7.55 4.24a1.78 1.78 0 0 0-2.5 1.55v12.42a1.78 1.78 0 0 0 2.5 1.55L16.5 14.6a1.78 1.78 0 0 0 0-3.2z M21 12h-3 M3 12h1",
   gateway: "M4 4h16v12H4z M8 20h8 M12 16v4 M8 8h.01 M12 8h4 M8 12h8",
   memory: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20 M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15z",
+  feeds: "M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16M5 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
   search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35",
   inbox: "M22 12h-6l-2 3h-4l-2-3H2M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z",
   security: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
@@ -227,16 +233,41 @@ function rulesForMcpServer(rules: ParsedRule[], server: string): ParsedRule[] {
 // chip means the same thing on every screen. `danger` is the vocabulary --
 // there is no `alert` tone, and naming one would have rendered every deny
 // rule in muted grey.
+/// A decision keyword said as an outcome. The keyword itself is still the
+/// config vocabulary and stays on hover wherever this is used.
+const DECISION_WORDS: Record<RuleDecision, string> = {
+  allow: "allowed",
+  ask: "asks you first",
+  deny: "blocked",
+};
+
 const DECISION_TONE: Record<RuleDecision, string> = {
   allow: "success",
   ask: "warning",
   deny: "danger",
 };
 
+/// A parsed rule, said in a sentence. The raw form stays on hover and in the
+/// title — an operator who knows the syntax loses nothing, and one who
+/// doesn't no longer has to learn it to read the page.
+function describeRule(rule: ParsedRule): string {
+  const noun =
+    rule.tool === "mcp"
+      ? rule.pattern
+        ? `the connected app ${rule.pattern.split("/")[0]}`
+        : "connected apps"
+      : (BUILTIN_TOOLS.find((t) => t.value === rule.tool)?.label ?? rule.tool);
+  if (rule.tool !== "mcp" && rule.pattern) return `${noun} matching ${rule.pattern}`;
+  return noun;
+}
+
 function RuleChip(props: { rule: ParsedRule }) {
   return (
-    <span class={`chip chip-tone-${DECISION_TONE[props.rule.decision]} mono`} title={`${props.rule.decision}: ${props.rule.raw}`}>
-      {props.rule.raw}
+    <span
+      class={`chip chip-phrase chip-tone-${DECISION_TONE[props.rule.decision]}`}
+      title={`${props.rule.decision}: ${props.rule.raw}`}
+    >
+      {describeRule(props.rule)}
     </span>
   );
 }
@@ -259,7 +290,7 @@ function Login() {
       connectEvents();
       navigate("#/overview");
     } catch (err) {
-      setError(err instanceof AuthRequired || `${err}`.includes("401") ? "Invalid token" : `${err}`);
+      setError(err instanceof AuthRequired || `${err}`.includes("401") ? "That token doesn\u2019t match. Check the one vak serve printed." : `${err}`);
     } finally {
       setBusy(false);
     }
@@ -371,8 +402,8 @@ function Overview() {
   return (
     <div class="view">
       <PageHeader
-        title="Operator overview"
-        description="A live command center for the work, policy, and runtime state behind vak."
+        title="Overview"
+        description="What is running, what needs you, and what changed."
         actions={<>
           <button class="ghost" onClick={refresh}>Refresh</button>
           <button onClick={newSession}>+ New session</button>
@@ -381,36 +412,36 @@ function Overview() {
       <section class="overview-hero">
         <div>
           <div class="hero-kicker"><span class={`dot dot-${conn()}`} /> {conn() === "live" ? "Live telemetry" : `Telemetry ${conn()}`}</div>
-          <h2>{attentionCount() === 0 ? "Everything is clear." : `${attentionCount()} signals need a look.`}</h2>
-          <p>{attentionCount() === 0 ? "No approvals, warnings, candidate runs, or security events are waiting in the current readout." : "Start with the attention queue, then use the reporting panels to understand what changed."}</p>
+          <h2>{attentionCount() === 0 ? "Everything is clear." : `${attentionCount()} thing${attentionCount() === 1 ? "" : "s"} need a look.`}</h2>
+          <p>{attentionCount() === 0 ? "Nothing is waiting on you — no approvals, warnings, draft runs, or security events." : "Start with the list below, then read the panels underneath to see what changed."}</p>
         </div>
         <div class="hero-route">
-          <span class="hero-route-label">Current route</span>
-          <strong>{config()?.provider ?? health()?.provider ?? "Loading…"}</strong>
+          <span class="hero-route-label">Answering with</span>
+          <strong>{providerLabel(config()?.provider ?? health()?.provider ?? "") || "Loading…"}</strong>
           <span class="mono">{config()?.model ?? health()?.model ?? ""}</span>
-          <button class="text-action" onClick={() => navigate("#/settings")}>Configure route →</button>
+          <button class="text-action" onClick={() => navigate("#/settings")}>Change this →</button>
         </div>
       </section>
       <div class="stats-row">
-        <StatCard label="Sessions indexed" value={sessions()?.total ?? "…"} />
+        <StatCard label="Sessions" value={sessions()?.total ?? "…"} />
         <StatCard
-          label="Entries · recent sessions"
+          label="Messages recorded"
           value={sessions()?.sessions.reduce((a, s) => a + s.entry_count, 0) ?? "…"}
           sub={
             sessions() && sessions()!.total > sessions()!.sessions.length
-              ? `Sum over the ${sessions()!.sessions.length} most recent of ${sessions()!.total}`
+              ? `Across the ${sessions()!.sessions.length} most recent of ${sessions()!.total} sessions`
               : undefined
           }
         />
         <StatCard
-          label="FinOps spend"
+          label="Spent so far"
           value={`$${spendUSD().toFixed(4)}`}
           progress={spendProgress()}
-          sub={capUSD() ? `Budget cap: $${capUSD()!.toFixed(2)}` : "No limit set"}
+          sub={capUSD() ? `of your $${capUSD()!.toFixed(2)} budget` : "No budget set"}
           tone={spendProgress() && spendProgress()! > 90 ? "warn" : undefined}
         />
         <StatCard
-          label="Security events · 24h"
+          label="Security events today"
           value={security.loading ? "…" : recentSecurity()}
           tone={recentSecurity() > 0 ? "warn" : undefined}
         />
@@ -418,18 +449,18 @@ function Overview() {
 
       <section class="attention-panel panel">
         <div class="panel-title-row">
-          <div><h2>Attention queue</h2><p>Items that can block work or change the system’s trust boundary.</p></div>
+          <div><h2>Needs your attention</h2><p>Anything that can hold work up, or change what vak is allowed to do.</p></div>
           <span class={`chip ${attentionCount() > 0 ? "chip-warn" : "chip-ok"}`}>{attentionCount()} open</span>
         </div>
         <div class="attention-grid">
           <button class="attention-item" onClick={() => navigate("#/inbox")}>
-            <span class="attention-icon warning">!</span><span><strong>{approvals()?.total ?? "…"} pending approvals</strong><small>Review gated tool calls in Inbox</small></span><span class="chev">›</span>
+            <span class="attention-icon warning">!</span><span><strong>{approvals()?.total ?? "…"} waiting for your approval</strong><small>Vak paused and asked before doing something — review it in the Inbox</small></span><span class="chev">›</span>
           </button>
           <button class="attention-item" onClick={() => navigate("#/sessions")}>
-            <span class="attention-icon info">◆</span><span><strong>{bestofn()?.total ?? "…"} candidate runs</strong><small>Compare or discard best-of-N work</small></span><span class="chev">›</span>
+            <span class="attention-icon info">◆</span><span><strong>{bestofn()?.total ?? "…"} draft attempts</strong><small>Vak tried the same task several ways — pick the one to keep</small></span><span class="chev">›</span>
           </button>
           <button class="attention-item" onClick={() => navigate("#/security")}>
-            <span class="attention-icon danger">⌁</span><span><strong>{recentSecurity()} security events</strong><small>Inspect the audit ledger from the last 24h</small></span><span class="chev">›</span>
+            <span class="attention-icon danger">⌁</span><span><strong>{recentSecurity()} security events</strong><small>Everything worth recording from the last 24 hours</small></span><span class="chev">›</span>
           </button>
         </div>
       </section>
@@ -438,26 +469,26 @@ function Overview() {
 
       <div class="two-col">
         <section class="panel">
-          <h2>System &amp; Operations</h2>
+          <h2>This machine</h2>
           <Show when={!health.loading} fallback={<div class="empty">Loading…</div>}>
             <dl class="kv">
-              <dt>provider</dt>
-              <dd>{health()?.provider}</dd>
-              <dt>model</dt>
+              <dt>Provider</dt>
+              <dd>{providerLabel(health()?.provider ?? "")}</dd>
+              <dt>Model</dt>
               <dd class="mono">{health()?.model}</dd>
-              <dt>permission mode</dt>
-              <dd><span class="chip chip-mode">{health()?.permission_mode}</span></dd>
-              <dt>sandbox</dt>
+              <dt>What it may do</dt>
+              <dd><span class="chip chip-phrase chip-mode">{modeLabel(health()?.permission_mode)}</span></dd>
+              <dt>Sandbox</dt>
               <dd>{health()?.sandbox}</dd>
-              <dt>context window</dt>
-              <dd>{(health()?.context_window ?? 0).toLocaleString()} tok</dd>
-              <dt>gateway service</dt>
+              <dt>Memory per turn</dt>
+              <dd>{(health()?.context_window ?? 0).toLocaleString()} tokens</dd>
+              <dt>Chat gateway</dt>
               <dd>
                 <span class="chip" data-on={ops()?.gateway?.state === "running" || ops()?.gateway_healthy}>
                   {ops()?.gateway?.state ?? (health()?.status === "ok" ? "ready" : "offline")}
                 </span>
               </dd>
-              <dt>workspace</dt>
+              <dt>Project folder</dt>
               <dd><PathCell path={health()?.cwd ?? ""} budget={46} /></dd>
             </dl>
             <Show when={(health()?.warnings?.length ?? 0) > 0}>
@@ -474,12 +505,12 @@ function Overview() {
         </section>
 
         <section class="panel">
-          <div class="panel-title-row"><div><h2>Runtime posture</h2><p>Services and policy currently in force.</p></div><button class="ghost small" onClick={() => navigate("#/gateway")}>Open gateway</button></div>
+          <div class="panel-title-row"><div><h2>What is running</h2><p>Live status of each part of the system.</p></div><button class="ghost small" onClick={() => navigate("#/gateway")}>Open gateway</button></div>
           <div class="posture-list">
-            <div><span class={`status-mark ${health()?.status === "ok" ? "good" : "bad"}`} /> <span>Core health</span><strong>{health()?.status ?? "Loading…"}</strong></div>
-            <div><span class={`status-mark ${ops()?.gateway_healthy ? "good" : "bad"}`} /> <span>Gateway service</span><strong>{ops()?.gateway?.state ?? "Unknown"}</strong></div>
-            <div><span class={`status-mark ${gateway()?.enabled ? "good" : "neutral"}`} /> <span>Channel bindings</span><strong>{gateway()?.bindings.length ?? "…"}</strong></div>
-            <div><span class="status-mark neutral" /> <span>Permission mode</span><strong>{config()?.permission_mode ?? health()?.permission_mode ?? "…"}</strong></div>
+            <div><span class={`status-mark ${health()?.status === "ok" ? "good" : "bad"}`} /> <span>Vak itself</span><strong>{health()?.status ?? "Loading…"}</strong></div>
+            <div><span class={`status-mark ${ops()?.gateway_healthy ? "good" : "bad"}`} /> <span>Chat gateway</span><strong>{ops()?.gateway?.state ?? "Unknown"}</strong></div>
+            <div><span class={`status-mark ${gateway()?.enabled ? "good" : "neutral"}`} /> <span>Connected chats</span><strong>{gateway()?.bindings.length ?? "…"}</strong></div>
+            <div><span class="status-mark neutral" /> <span>What it may do</span><strong>{config()?.permission_mode ?? health()?.permission_mode ? modeLabel(config()?.permission_mode ?? health()?.permission_mode) : "…"}</strong></div>
           </div>
           <Show when={recentWarnings().length > 0}>
             <div class="posture-warning">{recentWarnings()[0]} <button class="text-action" onClick={() => navigate("#/settings")}>Review settings →</button></div>
@@ -487,26 +518,26 @@ function Overview() {
         </section>
 
         <section class="panel recent-panel">
-          <div class="panel-title-row"><div><h2>Recent sessions</h2><p>Latest ledger activity across all workspaces.</p></div><button class="ghost small" onClick={() => navigate("#/sessions")}>View all</button></div>
+          <div class="panel-title-row"><div><h2>Recent sessions</h2><p>The latest conversations, across every project.</p></div><button class="ghost small" onClick={() => navigate("#/sessions")}>View all</button></div>
           <Show when={recentSessions().length > 0} fallback={<div class="empty">No sessions yet.</div>}>
             <div class="recent-sessions">
               <For each={recentSessions()}>{(session) => <button class="recent-session" onClick={() => navigate(`#/sessions/${session.session_id}`)}>
-                <span class="session-pulse" /><span class="mono">{shortId(session.session_id)}</span><span class="session-entries">{session.entry_count} entries</span><span class="when">{timeAgo(session.last_ts)}</span>
+                <span class="session-pulse" /><span class="mono">{shortId(session.session_id)}</span><span class="session-entries">{session.entry_count} messages</span><span class="when">{timeAgo(session.last_ts)}</span>
               </button>}</For>
             </div>
           </Show>
         </section>
 
         <section class="panel">
-          <div class="panel-title-row"><div><h2>Activity report</h2><p>Event mix from this connection.</p></div><span class="chip chip-tone-info">{feed().length} events</span></div>
+          <div class="panel-title-row"><div><h2>What has been happening</h2><p>The mix of events since this page connected.</p></div><span class="chip chip-tone-info">{feed().length} events</span></div>
           <Show when={activityCounts().length > 0} fallback={<div class="empty">Waiting for events…</div>}>
-            <div class="activity-report"><For each={activityCounts()}>{([kind, count]) => <div class="activity-row"><span>{kind}</span><div class="activity-track"><i style={{ width: `${Math.max(8, (count / Math.max(1, feed().length)) * 100)}%` }} /></div><strong>{count}</strong></div>}</For></div>
+            <div class="activity-report"><For each={activityCounts()}>{([kind, count]) => <div class="activity-row"><span title={kind}>{EVENT_LABELS[kind] ?? kind}</span><div class="activity-track"><i style={{ width: `${Math.max(8, (count / Math.max(1, feed().length)) * 100)}%` }} /></div><strong>{count}</strong></div>}</For></div>
           </Show>
-          <button class="text-action report-link" onClick={() => navigate("#/security")}>Open full event ledger →</button>
+          <button class="text-action report-link" onClick={() => navigate("#/security")}>See every recorded event →</button>
         </section>
 
         <section class="panel live-panel">
-          <div class="panel-title-row"><div><h2>Live activity</h2><p>Newest events arrive here as the server emits them.</p></div><span class="chip chip-tone-success">streaming</span></div>
+          <div class="panel-title-row"><div><h2>Happening now</h2><p>New events appear here the moment they occur.</p></div><span class="chip chip-tone-success">streaming</span></div>
           <Show
             when={feedItems().length > 0}
             fallback={<div class="empty">Waiting for events… they will appear here in real time.</div>}
@@ -516,7 +547,7 @@ function Overview() {
                 {(item) => (
                   <li data-type={item.event.type}>
                     <span class="feed-time">{clock(item.ts)}</span>
-                    <span class="feed-kind">{item.event.type}</span>
+                    <span class="feed-kind" title={item.event.type}>{EVENT_LABELS[item.event.type] ?? item.event.type}</span>
                     <span class="feed-text">{summarizeEvent(item.event)}</span>
                   </li>
                 )}
@@ -539,7 +570,7 @@ function ApprovalsCard() {
     setBusyId(a.request_id);
     try {
       await api.answer(a.session_id, a.request_id, approve);
-      pushToast("info", `${approve ? "Granted" : "Denied"} ${a.tool}`);
+      pushToast("info", `${approve ? "Allowed" : "Refused"} — ${a.tool}`);
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -551,10 +582,15 @@ function ApprovalsCard() {
 
   return (
     <section class="panel" classList={{ "panel-alert": (pending()?.total ?? 0) > 0 }} style="margin-bottom:14px">
-      <h2>Pending approvals</h2>
+      <div class="panel-title-row">
+        <div>
+          <h2>Waiting for your approval</h2>
+          <p class="dim">Vak stopped before doing each of these and is waiting on your answer.</p>
+        </div>
+      </div>
       <Show
         when={(pending()?.approvals.length ?? 0) > 0}
-        fallback={<div class="empty">No gates waiting. Runs proceed without you.</div>}
+        fallback={<div class="empty">Nothing is waiting. Vak is getting on with it.</div>}
       >
         <ul class="approval-list">
           <For each={pending()!.approvals}>
@@ -594,6 +630,24 @@ function ApprovalsCard() {
   );
 }
 
+/// `SystemEvent`'s serde tag is a Rust variant name. Print what happened
+/// instead, and keep the tag on hover for anyone matching it against a log.
+const EVENT_LABELS: Record<string, string> = {
+  Agent: "Agent step",
+  SessionCreated: "Session started",
+  SessionEntryAppended: "Message recorded",
+  ConfigChanged: "Setting changed",
+  GatewayInbound: "Message from a chat",
+  ApprovalRequested: "Approval requested",
+  ApprovalGranted: "Approval granted",
+  ApprovalDenied: "Approval refused",
+  SecurityEvent: "Security event",
+  ProviderError: "Provider error",
+  RateLimit: "Rate limited",
+  Heartbeat: "Still connected",
+  Lagged: "Events skipped",
+};
+
 function summarizeEvent(ev: import("./types").SystemEvent): string {
   switch (ev.type) {
     case "Agent":
@@ -601,16 +655,16 @@ function summarizeEvent(ev: import("./types").SystemEvent): string {
     case "SessionCreated":
       return ev.data.session_id.slice(0, 12);
     case "SessionEntryAppended":
-      return `${ev.data.kind} → ${ev.data.session_id.slice(0, 12)}`;
+      return `${ev.data.kind} in ${ev.data.session_id.slice(0, 12)}`;
     case "ConfigChanged":
       return `${ev.data.label}: ${ev.data.detail}`;
     case "GatewayInbound":
-      return `[${ev.data.surface}] ${ev.data.who}: ${ev.data.preview}`;
+      return `${SURFACE_LABEL[ev.data.surface] ?? ev.data.surface} · ${ev.data.who}: ${ev.data.preview}`;
     case "ApprovalGranted":
     case "ApprovalDenied":
       return `${ev.data.tool} (${ev.data.id.slice(0, 8)})`;
     case "SecurityEvent":
-      return `${ev.data.kind} — ${ev.data.label}`;
+      return `${secKindLabel(ev.data.kind)} — ${ev.data.label}`;
     case "ProviderError":
       return `${ev.data.provider}/${ev.data.model}: ${ev.data.error}`;
     case "RateLimit":
@@ -652,7 +706,7 @@ function Sessions() {
   };
 
   const removeSession = async (s: SessionListItem) => {
-    if (!confirmDestructive(`Delete session ${shortId(s.session_id)}? The ledger file itself is kept on disk.`)) return;
+    if (!confirmDestructive(`Delete session ${shortId(s.session_id)}? The transcript file stays on disk.`)) return;
     setBusySession(s.session_id);
     try {
       await api.deleteSession(s.session_id);
@@ -669,7 +723,7 @@ function Sessions() {
   const archivedCount = createMemo(() => (sessions()?.sessions ?? []).filter((s) => s.archived).length);
 
   const deleteAllArchived = async () => {
-    if (!confirmDestructive(`Delete all ${archivedCount()} archived sessions? The ledger files themselves are kept on disk.`)) return;
+    if (!confirmDestructive(`Delete all ${archivedCount()} archived sessions? The transcript files stay on disk.`)) return;
     setBulkBusy(true);
     try {
       const res = await api.deleteAllArchived();
@@ -700,7 +754,7 @@ function Sessions() {
     setBusyCandidate(sessionId);
     try {
       await api.keepBestRun(sessionId);
-      pushToast("info", "Candidate kept — worktree merged");
+      pushToast("info", "Kept. Those changes are now in your project.");
       bestofnActions.refetch();
       refetch();
     } catch (err) {
@@ -711,11 +765,11 @@ function Sessions() {
   };
 
   const handleDiscard = async (sessionId: string) => {
-    if (!confirmDestructive("Discard this candidate run?")) return;
+    if (!confirmDestructive("Throw this draft away? Its changes are lost.")) return;
     setBusyCandidate(sessionId);
     try {
       await api.discardBestRun(sessionId);
-      pushToast("info", "Candidate run discarded");
+      pushToast("info", "Draft discarded");
       bestofnActions.refetch();
       refetch();
     } catch (err) {
@@ -735,11 +789,19 @@ function Sessions() {
 
   return (
     <div class="view">
-      <PageHeader title="Sessions" description="Inspect append-only ledgers, run prompts, review diffs, and compare candidate work." />
+      <PageHeader title="Sessions" description="Every conversation vak has had — read one, pick up where it left off, or compare the drafts of a task it tried several ways." />
       {/* Best of N Candidate Runs Card */}
       <Show when={(bestofn()?.runs?.length ?? 0) > 0}>
         <section class="panel" style="margin-bottom:14px">
-          <h2>Active Best-of-N candidate runs ({bestofn()!.runs.length})</h2>
+          <div class="panel-title-row">
+            <div>
+              <h2>Drafts waiting to be picked ({bestofn()!.runs.length})</h2>
+              <p class="dim">
+                Vak tried the same task several ways, each in its own copy of the project. Keep the
+                one you want and the rest are thrown away.
+              </p>
+            </div>
+          </div>
           <div class="candidate-grid">
             <For each={bestofn()!.runs}>
               {(run) => (
@@ -769,7 +831,7 @@ function Sessions() {
       </Show>
 
       <div class="toolbar">
-        <input class="search-input" placeholder="Filter by session id…" value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
+        <input class="search-input" placeholder="Find a session…" value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
         <label class="toggle">
           <input type="checkbox" checked={showArchived()} onChange={(e) => setShowArchived(e.currentTarget.checked)} />
           Show archived ({archivedCount()})
@@ -792,17 +854,17 @@ function Sessions() {
         >
         <Show when={sessions() && sessions()!.total > sessions()!.sessions.length}>
           <p class="dim" style="margin:-6px 0 10px">
-            Showing the {sessions()!.sessions.length} most recent of {sessions()!.total} sessions. Narrow with
-            the filter above to find an older one.
+Showing the {sessions()!.sessions.length} most recent of {sessions()!.total} sessions — search above to
+            find an older one.
           </p>
         </Show>
         <Show
           when={filtered().length > 0}
-          fallback={<div class="empty">No sessions yet. Run a prompt via TUI, desktop, or gateway and it appears here.</div>}
+          fallback={<div class="empty">No sessions yet. Start one here, in the desktop app, or by messaging a connected chat — it will show up in this list.</div>}
         >
           <table class="table">
             <thead>
-              <tr><th>session</th><th>entries</th><th>first seen</th><th>last activity</th><th>workspace</th><th /></tr>
+              <tr><th>session</th><th>messages</th><th>started</th><th>last active</th><th>project</th><th /></tr>
             </thead>
             <tbody>
               <For each={filtered()}>
@@ -819,15 +881,15 @@ function Sessions() {
                       <td title={s.first_ts}>{timeAgo(s.first_ts)}</td>
                       <td title={s.last_ts}>{timeAgo(s.last_ts)}</td>
                       <td>
-                        <Show when={local()} fallback={<span class="dim" title="Belongs to a different workspace than this console is attached to — read-only from here.">other workspace</span>}>
-                          <span class="chip chip-tone-success">this workspace</span>
+                        <Show when={local()} fallback={<span class="dim" title="This session belongs to a different project than the one this console is attached to, so it can only be read from here.">another project</span>}>
+                          <span class="chip chip-tone-success">this project</span>
                         </Show>
                       </td>
                       <td onClick={(e) => e.stopPropagation()}>
                         <Show
                           when={local()}
                           fallback={
-                            <span class="dim" title="Only sessions in this console's own workspace can be archived, deleted, or exported here.">
+                            <span class="dim" title="Only sessions in this console's own project can be archived, deleted, or exported here.">
                               —
                             </span>
                           }
@@ -897,7 +959,7 @@ function Transcript(props: { sessionId: string }) {
       ? api
           .attach(props.sessionId)
           .then(() => api.diff(props.sessionId))
-          .catch((err) => ({ diff: `Could not load the worktree diff: ${err}` }))
+          .catch((err) => ({ diff: `Could not work out what changed: ${err}` }))
       : Promise.resolve(null),
   );
   const [receiptsData] = createResource(activeTab, (t) =>
@@ -982,7 +1044,7 @@ function Transcript(props: { sessionId: string }) {
   };
 
   const restoreCommit = async (seq: number) => {
-    if (!confirmDestructive(`Restore the session worktree to checkpoint #${seq}?`)) return;
+    if (!confirmDestructive(`Put the files back to how they were at save point #${seq}? Later changes in this session are lost.`)) return;
     try {
       // Attaching first lets the server resolve the correct cwd for a
       // best-of-N child (its worktree, not the workspace root) even when
@@ -1042,18 +1104,18 @@ function Transcript(props: { sessionId: string }) {
 
   return (
     <div class="view">
-      <PageHeader title="Session forensic view" description="Read the ledger, inspect worktree changes, and control the active run." />
+      <PageHeader title="Session" description="Read the conversation, see what changed on disk, and steer or stop the run." />
       <div class="toolbar">
         <button class="ghost" onClick={() => navigate("#/sessions")}>‹ Sessions</button>
         <span class="mono dim">{shortId(props.sessionId)}</span>
         <span class="spacer" />
         <Show when={running()}>
-          <span class="chip chip-running">run active</span>
+          <span class="chip chip-running">running</span>
           <button class="danger small" onClick={cancel}>Cancel</button>
         </Show>
         <label class="toggle">
           <input type="checkbox" checked={live()} onChange={(e) => setLive(e.currentTarget.checked)} />
-          Live tail
+          Follow along
         </label>
       </div>
 
@@ -1063,10 +1125,10 @@ function Transcript(props: { sessionId: string }) {
           Transcript ({totalCount()})
         </button>
         <button class="tab-btn" classList={{ active: activeTab() === "diff" }} onClick={() => setActiveTab("diff")}>
-          Worktree Diff
+          Changed files
         </button>
         <button class="tab-btn" classList={{ active: activeTab() === "receipts" }} onClick={() => setActiveTab("receipts")}>
-          Work Receipts
+          Cost &amp; usage
         </button>
         <button class="tab-btn" classList={{ active: activeTab() === "checkpoints" }} onClick={() => setActiveTab("checkpoints")}>
           Checkpoints
@@ -1088,7 +1150,7 @@ function Transcript(props: { sessionId: string }) {
           <Show when={!loading()} fallback={<div class="empty">Loading transcript…</div>}>
             <Show
               when={entries().length > 0}
-              fallback={<div class="empty">No entries match this filter.</div>}
+              fallback={<div class="empty">Nothing matches this filter.</div>}
             >
               <div class="transcript" classList={{ tailing: live() }}>
                 <For each={entries()}>
@@ -1111,7 +1173,7 @@ function Transcript(props: { sessionId: string }) {
               </div>
               <div class="pager">
                 <button class="ghost small" disabled={offset() === 0} onClick={() => changePage(-1)}>‹ Newer</button>
-                <span class="dim">page {Math.floor(offset() / PAGE) + 1}</span>
+                <span class="dim">Page {Math.floor(offset() / PAGE) + 1}</span>
                 <button class="ghost small" disabled={!hasMore()} onClick={() => changePage(1)}>Older ›</button>
               </div>
             </Show>
@@ -1120,7 +1182,7 @@ function Transcript(props: { sessionId: string }) {
           <div class="composer">
             <select
               class="n-stepper"
-              title="1 = single run · 2–4 = best-of-N fan-out"
+              title="How many attempts to make. 1 answers once; 2\u20134 try the same task separately, in their own copies of the project, so you can pick the best."
               value={nCandidates()}
               onChange={(e) => setNCandidates(Number(e.currentTarget.value))}
               disabled={running()}
@@ -1132,7 +1194,7 @@ function Transcript(props: { sessionId: string }) {
             </select>
             <textarea
               rows={2}
-              placeholder={running() ? "Queue steering for the active run…" : nCandidates() >= 2 ? `Fan across ${nCandidates()} isolated worktrees…` : "Send a prompt to this session…"}
+              placeholder={running() ? "Add a note to the run in progress…" : nCandidates() >= 2 ? `Try this ${nCandidates()} separate ways…` : "Ask vak to do something…"}
               value={draft()}
               onInput={(e) => setDraft(e.currentTarget.value)}
               onKeyDown={onKey}
@@ -1146,9 +1208,9 @@ function Transcript(props: { sessionId: string }) {
 
         {/* Diff Tab */}
         <Match when={activeTab() === "diff"}>
-          <Show when={!diffData.loading} fallback={<div class="empty">Computing worktree diff…</div>}>
+          <Show when={!diffData.loading} fallback={<div class="empty">Working out what changed…</div>}>
             <div class="diff-box">
-              <Show when={diffData()?.diff} fallback="No uncommitted changes in session worktree.">
+              <Show when={diffData()?.diff} fallback="Nothing has been changed on disk in this session.">
                 {diffData()!.diff}
               </Show>
             </div>
@@ -1157,11 +1219,11 @@ function Transcript(props: { sessionId: string }) {
 
         {/* Work Receipts Tab */}
         <Match when={activeTab() === "receipts"}>
-          <Show when={!receiptsData.loading} fallback={<div class="empty">Loading work receipts…</div>}>
-            <Show when={(receiptsData()?.length ?? 0) > 0} fallback={<div class="empty">No work receipts logged for this session yet.</div>}>
+          <Show when={!receiptsData.loading} fallback={<div class="empty">Loading…</div>}>
+            <Show when={(receiptsData()?.length ?? 0) > 0} fallback={<div class="empty">Nothing has been billed to this session yet.</div>}>
               <table class="table">
                 <thead>
-                  <tr><th>step</th><th>provider</th><th>model</th><th>in tokens</th><th>out tokens</th><th>cost (usd)</th><th>latency</th></tr>
+                  <tr><th>step</th><th>provider</th><th>model</th><th>sent</th><th>received</th><th>cost</th><th>took</th></tr>
                 </thead>
                 <tbody>
                   <For each={receiptsData() ?? []}>
@@ -1186,10 +1248,10 @@ function Transcript(props: { sessionId: string }) {
         {/* Checkpoints Tab */}
         <Match when={activeTab() === "checkpoints"}>
           <Show when={!checkpointsData.loading} fallback={<div class="empty">Loading checkpoints…</div>}>
-            <Show when={(checkpointsData()?.checkpoints?.length ?? 0) > 0} fallback={<div class="empty">No checkpoints recorded for this session yet.</div>}>
+            <Show when={(checkpointsData()?.checkpoints?.length ?? 0) > 0} fallback={<div class="empty">No save points yet. Vak records one each time it finishes a piece of work.</div>}>
               <table class="table">
                 <thead>
-                  <tr><th>seq</th><th>timestamp</th><th>commit</th><th>message</th><th /></tr>
+                  <tr><th>#</th><th>when</th><th>commit</th><th>what changed</th><th /></tr>
                 </thead>
                 <tbody>
                   <For each={checkpointsData()?.checkpoints ?? []}>
@@ -1222,9 +1284,9 @@ function Transcript(props: { sessionId: string }) {
 /// so a destination is nameable from the nav rather than found by scrolling
 /// — the same shape the Gateway section uses.
 const EXTENSION_TABS = [
-  { hash: "#/integrations", label: "MCP servers" },
+  { hash: "#/integrations", label: "Connected apps" },
   { hash: "#/integrations/skills", label: "Skills" },
-  { hash: "#/integrations/hooks", label: "Hooks" },
+  { hash: "#/integrations/hooks", label: "Automations" },
   { hash: "#/integrations/tasks", label: "Scheduled tasks" },
 ] as const;
 
@@ -1260,8 +1322,8 @@ interface ExtensionsCtx {
 /// Says so, rather than letting an empty list read as "unrestricted".
 function RulesUnknown() {
   return (
-    <span class="chip" title="This server build does not report its permission rules.">
-      scope not reported
+    <span class="chip chip-phrase" title="This version of the server does not report its permission rules.">
+      not reported
     </span>
   );
 }
@@ -1282,9 +1344,9 @@ function ModeDefaultChip(props: { mode: string }) {
   return (
     <span
       class={`chip chip-tone-${DECISION_TONE[decision()]}`}
-      title={`No rule covers this call, so ${props.mode} mode decides: ${decision()}`}
+      title={`No rule covers this, so the "${modeLabel(props.mode)}" setting decides: ${decision()}`}
     >
-      {decision()} · mode default
+      {DECISION_WORDS[decision()]} by default
     </span>
   );
 }
@@ -1311,6 +1373,72 @@ function envToLines(env: Record<string, string> | undefined): string {
     .join("\n");
 }
 
+/// A short, opinionated list of servers most operators actually want, so the
+/// common case is a click rather than a remembered `npx` invocation. Picking
+/// one only fills the form in — nothing is written until Connect is pressed,
+/// and every field stays editable. "Something else" clears it back to blank.
+const MCP_CATALOG: {
+  id: string;
+  label: string;
+  blurb: string;
+  name: string;
+  command: string;
+  args: string;
+  network: boolean;
+  env: string;
+}[] = [
+  {
+    id: "github",
+    label: "GitHub",
+    blurb: "Issues, pull requests, code search",
+    name: "github",
+    command: "npx",
+    args: "-y @modelcontextprotocol/server-github",
+    network: true,
+    env: "GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PERSONAL_ACCESS_TOKEN}",
+  },
+  {
+    id: "filesystem",
+    label: "Files",
+    blurb: "Read and write a folder outside the project",
+    name: "filesystem",
+    command: "npx",
+    args: "-y @modelcontextprotocol/server-filesystem .",
+    network: false,
+    env: "",
+  },
+  {
+    id: "postgres",
+    label: "Postgres",
+    blurb: "Query a database read-only",
+    name: "postgres",
+    command: "npx",
+    args: "-y @modelcontextprotocol/server-postgres",
+    network: true,
+    env: "DATABASE_URL=${DATABASE_URL}",
+  },
+  {
+    id: "fetch",
+    label: "Fetch a page",
+    blurb: "Pull a URL down as readable text",
+    name: "fetch",
+    command: "uvx",
+    args: "mcp-server-fetch",
+    network: true,
+    env: "",
+  },
+  {
+    id: "custom",
+    label: "Something else",
+    blurb: "Fill the details in yourself",
+    name: "",
+    command: "",
+    args: "",
+    network: false,
+    env: "",
+  },
+];
+
 function McpServersView(props: { ctx: ExtensionsCtx }) {
   const [expanded, setExpanded] = createSignal("");
   const [editing, setEditing] = createSignal("");
@@ -1327,6 +1455,28 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
   const [tavilyKey, setTavilyKey] = createSignal("");
   const [tavilyBusy, setTavilyBusy] = createSignal(false);
   const [tavily, { refetch: refetchTavily }] = createResource(() => api.tavily().catch(() => null));
+
+  const [catalogPick, setCatalogPick] = createSignal("");
+
+  /// Prefill the form from a catalog entry rather than send it: the operator
+  /// still sees, and can change, exactly what will be written.
+  const applyCatalog = (id: string) => {
+    const entry = MCP_CATALOG.find((e) => e.id === id);
+    setCatalogPick(id);
+    if (!entry || !entry.command) {
+      setNewName("");
+      setNewCmd("");
+      setNewArgs("");
+      setNewNetwork(false);
+      setNewEnv("");
+      return;
+    }
+    setNewName(entry.name);
+    setNewCmd(entry.command);
+    setNewArgs(entry.args);
+    setNewNetwork(entry.network);
+    setNewEnv(entry.env);
+  };
 
   const servers = createMemo(() => Object.entries(props.ctx.mcp()) as [string, McpServerConfig][]);
 
@@ -1346,7 +1496,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
           ...(Object.keys(env).length > 0 ? { env } : {}),
         },
       });
-      pushToast("info", `Added MCP server ‘${name}’`);
+      pushToast("info", `Connected ‘${name}’`);
       setNewName("");
       setNewCmd("");
       setNewArgs("");
@@ -1362,12 +1512,12 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
   };
 
   const removeServer = async (name: string) => {
-    if (!confirmDestructive(`Remove MCP server “${name}”?`)) return;
+    if (!confirmDestructive(`Disconnect “${name}”? Vak stops using its tools.`)) return;
     const next = { ...props.ctx.mcp() };
     delete next[name];
     try {
       await api.putMcpServers(next);
-      pushToast("info", `Removed MCP server ‘${name}’`);
+      pushToast("info", `Disconnected ‘${name}’`);
       props.ctx.refetchMcp();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
@@ -1397,7 +1547,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
           ...(Object.keys(env).length > 0 ? { env } : {}),
         },
       });
-      pushToast("info", `Updated MCP server ‘${name}’`);
+      pushToast("info", `Updated ‘${name}’`);
       setEditing("");
       props.ctx.refetchMcp();
     } catch (err) {
@@ -1493,18 +1643,17 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
       <section class="panel">
         <div class="panel-title-row">
           <div>
-            <h2>MCP servers</h2>
+            <h2>Connected apps</h2>
             <p class="dim">
-              Each row is a process vak will start on demand to borrow its tools. What it may then
-              be asked to do is decided by the <code>mcp(server/tool)</code> rules in{" "}
-              <a href="#/settings">Permissions</a> and, where no rule reaches it, by the permission
-              mode.
+              Each row is a program vak starts when it needs the tools that app provides. What it is
+              then allowed to do comes from the rules under{" "}
+              <a href="#/settings">Settings</a>, and where no rule reaches it, from the setting that
+              decides everything else.
             </p>
             <p class="dim">
-              This workspace's own <code>.vak/config.toml</code> only — a server registered
-              user-wide from <code>~/.vak/config.toml</code> is still available here too, but isn't
-              listed, so registering or editing one here can't silently freeze this project's copy
-              of it out of a later change made at the user level.
+              This lists only the apps connected for this project. One connected for your whole
+              account is still available here, but isn’t shown, so connecting or editing an app here
+              can never quietly pin this project to an old copy of it.
             </p>
           </div>
         </div>
@@ -1513,7 +1662,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
           <Match when={props.ctx.mcpLoading()}>
             <table class="table">
               <thead>
-                <tr><th>server</th><th>command</th><th>network</th><th>secrets</th><th>governed by</th><th /></tr>
+                <tr><th>app</th><th>starts with</th><th>internet</th><th>secrets</th><th>rules that apply</th><th /></tr>
               </thead>
               <tbody><SkeletonRows cols={6} /></tbody>
             </table>
@@ -1521,11 +1670,11 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
 
           <Match when={servers().length === 0}>
             <div class="empty empty-teach">
-              <strong>No MCP servers are registered.</strong>
+              <strong>No apps are connected yet.</strong>
               <p>
-                An MCP server is an external process that hands the agent extra tools — a GitHub
-                client, a database, a browser. Register one below and it starts the first time a run
-                actually calls it; until then it costs nothing.
+A connected app hands vak extra tools — a GitHub client, a database, a browser. Connect one
+                below and it starts up the first time something actually uses it; until then it costs
+                you nothing.
               </p>
             </div>
           </Match>
@@ -1533,7 +1682,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
           <Match when={servers().length > 0}>
             <table class="table">
               <thead>
-                <tr><th>server</th><th>command</th><th>network</th><th>secrets</th><th>governed by</th><th /></tr>
+                <tr><th>app</th><th>starts with</th><th>internet</th><th>secrets</th><th>rules that apply</th><th /></tr>
               </thead>
               <tbody>
                 <For each={servers()}>
@@ -1552,11 +1701,11 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
                           </td>
                           <td>
                             <span class={`chip chip-tone-${server.network ? "warning" : "success"}`}>
-                              {server.network ? "outbound allowed" : "blocked"}
+                              {server.network ? "can reach the internet" : "no internet"}
                             </span>
                           </td>
                           <td class="dim">
-                            {envKeys().length > 0 ? `${envKeys().length} env var${envKeys().length === 1 ? "" : "s"}` : "—"}
+                            {envKeys().length > 0 ? `${envKeys().length} secret${envKeys().length === 1 ? "" : "s"}` : "—"}
                           </td>
                           <td>
                             <Switch fallback={<ModeDefaultChip mode={props.ctx.mode()} />}>
@@ -1575,11 +1724,11 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
                             <td colspan={6}>
                               <div class="detail-grid">
                                 <div>
-                                  <span class="eyebrow">Command line</span>
+                                  <span class="eyebrow">What gets run</span>
                                   <pre class="mono detail-pre">{server.command} {(server.args ?? []).join(" ")}</pre>
                                 </div>
                                 <div>
-                                  <span class="eyebrow">Environment passed in</span>
+                                  <span class="eyebrow">Secrets passed in</span>
                                   <Show
                                     when={envKeys().length > 0}
                                     fallback={<p class="dim">Nothing beyond vak's own environment.</p>}
@@ -1596,13 +1745,12 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
                                   </Show>
                                 </div>
                                 <div>
-                                  <span class="eyebrow">Permission scope</span>
+                                  <span class="eyebrow">What it is allowed to do</span>
                                   <Show when={!props.ctx.rulesKnown()}>
                                     <p class="dim">
-                                      This server build does not report its permission rules, so what
-                                      governs calls to <code>{name}</code> cannot be shown here. Read{" "}
-                                      <code>allow</code>/<code>ask</code>/<code>deny</code> in{" "}
-                                      <code>config.toml</code> directly, or update vak.
+This version of the server doesn’t report its rules, so what governs calls
+                                      to <code>{name}</code> can’t be shown here. Open the project’s{" "}
+                                      <code>config.toml</code> to read them, or update vak.
                                     </p>
                                   </Show>
                                   <Show when={props.ctx.rulesKnown()}>
@@ -1610,10 +1758,11 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
                                     when={matching().length > 0}
                                     fallback={
                                       <p class="dim">
-                                        No rule names this server, so every call to it takes the mode
-                                        default: <strong>{modeDefaultDecision(props.ctx.mode())}</strong> under{" "}
-                                        {props.ctx.mode()}. Add an <code>mcp({name}/*)</code> rule to
-                                        config to narrow or widen that.
+No rule mentions this app, so every call to it is decided by the
+                                        setting under Settings — “{modeLabel(props.ctx.mode())}”, which means{" "}
+                                        <strong>{DECISION_WORDS[modeDefaultDecision(props.ctx.mode())]}</strong>.
+                                        Add an <code>mcp({name}/*)</code> rule to the config file to
+                                        change that for this app alone.
                                       </p>
                                     }
                                   >
@@ -1621,10 +1770,10 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
                                       <For each={matching()}>{(r) => <RuleChip rule={r} />}</For>
                                     </div>
                                     <p class="dim">
-                                      Among rules that match one call, deny outranks ask outranks
-                                      allow — order in config never decides it. A call these patterns
-                                      miss falls through to the mode default:{" "}
-                                      <strong>{modeDefaultDecision(props.ctx.mode())}</strong> under {props.ctx.mode()}.
+When several rules match the same call, the strictest one wins — blocked beats
+                                      ask beats allowed, and the order they appear in never matters. A call none
+                                      of these cover falls back to “{modeLabel(props.ctx.mode())}”, which means{" "}
+                                      <strong>{DECISION_WORDS[modeDefaultDecision(props.ctx.mode())]}</strong>.
                                     </p>
                                   </Show>
                                   </Show>
@@ -1632,22 +1781,22 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
                               </div>
                               <div class="row-gap" style="margin-top:12px">
                                 <Show when={editing() !== name}>
-                                  <button class="ghost small" onClick={() => beginEdit(name, server)}>Edit command</button>
+                                  <button class="ghost small" onClick={() => beginEdit(name, server)}>Edit</button>
                                 </Show>
                                 <button class="danger small" onClick={() => removeServer(name)}>
-                                  Remove server
+                                  Disconnect
                                 </button>
                               </div>
                               <Show when={editing() === name}>
                                 <div class="edit-form compact-edit">
-                                  <div class="form-row"><label>command</label><input class="mono" value={editCmd()} onInput={(e) => setEditCmd(e.currentTarget.value)} /></div>
-                                  <div class="form-row"><label>args</label><input class="mono" value={editArgs()} onInput={(e) => setEditArgs(e.currentTarget.value)} /></div>
+                                  <div class="form-row"><label>Program to run</label><input class="mono" value={editCmd()} onInput={(e) => setEditCmd(e.currentTarget.value)} /></div>
+                                  <div class="form-row"><label>Arguments</label><input class="mono" value={editArgs()} onInput={(e) => setEditArgs(e.currentTarget.value)} /></div>
                                   <label class="inherit-toggle">
                                     <input type="checkbox" checked={editNetwork()} onChange={(e) => setEditNetwork(e.currentTarget.checked)} />
-                                    Allow outbound network access
+                                    This app needs internet access
                                   </label>
                                   <div class="form-row">
-                                    <label>env</label>
+                                    <label>Secrets it needs</label>
                                     <textarea class="mono" rows={3} placeholder={"KEY=value, one per line"} value={editEnv()} onInput={(e) => setEditEnv(e.currentTarget.value)} />
                                   </div>
                                   <div class="row-gap">
@@ -1669,33 +1818,52 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
         </Switch>
 
         <details class="advanced">
-          <summary>Register an MCP server</summary>
+          <summary>Connect an app</summary>
           <p class="dim">
-            Written straight to <code>mcp.servers</code> in the workspace config.
+            Pick one of the common ones to fill the details in for you, or set one up by hand.
           </p>
+          <div class="pick-grid catalog-grid">
+            <For each={MCP_CATALOG}>
+              {(entry) => (
+                <button
+                  type="button"
+                  class="catalog-card"
+                  classList={{ active: catalogPick() === entry.id }}
+                  onClick={() => applyCatalog(entry.id)}
+                >
+                  <strong>{entry.label}</strong>
+                  <em>{entry.blurb}</em>
+                </button>
+              )}
+            </For>
+          </div>
           <div class="form-row">
-            <label>name</label>
+            <label>Name</label>
             <input placeholder="github, filesystem, postgres…" value={newName()} onInput={(e) => setNewName(e.currentTarget.value)} />
           </div>
           <div class="form-row">
-            <label>command</label>
+            <label>Program to run</label>
             <input class="mono" placeholder="npx, uvx, python3…" value={newCmd()} onInput={(e) => setNewCmd(e.currentTarget.value)} />
           </div>
           <div class="form-row">
-            <label>args</label>
+            <label>Arguments</label>
             <input class="mono" placeholder="-y @modelcontextprotocol/server-github" value={newArgs()} onInput={(e) => setNewArgs(e.currentTarget.value)} />
           </div>
           <label class="inherit-toggle">
             <input type="checkbox" checked={newNetwork()} onChange={(e) => setNewNetwork(e.currentTarget.checked)} />
-            Allow outbound network access
+            This app needs internet access
           </label>
           <div class="form-row">
-            <label>env</label>
+            <label>Secrets it needs</label>
             <textarea class="mono" rows={3} placeholder={"GITHUB_TOKEN=${GITHUB_TOKEN}, one per line"} value={newEnv()} onInput={(e) => setNewEnv(e.currentTarget.value)} />
           </div>
+          <p class="dim">
+            One <code>NAME=value</code> per line. Write <code>{"${NAME}"}</code> as the value to
+            pass a variable already in your environment through, instead of pasting the secret here.
+          </p>
           <div class="row-gap" style="margin-top:12px">
             <button disabled={busy() || !newName().trim() || !newCmd().trim()} onClick={() => void addServer()}>
-              {busy() ? "Registering…" : "Register server"}
+              {busy() ? "Connecting…" : "Connect"}
             </button>
           </div>
         </details>
@@ -1779,7 +1947,7 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
         <Switch>
           <Match when={props.ctx.skillsLoading()}>
             <table class="table">
-              <thead><tr><th>skill</th><th>scope</th><th>what it does</th><th>source</th></tr></thead>
+              <thead><tr><th>skill</th><th>available in</th><th>what it does</th><th>file</th></tr></thead>
               <tbody><SkeletonRows cols={4} /></tbody>
             </table>
           </Match>
@@ -1796,18 +1964,18 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
 
           <Match when={props.ctx.skills().length > 0}>
             <table class="table">
-              <thead><tr><th>skill</th><th>scope</th><th>what it does</th><th>source</th></tr></thead>
+              <thead><tr><th>skill</th><th>available in</th><th>what it does</th><th>file</th></tr></thead>
               <tbody>
                 <For each={props.ctx.skills()}>
                   {(s) => (
                     <tr class="row-static">
                       <td class="mono bold">{s.name}</td>
                       <td>
-                        <span class={`chip ${s.scope === "workspace" ? "chip-tool" : "chip-mode"}`}>
-                          {s.scope ?? "user"}
+                        <span class={`chip ${s.scope === "workspace" ? "chip-tool" : "chip-mode"}`} title={s.scope ?? "user"}>
+                          {s.scope === "workspace" ? "this project" : "every project"}
                         </span>
                       </td>
-                      <td class="dim">{s.description || "No description in its frontmatter."}</td>
+                      <td class="dim">{s.description || "No description written for this skill."}</td>
                       <td class="dim col-path">
                         <Show when={s.path} fallback={<span class="dim">—</span>}>
                           <PathCell path={s.path!} />
@@ -1828,6 +1996,29 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
 // ---- Extensions › Hooks ----------------------------------------------------
 
 const HOOK_EVENTS = ["pre_tool_use", "post_tool_use", "session_start", "stop"] as const;
+
+/// The same four events, said the way an operator thinks about them. The
+/// wire value never changes — only what the console prints.
+const HOOK_EVENT_LABELS: Record<string, string> = {
+  pre_tool_use: "Before the agent uses a tool",
+  post_tool_use: "After the agent uses a tool",
+  session_start: "When a session starts",
+  stop: "When a run finishes",
+};
+
+/// Milliseconds are the wire unit; seconds are the unit an operator has an
+/// intuition for. The stored value is untouched for anything not on the list.
+function TimeoutPicker(props: { value: string; onChange: (ms: string) => void }) {
+  const CHOICES = ["1000", "5000", "10000", "30000", "60000"];
+  const label = (ms: string) => `${Math.round(parseInt(ms, 10) / 100) / 10} seconds`;
+  return (
+    <select value={props.value} onChange={(e) => props.onChange(e.currentTarget.value)}>
+      <For each={CHOICES.includes(props.value) ? CHOICES : [props.value, ...CHOICES]}>
+        {(ms) => <option value={ms}>{label(ms)}</option>}
+      </For>
+    </select>
+  );
+}
 
 function HooksView(props: { ctx: ExtensionsCtx }) {
   const [event, setEvent] = createSignal<string>("pre_tool_use");
@@ -1857,7 +2048,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
           enabled: true,
         },
       ]);
-      pushToast("info", `Added a ${event()} hook`);
+      pushToast("info", `Added — runs ${(HOOK_EVENT_LABELS[event()] ?? event()).toLowerCase()}`);
       setCommand("");
       setMatcher("");
       props.ctx.refetchHooks();
@@ -1870,12 +2061,12 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
   };
 
   const removeHook = async (index: number) => {
-    if (!confirmDestructive("Remove this lifecycle hook?")) return;
+    if (!confirmDestructive("Remove this automation? The script itself stays on disk.")) return;
     const next = [...props.ctx.hooks()];
     next.splice(index, 1);
     try {
       await api.putHooks(next);
-      pushToast("info", "Hook removed");
+      pushToast("info", "Automation removed");
       props.ctx.refetchHooks();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
@@ -1908,11 +2099,13 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
   };
 
   const beginEdit = (index: number, hook: HookConfig) => {
-    setEditingIndex(index);
+    // Fields first: `<Show ... keyed>` mounts the form the moment the index
+    // is set, and MatcherBuilder reads its value at construction.
     setEditEvent(hook.event);
     setEditMatcher(hook.matcher ?? "");
     setEditCommand(hook.command);
     setEditTimeout(String(hook.timeout_ms));
+    setEditingIndex(index);
   };
 
   const saveEdit = async () => {
@@ -1927,7 +2120,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
         command: cmd,
         timeout_ms: parseInt(editTimeout(), 10) || 10_000,
       },
-      "Hook updated",
+      "Automation updated",
     );
     setEditingIndex(-1);
   };
@@ -1942,17 +2135,17 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
       <section class="panel">
         <div class="panel-title-row">
           <div>
-            <h2>Lifecycle hooks</h2>
+            <h2>Automations</h2>
             <p class="dim">
-              Hooks are the one extension that governs rather than being governed: a{" "}
-              <code>pre_tool_use</code> hook can block a call outright, and every hook runs as the
-              vak process itself — unsandboxed, outside the permission engine. Its matcher is the
-              only thing narrowing when it fires.
+              An automation runs one of your own scripts at a point in the turn. Treat these as
+              powerful: a script that runs before a tool can stop that tool outright, and every one
+              of them runs as vak itself — outside the sandbox, and outside every permission rule on
+              this page. Only what you choose under “Runs on” narrows when one fires.
             </p>
             <p class="dim">
-              This workspace's own <code>.vak/config.toml</code> only — a hook set user-wide from{" "}
-              <code>~/.vak/config.toml</code> still runs here too, but isn't listed or editable from
-              this page, so it can't be silently duplicated into this project's file by a save here.
+              This lists only the automations set up for this project. One set up for your whole
+              account still runs here, but isn’t shown or editable from this page, so saving here
+              can never quietly copy it into this project.
             </p>
           </div>
         </div>
@@ -1960,24 +2153,24 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
         <Switch>
           <Match when={props.ctx.hooksLoading()}>
             <table class="table">
-              <thead><tr><th>enabled</th><th>event</th><th>fires on</th><th>command</th><th>timeout</th><th /></tr></thead>
+              <thead><tr><th>on</th><th>when</th><th>fires on</th><th>runs</th><th>give up after</th><th /></tr></thead>
               <tbody><SkeletonRows cols={6} /></tbody>
             </table>
           </Match>
 
           <Match when={props.ctx.hooks().length === 0}>
             <div class="empty empty-teach">
-              <strong>No hooks are configured.</strong>
+              <strong>No automations are set up.</strong>
               <p>
-                Nothing intercepts a run. Add one to audit tool calls, block a pattern before it
-                executes, or seed each session with workspace context.
+Nothing runs alongside your turns. Add one to keep a record of what vak does, to stop a
+                particular command before it runs, or to give every new session some standing context.
               </p>
             </div>
           </Match>
 
           <Match when={props.ctx.hooks().length > 0}>
             <table class="table">
-              <thead><tr><th>enabled</th><th>event</th><th>fires on</th><th>command</th><th>timeout</th><th /></tr></thead>
+              <thead><tr><th>on</th><th>when</th><th>fires on</th><th>runs</th><th>give up after</th><th /></tr></thead>
               <tbody>
                 <For each={props.ctx.hooks()}>
                   {(hook, index) => {
@@ -1988,7 +2181,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
                     return (
                       <tr class="row-static" classList={{ dim: !hook.enabled }}>
                         <td>
-                          <label class="toggle" title={hook.enabled ? "Disable without removing it" : "Enabled hooks are re-checked before every matching call"}>
+                          <label class="toggle" title={hook.enabled ? "Turn it off without removing it" : "Turn it back on"}>
                             <input
                               type="checkbox"
                               checked={hook.enabled}
@@ -1997,28 +2190,29 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
                                 void replaceHook(
                                   index(),
                                   { enabled: e.currentTarget.checked },
-                                  e.currentTarget.checked ? "Hook enabled" : "Hook disabled",
+                                  e.currentTarget.checked ? "Automation on" : "Automation off",
                                 )
                               }
                             />
                           </label>
                         </td>
-                        <td><span class="chip chip-mode mono">{hook.event}</span></td>
+                        <td><span class="chip chip-phrase chip-mode" title={hook.event}>{HOOK_EVENT_LABELS[hook.event] ?? hook.event}</span></td>
                         <td>
                           <Switch>
                             <Match when={!hook.matcher}>
-                              <span class="chip chip-tone-warning">every call</span>
+                              <span class="chip chip-tone-warning">every tool call</span>
                             </Match>
-                            {/* The matcher prints verbatim: it is the string
-                                in config, and its glob half is
-                                case-significant. The parse only decides
-                                whether the engine will accept it at all. */}
+                            {/* Said plainly, with the verbatim matcher on
+                                hover: the stored string's glob half is
+                                case-significant, so it stays reachable. The
+                                parse only decides whether the engine will
+                                accept it at all. */}
                             <Match when={scope()}>
-                              <span class="chip mono">{hook.matcher}</span>
+                              <span class="chip chip-phrase" title={hook.matcher ?? ""}>{describeMatcher(hook.matcher)}</span>
                             </Match>
                             <Match when={!scope()}>
-                              <span class="chip chip-tone-danger mono" title="This matcher does not parse as a rule; the hook will not load.">
-                                {hook.matcher} · invalid
+                              <span class="chip chip-tone-danger mono" title="Vak cannot read this pattern, so this automation will not run. Edit it to fix.">
+                                {hook.matcher} · not valid
                               </span>
                             </Match>
                           </Switch>
@@ -2026,7 +2220,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
                         <td class="dim col-command">
                           <span class="path" title={hook.command}>{hook.command}</span>
                         </td>
-                        <td class="dim">{hook.timeout_ms}ms</td>
+                        <td class="dim">{hook.timeout_ms < 1000 ? `${hook.timeout_ms}ms` : shortDuration(hook.timeout_ms / 1000)}</td>
                         <td>
                           <div class="row-gap">
                             <button class="ghost small" disabled={isBusy()} onClick={() => beginEdit(index(), hook)}>
@@ -2046,32 +2240,29 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
           </Match>
         </Switch>
 
-        <Show when={editingIndex() >= 0}>
-          <div class="edit-form" aria-label="Edit hook">
+        <Show when={editingIndex() >= 0 ? String(editingIndex()) : ""} keyed>
+          <div class="edit-form" aria-label="Edit automation">
             <div class="panel-title-row">
               <div>
-                <h3>Edit hook</h3>
+                <h3>Edit automation</h3>
                 <p class="dim">Changes apply to the next matching call.</p>
               </div>
               <button class="ghost small" onClick={() => setEditingIndex(-1)}>Cancel</button>
             </div>
             <div class="form-row">
-              <label>event</label>
+              <label>When</label>
               <select value={editEvent()} onChange={(e) => setEditEvent(e.currentTarget.value)}>
-                <For each={HOOK_EVENTS}>{(ev) => <option value={ev}>{ev}</option>}</For>
+                <For each={HOOK_EVENTS}>{(ev) => <option value={ev}>{HOOK_EVENT_LABELS[ev] ?? ev}</option>}</For>
               </select>
             </div>
+            <MatcherBuilder value={editMatcher()} onChange={setEditMatcher} tools={MATCHER_TOOLS} />
             <div class="form-row">
-              <label>matcher</label>
-              <input class="mono" placeholder="Bash(git *) — optional" value={editMatcher()} onInput={(e) => setEditMatcher(e.currentTarget.value)} />
-            </div>
-            <div class="form-row">
-              <label>command</label>
+              <label>Script to run</label>
               <input class="mono" value={editCommand()} onInput={(e) => setEditCommand(e.currentTarget.value)} />
             </div>
             <div class="form-row">
-              <label>timeout (ms)</label>
-              <input type="number" min="100" value={editTimeout()} onInput={(e) => setEditTimeout(e.currentTarget.value)} />
+              <label>Give up after</label>
+              <TimeoutPicker value={editTimeout()} onChange={setEditTimeout} />
             </div>
             <button disabled={busyIndex() === editingIndex() || !editCommand().trim()} onClick={() => void saveEdit()}>
               {busyIndex() === editingIndex() ? "Saving…" : "Save changes"}
@@ -2080,33 +2271,29 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
         </Show>
 
         <details class="advanced">
-          <summary>Add a hook</summary>
+          <summary>Add an automation</summary>
           <p class="dim">
-            The matcher uses the same syntax as a permission rule — <code>Bash(git *)</code>,{" "}
-            <code>Write</code>, <code>mcp(github/*)</code>. Leave it empty and the hook fires on
-            every call for its event.
+            A hook runs your own script at a point in the turn. Pick when it fires and which calls
+            it should see; the script decides the rest.
           </p>
           <div class="form-row">
-            <label>event</label>
+            <label>When</label>
             <select value={event()} onChange={(e) => setEvent(e.currentTarget.value)}>
-              <For each={HOOK_EVENTS}>{(ev) => <option value={ev}>{ev}</option>}</For>
+              <For each={HOOK_EVENTS}>{(ev) => <option value={ev}>{HOOK_EVENT_LABELS[ev] ?? ev}</option>}</For>
             </select>
           </div>
+          <MatcherBuilder value={matcher()} onChange={setMatcher} tools={MATCHER_TOOLS} />
           <div class="form-row">
-            <label>matcher</label>
-            <input class="mono" placeholder="Bash(git *) — optional" value={matcher()} onInput={(e) => setMatcher(e.currentTarget.value)} />
-          </div>
-          <div class="form-row">
-            <label>command</label>
+            <label>Script to run</label>
             <input class="mono" placeholder="/path/to/script.sh" value={command()} onInput={(e) => setCommand(e.currentTarget.value)} />
           </div>
           <div class="form-row">
-            <label>timeout (ms)</label>
-            <input type="number" min="100" value={timeout()} onInput={(e) => setTimeoutMs(e.currentTarget.value)} />
+            <label>Give up after</label>
+            <TimeoutPicker value={timeout()} onChange={setTimeoutMs} />
           </div>
           <div class="row-gap" style="margin-top:12px">
             <button disabled={busy() || !command().trim()} onClick={() => void addHook()}>
-              {busy() ? "Adding…" : "Add hook"}
+              {busy() ? "Adding…" : "Add automation"}
             </button>
           </div>
         </details>
@@ -2169,11 +2356,12 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
   };
 
   const beginEdit = (task: TaskItem) => {
-    setEditingId(task.id);
+    // Fields before the id, for the same reason as the hooks editor above.
     setEditName(task.name);
     setEditPrompt(task.prompt ?? "");
     setEditSchedule(task.schedule ?? (task.interval_secs ? String(task.interval_secs) : ""));
     setEditModelPin(task.model_pin ?? "");
+    setEditingId(task.id);
   };
 
   const saveEdit = async () => {
@@ -2220,7 +2408,7 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
         <Switch>
           <Match when={props.ctx.tasksLoading()}>
             <table class="table">
-              <thead><tr><th>task</th><th>kind</th><th>schedule</th><th>model</th><th>last run</th><th>state</th><th /></tr></thead>
+              <thead><tr><th>task</th><th>type</th><th>runs</th><th>model</th><th>last run</th><th>state</th><th /></tr></thead>
               <tbody><SkeletonRows cols={7} /></tbody>
             </table>
           </Match>
@@ -2229,27 +2417,29 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
             <div class="empty empty-teach">
               <strong>Nothing is scheduled.</strong>
               <p>
-                A scheduled task is a prompt vak runs on a cron expression or a fixed interval — a
-                nightly digest, a recurring health check — and files the result in your Inbox.
+A scheduled task is something you ask vak to do on a repeating schedule — a nightly
+                digest, a weekly check — with the result filed in your Inbox.
               </p>
             </div>
           </Match>
 
           <Match when={props.ctx.tasks().length > 0}>
             <table class="table">
-              <thead><tr><th>task</th><th>kind</th><th>schedule</th><th>model</th><th>last run</th><th>state</th><th /></tr></thead>
+              <thead><tr><th>task</th><th>type</th><th>runs</th><th>model</th><th>last run</th><th>state</th><th /></tr></thead>
               <tbody>
                 <For each={props.ctx.tasks()}>
                   {(t) => (
                     <tr class="row-static">
                       <td class="bold">{t.name}</td>
-                      <td><span class={`chip ${t.script ? "chip-tool" : "chip-mode"}`}>{t.script ? "script" : "prompt"}</span></td>
-                      <td class="mono dim">{t.schedule ?? `every ${t.interval_secs ?? 3600}s`}</td>
-                      <td class="mono dim">{t.model_pin ?? "workspace default"}</td>
+                      <td><span class={`chip ${t.script ? "chip-tool" : "chip-mode"}`}>{t.script ? "runs a script" : "asks vak"}</span></td>
+                      <td class="dim" title={t.schedule ?? ""}>
+                        {t.schedule ? describeSchedule(t.schedule) : `Every ${describeDuration(t.interval_secs ?? 3600)}`}
+                      </td>
+                      <td class="dim">{t.model_pin ?? "Project default"}</td>
                       <td class="dim" title={t.last_run_at ?? ""}>{t.last_run_at ? timeAgo(t.last_run_at) : "never"}</td>
                       <td>
                         <span class={t.enabled ? "chip chip-tone-success" : "chip"}>
-                          {t.enabled ? "enabled" : "paused"}
+                          {t.enabled ? "on" : "paused"}
                         </span>
                       </td>
                       <td>
@@ -2298,7 +2488,7 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
           </Match>
         </Switch>
 
-        <Show when={editingId()}>
+        <Show when={editingId()} keyed>
           <div class="edit-form" aria-label="Edit scheduled task">
             <div class="panel-title-row">
               <div>
@@ -2307,10 +2497,10 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
               </div>
               <button class="ghost small" onClick={() => setEditingId("")}>Cancel</button>
             </div>
-            <div class="form-row"><label>name</label><input value={editName()} onInput={(e) => setEditName(e.currentTarget.value)} /></div>
-            <div class="form-row"><label>prompt</label><textarea rows={3} value={editPrompt()} onInput={(e) => setEditPrompt(e.currentTarget.value)} /></div>
-            <div class="form-row"><label>schedule</label><input class="mono" placeholder="*/30 * * * *" value={editSchedule()} onInput={(e) => setEditSchedule(e.currentTarget.value)} /></div>
-            <div class="form-row"><label>model pin</label><input class="mono" placeholder="Workspace default" value={editModelPin()} onInput={(e) => setEditModelPin(e.currentTarget.value)} /></div>
+            <div class="form-row"><label>Name</label><input value={editName()} onInput={(e) => setEditName(e.currentTarget.value)} /></div>
+            <div class="form-row"><label>What to do</label><textarea rows={3} value={editPrompt()} onInput={(e) => setEditPrompt(e.currentTarget.value)} /></div>
+            <ScheduleBuilder value={editSchedule()} onChange={setEditSchedule} />
+            <div class="form-row"><label>Model</label><input class="mono" placeholder="Workspace default" value={editModelPin()} onInput={(e) => setEditModelPin(e.currentTarget.value)} /></div>
             <button disabled={busyId() === editingId() || !editName().trim() || !editPrompt().trim()} onClick={() => void saveEdit()}>
               {busyId() === editingId() ? "Saving…" : "Save changes"}
             </button>
@@ -2320,19 +2510,16 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
         <details class="advanced">
           <summary>Schedule a task</summary>
           <div class="form-row">
-            <label>name</label>
-            <input placeholder="nightly-digest, dependency-audit…" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
+            <label>Name</label>
+            <input placeholder="Nightly digest, dependency audit…" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
           </div>
           <div class="form-row">
-            <label>prompt</label>
+            <label>What to do</label>
             <textarea rows={3} placeholder="What should vak do each time this runs?" value={prompt()} onInput={(e) => setPrompt(e.currentTarget.value)} />
           </div>
+          <ScheduleBuilder value={schedule()} onChange={setSchedule} />
           <div class="form-row">
-            <label>schedule</label>
-            <input class="mono" placeholder="*/30 * * * * — empty means hourly" value={schedule()} onInput={(e) => setSchedule(e.currentTarget.value)} />
-          </div>
-          <div class="form-row">
-            <label>model pin</label>
+            <label>Model</label>
             <input class="mono" placeholder="Optional — otherwise the workspace default" value={modelPin()} onInput={(e) => setModelPin(e.currentTarget.value)} />
           </div>
           <div class="row-gap" style="margin-top:12px">
@@ -2387,8 +2574,8 @@ function ExtensionsSection() {
   const failure = createMemo(() => {
     for (const [what, res] of [
       ["configuration", config],
-      ["MCP servers", mcp],
-      ["hooks", hooks],
+      ["connected apps", mcp],
+      ["automations", hooks],
       ["skills", skills],
       ["skill proposals", proposals],
       ["scheduled tasks", tasks],
@@ -2470,7 +2657,7 @@ function MemoryView() {
     setBusy(true);
     try {
       await api.addMemory(scope(), noteText().trim(), tag().trim() || undefined);
-      pushToast("info", "Memory note recorded");
+      pushToast("info", "Vak will remember that");
       setNoteText("");
       setTag("");
       refetch();
@@ -2482,10 +2669,10 @@ function MemoryView() {
   };
 
   const forget = async (id: string) => {
-    if (!confirmDestructive("Forget this memory note?")) return;
+    if (!confirmDestructive("Forget this note? Vak stops taking it into account.")) return;
     try {
       await api.forgetMemory(id);
-      pushToast("info", "Memory note forgotten");
+      pushToast("info", "Forgotten");
       refetch();
     } catch (err) {
       pushToast("alert", `${err}`);
@@ -2494,19 +2681,19 @@ function MemoryView() {
 
   return (
     <div class="view">
-      <PageHeader title="Memory" description="Record durable workspace or profile knowledge and remove stale notes." />
+      <PageHeader title="Memory" description="Things vak should keep in mind between sessions — about you, or about this project." />
       <div class="two-col">
         <section class="panel">
-          <h2>Tiered Memory Notes ({memoryData()?.notes?.length ?? 0})</h2>
-          <Show when={!memoryData.loading} fallback={<div class="empty">Loading memory…</div>}>
+          <h2>What vak remembers ({memoryData()?.notes?.length ?? 0})</h2>
+          <Show when={!memoryData.loading} fallback={<div class="empty">Loading…</div>}>
             <Show when={!memoryData.error} fallback={<LoadError message={`${memoryData.error}`} onRetry={() => refetch()} />}>
-            <Show when={(memoryData()?.notes?.length ?? 0) > 0} fallback={<div class="empty">No memory notes recorded.</div>}>
+            <Show when={(memoryData()?.notes?.length ?? 0) > 0} fallback={<div class="empty">Nothing remembered yet. Add a note on the right.</div>}>
               <ul class="hit-list">
                 <For each={memoryData()?.notes ?? []}>
                   {(m: MemoryItem) => (
                     <li class="inbox-item">
                       <div class="hit-meta">
-                        <span class={`chip ${m.scope === "profile" ? "chip-mode" : "chip-tool"}`}>{m.scope}</span>
+                        <span class={`chip ${m.scope === "profile" ? "chip-mode" : "chip-tool"}`} title={m.scope}>{m.scope === "profile" ? "about me" : "about this project"}</span>
                         <Show when={m.tag}><strong class="mono">{m.tag}</strong></Show>
                         <span class="when">{timeAgo(m.ts)}</span>
                       </div>
@@ -2524,21 +2711,26 @@ function MemoryView() {
         </section>
 
         <section class="panel">
-          <h2>Record Knowledge Note</h2>
+          <div class="panel-title-row">
+            <div>
+              <h2>Add a note</h2>
+              <p class="dim">Vak reads these at the start of every session.</p>
+            </div>
+          </div>
           <div class="form-row">
-            <label>scope</label>
+            <label>Applies to</label>
             <select value={scope()} onChange={(e) => setScope(e.currentTarget.value as "profile" | "project")}>
-              <option value="project">Workspace Note</option>
-              <option value="profile">USER.md Profile</option>
+              <option value="project">This project</option>
+              <option value="profile">Me, in every project</option>
             </select>
           </div>
           <div class="form-row">
-            <label>tag</label>
-            <input placeholder="Optional tag slug" value={tag()} onInput={(e) => setTag(e.currentTarget.value)} />
+            <label>Label</label>
+            <input placeholder="Optional label, e.g. billing" value={tag()} onInput={(e) => setTag(e.currentTarget.value)} />
           </div>
           <div class="form-row">
-            <label>text</label>
-            <textarea rows={4} placeholder="Note content to persist..." value={noteText()} onInput={(e) => setNoteText(e.currentTarget.value)} />
+            <label>Note</label>
+            <textarea rows={4} placeholder="What should vak remember?" value={noteText()} onInput={(e) => setNoteText(e.currentTarget.value)} />
           </div>
           <div class="row-gap" style="margin-top:12px">
             <button disabled={busy() || !noteText().trim()} onClick={addNote}>
@@ -2594,11 +2786,11 @@ function SearchView() {
 
   return (
     <div class="view">
-      <PageHeader title="Search" description="Find evidence across every indexed transcript and jump directly to its session." />
+      <PageHeader title="Search" description="Look through every conversation vak has had, and jump straight to where something was said." />
       <div class="search-hero">
         <input
           class="search-big"
-          placeholder="Search every session… (FTS5 BM25 syntax supported)"
+          placeholder="Search everything you’ve ever asked…"
           value={q()}
           onInput={(e) => {
             setQ(e.currentTarget.value);
@@ -2617,10 +2809,10 @@ function SearchView() {
           <div class="empty">Searching…</div>
         </Match>
         <Match when={hits() === null}>
-          <div class="empty">Type to search across all indexed transcripts. Phrases in quotes, prefix with star.</div>
+          <div class="empty">Start typing to search every conversation. Put a phrase in "quotes" to match it exactly, or end a word with * to match anything that starts with it.</div>
         </Match>
         <Match when={hits()?.length === 0}>
-          <div class="empty">No matches.</div>
+          <div class="empty">Nothing found.</div>
         </Match>
         <Match when={hits()}>
           <ul class="hit-list">
@@ -2647,7 +2839,27 @@ function SearchView() {
 
 // ---- Security --------------------------------------------------------------
 
-const SEC_KINDS = ["", "auth_failure", "rate_limit", "chat_allowlist", "chat_pending", "chat_approved", "chat_denied", "chat_revoked", "permission_denial", "config_change", "provider_key_change", "full_access_grant", "full_access_revoke"];
+/// The audit ledger's own kind strings, each paired with what it means. The
+/// value is what `GET /security?kind=` filters on and must not change; the
+/// label is all the operator ever needs to read.
+const SEC_KINDS: { value: string; label: string }[] = [
+  { value: "", label: "Everything" },
+  { value: "auth_failure", label: "Failed sign-in" },
+  { value: "rate_limit", label: "Rate limited" },
+  { value: "chat_allowlist", label: "Chat allowed" },
+  { value: "chat_pending", label: "Chat knocked" },
+  { value: "chat_approved", label: "Chat approved" },
+  { value: "chat_denied", label: "Chat refused" },
+  { value: "chat_revoked", label: "Chat removed" },
+  { value: "permission_denial", label: "Action blocked" },
+  { value: "config_change", label: "Setting changed" },
+  { value: "provider_key_change", label: "Provider key changed" },
+  { value: "full_access_grant", label: "Full access granted" },
+  { value: "full_access_revoke", label: "Full access removed" },
+];
+
+const secKindLabel = (kind: string) =>
+  SEC_KINDS.find((k) => k.value === kind)?.label ?? kind.replaceAll("_", " ");
 
 function Security() {
   const [kind, setKind] = createSignal("");
@@ -2659,17 +2871,18 @@ function Security() {
 
   return (
     <div class="view">
-      <PageHeader title="Security" description="Review authentication, permission, provider, and gateway events from the audit ledger." />
+      <PageHeader title="Security" description="Every sign-in, blocked action, key change, and chat decision vak has recorded." />
       <div class="toolbar">
         <div class="chips">
           <For each={SEC_KINDS}>
             {(k) => (
               <button
                 class="chip-btn"
-                classList={{ active: kind() === k }}
-                onClick={() => setKind(k)}
+                classList={{ active: kind() === k.value }}
+                onClick={() => setKind(k.value)}
+                title={k.value}
               >
-                {k === "" ? "All" : k.replaceAll("_", " ")}
+                {k.label}
               </button>
             )}
           </For>
@@ -2677,21 +2890,21 @@ function Security() {
         <span class="spacer" />
         <button class="ghost" onClick={() => refetch()}>Refresh</button>
       </div>
-      <Show when={!events.loading} fallback={<div class="empty">Loading audit log…</div>}>
+      <Show when={!events.loading} fallback={<div class="empty">Loading…</div>}>
         <Show
           when={(events()?.events.length ?? 0) > 0}
-          fallback={<div class="empty">No security events recorded. Quiet is good.</div>}
+          fallback={<div class="empty">Nothing recorded. Quiet is good.</div>}
         >
           <table class="table">
             <thead>
-              <tr><th>when</th><th>kind</th><th>label</th><th>detail</th><th>source</th></tr>
+              <tr><th>when</th><th>what</th><th>summary</th><th>details</th><th>from</th></tr>
             </thead>
             <tbody>
               <For each={events()?.events}>
                 {(e: SecurityEvent) => (
                   <tr data-kind={e.kind}>
                     <td title={e.ts}>{timeAgo(e.ts)}</td>
-                    <td><span class="chip" data-kind={e.kind}>{e.kind.replaceAll("_", " ")}</span></td>
+                    <td><span class="chip chip-phrase" data-kind={e.kind} title={e.kind}>{secKindLabel(e.kind)}</span></td>
                     <td>{e.label}</td>
                     <td class="mono dim wrap">{e.detail}</td>
                     <td class="mono dim">{e.ip ?? "—"}</td>
@@ -2722,6 +2935,18 @@ const INBOX_KIND_TONE: Record<string, string> = {
   proposal_opened: "info",
 };
 
+/// The ledger's own kind strings, said plainly. An unknown kind still falls
+/// back to its underscored id rather than vanishing.
+const INBOX_KIND_LABELS: Record<string, string> = {
+  task_summary: "scheduled task",
+  approval_pending: "needs approval",
+  approval_denied: "refused",
+  budget_alert: "budget",
+  digest: "digest",
+  heartbeat: "status",
+  proposal_opened: "new skill proposed",
+};
+
 function Inbox() {
   const [unreadOnly, setUnreadOnly] = createSignal(false);
   const [inbox, { refetch }] = createResource(unreadOnly, (u) => api.inbox(u));
@@ -2741,7 +2966,7 @@ function Inbox() {
 
   return (
     <div class="view">
-      <PageHeader title="Inbox" description="Handle approvals, task results, budgets, and proactive updates that need your attention." />
+      <PageHeader title="Inbox" description="Approvals to give, results from scheduled work, budget warnings, and anything else vak wants you to see." />
       <div class="toolbar">
         <label class="toggle">
           <input
@@ -2754,10 +2979,10 @@ function Inbox() {
         <span class="spacer" />
         <button class="ghost" onClick={() => refetch()}>Refresh</button>
       </div>
-      <Show when={!inbox.loading} fallback={<div class="empty">Loading inbox…</div>}>
+      <Show when={!inbox.loading} fallback={<div class="empty">Loading…</div>}>
         <Show
           when={(inbox()?.entries.length ?? 0) > 0}
-          fallback={<div class="empty">Inbox zero.</div>}
+          fallback={<div class="empty">Nothing here. Inbox zero.</div>}
         >
           <ul class="hit-list">
             <For each={inbox()!.entries}>
@@ -2765,7 +2990,7 @@ function Inbox() {
                 <li class="inbox-item">
                   <div class="hit-meta">
                     <span class={`chip ${INBOX_KIND_TONE[e.kind] ? `chip-tone-${INBOX_KIND_TONE[e.kind]}` : ""}`}>
-                      {e.kind.replaceAll("_", " ")}
+                      {INBOX_KIND_LABELS[e.kind] ?? e.kind.replaceAll("_", " ")}
                     </span>
                     <strong>{e.title}</strong>
                     <span class="when">{timeAgo(e.ts)}</span>
@@ -2812,7 +3037,7 @@ const SURFACE_LABEL: Record<string, string> = {
 function SurfaceBadge(props: { channelKey: string }) {
   const surface = () => props.channelKey.split(":")[0] ?? "";
   return (
-    <span class="chip chip-surface" data-surface={surface()} title={`${surface()} channel`}>
+    <span class="chip chip-surface" data-surface={surface()} title={`${SURFACE_LABEL[surface()] ?? surface()} chat`}>
       {SURFACE_LABEL[surface()] ?? surface()}
     </span>
   );
@@ -2844,9 +3069,9 @@ function WorkspacePicker(props: {
   return (
     <div style="margin-bottom:8px">
       <label class="inherit-toggle" style="margin-top:2px">
-        Workspace
-        <span class="chip" data-on={warm()} style="margin-left:6px">
-          {warm() ? "warm" : "cold — starts on next message"}
+        Project folder
+        <span class="chip chip-phrase" data-on={warm()} style="margin-left:6px">
+          {warm() ? "loaded and ready" : "loads on the next message"}
         </span>
       </label>
       <select
@@ -2864,19 +3089,19 @@ function WorkspacePicker(props: {
         }}
       >
         <For each={options()}>{(w) => <option value={w}>{w}</option>}</For>
-        <option value={CUSTOM_WORKSPACE}>Custom path…</option>
+        <option value={CUSTOM_WORKSPACE}>Another folder…</option>
       </select>
       <Show when={custom()}>
         <input
           class="mono"
           value={props.value}
           onInput={(e) => props.onChange(e.currentTarget.value)}
-          placeholder="/absolute/path/to/workspace"
+          placeholder="/full/path/to/the/folder"
           style="width:100%;margin-top:6px"
         />
         <div class="binding-meta">
-          Unverified: nothing has run here yet, so this path is only checked when the pool
-          actually starts a Core in it. A typo surfaces as a <code>vak doctor</code> failure.
+Nothing has run here yet, so this path isn’t checked until the first message arrives. A
+          typo shows up later as a failure — run “Check for problems” under Settings to catch one.
         </div>
       </Show>
     </div>
@@ -2932,7 +3157,7 @@ function GatewayBindingEditor(props: {
         <div>
           <strong class="mono">{props.binding.target}</strong>
           <div class="binding-meta">
-            {props.binding.session_id ? `session ${shortId(props.binding.session_id)}` : "new session on next message"}
+            {props.binding.session_id ? `session ${shortId(props.binding.session_id)}` : "starts a new session on the next message"}
           </div>
         </div>
         <div class="row-gap" style="gap:6px">
@@ -2943,17 +3168,17 @@ function GatewayBindingEditor(props: {
             </span>
           </Show>
           <span class={`chip ${props.binding.stale ? "chip-tone-warning" : "chip-tone-success"}`}>
-            {props.binding.stale ? "rotation required" : "current"}
+            {props.binding.stale ? "new session next" : "up to date"}
           </span>
         </div>
       </div>
 
       <div class="route-compare">
         <div>
-          <span class="eyebrow">Effective route</span>
-          <strong>{props.binding.effective_route.provider}</strong>
+          <span class="eyebrow">Answering with</span>
+          <strong>{providerLabel(props.binding.effective_route.provider)}</strong>
           <code>{props.binding.effective_route.model}</code>
-          <span class="binding-meta">{props.binding.effective_route.source}</span>
+          <span class="binding-meta">from {sourceLabel(props.binding.effective_route.source)}</span>
         </div>
         {/* The permission counterpart of "Effective route": what this
             channel actually runs as, and where that came from. A pin that
@@ -2961,21 +3186,21 @@ function GatewayBindingEditor(props: {
             as if the wider grant were live. */}
         <Show when={props.allowlistEntry?.effective_permission_mode}>
           <div>
-            <span class="eyebrow">Effective permission</span>
-            <strong>{props.allowlistEntry!.effective_permission_mode}</strong>
+            <span class="eyebrow">Allowed to</span>
+            <strong>{modeLabel(props.allowlistEntry!.effective_permission_mode)}</strong>
             <span class="binding-meta">
               {props.allowlistEntry!.permission_capped
-                ? `channel pin ${props.allowlistEntry!.permission_mode} capped by workspace`
+                ? `reduced — you asked for "${modeLabel(props.allowlistEntry!.permission_mode)}", which is more than this project allows`
                 : props.allowlistEntry!.permission_mode
-                  ? "channel override"
-                  : "inherited from workspace"}
+                  ? "set for this chat"
+                  : "follows the project"}
             </span>
           </div>
         </Show>
         <div>
-          <span class="eyebrow">Frozen session</span>
-          <Show when={props.binding.session_contract} fallback={<span class="dim">Not created</span>}>
-            <strong>{props.binding.session_contract!.provider}</strong>
+          <span class="eyebrow">Current conversation</span>
+          <Show when={props.binding.session_contract} fallback={<span class="dim">Not started yet</span>}>
+            <strong>{providerLabel(props.binding.session_contract!.provider)}</strong>
             <code>{props.binding.session_contract!.model}</code>
             <span class="binding-meta">v{props.binding.session_contract!.app_version}</span>
           </Show>
@@ -2983,22 +3208,31 @@ function GatewayBindingEditor(props: {
       </div>
 
       <Show when={props.binding.stale_reasons.length}>
-        <div class="warning">Will rotate on next inbound message: {props.binding.stale_reasons.join(", ").replaceAll("_", " ")}</div>
+        <div class="warning">The next message starts a fresh conversation, because this changed: {props.binding.stale_reasons.join(", ").replaceAll("_", " ")}</div>
       </Show>
 
       <label class="inherit-toggle">
         <input type="checkbox" checked={inherit()} onChange={(e) => setInherit(e.currentTarget.checked)} />
-        Inherit workspace default
+        Use the project's model (untick to choose one for this chat)
       </label>
       <Show when={!inherit()}>
         <div class="binding-controls">
-          <select value={provider()} onChange={(e) => setProvider(e.currentTarget.value)}>
-            <For each={props.providers}>{(p) => <option value={p.name}>{p.name}</option>}</For>
+          <select
+            value={provider()}
+            ref={(el) => syncSelect(el, provider, () => props.providers)}
+            onChange={(e) => setProvider(e.currentTarget.value)}
+          >
+            <For each={props.providers}>{(p) => <option value={p.name}>{providerLabel(p.name)}</option>}</For>
           </select>
           <Show when={models().length} fallback={
             <input class="mono" value={model()} onInput={(e) => setModel(e.currentTarget.value)} placeholder="model id" />
           }>
-            <select class="mono" value={model()} onChange={(e) => setModel(e.currentTarget.value)}>
+            <select
+              class="mono"
+              value={model()}
+              ref={(el) => syncSelect(el, model, models)}
+              onChange={(e) => setModel(e.currentTarget.value)}
+            >
               <For each={models()}>{(m) => <option value={m}>{m}</option>}</For>
             </select>
           </Show>
@@ -3007,28 +3241,28 @@ function GatewayBindingEditor(props: {
       <div class="row-gap">
         <button disabled={busy() || (!inherit() && !model().trim())} onClick={() => act(
           () => api.patchGatewayBinding(props.binding.target, inherit() ? {} : { provider: provider(), model: model() }),
-          `Route updated for ${props.binding.target}`,
-        )}>Save route</button>
+          `Model updated for ${props.binding.target}`,
+        )}>Save model</button>
         <button class="ghost" disabled={busy() || !props.binding.session_id} onClick={() => act(
           () => api.rotateGatewayBinding(props.binding.target),
-          `Conversation rotated for ${props.binding.target}`,
-        )}>Rotate now</button>
+          `Started a fresh conversation for ${props.binding.target}`,
+        )}>Start fresh</button>
         <span class="spacer" />
         <Show when={props.allowlistEntry?.status === "allowed"}>
           <button class="ghost small" disabled={busy()} onClick={() => setEditing((v) => !v)}>
-            {editing() ? "Close editor" : "Edit access"}
+            {editing() ? "Close" : "Edit what it can do"}
           </button>
           <button class="danger small" disabled={busy()} onClick={() => {
-            if (window.confirm(`Revoke allowlist access for ${props.binding.target}? The next message from this chat will be rejected and start a fresh pending review.`)) {
-              void act(() => api.revokeGatewayAllowlist(props.binding.target), `Access revoked: ${props.binding.target}`);
+            if (window.confirm(`Disconnect ${props.binding.target}? The next message from this chat is turned away, and it goes back to waiting for your approval.`)) {
+              void act(() => api.revokeGatewayAllowlist(props.binding.target), `Disconnected ${props.binding.target}`);
             }
-          }}>Revoke access</button>
+          }}>Disconnect</button>
         </Show>
         <button class="danger small" disabled={busy()} onClick={() => {
-          if (window.confirm(`Remove ${props.binding.target} and its route override? Session history is preserved.`)) {
-            void act(() => api.deleteGatewayBinding(props.binding.target), `Binding removed: ${props.binding.target}`);
+          if (window.confirm(`Remove ${props.binding.target} and the model chosen for it? The conversation history is kept.`)) {
+            void act(() => api.deleteGatewayBinding(props.binding.target), `Removed ${props.binding.target}`);
           }
-        }}>Remove binding</button>
+        }}>Remove</button>
       </div>
       <Show when={editing() && props.allowlistEntry?.status === "allowed"}>
         <ChannelAccessEditor
@@ -3051,10 +3285,20 @@ function GatewayBindingEditor(props: {
 /// Settings page's "Permission Mode" panel uses, so an operator sees one
 /// vocabulary in both places.
 const CHANNEL_MODES: { value: PermissionMode; label: string; desc: string }[] = [
-  { value: "read-only", label: "ReadOnly", desc: "Read-only tools; writes denied" },
-  { value: "workspace-write", label: "WorkspaceWrite", desc: "Writes confined to workspace" },
-  { value: "full-access", label: "FullAccess", desc: "Unsandboxed — explicit trust" },
+  { value: "read-only", label: "Look, don't touch", desc: "Reads and searches only; every change refused" },
+  { value: "workspace-write", label: "Work inside this project", desc: "Changes files here; anything else asks first" },
+  { value: "full-access", label: "No limits", desc: "Nothing is checked with you first" },
 ];
+
+/// Same three words wherever a wire mode is printed back, in either casing
+/// the server may use (`read-only` from the gateway, `ReadOnly` from
+/// `GET /config`).
+function modeLabel(mode: string | null | undefined): string {
+  if (!mode) return "the workspace default";
+  const kebab = CHANNEL_MODES.find((m) => m.value === mode);
+  if (kebab) return kebab.label;
+  return MODES.find((m) => m.value === mode)?.label ?? mode;
+}
 
 function defaultChannelPolicy(): ChannelPolicy {
   return {
@@ -3098,7 +3342,7 @@ function ChannelPermissionPicker(props: {
           checked={props.pinned}
           onChange={(e) => props.setPinned(e.currentTarget.checked)}
         />
-        Pin a specific permission mode (otherwise inherits the workspace default)
+        Give this channel its own limits (otherwise it follows the project)
       </label>
       <Show when={props.pinned}>
         <div class="mode-grid">
@@ -3118,8 +3362,8 @@ function ChannelPermissionPicker(props: {
         <Show when={capped()}>
           {(c) => (
             <div class="binding-meta">
-              This workspace is configured for <code>{c()}</code>. A channel can only match or
-              reduce that, never exceed it — this pin will take effect as <code>{c()}</code>.
+              This project is set to “{modeLabel(c())}”. A channel can match that or ask for less,
+              never more — so this choice will take effect as “{modeLabel(c())}”.
             </div>
           )}
         </Show>
@@ -3134,64 +3378,137 @@ function ChannelCapabilityPolicy(props: {
 }) {
   const [mcp] = createResource(() => api.mcpServers().catch(() => ({ servers: {} })));
   const [skills] = createResource(() => api.skills().catch(() => ({ skills: [] })));
-  const csv = (value: string) => value.split(/[\n,]/).map((v) => v.trim()).filter(Boolean);
+  const [hooks] = createResource(() => api.hooks().catch(() => ({ hooks: [] })));
   const update = (patch: Partial<ChannelPolicy>) => props.onChange({ ...props.value, ...patch });
-  const list = (values: string[] | null) => values?.join(", ") ?? "";
+
+  // A server is matched as `name/*` (see `Core::filter_mcp`), a skill by its
+  // own name, a hook by `event/command`. The picker offers exactly those
+  // values so nothing here has to be typed.
+  const mcpOptions = createMemo<AccessOption[]>(() =>
+    Object.keys(mcp()?.servers ?? {}).map((name) => ({
+      value: `${name}/*`,
+      label: name,
+      hint: "all of its tools",
+    })),
+  );
+  const skillOptions = createMemo<AccessOption[]>(() =>
+    (skills()?.skills ?? []).map((s) => ({
+      value: s.name,
+      label: s.name,
+      hint: s.description?.slice(0, 60),
+    })),
+  );
+  const hookOptions = createMemo<AccessOption[]>(() =>
+    (hooks()?.hooks ?? []).map((h) => ({
+      value: `${h.event}/${h.command}`,
+      label: h.command.split("/").pop() || h.command,
+      hint: `on ${HOOK_EVENT_LABELS[h.event] ?? h.event}`,
+    })),
+  );
+
+  const networkServers = createMemo(
+    () => Object.entries(mcp()?.servers ?? {}) as [string, McpServerConfig][],
+  );
+  const netOff = (name: string) => props.value.mcp_network_deny.includes(`${name}/*`);
+  const toggleNet = (name: string) => {
+    const pattern = `${name}/*`;
+    update({
+      mcp_network_deny: netOff(name)
+        ? props.value.mcp_network_deny.filter((v) => v !== pattern)
+        : [...props.value.mcp_network_deny, pattern],
+    });
+  };
+
   return (
     <section class="channel-capabilities">
       <div class="binding-meta">
-        Channel capability restrictions. Unchecked allow lists inherit the workspace; selecting a
-        block-all control or adding a deny pattern can only reduce access.
+        By default this channel gets whatever the workspace allows. Anything you change here can
+        only take access away, never add it.
       </div>
       <div class="capability-grid">
-        <div>
-          <label class="eyebrow">Built-in tools</label>
-          <label class="inherit-toggle"><input type="checkbox" checked={props.value.tools_allow?.length === 0}
-            onChange={(e) => update({ tools_allow: e.currentTarget.checked ? [] : null })} /> Block all built-in tools</label>
-          <input class="mono" placeholder="inherit — e.g. read, grep" value={list(props.value.tools_allow)}
-            onInput={(e) => update({ tools_allow: e.currentTarget.value.trim() ? csv(e.currentTarget.value) : null })} />
-          <input class="mono" placeholder="deny tools, e.g. bash" value={list(props.value.tools_deny)}
-            onInput={(e) => update({ tools_deny: csv(e.currentTarget.value) })} />
-        </div>
-        <div>
-          <label class="eyebrow">MCP tools</label>
-          <label class="inherit-toggle"><input type="checkbox" checked={props.value.mcp_allow?.length === 0}
-            onChange={(e) => update({ mcp_allow: e.currentTarget.checked ? [] : null })} /> Block all MCP</label>
-          <input class="mono" placeholder="inherit — e.g. tavily/*" value={list(props.value.mcp_allow)}
-            onInput={(e) => update({ mcp_allow: e.currentTarget.value.trim() ? csv(e.currentTarget.value) : null })} />
-          <div class="binding-meta">Allow patterns; available: {Object.keys(mcp()?.servers ?? {}).join(", ") || "none"}</div>
-          <input class="mono" placeholder="deny patterns, e.g. github/*" value={list(props.value.mcp_deny)}
-            onInput={(e) => update({ mcp_deny: csv(e.currentTarget.value) })} />
-          <label class="eyebrow" style="margin-top:10px;display:block">Force network off for this channel</label>
-          <div class="binding-meta">
-            Takes network away from a server that has it on; cannot grant network to one that
-            doesn't. The server's own network setting (Extensions → MCP servers) still applies to
-            every other channel.
-          </div>
-          <input class="mono" placeholder="e.g. tavily/*" value={list(props.value.mcp_network_deny)}
-            onInput={(e) => update({ mcp_network_deny: csv(e.currentTarget.value) })} />
-        </div>
-        <div>
-          <label class="eyebrow">Skills visible to the agent</label>
-          <label class="inherit-toggle"><input type="checkbox" checked={props.value.skills_allow?.length === 0}
-            onChange={(e) => update({ skills_allow: e.currentTarget.checked ? [] : null })} /> Hide all skills</label>
-          <input class="mono" placeholder="inherit — e.g. research" value={list(props.value.skills_allow)}
-            onInput={(e) => update({ skills_allow: e.currentTarget.value.trim() ? csv(e.currentTarget.value) : null })} />
-          <div class="binding-meta">Instruction visibility only; available: {(skills()?.skills ?? []).map((s) => s.name).join(", ") || "none"}</div>
-          <input class="mono" placeholder="deny skill names" value={list(props.value.skills_deny)}
-            onInput={(e) => update({ skills_deny: csv(e.currentTarget.value) })} />
-        </div>
-        <div>
-          <label class="eyebrow">Hooks assigned by admin</label>
-          <label class="inherit-toggle"><input type="checkbox" checked={props.value.hooks_allow?.length === 0}
-            onChange={(e) => update({ hooks_allow: e.currentTarget.checked ? [] : null })} /> Disable all hooks</label>
-          <input class="mono" placeholder="inherit — e.g. pre_tool_use/*" value={list(props.value.hooks_allow)}
-            onInput={(e) => update({ hooks_allow: e.currentTarget.value.trim() ? csv(e.currentTarget.value) : null })} />
-          <div class="binding-meta">Hooks remain trusted admin shell policy; secrets are never channel-owned.</div>
-          <input class="mono" placeholder="deny hook patterns" value={list(props.value.hooks_deny)}
-            onInput={(e) => update({ hooks_deny: csv(e.currentTarget.value) })} />
-        </div>
+        <AccessPicker
+          title="What it can do on this machine"
+          help="The built-in tools — reading files, editing them, running commands."
+          noun="tool"
+          inheritLabel="Everything the workspace allows"
+          limitLabel="Only what I pick"
+          noneLabel="No built-in tools"
+          options={BUILTIN_TOOLS}
+          allow={props.value.tools_allow}
+          deny={props.value.tools_deny}
+          onChange={(next) => update({ tools_allow: next.allow, tools_deny: next.deny })}
+          patternHint="e.g. web*"
+        />
+        <AccessPicker
+          title="Connected apps"
+          help="Tools borrowed from the apps connected under Extensions."
+          noun="server"
+          inheritLabel="Every connected app"
+          limitLabel="Only the apps I pick"
+          noneLabel="No connected apps"
+          options={mcpOptions()}
+          loading={mcp.loading}
+          allow={props.value.mcp_allow}
+          deny={props.value.mcp_deny}
+          onChange={(next) => update({ mcp_allow: next.allow, mcp_deny: next.deny })}
+          patternHint="e.g. github/*"
+        />
+        <AccessPicker
+          title="Skills"
+          help="Which sets of instructions the agent can see on this channel."
+          noun="skill"
+          inheritLabel="Every skill"
+          limitLabel="Only the skills I pick"
+          noneLabel="No skills"
+          options={skillOptions()}
+          loading={skills.loading}
+          allow={props.value.skills_allow}
+          deny={props.value.skills_deny}
+          onChange={(next) => update({ skills_allow: next.allow, skills_deny: next.deny })}
+          patternHint="e.g. research*"
+        />
+        <AccessPicker
+          title="Automations"
+          help="The hooks an admin has set to run around each turn."
+          noun="automation"
+          inheritLabel="Every automation"
+          limitLabel="Only the ones I pick"
+          noneLabel="No automations"
+          options={hookOptions()}
+          loading={hooks.loading}
+          allow={props.value.hooks_allow}
+          deny={props.value.hooks_deny}
+          onChange={(next) => update({ hooks_allow: next.allow, hooks_deny: next.deny })}
+          patternHint="e.g. pre_tool_use/*"
+        />
       </div>
+
+      <Show when={networkServers().length > 0}>
+        <section class="access-picker">
+          <header class="access-head">
+            <div>
+              <h4>Internet access for connected apps</h4>
+              <p class="dim">
+                Turn the internet off for an app on this channel only. It stays on everywhere else.
+                An app that has no internet to begin with cannot be given it here.
+              </p>
+            </div>
+          </header>
+          <div class="pick-grid">
+            <For each={networkServers()}>
+              {([name, server]) => (
+                <label class="pick deny" classList={{ on: netOff(name) }}>
+                  <input type="checkbox" checked={netOff(name)} onChange={() => toggleNet(name)} />
+                  <span>
+                    <strong>{name}</strong>
+                    <em>{server.network ? "has internet — uncheck to keep it" : "already offline"}</em>
+                  </span>
+                </label>
+              )}
+            </For>
+          </div>
+        </section>
+      </Show>
     </section>
   );
 }
@@ -3266,17 +3583,26 @@ function ChannelAccessEditor(props: {
       />
       <label class="inherit-toggle">
         <input type="checkbox" checked={pinRoute()} onChange={(e) => setPinRoute(e.currentTarget.checked)} />
-        Pin a specific provider / model (otherwise inherits the workspace default)
+        Give this channel its own model (otherwise it follows the project)
       </label>
       <Show when={pinRoute()}>
         <div class="binding-controls">
-          <select value={provider()} onChange={(e) => setProvider(e.currentTarget.value)}>
-            <For each={props.providers}>{(p) => <option value={p.name}>{p.name}</option>}</For>
+          <select
+            value={provider()}
+            ref={(el) => syncSelect(el, provider, () => props.providers)}
+            onChange={(e) => setProvider(e.currentTarget.value)}
+          >
+            <For each={props.providers}>{(p) => <option value={p.name}>{providerLabel(p.name)}</option>}</For>
           </select>
           <Show when={models().length} fallback={
             <input class="mono" value={model()} onInput={(e) => setModel(e.currentTarget.value)} placeholder="model id" />
           }>
-            <select class="mono" value={model()} onChange={(e) => setModel(e.currentTarget.value)}>
+            <select
+              class="mono"
+              value={model()}
+              ref={(el) => syncSelect(el, model, models)}
+              onChange={(e) => setModel(e.currentTarget.value)}
+            >
               <For each={models()}>{(m) => <option value={m}>{m}</option>}</For>
             </select>
           </Show>
@@ -3291,7 +3617,7 @@ function ChannelAccessEditor(props: {
       />
       <ChannelCapabilityPolicy value={policy()} onChange={setPolicy} />
       <div class="row-gap">
-        <button disabled={busy()} onClick={save}>Save access</button>
+        <button disabled={busy()} onClick={save}>Save changes</button>
       </div>
     </div>
   );
@@ -3341,10 +3667,10 @@ function PendingChannelCard(props: {
       if (entry.permission_capped) {
         pushToast(
           "alert",
-          `${props.entry.key}: ${entry.permission_mode} exceeds that workspace's own mode — capped to ${entry.effective_permission_mode}`,
+          `${props.entry.key}: "${modeLabel(entry.permission_mode)}" is more than that project allows, so it was reduced to "${modeLabel(entry.effective_permission_mode)}".`,
         );
       }
-      pushToast("info", `Approved ${props.entry.key} → ${entry.workspace ?? "(workspace unset)"}`);
+      pushToast("info", `Approved ${props.entry.key}${entry.workspace ? ` — working in ${entry.workspace}` : ", but no project folder was set"}`);
       props.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
@@ -3357,7 +3683,7 @@ function PendingChannelCard(props: {
     setBusy(true);
     try {
       await api.denyGatewayAllowlist(props.entry.key);
-      pushToast("info", `Denied ${props.entry.key}`);
+      pushToast("info", `Turned away ${props.entry.key}`);
       props.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
@@ -3371,7 +3697,7 @@ function PendingChannelCard(props: {
       <div class="binding-head">
         <div>
           <strong class="mono">{props.entry.key}</strong>
-          <div class="binding-meta">first seen {timeAgo(props.entry.added_at)}</div>
+          <div class="binding-meta">first messaged {timeAgo(props.entry.added_at)}</div>
         </div>
         <div class="row-gap" style="gap:6px">
           <SurfaceBadge channelKey={props.entry.key} />
@@ -3392,17 +3718,26 @@ function PendingChannelCard(props: {
 
       <label class="inherit-toggle">
         <input type="checkbox" checked={pinRoute()} onChange={(e) => setPinRoute(e.currentTarget.checked)} />
-        Pin a specific provider / model (otherwise inherits the workspace default)
+        Give this channel its own model (otherwise it follows the project)
       </label>
       <Show when={pinRoute()}>
         <div class="binding-controls">
-          <select value={provider()} onChange={(e) => setProvider(e.currentTarget.value)}>
-            <For each={props.providers}>{(p) => <option value={p.name}>{p.name}</option>}</For>
+          <select
+            value={provider()}
+            ref={(el) => syncSelect(el, provider, () => props.providers)}
+            onChange={(e) => setProvider(e.currentTarget.value)}
+          >
+            <For each={props.providers}>{(p) => <option value={p.name}>{providerLabel(p.name)}</option>}</For>
           </select>
           <Show when={models().length} fallback={
             <input class="mono" value={model()} onInput={(e) => setModel(e.currentTarget.value)} placeholder="model id" />
           }>
-            <select class="mono" value={model()} onChange={(e) => setModel(e.currentTarget.value)}>
+            <select
+              class="mono"
+              value={model()}
+              ref={(el) => syncSelect(el, model, models)}
+              onChange={(e) => setModel(e.currentTarget.value)}
+            >
               <For each={models()}>{(m) => <option value={m}>{m}</option>}</For>
             </select>
           </Show>
@@ -3448,8 +3783,8 @@ function CredentialRow(props: { surface: string; state: ChatSurfaceStatus | unde
       pushToast(
         "info",
         res.restarted
-          ? `${props.surface} token saved and the bridge restarted`
-          : `${props.surface} token saved — start the bridge by hand (vak ${props.surface} --server …) or from the tray`,
+          ? `${SURFACE_LABEL[props.surface] ?? props.surface} token saved — the bridge restarted itself`
+          : `${SURFACE_LABEL[props.surface] ?? props.surface} token saved. Start the bridge yourself from the tray, or run: vak ${props.surface} --server`,
       );
       props.refresh();
     } catch (err) {
@@ -3460,11 +3795,11 @@ function CredentialRow(props: { surface: string; state: ChatSurfaceStatus | unde
   };
 
   const remove = async () => {
-    if (!window.confirm(`Remove the ${props.surface} bot token? The bridge stops authenticating and every channel on that surface goes quiet until a new token is set.`)) return;
+    if (!window.confirm(`Remove the ${SURFACE_LABEL[props.surface] ?? props.surface} bot token? Every chat on it goes quiet until you set a new one.`)) return;
     setBusy("remove");
     try {
       await api.removeBotToken(props.surface);
-      pushToast("info", `${props.surface} token removed`);
+      pushToast("info", `${SURFACE_LABEL[props.surface] ?? props.surface} token removed`);
       props.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
@@ -3480,10 +3815,10 @@ function CredentialRow(props: { surface: string; state: ChatSurfaceStatus | unde
         <code class="binding-meta">{props.state?.env_var ?? "—"}</code>
       </div>
       <span class={`chip ${configured() ? "chip-tone-success" : ""}`}>
-        {configured() ? "token set" : "no token"}
+        {configured() ? "signed in" : "no token yet"}
       </span>
       <span class="binding-meta cred-service">
-        {props.state?.managed_service ? "managed service — restarts on save" : "started by hand"}
+        {props.state?.managed_service ? "vak restarts the bridge when you save" : "you start the bridge yourself"}
       </span>
       <span class="spacer" />
       <Show
@@ -3507,7 +3842,7 @@ function CredentialRow(props: { surface: string; state: ChatSurfaceStatus | unde
             autocomplete="off"
             spellcheck={false}
             autofocus
-            placeholder={`paste the ${props.surface} bot token`}
+            placeholder={`Paste the ${SURFACE_LABEL[props.surface] ?? props.surface} bot token`}
             value={draft()}
             onInput={(e) => setDraft(e.currentTarget.value)}
             onKeyDown={(e) => {
@@ -3581,7 +3916,7 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
     if (!key.includes(":") || !(KNOWN_SURFACES as readonly string[]).includes(surface)) {
       pushToast(
         "alert",
-        `A routing key looks like surface:chat — for example telegram:12345, with the surface one of ${KNOWN_SURFACES.join(", ")}. Bot tokens live under Credentials and are never entered here.`,
+        `That doesn't look like a chat id. Write it as app:chat-id — for example telegram:12345 — where the app is one of ${KNOWN_SURFACES.join(", ")}. Bot tokens go under Credentials, never here.`,
       );
       return;
     }
@@ -3589,7 +3924,7 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
     try {
       await api.patchGatewayBinding(key, {});
       setManualKey("");
-      pushToast("info", `Registered ${key} with the workspace default`);
+      pushToast("info", `Added ${key}. It uses the project defaults until you change them.`);
       props.ctx.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
@@ -3603,7 +3938,7 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
       <div class="toolbar">
         <input
           class="search-input"
-          placeholder="Filter by channel or workspace…"
+          placeholder="Find a chat or project…"
           value={filter()}
           onInput={(e) => setFilter(e.currentTarget.value)}
         />
@@ -3629,11 +3964,11 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
       <section class="panel">
         <div class="panel-title-row">
           <div>
-            <h2>Registered channels</h2>
+            <h2>Connected chats</h2>
             <Show when={(props.ctx.status()?.bindings.length ?? 0) > 0}>
               <p class="dim">
-                Each row is one approved chat: where it runs, what it routes to, and what it is
-                allowed to do. Open a row to change any of that or to revoke it.
+One row per approved chat: which project it works in, which model answers, and what it
+                is allowed to do. Click a row to change any of that, or to disconnect it.
               </p>
             </Show>
           </div>
@@ -3643,7 +3978,7 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
           <Match when={props.ctx.statusLoading()}>
             <table class="table">
               <thead>
-                <tr><th>channel</th><th>surface</th><th>workspace</th><th>route</th><th>permission</th><th>status</th><th /></tr>
+                <tr><th>chat</th><th>app</th><th>project</th><th>model</th><th>can do</th><th>status</th><th /></tr>
               </thead>
               <tbody><SkeletonRows cols={7} /></tbody>
             </table>
@@ -3651,11 +3986,11 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
 
           <Match when={(props.ctx.status()?.bindings.length ?? 0) === 0}>
             <div class="empty empty-teach">
-              <strong>No channels are connected yet.</strong>
+              <strong>No chats are connected yet.</strong>
               <p>
-                A channel is one chat — a Telegram group, a Discord channel, a Slack conversation —
-                bound to a workspace and a model. Connecting one takes three steps: give the bridge
-                its bot token, message the bot from the chat, then approve it here.
+A connected chat — a Telegram group, a Discord channel, a Slack conversation — lets people
+                talk to vak from where they already are. It takes three steps: add the bot token,
+                message the bot from that chat, then approve it here.
               </p>
               <button onClick={() => navigate("#/gateway/connect")}>Connect a channel</button>
             </div>
@@ -3663,7 +3998,7 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
 
           <Match when={rows().length === 0}>
             <div class="empty">
-              No channel matches “{filter()}”.{" "}
+              Nothing matches “{filter()}”.{" "}
               <button class="ghost small" onClick={() => setFilter("")}>Clear filter</button>
             </div>
           </Match>
@@ -3671,7 +4006,7 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
           <Match when={rows().length > 0}>
             <table class="table">
               <thead>
-                <tr><th>channel</th><th>surface</th><th>workspace</th><th>route</th><th>permission</th><th>status</th><th /></tr>
+                <tr><th>chat</th><th>app</th><th>project</th><th>model</th><th>can do</th><th>status</th><th /></tr>
               </thead>
               <tbody>
                 <For each={rows()}>
@@ -3697,9 +4032,9 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
                           </td>
                           <td>
                             <Show when={entry()?.effective_permission_mode} fallback={<span class="dim">—</span>}>
-                              <span class="chip chip-kind">{entry()!.effective_permission_mode}</span>
+                              <span class="chip chip-phrase chip-kind">{modeLabel(entry()!.effective_permission_mode)}</span>
                               <Show when={entry()!.permission_capped}>
-                                <span class="chip chip-tone-warning" style="margin-left:6px">capped</span>
+                                <span class="chip chip-tone-warning" style="margin-left:6px" title="You asked for more than the project allows, so it was reduced to this.">reduced</span>
                               </Show>
                             </Show>
                           </td>
@@ -3710,7 +4045,7 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
                               </span>
                             </Show>
                             <Show when={binding.stale}>
-                              <span class="chip chip-tone-warning" style="margin-left:6px">rotates next</span>
+                              <span class="chip chip-tone-warning" style="margin-left:6px" title="A setting changed. The next message starts a fresh session with the new one.">new session next</span>
                             </Show>
                           </td>
                           <td><span class="chev">{open() ? "⌄" : "›"}</span></td>
@@ -3739,11 +4074,11 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
         </Switch>
 
         <details class="advanced">
-          <summary>Register a routing key by hand</summary>
+          <summary>Add a chat by its id</summary>
           <p class="dim">
-            Only for a chat whose id you already know — normally a channel registers itself the first
-            time it messages the bot. This is the routing key <code>surface:chat</code>, never a bot
-            token; tokens are set under Credentials.
+            Only needed if you already know the chat’s id. Normally a chat adds itself the first time
+            it messages the bot. Write it as <code>app:chat-id</code> — for example{" "}
+            <code>telegram:12345</code>. This is never a bot token; those go under Credentials.
           </p>
           <div class="add-binding">
             <input
@@ -3785,7 +4120,7 @@ function ConnectView(props: { ctx: GatewayCtx }) {
       <div class="toolbar">
         <div>
           <h2 class="view-title">Connect a channel</h2>
-          <p class="dim">From a bot with no credential to a chat routed at a workspace.</p>
+          <p class="dim">Three steps, from a bot with no token to a chat that can talk to vak.</p>
         </div>
         <span class="spacer" />
         <button class="ghost" onClick={() => props.ctx.refresh()}>Refresh</button>
@@ -3796,11 +4131,11 @@ function ConnectView(props: { ctx: GatewayCtx }) {
         <li class="step" data-state={stepState(1)}>
           <span class="step-index">1</span>
           <div class="step-body">
-            <h3>Give the bridge its bot token</h3>
+            <h3>Add the bot’s token</h3>
             <p class="dim">
-              The credential the bridge authenticates with — from BotFather (Telegram), the Discord
-              Developer Portal, or a Slack app's Bot User OAuth Token. Stored in the shared user{" "}
-              <code>.env</code> and never read back.
+              Get it from BotFather (Telegram), the Discord Developer Portal, or your Slack app’s
+              “Bot User OAuth Token”. It is saved to your private <code>.env</code> and never shown
+              again.
             </p>
             <Show when={!props.ctx.surfacesLoading()} fallback={<div class="cred-list"><span class="skel skel-block" /><span class="skel skel-block" /></div>}>
               <div class="cred-list">
@@ -3823,8 +4158,8 @@ function ConnectView(props: { ctx: GatewayCtx }) {
           <div class="step-body">
             <h3>Message the bot from the chat you want to connect</h3>
             <p class="dim">
-              The first message is rejected on purpose — vak records the chat as pending instead of
-              letting it in. That rejection is what puts it in front of you below.
+The first message is turned away on purpose. Vak notes the chat down instead of letting it
+              in, and that is what puts it in front of you in step 3.
             </p>
             <Show
               when={props.ctx.pending().length > 0}
@@ -3832,14 +4167,14 @@ function ConnectView(props: { ctx: GatewayCtx }) {
                 <div class="waiting-line">
                   <span class={`dot dot-${conn()}`} />
                   <Show when={credentialDone()} fallback={<span class="dim">Waiting on step 1 — no bot token is set yet.</span>}>
-                    <span class="dim">Listening. Send any message to the bot and it appears in step 3.</span>
+                    <span class="dim">Listening. Send the bot any message and the chat appears in step 3.</span>
                   </Show>
                 </div>
               }
             >
               <div class="waiting-line">
                 <span class="chip chip-tone-success">
-                  {props.ctx.pending().length} chat{props.ctx.pending().length === 1 ? "" : "s"} knocked
+                  {props.ctx.pending().length} chat{props.ctx.pending().length === 1 ? "" : "s"} waiting
                 </span>
               </div>
             </Show>
@@ -3851,9 +4186,9 @@ function ConnectView(props: { ctx: GatewayCtx }) {
           <div class="step-body">
             <h3>Review and approve</h3>
             <p class="dim">
-              Approving binds the chat to a workspace and, optionally, pins a route and a permission
-              mode. Anything left unpinned inherits the workspace default and can be changed later
-              from Channels.
+Approving connects the chat to a project, and lets you give it its own model and its own
+              limits if you want to. Anything you leave alone follows the project, and all of it can
+              be changed later from Channels.
             </p>
             <Show
               when={props.ctx.pending().length > 0}
@@ -3861,7 +4196,7 @@ function ConnectView(props: { ctx: GatewayCtx }) {
                 <div class="empty">
                   Nothing is waiting for review.{" "}
                   <Show when={(props.ctx.status()?.bindings.length ?? 0) > 0}>
-                    <button class="ghost small" onClick={() => navigate("#/gateway")}>See connected channels</button>
+                    <button class="ghost small" onClick={() => navigate("#/gateway")}>See connected chats</button>
                   </Show>
                 </div>
               }
@@ -3897,10 +4232,10 @@ function CredentialsView(props: { ctx: GatewayCtx }) {
         <div>
           <h2>Bot tokens</h2>
           <p class="dim">
-            One credential per chat surface — what the bridge authenticates to Telegram, Discord, or
-            Slack with. Kept in the shared user <code>.env</code>; the console can set or clear a
-            token but never reads one back. Routing keys (<code>surface:chat</code>) are a different
-            thing entirely and live under Channels.
+            One token per app — how vak signs in to Telegram, Discord, or Slack. Tokens are saved to
+            your private <code>.env</code>; this page can set or clear one, but never shows it again.
+            A chat id (like <code>telegram:12345</code>) is a different thing entirely and lives
+            under Chats.
           </p>
         </div>
         <button class="ghost small" onClick={() => props.ctx.refresh()}>Refresh</button>
@@ -3927,6 +4262,18 @@ function CredentialsView(props: { ctx: GatewayCtx }) {
 
 // ---- Gateway › Routing & pool ----------------------------------------------
 
+/// Where a default came from, as reported by `default_route.*_source`. An
+/// unrecognised source still prints its own id rather than vanishing.
+const ROUTE_SOURCES: Record<string, string> = {
+  config: "the config file",
+  admin: "set here in the console",
+  default: "vak's built-in default",
+  env: "an environment variable",
+  cli: "a command-line flag",
+};
+const sourceLabel = (source: string | undefined) =>
+  source ? (ROUTE_SOURCES[source] ?? source) : "—";
+
 function GatewayHealthView(props: { ctx: GatewayCtx }) {
   const pool = () => props.ctx.status()?.core_pool;
   return (
@@ -3934,10 +4281,11 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
       <section class="panel gateway-summary">
         <div class="panel-title-row">
           <div>
-            <h2>Routing defaults</h2>
+            <h2>Defaults for connected chats</h2>
             <p class="dim">
-              What a channel gets when it pins nothing of its own. Defaults propagate to inheriting
-              channels; frozen sessions rotate rather than mutate.
+              What a chat gets when it hasn’t been given anything of its own. Changing a default
+              reaches every chat that follows it — each one picks it up on its next message rather
+              than mid-conversation.
             </p>
           </div>
           <button class="ghost small" onClick={() => props.ctx.refresh()}>Refresh</button>
@@ -3948,12 +4296,14 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
         >
           <div class="route-summary-grid">
             <div><span class="eyebrow">Gateway</span><strong>{props.ctx.status()?.enabled ? "Enabled" : "Disabled"}</strong></div>
-            <div><span class="eyebrow">Workspace</span><PathCell path={props.ctx.status()?.workspace ?? ""} budget={46} /></div>
-            <div><span class="eyebrow">Admin default</span><strong>{props.ctx.status()?.default_route.provider}</strong><code>{props.ctx.status()?.default_route.model}</code></div>
+            <div><span class="eyebrow">Project</span><PathCell path={props.ctx.status()?.workspace ?? ""} budget={46} /></div>
+            <div><span class="eyebrow">Default model</span><strong>{providerLabel(props.ctx.status()?.default_route.provider ?? "")}</strong><code>{props.ctx.status()?.default_route.model}</code></div>
             <div>
-              <span class="eyebrow">Provenance</span>
-              <code>{props.ctx.status()?.default_route.provider_source} + {props.ctx.status()?.default_route.model_source}</code>
-              <span class="binding-meta">{props.ctx.status()?.default_route.revision}</span>
+              <span class="eyebrow">Where that comes from</span>
+              <strong>{sourceLabel(props.ctx.status()?.default_route.provider_source)}</strong>
+              <span class="binding-meta" title={`${props.ctx.status()?.default_route.provider_source} + ${props.ctx.status()?.default_route.model_source} · ${props.ctx.status()?.default_route.revision}`}>
+                model: {sourceLabel(props.ctx.status()?.default_route.model_source)}
+              </span>
             </div>
           </div>
         </Show>
@@ -3962,11 +4312,13 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
       <section class="panel" style="margin-top:14px">
         <div class="panel-title-row">
           <div>
-            <h2>Core pool</h2>
+            <h2>Projects loaded right now</h2>
             <p class="dim">
-              Workspaces holding a live Core (sandbox, permission mode, session ledger). A cold
-              workspace starts its own Core on the next inbound message. Max {pool()?.max ?? "—"}{" "}
-              pooled, idle eviction after {pool()?.idle_secs ?? "—"}s.
+              A project stays loaded and ready after it is used. One that isn’t listed simply loads
+              on the next message — nothing is lost either way. Up to {pool()?.max ?? "—"} stay
+              loaded, and one drops off after{" "}
+              {pool()?.idle_secs == null ? "—" : describeDuration(pool()!.idle_secs)} with nothing to
+              do.
             </p>
           </div>
         </div>
@@ -3976,28 +4328,29 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
           </Match>
           <Match when={(pool()?.entries.length ?? 0) === 0}>
             <div class="empty empty-teach">
-              <strong>Every workspace is cold.</strong>
+              <strong>Nothing is loaded at the moment.</strong>
               <p>
-                Nothing is wrong: a Core starts on the first inbound message to a channel and stays
-                warm here until it has been idle for {pool()?.idle_secs ?? "—"}s.
+                Nothing is wrong. A project loads on the first message to one of its chats and stays
+                ready here until it has been idle for{" "}
+                {pool()?.idle_secs == null ? "—" : describeDuration(pool()!.idle_secs)}.
               </p>
             </div>
           </Match>
           <Match when={(pool()?.entries.length ?? 0) > 0}>
             <table class="table">
               <thead>
-                <tr><th>workspace</th><th>permission</th><th>idle</th><th /></tr>
+                <tr><th>project</th><th>can do</th><th>idle for</th><th /></tr>
               </thead>
               <tbody>
                 <For each={pool()?.entries}>
                   {(entry) => (
                     <tr class="row-static">
                       <td class="col-path"><PathCell path={entry.workspace} /></td>
-                      <td><span class="chip chip-kind">{entry.effective_permission_mode}</span></td>
-                      <td class="dim">{entry.idle_secs}s</td>
+                      <td><span class="chip chip-phrase chip-kind">{modeLabel(entry.effective_permission_mode)}</span></td>
+                      <td class="dim">{shortDuration(entry.idle_secs)}</td>
                       <td>
                         <Show when={entry.is_default}><span class="chip chip-mode">default</span></Show>
-                        <span class="chip chip-tone-success" style="margin-left:6px">warm</span>
+                        <span class="chip chip-tone-success" style="margin-left:6px">ready</span>
                       </td>
                     </tr>
                   )}
@@ -4014,10 +4367,10 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
 // ---- Gateway section shell -------------------------------------------------
 
 const GATEWAY_TABS = [
-  { hash: "#/gateway", label: "Channels" },
+  { hash: "#/gateway", label: "Chats" },
   { hash: "#/gateway/connect", label: "Connect" },
   { hash: "#/gateway/credentials", label: "Credentials" },
-  { hash: "#/gateway/routing", label: "Routing & pool" },
+  { hash: "#/gateway/routing", label: "Defaults & status" },
 ] as const;
 
 function gatewayTab(): string {
@@ -4079,7 +4432,14 @@ function GatewaySection() {
   );
 }
 
-const MODES = ["ReadOnly", "WorkspaceWrite", "FullAccess"];
+/// Wire values are the `Debug` form the server prints (`GET /config`
+/// reports `format!("{:?}", mode)`); the labels are what an operator reads.
+/// Ordered least to most permissive.
+const MODES: { value: string; label: string }[] = [
+  { value: "ReadOnly", label: "Look, don't touch" },
+  { value: "WorkspaceWrite", label: "Work inside this project" },
+  { value: "FullAccess", label: "No limits" },
+];
 
 // Cosmetic labels only — the actual set of selectable providers comes from
 // `GET /providers` (`vak_core::Core::provider_names`, backed by the
@@ -4097,10 +4457,30 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 const providerLabel = (id: string) => PROVIDER_LABELS[id] ?? id;
 
+/// The three rule lists, titled and explained the way they read rather than
+/// by the keyword they use in config.
+const RULE_SECTIONS: { decision: RuleDecision; title: string; empty: string }[] = [
+  {
+    decision: "deny",
+    title: "Never allowed",
+    empty: "Nothing is blocked outright beyond what the setting above already decides.",
+  },
+  {
+    decision: "ask",
+    title: "Always ask me first",
+    empty: "Nothing is forced to check with you beyond what the setting above already decides.",
+  },
+  {
+    decision: "allow",
+    title: "Always allowed",
+    empty: "Nothing is pre-approved beyond what the setting above already decides.",
+  },
+];
+
 const MODE_COPY: Record<string, string> = {
-  ReadOnly: "Read tools only, confined to the workspace. Every write is denied outright.",
-  WorkspaceWrite: "Writes inside the workspace go through; anything else asks first.",
-  FullAccess: "Nothing is gated. Only for a workspace you have decided to trust completely.",
+  ReadOnly: "It can read and search this project, and nothing else. Every change is refused.",
+  WorkspaceWrite: "It can change files inside this project on its own. Anything outside asks you first.",
+  FullAccess: "Nothing is checked with you first. Only for a project you trust completely.",
 };
 
 /// One page, six self-contained panels. Each answers a single question about
@@ -4174,7 +4554,7 @@ function Settings() {
     setSavingKey(true);
     try {
       await api.setProviderKey(selectedProvider(), providerKeyInput().trim());
-      pushToast("info", `Key stored for ${selectedProvider()}`);
+      pushToast("info", `Key saved for ${providerLabel(selectedProvider())}`);
       setProviderKeyInput("");
       refetchProviders();
       await discover(selectedProvider());
@@ -4222,27 +4602,31 @@ function Settings() {
 
   return (
     <div class="view">
-      <PageHeader title="Settings" description="Manage the workspace route, permission mode, provider credentials, maintenance, and console appearance." />
+      <PageHeader title="Settings" description="Choose the model, decide how much the agent may do on its own, store provider keys, and keep the console tidy." />
       <div class="two-col">
         <div class="stack">
           <section class="panel">
             <div class="panel-title-row">
               <div>
                 <h2>Model</h2>
-                <p class="dim">What answers a turn when nothing pins a different route.</p>
+                <p class="dim">Which model answers, unless a channel or session picks its own.</p>
               </div>
             </div>
             <Show when={!config.loading} fallback={<div class="cred-list"><span class="skel skel-block" /><span class="skel skel-block" /></div>}>
               <div class="form-row">
-                <label>provider</label>
-                <select value={selectedProvider()} onChange={(e) => setSelectedProvider(e.currentTarget.value)}>
+                <label>Provider</label>
+                <select
+                  value={selectedProvider()}
+                  ref={(el) => syncSelect(el, selectedProvider, () => providersData()?.providers)}
+                  onChange={(e) => setSelectedProvider(e.currentTarget.value)}
+                >
                   <For each={providersData()?.providers ?? []}>
                     {(p) => <option value={p.name}>{providerLabel(p.name)}</option>}
                   </For>
                 </select>
               </div>
               <div class="form-row">
-                <label>model</label>
+                <label>Model</label>
                 <Show
                   when={discoveredModels().length > 0}
                   fallback={
@@ -4254,15 +4638,20 @@ function Settings() {
                     />
                   }
                 >
-                  <select value={selectedModel()} onChange={(e) => setSelectedModel(e.currentTarget.value)}>
+                  <select
+                    value={selectedModel()}
+                    ref={(el) => syncSelect(el, selectedModel, discoveredModels)}
+                    onChange={(e) => setSelectedModel(e.currentTarget.value)}
+                  >
                     <For each={discoveredModels()}>{(m) => <option value={m}>{m}</option>}</For>
                   </select>
                 </Show>
               </div>
               <Show when={modelError() && discoveredModels().length === 0}>
                 <p class="dim">
-                  Could not list models for {selectedProvider()} ({modelError()}). Set its key below,
-                  or type a model id by hand.
+                  Couldn’t list models for {providerLabel(selectedProvider())} — usually because
+                  its key isn’t stored yet. Add the key below, or type a model name in by hand.
+                  ({modelError()})
                 </p>
               </Show>
               <div class="row-gap" style="margin-top:10px">
@@ -4271,14 +4660,14 @@ function Settings() {
                   onClick={() =>
                     void guard(
                       () => api.patchConfig({ provider: selectedProvider(), model: selectedModel() }),
-                      `Route is now ${selectedProvider()} / ${selectedModel()}`,
+                      `Now using ${providerLabel(selectedProvider())} — ${selectedModel()}`,
                     )
                   }
                 >
-                  Save route
+                  Save
                 </button>
                 <button class="ghost small" disabled={loadingModels()} onClick={() => void discover(selectedProvider())}>
-                  {loadingModels() ? "Discovering…" : "Rediscover models"}
+                  {loadingModels() ? "Checking…" : "Refresh the list"}
                 </button>
               </div>
             </Show>
@@ -4289,16 +4678,16 @@ function Settings() {
               <div>
                 <h2>Provider key</h2>
                 <p class="dim">
-                  Stored for {selectedProvider()}. Written to the user <code>.env</code>; it is never
-                  read back into this page.
+                  The key for {providerLabel(selectedProvider())}. It is written to your private
+                  <code>.env</code> and never shown again, here or anywhere else.
                 </p>
               </div>
               <span class={`chip chip-tone-${keyConfigured() ? "success" : "warning"}`}>
-                {keyConfigured() ? "set" : "not set"}
+                {keyConfigured() ? "saved" : "not saved yet"}
               </span>
             </div>
             <div class="form-row">
-              <label>key</label>
+              <label>Key</label>
               <input
                 type="password"
                 autocomplete="off"
@@ -4309,18 +4698,18 @@ function Settings() {
             </div>
             <div class="row-gap" style="margin-top:10px">
               <button disabled={savingKey() || !providerKeyInput().trim()} onClick={() => void saveKey()}>
-                {savingKey() ? "Storing…" : "Store key"}
+                {savingKey() ? "Saving…" : "Save key"}
               </button>
               <Show when={keyConfigured()}>
                 <button
                   class="danger small"
                   onClick={() =>
                     void guard(async () => {
-                      if (!confirmDestructive(`Revoke the ${selectedProvider()} provider key?`)) return;
+                      if (!confirmDestructive(`Delete the stored ${providerLabel(selectedProvider())} key?`)) return;
                       await api.deleteProviderKey(selectedProvider());
                       refetchProviders();
                       setDiscoveredModels([]);
-                    }, `Key revoked for ${selectedProvider()}`)
+                    }, `Key deleted for ${providerLabel(selectedProvider())}`)
                   }
                 >
                   Revoke
@@ -4333,7 +4722,7 @@ function Settings() {
             <div class="panel-title-row">
               <div>
                 <h2>Appearance</h2>
-                <p class="dim">Applies to this browser only.</p>
+                <p class="dim">Just for this browser — nobody else sees the change.</p>
               </div>
             </div>
             <div class="theme-grid">
@@ -4359,11 +4748,9 @@ function Settings() {
           <section class="panel">
             <div class="panel-title-row">
               <div>
-                <h2>Permissions</h2>
+                <h2>How much can it do on its own?</h2>
                 <p class="dim">
-                  The mode decides every call no rule covers. Rules are checked first, and among the
-                  rules that match one call, deny outranks ask outranks allow — the order they appear
-                  in never decides it.
+                  This is the answer for anything the specific rules below don’t already cover.
                 </p>
               </div>
             </div>
@@ -4372,12 +4759,17 @@ function Settings() {
                 {(m) => (
                   <button
                     class="mode-btn"
-                    classList={{ active: config()?.permission_mode === m }}
-                    onClick={() => void guard(() => api.setMode(m), `Permission mode → ${m}`)}
-                    disabled={config()?.permission_mode === m}
+                    classList={{ active: config()?.permission_mode === m.value }}
+                    onClick={() => void guard(() => api.setMode(m.value), `Now set to \u201C${m.label}\u201D`)}
+                    disabled={config()?.permission_mode === m.value}
                   >
-                    <span class="mode-name">{m}</span>
-                    <span class="mode-desc">{MODE_COPY[m]}</span>
+                    <span class="mode-name">
+                      {m.label}
+                      <Show when={config()?.permission_mode === m.value}>
+                        <span class="chip chip-tone-success">current</span>
+                      </Show>
+                    </span>
+                    <span class="mode-desc">{MODE_COPY[m.value]}</span>
                   </button>
                 )}
               </For>
@@ -4389,23 +4781,22 @@ function Settings() {
                 <Show when={!config.loading}>
                   <div class="rule-lists">
                     <p class="dim">
-                      This server build does not report its rule lists, so the rules layered on top
-                      of the mode cannot be shown. Everything above still applies; read{" "}
-                      <code>allow</code>/<code>ask</code>/<code>deny</code> in <code>config.toml</code>{" "}
-                      directly, or update vak.
+                      This version of the server doesn’t report its specific rules, so they can’t be
+                      listed here. The setting above still applies. To see the rules, open the
+                      project’s <code>config.toml</code>, or update vak.
                     </p>
                   </div>
                 </Show>
               }
             >
               <div class="rule-lists">
-                <For each={["deny", "ask", "allow"] as const}>
-                  {(decision) => (
+                <For each={RULE_SECTIONS}>
+                  {({ decision, title, empty }) => (
                     <div>
-                      <span class="eyebrow">{decision} rules</span>
+                      <span class="eyebrow">{title}</span>
                       <Show
                         when={rulesFor(decision).length > 0}
-                        fallback={<p class="dim">None — nothing is {decision === "allow" ? "pre-approved" : decision === "deny" ? "blocked outright" : "forced to ask"} beyond what the mode already decides.</p>}
+                        fallback={<p class="dim">{empty}</p>}
                       >
                         <div class="chip-stack">
                           <For each={rulesFor(decision)}>{(r) => <RuleChip rule={r} />}</For>
@@ -4416,9 +4807,10 @@ function Settings() {
                 </For>
               </div>
               <p class="dim">
-                Rules live in <code>config.toml</code> and are read-only here — editing them from a
-                browser session would let the console widen its own reach. See what each one grants a
-                given extension under <a href="#/integrations">Extensions</a>.
+                These are set in the project’s config file and can’t be changed from a browser — a
+                console that could widen its own reach wouldn’t be worth much. Hover a rule to see
+                exactly how it is written. To see what a rule grants one connected app, open{" "}
+                <a href="#/integrations">Extensions</a>.
               </p>
             </Show>
           </section>
@@ -4426,16 +4818,16 @@ function Settings() {
           <section class="panel">
             <div class="panel-title-row">
               <div>
-                <h2>Maintenance</h2>
-                <p class="dim">Neither is destructive; both can take a moment on a large store.</p>
+                <h2>Housekeeping</h2>
+                <p class="dim">Safe to run any time. Both can take a moment on a big project.</p>
               </div>
             </div>
             <div class="row-gap">
               <button class="ghost" disabled={runningDoctor()} onClick={() => void runDoctor()}>
-                {runningDoctor() ? "Diagnosing…" : "Run diagnostics"}
+                {runningDoctor() ? "Checking…" : "Check for problems"}
               </button>
               <button class="ghost" disabled={rebuilding()} onClick={() => void rebuild()}>
-                {rebuilding() ? "Reindexing…" : "Rebuild search index"}
+                {rebuilding() ? "Rebuilding…" : "Rebuild search"}
               </button>
             </div>
             <Show when={doctorReport()}>
@@ -4449,9 +4841,9 @@ function Settings() {
           <section class="panel">
             <div class="panel-title-row">
               <div>
-                <h2>This session</h2>
+                <h2>Signed in</h2>
                 <p class="dim">
-                  Signing out clears the console cookie here. Runs already in flight keep going.
+                  Signing out only affects this browser. Anything already running carries on.
                 </p>
               </div>
             </div>
@@ -4507,11 +4899,402 @@ const NAV: NavItem[] = [
     activeChild: gatewayTab,
   },
   { hash: "#/memory", label: "Memory", icon: ICONS.memory },
+  { hash: "#/feeds", label: "Feeds", icon: ICONS.feeds },
   { hash: "#/search", label: "Search", icon: ICONS.search },
   { hash: "#/inbox", label: "Inbox", icon: ICONS.inbox, badge: () => unread().toString() || "" },
   { hash: "#/security", label: "Security", icon: ICONS.security },
   { hash: "#/settings", label: "Settings", icon: ICONS.settings },
 ];
+
+/// Source types arrive as the registry's own ids. Print the name people use.
+const FEED_TYPE_LABELS: Record<string, string> = {
+  rss: "RSS / Atom",
+  youtube: "YouTube",
+  hacker_news: "Hacker News",
+  reddit: "Reddit",
+  custom_http: "Custom",
+};
+
+function FeedsSection() {
+  const [tab, setTab] = createSignal<"overview" | "sources" | "reader" | "alerts" | "workbench">("overview");
+  const [searchQuery, setSearchQuery] = createSignal("");
+  const [searchResults, setSearchResults] = createSignal<import("./types").FeedSearchResponse | null>(null);
+  const [searching, setSearching] = createSignal(false);
+  const [wizardOpen, setWizardOpen] = createSignal(false);
+
+  const [stats, { refetch: refetchStats }] = createResource(() => api.feedStats().catch(() => null));
+  const [sourceTypes] = createResource(() => api.feedSourceTypes().catch(() => ({ source_types: [] })));
+  const [alerts, { refetch: refetchAlerts }] = createResource(() => api.feedAlerts().catch(() => ({ alerts: [] })));
+
+  const doSearch = async () => {
+    const q = searchQuery().trim();
+    if (!q) return;
+    setSearching(true);
+    try {
+      const res = await api.feedSearch({ q, limit: 10 });
+      setSearchResults(res);
+    } catch (e) {
+      pushToast("alert", `Search failed: ${e}`);
+    }
+    setSearching(false);
+  };
+
+  const triggerIngest = async () => {
+    try {
+      const res = await api.feedIngest();
+      pushToast("info", `Found ${res.new_items} new item${res.new_items === 1 ? "" : "s"} across ${res.sources_ingested} source${res.sources_ingested === 1 ? "" : "s"}`);
+      refetchStats();
+    } catch (e) {
+      pushToast("alert", `Could not check for new items: ${e}`);
+    }
+  };
+
+  return (
+    <div class="view">
+      <PageHeader
+        title="Feeds"
+        description="Sources vak reads on a schedule — blogs, YouTube channels, Reddit, Hacker News — so it can answer from them."
+        actions={
+          <button class="small" onClick={triggerIngest}>Check for new items</button>
+        }
+      />
+      <div class="tab-bar">
+        <a class={tab() === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Overview</a>
+        <a class={tab() === "sources" ? "active" : ""} onClick={() => setTab("sources")}>Sources</a>
+        <a class={tab() === "reader" ? "active" : ""} onClick={() => setTab("reader")}>Reader</a>
+        <a class={tab() === "alerts" ? "active" : ""} onClick={() => setTab("alerts")}>Alerts</a>
+        <a class={tab() === "workbench" ? "active" : ""} onClick={() => setTab("workbench")}>Workbench</a>
+      </div>
+
+      <Show when={tab() === "overview"}>
+        <Show when={stats()} fallback={<div class="empty">Loading…</div>}>
+          <div class="feed-stats-row">
+            <div class="feed-stat">
+              <div class="value">{stats()!.total_items}</div>
+              <div class="label">Items collected</div>
+            </div>
+            <div class="feed-stat">
+              <div class="value">{stats()!.total_feeds}</div>
+              <div class="label">Sources</div>
+            </div>
+            <div class="feed-stat">
+              <div class="value">{stats()!.items_today}</div>
+              <div class="label">New today</div>
+            </div>
+            <div class="feed-stat">
+              <div class="value">{stats()!.total_alerts}</div>
+              <div class="label">Alerts set up</div>
+            </div>
+          </div>
+          <Show when={stats()!.sources && stats()!.sources!.length > 0}>
+            <section class="panel">
+              <div class="panel-title-row"><div><h2>Sources</h2></div></div>
+              <For each={stats()!.sources}>
+                {(src) => (
+                  <div class="feed-source-card">
+                    <div class="icon">{src.type === "hacker_news" ? "🔥" : src.type === "youtube" ? "▶" : "📡"}</div>
+                    <div class="info">
+                      <div class="name">{src.name}</div>
+                      <div class="meta">{FEED_TYPE_LABELS[src.type] ?? src.type} · {src.item_count} items</div>
+                    </div>
+                  </div>
+                )}
+              </For>
+            </section>
+          </Show>
+        </Show>
+        <section class="panel">
+          <div class="panel-title-row"><div><h2>Search</h2></div></div>
+          <div class="toolbar">
+            <input
+              class="search-input"
+              placeholder="Search everything you follow…"
+              value={searchQuery()}
+              onInput={(e) => setSearchQuery(e.currentTarget.value)}
+              onKeyDown={(e) => e.key === "Enter" && doSearch()}
+            />
+            <button onClick={doSearch} disabled={searching()}>{searching() ? "Searching…" : "Search"}</button>
+          </div>
+          <Show when={searchResults()}>
+            <Show when={searchResults()!.answer}>
+              <div class="feed-answer-box">{searchResults()!.answer}</div>
+            </Show>
+            <Show when={searchResults()!.follow_up_questions && searchResults()!.follow_up_questions!.length > 0}>
+              <div class="feed-follow-ups">
+                <For each={searchResults()!.follow_up_questions}>
+                  {(q) => (
+                    <span class="feed-follow-up" onClick={() => { setSearchQuery(q); doSearch(); }}>{q}</span>
+                  )}
+                </For>
+              </div>
+            </Show>
+            <For each={searchResults()!.results}>
+              {(item) => (
+                <div class="feed-search-result">
+                  <div class="score-bar"><div class="fill" style={{ width: `${Math.round(item.score * 100)}%` }} /></div>
+                  <div class="title"><a href={item.url} target="_blank">{item.title}</a></div>
+                  <Show when={item.content}>
+                    <div class="excerpt">{item.content.slice(0, 200)}</div>
+                  </Show>
+                  <div class="evidence">
+                    <Show when={item.source_name}><span>{item.source_name}</span></Show>
+                    <Show when={item.published_date}><span>{item.published_date}</span></Show>
+                    <Show when={item.evidence?.freshness_hours != null}><span>{item.evidence!.freshness_hours}h ago</span></Show>
+                  </div>
+                </div>
+              )}
+            </For>
+          </Show>
+        </section>
+      </Show>
+
+      <Show when={tab() === "sources"}>
+        <section class="panel">
+          <div class="panel-title-row">
+            <div><h2>What you can follow</h2><p class="dim">Pick any of these when adding a source.</p></div>
+            <button class="small" onClick={() => setWizardOpen(true)}>Add a source</button>
+          </div>
+          <Show when={sourceTypes()}>
+            <For each={sourceTypes()!.source_types}>
+              {(st) => (
+                <div class="feed-source-card">
+                  <div class="icon">{st.icon === "rss" ? "📡" : st.icon === "youtube" ? "▶" : st.icon === "fire" ? "🔥" : st.icon === "reddit" ? "📱" : "🌐"}</div>
+                  <div class="info">
+                    <div class="name">{st.name}</div>
+                    <div class="meta">{st.description} · checked every {st.default_interval} by default</div>
+                  </div>
+                </div>
+              )}
+            </For>
+          </Show>
+        </section>
+      </Show>
+
+      <Show when={tab() === "reader"}>
+        <section class="panel">
+          <div class="panel-title-row"><div><h2>Reader</h2><p class="dim">Everything collected so far, newest first.</p></div></div>
+          <FeedReader />
+        </section>
+      </Show>
+
+      <Show when={tab() === "alerts"}>
+        <section class="panel">
+          <div class="panel-title-row"><div><h2>Alerts</h2><p class="dim">Tell vak to flag an item when it mentions something you care about.</p></div></div>
+          <Show when={alerts()!.alerts.length === 0}>
+            <div class="empty">No alerts set up yet.</div>
+          </Show>
+          <For each={alerts()!.alerts}>
+            {(alert) => (
+              <div class="feed-alert-card">
+                <div class="info">
+                  <div class="name">{alert.name}</div>
+                  <div class="match">
+                    <Show when={alert.match_config?.keywords}>mentions {alert.match_config!.keywords!.join(", ")}</Show>
+                    <Show when={alert.match_config?.tags}> · tagged {alert.match_config!.tags!.join(", ")}</Show>
+                  </div>
+                </div>
+                <span class={`chip ${alert.enabled ? "chip-tone-success" : "chip-tone-danger"}`}>
+                  {alert.enabled ? "on" : "off"}
+                </span>
+              </div>
+            )}
+          </For>
+        </section>
+      </Show>
+
+      <Show when={tab() === "workbench"}>
+        <section class="panel">
+          <div class="panel-title-row"><div><h2>Workbench</h2><p class="dim">Run a search and see the raw result vak works from — useful for checking why something did or didn’t come back.</p></div></div>
+          <div class="form-row">
+            <label>Try a search</label>
+            <div class="toolbar">
+              <input
+                class="search-big"
+                placeholder="Type a search to try…"
+                value={searchQuery()}
+                onInput={(e) => setSearchQuery(e.currentTarget.value)}
+                onKeyDown={(e) => e.key === "Enter" && doSearch()}
+              />
+              <button onClick={doSearch} disabled={searching()}>Test</button>
+            </div>
+          </div>
+          <Show when={searchResults()}>
+            <pre style={{ "font-size": "11px", "max-height": "400px", overflow: "auto", "white-space": "pre-wrap" }}>
+              {JSON.stringify(searchResults(), null, 2)}
+            </pre>
+          </Show>
+        </section>
+      </Show>
+
+      <Show when={wizardOpen()}>
+        <FeedWizard onClose={() => setWizardOpen(false)} onAdded={() => { setWizardOpen(false); refetchStats(); }} />
+      </Show>
+    </div>
+  );
+}
+
+function FeedReader() {
+  const [items, setItems] = createSignal<import("./types").FeedItem[]>([]);
+  const [loading, setLoading] = createSignal(true);
+
+  const loadItems = async () => {
+    setLoading(true);
+    try {
+      const res = await api.feedItems({ limit: 50 });
+      setItems(res.items || []);
+    } catch (e) {
+      pushToast("alert", `Could not load items: ${e}`);
+    }
+    setLoading(false);
+  };
+
+  createEffect(() => loadItems());
+
+  return (
+    <Show when={!loading()} fallback={<div class="empty">Loading…</div>}>
+      <Show when={items().length === 0}>
+        <div class="empty">Nothing collected yet. Add a source, then press “Check for new items”.</div>
+      </Show>
+      <For each={items()}>
+        {(item) => (
+          <div class="feed-item-card">
+            <div class="title"><a href={item.url} target="_blank">{item.title}</a></div>
+            <Show when={item.summary}>
+              <div class="summary">{item.summary!.slice(0, 200)}</div>
+            </Show>
+            <div class="meta">
+              <Show when={item.source_name}><span class="source">{item.source_name}</span></Show>
+              <Show when={item.published_at}><span class="date">{item.published_at!.slice(0, 10)}</span></Show>
+              <Show when={item.source_trust}><span class="trust">{item.source_trust}</span></Show>
+            </div>
+            <Show when={item.tags && item.tags.length > 0}>
+              <div class="tags">
+                <For each={item.tags!}>
+                  {(tag) => <span class="chip chip-tone-info">{tag}</span>}
+                </For>
+              </div>
+            </Show>
+          </div>
+        )}
+      </For>
+    </Show>
+  );
+}
+
+function FeedWizard(props: { onClose: () => void; onAdded: () => void }) {
+  const [step, setStep] = createSignal(1);
+  const [selectedType, setSelectedType] = createSignal<string | null>(null);
+  const [name, setName] = createSignal("");
+  const [url, setUrl] = createSignal("");
+  const [interval, setInterval] = createSignal("1h");
+  const [tags, setTags] = createSignal("");
+  const [sourceTypes] = createResource(() => api.feedSourceTypes());
+
+  const typeOptions = () => {
+    const types = sourceTypes();
+    if (!types || !types.source_types) {
+      return [
+        { id: "rss", label: "RSS / Atom", desc: "Any RSS or Atom feed URL" },
+        { id: "youtube", label: "YouTube", desc: "Follow a channel's uploads" },
+        { id: "hacker_news", label: "Hacker News", desc: "Top stories, best new, Ask HN" },
+        { id: "reddit", label: "Reddit", desc: "Follow subreddits" },
+        { id: "custom_http", label: "Something else", desc: "Any web address that returns data" },
+      ];
+    }
+    return types.source_types.map((t) => ({
+      id: t.id,
+      label: t.name || t.id.charAt(0).toUpperCase() + t.id.slice(1).replace(/_/g, " "),
+      desc: t.description || `Fetch from ${t.id}`,
+    }));
+  };
+
+  const needsUrl = () => {
+    const t = selectedType();
+    return t && (t === "rss" || t === "youtube" || t === "custom_http");
+  };
+
+  const canSubmit = () => name() && (!needsUrl() || url());
+
+  const submit = async () => {
+    const source: import("./types").FeedSource = {
+      name: name(),
+      type: selectedType()!,
+      url: url() || undefined,
+      interval: interval(),
+      tags: tags() ? tags().split(",").map((t) => t.trim()) : [],
+    };
+    try {
+      await api.feedAddSource(source);
+      props.onAdded();
+      pushToast("info", `Source "${name()}" added`);
+    } catch (e) {
+      pushToast("alert", `Could not add the source: ${e}`);
+    }
+  };
+
+  return (
+    <div class="feed-wizard-overlay" onClick={props.onClose}>
+      <div class="feed-wizard" onClick={(e) => e.stopPropagation()}>
+        <h2>Add a source</h2>
+        <Show when={step() === 1}>
+          <div class="step">
+            <div class="step-label">What do you want to follow?</div>
+            <div class="type-grid">
+              <For each={typeOptions()}>
+                {(opt) => (
+                  <div
+                    class={`type-option ${selectedType() === opt.id ? "selected" : ""}`}
+                    onClick={() => { setSelectedType(opt.id); setStep(2); }}
+                  >
+                    <div class="label">{opt.label}</div>
+                    <div class="desc">{opt.desc}</div>
+                  </div>
+                )}
+              </For>
+            </div>
+          </div>
+        </Show>
+        <Show when={step() === 2}>
+          <div class="step">
+            <div class="step-label">Details</div>
+            <div class="form-row">
+              <label>Name</label>
+              <input value={name()} onInput={(e) => setName(e.currentTarget.value)} placeholder="My Feed" />
+            </div>
+            <Show when={needsUrl()}>
+              <div class="form-row">
+                <label>URL</label>
+                <input value={url()} onInput={(e) => setUrl(e.currentTarget.value)} placeholder="https://example.com/feed.xml" />
+              </div>
+            </Show>
+            <div class="form-row">
+              <label>Check for new items</label>
+              <select value={interval()} onChange={(e) => setInterval(e.currentTarget.value)}>
+                <option value="5m">Every 5 minutes</option>
+                <option value="15m">Every 15 minutes</option>
+                <option value="30m">Every 30 minutes</option>
+                <option value="1h">Every hour</option>
+                <option value="6h">Every 6 hours</option>
+                <option value="1d">Daily</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Tags</label>
+              <input value={tags()} onInput={(e) => setTags(e.currentTarget.value)} placeholder="tech, news — separate with commas" />
+            </div>
+            <div style={{ "margin-top": "12px", display: "flex", gap: "8px" }}>
+              <button class="ghost" onClick={() => setStep(1)}>Back</button>
+              <button onClick={submit} disabled={!canSubmit()}>Add source</button>
+            </div>
+          </div>
+        </Show>
+        <div style={{ "margin-top": "12px", "text-align": "right" }}>
+          <button class="ghost" onClick={props.onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const probeAuth = () => {
@@ -4628,6 +5411,7 @@ export default function App() {
               <Match when={currentRoute() === "#/integrations"}><ExtensionsSection /></Match>
               <Match when={currentRoute() === "#/gateway"}><GatewaySection /></Match>
               <Match when={currentRoute() === "#/memory"}><MemoryView /></Match>
+              <Match when={currentRoute() === "#/feeds"}><FeedsSection /></Match>
               <Match when={currentRoute() === "#/search"}><SearchView /></Match>
               <Match when={currentRoute() === "#/inbox"}><Inbox /></Match>
               <Match when={currentRoute() === "#/security"}><Security /></Match>

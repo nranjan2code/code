@@ -458,4 +458,57 @@ export const api = {
     surface: string,
   ): Promise<{ surface: string; env_var: string; configured: boolean; restarted: boolean }> =>
     fetch(`/config/bot-token/${encodeURIComponent(surface)}`, { method: "DELETE" }).then((r) => handle(r)),
+
+  feedSourceTypes: (): Promise<{ source_types: import("./types").FeedSourceType[] }> =>
+    fetch("/feeds/sources").then((r) => handle(r)),
+
+  feedStats: (): Promise<import("./types").FeedStats> =>
+    fetch("/feeds/stats").then((r) => handle(r)),
+
+  feedSearch: (params: {
+    q: string;
+    tags?: string;
+    since?: string;
+    limit?: number;
+    source?: string;
+  }): Promise<import("./types").FeedSearchResponse> => {
+    const qs = new URLSearchParams({ q: params.q });
+    if (params.tags) qs.set("tags", params.tags);
+    if (params.since) qs.set("since", params.since);
+    if (params.limit) qs.set("limit", String(params.limit));
+    if (params.source) qs.set("source", params.source);
+    return fetch(`/feeds/search?${qs}`).then((r) => handle(r));
+  },
+
+  feedItems: (params?: {
+    limit?: number;
+    source?: string;
+  }): Promise<{ items: import("./types").FeedItem[] }> => {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.source) qs.set("source", params.source);
+    const q = qs.toString();
+    return fetch(`/feeds/items${q ? `?${q}` : ""}`).then((r) => handle(r));
+  },
+
+  feedItem: (id: number): Promise<import("./types").FeedItem> =>
+    fetch(`/feeds/items/${id}`).then((r) => handle(r)),
+
+  feedAlerts: (): Promise<{ alerts: import("./types").FeedAlertRule[] }> =>
+    fetch("/feeds/alerts").then((r) => handle(r)),
+
+  feedIngest: (): Promise<{ sources_ingested: number; new_items: number; alerts_fired: number; errors: number }> =>
+    fetch("/feeds/ingest", { method: "POST" }).then((r) => handle(r)),
+
+  feedAddSource: (source: import("./types").FeedSource): Promise<{ status: string }> =>
+    fetch("/feeds/sources", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(source),
+    }).then((r) => handle(r)),
+
+  feedDeleteSource: (name: string): Promise<{ status: string }> =>
+    fetch(`/feeds/sources/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }).then((r) => handle(r)),
 };

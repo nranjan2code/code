@@ -154,10 +154,10 @@ as sub-rows while the section is open and in a tab bar above the view:
 
 | Route | Task | Shape |
 |---|---|---|
-| `#/gateway` | "What channels do I have, and what do they do?" | Scan-first table; a row expands into the full route/access editor |
+| `#/gateway` (Chats) | "What channels do I have, and what do they do?" | Scan-first table; a row expands into the full route/access editor |
 | `#/gateway/connect` | "I need to add a new bot" | Three-step guided sequence with live state per step |
 | `#/gateway/credentials` | "Set or clear a bot token" | Credentials only — no routing field on the screen |
-| `#/gateway/routing` | "Is this healthy?" | Routing defaults, provenance, Core pool |
+| `#/gateway/routing` (Defaults & status) | "Is this healthy?" | Routing defaults, provenance, Core pool |
 
 Rules the split enforces:
 
@@ -174,7 +174,8 @@ Rules the split enforces:
    finished steps dim.
 3. **Ongoing management is a list, not a form.** Channels is a table of
    channel, surface, workspace, effective route, effective permission, and
-   status (including *capped* and *rotates next*). Editing is a row
+   status (labelled *chat / app / project / model / can do / status*, with
+   *reduced* and *new session next* for the two edge states). Editing is a row
    expansion, so the settled state reads first and the form appears on
    demand. Every prior control — save route, rotate now, edit access,
    revoke access, remove binding, approve/deny — is preserved unchanged.
@@ -197,7 +198,8 @@ with exponential-backoff reconnect.
 The Gateway split answered "who may talk to this agent, and under what
 permission". Extensions answers the same question for everything else that
 widens what the agent can do. `#/integrations` is four hash routes —
-`#/integrations` (MCP servers), `/skills`, `/hooks`, `/tasks` — presented in
+`#/integrations` (Connected apps), `/skills` (Skills), `/hooks`
+(Automations), `/tasks` (Scheduled tasks) — presented in
 a tab bar and as sidebar sub-rows, structurally identical to the Gateway
 section so the two governance surfaces read as one system.
 
@@ -330,6 +332,63 @@ filter is client-side over the full set, which is honest while the API is
 unpaginated. Several thousand channels would want server-side paging and
 search first; a paginated UI has not been built over an API that cannot
 page, because it would have to invent the pages.
+
+## Plain language, and the controls that carry it
+
+The console's audience is not only the person who wrote the config. Every
+screen was reviewed against one question: does this ask the reader to know a
+syntax, an internal name, or a Rust identifier in order to act? Where the
+answer was yes, the wire form stayed exactly as it was and the presentation
+changed.
+
+Two rules govern the rewrite:
+
+1. **The wire shape is never bent to fit the wording.** No endpoint, config
+   key, glob grammar, cron dialect, or serde tag changed. `read-only` is
+   still `read-only`; the console prints "Look, don't touch" and keeps the
+   raw value in a `title` so anyone matching the UI against a log or a config
+   file still can.
+2. **A picker offers what exists, and never eats what doesn't.** The
+   capability pickers are built from live data — `GET /config/mcp`'s servers,
+   `GET /config/skills`, `GET /config/hooks` — and anything already in a
+   stored list that no longer matches an offered option is rendered as a
+   removable chip rather than dropped on save. Editing a channel cannot
+   silently discard a pattern the picker does not understand.
+
+`src/controls.tsx` holds the shared pieces:
+
+- **`AccessPicker`** replaced eight free-text glob fields on the channel
+  access editor. `allow` is tri-state on the wire (`null` inherits, `[]`
+  blocks everything, a list limits), which is read back as three words:
+  *Everything the workspace allows / Only what I pick / None*. Because
+  "limit to nothing yet" and "block all" are the same `[]`, the control
+  remembers the operator's choice locally — deriving the mode from the wire
+  alone would snap the picker back to "block all" the instant they switched
+  to "limit". Deny stays available, behind a disclosure, over the same
+  options.
+- **`ScheduleBuilder`** emits the cron string the tasks API already accepts,
+  from a preset list and a time field. `parseSchedule` recognises the shapes
+  it emits, so an existing task opens on the preset that produced it rather
+  than on "custom"; anything else round-trips through the raw field
+  untouched. `describeSchedule` gives the tasks table its English.
+- **`MatcherBuilder`** covers the hook matcher grammar's common cases —
+  every call, one tool, one tool with an argument pattern — and hands
+  anything else back to a raw field. A matcher that does not parse is still
+  flagged, because a hook that will not load is exactly what an operator
+  needs to see.
+- **`BUILTIN_TOOLS`** names the eight built-ins by what they do. The
+  permission engine matches tool names case-insensitively, so the lowercase
+  wire name is what gets stored either way.
+
+Vocabulary is shared across screens on purpose: what the channel editor calls
+"connected apps" and "automations" is what the sidebar calls them, and what a
+permission rule is said to grant. `modeLabel` prints the same three phrases
+wherever a permission mode appears, in either casing the server may send
+(`read-only` from the gateway, `ReadOnly` from `GET /config`).
+
+Chips carrying a phrase rather than a label use `.chip-phrase`, which drops
+the global `text-transform: lowercase` and `white-space: nowrap` — a sentence
+is not a status label, and truncating one mid-word helps nobody.
 
 ## Invariants
 

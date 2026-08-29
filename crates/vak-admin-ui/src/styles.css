@@ -257,7 +257,7 @@ html, body {
 .dot-down { background: var(--red); }
 
 .channel-capabilities { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-soft); }
-.capability-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+.capability-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 10px; }
 .capability-grid > div { display: flex; flex-direction: column; gap: 5px; }
 .capability-grid input { width: 100%; }
 @media (max-width: 900px) { .capability-grid { grid-template-columns: 1fr; } }
@@ -1326,6 +1326,11 @@ a.tab-btn {
    disagree with the file it is reporting. Mono chips print verbatim. */
 .chip.mono { text-transform: none; }
 
+/* A chip carrying a phrase rather than a label -- a rule said in English, a
+   hook's matcher, a picked capability. The pill still reads as a chip, but
+   lowercasing a sentence and refusing to wrap it are both wrong for one. */
+.chip-phrase { text-transform: none; white-space: normal; }
+
 /* The permission panel lives in one column of a two-column page, so three
    modes side by side leaves each ~90px wide and the description sets as a
    ragged tower. Stack them: one mode per row, name and consequence on one
@@ -1377,3 +1382,199 @@ a.tab-btn {
   .composer textarea { order: 3; flex-basis: 100%; }
   .composer button { flex: 1; }
 }
+
+/* Feed pipeline styles */
+.feed-stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.feed-stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.feed-stat .value { font-size: 22px; font-weight: 600; color: var(--text); font-family: var(--mono); }
+.feed-stat .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--faint); margin-top: 4px; }
+
+.feed-source-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; }
+.feed-source-card .icon { width: 32px; height: 32px; border-radius: var(--radius-sm); background: var(--surface-raised); display: flex; align-items: center; justify-content: center; color: var(--accent); font-size: 16px; }
+.feed-source-card .info { flex: 1; min-width: 0; }
+.feed-source-card .info .name { font-weight: 500; font-size: 13px; color: var(--text); }
+.feed-source-card .info .meta { font-size: 11px; color: var(--faint); margin-top: 2px; }
+.feed-source-card .actions { display: flex; gap: 6px; }
+
+.feed-item-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s; }
+.feed-item-card:hover { border-color: var(--border-focus); }
+.feed-item-card .title { font-weight: 500; font-size: 13px; color: var(--text); margin-bottom: 4px; }
+.feed-item-card .title a { color: var(--accent); text-decoration: none; }
+.feed-item-card .title a:hover { text-decoration: underline; }
+.feed-item-card .summary { font-size: 12px; color: var(--text-soft); line-height: 1.5; max-height: 3em; overflow: hidden; }
+.feed-item-card .meta { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; align-items: center; }
+.feed-item-card .meta .source { font-size: 11px; color: var(--faint); }
+.feed-item-card .meta .date { font-size: 11px; color: var(--faint); }
+.feed-item-card .meta .trust { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--surface-raised); color: var(--text-soft); }
+.feed-item-card .tags { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+
+.feed-search-result { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 8px; }
+.feed-search-result .score-bar { height: 3px; border-radius: 2px; background: var(--surface-raised); margin-bottom: 8px; overflow: hidden; }
+.feed-search-result .score-bar .fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; }
+.feed-search-result .title { font-weight: 500; font-size: 13px; margin-bottom: 4px; }
+.feed-search-result .title a { color: var(--accent); text-decoration: none; }
+.feed-search-result .title a:hover { text-decoration: underline; }
+.feed-search-result .excerpt { font-size: 12px; color: var(--text-soft); line-height: 1.5; margin-bottom: 6px; }
+.feed-search-result .evidence { font-size: 11px; color: var(--faint); display: flex; gap: 12px; }
+
+.feed-alert-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; }
+.feed-alert-card .info { flex: 1; }
+.feed-alert-card .info .name { font-weight: 500; font-size: 13px; }
+.feed-alert-card .info .match { font-size: 11px; color: var(--faint); margin-top: 2px; }
+
+.feed-wizard-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.feed-wizard { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); width: 520px; max-height: 80vh; overflow-y: auto; padding: 24px; }
+.feed-wizard h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+.feed-wizard .step { margin-bottom: 16px; }
+.feed-wizard .step-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--faint); margin-bottom: 6px; }
+.feed-wizard .type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.feed-wizard .type-option { background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; cursor: pointer; transition: border-color 0.15s; }
+.feed-wizard .type-option:hover, .feed-wizard .type-option.selected { border-color: var(--accent); }
+.feed-wizard .type-option .label { font-weight: 500; font-size: 13px; }
+.feed-wizard .type-option .desc { font-size: 11px; color: var(--faint); margin-top: 2px; }
+
+.feed-answer-box { background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 12px; font-size: 13px; line-height: 1.6; color: var(--text-soft); }
+.feed-follow-ups { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.feed-follow-up { font-size: 11px; padding: 4px 10px; border-radius: 999px; background: var(--surface-raised); border: 1px solid var(--border); color: var(--text-soft); cursor: pointer; transition: border-color 0.15s; }
+.feed-follow-up:hover { border-color: var(--accent); color: var(--accent); }
+
+
+/* ---- Plain-language controls (src/controls.tsx) --------------------------
+   The pickers that replaced hand-typed glob lists, cron strings and
+   permission matchers. They reuse the existing surface/border/chip tokens so
+   a restricted capability reads the same amber it does everywhere else. */
+
+.access-picker {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+}
+.access-picker.restricted { border-color: var(--amber); }
+.access-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.access-head h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.access-head p { margin: 3px 0 0; font-size: 11.5px; line-height: 1.45; max-width: 46ch; }
+
+/* Three mutually exclusive words, sized to be read at a glance rather than
+   parsed. Wraps rather than truncates — the labels are the whole point. */
+.choice-row { display: flex; flex-wrap: wrap; gap: 5px; }
+.choice {
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.choice:hover { border-color: var(--border-focus); color: var(--text); }
+.choice.active {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  color: var(--accent-bright);
+}
+
+.pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(184px, 1fr)); gap: 6px; }
+.pick {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.35;
+  transition: border-color 0.15s;
+  min-width: 0;
+}
+.pick:hover { border-color: var(--border-focus); }
+.pick.on { border-color: var(--accent); background: var(--accent-wash); }
+.pick.deny.on { border-color: var(--red); background: var(--red-soft); }
+.pick input { width: auto; margin-top: 1px; flex-shrink: 0; }
+.pick span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pick strong { font-weight: 500; color: var(--text); overflow-wrap: anywhere; }
+.pick em { font-style: normal; font-size: 11px; color: var(--faint); overflow-wrap: anywhere; }
+
+.warn-line { color: var(--amber); }
+.deny-line { display: flex; flex-direction: column; gap: 5px; }
+
+/* An inline "×" on a chip. Chips are pills, so the button has to sit flush
+   inside one without changing its height. */
+.chip-x {
+  background: none;
+  border: none;
+  padding: 0 0 0 5px;
+  margin: 0;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+.chip-x:hover { opacity: 1; }
+.chip:has(.chip-x) { display: inline-flex; align-items: center; }
+
+.link-button {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11.5px;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color 0.15s;
+}
+.link-button:hover { text-decoration-color: currentColor; }
+
+.advanced-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
+.advanced-box p { margin: 0; font-size: 11px; }
+.pattern-row { display: flex; gap: 6px; }
+.pattern-row input { flex: 1; min-width: 0; }
+
+.schedule-builder, .matcher-builder { display: flex; flex-direction: column; gap: 2px; }
+.schedule-builder p, .matcher-builder p { margin: 2px 0 0; font-size: 11.5px; }
+.schedule-builder input[type="time"] { width: fit-content; }
+
+/* The MCP catalog: one click fills the form below, so the cards are
+   selectable rather than navigational. */
+.catalog-grid { margin-bottom: 12px; }
+.catalog-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.catalog-card:hover { border-color: var(--border-focus); }
+.catalog-card.active { border-color: var(--accent); background: var(--accent-wash); }
+.catalog-card strong { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.catalog-card em { font-style: normal; font-size: 11px; color: var(--faint); }
+
+/* A mode button now carries a "current" chip beside its name -- but only the
+   Settings page, whose `.stack .mode-grid` is one column wide, ever renders
+   one. Scope the flex row to that case so the three-across channel picker
+   keeps its original single-line name. */
+.mode-name:has(.chip) { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }

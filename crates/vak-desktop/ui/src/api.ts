@@ -771,3 +771,54 @@ export function ackInbox(id: string): Promise<{ acked: boolean }> {
 export function inboxUnreadCount(): Promise<{ count: number }> {
   return req("/inbox/unread_count");
 }
+
+// ---- feeds -----------------------------------------------------------
+
+import type { FeedSourceType, FeedStats, FeedSearchResponse, FeedItem } from "./types";
+
+export function feedSourceTypes(): Promise<{ source_types: FeedSourceType[] }> {
+  return req("/feeds/sources");
+}
+
+export function feedStats(): Promise<FeedStats> {
+  return req("/feeds/stats");
+}
+
+export function feedSearch(params: {
+  q: string;
+  tags?: string;
+  since?: string;
+  limit?: number;
+  source?: string;
+}): Promise<FeedSearchResponse> {
+  const qs = new URLSearchParams({ q: params.q });
+  if (params.tags) qs.set("tags", params.tags);
+  if (params.since) qs.set("since", params.since);
+  if (params.limit) qs.set("limit", String(params.limit));
+  if (params.source) qs.set("source", params.source);
+  return req(`/feeds/search?${qs.toString()}`);
+}
+
+export function feedItems(params?: {
+  limit?: number;
+  source?: string;
+}): Promise<{ items: FeedItem[] }> {
+  const qs = new URLSearchParams();
+  if (params?.limit) qs.set("limit", String(params.limit));
+  if (params?.source) qs.set("source", params.source);
+  const q = qs.toString();
+  return req(`/feeds/items${q ? `?${q}` : ""}`);
+}
+
+export function feedIngest(): Promise<{
+  sources_ingested: number;
+  new_items: number;
+  alerts_fired: number;
+  errors: number;
+}> {
+  return req("/feeds/ingest", { method: "POST", body: "{}" });
+}
+
+export function feedDeleteSource(name: string): Promise<{ status: string }> {
+  return req(`/feeds/sources/${encodeURIComponent(name)}`, { method: "DELETE" });
+}

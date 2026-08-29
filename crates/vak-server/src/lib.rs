@@ -45,6 +45,7 @@ mod core_pool;
 mod delivery;
 pub mod discord;
 mod events;
+mod feeds;
 mod gateway;
 mod heartbeat;
 mod presentation;
@@ -455,6 +456,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/skills/proposals/{id}/promote", post(promote_proposal))
         .route("/skills/proposals/{id}/reject", post(reject_proposal))
         .merge(gateway::routes())
+        .merge(feeds::routes())
         .merge(admin::routes())
         .merge(admin_ui::routes())
         .with_state(state)

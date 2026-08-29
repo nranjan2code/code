@@ -95,6 +95,8 @@ import Toast from "./components/Toast";
 import Settings from "./components/Settings";
 import BudgetBanner from "./components/BudgetBanner";
 import SearchModal from "./components/SearchModal";
+import FeedsPanel from "./components/FeedsPanel";
+import FeedsModal from "./components/FeedsModal";
 import SetupCard from "./components/SetupCard";
 import TranscriptModal from "./components/TranscriptModal";
 import InboxPage from "./components/InboxPage";
@@ -818,6 +820,7 @@ export default function App() {
                     ["editor", "Editor", "code"],
                     ["pr", "Pull request", "git"],
                     ["agents", "Subagents", "grid"],
+                    ["feeds", "Feeds", "bell"],
                   ] as const}>
                     {([id, label, icon]) => (
                       <button
@@ -857,6 +860,9 @@ export default function App() {
                 <Show when={tab() === "agents"}>
                   <SubagentsPanel sessionId={activeId()} />
                 </Show>
+                <Show when={tab() === "feeds"}>
+                  <FeedsPanel />
+                </Show>
               </div>
               </>
             )}
@@ -884,6 +890,7 @@ export default function App() {
           </Show>
           <Toast />
           <SearchModal />
+          <FeedsModal />
           <Show when={settingsOpen()}><Settings /></Show>
         </div>
       )}
