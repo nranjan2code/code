@@ -35,8 +35,11 @@ impl Default for Paths {
 /// mirroring the hand-made plists minus their embedded secrets.
 #[derive(Debug, Clone)]
 pub struct ServiceSpec {
-    /// launchd label, also the plist stem (`com.vak.gateway`).
-    pub name: &'static str,
+    /// launchd label, also the plist stem (`com.vak.gateway`). Owned rather
+    /// than `&'static str` because per-bot units (`com.vak.telegram-<id>`)
+    /// are named dynamically from `bots.json`, not from the static
+    /// [`SERVICES`] table.
+    pub name: String,
     pub bin_path: PathBuf,
     pub args: Vec<String>,
     /// Stable log destination under the canonical platform logs directory.
@@ -148,13 +151,188 @@ pub const SERVICES: &[ServiceDef] = &[
 /// the bundle's LaunchServices identity alive without a window to reveal.
 pub const RETIRED_SERVICES: &[&str] = &["com.vak.tray"];
 
+// ------------------------------------------------------- multi-bot units
+//
+// docs/design/34 (multi-bot-per-channel): a user adds/removes Telegram,
+// Discord, and Slack bots at any time from the admin console, each getting
+// its own id and its own token env var recorded in `bots.json`. Unlike
+// [`SERVICES`] above, these units cannot be a static compile-time table —
+// there is no fixed number of bots, and the set changes at runtime as bots
+// are created, deleted, or renamed. Everything below reads `bots.json`
+// fresh each time and derives one unit per configured bot, named
+// `com.vak.<surface>-<id>` (e.g. `com.vak.telegram-VakBot`), each launched
+// with `--bot-id <id>` so it resolves that bot's own token env var
+// (`vak_server::gateway::bot_token_env_for_id`) instead of the legacy
+// single-bot slot. This crate cannot depend on vak-server (vak-server
+// already depends on vak-ops), so the tiny bit of `bots.json` schema it
+// needs is duplicated here rather than shared.
+
+/// Surfaces with a CLI bridge that takes `--server <url> --bot-id <id>`
+/// (see `vak telegram|discord|slack` in `crates/vak/src/cli.rs`).
+const BRIDGE_SURFACES: &[&str] = &["telegram", "discord", "slack"];
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct BotRecord {
+    id: String,
+    surface: String,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct BotsFile {
+    #[serde(default)]
+    bots: Vec<BotRecord>,
+}
+
+fn bots_json_path(data_home: &Path) -> PathBuf {
+    data_home.join("gateway").join("bots.json")
+}
+
+/// Read the bots a user has configured. Missing file or parse failure reads
+/// as "no bots" rather than an error — a fresh install has no `bots.json`
+/// yet, and a corrupt one must not stop the gateway/desktop units from
+/// syncing.
+fn read_bots(data_home: &Path) -> Vec<BotRecord> {
+    std::fs::read_to_string(bots_json_path(data_home))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<BotsFile>(&raw).ok())
+        .map(|f| f.bots)
+        .unwrap_or_default()
+}
+
+/// launchd/systemd labels only tolerate a narrow character set; a bot id is
+/// operator-chosen (the admin console enforces alphanumeric/hyphen today,
+/// but this is a second, independent line of defense against a stray id
+/// producing a unit name the service manager rejects or a path that escapes
+/// the units directory).
+fn sanitize_for_unit_name(id: &str) -> String {
+    id.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' })
+        .collect()
+}
+
+/// The launchd label / systemd stem for one bot's bridge unit.
+pub fn bot_service_name(surface: &str, id: &str) -> String {
+    format!("com.vak.{surface}-{}", sanitize_for_unit_name(id))
+}
+
+/// One [`ServiceSpec`] per bot currently in `bots.json`, ready for
+/// [`sync_specs`]. Surfaces without a CLI bridge (unrecognized `surface`
+/// values) are skipped rather than producing a unit that can never run.
+pub fn bot_service_specs(
+    bin_dir: &Path,
+    home_dir: &Path,
+    working_dir: &Path,
+    data_home: &Path,
+    gateway_url: &str,
+) -> Vec<ServiceSpec> {
+    read_bots(data_home)
+        .into_iter()
+        .filter(|b| BRIDGE_SURFACES.contains(&b.surface.as_str()))
+        .map(|b| {
+            let name = bot_service_name(&b.surface, &b.id);
+            let log_file = format!("{}-{}.log", b.surface, sanitize_for_unit_name(&b.id));
+            ServiceSpec {
+                name,
+                bin_path: bin_dir.join("vak"),
+                args: vec![
+                    b.surface,
+                    "--server".to_string(),
+                    gateway_url.to_string(),
+                    "--bot-id".to_string(),
+                    b.id,
+                ],
+                log_path: vak_config::paths::logs_dir().join(log_file),
+                working_dir: working_dir.to_path_buf(),
+                home_dir: home_dir.to_path_buf(),
+                path_env: std::env::var("PATH").unwrap_or_default(),
+                keep_alive: true,
+                gui: false,
+            }
+        })
+        .collect()
+}
+
+/// Units matching `com.vak.<surface>-*` on disk that are no longer in
+/// `wanted` get stopped, deregistered, and their unit file removed — the
+/// counterpart to a bot being deleted or renamed in the admin console.
+/// Without this, a deleted bot's bridge process (and its stale token env
+/// reference) would keep running forever, invisible to `bots.json`.
+fn prune_stale_bot_units(wanted: &[String], paths: &Paths, runner: &dyn CommandRunner) {
+    let dir = if cfg!(target_os = "macos") {
+        &paths.launch_agents_dir
+    } else {
+        &paths.systemd_unit_dir
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        let is_bot_unit = BRIDGE_SURFACES
+            .iter()
+            .any(|s| file_name.starts_with(&format!("com.vak.{s}-")));
+        if !is_bot_unit {
+            continue;
+        }
+        let stem = file_name
+            .strip_suffix(".plist")
+            .or_else(|| file_name.strip_suffix(".service").map(|s| s.trim_start_matches("vak-")))
+            .unwrap_or(&file_name);
+        // systemd stems are stripped of the "com.vak." prefix by
+        // `short_name`; reconstruct the launchd-style label to compare.
+        let label = if file_name.ends_with(".service") {
+            format!("com.vak.{stem}")
+        } else {
+            stem.to_string()
+        };
+        if !wanted.contains(&label) {
+            let _ = services_uninstall(&[label.as_str()], paths, runner);
+        }
+    }
+}
+
+/// Reconcile every currently-configured bot's unit against the service
+/// manager: create units for new bots, update ones whose args changed
+/// (token env, surface), leave healthy ones alone, and remove units for
+/// bots that were deleted or renamed. Called after every bot create/update
+/// (surface change)/delete/token change so a user editing bots in the admin
+/// console never has to know a launchd/systemd unit is involved.
+pub fn sync_bots(
+    bin_path: &Path,
+    data_home: &Path,
+    gateway_url: &str,
+    paths: &Paths,
+    runner: &dyn CommandRunner,
+) -> Vec<SyncOutcome> {
+    let bin_dir = bin_path.parent().unwrap_or(Path::new("/"));
+    let home_dir = super::home();
+    let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    let specs = bot_service_specs(bin_dir, &home_dir, &working_dir, data_home, gateway_url);
+    let wanted: Vec<String> = specs.iter().map(|s| s.name.clone()).collect();
+    prune_stale_bot_units(&wanted, paths, runner);
+    sync_specs(&specs, paths, runner)
+}
+
+/// Bounce one bot's already-installed unit so its process re-reads `.env`.
+/// A token rotate or removal changes no unit *content* — the token itself
+/// is never embedded in the plist/unit, only its env var name is, and that
+/// name doesn't change — so [`sync_bots`]'s identity diff would see
+/// `Unchanged` and never restart the process. Call this alongside
+/// [`sync_bots`] whenever a bot's token is set or cleared. Best-effort: a
+/// bot with no unit yet (token set before the first sync) simply reports
+/// `false`, which is fine — [`sync_bots`] will create and start it fresh.
+pub fn restart_bot_unit(surface: &str, id: &str, runner: &dyn CommandRunner) -> bool {
+    platform::restart(&bot_service_name(surface, id), runner)
+}
+
 impl ServiceDef {
     /// Resolve against an install prefix: `bin_dir` holds the release
     /// binaries; logs land in the canonical platform logs dir
     /// (`~/Library/Logs/vak` / XDG state) — never inside data.
     pub fn spec(&self, bin_dir: &Path, home_dir: &Path, working_dir: &Path) -> ServiceSpec {
         ServiceSpec {
-            name: self.name,
+            name: self.name.to_string(),
             bin_path: bin_dir.join(self.bin_file),
             args: self.args.iter().map(|a| (*a).to_string()).collect(),
             log_path: vak_config::paths::logs_dir().join(self.log_file),
@@ -261,7 +439,7 @@ pub fn render_launchd_plist(spec: &ServiceSpec) -> String {
 "#,
         if spec.keep_alive { "true" } else { "false" },
         session_type,
-        xml_escape(spec.name),
+        xml_escape(&spec.name),
         prog_args,
         xml_escape(&spec.home_dir.to_string_lossy()),
         xml_escape(&spec.path_env),
@@ -298,7 +476,7 @@ pub fn render_systemd_unit(spec: &ServiceSpec) -> String {
          \n\
          [Install]\n\
          WantedBy=default.target\n",
-        short_name(spec.name),
+        short_name(&spec.name),
         spec.home_dir.display(),
         spec.path_env,
         spec.working_dir.display(),
@@ -620,16 +798,16 @@ fn sync_one_inner(
     runner: &dyn CommandRunner,
 ) -> Result<SyncAction, String> {
     let rendered = render(spec);
-    let unit_path = unit_file_path(spec.name, paths);
+    let unit_path = unit_file_path(&spec.name, paths);
     if let Some(parent) = unit_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
     let previous = std::fs::read_to_string(&unit_path).ok();
-    let was_running = running_pid(spec.name, runner).is_some();
+    let was_running = running_pid(&spec.name, runner).is_some();
 
     if previous.as_deref() == Some(rendered.as_str()) {
         return if !was_running {
-            if start(spec.name, runner) {
+            if start(&spec.name, runner) {
                 Ok(SyncAction::Restarted)
             } else {
                 Err(format!("start {} failed", spec.name))
@@ -638,7 +816,7 @@ fn sync_one_inner(
             // The live process predates the installed binary. Bounce it and
             // re-stamp the unit so staleness converges — without the stamp,
             // every later sync would bounce again forever.
-            if platform::restart(spec.name, runner) && write_atomic(&unit_path, &rendered).is_ok() {
+            if platform::restart(&spec.name, runner) && write_atomic(&unit_path, &rendered).is_ok() {
                 Ok(SyncAction::Bounced)
             } else {
                 Err(format!(
@@ -655,9 +833,9 @@ fn sync_one_inner(
     // Bootout unconditionally — a crashed-but-loaded service (pid absent,
     // registration alive) would otherwise fail the later bootstrap with
     // "already bootstrapped" and roll back a perfectly good unit.
-    unload(spec.name, runner);
+    unload(&spec.name, runner);
     write_atomic(&unit_path, &rendered)?;
-    if load_with_retries(spec.name, &unit_path, runner) {
+    if load_with_retries(&spec.name, &unit_path, runner) {
         Ok(if previous.is_some() {
             SyncAction::Updated
         } else {
@@ -700,10 +878,10 @@ pub fn status_specs(
     specs
         .iter()
         .map(|spec| {
-            let unit_path = unit_file_path(spec.name, paths);
+            let unit_path = unit_file_path(&spec.name, paths);
             let on_disk = std::fs::read_to_string(&unit_path).ok();
             let wanted = spec.bin_path.to_string_lossy().into_owned();
-            let pid = running_pid(spec.name, runner);
+            let pid = running_pid(&spec.name, runner);
             let unit_present = on_disk.is_some();
             let points_at_installed = on_disk.is_some_and(|t| t.contains(wanted.as_str()));
             ServiceRow {
@@ -869,7 +1047,7 @@ mod tests {
 
     fn spec_for(def: &ServiceDef, bin_dir: &Path, log_dir: &Path) -> ServiceSpec {
         ServiceSpec {
-            name: def.name,
+            name: def.name.to_string(),
             bin_path: bin_dir.join(def.bin_file),
             args: def.args.iter().map(|a| (*a).to_string()).collect(),
             log_path: log_dir.join(def.log_file),
@@ -1282,5 +1460,131 @@ mod tests {
 
         let synced = services_sync(Path::new("/b"), &["nope"], &Paths::default(), &Fake::new());
         assert!(matches!(synced[0].action, SyncAction::Failed(_)));
+    }
+
+    fn write_bots_json(data_home: &Path, bots: &[(&str, &str)]) {
+        let dir = data_home.join("gateway");
+        std::fs::create_dir_all(&dir).unwrap();
+        let entries: Vec<String> = bots
+            .iter()
+            .map(|(id, surface)| format!(r#"{{"id":"{id}","surface":"{surface}"}}"#))
+            .collect();
+        std::fs::write(
+            dir.join("bots.json"),
+            format!(r#"{{"schema":1,"bots":[{}]}}"#, entries.join(",")),
+        )
+        .unwrap();
+    }
+
+    /// One unit per configured bot, named and argued so it resolves that
+    /// bot's own token — the fix for the multi-bot regression where a
+    /// single static `com.vak.telegram` unit with no `--bot-id` fell back
+    /// to the dead legacy `TELEGRAM_BOT_TOKEN` slot.
+    #[test]
+    fn bot_service_specs_one_per_configured_bot_with_bot_id_arg() {
+        let dir = tempfile::tempdir().unwrap();
+        write_bots_json(
+            dir.path(),
+            &[("VakBot", "telegram"), ("VakyarthaBot", "telegram")],
+        );
+        let specs = bot_service_specs(
+            Path::new("/opt/vak/bin"),
+            Path::new("/Users/x"),
+            Path::new("/workspace"),
+            dir.path(),
+            "http://127.0.0.1:8901",
+        );
+        assert_eq!(specs.len(), 2);
+        let names: Vec<&str> = specs.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"com.vak.telegram-VakBot"));
+        assert!(names.contains(&"com.vak.telegram-VakyarthaBot"));
+        let vakbot = specs.iter().find(|s| s.name == "com.vak.telegram-VakBot").unwrap();
+        assert_eq!(
+            vakbot.args,
+            vec!["telegram", "--server", "http://127.0.0.1:8901", "--bot-id", "VakBot"],
+        );
+        assert!(vakbot.keep_alive);
+        // Every rendered unit must still carry zero secrets — the token
+        // lives only in the env var the bridge process reads for itself.
+        let plist = render_launchd_plist(vakbot);
+        for secret in ["TOKEN", "SECRET", "BOT_TOKEN"] {
+            assert!(!plist.contains(secret), "unit must not contain {secret}");
+        }
+    }
+
+    /// A surface the CLI has no bridge for (or a bots.json typo) must not
+    /// produce a unit that can never run.
+    #[test]
+    fn bot_service_specs_skips_unknown_surfaces_and_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        write_bots_json(dir.path(), &[("Weird", "carrier-pigeon")]);
+        let specs = bot_service_specs(
+            Path::new("/b"),
+            Path::new("/h"),
+            Path::new("/w"),
+            dir.path(),
+            "http://127.0.0.1:8901",
+        );
+        assert!(specs.is_empty());
+
+        let missing = tempfile::tempdir().unwrap();
+        let specs = bot_service_specs(
+            Path::new("/b"),
+            Path::new("/h"),
+            Path::new("/w"),
+            missing.path(),
+            "http://127.0.0.1:8901",
+        );
+        assert!(specs.is_empty(), "no bots.json yet must mean no units, not an error");
+    }
+
+    /// Deleting (or renaming) a bot must take its bridge process down too —
+    /// otherwise it keeps running forever against a token env var nothing
+    /// references any more.
+    #[test]
+    fn sync_bots_prunes_units_for_deleted_bots() {
+        let (_d, paths) = tmp_paths("bots-prune");
+        let data = tempfile::tempdir().unwrap();
+        let fake = Fake::with_pid(123);
+
+        write_bots_json(data.path(), &[("VakBot", "telegram"), ("Second", "telegram")]);
+        let first = sync_bots(
+            Path::new("/opt/vak/bin/vak"),
+            data.path(),
+            "http://127.0.0.1:8901",
+            &paths,
+            &fake,
+        );
+        assert_eq!(first.len(), 2);
+        assert!(unit_file_path("com.vak.telegram-VakBot", &paths).exists());
+        assert!(unit_file_path("com.vak.telegram-Second", &paths).exists());
+
+        // User deletes "Second" from the admin console.
+        write_bots_json(data.path(), &[("VakBot", "telegram")]);
+        let second = sync_bots(
+            Path::new("/opt/vak/bin/vak"),
+            data.path(),
+            "http://127.0.0.1:8901",
+            &paths,
+            &fake,
+        );
+        assert_eq!(second.len(), 1, "only the surviving bot should be (re)synced");
+        assert!(
+            unit_file_path("com.vak.telegram-VakBot", &paths).exists(),
+            "surviving bot's unit must be untouched"
+        );
+        assert!(
+            !unit_file_path("com.vak.telegram-Second", &paths).exists(),
+            "deleted bot's unit must be removed, not left running forever"
+        );
+    }
+
+    #[test]
+    fn bot_service_name_sanitizes_and_namespaces_by_surface() {
+        assert_eq!(bot_service_name("telegram", "VakBot"), "com.vak.telegram-VakBot");
+        assert_eq!(
+            bot_service_name("discord", "weird id!"),
+            "com.vak.discord-weird_id_"
+        );
     }
 }

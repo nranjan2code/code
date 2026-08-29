@@ -3579,6 +3579,30 @@ async fn delete_bot_token(
 
 // ---- Multi-bot (docs/design/34, multi-bot-per-channel) --------------------
 
+/// Reconcile per-bot bridge units after any `bots.json` change (create,
+/// delete, or rename) so the admin console's Bots list never gets ahead of
+/// what's actually running. Mirrors the legacy single-bot
+/// `vak_ops::restart(Service::Telegram, ...)` calls above, generalized to a
+/// dynamic per-bot unit — see docs/design/34 and `vak-ops::services`.
+///
+/// `std::env::current_exe()` is deliberately used instead of resolving an
+/// install manifest: this handler runs inside the gateway process itself
+/// (`vak serve --gateway --trust`), so the currently-executing binary path
+/// *is* the correct one to launch bridge processes from.
+fn sync_bot_units(core: &vak_core::Core) {
+    let Ok(bin_path) = std::env::current_exe() else {
+        return;
+    };
+    let gateway_url = vak_ops::OpsConfig::detect().base_url();
+    let _ = vak_ops::sync_bots(
+        &bin_path,
+        &core.sessions_home(),
+        &gateway_url,
+        &vak_ops::Paths::default(),
+        &vak_ops::SystemRunner,
+    );
+}
+
 fn bot_env_var(id: &str) -> String {
     // A dedicated env var per bot id, distinct from the legacy per-surface
     // slots (`TELEGRAM_BOT_TOKEN` etc.) so a second bot never overwrites
@@ -3637,6 +3661,7 @@ async fn create_bot(
         ..Default::default()
     };
     state.gateway.bot_upsert(&state.core, bot.clone());
+    sync_bot_units(&state.core);
     state.hub.emit_config_changed("bot_created", id);
     Json(serde_json::json!({ "bot": bot })).into_response()
 }
@@ -3708,6 +3733,7 @@ async fn delete_bot(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> StatusCode {
     if state.gateway.bot_remove(&state.core, &id) {
+        sync_bot_units(&state.core);
         state.hub.emit_config_changed("bot_deleted", &id);
         StatusCode::OK
     } else {
@@ -3737,8 +3763,20 @@ async fn put_bot_id_token(
                 None,
             );
             state.hub.emit_config_changed("bot_token_set", &id);
-            Json(serde_json::json!({ "id": id, "env_var": env_var, "configured": true }))
-                .into_response()
+            // A rotate needs no new unit, only a bounce so the process
+            // re-reads its env var (see `restart_bot_unit`'s doc comment).
+            // A first-time token set has no unit yet — `sync_bot_units`
+            // creates and starts it, and `restart_bot_unit` then no-ops.
+            sync_bot_units(&state.core);
+            let restarted =
+                vak_ops::restart_bot_unit(&bot.surface, &id, &vak_ops::SystemRunner);
+            Json(serde_json::json!({
+                "id": id,
+                "env_var": env_var,
+                "configured": true,
+                "restarted": restarted,
+            }))
+            .into_response()
         }
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -3769,11 +3807,17 @@ async fn delete_bot_id_token(
                 None,
             );
             state.hub.emit_config_changed("bot_token_removed", &id);
+            // Bounce the running process so it stops using the now-cleared
+            // token immediately, instead of continuing on the one it read
+            // at its last start.
+            let restarted =
+                vak_ops::restart_bot_unit(&bot.surface, &id, &vak_ops::SystemRunner);
             Json(serde_json::json!({
                 "id": id,
                 "env_var": removed.env_var,
                 "configured": removed.shadowed_by_env,
                 "shadowed_by_env": removed.shadowed_by_env,
+                "restarted": restarted,
             }))
             .into_response()
         }
