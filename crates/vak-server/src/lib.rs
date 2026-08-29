@@ -3672,12 +3672,19 @@ struct UpdateBotBody {
     label: Option<String>,
     #[serde(default)]
     policy: Option<vak_config::ChannelPolicy>,
-    #[serde(default)]
-    permission_mode: Option<String>,
-    #[serde(default)]
-    route: Option<crate::gateway::AllowlistRoute>,
-    #[serde(default)]
-    workspace: Option<String>,
+    /// Absent (field simply not sent) leaves the current mode alone;
+    /// explicit `null` clears it back to "follows the project"; a string
+    /// sets it. See `gateway::deserialize_present` for why the plain
+    /// `Option<Option<T>>` shape needs the custom deserializer to make
+    /// that distinction actually work.
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
+    permission_mode: Option<Option<String>>,
+    /// See `permission_mode` above.
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
+    route: Option<Option<crate::gateway::AllowlistRoute>>,
+    /// See `permission_mode` above.
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
+    workspace: Option<Option<String>>,
 }
 
 async fn update_bot(
@@ -3699,28 +3706,31 @@ async fn update_bot(
         bot.policy = policy;
     }
     if let Some(raw) = body.permission_mode {
-        match crate::parse_mode(raw.trim()) {
-            Some(mode) => bot.permission_mode = Some(mode),
-            None if raw.trim().is_empty() => bot.permission_mode = None,
-            None => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(
-                        serde_json::json!({ "error": format!("unknown permission_mode '{raw}'") }),
-                    ),
-                )
-                    .into_response();
-            }
+        match raw {
+            None => bot.permission_mode = None,
+            Some(raw) if raw.trim().is_empty() => bot.permission_mode = None,
+            Some(raw) => match crate::parse_mode(raw.trim()) {
+                Some(mode) => bot.permission_mode = Some(mode),
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(
+                            serde_json::json!({ "error": format!("unknown permission_mode '{raw}'") }),
+                        ),
+                    )
+                        .into_response();
+                }
+            },
         }
     }
     if let Some(route) = body.route {
-        bot.route = Some(route);
+        bot.route = route;
     }
     if let Some(ws) = body.workspace {
-        bot.workspace = if ws.trim().is_empty() {
-            None
-        } else {
-            Some(PathBuf::from(ws.trim()))
+        bot.workspace = match ws {
+            None => None,
+            Some(ws) if ws.trim().is_empty() => None,
+            Some(ws) => Some(PathBuf::from(ws.trim())),
         };
     }
     state.gateway.bot_upsert(&state.core, bot.clone());

@@ -3439,6 +3439,9 @@ function ChannelPermissionPicker(props: {
   setMode: (m: PermissionMode) => void;
   /// The workspace's own mode, when known — the ceiling a pin is capped to.
   ceiling?: PermissionMode | null;
+  /// What this pin belongs to, for the toggle's label — "channel" (a chat)
+  /// or "bot". Defaults to "channel", the original caller's wording.
+  subject?: string;
 }) {
   // A pin above the workspace's own mode is not an error, it is simply
   // reduced at dispatch; say so plainly rather than letting the operator
@@ -3457,7 +3460,7 @@ function ChannelPermissionPicker(props: {
           checked={props.pinned}
           onChange={(e) => props.setPinned(e.currentTarget.checked)}
         />
-        Give this channel its own limits (otherwise it follows the project)
+        Give this {props.subject ?? "channel"} its own limits (otherwise it follows the project)
       </label>
       <Show when={props.pinned}>
         <div class="mode-grid">
@@ -4005,10 +4008,121 @@ function CredentialRow(props: { surface: string; state: ChatSurfaceStatus | unde
 /// identity from the start rather than the anonymous per-surface slot.
 /// Each row is its own credential *and* its own policy/permission/route
 /// tier that a chat can inherit from (see `ChannelPolicy::merge` server-side).
-function BotRow(props: { bot: Bot; refresh: () => void }) {
+/// A bot's own defaults — workspace, model, permission mode, and tool/skill/
+/// automation policy — exactly the same controls and the same components
+/// (`WorkspacePicker`, `ChannelPermissionPicker`, `ChannelCapabilityPolicy`)
+/// as `ChannelAccessEditor` uses for one chat, so an operator sees one
+/// consistent settings UI rather than two different ones depending on
+/// whether they are editing a bot or a chat. A chat bound to this bot
+/// inherits these unless it opts out (`inherit_bot_policy`) or pins its
+/// own values, same as `ChannelAccessEditor`'s "Bot" picker already offers.
+function BotAccessEditor(props: {
+  bot: Bot;
+  providers: ProviderSummary[];
+  knownWorkspaces: string[];
+  corePool: CorePoolEntry[];
+  refresh: () => void;
+}) {
+  const [workspace, setWorkspace] = createSignal(props.bot.workspace ?? "");
+  const [pinRoute, setPinRoute] = createSignal(!!props.bot.route);
+  const [provider, setProvider] = createSignal(
+    props.bot.route?.provider ?? props.providers[0]?.name ?? "",
+  );
+  const [model, setModel] = createSignal(props.bot.route?.model ?? "");
+  const [models, setModels] = createSignal<string[]>([]);
+  const [busy, setBusy] = createSignal(false);
+  const [pinPerm, setPinPerm] = createSignal(!!props.bot.permission_mode);
+  const [perm, setPerm] = createSignal<PermissionMode>(props.bot.permission_mode ?? "workspace-write");
+  const [policy, setPolicy] = createSignal<ChannelPolicy>(props.bot.policy ?? defaultChannelPolicy());
+
+  createEffect(async () => {
+    if (!pinRoute() || !provider()) return;
+    try {
+      const found = (await api.models(provider())).models ?? [];
+      setModels(found);
+      if (found.length && !found.includes(model())) setModel(found[0]);
+    } catch {
+      setModels([]);
+    }
+  });
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api.updateBot(props.bot.id, {
+        workspace: workspace().trim() || null,
+        route: pinRoute() && provider() && model() ? { provider: provider(), model: model() } : null,
+        permission_mode: pinPerm() ? perm() : null,
+        policy: policy(),
+      });
+      pushToast("info", `${props.bot.label} updated — chats bound to it pick this up on their next message`);
+      props.refresh();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <p class="binding-meta" style="margin-bottom:6px">
+        These are this bot's defaults across every chat bound to it. A chat can still override them
+        for itself, or opt out of inheriting them entirely, from its own row under Chats.
+      </p>
+      <WorkspacePicker
+        value={workspace()}
+        onChange={setWorkspace}
+        known={props.knownWorkspaces}
+        corePool={props.corePool}
+      />
+      <label class="inherit-toggle">
+        <input type="checkbox" checked={pinRoute()} onChange={(e) => setPinRoute(e.currentTarget.checked)} />
+        Give this bot its own model (otherwise it follows the project)
+      </label>
+      <Show when={pinRoute()}>
+        <div class="binding-controls">
+          <select
+            value={provider()}
+            ref={(el) => syncSelect(el, provider, () => props.providers)}
+            onChange={(e) => setProvider(e.currentTarget.value)}
+          >
+            <For each={props.providers}>{(p) => <option value={p.name}>{providerLabel(p.name)}</option>}</For>
+          </select>
+          <Show when={models().length} fallback={
+            <input class="mono" value={model()} onInput={(e) => setModel(e.currentTarget.value)} placeholder="model id" />
+          }>
+            <select
+              class="mono"
+              value={model()}
+              ref={(el) => syncSelect(el, model, models)}
+              onChange={(e) => setModel(e.currentTarget.value)}
+            >
+              <For each={models()}>{(m) => <option value={m}>{m}</option>}</For>
+            </select>
+          </Show>
+        </div>
+      </Show>
+      <ChannelPermissionPicker pinned={pinPerm()} setPinned={setPinPerm} mode={perm()} setMode={setPerm} subject="bot" />
+      <ChannelCapabilityPolicy value={policy()} onChange={setPolicy} />
+      <div class="row-gap">
+        <button disabled={busy()} onClick={() => void save()}>{busy() ? "Saving…" : "Save changes"}</button>
+      </div>
+    </div>
+  );
+}
+
+function BotRow(props: {
+  bot: Bot;
+  providers: ProviderSummary[];
+  knownWorkspaces: string[];
+  corePool: CorePoolEntry[];
+  refresh: () => void;
+}) {
   const [editing, setEditing] = createSignal(false);
   const [draft, setDraft] = createSignal("");
-  const [busy, setBusy] = createSignal<"save" | "remove" | "delete" | null>(null);
+  const [busy, setBusy] = createSignal<"save" | "remove" | "delete" | "settings" | null>(null);
+  const [settingsOpen, setSettingsOpen] = createSignal(false);
 
   const save = async () => {
     const token = draft().trim();
@@ -4056,41 +4170,58 @@ function BotRow(props: { bot: Bot; refresh: () => void }) {
   };
 
   return (
-    <div class="cred-row">
-      <div class="cred-id">
-        <SurfaceBadge channelKey={`${props.bot.surface}:`} />
-        <span class="binding-meta">{props.bot.label}</span>
-        <code class="binding-meta">{props.bot.token_env}</code>
-      </div>
-      <span class="spacer" />
-      <Show
-        when={editing()}
-        fallback={
-          <div class="row-gap">
-            <button class="ghost small" onClick={() => setEditing(true)}>Set token</button>
-            <button class="danger small" disabled={busy() === "remove"} onClick={() => void removeToken()}>Remove token</button>
-            <button class="danger small" disabled={busy() === "delete"} onClick={() => void deleteBot()}>Delete bot</button>
+    <div class="cred-block">
+      <div class="cred-row">
+        <div class="cred-id">
+          <SurfaceBadge channelKey={`${props.bot.surface}:`} />
+          <span class="binding-meta">{props.bot.label}</span>
+          <code class="binding-meta">{props.bot.token_env}</code>
+        </div>
+        <span class="spacer" />
+        <Show
+          when={editing()}
+          fallback={
+            <div class="row-gap">
+              <button class="ghost small" onClick={() => setSettingsOpen((v) => !v)}>
+                {settingsOpen() ? "Hide settings" : "Settings"}
+              </button>
+              <button class="ghost small" onClick={() => setEditing(true)}>Set token</button>
+              <button class="danger small" disabled={busy() === "remove"} onClick={() => void removeToken()}>Remove token</button>
+              <button class="danger small" disabled={busy() === "delete"} onClick={() => void deleteBot()}>Delete bot</button>
+            </div>
+          }
+        >
+          <div class="cred-edit">
+            <input
+              type="password"
+              autocomplete="off"
+              spellcheck={false}
+              autofocus
+              placeholder={`Paste ${props.bot.label}'s token`}
+              value={draft()}
+              onInput={(e) => setDraft(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void save();
+                if (e.key === "Escape") setEditing(false);
+              }}
+            />
+            <button disabled={busy() === "save" || !draft().trim()} onClick={() => void save()}>
+              {busy() === "save" ? "Saving…" : "Save"}
+            </button>
+            <button class="ghost small" onClick={() => { setEditing(false); setDraft(""); }}>Cancel</button>
           </div>
-        }
-      >
-        <div class="cred-edit">
-          <input
-            type="password"
-            autocomplete="off"
-            spellcheck={false}
-            autofocus
-            placeholder={`Paste ${props.bot.label}'s token`}
-            value={draft()}
-            onInput={(e) => setDraft(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void save();
-              if (e.key === "Escape") setEditing(false);
-            }}
+        </Show>
+      </div>
+
+      <Show when={settingsOpen()}>
+        <div class="cred-settings">
+          <BotAccessEditor
+            bot={props.bot}
+            providers={props.providers}
+            knownWorkspaces={props.knownWorkspaces}
+            corePool={props.corePool}
+            refresh={props.refresh}
           />
-          <button disabled={busy() === "save" || !draft().trim()} onClick={() => void save()}>
-            {busy() === "save" ? "Saving…" : "Save"}
-          </button>
-          <button class="ghost small" onClick={() => { setEditing(false); setDraft(""); }}>Cancel</button>
         </div>
       </Show>
     </div>
@@ -4128,7 +4259,17 @@ function ExtraBotsList(props: { ctx: GatewayCtx }) {
   return (
     <div class="cred-list" style={{ "margin-top": "0.75rem" }}>
       <Show when={props.ctx.bots().length > 0}>
-        <For each={props.ctx.bots()}>{(bot) => <BotRow bot={bot} refresh={props.ctx.refresh} />}</For>
+        <For each={props.ctx.bots()}>
+          {(bot) => (
+            <BotRow
+              bot={bot}
+              providers={props.ctx.providers()}
+              knownWorkspaces={props.ctx.status()?.known_workspaces ?? []}
+              corePool={props.ctx.status()?.core_pool.entries ?? []}
+              refresh={props.ctx.refresh}
+            />
+          )}
+        </For>
       </Show>
       <Show
         when={adding()}

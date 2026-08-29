@@ -1207,6 +1207,16 @@ a.tab-btn {
 .cred-edit { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 260px; }
 .cred-edit input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12.5px; }
 
+.cred-block { display: grid; gap: 8px; }
+/* Same look as `.binding-card` (the per-chat "Edit what it can do" panel),
+   so a bot's settings panel and a chat's are visually one design, not two. */
+.cred-settings {
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
 /* ---- gateway: onboarding steps ---- */
 
 .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }

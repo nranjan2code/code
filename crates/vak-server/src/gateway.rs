@@ -212,6 +212,27 @@ pub(crate) fn default_true() -> bool {
     true
 }
 
+/// Deserializer for a PATCH field shaped `Option<Option<T>>`, where the
+/// three JSON states must stay distinguishable: the key absent ("leave
+/// this alone"), the key present as `null` ("clear it"), and the key
+/// present with a value ("set it"). A plain `Option<Option<T>>` field
+/// cannot do this on its own — serde's derived `deserialize_option` maps
+/// JSON `null` to the *outer* `None`, identical to the key being absent,
+/// so "explicit null clears it" silently never fires
+/// (<https://github.com/serde-rs/serde/issues/984>). Pair with
+/// `#[serde(default, deserialize_with = "deserialize_present")]`: the
+/// `default` only ever applies when the key is missing entirely (serde
+/// skips `deserialize_with` in that case), and this function itself
+/// wraps whatever it sees — including a `null` that becomes `Some(None)`
+/// — in the outer `Some`.
+pub(crate) fn deserialize_present<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
 fn is_default_channel_policy(policy: &vak_config::ChannelPolicy) -> bool {
     policy == &vak_config::ChannelPolicy::default()
 }
@@ -2251,6 +2272,33 @@ fn log_gateway_reflection(outcome: vak_core::reflection::ReflectionOutcome) {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    /// Regression for the classic serde `Option<Option<T>>` trap: a plain
+    /// double-`Option` field can't tell "the key was never sent" apart
+    /// from "the key was sent as `null`" — both collapse to the outer
+    /// `None`. `deserialize_present` is the fix; this locks in all three
+    /// states a PATCH body actually needs.
+    #[test]
+    fn deserialize_present_distinguishes_absent_null_and_value() {
+        #[derive(serde::Deserialize)]
+        struct Body {
+            #[serde(default, deserialize_with = "deserialize_present")]
+            field: Option<Option<String>>,
+        }
+
+        let absent: Body = serde_json::from_str("{}").unwrap();
+        assert_eq!(absent.field, None, "key never sent must mean 'leave alone'");
+
+        let explicit_null: Body = serde_json::from_str(r#"{"field": null}"#).unwrap();
+        assert_eq!(
+            explicit_null.field,
+            Some(None),
+            "explicit null must mean 'clear it', not be indistinguishable from absent"
+        );
+
+        let set: Body = serde_json::from_str(r#"{"field": "x"}"#).unwrap();
+        assert_eq!(set.field, Some(Some("x".to_string())));
+    }
 
     #[test]
     fn bare_verdicts_have_no_gate_id() {

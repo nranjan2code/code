@@ -1090,8 +1090,11 @@ pub(crate) struct AllowlistPatchBody {
     /// absent) means "leave whatever bot binding is already set" — unlike
     /// approve, patch is an edit-in-place and must not silently unbind a
     /// chat just because a caller's PATCH body didn't mention bots at all.
-    /// Send an explicit `null` to unbind.
-    #[serde(default)]
+    /// Send an explicit `null` to unbind. See
+    /// `crate::gateway::deserialize_present` for why the plain
+    /// `Option<Option<T>>` shape alone can't tell "absent" from "present
+    /// as null" apart — without it this `null` would silently do nothing.
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
     bot_id: Option<Option<String>>,
     #[serde(default)]
     inherit_bot_policy: Option<bool>,
