@@ -2316,6 +2316,8 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
   const [editPrompt, setEditPrompt] = createSignal("");
   const [editSchedule, setEditSchedule] = createSignal("");
   const [editModelPin, setEditModelPin] = createSignal("");
+  /// Set only for a task that runs on a plain interval rather than a cron.
+  const [editInterval, setEditInterval] = createSignal<number | null>(null);
 
   const guard = async (id: string, work: () => Promise<void>, ok: string) => {
     setBusyId(id);
@@ -2359,7 +2361,8 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
     // Fields before the id, for the same reason as the hooks editor above.
     setEditName(task.name);
     setEditPrompt(task.prompt ?? "");
-    setEditSchedule(task.schedule ?? (task.interval_secs ? String(task.interval_secs) : ""));
+    setEditSchedule(task.schedule ?? "");
+    setEditInterval(task.schedule ? null : (task.interval_secs ?? null));
     setEditModelPin(task.model_pin ?? "");
     setEditingId(task.id);
   };
@@ -2499,6 +2502,12 @@ A scheduled task is something you ask vak to do on a repeating schedule — a ni
             </div>
             <div class="form-row"><label>Name</label><input value={editName()} onInput={(e) => setEditName(e.currentTarget.value)} /></div>
             <div class="form-row"><label>What to do</label><textarea rows={3} value={editPrompt()} onInput={(e) => setEditPrompt(e.currentTarget.value)} /></div>
+            <Show when={editInterval() != null && !editSchedule().trim()}>
+              <p class="dim">
+                This task runs every {describeDuration(editInterval())} at the moment. Leave the
+                schedule alone to keep that, or pick one below to switch it over.
+              </p>
+            </Show>
             <ScheduleBuilder value={editSchedule()} onChange={setEditSchedule} />
             <div class="form-row"><label>Model</label><input class="mono" placeholder="Workspace default" value={editModelPin()} onInput={(e) => setEditModelPin(e.currentTarget.value)} /></div>
             <button disabled={busyId() === editingId() || !editName().trim() || !editPrompt().trim()} onClick={() => void saveEdit()}>
@@ -3944,7 +3953,7 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
         />
         <span class="spacer" />
         <button class="ghost" onClick={() => props.ctx.refresh()}>Refresh</button>
-        <button onClick={() => navigate("#/gateway/connect")}>Connect a channel</button>
+        <button onClick={() => navigate("#/gateway/connect")}>Connect a chat</button>
       </div>
 
       <Show when={props.ctx.pending().length > 0}>
@@ -3992,7 +4001,7 @@ A connected chat — a Telegram group, a Discord channel, a Slack conversation �
                 talk to vak from where they already are. It takes three steps: add the bot token,
                 message the bot from that chat, then approve it here.
               </p>
-              <button onClick={() => navigate("#/gateway/connect")}>Connect a channel</button>
+              <button onClick={() => navigate("#/gateway/connect")}>Connect a chat</button>
             </div>
           </Match>
 
@@ -4119,12 +4128,12 @@ function ConnectView(props: { ctx: GatewayCtx }) {
     <>
       <div class="toolbar">
         <div>
-          <h2 class="view-title">Connect a channel</h2>
+          <h2 class="view-title">Connect a chat</h2>
           <p class="dim">Three steps, from a bot with no token to a chat that can talk to vak.</p>
         </div>
         <span class="spacer" />
         <button class="ghost" onClick={() => props.ctx.refresh()}>Refresh</button>
-        <button class="ghost" onClick={() => navigate("#/gateway")}>All channels</button>
+        <button class="ghost" onClick={() => navigate("#/gateway")}>All chats</button>
       </div>
 
       <ol class="steps">
@@ -4609,7 +4618,7 @@ function Settings() {
             <div class="panel-title-row">
               <div>
                 <h2>Model</h2>
-                <p class="dim">Which model answers, unless a channel or session picks its own.</p>
+                <p class="dim">Which model answers, unless a chat or session picks its own.</p>
               </div>
             </div>
             <Show when={!config.loading} fallback={<div class="cred-list"><span class="skel skel-block" /><span class="skel skel-block" /></div>}>

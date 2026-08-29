@@ -613,6 +613,21 @@ export function MatcherBuilder(props: {
   const initial = parseMatcher(props.value);
   const [scope, setScope] = createSignal(initial.scope);
   const [tool, setTool] = createSignal(initial.tool || props.tools[0]?.value || "bash");
+
+  // The rule grammar is case-insensitive (`Rule::matches` compares with
+  // `eq_ignore_ascii_case`), so a config perfectly reasonably says
+  // `Bash(git *)` while this list stores `bash` -- and a `<select>` whose
+  // value matches no option renders blank. Rather than rewrite the operator's
+  // casing on save, offer their exact spelling as its own option, labelled
+  // with the friendly name when we recognise it. Same for a tool the list
+  // does not carry at all, such as `mcp`.
+  const toolOptions = createMemo<MatcherTool[]>(() => {
+    const current = tool();
+    if (!current || props.tools.some((t) => t.value === current)) return props.tools;
+    const known = props.tools.find((t) => t.value.toLowerCase() === current.toLowerCase());
+    const label = known ? known.label.replace(`(${known.value})`, `(${current})`) : current;
+    return [{ value: current, label }, ...props.tools];
+  });
   const [args, setArgs] = createSignal(initial.args);
   const [custom, setCustom] = createSignal(initial.scope === "custom" ? props.value : "");
 
@@ -667,12 +682,13 @@ export function MatcherBuilder(props: {
           <label>Tool</label>
           <select
             value={tool()}
+            ref={(el) => syncSelect(el, tool, toolOptions)}
             onChange={(e) => {
               setTool(e.currentTarget.value);
               emit({ tool: e.currentTarget.value });
             }}
           >
-            <For each={props.tools}>{(t) => <option value={t.value}>{t.label}</option>}</For>
+            <For each={toolOptions()}>{(t) => <option value={t.value}>{t.label}</option>}</For>
           </select>
         </div>
         <div class="form-row">
