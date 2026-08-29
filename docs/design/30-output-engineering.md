@@ -2,9 +2,9 @@
 
 Status: schema-v2 semantic timeline, deterministic CommonMark compiler,
 desktop native renderer, snapshot/SSE projection, isolated worker, trusted
-templates, Telegram projection, semantic webhook envelope, adapter registry,
-ordered multi-message output, and durable retry outbox implemented. TUI and
-additional native channel projectors remain follow-up work.
+templates, Telegram/Slack/Discord projections, semantic webhook envelope,
+adapter registry, ordered multi-message output, and durable retry outbox
+implemented. TUI remains follow-up work.
 
 ## Problem
 
@@ -156,14 +156,51 @@ turn settles, hydration replaces it with the ledger-derived AST. Unknown nodes
 fall back visibly, links are scheme-checked, raw HTML is inert, and artifact
 and approval actions route through existing desktop commands.
 
+## Channel-specific markup projections
+
+`Markup` has one variant per target dialect, not one generic "Markdown" for
+every chat surface: `TelegramHtml`, `SlackMrkdwn`, `DiscordMarkdown`, plus
+`Plain`/`Markdown`/`Json` for surfaces that render the source directly.
+Passing raw GFM through to Slack or Discord is not a safe default — each
+dialect disagrees with GFM in specific, visible ways:
+
+- **Telegram** (`telegram::markdown_to_html`) projects to the HTML subset
+  Telegram's Bot API accepts: `<b>/<i>/<s>/<tg-spoiler>/<code>/<pre>/<a>`.
+  Headings become bold (h1/h2 upshifted for visual weight since Telegram HTML
+  has no heading tags), nested bullets get depth markers (`•`/`◦`/`▪`),
+  consecutive `> ` lines merge into one `<blockquote>` instead of one per
+  line, fenced code keeps its language as `<code class="language-x">`, and
+  GFM tables render as an aligned monospace grid inside `<pre>` since
+  Telegram HTML has no table element.
+- **Slack** (`slack::markdown_to_mrkdwn`) projects to `mrkdwn`, which
+  disagrees with GFM on the two markers that matter most: bold is a single
+  `*`, italic is `_` (GFM's single `*` would collide with Slack's bold), and
+  links are `<url|text>` rather than `[text](url)`. mrkdwn has no heading or
+  table syntax at all, so headings become a bold line and tables become an
+  aligned monospace block inside a fenced code span.
+- **Discord** (`discord::markdown_to_discord`) is the smallest delta from
+  GFM — bold, italic, strikethrough, spoilers, fences, blockquotes, and
+  `#`/`##`/`###` headings already match natively and pass through untouched.
+  The two gaps: `[text](url)` does not hyperlink in a plain message (only
+  inside an embed), so it becomes `text (<url>)` — the angle brackets also
+  suppress Discord's own link-preview embed; and there is no table syntax,
+  so tables become the same aligned monospace block as the other two.
+
+All three keep the exact `source_markdown` as `fallback_markdown` regardless
+of projection, so a channel-specific rendering bug never loses the original
+answer.
+
 ## Multi-message rule
 
 When one message cannot satisfy a channel limit, `DeliveryPacket.chunks` holds
 every ordered part. Adapters must send all chunks sequentially; truncation is
 not normal delivery. Telegram closes and reopens HTML tags at boundaries so
-each chunk parses independently. Actions appear once, normally on the final
-chunk. A partial send returns an error and retains the same job ID for replay.
-`fallback_markdown` always carries the exact unsplit answer.
+each chunk parses independently; Slack and Discord close and reopen an open
+fenced code block (` ``` `) at a chunk boundary the same way, so a split never
+leaves a dangling fence that swallows the rest of the message as code. Actions
+appear once, normally on the final chunk. A partial send returns an error and
+retains the same job ID for replay. `fallback_markdown` always carries the
+exact unsplit answer.
 
 Chunking is Unicode-scalar safe, but not yet grapheme-cluster aware; it can
 split a visible emoji sequence while remaining valid UTF-8. That limitation is
@@ -178,11 +215,13 @@ webhooks receive `{target,text,ts,job_id,delivery}` plus `Idempotency-Key`, so a
 relay can deduplicate and consume semantics while old receivers keep using
 `text`.
 
-Telegram is a sidecar adapter: `/gateway/inbound` returns the semantic packet
-and the bridge sends every chunk. Future Slack, Discord, Teams, or Matrix
-sidecars can post optional `capabilities` (`markup`, `max_chars`, tables, code,
-links, actions) and consume the same packet without changing the agent loop.
-Unknown surfaces start conservative; declared limits are capped at 100,000.
+Telegram, Slack, and Discord are sidecar adapters: `/gateway/inbound` returns
+the semantic packet and each bridge sends every chunk through its channel's
+own send call (`sendMessage`, `chat.postMessage`, and the Discord message
+endpoint respectively). Future Teams or Matrix sidecars can post optional
+`capabilities` (`markup`, `max_chars`, tables, code, links, actions) and
+consume the same packet without changing the agent loop. Unknown surfaces
+start conservative; declared limits are capped at 100,000.
 
 For context, Telegram text is limited to 4096 characters, Slack recommends
 4000 top-level characters and imposes per-block limits, and Discord message
@@ -243,13 +282,15 @@ export and emergency fallback for every projection.
 
 1. Durable outbox records and a persistent worker supervisor: complete.
 2. Telegram conversion behind the worker with tag-safe chunking: complete.
-3. Semantic webhook envelope plus `text` fallback: complete.
-4. Stable semantic packet returned to sidecars and available to native clients:
+3. Slack `mrkdwn` and Discord markdown conversion behind the worker, both
+   with fence-safe chunking: complete.
+4. Semantic webhook envelope plus `text` fallback: complete.
+5. Stable semantic packet returned to sidecars and available to native clients:
    complete.
-5. Desktop outcome-first semantic renderer and reconnectable projection:
+6. Desktop outcome-first semantic renderer and reconnectable projection:
    complete.
-6. TUI and richer Slack/Discord projectors: planned.
-7. Golden fixtures cover parser losslessness, nested structures, tables, code,
+7. TUI projector: planned.
+8. Golden fixtures cover parser losslessness, nested structures, tables, code,
    diffs, unsafe links/HTML, artifacts, lifecycle states, legacy drafts, and
    unsupported capabilities; channel-specific accessibility and visual checks
    remain part of each surface release gate.

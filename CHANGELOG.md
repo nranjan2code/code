@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.11.23 — 2026-08-30
+
+### Telegram, Slack, and Discord get dedicated output formatting
+
+Telegram had a rich HTML projection; Slack and Discord did not — both got
+raw GFM markdown passed straight through `chat.postMessage`/the Discord
+message endpoint, which visibly mis-renders on both surfaces (docs/design/30):
+
+- Telegram's `markdown_to_html` gained headings-as-bold (h1/h2 upshifted),
+  ordered lists with real numbering, depth-based nested bullet markers
+  (`•`/`◦`/`▪`), merged multi-line `<blockquote>` instead of one per line,
+  fenced code with `<code class="language-x">`, GFM tables rendered as an
+  aligned monospace grid, strikethrough (`<s>`), spoiler (`<tg-spoiler>`),
+  and a horizontal-rule divider.
+- New `Markup::SlackMrkdwn` (`vak-delivery/src/slack.rs`): swaps GFM's
+  `**bold**`/`*italic*` for mrkdwn's `*bold*`/`_italic_`, converts
+  `[text](url)` to `<url|text>`, and renders headings/tables the way
+  Telegram's projection does since mrkdwn has neither.
+- New `Markup::DiscordMarkdown` (`vak-delivery/src/discord.rs`): Discord's
+  markdown already matches GFM for bold/italic/strike/spoiler/fences/quotes/
+  headings, so this only fixes `[text](url)` (doesn't hyperlink in a plain
+  message — becomes `text (<url>)`, angle brackets suppressing the
+  link-preview embed) and adds the same table-as-monospace-block fallback.
+- Both new surface delivery profiles in `vak-server/src/delivery.rs` (the
+  `discord`/`slack` cases previously shared generic `Markup::Markdown`), and
+  a fence-aware chunker (`chunk_markdown_preserving_fences`) so a message
+  split at the per-channel character cap closes and reopens an open ` ``` `
+  block instead of leaving it dangling across chunks, matching the tag-safe
+  chunking Telegram already had.
+
 ## 0.11.22 — 2026-08-30
 
 ### Voice & personality — Gemini Live synthesis for bots and desktop
