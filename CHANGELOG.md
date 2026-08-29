@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.11.13 — 2026-08-29
+
+### Admin console: real CRUD, and the write bugs that surfaced building it
+
+The admin console's Sessions, Hooks, and MCP screens were read-mostly.
+This closes the gaps and fixes what fixing them turned up:
+
+- **Sessions** — archive/unarchive, delete (archived-only, soft), bulk
+  "delete all archived", and markdown export, all from the console. Rows
+  now show whether this console instance can actually reach them: session
+  mutation only ever touches this process's own workspace, even though the
+  list spans every project the store indexes.
+- **Hooks** — edit in place, and a real enabled/disabled toggle.
+  `HookConfig` had no `enabled` field: disabling a hook deleted it from
+  `config.toml` instead of recording it as off. Fixed by adding the field
+  (`vak-config`) and skipping disabled hooks at build time (`vak-core`).
+- **MCP servers** — `env` and `network` are now editable, not file-only.
+- **A real, active bug**: hooks merge global+project by `Vec::extend` with
+  no dedup, and `GET /config/hooks` reported the *merged* list — which
+  `PUT /config/hooks` then always resubmitted whole. Editing any hook in a
+  workspace with a global hook active wrote that inherited hook into the
+  project file too; the next edit doubled it again, without bound, each
+  copy re-firing a side-effecting command per matching call. Fixed by
+  scoping `GET /config/hooks` and `GET /config/mcp` to the project layer
+  alone (never the merged view) and adding the missing dedup in
+  `vak_config::merge_into`.
+- **Cross-workspace data-loss bug**: `DELETE /sessions/archived` (bulk)
+  had no workspace boundary check, unlike single-session delete — running
+  it from one workspace's console could soft-delete another workspace's
+  archived sessions. Fixed to match the single-item scoping.
+- **Diff endpoint bug, unrelated to the above**: `git diff` was invoked as
+  `git --no-color diff` (flag before the subcommand — invalid syntax, git
+  exits 129), silently swallowed into an empty diff. The Worktree Diff tab
+  — admin console, desktop, and `openFileSmart`'s diff-routing — has never
+  shown real diff content until now.
+- `session_diff`, `create_session`, and `/admin/api/sessions` now return
+  real HTTP status codes on failure instead of 200-with-`{"error"}`, which
+  the console previously rendered as an empty state rather than a failure.
+- CI now builds, typechecks, and rebuilds `crates/vak-admin-ui/dist` on
+  every push, failing if it drifts from `src/` — the exact drift that
+  shipped a blank admin console in v0.8.1 now fails before merge, not only
+  at release time.
+- **Known, documented, not yet fixed**: a warm `CorePool` entry for a
+  *different* workspace than this gateway's own does not see a permission-
+  mode change made to that workspace's `.vak/config.toml` until idle
+  eviction (up to 30 minutes, or indefinitely on a channel that stays
+  active) — pinned down by a new `core_pool` test; a first fix attempt
+  caused an unrelated test to hang for reasons not yet root-caused and was
+  reverted rather than shipped. Also newly documented: no "paused" channel
+  state (only permanent deny or config-losing revoke), and a project skill
+  silently and invisibly shadows a user-level one of the same name. See
+  `docs/design/34-channel-onboarding.md` and `docs/design/09-extensibility.md`.
+
 ## 0.11.12 — 2026-08-28
 
 ### Desktop: the project gate now releases to the workspace

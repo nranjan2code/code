@@ -2209,6 +2209,9 @@ fn build_hooks_from(
 ) -> Result<Vec<vak_hooks::HookDef>, CoreError> {
     let mut out = Vec::with_capacity(config_hooks.len());
     for h in config_hooks {
+        if !h.enabled {
+            continue;
+        }
         let event = match h.event.as_str() {
             "session-start" | "session_start" | "start" => vak_hooks::HookEvent::SessionStart,
             "pre-tool-use" | "pre_tool_use" => vak_hooks::HookEvent::PreToolUse,

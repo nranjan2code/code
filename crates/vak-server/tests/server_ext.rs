@@ -1257,6 +1257,91 @@ async fn archive_toggle_is_reflected_in_session_list() {
     assert_eq!(unknown.status(), 404);
 }
 
+/// `archive.json`/`deleted.json` are one shared map per `sessions_home`,
+/// keyed by session id with no workspace scoping of their own — a ledger
+/// file only ever lives under *this* process's own
+/// `sessions_dir(sessions_home, cwd)`. Single-session delete already checks
+/// that file exists before acting on it; `DELETE /sessions/archived`
+/// (bulk) iterated every archived id in the shared map with no such check,
+/// so running it from a server bound to workspace B could soft-delete an
+/// archived session that only ever belonged to workspace A.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn delete_all_archived_never_touches_a_different_workspaces_session() {
+    use vak_llm::types::{ContentBlock as CB, Role};
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = home_dir.path().to_path_buf();
+    std::mem::forget(home_dir);
+
+    async fn make_archived_session(cwd: &std::path::Path, home: &std::path::Path) -> String {
+        let core = Core::new(cwd.to_path_buf()).unwrap();
+        core.set_sessions_home(home.to_path_buf());
+        let mut log = core.start_session().await.unwrap();
+        let id = log.header().unwrap().session_id.clone();
+        log.append_message(vak_session::MessageRecord {
+            message: vak_llm::Message {
+                role: Role::User,
+                content: vec![CB::text("task")],
+            },
+            meta: None,
+        })
+        .unwrap();
+        drop(log);
+        id
+    }
+
+    let dir_a = tempfile::tempdir().unwrap();
+    let cwd_a = dir_a.path().to_path_buf();
+    std::mem::forget(dir_a);
+    let dir_b = tempfile::tempdir().unwrap();
+    let cwd_b = dir_b.path().to_path_buf();
+    std::mem::forget(dir_b);
+
+    let id_a = make_archived_session(&cwd_a, &home).await;
+    let id_b = make_archived_session(&cwd_b, &home).await;
+
+    // Archive both directly in the shared sidecar, exactly as the running
+    // server would after two `POST .../archive` calls from two different
+    // workspaces.
+    let archive_path = home.join("archive.json");
+    std::fs::write(
+        &archive_path,
+        serde_json::to_string(&serde_json::json!({ &id_a: true, &id_b: true })).unwrap(),
+    )
+    .unwrap();
+
+    // A server bound to workspace B only.
+    let core_b = Core::new(cwd_b.clone()).unwrap();
+    core_b.set_sessions_home(home.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (app, token) = vak_server::secured_router(core_b);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let base = format!("http://{addr}");
+    let client = client_with(&token);
+
+    let res = client
+        .delete(format!("{base}/sessions/archived"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(body["deleted"], 1, "only workspace B's own session, {body}");
+
+    let deleted: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(home.join("deleted.json")).unwrap()).unwrap();
+    assert_eq!(
+        deleted[&id_b], true,
+        "workspace B's archived session must be deleted"
+    );
+    assert!(
+        deleted.get(&id_a).is_none() || deleted[&id_a] != true,
+        "workspace A's archived session must survive a bulk delete run from workspace B"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn skills_listing_and_pascalcase_mode() {
     let dir = tempfile::tempdir().unwrap();
@@ -1636,4 +1721,81 @@ async fn telegram_token_storage_roundtrip() {
         .await
         .unwrap();
     assert_eq!(after_remove["telegram"]["configured"], false);
+}
+
+/// `PUT /config/hooks` used to drop a disabled hook from `config.toml`
+/// entirely instead of recording it as off (there was nowhere in
+/// `[[hooks]]` to say "off" before `HookConfig::enabled` existed), and `GET
+/// /config/hooks` always reported `enabled: true` regardless. A console
+/// toggle unchecking "enabled" therefore deleted the hook's definition
+/// outright rather than pausing it. This locks in both the round-trip and
+/// that `get_hooks` reports the *project* file's own hooks, not the
+/// runtime-merged effective set (see the vak-config `merge_into` tests for
+/// why the merged set must never be resubmitted here).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hooks_roundtrip_preserves_disabled_hooks_instead_of_deleting_them() {
+    let (base, token, cwd, _server) = spawn_secured(Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::new()),
+    }))
+    .await;
+    let client = client_with(&token);
+
+    let put = client
+        .put(format!("{base}/config/hooks"))
+        .json(&serde_json::json!({
+            "hooks": [
+                {"event": "pre_tool_use", "matcher": null, "command": "echo on", "timeout_ms": 5000, "enabled": true},
+                {"event": "stop", "matcher": null, "command": "echo off", "timeout_ms": 5000, "enabled": false},
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(put.status(), 200);
+    // The success payload counts only the *enabled* hooks written — one of
+    // the two, here.
+    let put_body: serde_json::Value = put.json().await.unwrap();
+    assert_eq!(put_body["count"], 1);
+
+    let got: serde_json::Value = client
+        .get(format!("{base}/config/hooks"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let hooks = got["hooks"].as_array().unwrap();
+    assert_eq!(
+        hooks.len(),
+        2,
+        "the disabled hook must still be listed: {hooks:?}"
+    );
+    let off = hooks
+        .iter()
+        .find(|h| h["command"] == "echo off")
+        .expect("disabled hook must survive the round trip");
+    assert_eq!(off["enabled"], false);
+    let on = hooks
+        .iter()
+        .find(|h| h["command"] == "echo on")
+        .expect("enabled hook must still be present");
+    assert_eq!(on["enabled"], true);
+
+    // And it is genuinely on disk, not just echoed back from memory.
+    let raw = std::fs::read_to_string(cwd.join(".vak/config.toml")).unwrap();
+    assert!(
+        raw.contains("echo off"),
+        "disabled hook missing from config.toml:\n{raw}"
+    );
+    assert!(raw.contains("enabled = false"), "config.toml:\n{raw}");
+
+    // A fresh Core loading that same file must not run the disabled hook.
+    let restarted = Core::new_with_trust(cwd, true).unwrap();
+    let built = vak_core::build_hooks(restarted.config()).unwrap();
+    assert_eq!(
+        built.len(),
+        1,
+        "only the enabled hook should become live: {built:?}"
+    );
 }

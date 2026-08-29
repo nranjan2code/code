@@ -392,10 +392,15 @@ function Overview() {
         </div>
       </section>
       <div class="stats-row">
-        <StatCard label="Sessions indexed" value={sessions()?.sessions.length ?? "…"} />
+        <StatCard label="Sessions indexed" value={sessions()?.total ?? "…"} />
         <StatCard
-          label="Total entries"
+          label="Entries · recent sessions"
           value={sessions()?.sessions.reduce((a, s) => a + s.entry_count, 0) ?? "…"}
+          sub={
+            sessions() && sessions()!.total > sessions()!.sessions.length
+              ? `Sum over the ${sessions()!.sessions.length} most recent of ${sessions()!.total}`
+              : undefined
+          }
         />
         <StatCard
           label="FinOps spend"
@@ -620,9 +625,63 @@ function summarizeEvent(ev: import("./types").SystemEvent): string {
 function Sessions() {
   const [sessions, { refetch }] = createResource(sessionsVersion, () => api.sessions());
   const [bestofn, bestofnActions] = createResource(sessionsVersion, () => api.bestofn().catch(() => ({ runs: [], total: 0 })));
+  // Needed only for `workspace_project_hash` — which rows this console
+  // instance can archive/delete/export, versus read-only across projects.
+  const [config] = createResource(() => api.config().catch(() => null));
   const [q, setQ] = createSignal("");
+  const [showArchived, setShowArchived] = createSignal(false);
   const [creating, setCreating] = createSignal(false);
   const [busyCandidate, setBusyCandidate] = createSignal("");
+  const [busySession, setBusySession] = createSignal("");
+  const [bulkBusy, setBulkBusy] = createSignal(false);
+
+  const isLocal = (s: SessionListItem) => s.project_hash === config()?.workspace_project_hash;
+
+  const toggleArchive = async (s: SessionListItem) => {
+    setBusySession(s.session_id);
+    try {
+      await api.archiveSession(s.session_id, !s.archived);
+      pushToast("info", s.archived ? "Unarchived" : "Archived");
+      refetch();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setBusySession("");
+    }
+  };
+
+  const removeSession = async (s: SessionListItem) => {
+    if (!confirmDestructive(`Delete session ${shortId(s.session_id)}? The ledger file itself is kept on disk.`)) return;
+    setBusySession(s.session_id);
+    try {
+      await api.deleteSession(s.session_id);
+      pushToast("info", "Session deleted");
+      refetch();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setBusySession("");
+    }
+  };
+
+  const archivedCount = createMemo(() => (sessions()?.sessions ?? []).filter((s) => s.archived).length);
+
+  const deleteAllArchived = async () => {
+    if (!confirmDestructive(`Delete all ${archivedCount()} archived sessions? The ledger files themselves are kept on disk.`)) return;
+    setBulkBusy(true);
+    try {
+      const res = await api.deleteAllArchived();
+      pushToast("info", `Deleted ${res.deleted} archived session${res.deleted === 1 ? "" : "s"}`);
+      refetch();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   const newSession = async () => {
     setCreating(true);
@@ -669,7 +728,8 @@ function Sessions() {
   const filtered = createMemo(() => {
     const needle = q().toLowerCase();
     return (sessions()?.sessions ?? []).filter(
-      (s: SessionListItem) => !needle || s.session_id.toLowerCase().includes(needle),
+      (s: SessionListItem) =>
+        (!needle || s.session_id.toLowerCase().includes(needle)) && (showArchived() || !s.archived),
     );
   });
 
@@ -710,7 +770,16 @@ function Sessions() {
 
       <div class="toolbar">
         <input class="search-input" placeholder="Filter by session id…" value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
+        <label class="toggle">
+          <input type="checkbox" checked={showArchived()} onChange={(e) => setShowArchived(e.currentTarget.checked)} />
+          Show archived ({archivedCount()})
+        </label>
         <span class="spacer" />
+        <Show when={showArchived() && archivedCount() > 0}>
+          <button class="danger small" disabled={bulkBusy()} onClick={() => void deleteAllArchived()}>
+            {bulkBusy() ? "Deleting…" : `Delete all archived (${archivedCount()})`}
+          </button>
+        </Show>
         <button disabled={creating()} onClick={newSession}>
           {creating() ? "Creating…" : "+ New session"}
         </button>
@@ -718,27 +787,73 @@ function Sessions() {
       </div>
       <Show when={!sessions.loading} fallback={<div class="empty">Loading sessions…</div>}>
         <Show
+          when={!sessions.error}
+          fallback={<LoadError message={`${sessions.error}`} onRetry={() => refetch()} />}
+        >
+        <Show when={sessions() && sessions()!.total > sessions()!.sessions.length}>
+          <p class="dim" style="margin:-6px 0 10px">
+            Showing the {sessions()!.sessions.length} most recent of {sessions()!.total} sessions. Narrow with
+            the filter above to find an older one.
+          </p>
+        </Show>
+        <Show
           when={filtered().length > 0}
           fallback={<div class="empty">No sessions yet. Run a prompt via TUI, desktop, or gateway and it appears here.</div>}
         >
           <table class="table">
             <thead>
-              <tr><th>session</th><th>entries</th><th>first seen</th><th>last activity</th><th /></tr>
+              <tr><th>session</th><th>entries</th><th>first seen</th><th>last activity</th><th>workspace</th><th /></tr>
             </thead>
             <tbody>
               <For each={filtered()}>
-                {(s) => (
-                  <tr tabindex="0" onClick={() => navigate(`#/sessions/${s.session_id}`)} onKeyDown={(e) => e.key === "Enter" && navigate(`#/sessions/${s.session_id}`)}>
-                    <td class="mono">{shortId(s.session_id)}</td>
-                    <td>{s.entry_count}</td>
-                    <td title={s.first_ts}>{timeAgo(s.first_ts)}</td>
-                    <td title={s.last_ts}>{timeAgo(s.last_ts)}</td>
-                    <td><span class="chev">›</span></td>
-                  </tr>
-                )}
+                {(s) => {
+                  const local = createMemo(() => isLocal(s));
+                  const busy = () => busySession() === s.session_id;
+                  return (
+                    <tr tabindex="0" classList={{ dim: s.archived }} onClick={() => navigate(`#/sessions/${s.session_id}`)} onKeyDown={(e) => e.key === "Enter" && navigate(`#/sessions/${s.session_id}`)}>
+                      <td class="mono">
+                        {shortId(s.session_id)}
+                        <Show when={s.archived}><span class="chip" style="margin-left:6px">archived</span></Show>
+                      </td>
+                      <td>{s.entry_count}</td>
+                      <td title={s.first_ts}>{timeAgo(s.first_ts)}</td>
+                      <td title={s.last_ts}>{timeAgo(s.last_ts)}</td>
+                      <td>
+                        <Show when={local()} fallback={<span class="dim" title="Belongs to a different workspace than this console is attached to — read-only from here.">other workspace</span>}>
+                          <span class="chip chip-tone-success">this workspace</span>
+                        </Show>
+                      </td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <Show
+                          when={local()}
+                          fallback={
+                            <span class="dim" title="Only sessions in this console's own workspace can be archived, deleted, or exported here.">
+                              —
+                            </span>
+                          }
+                        >
+                          <div class="row-gap">
+                            <button class="ghost small" disabled={busy()} onClick={() => void toggleArchive(s)}>
+                              {busy() ? "…" : s.archived ? "Unarchive" : "Archive"}
+                            </button>
+                            <a class="ghost small" href={`/sessions/${encodeURIComponent(s.session_id)}/transcript.md`} target="_blank" rel="noreferrer">
+                              Export .md
+                            </a>
+                            <Show when={s.archived}>
+                              <button class="danger small" disabled={busy()} onClick={() => void removeSession(s)}>
+                                Delete
+                              </button>
+                            </Show>
+                          </div>
+                        </Show>
+                      </td>
+                    </tr>
+                  );
+                }}
               </For>
             </tbody>
           </table>
+        </Show>
         </Show>
       </Show>
     </div>
@@ -770,9 +885,32 @@ function Transcript(props: { sessionId: string }) {
   const [live, setLive] = createSignal(false);
   const [running, setRunning] = createSignal(false);
 
-  // Side tabs resources
-  const [diffData] = createResource(activeTab, (t) => t === "diff" ? api.diff(props.sessionId).catch(() => ({ diff: "No worktree diff available." })) : Promise.resolve(null));
-  const [receiptsData] = createResource(activeTab, (t) => t === "receipts" ? api.receipts(props.sessionId).catch(() => []) : Promise.resolve(null));
+  // `diff` and `receipts` are served off the live in-memory session handle,
+  // not the store index the transcript list itself reads from — a session
+  // opened here from the sessions list (rather than created in this tab)
+  // has no such handle yet. Attach it first, the same way the desktop
+  // client does on every task switch; attach is a no-op when the handle is
+  // already live. `checkpoints` reads the on-disk snapshot directory
+  // directly and needs no handle.
+  const [diffData] = createResource(activeTab, (t) =>
+    t === "diff"
+      ? api
+          .attach(props.sessionId)
+          .then(() => api.diff(props.sessionId))
+          .catch((err) => ({ diff: `Could not load the worktree diff: ${err}` }))
+      : Promise.resolve(null),
+  );
+  const [receiptsData] = createResource(activeTab, (t) =>
+    t === "receipts"
+      ? api
+          .attach(props.sessionId)
+          .then(() => api.receipts(props.sessionId))
+          .catch((err) => {
+            pushToast("alert", `Could not load work receipts: ${err}`);
+            return [];
+          })
+      : Promise.resolve(null),
+  );
   const [checkpointsData, { refetch: refetchCheckpoints }] = createResource(activeTab, (t) => t === "checkpoints" ? api.checkpoints(props.sessionId).catch(() => ({ checkpoints: [] })) : Promise.resolve(null));
 
   const PAGE = 100;
@@ -835,6 +973,7 @@ function Transcript(props: { sessionId: string }) {
 
   const cancel = async () => {
     try {
+      await api.attach(props.sessionId);
       await api.cancelRun(props.sessionId);
       pushToast("info", "Cancellation requested");
     } catch (err) {
@@ -845,6 +984,10 @@ function Transcript(props: { sessionId: string }) {
   const restoreCommit = async (seq: number) => {
     if (!confirmDestructive(`Restore the session worktree to checkpoint #${seq}?`)) return;
     try {
+      // Attaching first lets the server resolve the correct cwd for a
+      // best-of-N child (its worktree, not the workspace root) even when
+      // this tab never ran anything on it.
+      await api.attach(props.sessionId);
       await api.restoreCheckpoint(props.sessionId, seq);
       pushToast("info", `Restored to checkpoint #${seq}`);
       refetchCheckpoints();
@@ -865,6 +1008,7 @@ function Transcript(props: { sessionId: string }) {
     if (!text || sending()) return;
     setSending(true);
     try {
+      await api.attach(props.sessionId);
       if (running() && nCandidates() === 1) {
         await api.steer(props.sessionId, text);
         pushToast("info", "Steering queued");
@@ -1147,14 +1291,38 @@ function ModeDefaultChip(props: { mode: string }) {
 
 // ---- Extensions › MCP servers ----------------------------------------------
 
+/** `KEY=VALUE` per line, the same shape a `.env` file uses — matches how
+ * these values are described elsewhere ("Names live in .vak/config.toml").
+ * Blank lines and lines without `=` are ignored rather than rejected, so a
+ * stray trailing newline never blocks a save. */
+function parseEnvLines(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const idx = line.indexOf("=");
+    if (idx <= 0) continue;
+    const key = line.slice(0, idx).trim();
+    if (key) out[key] = line.slice(idx + 1).trim();
+  }
+  return out;
+}
+function envToLines(env: Record<string, string> | undefined): string {
+  return Object.entries(env ?? {})
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+}
+
 function McpServersView(props: { ctx: ExtensionsCtx }) {
   const [expanded, setExpanded] = createSignal("");
   const [editing, setEditing] = createSignal("");
   const [editCmd, setEditCmd] = createSignal("");
   const [editArgs, setEditArgs] = createSignal("");
+  const [editNetwork, setEditNetwork] = createSignal(false);
+  const [editEnv, setEditEnv] = createSignal("");
   const [newName, setNewName] = createSignal("");
   const [newCmd, setNewCmd] = createSignal("");
   const [newArgs, setNewArgs] = createSignal("");
+  const [newNetwork, setNewNetwork] = createSignal(false);
+  const [newEnv, setNewEnv] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [tavilyKey, setTavilyKey] = createSignal("");
   const [tavilyBusy, setTavilyBusy] = createSignal(false);
@@ -1168,14 +1336,22 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     if (!name || !cmd || busy()) return;
     setBusy(true);
     try {
+      const env = parseEnvLines(newEnv());
       await api.putMcpServers({
         ...props.ctx.mcp(),
-        [name]: { command: cmd, args: newArgs().trim() ? newArgs().trim().split(/\s+/) : [] },
+        [name]: {
+          command: cmd,
+          args: newArgs().trim() ? newArgs().trim().split(/\s+/) : [],
+          network: newNetwork(),
+          ...(Object.keys(env).length > 0 ? { env } : {}),
+        },
       });
       pushToast("info", `Added MCP server ‘${name}’`);
       setNewName("");
       setNewCmd("");
       setNewArgs("");
+      setNewNetwork(false);
+      setNewEnv("");
       props.ctx.refetchMcp();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
@@ -1203,18 +1379,22 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     setEditing(name);
     setEditCmd(server.command);
     setEditArgs((server.args ?? []).join(" "));
+    setEditNetwork(!!server.network);
+    setEditEnv(envToLines(server.env));
   };
 
   const saveEdit = async (name: string) => {
     if (!editCmd().trim() || busy()) return;
     setBusy(true);
     try {
+      const env = parseEnvLines(editEnv());
       await api.putMcpServers({
         ...props.ctx.mcp(),
         [name]: {
-          ...props.ctx.mcp()[name],
           command: editCmd().trim(),
           args: editArgs().trim() ? editArgs().trim().split(/\s+/) : [],
+          network: editNetwork(),
+          ...(Object.keys(env).length > 0 ? { env } : {}),
         },
       });
       pushToast("info", `Updated MCP server ‘${name}’`);
@@ -1320,6 +1500,12 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
               <a href="#/settings">Permissions</a> and, where no rule reaches it, by the permission
               mode.
             </p>
+            <p class="dim">
+              This workspace's own <code>.vak/config.toml</code> only — a server registered
+              user-wide from <code>~/.vak/config.toml</code> is still available here too, but isn't
+              listed, so registering or editing one here can't silently freeze this project's copy
+              of it out of a later change made at the user level.
+            </p>
           </div>
         </div>
 
@@ -1402,8 +1588,10 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
                                       <For each={envKeys()}>{(k) => <span class="chip mono">{k}</span>}</For>
                                     </div>
                                     <p class="dim">
-                                      Names only. Values live in <code>.vak/config.toml</code> and are
-                                      never rendered here.
+                                      Stored in <code>.vak/config.toml</code> — usually a{" "}
+                                      <code>{"${VAR}"}</code> reference resolved from <code>.env</code> at
+                                      launch rather than a literal secret, but whatever is written there is
+                                      what "Edit command" below will show and can change.
                                     </p>
                                   </Show>
                                 </div>
@@ -1454,6 +1642,14 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
                                 <div class="edit-form compact-edit">
                                   <div class="form-row"><label>command</label><input class="mono" value={editCmd()} onInput={(e) => setEditCmd(e.currentTarget.value)} /></div>
                                   <div class="form-row"><label>args</label><input class="mono" value={editArgs()} onInput={(e) => setEditArgs(e.currentTarget.value)} /></div>
+                                  <label class="inherit-toggle">
+                                    <input type="checkbox" checked={editNetwork()} onChange={(e) => setEditNetwork(e.currentTarget.checked)} />
+                                    Allow outbound network access
+                                  </label>
+                                  <div class="form-row">
+                                    <label>env</label>
+                                    <textarea class="mono" rows={3} placeholder={"KEY=value, one per line"} value={editEnv()} onInput={(e) => setEditEnv(e.currentTarget.value)} />
+                                  </div>
                                   <div class="row-gap">
                                     <button disabled={busy() || !editCmd().trim()} onClick={() => void saveEdit(name)}>Save changes</button>
                                     <button class="ghost small" onClick={() => setEditing("")}>Cancel</button>
@@ -1475,8 +1671,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
         <details class="advanced">
           <summary>Register an MCP server</summary>
           <p class="dim">
-            Written straight to <code>mcp.servers</code> in the workspace config. Outbound network
-            and injected environment are privileged fields and are only editable in the file.
+            Written straight to <code>mcp.servers</code> in the workspace config.
           </p>
           <div class="form-row">
             <label>name</label>
@@ -1489,6 +1684,14 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
           <div class="form-row">
             <label>args</label>
             <input class="mono" placeholder="-y @modelcontextprotocol/server-github" value={newArgs()} onInput={(e) => setNewArgs(e.currentTarget.value)} />
+          </div>
+          <label class="inherit-toggle">
+            <input type="checkbox" checked={newNetwork()} onChange={(e) => setNewNetwork(e.currentTarget.checked)} />
+            Allow outbound network access
+          </label>
+          <div class="form-row">
+            <label>env</label>
+            <textarea class="mono" rows={3} placeholder={"GITHUB_TOKEN=${GITHUB_TOKEN}, one per line"} value={newEnv()} onInput={(e) => setNewEnv(e.currentTarget.value)} />
           </div>
           <div class="row-gap" style="margin-top:12px">
             <button disabled={busy() || !newName().trim() || !newCmd().trim()} onClick={() => void addServer()}>
@@ -1632,6 +1835,12 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
   const [command, setCommand] = createSignal("");
   const [timeout, setTimeoutMs] = createSignal("10000");
   const [busy, setBusy] = createSignal(false);
+  const [busyIndex, setBusyIndex] = createSignal(-1);
+  const [editingIndex, setEditingIndex] = createSignal(-1);
+  const [editEvent, setEditEvent] = createSignal<string>("pre_tool_use");
+  const [editMatcher, setEditMatcher] = createSignal("");
+  const [editCommand, setEditCommand] = createSignal("");
+  const [editTimeout, setEditTimeout] = createSignal("10000");
 
   const addHook = async () => {
     const cmd = command().trim();
@@ -1674,6 +1883,55 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
     }
   };
 
+  // `PUT /config/hooks` replaces the whole list — there is no per-hook
+  // endpoint — so a toggle, an edit, and a delete are all "patch this one
+  // element, write back the array."
+  const replaceHook = async (index: number, patch: Partial<HookConfig>, ok: string) => {
+    setBusyIndex(index);
+    const next = [...props.ctx.hooks()];
+    const current = next[index];
+    if (!current) {
+      setBusyIndex(-1);
+      return;
+    }
+    next[index] = { ...current, ...patch };
+    try {
+      await api.putHooks(next);
+      pushToast("info", ok);
+      props.ctx.refetchHooks();
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setBusyIndex(-1);
+    }
+  };
+
+  const beginEdit = (index: number, hook: HookConfig) => {
+    setEditingIndex(index);
+    setEditEvent(hook.event);
+    setEditMatcher(hook.matcher ?? "");
+    setEditCommand(hook.command);
+    setEditTimeout(String(hook.timeout_ms));
+  };
+
+  const saveEdit = async () => {
+    const index = editingIndex();
+    const cmd = editCommand().trim();
+    if (index < 0 || !cmd) return;
+    await replaceHook(
+      index,
+      {
+        event: editEvent(),
+        matcher: editMatcher().trim() || null,
+        command: cmd,
+        timeout_ms: parseInt(editTimeout(), 10) || 10_000,
+      },
+      "Hook updated",
+    );
+    setEditingIndex(-1);
+  };
+
   return (
     <>
       <div class="toolbar">
@@ -1691,14 +1949,19 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
               vak process itself — unsandboxed, outside the permission engine. Its matcher is the
               only thing narrowing when it fires.
             </p>
+            <p class="dim">
+              This workspace's own <code>.vak/config.toml</code> only — a hook set user-wide from{" "}
+              <code>~/.vak/config.toml</code> still runs here too, but isn't listed or editable from
+              this page, so it can't be silently duplicated into this project's file by a save here.
+            </p>
           </div>
         </div>
 
         <Switch>
           <Match when={props.ctx.hooksLoading()}>
             <table class="table">
-              <thead><tr><th>event</th><th>fires on</th><th>command</th><th>timeout</th><th /></tr></thead>
-              <tbody><SkeletonRows cols={5} /></tbody>
+              <thead><tr><th>enabled</th><th>event</th><th>fires on</th><th>command</th><th>timeout</th><th /></tr></thead>
+              <tbody><SkeletonRows cols={6} /></tbody>
             </table>
           </Match>
 
@@ -1714,15 +1977,32 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
 
           <Match when={props.ctx.hooks().length > 0}>
             <table class="table">
-              <thead><tr><th>event</th><th>fires on</th><th>command</th><th>timeout</th><th /></tr></thead>
+              <thead><tr><th>enabled</th><th>event</th><th>fires on</th><th>command</th><th>timeout</th><th /></tr></thead>
               <tbody>
                 <For each={props.ctx.hooks()}>
                   {(hook, index) => {
                     const scope = createMemo(() =>
                       hook.matcher ? parseRule(hook.matcher, "allow") : null,
                     );
+                    const isBusy = () => busyIndex() === index();
                     return (
-                      <tr class="row-static">
+                      <tr class="row-static" classList={{ dim: !hook.enabled }}>
+                        <td>
+                          <label class="toggle" title={hook.enabled ? "Disable without removing it" : "Enabled hooks are re-checked before every matching call"}>
+                            <input
+                              type="checkbox"
+                              checked={hook.enabled}
+                              disabled={isBusy()}
+                              onChange={(e) =>
+                                void replaceHook(
+                                  index(),
+                                  { enabled: e.currentTarget.checked },
+                                  e.currentTarget.checked ? "Hook enabled" : "Hook disabled",
+                                )
+                              }
+                            />
+                          </label>
+                        </td>
                         <td><span class="chip chip-mode mono">{hook.event}</span></td>
                         <td>
                           <Switch>
@@ -1748,9 +2028,14 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
                         </td>
                         <td class="dim">{hook.timeout_ms}ms</td>
                         <td>
-                          <button class="danger small" onClick={() => void removeHook(index())}>
-                            Remove
-                          </button>
+                          <div class="row-gap">
+                            <button class="ghost small" disabled={isBusy()} onClick={() => beginEdit(index(), hook)}>
+                              Edit
+                            </button>
+                            <button class="danger small" disabled={isBusy()} onClick={() => void removeHook(index())}>
+                              Remove
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1760,6 +2045,39 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
             </table>
           </Match>
         </Switch>
+
+        <Show when={editingIndex() >= 0}>
+          <div class="edit-form" aria-label="Edit hook">
+            <div class="panel-title-row">
+              <div>
+                <h3>Edit hook</h3>
+                <p class="dim">Changes apply to the next matching call.</p>
+              </div>
+              <button class="ghost small" onClick={() => setEditingIndex(-1)}>Cancel</button>
+            </div>
+            <div class="form-row">
+              <label>event</label>
+              <select value={editEvent()} onChange={(e) => setEditEvent(e.currentTarget.value)}>
+                <For each={HOOK_EVENTS}>{(ev) => <option value={ev}>{ev}</option>}</For>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>matcher</label>
+              <input class="mono" placeholder="Bash(git *) — optional" value={editMatcher()} onInput={(e) => setEditMatcher(e.currentTarget.value)} />
+            </div>
+            <div class="form-row">
+              <label>command</label>
+              <input class="mono" value={editCommand()} onInput={(e) => setEditCommand(e.currentTarget.value)} />
+            </div>
+            <div class="form-row">
+              <label>timeout (ms)</label>
+              <input type="number" min="100" value={editTimeout()} onInput={(e) => setEditTimeout(e.currentTarget.value)} />
+            </div>
+            <button disabled={busyIndex() === editingIndex() || !editCommand().trim()} onClick={() => void saveEdit()}>
+              {busyIndex() === editingIndex() ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        </Show>
 
         <details class="advanced">
           <summary>Add a hook</summary>
@@ -2333,7 +2651,11 @@ const SEC_KINDS = ["", "auth_failure", "rate_limit", "chat_allowlist", "chat_pen
 
 function Security() {
   const [kind, setKind] = createSignal("");
-  const [events, { refetch }] = createResource(() => api.security(500, kind() || undefined));
+  // The source function, not the fetcher, is what Solid tracks — reading
+  // `kind()` inside the fetcher (the old `() => api.security(...)` form)
+  // runs untracked, so clicking a filter chip never re-fetched until
+  // something else happened to trigger a refetch.
+  const [events, { refetch }] = createResource(kind, (k) => api.security(500, k || undefined));
 
   return (
     <div class="view">
@@ -2402,7 +2724,7 @@ const INBOX_KIND_TONE: Record<string, string> = {
 
 function Inbox() {
   const [unreadOnly, setUnreadOnly] = createSignal(false);
-  const [inbox, { refetch }] = createResource(() => api.inbox(unreadOnly()));
+  const [inbox, { refetch }] = createResource(unreadOnly, (u) => api.inbox(u));
   const [acking, setAcking] = createSignal("");
 
   const ack = async (id: string) => {
@@ -3750,12 +4072,21 @@ function GatewaySection() {
 
 const MODES = ["ReadOnly", "WorkspaceWrite", "FullAccess"];
 
-const PROVIDERS = [
-  { id: "anthropic", label: "Anthropic (Claude)" },
-  { id: "openai", label: "OpenAI (Responses)" },
-  { id: "google", label: "Google (Gemini)" },
-  { id: "ollama", label: "Ollama (local)" },
-] as const;
+// Cosmetic labels only — the actual set of selectable providers comes from
+// `GET /providers` (`vak_core::Core::provider_names`, backed by the
+// registration list in `vak-llm/src/registry.rs`). A name missing here
+// (a provider added to the registry without a label added here) still
+// renders — just under its own registry id.
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic (Claude)",
+  openai: "OpenAI (Completions)",
+  "openai-responses": "OpenAI (Responses)",
+  google: "Google (Gemini)",
+  openrouter: "OpenRouter",
+  "opencode-zen": "OpenCode Zen",
+  ollama: "Ollama (local)",
+};
+const providerLabel = (id: string) => PROVIDER_LABELS[id] ?? id;
 
 const MODE_COPY: Record<string, string> = {
   ReadOnly: "Read tools only, confined to the workspace. Every write is denied outright.",
@@ -3896,7 +4227,9 @@ function Settings() {
               <div class="form-row">
                 <label>provider</label>
                 <select value={selectedProvider()} onChange={(e) => setSelectedProvider(e.currentTarget.value)}>
-                  <For each={PROVIDERS}>{(p) => <option value={p.id}>{p.label}</option>}</For>
+                  <For each={providersData()?.providers ?? []}>
+                    {(p) => <option value={p.name}>{providerLabel(p.name)}</option>}
+                  </For>
                 </select>
               </div>
               <div class="form-row">

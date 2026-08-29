@@ -54,7 +54,7 @@ flow with visible state, approval, and governance.
   by an operator who thinks to look, after the fact, with no forward
   path from "I see it was rejected" to "now let it through" except
   re-editing the same file.
-- The gateway's workspace is the process's `cwd` (`docs/design/32`
+- The gateway's workspace is the process's `cwd` (`docs/design/32-release-engineering.md`
   invariant 3: services execute from "the workspace captured by `self
   services-sync`"). `GatewayBinding` *does* carry a per-binding
   `workspace` override in the data model (`admin.rs`'s
@@ -149,6 +149,21 @@ POST   /admin/api/gateway/allowlist/{key}/approve   {workspace?, route?}
 POST   /admin/api/gateway/allowlist/{key}/deny
 DELETE /admin/api/gateway/allowlist/{key}          revoke an allowed entry
 ```
+
+**Known gap: no pause.** The status enum is exactly `pending | allowed |
+denied`; there is no fourth "temporarily off, config kept" state. `deny`
+is permanent and sticky ("never re-prompts" above); `revoke` (the DELETE)
+does not flip a status at all — it removes the entry outright
+(`GatewayState::allowlist_revoke`), so the workspace/route/permission-pin/
+capability-policy an operator configured is gone with it, and the next
+message from that chat starts a brand-new `pending` review from zero. An
+operator who wants to quiet one channel for a while without losing its
+setup, or without taking down the whole bridge (removing the bot token
+stops every channel on that surface, not just one), has no lever for it
+today. A `paused` status — dispatch rejected the same way `denied` is, but
+carrying the same `workspace`/`route`/`permission_mode`/`policy` fields
+`allowed` does, flip-backable to `allowed` without re-approval — is the
+natural shape for it; not yet built.
 
 `workspace` on approve is the fix for today's incident: it's an explicit
 field the operator fills in (defaulting to the gateway's own cwd, shown
@@ -463,9 +478,39 @@ effect.
 
 **Known limitation**: a pooled Core's ceiling is read when that instance
 is constructed. If a workspace's config later *tightens*, an already-warm
-overridden instance keeps its earlier clamp until idle eviction drops it
-— the same config-staleness a pooled Core already has for route and
-everything else, bounded by `core_pool_idle_secs`.
+instance — overridden or plain inherit alike — keeps its earlier mode
+until idle eviction drops it, up to `core_pool_idle_secs` (1800s default)
+later, or indefinitely on a channel active enough to never idle out. Locked
+down by `core_pool::tests::
+warm_pool_entry_does_not_see_a_permission_mode_change_written_after_it_started`.
+This is narrower than it first looks: the gateway's *own default*
+workspace is exempt, because `CorePool::new` seeds that one entry with the
+exact `Core` object `AppState.core` already is (an `Arc`-backed clone, not
+a copy), so `apply_permission_mode`'s direct mutation of `state.core` (the
+one thing `POST /config/mode` from this process can ever change) is
+visible there immediately, same object identity. The gap is real only for
+a *different* workspace this same gateway also serves (multi-tenant
+CorePool) whose own `.vak/config.toml` changes independently — by a
+separate `vak` process, or a hand edit — which is exactly the scenario
+`apply_permission_mode`'s revoke-in-flight sweep over `state.sessions`
+(docs/design/33, AGENTS.md rule 17) does reach for the *current* turn
+(gateway-registered handles share that same map) but the *next* message on
+that channel still resolves the stale, unrefreshed pool entry.
+
+A fix was attempted and reverted: re-deriving the mode from disk on every
+`CorePool` cache hit (respecting each entry's own permission-mode pin, so
+an explicit channel override still gets re-capped against a moved ceiling
+rather than clobbered outright) reproducibly hung
+`busy_message_is_steered_not_dropped` (`vak-server/tests/gateway.rs`) — a
+steering message resolving mid-turn on the same warm Core a live tool call
+was still running on. Wrapping the refresh in
+`tokio::task::block_in_place` did not fix it, so the cause is not simple
+executor-thread starvation from synchronous config-file IO; it never
+surfaced in `core_pool`'s own unit tests, only against a real in-flight
+dispatch, and was not root-caused before the attempt was reverted. Any
+future fix must pass both that gateway test and the `core_pool` test named
+above — the second currently asserts the *unfixed* behavior and must flip
+to asserting the mode changed, on purpose, as part of the same change.
 
 ## Phase 3: Discord/Slack bridges + per-surface admin UI
 

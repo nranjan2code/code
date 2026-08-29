@@ -92,23 +92,43 @@ pub(crate) struct SessionListItem {
     pub entry_count: usize,
     pub first_ts: String,
     pub last_ts: String,
+    /// From the shared `archive.json` (keyed by session id, not scoped to a
+    /// workspace — the same map `/sessions/{id}/archive` reads and writes).
+    pub archived: bool,
 }
 
 pub(crate) async fn list_sessions_admin(
     State(state): State<AppState>,
     Query(q): Query<SessionListQuery>,
-) -> Json<serde_json::Value> {
+) -> Response {
     let Some(store) = &state.store else {
-        return Json(serde_json::json!({ "error": "store not available" }));
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "store not available" })),
+        )
+            .into_response();
     };
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    // Both maps live under the shared vak home (`sessions_home`), not a
+    // per-workspace directory, so they apply across every project this
+    // store indexes — unlike archive/delete *mutation*, which only reaches
+    // a ledger file under this process's own workspace (see
+    // `workspace_project_hash` on `/admin/api/config`).
+    let archive_map = crate::read_archive(&state.core);
+    let deleted_map = crate::read_deleted(&state.core);
     match store.list_sessions() {
         Ok(all) => {
-            let items: Vec<SessionListItem> = all
+            let visible = all.into_iter().filter(|s| {
+                q.project.as_ref().is_none_or(|p| &s.project_hash == p)
+                    && !deleted_map.get(&s.session_id).copied().unwrap_or(false)
+            });
+            let visible: Vec<_> = visible.collect();
+            let total = visible.len();
+            let items: Vec<SessionListItem> = visible
                 .into_iter()
-                .filter(|s| q.project.as_ref().is_none_or(|p| &s.project_hash == p))
                 .take(limit)
                 .map(|s| SessionListItem {
+                    archived: archive_map.get(&s.session_id).copied().unwrap_or(false),
                     session_id: s.session_id,
                     project_hash: s.project_hash,
                     entry_count: s.entry_count,
@@ -116,9 +136,13 @@ pub(crate) async fn list_sessions_admin(
                     last_ts: s.last_ts,
                 })
                 .collect();
-            Json(serde_json::json!({ "sessions": items }))
+            Json(serde_json::json!({ "sessions": items, "total": total })).into_response()
         }
-        Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
     }
 }
 
@@ -484,6 +508,13 @@ pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serd
         "max_turns": state.core.effective_max_turns(),
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
         "theme": state.core.effective_theme(),
+        // The session list at `/admin/api/sessions` spans every project the
+        // store indexes, but archive/delete/run/steer on a session only
+        // reach a ledger file under *this* process's own workspace
+        // (`sessions_home/sessions/<hash(cwd)>/`). This is that same hash,
+        // matching `project_hash` on each session row — the console uses it
+        // to tell which rows those actions can actually reach.
+        "workspace_project_hash": vak_core::memory::hash_cwd(state.core.cwd()),
         // The resolved rule lists the permission engine actually evaluates
         // (vak_permission::Rule syntax: `Tool`, `Tool(glob)`, with a
         // `+`/`?`/`-` prefix for allow/ask/deny). The admin console shows

@@ -34,7 +34,19 @@
     reasons; a changed effective route rotates to a new frozen session while
     preserving the old append-only ledger. Persisted max-turns, theme, MCP,
     hooks, and permission mode use the same cross-process refresh; permission
-    changes revoke active capabilities before apply.
+    changes revoke active capabilities before apply — true today for
+    `state.sessions` (`apply_permission_mode`, vak-server/src/lib.rs; a
+    gateway-registered handle is in that same map, so the *current* turn on
+    a channel is reached too) and for the gateway's own default workspace
+    (its `CorePool` entry is `state.core` by shared `Arc` identity, not a
+    copy). It does **not** yet hold for another workspace the same gateway
+    also pools (docs/design/34 Phase 2): a warm, un-refreshed pool entry
+    keeps its mode until idle eviction. Pinned down by
+    `core_pool::tests::warm_pool_entry_does_not_see_a_permission_mode_change_written_after_it_started`
+    — read that test's doc comment (and docs/design/34's "Known
+    limitation") before attempting a fix; a straightforward one already
+    reproducibly broke `busy_message_is_steered_not_dropped` for reasons
+    not yet root-caused.
 18. **Durable services retain workspace identity.** Generated launchd/systemd
     units must execute from the workspace captured by `self services-sync` so
     gateway and Telegram runs load that workspace's config and project `.env`,
@@ -59,6 +71,30 @@
     surfaces, and enforced again at MCP call time. Skills are visibility
     controls, not a replacement for permission rules. Secrets remain owned by
     the workspace integration and are never assigned to a channel overlay.
+21. **A GET that seeds a same-shape PUT must report only the layer that PUT
+    writes, never a merged/effective view.** `GET /config/hooks` and `GET
+    /config/mcp` report the *project* `.vak/config.toml` alone, not
+    `state.core`'s global+project merge — because their `PUT` always
+    replaces the whole project-layer list/map with whatever the matching
+    `GET` last returned. Reporting the merged view would silently write an
+    inherited global entry into the project file on the very next save. For
+    a name-keyed map (MCP servers) that only forks a copy; for a bare `Vec`
+    merged by `extend` with no dedup (hooks, before `HookConfig::enabled`
+    and this rule existed) it duplicated without bound and re-fired a
+    side-effecting command once per copy. Any new config surface with this
+    read-then-full-replace shape must follow the same rule. A disabled hook
+    is data, not an absence — it stays in the file (`enabled = false`),
+    because deleting it on disable is indistinguishable from deleting it on
+    purpose, and undoing "disable" must not require retyping the hook.
+22. **A workspace/session-scoped mutation and its bulk form must share one
+    boundary check.** `sessions_home`-level sidecars (`archive.json`,
+    `deleted.json`, the gateway allowlist) are keyed globally by id, not
+    per-workspace, but a session's ledger file — and therefore what a
+    *single* mutation on it may reach — lives only under this process's own
+    `sessions_dir(sessions_home, cwd)`. A bulk endpoint over the same
+    sidecar (e.g. delete-all-archived) must re-derive and apply that same
+    per-item existence check, not iterate the sidecar's full keyspace on
+    the assumption that every key belongs to this workspace.
 
 ## Code rules
 

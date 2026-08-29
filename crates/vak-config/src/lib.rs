@@ -404,13 +404,22 @@ pub struct ChannelPolicy {
     pub hooks_deny: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct HookConfig {
     pub event: String,
     #[serde(rename = "match")]
     pub matcher: Option<String>,
     pub command: String,
     pub timeout_ms: Option<u64>,
+    /// Missing in an existing `config.toml` means enabled — this field was
+    /// added after `[[hooks]]` shipped without one, and every hook written
+    /// before it must keep firing.
+    #[serde(default = "default_hook_config_enabled")]
+    pub enabled: bool,
+}
+
+fn default_hook_config_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone)]
@@ -1745,7 +1754,20 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     if over.context_window.is_some() {
         base.context_window = over.context_window;
     }
-    base.hooks.extend(over.hooks);
+    // Unlike allow/ask/deny just above, this used to be a plain `.extend`
+    // with no dedup. `PUT /config/hooks` (vak-server) always resubmitted the
+    // full *effective* list it had just read — global layer included — so
+    // every hook edit re-wrote the project's own inherited copy of every
+    // global hook back into the project file, and the next load merged
+    // both: the same hook doubled, then tripled on the next edit, without
+    // bound. `get_hooks` no longer echoes inherited hooks for this reason,
+    // but a hand-edited config with a genuine duplicate should not compound
+    // either.
+    for h in over.hooks {
+        if !base.hooks.contains(&h) {
+            base.hooks.push(h);
+        }
+    }
     for (name, srv) in over.mcp.servers {
         base.mcp.servers.insert(name, srv);
     }
@@ -2339,5 +2361,79 @@ mod tests {
         assert_eq!(cfg.ui.theme, "dark");
         assert_eq!(cfg.deny, vec!["bash"]);
         assert_eq!(cfg.route.objective, "quality-critical");
+    }
+
+    fn hook(command: &str, enabled: bool) -> HookConfig {
+        HookConfig {
+            event: "pre_tool_use".into(),
+            matcher: None,
+            command: command.into(),
+            timeout_ms: None,
+            enabled,
+        }
+    }
+
+    /// `PUT /config/hooks` (vak-server) always resubmits whatever `GET
+    /// /config/hooks` last reported, and used to report the merged
+    /// *effective* list — global layer included. Every save re-extended an
+    /// already-inherited global hook into the project layer, so the next
+    /// merge doubled it, then the next save tripled it. `base.hooks.extend`
+    /// without a dedup check (unlike allow/ask/deny two blocks above it)
+    /// let that compound with no bound. This is the one guard against it
+    /// staying fixed at the merge layer even if the endpoint-level fix
+    /// (`get_hooks` reading its own file instead of the merged config)
+    /// ever regresses.
+    #[test]
+    fn merge_into_does_not_duplicate_an_already_inherited_hook() {
+        let mut base = FileConfig {
+            hooks: vec![hook("global.sh", true)],
+            ..FileConfig::default()
+        };
+        let over = FileConfig {
+            // Exactly what a naive resubmit of the merged list looks like:
+            // the inherited hook, unchanged, plus one genuinely new to this
+            // layer.
+            hooks: vec![hook("global.sh", true), hook("project.sh", true)],
+            ..FileConfig::default()
+        };
+        merge_into(&mut base, over);
+        assert_eq!(
+            base.hooks,
+            vec![hook("global.sh", true), hook("project.sh", true)],
+            "the shared hook must appear once, not twice"
+        );
+    }
+
+    /// A hook that differs only in `enabled` is a real edit, not a
+    /// duplicate — the dedup must key on the whole value, not just command.
+    #[test]
+    fn merge_into_keeps_a_hook_whose_enabled_state_changed() {
+        let mut base = FileConfig {
+            hooks: vec![hook("audit.sh", true)],
+            ..FileConfig::default()
+        };
+        let over = FileConfig {
+            hooks: vec![hook("audit.sh", false)],
+            ..FileConfig::default()
+        };
+        merge_into(&mut base, over);
+        assert_eq!(
+            base.hooks,
+            vec![hook("audit.sh", true), hook("audit.sh", false)]
+        );
+    }
+
+    /// A `[[hooks]]` entry written before `enabled` existed has no such key
+    /// in its TOML; it must still load as enabled, not silently vanish.
+    #[test]
+    fn hook_without_enabled_key_deserializes_as_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "[[hooks]]\nevent = \"pre_tool_use\"\ncommand = \"echo hi\"\n",
+        );
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.hooks.len(), 1);
+        assert!(cfg.hooks[0].enabled);
     }
 }

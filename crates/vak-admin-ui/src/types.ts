@@ -4,6 +4,8 @@ export interface SessionListItem {
   entry_count: number;
   first_ts: string;
   last_ts: string;
+  /** From the shared `archive.json`, not scoped to a workspace. */
+  archived: boolean;
 }
 
 export interface TranscriptEntry {
@@ -73,6 +75,14 @@ export interface ConfigInfo {
   theme: string;
   /** Resolved permission rule lists, exactly as the engine evaluates them. */
   permissions?: PermissionRules;
+  /** `project_hash` of the workspace this server process is bound to.
+   * `/admin/api/sessions` lists sessions across every project the store
+   * indexes, but attach/run/steer/cancel/diff/receipts/archive/delete/
+   * markdown-export only ever reach a ledger file under this one
+   * workspace's directory — a session whose own `project_hash` differs
+   * from this can only be read (transcript, checkpoints), never mutated,
+   * from this console instance. */
+  workspace_project_hash?: string;
 }
 
 export interface PermissionRules {

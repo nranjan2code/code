@@ -11,6 +11,15 @@ path line enters the system prompt; the model reads the file with `read`
 when relevant — progressive disclosure, Claude Code-skill compatible.
 Discovered skills are recorded in the frozen contract.
 
+Same-name precedence: project shadows user (`vak_core::skills::discover`
+sorts by name then dedups consecutive same-named entries — project is
+scanned first, so it survives the dedup). Unlike custom commands below,
+this is not disclosed anywhere a caller can see it: `discover()` has
+already dropped the shadowed entry by the time `GET /skills` (or anything
+else) reads the result, so admin/desktop UIs cannot show "shadowed" even
+if they wanted to. A fix means `discover()` itself returning the losing
+entries too, tagged as shadowed, not a projection-layer workaround.
+
 ## Subagents (shipped, blocking + parallel fan-out + attach/steer)
 
 The `task` tool delegates a self-contained prompt to a child agent:
@@ -60,7 +69,20 @@ event = "pre-tool-use"        # session-start | pre-tool-use | post-tool-use | s
 match = "Bash(git push *)"    # optional; same rule syntax as permissions
 command = "scripts/guard.sh"
 timeout_ms = 5000             # optional, default 10000
+enabled = true                # optional, default true (absent = enabled,
+                               # for every [[hooks]] entry written before
+                               # this field existed)
 ```
+
+`enabled = false` keeps the entry in config rather than removing it —
+`vak_core::build_hooks_from` (`crates/vak-core/src/lib.rs`) skips a
+disabled entry when it builds the live `HookDef` list, so "disable" and
+"delete" are genuinely different operations. This matters because
+`PUT /config/hooks` (vak-server) replaces the whole project-layer list on
+every write: before `enabled` existed there was nowhere to record "off,"
+so the admin console's only way to represent a disabled hook was to drop
+it from the file outright — a checkbox that silently deleted the hook it
+unchecked. See AGENTS.md rule 21.
 
 Contract: handler receives JSON on stdin
 (`{event, session_id, cwd, tool?: {name, input}, text?}`); answers via stdout

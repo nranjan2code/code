@@ -1174,11 +1174,18 @@ pub(crate) fn register_handle(
     handle
 }
 
-async fn create_session(State(state): State<AppState>) -> Json<serde_json::Value> {
+async fn create_session(State(state): State<AppState>) -> axum::response::Response {
+    use axum::response::IntoResponse;
     refresh_control_plane(&state);
     let session = match state.core.start_session().await {
         Ok(s) => s,
-        Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
     };
     let id = session
         .header()
@@ -1189,7 +1196,7 @@ async fn create_session(State(state): State<AppState>) -> Json<serde_json::Value
     state.hub.emit_session_created(&id, "");
     index_session_later(state.store.clone(), state.core.sessions_home(), id.clone());
 
-    Json(serde_json::json!({ "session_id": id }))
+    Json(serde_json::json!({ "session_id": id })).into_response()
 }
 
 /// Re-index one session's JSONL in the background. Reading does not
@@ -2379,18 +2386,35 @@ async fn git_output(cwd: &std::path::Path, args: &[&str]) -> Option<String> {
 async fn session_diff(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
     let Some(handle) = state.get(&id) else {
-        return Json(serde_json::json!({ "error": "unknown session" }));
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "unknown session" })),
+        )
+            .into_response();
     };
     let cwd = handle.cwd.clone();
     let Some(status) = git_output(&cwd, &["status", "--porcelain"]).await else {
-        return Json(serde_json::json!({ "error": "not a git repository" }));
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": "not a git repository" })),
+        )
+            .into_response();
     };
-    let diff = git_output(&cwd, &["--no-color", "diff", "--unified=3"])
+    // `--no-color` is a `diff` option, not a global git flag — placed
+    // before the subcommand (as this read for a long time) git rejects it
+    // outright ("unknown option: --no-color", exit 129), and `git_output`
+    // turns that failure into a silently empty string via
+    // `unwrap_or_default()`. Every consumer of this endpoint — this
+    // console's Worktree Diff tab, the desktop DiffPane, `openFileSmart`'s
+    // diff-vs-editor routing — has been reading an empty diff regardless
+    // of what actually changed.
+    let diff = git_output(&cwd, &["diff", "--no-color", "--unified=3"])
         .await
         .unwrap_or_default();
-    let staged = git_output(&cwd, &["--no-color", "diff", "--cached", "--unified=3"])
+    let staged = git_output(&cwd, &["diff", "--no-color", "--cached", "--unified=3"])
         .await
         .unwrap_or_default();
     Json(serde_json::json!({
@@ -2399,6 +2423,7 @@ async fn session_diff(
         "staged_diff": staged,
         "status": status,
     }))
+    .into_response()
 }
 
 // ---- checkpoints (time travel) ----------------------------------------------
@@ -2595,16 +2620,29 @@ async fn delete_session(
 }
 
 async fn delete_all_archived(State(state): State<AppState>) -> axum::response::Response {
+    // `archive.json`/`deleted.json` are shared, global-by-session-id maps —
+    // not scoped to a workspace — but a ledger file only ever lives under
+    // *this* process's own `sessions_dir(sessions_home, cwd)`. Single-item
+    // delete already respects that boundary by checking the file exists
+    // there before acting; this bulk form iterated every archived id in the
+    // global map with no such check, so running it from one workspace
+    // could soft-delete archived sessions that belong to a completely
+    // different project.
+    let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), state.core.cwd());
     let archive = read_archive(&state.core);
-    let running_archived = archive.iter().any(|(id, archived)| {
-        *archived
-            && state.get(id).is_some_and(|handle| {
-                handle
-                    .session
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .is_none()
-            })
+    let local_archived: Vec<String> = archive
+        .into_iter()
+        .filter(|(id, archived)| *archived && dir.join(format!("{id}.jsonl")).is_file())
+        .map(|(id, _)| id)
+        .collect();
+    let running_archived = local_archived.iter().any(|id| {
+        state.get(id).is_some_and(|handle| {
+            handle
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none()
+        })
     });
     if running_archived {
         return (
@@ -2615,8 +2653,8 @@ async fn delete_all_archived(State(state): State<AppState>) -> axum::response::R
     }
     let mut deleted = read_deleted(&state.core);
     let mut count = 0u64;
-    for (id, archived) in archive {
-        if archived && !deleted.get(&id).copied().unwrap_or(false) {
+    for id in local_archived {
+        if !deleted.get(&id).copied().unwrap_or(false) {
             deleted.insert(id, true);
             count += 1;
         }
@@ -3391,9 +3429,29 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
 // this endpoint is only reachable through the bearer-token router of a
 // locally trusted surface.
 
-async fn get_mcp_servers(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mcp = state.core.effective_mcp();
-    Json(serde_json::json!({ "servers": mcp.servers }))
+/// Project-only, deliberately not `state.core.effective_mcp()` (the merged
+/// effective set, global layer included). `PUT /config/mcp` writes whatever
+/// this reports straight into the *project* config — reporting the merged
+/// set would silently fork every currently-inherited global MCP server
+/// into the project file the moment any one server was added, edited, or
+/// removed here, freezing that project's copy out of future changes to the
+/// global definition. Unlike the hooks list (a plain `Vec` extended with no
+/// dedup key), the merge for MCP servers is a name-keyed map — so this
+/// couldn't duplicate or compound the way the hooks bug did, but it would
+/// still quietly diverge project config from what the operator thought
+/// they were changing. Mirrors `get_global_mcp_servers`, which has always
+/// read its own file directly for the same reason.
+async fn get_mcp_servers(State(state): State<AppState>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = vak_config::project_path(state.core.cwd());
+    match read_mcp_config(&path) {
+        Ok(mcp) => Json(serde_json::json!({ "servers": mcp.servers })).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
 }
 
 async fn get_tavily(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -3557,11 +3615,31 @@ struct HooksPutBody {
     hooks: Vec<HookInput>,
 }
 
-async fn get_hooks(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let hooks = state
-        .core
-        .config()
-        .hooks
+/// Project-only, deliberately not `state.core.config().hooks` (the merged
+/// effective list, global layer included — `vak_config::merge_into` extends
+/// the project's hooks with the global ones on every load). `PUT
+/// /config/hooks` replaces the *project* file's own `[[hooks]]` array with
+/// whatever this endpoint reported; reporting the merged list would hand
+/// back an inherited global hook, which the next save would then write into
+/// the project file as if it were the project's own — duplicating it there,
+/// and compounding on every subsequent edit as the merge re-extends over an
+/// already-doubled list. Mirrors `get_global_hooks`, which has always read
+/// its own file directly for the same reason.
+async fn get_hooks(State(state): State<AppState>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = state.core.cwd().join(".vak/config.toml");
+    let hooks = if path.is_file() {
+        match std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| toml::from_str::<vak_config::FileConfig>(&raw).ok())
+        {
+            Some(config) => config.hooks,
+            None => return (StatusCode::BAD_REQUEST, "project config is invalid").into_response(),
+        }
+    } else {
+        Vec::new()
+    };
+    let hooks = hooks
         .iter()
         .map(|h| {
             serde_json::json!({
@@ -3569,11 +3647,11 @@ async fn get_hooks(State(state): State<AppState>) -> Json<serde_json::Value> {
                 "matcher": h.matcher,
                 "command": h.command,
                 "timeout_ms": h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS),
-                "enabled": true,
+                "enabled": h.enabled,
             })
         })
         .collect::<Vec<_>>();
-    Json(serde_json::json!({ "hooks": hooks }))
+    Json(serde_json::json!({ "hooks": hooks })).into_response()
 }
 
 async fn get_global_hooks() -> axum::response::Response {
@@ -3592,7 +3670,7 @@ async fn get_global_hooks() -> axum::response::Response {
     } else {
         Vec::new()
     };
-    Json(serde_json::json!({ "scope": "user", "hooks": hooks.into_iter().map(|h| serde_json::json!({ "event": h.event, "matcher": h.matcher, "command": h.command, "timeout_ms": h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS), "enabled": true })).collect::<Vec<_>>() })).into_response()
+    Json(serde_json::json!({ "scope": "user", "hooks": hooks.into_iter().map(|h| serde_json::json!({ "event": h.event, "matcher": h.matcher, "command": h.command, "timeout_ms": h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS), "enabled": h.enabled })).collect::<Vec<_>>() })).into_response()
 }
 
 async fn put_global_hooks(
@@ -3662,6 +3740,7 @@ fn validated_hook_configs(hooks: &[HookInput]) -> Result<Vec<vak_config::HookCon
                     .filter(|matcher| !matcher.trim().is_empty()),
                 command: hook.command.trim().to_string(),
                 timeout_ms: Some(timeout_ms),
+                enabled: hook.enabled,
             })
         })
         .collect()
@@ -3698,6 +3777,7 @@ fn persist_hooks_to_config(
                             hook.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS) as i64,
                         ),
                     );
+                    value.insert("enabled".into(), toml::Value::Boolean(hook.enabled));
                     toml::Value::Table(value)
                 })
                 .collect(),
@@ -3768,10 +3848,12 @@ async fn put_hooks(
     } else {
         toml::Value::Table(toml::map::Map::new())
     };
+    // A disabled hook is kept in config, not dropped — round-tripping the
+    // toggle used to delete the definition outright (there was nowhere in
+    // `[[hooks]]` to record "off"), which is not what a checkbox should do.
     let values = body
         .hooks
         .iter()
-        .filter(|h| h.enabled)
         .map(|h| {
             let mut t = toml::map::Map::new();
             t.insert("event".into(), toml::Value::String(h.event.clone()));
@@ -3786,6 +3868,7 @@ async fn put_hooks(
                 "timeout_ms".into(),
                 toml::Value::Integer(h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS) as i64),
             );
+            t.insert("enabled".into(), toml::Value::Boolean(h.enabled));
             toml::Value::Table(t)
         })
         .collect::<Vec<_>>();
@@ -3817,15 +3900,18 @@ async fn put_hooks(
         )
             .into_response();
     }
+    // Disabled hooks are still handed to Core — `build_hooks_from` is what
+    // skips them when it builds the live `HookDef` list — so the effective
+    // set stays correct without this endpoint duplicating that filter.
     state.core.apply_persisted_hooks(
         body.hooks
             .iter()
-            .filter(|h| h.enabled)
             .map(|h| vak_config::HookConfig {
                 event: h.event.clone(),
                 matcher: h.matcher.clone().filter(|m| !m.trim().is_empty()),
                 command: h.command.trim().to_string(),
                 timeout_ms: Some(h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS)),
+                enabled: h.enabled,
             })
             .collect(),
     );

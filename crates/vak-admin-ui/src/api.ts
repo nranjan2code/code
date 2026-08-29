@@ -40,17 +40,29 @@ export class AuthRequired extends Error {
 
 async function handle<T>(res: Response): Promise<T> {
   if (res.status === 401 || res.status === 403) throw new AuthRequired();
-  if (!res.ok) {
-    let detail = `${res.status}`;
+  // A void-returning mutation (mode change, approval, cancel, steering, a
+  // 202-accepted run, most gateway/allowlist writes) answers with an empty
+  // body and a bare status code — res.json() on "" throws a SyntaxError,
+  // which surfaced every one of those as a failure toast even though the
+  // effect had already gone through. Parse leniently instead: empty body is
+  // `undefined`, not an error.
+  const text = await res.text();
+  let body: unknown;
+  if (text) {
     try {
-      const body = await res.json();
-      if (body?.error) detail = body.error;
+      body = JSON.parse(text);
     } catch {
-      // status code is enough
+      body = undefined;
     }
+  }
+  if (!res.ok) {
+    const detail =
+      body && typeof body === "object" && "error" in (body as Record<string, unknown>)
+        ? String((body as Record<string, unknown>).error)
+        : `${res.status}`;
     throw new Error(detail);
   }
-  return (await res.json()) as T;
+  return body as T;
 }
 
 export const api = {
@@ -69,8 +81,24 @@ export const api = {
 
   health: () => fetch("/health").then((r) => handle<HealthInfo>(r)),
 
-  sessions: (limit = 100): Promise<{ sessions: SessionListItem[] }> =>
+  /** `total` counts every session matching the filter, not just the page
+   * `limit` returned — the list itself is capped, the count isn't. */
+  sessions: (limit = 100): Promise<{ sessions: SessionListItem[]; total: number }> =>
     fetch(`/admin/api/sessions?limit=${limit}`).then((r) => handle(r)),
+
+  /** Open a persisted session's ledger in this server process so it can
+   * accept runs/steering/cancel and report a live diff. Every session the
+   * admin lists comes from the store index, not the in-memory handle
+   * registry that `/sessions/{id}/run` etc. actually check — the desktop
+   * client attaches on every task switch for the same reason (see
+   * `vak-desktop/ui/src/api.ts`). Idempotent: re-attaching an already-live
+   * handle is a no-op on the server. */
+  attach: (sessionId: string): Promise<{ session_id: string }> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/attach`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId }),
+    }).then((r) => handle(r)),
 
   transcript: (
     id: string,
@@ -199,6 +227,26 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: "{}",
     }).then((r) => handle(r)),
+
+  /** Archive/unarchive is sidebar visibility only — the ledger itself is
+   * never touched. Reaches a ledger file under this process's own
+   * workspace only; see `ConfigInfo.workspace_project_hash`. */
+  archiveSession: (sessionId: string, archived: boolean): Promise<{ archived: boolean }> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/archive`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ archived }),
+    }).then((r) => handle(r)),
+
+  /** The server only allows deleting a session that is already archived
+   * and not currently running — a deliberate two-step so nothing vanishes
+   * from a single click. Soft-delete: marks it in `deleted.json`, the
+   * ledger file itself is untouched. */
+  deleteSession: (sessionId: string): Promise<{ deleted: string }> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" }).then((r) => handle(r)),
+
+  deleteAllArchived: (): Promise<{ deleted: number }> =>
+    fetch("/sessions/archived", { method: "DELETE" }).then((r) => handle(r)),
 
   runPrompt: (sessionId: string, prompt: string): Promise<void> =>
     fetch(`/sessions/${encodeURIComponent(sessionId)}/run`, {

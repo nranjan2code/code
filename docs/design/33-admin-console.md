@@ -118,7 +118,14 @@ steering`, `/sessions/:id/cancel`, `/config/mode`, `PATCH /config`,
 
 - **Overview** — stat cards, system health, pending-approval card with
   Approve/Deny (live via SSE), activity feed.
-- **Sessions** — filterable catalog; "+ New session".
+- **Sessions** — filterable catalog; "+ New session"; per-row Archive/
+  Unarchive, Delete (archived only, soft — the ledger file is kept), and
+  Export `.md`, plus a bulk "Delete all archived". A **workspace** column
+  distinguishes rows this console instance can mutate (its own bound
+  workspace) from rows it can only read (another project the store also
+  indexes) — `attach`/`run`/`diff`/`receipts`/archive/delete/export all
+  resolve a session's ledger file under this process's own
+  `sessions_home/sessions/<hash(cwd)>/`, never another workspace's.
 - **Transcript** — role-railed entries, tool badges, error highlighting,
   kind/role filters, pagination, **Live tail** toggle (session-scoped SSE →
   debounced refetch), Cancel button while a run is active, and the
@@ -215,14 +222,44 @@ Nothing here is inferred where it could be read.
   is neither a read nor a write tool, so an uncovered call is `allow` under
   full-access, `deny` under read-only, `ask` under workspace-write. The UI
   names that decision rather than leaving the cell blank.
-- **MCP network and environment** are already on `McpServerConfig`
-  (`network`, `env`) and come back from `GET /config/mcp`. Environment is
-  shown as key names only; values live in `config.toml` and are not rendered.
+- **MCP network and environment** are on `McpServerConfig` (`network`,
+  `env`), both editable from the console (register/edit form). `env` values
+  round-trip verbatim through `GET`/`PUT /config/mcp` — usually a `${VAR}`
+  reference resolved from `.env` at process launch rather than a literal
+  secret, since that is how config.toml already stores them, and the value
+  is exactly what a filesystem-reading operator could already see.
+- `GET /config/mcp` and `GET /config/hooks` report the *project's own*
+  `.vak/config.toml` only, never the merged effective set (`state.core`'s
+  global+project view). A channel/hook editor's `PUT` always resubmits
+  whatever the matching `GET` reported; reporting the merged view would
+  hand back an inherited global server or hook, which the very next save
+  would write into the project file as if it were the project's own —
+  silently forking an MCP server, and (worse, since `[[hooks]]` merges by
+  `Vec::extend` rather than a name-keyed map) duplicating a hook on every
+  edit cycle, compounding without bound and re-firing a side-effecting
+  command once per copy. A user-scope entry is still available to the
+  workspace at runtime; it is simply not listed or editable from this
+  screen, and the panel copy says so.
+- **A hook's `enabled` flag is real**, not a display convenience: disabling
+  one keeps its definition in `.vak/config.toml` (`enabled = false`) rather
+  than deleting it, and `vak_core::build_hooks_from` skips disabled entries
+  when it builds the live `HookDef` list for a turn. Toggling it, and
+  editing a hook in place (event/matcher/command/timeout), are both `PUT
+  /config/hooks` — there is no per-hook endpoint, so every one of these
+  writes the whole (project-scoped) list back.
 - **Hook scope** is the hook's own matcher, which `vak-core` parses into a
   `Rule` before `vak-hooks` matches it. It prints verbatim, and a matcher
   that does not parse is flagged rather than hidden.
 - **Skill provenance** comes from `GET /skills`, extended with `path` and a
-  `scope` of `workspace` (`<cwd>/.vak/skills`) or `user`.
+  `scope` of `workspace` (`<cwd>/.vak/skills`) or `user`. **Known gap:**
+  `vak_core::skills::discover` sorts by name and dedups same-named entries
+  *before* scope is attached — a project skill silently shadows a
+  user-level one of the same name (deliberate precedence, matching MCP
+  servers and custom commands), but unlike custom commands (which document
+  "names must be unique after precedence dedup," docs/design/09) nothing
+  here discloses that the shadowed one exists. `GET /skills` cannot report
+  it because `discover()` has already dropped it; a fix belongs there, not
+  in the admin projection.
 - **Channel capability overlays** are edited from the Gateway channel editor
   and pending-approval form. They support inherited or restrictive
   built-in-tool, MCP server/tool, skill-visibility, and hook patterns. The

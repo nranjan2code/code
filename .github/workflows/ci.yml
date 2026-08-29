@@ -20,6 +20,38 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  admin-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: crates/vak-admin-ui/package-lock.json
+      - working-directory: crates/vak-admin-ui
+        run: npm ci
+      - name: typecheck
+        working-directory: crates/vak-admin-ui
+        run: npm run check
+      - name: build
+        working-directory: crates/vak-admin-ui
+        run: npm run build
+      # crates/vak-admin-ui/dist is committed and embedded into vak-server
+      # at compile time (admin_ui.rs, include_dir!) — only what's on disk in
+      # dist/ ships. v0.8.1 shipped a blank admin console because src/ had a
+      # real fix that dist/ was never rebuilt from, and nothing caught the
+      # mismatch before release (see scripts/release.sh). This makes that
+      # drift fail on every push, not just at release time.
+      - name: dist matches source
+        run: |
+          if [ -n "$(git status --porcelain -- crates/vak-admin-ui/dist)" ]; then
+            echo "::error::crates/vak-admin-ui/dist does not match crates/vak-admin-ui/src." >&2
+            echo "Rebuild locally (npm run build in crates/vak-admin-ui) and commit dist/." >&2
+            git status --short -- crates/vak-admin-ui/dist >&2
+            exit 1
+          fi
+
   linux:
     runs-on: ubuntu-latest
     steps:
@@ -31,8 +63,8 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
-    - name: doc citations resolve
-      run: python3 scripts/check_doc_paths.py
+      - name: doc citations resolve
+        run: python3 scripts/check_doc_paths.py
       - name: Landlock sandbox smoke (Linux 5.13+ runners)
         run: |
           cargo build -p vak
