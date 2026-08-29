@@ -199,6 +199,16 @@ fn read_bots(data_home: &Path) -> Vec<BotRecord> {
         .unwrap_or_default()
 }
 
+/// Whether the user has configured at least one bot for `surface` in
+/// `bots.json`. Used to keep the legacy bot-id-less static unit for that
+/// surface (e.g. `com.vak.telegram`) out of the sync set once real
+/// per-bot units have taken over — running both against the same token
+/// env produces two long-pollers on the same bot and 409 Conflicts on the
+/// Telegram API.
+pub fn has_configured_bots(data_home: &Path, surface: &str) -> bool {
+    read_bots(data_home).into_iter().any(|b| b.surface == surface)
+}
+
 /// launchd/systemd labels only tolerate a narrow character set; a bot id is
 /// operator-chosen (the admin console enforces alphanumeric/hyphen today,
 /// but this is a second, independent line of defense against a stray id
@@ -322,6 +332,16 @@ pub fn sync_bots(
     let wanted: Vec<String> = specs.iter().map(|s| s.name.clone()).collect();
     prune_stale_bot_units(&wanted, paths, runner);
     sync_specs(&specs, paths, runner)
+}
+
+/// Remove every per-bot bridge unit found on disk (`com.vak.<surface>-*`),
+/// regardless of what `bots.json` currently says. For use at uninstall
+/// time, where nothing should be left running — [`sync_bots`]'s normal
+/// diff-against-`bots.json` behaviour is the wrong shape there, since an
+/// uninstall wants "wanted = nothing", not "wanted = whatever's still
+/// configured".
+pub fn uninstall_bot_units(paths: &Paths, runner: &dyn CommandRunner) {
+    prune_stale_bot_units(&[], paths, runner);
 }
 
 /// Bounce one bot's already-installed unit so its process re-reads `.env`.

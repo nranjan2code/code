@@ -319,7 +319,19 @@ impl TaskStore {
             path: self.path.clone(),
             source,
         })?;
-        std::fs::write(&self.path, json).map_err(|source| TaskError::Io {
+        // Atomic write: a plain `fs::write` truncates the file before the
+        // new bytes land, so a crash or power loss mid-write leaves
+        // `tasks.json` corrupt and unrecoverable. Write to a sibling temp
+        // file and rename over it instead — on all platforms this crate
+        // targets, `rename` onto an existing path is atomic, so readers
+        // (this store, the server, the desktop app) only ever see the
+        // fully-old or fully-new content, never a partial write.
+        let tmp_path = self.path.with_extension("json.tmp");
+        std::fs::write(&tmp_path, json).map_err(|source| TaskError::Io {
+            path: tmp_path.clone(),
+            source,
+        })?;
+        std::fs::rename(&tmp_path, &self.path).map_err(|source| TaskError::Io {
             path: self.path.clone(),
             source,
         })

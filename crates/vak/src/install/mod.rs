@@ -519,6 +519,8 @@ pub fn run_services_sync(prefix: Option<PathBuf>, names: Vec<String>) -> i32 {
             return 1;
         }
     };
+    let data_home = vak_config::paths::data_home();
+
     let requested: Vec<&str> = if names.is_empty() {
         let retired = vak_ops::services::RETIRED_SERVICES;
         if !retired.is_empty()
@@ -534,6 +536,30 @@ pub fn run_services_sync(prefix: Option<PathBuf>, names: Vec<String>) -> i32 {
     } else {
         names.iter().map(String::as_str).collect()
     };
+
+    // The legacy bot-id-less `com.vak.telegram` unit only exists for a user
+    // who hasn't moved to the multi-bot admin console yet. Once a Telegram
+    // bot is configured in `bots.json`, per-bot units (below) fully
+    // supersede it — leaving it in `requested` would sync a second poller
+    // against the same token env and cause duplicate-poll 409 Conflicts on
+    // every `self update` / `self services-sync` from here on.
+    let legacy_telegram_superseded =
+        vak_ops::services::has_configured_bots(&data_home, "telegram");
+    let requested: Vec<&str> = requested
+        .into_iter()
+        .filter(|&name| !(legacy_telegram_superseded && name == "com.vak.telegram"))
+        .collect();
+    if legacy_telegram_superseded {
+        vak_ops::stop(vak_ops::Service::Telegram, &vak_ops::OpsConfig::detect());
+        if let Err(e) = vak_ops::services::services_uninstall(
+            &["com.vak.telegram"],
+            &vak_ops::services::Paths::default(),
+            &vak_ops::services::SystemRunner,
+        ) {
+            eprintln!("warning: legacy Telegram unit teardown incomplete: {e}");
+        }
+    }
+
     let outcomes = vak_ops::services::services_sync(
         &cli,
         &requested,
@@ -560,7 +586,7 @@ pub fn run_services_sync(prefix: Option<PathBuf>, names: Vec<String>) -> i32 {
     // console edit touched it.
     let bot_outcomes = vak_ops::services::sync_bots(
         &cli,
-        &vak_config::paths::data_home(),
+        &data_home,
         &vak_ops::OpsConfig::detect().base_url(),
         &vak_ops::services::Paths::default(),
         &vak_ops::services::SystemRunner,
@@ -734,6 +760,15 @@ pub fn run_uninstall(prefix: Option<PathBuf>, yes: bool, purge: bool) -> i32 {
     ) {
         eprintln!("warning: service teardown incomplete: {e}");
     }
+
+    // Per-bot bridge units (docs/design/34) live outside the static
+    // SERVICES table above and were previously left running after
+    // uninstall, leaking a bridge process per configured Telegram/
+    // Discord/Slack bot with a stale token env reference.
+    vak_ops::services::uninstall_bot_units(
+        &vak_ops::services::Paths::default(),
+        &vak_ops::services::SystemRunner,
+    );
 
     // Report components installed elsewhere, which removing this prefix
     // will not reach.

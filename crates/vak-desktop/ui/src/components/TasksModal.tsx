@@ -276,7 +276,7 @@ export default function TasksModal() {
           </Show>
 
           <div class="bo-foot" style="margin-top:10px">
-            <span class="hint">runs fire while the app is open · cron uses local time · latest worktree kept for review</span>
+            <span class="hint">runs fire on the gateway server, not this window · cron uses local time · latest worktree kept for review</span>
             <button class="btn primary" onClick={() => setTasksOpen(false)}>Close</button>
           </div>
         </div>
