@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,11 +50,28 @@ impl std::error::Error for OutboxError {}
 #[derive(Debug, Clone)]
 pub struct Outbox {
     root: PathBuf,
+    // Guards `update`'s read-modify-append against concurrent callers within
+    // this process. `update` has no file-level lock of its own, so without
+    // this, correctness would rest entirely on every caller happening to
+    // serialize through some *other* shared mutex (as `DeliveryRuntime`'s
+    // `serial` field does today) — an invariant invisible from this module
+    // and easy for a future call site to violate, reintroducing a classic
+    // lost-update race (two updates read the same `attempts`/state, the
+    // second overwrites the first). `Arc` so every `Outbox` clone sharing
+    // this `root` also shares the lock, not just the original instance.
+    // This still does not protect against a second *process* writing the
+    // same `root` concurrently — that would need a real file lock (e.g.
+    // flock), which nothing in this workspace does today because there is
+    // exactly one `Outbox` per `root` per process in practice.
+    lock: Arc<Mutex<()>>,
 }
 
 impl Outbox {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            lock: Arc::new(Mutex::new(())),
+        }
     }
 
     pub fn enqueue(&self, job: DeliveryJob) -> Result<OutboxRecord, OutboxError> {
@@ -147,6 +165,11 @@ impl Outbox {
         job_id: &str,
         mutate: impl FnOnce(&mut OutboxRecord),
     ) -> Result<OutboxRecord, OutboxError> {
+        // Serialize the whole read-modify-append so two concurrent updates
+        // (e.g. a replay tick and a direct `deliver` call racing on the
+        // same job) can't both read the pre-mutation record and have the
+        // second overwrite the first's change. See the `lock` field doc.
+        let _guard = self.lock.lock().unwrap_or_else(PoisonError::into_inner);
         let path = self.record_path(job_id);
         let mut record = read_record(&path)?;
         mutate(&mut record);

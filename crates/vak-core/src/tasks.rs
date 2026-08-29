@@ -6,6 +6,7 @@
 //! themselves stay append-only ledgers.
 
 use std::collections::{BTreeSet, HashMap};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
@@ -270,6 +271,19 @@ impl TaskDef {
     }
 }
 
+/// fsyncs a directory so a prior rename into it is durable across a crash.
+/// On non-unix platforms directory fsync isn't a thing; the rename itself
+/// is still atomic there, so this is a no-op rather than an error.
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> std::io::Result<()> {
+    std::fs::File::open(path).and_then(|dir| dir.sync_all())
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 /// In-process mirror of the persisted tasks.json array, keyed by id.
 pub struct TaskStore {
     path: PathBuf,
@@ -319,22 +333,43 @@ impl TaskStore {
             path: self.path.clone(),
             source,
         })?;
-        // Atomic write: a plain `fs::write` truncates the file before the
-        // new bytes land, so a crash or power loss mid-write leaves
-        // `tasks.json` corrupt and unrecoverable. Write to a sibling temp
-        // file and rename over it instead — on all platforms this crate
+        // Atomic + durable write: a plain `fs::write` truncates the file
+        // before the new bytes land, so a crash or power loss mid-write
+        // leaves `tasks.json` corrupt and unrecoverable. Write to a sibling
+        // temp file, fsync its contents, rename over the real path, then
+        // fsync the containing directory — on all platforms this crate
         // targets, `rename` onto an existing path is atomic, so readers
         // (this store, the server, the desktop app) only ever see the
-        // fully-old or fully-new content, never a partial write.
+        // fully-old or fully-new content, never a partial write; the fsyncs
+        // ensure that content and the rename itself survive a crash right
+        // after this call returns, not just torn-write-free while running.
         let tmp_path = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp_path, json).map_err(|source| TaskError::Io {
-            path: tmp_path.clone(),
-            source,
-        })?;
+        {
+            let mut file = std::fs::File::create(&tmp_path).map_err(|source| TaskError::Io {
+                path: tmp_path.clone(),
+                source,
+            })?;
+            file.write_all(json.as_bytes())
+                .map_err(|source| TaskError::Io {
+                    path: tmp_path.clone(),
+                    source,
+                })?;
+            file.sync_all().map_err(|source| TaskError::Io {
+                path: tmp_path.clone(),
+                source,
+            })?;
+        }
         std::fs::rename(&tmp_path, &self.path).map_err(|source| TaskError::Io {
             path: self.path.clone(),
             source,
-        })
+        })?;
+        if let Some(parent) = self.path.parent() {
+            sync_directory(parent).map_err(|source| TaskError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        Ok(())
     }
 
     pub fn get(&self, id: &str) -> Option<&TaskDef> {

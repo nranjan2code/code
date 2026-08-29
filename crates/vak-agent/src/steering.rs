@@ -9,6 +9,14 @@ pub enum DrainMode {
     All,
 }
 
+/// Cap on each queue's length. Without one, a sender who fires messages
+/// (each potentially carrying base64 image blocks) faster than a
+/// long-running turn drains them grows memory without bound. Once full, the
+/// oldest entry is dropped to make room for the newest — for steering in
+/// particular, the most recently expressed intent is the one that should
+/// win when the sender is over-sending, not the stalest queued message.
+const MAX_QUEUE_LEN: usize = 200;
+
 #[derive(Debug, Default)]
 struct Queues {
     steering: VecDeque<Message>,
@@ -35,11 +43,19 @@ impl SteeringQueues {
     }
 
     pub fn push_steering_message(&self, message: Message) {
-        self.lock().steering.push_back(message);
+        let mut q = self.lock();
+        q.steering.push_back(message);
+        while q.steering.len() > MAX_QUEUE_LEN {
+            q.steering.pop_front();
+        }
     }
 
     pub fn push_follow_up(&self, text: impl Into<String>) {
-        self.lock().follow_up.push_back(Message::user_text(text));
+        let mut q = self.lock();
+        q.follow_up.push_back(Message::user_text(text));
+        while q.follow_up.len() > MAX_QUEUE_LEN {
+            q.follow_up.pop_front();
+        }
     }
 
     pub fn drain(&self, mode: DrainMode) -> Vec<Message> {
@@ -121,5 +137,20 @@ mod tests {
     #[test]
     fn empty_drain_merges_to_none() {
         assert!(SteeringQueues::merge_prompt(Vec::new()).is_none());
+    }
+
+    #[test]
+    fn steering_queue_drops_oldest_past_cap() {
+        let q = SteeringQueues::new();
+        for i in 0..MAX_QUEUE_LEN + 10 {
+            q.push_steering(format!("msg {i}"));
+        }
+        let drained = q.drain(DrainMode::All);
+        assert_eq!(drained.len(), MAX_QUEUE_LEN);
+        // Oldest entries (0..10) were evicted; the newest survive in order.
+        let vak_llm::ContentBlock::Text { text } = &drained[0].content[0] else {
+            panic!("expected text block");
+        };
+        assert_eq!(text, "msg 10");
     }
 }

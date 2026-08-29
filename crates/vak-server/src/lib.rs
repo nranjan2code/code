@@ -54,6 +54,7 @@ pub mod slack;
 pub mod telegram;
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -3203,6 +3204,10 @@ async fn delete_session(
     let mut deleted = read_deleted(&state.core);
     deleted.insert(id.clone(), true);
     write_deleted(&state.core, &deleted);
+    // Drop the session's cached FinOps spend gate along with it (docs/design/27
+    // Phase D) — otherwise a long-running server accumulates one entry per
+    // session ever seen, forever.
+    state.core.forget_spend_gate(&id);
     Json(serde_json::json!({ "deleted": id })).into_response()
 }
 
@@ -3242,9 +3247,10 @@ async fn delete_all_archived(State(state): State<AppState>) -> axum::response::R
     let mut count = 0u64;
     for id in local_archived {
         if !deleted.get(&id).copied().unwrap_or(false) {
-            deleted.insert(id, true);
+            deleted.insert(id.clone(), true);
             count += 1;
         }
+        state.core.forget_spend_gate(&id);
     }
     write_deleted(&state.core, &deleted);
     Json(serde_json::json!({ "deleted": count })).into_response()
@@ -5767,6 +5773,17 @@ fn tasks_file(core: &Core) -> PathBuf {
     vak_core::tasks::tasks_file(&core.sessions_home())
 }
 
+/// Loads `tasks.json` and makes `state.tasks` match it exactly (inserts,
+/// updates *and* removals) rather than merging insert-only. The whole
+/// read-and-replace runs under `state.tasks`'s lock so it can never
+/// interleave with `update_tasks`'s mutate-then-persist below: either this
+/// runs entirely before a concurrent create/update/delete's persist, or
+/// entirely after, never in the gap between that mutation's memory write
+/// and its disk write. Previously an insert-only merge meant an external
+/// delete (CLI, desktop app) — or even this process's own `delete_task`
+/// racing a scheduler tick — could be silently undone the next time
+/// anything called `update_tasks`, since the removed id would still be on
+/// disk and get merged straight back into memory.
 fn load_tasks(state: &AppState) {
     match vak_core::tasks::TaskStore::load(&state.core.sessions_home()) {
         Ok(store) => {
@@ -5774,9 +5791,7 @@ fn load_tasks(state: &AppState) {
                 .tasks
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            for t in store.all() {
-                map.insert(t.id.clone(), t);
-            }
+            *map = store.all().into_iter().map(|t| (t.id.clone(), t)).collect();
         }
         // A corrupt tasks file is surfaced loudly, never silently dropped:
         // those definitions represent real automation the user expects.
@@ -5784,28 +5799,62 @@ fn load_tasks(state: &AppState) {
     }
 }
 
-fn save_tasks(state: &AppState) {
-    // The in-memory map is authoritative; the persisted array is rewritten
-    // wholesale in the exact wire shape TaskStore uses.
-    let list: Vec<TaskDef> = state
+/// fsyncs a directory so a prior rename into it is durable across a crash,
+/// not just torn-write-free while running. No-op on non-unix, where the
+/// rename itself is still atomic but directory fsync isn't a thing.
+#[cfg(unix)]
+fn sync_tasks_dir(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::File::open(path).and_then(|dir| dir.sync_all())
+}
+#[cfg(not(unix))]
+fn sync_tasks_dir(_path: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// Serializes `map` and writes it to `tasks.json` atomically and durably:
+/// write-to-temp, fsync the temp file, rename over the real path, fsync the
+/// directory. Mirrors `vak_core::tasks::TaskStore::save` (and the same
+/// crash-durability fix) since this is a second, independent writer of the
+/// same file — kept in sync here because `AppState.tasks` lives in the
+/// server, not in a `TaskStore`.
+fn write_tasks_file(state: &AppState, map: &HashMap<String, TaskDef>) {
+    let mut list: Vec<TaskDef> = map.values().cloned().collect();
+    list.sort_by_key(|t| t.created_at);
+    let target = tasks_file(&state.core);
+    let result = (|| -> std::io::Result<()> {
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string_pretty(&list)?;
+        let tmp = target.with_extension("json.tmp");
+        {
+            let mut file = std::fs::File::create(&tmp)?;
+            file.write_all(json.as_bytes())?;
+            file.sync_all()?;
+        }
+        std::fs::rename(&tmp, &target)?;
+        if let Some(parent) = target.parent() {
+            sync_tasks_dir(parent)?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = result {
+        eprintln!("[scheduler] tasks file save failed: {e}");
+    }
+}
+
+/// Mutates `state.tasks` and persists the result to disk under a single
+/// hold of the lock, so no other reader/writer (in particular
+/// `load_tasks`'s scheduler tick) can observe or race the gap between the
+/// in-memory change and the on-disk write.
+fn update_tasks<T>(state: &AppState, f: impl FnOnce(&mut HashMap<String, TaskDef>) -> T) -> T {
+    let mut map = state
         .tasks
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .values()
-        .cloned()
-        .collect();
-    let _ = std::fs::create_dir_all(state.core.sessions_home());
-    let target = tasks_file(&state.core);
-    let tmp = target.with_extension("json.tmp");
-    match serde_json::to_string_pretty(&list)
-        .ok()
-        .filter(|json| std::fs::write(&tmp, json).is_ok())
-    {
-        Some(_) => {
-            let _ = std::fs::rename(&tmp, &target);
-        }
-        None => eprintln!("[scheduler] tasks file save failed"),
-    }
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let result = f(&mut map);
+    write_tasks_file(state, &map);
+    result
 }
 
 async fn list_tasks(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -5900,12 +5949,9 @@ async fn create_task(
     if let Err((status, payload)) = validate_task_fields(&task) {
         return (status, Json(payload)).into_response();
     }
-    state
-        .tasks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(task.id.clone(), task);
-    save_tasks(&state);
+    update_tasks(&state, |map| {
+        map.insert(task.id.clone(), task);
+    });
     (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response()
 }
 
@@ -5966,91 +6012,87 @@ async fn patch_task(
         )
             .into_response();
     }
-    let updated = {
-        let mut map = state
-            .tasks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match map.get_mut(&id) {
-            Some(t) => {
-                // Apply to a candidate and validate BEFORE committing so a
-                // rejected patch never leaves half-mutated state behind.
-                let mut candidate = t.clone();
-                if let Some(v) = body.enabled {
-                    candidate.enabled = v;
-                }
-                if let Some(v) = body.name {
-                    candidate.name = v;
-                }
-                if let Some(v) = body.prompt {
-                    candidate.prompt = v;
-                }
-                if let Some(v) = body.interval_secs
-                    && v >= 60
-                {
-                    candidate.interval_secs = v;
-                }
-                if let Some(v) = body.deliver_to {
-                    candidate.deliver_to = v;
-                }
-                match body.schedule {
-                    OptionalStr::Keep => {}
-                    OptionalStr::Clear => candidate.schedule = None,
-                    OptionalStr::Set(ref s) => candidate.schedule = Some(s.clone()),
-                }
-                match body.script {
-                    OptionalStr::Keep => {}
-                    OptionalStr::Clear => candidate.script = None,
-                    OptionalStr::Set(ref s) => candidate.script = Some(s.clone()),
-                }
-                match body.model_pin {
-                    OptionalStr::Keep => {}
-                    OptionalStr::Clear => candidate.model_pin = None,
-                    OptionalStr::Set(ref s) => candidate.model_pin = Some(s.clone()),
-                }
-                if let Err((status, payload)) = validate_task_fields(&candidate) {
-                    return (status, Json(payload)).into_response();
-                }
-                *t = candidate.clone();
-                candidate
-            }
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({ "error": format!("no task '{id}'") })),
-                )
-                    .into_response();
-            }
+    // Mutate, validate and (on success) persist under a single hold of the
+    // tasks lock, so the patch can never be observed as committed in memory
+    // but not yet on disk (or vice versa) by a concurrent `load_tasks` tick.
+    // `update_tasks` can't itself carry an early `return` out of this async
+    // fn, so the closure reports outcome via `Result` and the response is
+    // built from that afterward.
+    let outcome = update_tasks(&state, |map| -> Result<TaskDef, (StatusCode, serde_json::Value)> {
+        let t = map.get_mut(&id).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                serde_json::json!({ "error": format!("no task '{id}'") }),
+            )
+        })?;
+        // Apply to a candidate and validate BEFORE committing so a
+        // rejected patch never leaves half-mutated state behind.
+        let mut candidate = t.clone();
+        if let Some(v) = body.enabled {
+            candidate.enabled = v;
         }
-    };
-    // Re-enabling reschedules interval tasks from now; dropping the cron
-    // marker makes the next tick recompute the schedule from scratch.
-    if body.enabled == Some(true) {
-        let mut map = state
-            .tasks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(t) = map.get_mut(&id)
-            && t.schedule.is_none()
+        if let Some(v) = body.name {
+            candidate.name = v;
+        }
+        if let Some(v) = body.prompt {
+            candidate.prompt = v;
+        }
+        if let Some(v) = body.interval_secs
+            && v >= 60
         {
+            candidate.interval_secs = v;
+        }
+        if let Some(v) = body.deliver_to {
+            candidate.deliver_to = v;
+        }
+        match body.schedule {
+            OptionalStr::Keep => {}
+            OptionalStr::Clear => candidate.schedule = None,
+            OptionalStr::Set(ref s) => candidate.schedule = Some(s.clone()),
+        }
+        match body.script {
+            OptionalStr::Keep => {}
+            OptionalStr::Clear => candidate.script = None,
+            OptionalStr::Set(ref s) => candidate.script = Some(s.clone()),
+        }
+        match body.model_pin {
+            OptionalStr::Keep => {}
+            OptionalStr::Clear => candidate.model_pin = None,
+            OptionalStr::Set(ref s) => candidate.model_pin = Some(s.clone()),
+        }
+        if let Err((status, payload)) = validate_task_fields(&candidate) {
+            return Err((status, payload));
+        }
+        *t = candidate.clone();
+        // Re-enabling reschedules interval tasks from now; dropping the
+        // cron marker makes the next tick recompute the schedule from
+        // scratch.
+        if body.enabled == Some(true) && t.schedule.is_none() {
             t.last_run_at = None;
         }
-    }
+        Ok(candidate)
+    });
+    let updated = match outcome {
+        Ok(updated) => updated,
+        // `update_tasks` still writes tasks.json on the Err path (it can't
+        // see into the Result), but the write reproduces the same
+        // unmodified map, so a rejected/missing patch persists nothing new.
+        Err((status, payload)) => return (status, Json(payload)).into_response(),
+    };
     state
         .next_fire
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .remove(&id);
-    save_tasks(&state);
     (StatusCode::OK, Json(serde_json::json!(updated))).into_response()
 }
 
 async fn delete_task(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
-    let removed = state
-        .tasks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&id);
+    // Remove-and-persist under one lock hold, closing the window where a
+    // concurrent scheduler `load_tasks` tick could otherwise re-read the
+    // not-yet-updated disk file and resurrect the task right after this
+    // handler releases the lock but before it writes tasks.json.
+    let removed = update_tasks(&state, |map| map.remove(&id));
     if let Some(task) = removed {
         let idle = task.last_session_id.as_deref().is_none_or(|sid| {
             state.get(sid).is_none_or(|h| {
@@ -6067,7 +6109,6 @@ async fn delete_task(State(state): State<AppState>, Path(id): Path<String>) -> S
             };
             let _ = vak_core::worktree::remove(&task.cwd, &old);
         }
-        save_tasks(&state);
         StatusCode::OK
     } else {
         StatusCode::NOT_FOUND
@@ -6175,21 +6216,17 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
     .await
     .ok()?;
 
-    let mut map = state
-        .tasks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(t) = map.get_mut(id) {
-        t.last_run_at = Some(chrono::Utc::now());
-        t.last_session_id = Some(child_id.clone());
-        t.last_summary = None;
-        t.last_wt = Some(WtMeta {
-            path: wt.path,
-            branch: wt.branch,
-        });
-    }
-    drop(map);
-    save_tasks(state);
+    update_tasks(state, |map| {
+        if let Some(t) = map.get_mut(id) {
+            t.last_run_at = Some(chrono::Utc::now());
+            t.last_session_id = Some(child_id.clone());
+            t.last_summary = None;
+            t.last_wt = Some(WtMeta {
+                path: wt.path,
+                branch: wt.branch,
+            });
+        }
+    });
 
     // Watcher: record the run's final assistant text on the task when it
     // finishes, and push it out through the gateway when a deliver target
@@ -6211,15 +6248,11 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
                 if let AgentEvent::RunFinished { summary, .. } = ev {
                     let text =
                         last_assistant_text(&child_handle).unwrap_or_else(|| summary.clone());
-                    if let Some(t) = st
-                        .tasks
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .get_mut(&tid)
-                    {
-                        t.last_summary = Some(text.clone());
-                    }
-                    save_tasks(&st);
+                    update_tasks(&st, |map| {
+                        if let Some(t) = map.get_mut(&tid) {
+                            t.last_summary = Some(text.clone());
+                        }
+                    });
                     if let Some(target) = &deliver_to {
                         // Delivery failure must not lose the recorded summary;
                         // it only means this transport could not be reached.
@@ -6374,11 +6407,7 @@ async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Opt
         )
         .await;
     }
-    {
-        let mut map = state
-            .tasks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    update_tasks(state, |map| {
         if let Some(t) = map.get_mut(&task.id) {
             t.last_run_at = Some(chrono::Utc::now());
             t.last_summary = Some(if outcome.ok && outcome.text.is_empty() {
@@ -6387,8 +6416,7 @@ async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Opt
                 outcome.text.clone()
             });
         }
-    }
-    save_tasks(state);
+    });
     check_budget_alert(state, &task.id).await;
     state
         .script_inflight
