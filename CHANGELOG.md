@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.11.18 — 2026-08-29
+
+### Feed pipeline, and an admin console pass for non-technical operators
+
+Added an extensible feed ingestion system end to end: Python drivers pull
+RSS/Atom, YouTube, Reddit, Hacker News, Lobsters, and custom HTTP sources
+into a DuckDB store with BM25 search, Tavily-compatible responses, alert
+rules with outbox delivery, and an MCP stdio server. The Rust server
+exposes sources/items/search/stats/alerts/ingest behind a persisted TOML
+config with atomic writes; both the admin console and desktop SPA gained
+a Feeds section — a three-pane reader, a guided source wizard, and search.
+
+Reworked the admin console's screens that assumed a technical operator.
+Channel capability restrictions (tools/MCP servers/skills/hooks) were
+nine hand-typed glob fields; they are now `AccessPicker` controls built
+from live data (`GET /config/mcp`, `/config/skills`, `/config/hooks`) —
+*Everything the workspace allows / Only what I pick / None*, plus a
+disclosure for the raw pattern grammar. Scheduled tasks got a preset +
+time picker in place of a bare cron string; hook matchers got a
+tool/argument builder in place of `Bash(git *)`. Permission modes,
+decision outcomes, provider ids, and event/security-kind tags are said
+in plain language everywhere, with the wire value kept on hover. Settings
+and every other screen were rewritten screen by screen against the same
+rule: never bend the wire shape to fit the wording, and never let a
+picker discard a stored value it doesn't recognise.
+
+QA on that pass caught three real defects, since fixed: a provider
+`<select>` populated by a later fetch kept showing the browser's default
+option instead of the configured provider — Settings could display
+"Anthropic" while about to save `openai-responses` — fixed with a
+`syncSelect` helper reapplied after every async-populated list; a hook
+matcher's tool dropdown rendered blank for `Bash(git *)` because the
+picker's option values are lowercase and the rule grammar's case
+sensitivity meant no option matched (fixed by offering the operator's
+own spelling as a first-class option); and editing an interval-based
+task sent its `interval_secs` back as an invalid cron string, which
+`TaskDef::validate` rejected with a 400 (fixed by leaving the schedule
+field empty, which the patch endpoint reads as "keep the interval").
+
 ## 0.11.14 — 2026-08-29
 
 ### Per-channel MCP network override
