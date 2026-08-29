@@ -206,7 +206,13 @@ fn read_bots(data_home: &Path) -> Vec<BotRecord> {
 /// the units directory).
 fn sanitize_for_unit_name(id: &str) -> String {
     id.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -277,7 +283,11 @@ fn prune_stale_bot_units(wanted: &[String], paths: &Paths, runner: &dyn CommandR
         }
         let stem = file_name
             .strip_suffix(".plist")
-            .or_else(|| file_name.strip_suffix(".service").map(|s| s.trim_start_matches("vak-")))
+            .or_else(|| {
+                file_name
+                    .strip_suffix(".service")
+                    .map(|s| s.trim_start_matches("vak-"))
+            })
             .unwrap_or(&file_name);
         // systemd stems are stripped of the "com.vak." prefix by
         // `short_name`; reconstruct the launchd-style label to compare.
@@ -816,7 +826,8 @@ fn sync_one_inner(
             // The live process predates the installed binary. Bounce it and
             // re-stamp the unit so staleness converges — without the stamp,
             // every later sync would bounce again forever.
-            if platform::restart(&spec.name, runner) && write_atomic(&unit_path, &rendered).is_ok() {
+            if platform::restart(&spec.name, runner) && write_atomic(&unit_path, &rendered).is_ok()
+            {
                 Ok(SyncAction::Bounced)
             } else {
                 Err(format!(
@@ -1498,10 +1509,19 @@ mod tests {
         let names: Vec<&str> = specs.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"com.vak.telegram-VakBot"));
         assert!(names.contains(&"com.vak.telegram-VakyarthaBot"));
-        let vakbot = specs.iter().find(|s| s.name == "com.vak.telegram-VakBot").unwrap();
+        let vakbot = specs
+            .iter()
+            .find(|s| s.name == "com.vak.telegram-VakBot")
+            .unwrap();
         assert_eq!(
             vakbot.args,
-            vec!["telegram", "--server", "http://127.0.0.1:8901", "--bot-id", "VakBot"],
+            vec![
+                "telegram",
+                "--server",
+                "http://127.0.0.1:8901",
+                "--bot-id",
+                "VakBot"
+            ],
         );
         assert!(vakbot.keep_alive);
         // Every rendered unit must still carry zero secrets — the token
@@ -1535,7 +1555,10 @@ mod tests {
             missing.path(),
             "http://127.0.0.1:8901",
         );
-        assert!(specs.is_empty(), "no bots.json yet must mean no units, not an error");
+        assert!(
+            specs.is_empty(),
+            "no bots.json yet must mean no units, not an error"
+        );
     }
 
     /// Deleting (or renaming) a bot must take its bridge process down too —
@@ -1547,7 +1570,10 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let fake = Fake::with_pid(123);
 
-        write_bots_json(data.path(), &[("VakBot", "telegram"), ("Second", "telegram")]);
+        write_bots_json(
+            data.path(),
+            &[("VakBot", "telegram"), ("Second", "telegram")],
+        );
         let first = sync_bots(
             Path::new("/opt/vak/bin/vak"),
             data.path(),
@@ -1568,7 +1594,11 @@ mod tests {
             &paths,
             &fake,
         );
-        assert_eq!(second.len(), 1, "only the surviving bot should be (re)synced");
+        assert_eq!(
+            second.len(),
+            1,
+            "only the surviving bot should be (re)synced"
+        );
         assert!(
             unit_file_path("com.vak.telegram-VakBot", &paths).exists(),
             "surviving bot's unit must be untouched"
@@ -1581,7 +1611,10 @@ mod tests {
 
     #[test]
     fn bot_service_name_sanitizes_and_namespaces_by_surface() {
-        assert_eq!(bot_service_name("telegram", "VakBot"), "com.vak.telegram-VakBot");
+        assert_eq!(
+            bot_service_name("telegram", "VakBot"),
+            "com.vak.telegram-VakBot"
+        );
         assert_eq!(
             bot_service_name("discord", "weird id!"),
             "com.vak.discord-weird_id_"

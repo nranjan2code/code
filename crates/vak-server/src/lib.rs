@@ -3778,8 +3778,7 @@ async fn put_bot_id_token(
             // A first-time token set has no unit yet — `sync_bot_units`
             // creates and starts it, and `restart_bot_unit` then no-ops.
             sync_bot_units(&state.core);
-            let restarted =
-                vak_ops::restart_bot_unit(&bot.surface, &id, &vak_ops::SystemRunner);
+            let restarted = vak_ops::restart_bot_unit(&bot.surface, &id, &vak_ops::SystemRunner);
             Json(serde_json::json!({
                 "id": id,
                 "env_var": env_var,
@@ -3820,8 +3819,7 @@ async fn delete_bot_id_token(
             // Bounce the running process so it stops using the now-cleared
             // token immediately, instead of continuing on the one it read
             // at its last start.
-            let restarted =
-                vak_ops::restart_bot_unit(&bot.surface, &id, &vak_ops::SystemRunner);
+            let restarted = vak_ops::restart_bot_unit(&bot.surface, &id, &vak_ops::SystemRunner);
             Json(serde_json::json!({
                 "id": id,
                 "env_var": removed.env_var,

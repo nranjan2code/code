@@ -191,7 +191,12 @@ impl AdapterRegistry {
         self.adapters.insert(adapter.scheme(), Arc::new(adapter));
     }
 
-    fn register_bot(&mut self, surface: &str, bot_id: String, adapter: impl ChannelAdapter + 'static) {
+    fn register_bot(
+        &mut self,
+        surface: &str,
+        bot_id: String,
+        adapter: impl ChannelAdapter + 'static,
+    ) {
         self.bot_adapters
             .insert((surface.to_string(), bot_id), Arc::new(adapter));
     }
@@ -927,7 +932,10 @@ mod tests {
         let registry = AdapterRegistry {
             adapters: HashMap::new(),
             bot_adapters: HashMap::from([
-                (("telegram".to_string(), "VakBot".to_string()), vakbot.clone()),
+                (
+                    ("telegram".to_string(), "VakBot".to_string()),
+                    vakbot.clone(),
+                ),
                 (
                     ("telegram".to_string(), "Vakyartha".to_string()),
                     vakyartha.clone(),
@@ -937,7 +945,10 @@ mod tests {
 
         let (adapter_a, address_a) = registry.resolve("telegram:8846301562:VakBot").unwrap();
         assert_eq!(address_a, "8846301562");
-        assert!(Arc::ptr_eq(&adapter_a, &vakbot), "must pick VakBot's own adapter");
+        assert!(
+            Arc::ptr_eq(&adapter_a, &vakbot),
+            "must pick VakBot's own adapter"
+        );
         assert!(!Arc::ptr_eq(&adapter_a, &vakyartha));
 
         let (adapter_b, address_b) = registry.resolve("telegram:8846301562:Vakyartha").unwrap();

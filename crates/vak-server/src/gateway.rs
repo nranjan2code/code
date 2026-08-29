@@ -1565,7 +1565,12 @@ async fn gateway_inbound(
     // single-bot bridges (no bot id) keep the original two-part key
     // unchanged. See `legacy_key_for` for the one-time migration this
     // implies for an already-approved chat or a `chat_allowlist` row.
-    let key = match body.bot_id.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+    let key = match body
+        .bot_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+    {
         Some(bot_id) => format!("{}:{}:{bot_id}", body.surface.trim(), body.chat.trim()),
         None => format!("{}:{}", body.surface.trim(), body.chat.trim()),
     };
@@ -2658,12 +2663,8 @@ mod tests {
         let legacy = gw.allowlist_get("telegram:8846301562").unwrap();
         assert_eq!(legacy.status, AllowlistStatus::Allowed);
 
-        let decision = gw.allowlist_resolve_inbound(
-            &core,
-            "telegram:8846301562:VakBot",
-            "hi",
-            Some("VakBot"),
-        );
+        let decision =
+            gw.allowlist_resolve_inbound(&core, "telegram:8846301562:VakBot", "hi", Some("VakBot"));
         assert!(matches!(decision, AllowlistDecision::Allowed));
         let inherited = gw.allowlist_get("telegram:8846301562:VakBot").unwrap();
         assert_eq!(inherited.status, AllowlistStatus::Allowed);
@@ -2688,7 +2689,9 @@ mod tests {
         let inherited2 = gw.allowlist_get("telegram:8846301562:Vakyartha").unwrap();
         assert_eq!(inherited2.bot_id.as_deref(), Some("Vakyartha"));
         assert_ne!(
-            gw.allowlist_get("telegram:8846301562:VakBot").unwrap().bot_id,
+            gw.allowlist_get("telegram:8846301562:VakBot")
+                .unwrap()
+                .bot_id,
             inherited2.bot_id,
             "each bot must get its own entry, not share one"
         );
