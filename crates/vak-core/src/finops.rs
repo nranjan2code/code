@@ -7,12 +7,27 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 use vak_agent::{SpendCheck, SpendGate};
 use vak_llm::Usage;
+
+/// Above this size, `append` compacts the ledger before writing (see
+/// [`FinOpsLedger::compact_if_large`]) instead of letting it grow forever —
+/// every `authorize()` used to re-read the whole file from the start of
+/// time on every paid dispatch, so an unbounded file meant unbounded
+/// per-dispatch latency as well as unbounded disk use.
+const COST_LOG_COMPACT_THRESHOLD_BYTES: u64 = 5 * 1024 * 1024;
+/// How much history compaction keeps: comfortably more than the 14-day
+/// admin trend chart and the `total_usd_since` callers in this codebase
+/// use (7/30-day rollups), so compaction never changes a real answer.
+const COST_LOG_RETENTION_DAYS: i64 = 90;
+/// Same idea for the budget-alert log, which is read in full by
+/// `last_alert`/`recent_budget_alerts` and only ever needs recent history.
+const ALERTS_COMPACT_THRESHOLD_BYTES: u64 = 1024 * 1024;
+const ALERTS_RETENTION_ROWS: usize = 2000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CostRow {
@@ -51,6 +66,7 @@ impl FinOpsLedger {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        self.compact_if_large()?;
         let line = serde_json::to_string(row)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         let mut f = std::fs::OpenOptions::new()
@@ -58,6 +74,48 @@ impl FinOpsLedger {
             .append(true)
             .open(&self.path)?;
         writeln!(f, "{line}")
+    }
+
+    /// Bound the ledger's on-disk size: cheap to skip on every call (one
+    /// `metadata()` stat), and only reads+rewrites the whole file the rare
+    /// time it actually crosses the threshold. Drops rows older than
+    /// [`COST_LOG_RETENTION_DAYS`]; never touches today's numbers.
+    fn compact_if_large(&self) -> std::io::Result<()> {
+        self.compact_if_larger_than(
+            COST_LOG_COMPACT_THRESHOLD_BYTES,
+            chrono::Duration::days(COST_LOG_RETENTION_DAYS),
+        )
+    }
+
+    /// Parameterized so tests can exercise compaction without writing
+    /// megabytes of fixture rows first.
+    fn compact_if_larger_than(
+        &self,
+        threshold_bytes: u64,
+        retention: chrono::Duration,
+    ) -> std::io::Result<()> {
+        let Ok(meta) = std::fs::metadata(&self.path) else {
+            return Ok(());
+        };
+        if meta.len() < threshold_bytes {
+            return Ok(());
+        }
+        let cutoff = chrono::Utc::now() - retention;
+        let kept = self
+            .all_rows()
+            .into_iter()
+            .filter(|r| r.ts >= cutoff)
+            .collect::<Vec<_>>();
+        let tmp = self.path.with_extension("jsonl.compact.tmp");
+        {
+            let mut f = std::fs::File::create(&tmp)?;
+            for row in &kept {
+                let line = serde_json::to_string(row)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                writeln!(f, "{line}")?;
+            }
+        }
+        std::fs::rename(&tmp, &self.path)
     }
 
     /// USD total over rows at or after `since`. Unpriced rows contribute
@@ -128,26 +186,111 @@ impl FinOpsLedger {
     }
 }
 
+/// Process-wide, cross-session admission state for the day cap, shared by
+/// every [`CoreSpendGate`] built from the same `Core`. Closes two gaps a
+/// gate-local `Mutex<f64>` can't: (1) a per-turn gate used to start the
+/// run cap over from zero every turn (`Core::spend_gate_for` now hands
+/// back the SAME gate for the life of a session instead, so `run_spent_usd`
+/// finally means "this run", not "this turn"); (2) concurrent dispatches
+/// (parallel tool calls, or multiple sessions sharing one `Core`) used to
+/// all read the same stale on-disk day total and could jointly blow past
+/// the cap before any of their rows landed — `reserved_usd` below is
+/// credited at admission time, before the paid call happens, so a second
+/// concurrent `authorize()` sees the first one's reservation immediately.
+pub(crate) struct DayBudget {
+    day: chrono::NaiveDate,
+    /// Settled USD for `day`, read from the ledger once per day (not once
+    /// per dispatch — this used to be a full-file re-scan on every single
+    /// `authorize()` call).
+    baseline_usd: f64,
+    /// Admitted-but-not-yet-appended estimates for `day`. Rolled into
+    /// `baseline_usd` (approximately — via the settled estimate, not the
+    /// exact reservation) as each dispatch settles; a rollover to a new
+    /// day always re-derives `baseline_usd` from the ledger, so any drift
+    /// self-corrects at most once a day.
+    reserved_usd: f64,
+}
+
+impl DayBudget {
+    /// A tracker with a deliberately-stale sentinel day, so the first
+    /// `roll()` always re-derives `baseline_usd` from the ledger.
+    pub(crate) fn new() -> Self {
+        DayBudget {
+            day: chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap_or_default(),
+            baseline_usd: 0.0,
+            reserved_usd: 0.0,
+        }
+    }
+
+    fn roll(&mut self, ledger: &FinOpsLedger, now: chrono::DateTime<chrono::Utc>) {
+        let today = now.date_naive();
+        if self.day != today {
+            self.day = today;
+            self.baseline_usd = ledger.day_total_usd(now);
+            self.reserved_usd = 0.0;
+        }
+    }
+}
+
 /// Core-side SpendGate: run/day caps + pricing-driven estimates.
 pub struct CoreSpendGate {
     ledger: FinOpsLedger,
-    max_run_usd: Option<f64>,
-    max_day_usd: Option<f64>,
-    overrides: BTreeMap<String, vak_config::PriceEntry>,
+    max_run_usd: Mutex<Option<f64>>,
+    max_day_usd: Mutex<Option<f64>>,
+    overrides: Mutex<BTreeMap<String, vak_config::PriceEntry>>,
     run_spent_usd: Mutex<f64>,
     raised_once: AtomicBool,
+    day_budget: Arc<Mutex<DayBudget>>,
 }
 
 impl CoreSpendGate {
     pub fn new(sessions_home: &std::path::Path, finops: &vak_config::FinopsResolved) -> Self {
+        Self::with_shared_day_budget(
+            sessions_home,
+            finops,
+            Arc::new(Mutex::new(DayBudget::new())),
+        )
+    }
+
+    /// Same as [`Self::new`] but sharing the day-cap admission state with
+    /// every other gate built from the same `Core` (see [`DayBudget`]).
+    /// `Core::spend_gate_for` is the only caller that needs this; direct
+    /// `new` (tests, the one-off reflection gate) is fine with its own
+    /// isolated tracker since nothing else observes it.
+    pub(crate) fn with_shared_day_budget(
+        sessions_home: &std::path::Path,
+        finops: &vak_config::FinopsResolved,
+        day_budget: Arc<Mutex<DayBudget>>,
+    ) -> Self {
         CoreSpendGate {
             ledger: FinOpsLedger::new(sessions_home),
-            max_run_usd: finops.max_run_usd,
-            max_day_usd: finops.max_day_usd,
-            overrides: finops.price_overrides.clone(),
+            max_run_usd: Mutex::new(finops.max_run_usd),
+            max_day_usd: Mutex::new(finops.max_day_usd),
+            overrides: Mutex::new(finops.price_overrides.clone()),
             run_spent_usd: Mutex::new(0.0),
             raised_once: AtomicBool::new(false),
+            day_budget,
         }
+    }
+
+    /// Pick up a live `PATCH /finops` cap change on a gate that is being
+    /// reused across turns (see [`DayBudget`] doc). Deliberately leaves
+    /// `run_spent_usd`/`raised_once` untouched — a cap edit mid-run must
+    /// not reset what's already been spent or re-arm a denial the
+    /// approver already raised.
+    pub(crate) fn refresh_caps(&self, finops: &vak_config::FinopsResolved) {
+        *self
+            .max_run_usd
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = finops.max_run_usd;
+        *self
+            .max_day_usd
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = finops.max_day_usd;
+        *self
+            .overrides
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = finops.price_overrides.clone();
     }
 
     /// The approver answered "raise the cap for this run once".
@@ -156,7 +299,11 @@ impl CoreSpendGate {
     }
 
     fn estimate(&self, model: &str, usage: &Usage) -> Option<f64> {
-        vak_config::finops::estimate_cost_usd(model, usage, &self.overrides)
+        let overrides = self
+            .overrides
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        vak_config::finops::estimate_cost_usd(model, usage, &overrides)
     }
 }
 
@@ -173,11 +320,15 @@ impl SpendGate for CoreSpendGate {
         let Some(est) = self.estimate(check.model, &planned) else {
             return Ok(());
         };
+        let max_run_usd = *self
+            .max_run_usd
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let run_spent = *self
             .run_spent_usd
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(cap) = self.max_run_usd
+        if let Some(cap) = max_run_usd
             && !self.raised_once.load(Ordering::SeqCst)
             && run_spent + est > cap
         {
@@ -185,19 +336,52 @@ impl SpendGate for CoreSpendGate {
                 "run budget ${cap:.2} would be exceeded by this dispatch (+${est:.2}, ${run_spent:.2} already spent)"
             ));
         }
-        if let Some(cap) = self.max_day_usd {
-            let day = self.ledger.day_total_usd(chrono::Utc::now());
-            if day + est > cap {
+        let max_day_usd = *self
+            .max_day_usd
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(cap) = max_day_usd {
+            let mut day = self
+                .day_budget
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            day.roll(&self.ledger, chrono::Utc::now());
+            let projected = day.baseline_usd + day.reserved_usd + est;
+            if projected > cap {
                 return Err(format!(
-                    "day budget ${cap:.2} would be exceeded by this dispatch (+${est:.2}, ${day:.2} spent today)"
+                    "day budget ${cap:.2} would be exceeded by this dispatch (+${est:.2}, ${:.2} spent today)",
+                    day.baseline_usd + day.reserved_usd
                 ));
             }
+            // Reserve immediately so a concurrent authorize() racing this
+            // one sees the commitment before either dispatch settles.
+            day.reserved_usd += est;
         }
         Ok(())
     }
 
     fn record_settled(&self, provider: &str, model: &str, session_id: &str, usage: &Usage) {
         let usd = self.estimate(model, usage);
+        // Fail-closed accounting: a run/day cap must still hold even if
+        // the ledger write below fails (e.g. disk full) — an I/O error
+        // must not silently re-open the budget it was there to enforce.
+        if let Some(usd) = usd {
+            let mut spent = self
+                .run_spent_usd
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *spent += usd;
+            let mut day = self
+                .day_budget
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            day.roll(&self.ledger, chrono::Utc::now());
+            // Release this dispatch's reservation and fold the settled
+            // amount into the baseline; clamp guards a same-day estimate
+            // mismatch (planned vs. actual tokens) from going negative.
+            day.reserved_usd = (day.reserved_usd - usd).max(0.0);
+            day.baseline_usd += usd;
+        }
         let row = CostRow {
             ts: chrono::Utc::now(),
             model: model.to_string(),
@@ -210,17 +394,11 @@ impl SpendGate for CoreSpendGate {
             session_id: session_id.to_string(),
         };
         if let Err(e) = self.ledger.append(&row) {
-            // Ledger write failure must not kill a healthy run; the
-            // receipt entries in the session log still carry usage.
+            // The ledger write itself is still best-effort — the receipt
+            // entries in the session log carry usage independently — but
+            // the in-memory run/day counters above are already updated,
+            // so caps stay enforced even when this fails.
             eprintln!("warning: cost ledger append failed: {e}");
-            return;
-        }
-        if let Some(usd) = usd {
-            let mut spent = self
-                .run_spent_usd
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *spent += usd;
         }
     }
 }
@@ -289,6 +467,7 @@ pub fn record_alert(
     session_id: &str,
 ) -> std::io::Result<BudgetAlertRow> {
     std::fs::create_dir_all(home)?;
+    compact_alerts_if_large(home)?;
     let row = BudgetAlertRow {
         kind: "budget_alert".to_string(),
         ts: chrono::Utc::now(),
@@ -304,6 +483,31 @@ pub fn record_alert(
         .open(alerts_path(home))?;
     writeln!(f, "{line}")?;
     Ok(row)
+}
+
+/// Same bounded-growth treatment as [`FinOpsLedger::compact_if_large`]:
+/// alerts are only ever read for "most recent N", so unbounded history
+/// buys nothing but disk and scan time.
+fn compact_alerts_if_large(home: &std::path::Path) -> std::io::Result<()> {
+    let path = alerts_path(home);
+    let Ok(meta) = std::fs::metadata(&path) else {
+        return Ok(());
+    };
+    if meta.len() < ALERTS_COMPACT_THRESHOLD_BYTES {
+        return Ok(());
+    }
+    let Ok(f) = std::fs::File::open(&path) else {
+        return Ok(());
+    };
+    let mut lines: Vec<String> = BufReader::new(f).lines().map_while(Result::ok).collect();
+    if lines.len() <= ALERTS_RETENTION_ROWS {
+        return Ok(());
+    }
+    let drop = lines.len() - ALERTS_RETENTION_ROWS;
+    lines.drain(0..drop);
+    let tmp = path.with_extension("jsonl.compact.tmp");
+    std::fs::write(&tmp, lines.join("\n") + "\n")?;
+    std::fs::rename(&tmp, &path)
 }
 
 /// Most recent recorded alert at exactly `level`, for once-per-window
@@ -533,5 +737,110 @@ mod tests {
         assert_eq!(found.session_id, "seed");
         assert!((found.day_total_usd - 1.5).abs() < 1e-9);
         assert!(last_alert(dir.path(), AlertLevel::Full).is_none());
+    }
+
+    /// Audit fix: the ledger used to grow forever with no rotation, and
+    /// every `authorize()` re-read the whole file from disk on every paid
+    /// dispatch. Compaction should trim old rows once the file crosses
+    /// its size threshold, and must never drop anything within the
+    /// retention window.
+    #[test]
+    fn compaction_drops_only_rows_older_than_retention() {
+        let dir = tempdir().unwrap();
+        let ledger = FinOpsLedger::new(dir.path());
+        let now = chrono::Utc::now();
+        let old = now - chrono::Duration::days(400);
+        ledger.append(&row_on(old.date_naive(), Some(1.0))).unwrap();
+        ledger.append(&row_on(now.date_naive(), Some(2.0))).unwrap();
+
+        // Force compaction on the next append regardless of actual file
+        // size, with a short retention window so the seeded old row falls
+        // outside it.
+        ledger
+            .compact_if_larger_than(0, chrono::Duration::days(1))
+            .unwrap();
+
+        let rows = ledger.all_rows();
+        assert_eq!(rows.len(), 1, "the old row must be dropped, not the fresh one");
+        assert_eq!(rows[0].usd, Some(2.0));
+        // Aggregates must be unaffected by compaction for anything still
+        // within the retention window.
+        assert_eq!(ledger.day_total_usd(now), 2.0);
+    }
+
+    #[test]
+    fn compaction_is_a_noop_below_the_size_threshold() {
+        let dir = tempdir().unwrap();
+        let ledger = FinOpsLedger::new(dir.path());
+        let now = chrono::Utc::now();
+        let old = now - chrono::Duration::days(400);
+        ledger.append(&row_on(old.date_naive(), Some(1.0))).unwrap();
+
+        // A generous threshold the tiny fixture file can never cross:
+        // compaction must leave old-but-still-present rows alone.
+        ledger
+            .compact_if_larger_than(u64::MAX, chrono::Duration::days(1))
+            .unwrap();
+        assert_eq!(ledger.all_rows().len(), 1);
+    }
+
+    /// Audit fix: concurrent dispatches used to each read the same stale
+    /// on-disk day total before any of them settled, so a burst could
+    /// jointly blow past `max_day_usd`. `DayBudget::reserved_usd` credits
+    /// an admission immediately so a second concurrent `authorize()` sees
+    /// the first one's reservation before either settles.
+    #[tokio::test]
+    async fn concurrent_authorize_calls_cannot_jointly_exceed_the_day_cap() {
+        let dir = tempdir().unwrap();
+        let mut finops = vak_config::FinopsResolved::default();
+        // sonnet est ~= $4.50/dispatch; cap admits exactly one.
+        finops.max_day_usd = Some(5.0);
+        let day_budget = Arc::new(Mutex::new(DayBudget::new()));
+        let gate_a =
+            CoreSpendGate::with_shared_day_budget(dir.path(), &finops, day_budget.clone());
+        let gate_b = CoreSpendGate::with_shared_day_budget(dir.path(), &finops, day_budget);
+
+        // Both "concurrent" calls check against the ledger before either
+        // has appended anything — a stale-read race would admit both.
+        let first = gate_a.authorize(&check("claude-sonnet")).await;
+        let second = gate_b.authorize(&check("claude-sonnet")).await;
+        assert!(first.is_ok(), "{first:?}");
+        assert!(
+            second.is_err(),
+            "the second concurrent dispatch must see the first one's reservation"
+        );
+    }
+
+    /// `record_settled` releases a dispatch's reservation and folds the
+    /// settled amount into the day baseline; a same-day gate built after
+    /// the first must see the earlier settlement.
+    #[tokio::test]
+    async fn record_settled_updates_the_shared_day_budget_for_later_gates() {
+        let dir = tempdir().unwrap();
+        let mut finops = vak_config::FinopsResolved::default();
+        // sonnet est ~= $4.50/dispatch; cap admits exactly one, so a
+        // gate that doesn't see gate_a's settlement would wrongly admit
+        // a second one at ~$9.00 total.
+        finops.max_day_usd = Some(5.0);
+        let day_budget = Arc::new(Mutex::new(DayBudget::new()));
+        let gate_a =
+            CoreSpendGate::with_shared_day_budget(dir.path(), &finops, day_budget.clone());
+        gate_a.authorize(&check("claude-sonnet")).await.unwrap();
+        gate_a.record_settled(
+            "anthropic",
+            "claude-sonnet",
+            "s1",
+            &usage(1_000_000, 100_000),
+        );
+
+        // A later gate sharing the same tracker (e.g. the next turn's
+        // session, or a different session on the same Core) must see
+        // gate_a's settled spend, not a fresh zero.
+        let gate_b = CoreSpendGate::with_shared_day_budget(dir.path(), &finops, day_budget);
+        let err = gate_b
+            .authorize(&check("claude-sonnet"))
+            .await
+            .expect_err("day cap must already reflect gate_a's settled spend");
+        assert!(err.contains("day budget $5.00"), "{err}");
     }
 }

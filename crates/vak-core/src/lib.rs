@@ -173,6 +173,19 @@ struct CoreInner {
     /// (Phase R). Fed from work receipts at run end; read at ladder
     /// admission.
     beliefs: Arc<routing::BeliefState>,
+    /// Per-session FinOps spend gates (docs/design/27 Phase D), keyed by
+    /// session id. Built once per session and reused for every turn: a
+    /// fresh gate per turn used to zero out `max_run_usd`'s accounting on
+    /// every message, so a multi-turn conversation could blow past the
+    /// run cap by an arbitrary multiple. Sessions are evicted explicitly
+    /// (see `Core::forget_spend_gate`) rather than left to grow forever.
+    spend_gates: std::sync::Mutex<HashMap<String, Arc<finops::CoreSpendGate>>>,
+    /// Shared cross-session/cross-turn day-cap admission state (see
+    /// [`finops::CoreSpendGate`]'s `DayBudget` doc) — one tracker per
+    /// `Core`, handed to every spend gate it builds so concurrent
+    /// dispatches from different sessions can't jointly race past the
+    /// day cap before any of them settles.
+    day_budget: Arc<std::sync::Mutex<finops::DayBudget>>,
 }
 
 /// Learned permission rules live outside the main config so they can be
@@ -359,6 +372,8 @@ impl Core {
                 hooks_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 channel_policy: std::sync::Mutex::new(None),
                 beliefs: Arc::new(routing::BeliefState::new()),
+                spend_gates: std::sync::Mutex::new(HashMap::new()),
+                day_budget: Arc::new(std::sync::Mutex::new(finops::DayBudget::new())),
             }),
         })
     }
@@ -889,6 +904,51 @@ impl Core {
             finops.max_day_usd = day;
         }
         finops
+    }
+
+    /// The spend gate for `session_id`, built once and reused for every
+    /// subsequent turn of that session (docs/design/27 Phase D). Rebuilding
+    /// a fresh gate per turn used to reset `max_run_usd`'s in-memory spend
+    /// counter to zero on every message — this cache is what makes the run
+    /// cap actually span the whole run rather than a single turn. Live cap
+    /// edits (`PATCH /finops`) are picked up on the next call via
+    /// `refresh_caps`, without disturbing spend already tallied.
+    fn spend_gate_for(&self, session_id: &str) -> Arc<finops::CoreSpendGate> {
+        let finops = self.effective_finops();
+        let mut gates = self
+            .inner
+            .spend_gates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(gate) = gates.get(session_id) {
+            gate.refresh_caps(&finops);
+            return gate.clone();
+        }
+        let gate = Arc::new(finops::CoreSpendGate::with_shared_day_budget(
+            // `self.sessions_home()`, not the raw `inner.sessions_home`
+            // field — the latter ignores `set_sessions_home` (the SDK
+            // seam tests/embedded runtimes use to relocate storage), so
+            // the ledger would silently keep writing to the original
+            // location. The reflection call site already got this right;
+            // the per-turn call site this replaces did not.
+            &self.sessions_home(),
+            &finops,
+            self.inner.day_budget.clone(),
+        ));
+        gates.insert(session_id.to_string(), gate.clone());
+        gate
+    }
+
+    /// Drop a session's spend gate (and the run-spend it was tracking)
+    /// once the session is done, so `spend_gates` doesn't grow forever
+    /// across the lifetime of a long-running process. Safe to call even
+    /// when no gate was ever built for `session_id`.
+    pub fn forget_spend_gate(&self, session_id: &str) {
+        self.inner
+            .spend_gates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session_id);
     }
 
     pub fn effective_finops_max_run_usd(&self) -> Option<f64> {
@@ -1817,19 +1877,19 @@ impl Core {
         // whenever any finops knob is configured.
         let f = self.effective_finops();
         if f.max_run_usd.is_some() || f.max_day_usd.is_some() || !f.price_overrides.is_empty() {
-            cfg.spend_gate = Some(Arc::new(finops::CoreSpendGate::new(
-                &self.inner.sessions_home,
-                &f,
-            )));
+            let sid = session
+                .header()
+                .map(|h| h.session_id.clone())
+                .unwrap_or_default();
+            // Reused for every turn of this session (not rebuilt per
+            // turn) so `max_run_usd`'s spend counter actually spans the
+            // whole run instead of resetting on each message.
+            cfg.spend_gate = Some(self.spend_gate_for(&sid));
 
             // MEA substrate (Phase H): auditor sees the workspace delta between
             // this run's start checkpoint and the live tree.
             {
                 let home = self.sessions_home();
-                let sid = session
-                    .header()
-                    .map(|h| h.session_id.clone())
-                    .unwrap_or_default();
                 let seq = self.next_checkpoint_seq(&sid);
                 let cwd = self.inner.cwd.clone();
                 cfg.workspace_delta = Some(Arc::new(CheckpointDelta {
@@ -2648,7 +2708,10 @@ impl Core {
         // path that admits run turns, so caps bind identically here.
         let f = self.effective_finops();
         if f.max_run_usd.is_some() || f.max_day_usd.is_some() || !f.price_overrides.is_empty() {
-            let gate = finops::CoreSpendGate::new(&self.sessions_home(), &f);
+            // The session's own gate, not a fresh one — so a reflection
+            // pass is admitted against the SAME run/day budget the
+            // session's turns have already been spending from.
+            let gate = self.spend_gate_for(&sid);
             let probe = vak_llm::Message {
                 role: vak_llm::Role::User,
                 content: vec![vak_llm::ContentBlock::text(tail.clone())],
@@ -2667,7 +2730,7 @@ impl Core {
                 est_input_tokens: est,
                 planned_output_tokens: u64::from(reflection::MAX_TOKENS),
             };
-            if vak_agent::SpendGate::authorize(&gate, &check)
+            if vak_agent::SpendGate::authorize(gate.as_ref(), &check)
                 .await
                 .is_err()
             {
@@ -3330,5 +3393,107 @@ mod route_control_tests {
         assert_eq!(contract.provider, "channel-provider");
         assert_eq!(contract.model, "channel-model");
         assert_eq!(core.effective_route(), default);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod spend_gate_persistence_tests {
+    // Regression coverage for the FinOps audit fix: `spend_gate_for` used
+    // to be `finops::CoreSpendGate::new(..)` called fresh inline on every
+    // turn, so `max_run_usd`'s in-memory spend counter reset to zero each
+    // message — a multi-turn conversation could blow past the run cap by
+    // an arbitrary multiple. `spend_gate_for` now caches one gate per
+    // session and reuses it turn over turn.
+    use super::Core;
+    use std::sync::Arc;
+    use vak_agent::{SpendCheck, SpendGate};
+    use vak_llm::Usage;
+
+    fn core_with_run_cap(dir: &std::path::Path, cap: f64) -> Core {
+        let core = Core::new(dir.join("cwd")).unwrap();
+        core.set_sessions_home(dir.join("home"));
+        core.apply_persisted_finops_caps(Some(Some(cap)), None);
+        core
+    }
+
+    fn check(session_id: &'static str) -> SpendCheck<'static> {
+        SpendCheck {
+            model: "claude-sonnet",
+            provider: "anthropic",
+            session_id,
+            est_input_tokens: 1_000_000,
+            planned_output_tokens: 100_000,
+        }
+    }
+
+    fn usage_1m_in_100k_out() -> Usage {
+        Usage {
+            input_tokens: 1_000_000,
+            output_tokens: 100_000,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn same_session_reuses_one_gate_across_calls() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core_with_run_cap(dir.path(), 5.0);
+
+        let turn1 = core.spend_gate_for("s1");
+        let turn2 = core.spend_gate_for("s1");
+        assert!(
+            Arc::ptr_eq(&turn1, &turn2),
+            "the same session must get the SAME gate on its next turn, \
+             not a freshly zeroed one"
+        );
+
+        let other_session = core.spend_gate_for("s2");
+        assert!(
+            !Arc::ptr_eq(&turn1, &other_session),
+            "a different session must not share another session's run budget"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_cap_spend_survives_across_simulated_turns() {
+        // sonnet: $3/MTok in, $15/MTok out => 1M in + 100k out = $4.50.
+        let dir = tempfile::tempdir().unwrap();
+        let core = core_with_run_cap(dir.path(), 5.0);
+
+        // Turn 1: `run_turn_inner` fetches the session's gate, admits the
+        // dispatch, then records it settled.
+        let gate = core.spend_gate_for("s1");
+        gate.authorize(&check("s1")).await.unwrap();
+        gate.record_settled("anthropic", "claude-sonnet", "s1", &usage_1m_in_100k_out());
+
+        // Turn 2: a SEPARATE `run_turn_inner` call for the same session
+        // re-fetches the gate. Before this fix, that call built a brand
+        // new `CoreSpendGate` with `run_spent_usd` back at zero, so this
+        // dispatch was wrongly admitted even though the run cap was
+        // already exhausted by turn 1.
+        let gate_next_turn = core.spend_gate_for("s1");
+        let err = gate_next_turn
+            .authorize(&check("s1"))
+            .await
+            .expect_err("run cap must still reflect turn 1's spend on turn 2");
+        assert!(err.contains("run budget $5.00"), "{err}");
+    }
+
+    #[test]
+    fn forget_spend_gate_drops_cached_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core_with_run_cap(dir.path(), 5.0);
+
+        let before = core.spend_gate_for("s1");
+        core.forget_spend_gate("s1");
+        let after = core.spend_gate_for("s1");
+        assert!(
+            !Arc::ptr_eq(&before, &after),
+            "forgetting a session's gate must not leave the old one cached"
+        );
+
+        // Forgetting a session with no cached gate must be a harmless no-op.
+        core.forget_spend_gate("never-seen");
     }
 }
