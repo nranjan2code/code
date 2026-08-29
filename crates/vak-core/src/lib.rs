@@ -135,6 +135,8 @@ struct CoreInner {
     memory_write_enabled_override: std::sync::Mutex<Option<bool>>,
     memory_reflection_override: std::sync::Mutex<Option<bool>>,
     memory_skill_proposals_override: std::sync::Mutex<Option<bool>>,
+    /// Same no-pin, always-take-latest shape as the memory overrides above.
+    subagents_override: std::sync::Mutex<Option<bool>>,
     sandbox_backend_override: std::sync::Mutex<Option<String>>,
     provider_instance: std::sync::Mutex<Option<Arc<dyn Provider>>>,
     sessions_home_override: std::sync::Mutex<Option<PathBuf>>,
@@ -317,6 +319,7 @@ impl Core {
                 memory_write_enabled_override: std::sync::Mutex::new(None),
                 memory_reflection_override: std::sync::Mutex::new(None),
                 memory_skill_proposals_override: std::sync::Mutex::new(None),
+                subagents_override: std::sync::Mutex::new(None),
                 provider_instance: std::sync::Mutex::new(None),
                 sessions_home_override: std::sync::Mutex::new(None),
                 breaker,
@@ -843,6 +846,16 @@ impl Core {
         );
     }
 
+    /// Whether sub-agent delegation (the `task` tool) is available right
+    /// now — live-effective, same shape as the memory accessors above.
+    pub fn effective_subagents(&self) -> bool {
+        Self::read_override(&self.inner.subagents_override).unwrap_or(self.inner.config.subagents)
+    }
+
+    pub fn apply_persisted_subagents(&self, enabled: bool) {
+        Self::write_override(&self.inner.subagents_override, Some(enabled));
+    }
+
     /// Refresh every non-security persisted preference. Permission mode is
     /// returned to the server control plane so it can revoke in-flight
     /// capabilities before applying a changed value.
@@ -889,6 +902,7 @@ impl Core {
             config.memory.reflection,
             config.memory.skill_proposals,
         );
+        self.apply_persisted_subagents(config.subagents);
         Ok(config.permission_mode)
     }
 
@@ -1063,7 +1077,7 @@ impl Core {
             .iter()
             .map(|t| t.name().to_string())
             .collect();
-        if self.inner.config.subagents {
+        if self.effective_subagents() {
             names.push("task".into());
         }
         if !self.effective_mcp().servers.is_empty() {
@@ -1820,7 +1834,7 @@ impl Core {
         }
 
         let mut tools = self.agent_tools();
-        if self.inner.config.subagents
+        if self.effective_subagents()
             && let Some(parent_id) = session.header().map(|h| h.session_id.clone())
         {
             tools.push(Arc::new(vak_agent::TaskTool::new(vak_agent::TaskDeps {

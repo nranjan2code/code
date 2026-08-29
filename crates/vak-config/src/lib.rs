@@ -1194,6 +1194,67 @@ fn persist_memory_prefs_at(
     std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
 }
 
+/// Persist the top-level `subagents` toggle for the current project.
+/// Mirrors [`persist_project_preferences`]'s atomic-write shape exactly.
+pub fn persist_project_subagents(cwd: &Path, enabled: bool) -> Result<(), ConfigError> {
+    persist_subagents_at(project_path(cwd), enabled)
+}
+
+/// Persist the user-level `subagents` default, inherited by project
+/// configs through [`load_with_trust`] until they set their own override.
+pub fn persist_global_subagents(enabled: bool) -> Result<(), ConfigError> {
+    let path = global_path().ok_or_else(|| ConfigError::Write {
+        path: PathBuf::from("<user-config>"),
+        source: std::io::Error::other("user home is unavailable"),
+    })?;
+    persist_subagents_at(path, enabled)
+}
+
+fn persist_subagents_at(path: PathBuf, enabled: bool) -> Result<(), ConfigError> {
+    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = WRITE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut root = if path.is_file() {
+        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
+            path: path.clone(),
+            source,
+        })?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let Some(table) = root.as_table_mut() else {
+        return Err(ConfigError::Write {
+            path,
+            source: std::io::Error::other("top-level config must be a TOML table"),
+        });
+    };
+    table.insert("subagents".into(), toml::Value::Boolean(enabled));
+    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other(error.to_string()),
+    })?;
+    let parent = path.parent().ok_or_else(|| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other("config has no parent directory"),
+    })?;
+    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
+    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
+}
+
 fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }

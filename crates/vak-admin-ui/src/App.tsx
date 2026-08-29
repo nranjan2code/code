@@ -5042,6 +5042,9 @@ function Settings() {
   const [modelError, setModelError] = createSignal("");
   const [providerKeyInput, setProviderKeyInput] = createSignal("");
   const [savingKey, setSavingKey] = createSignal(false);
+  const [maxTurnsInput, setMaxTurnsInput] = createSignal("");
+  const [savingMaxTurns, setSavingMaxTurns] = createSignal(false);
+  const [togglingSubagents, setTogglingSubagents] = createSignal(false);
 
   let initialized = false;
   createEffect(() => {
@@ -5050,6 +5053,7 @@ function Settings() {
       initialized = true;
       setSelectedProvider(c.provider || "anthropic");
       setSelectedModel(c.model || "");
+      setMaxTurnsInput(String(c.max_turns ?? ""));
     }
   });
 
@@ -5283,6 +5287,62 @@ function Settings() {
                 )}
               </For>
             </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title-row">
+              <div>
+                <h2>Limits</h2>
+                <p class="dim">How long a single run can go, and whether it can delegate.</p>
+              </div>
+            </div>
+            <Show when={!config.loading} fallback={<div class="cred-list"><span class="skel skel-block" /></div>}>
+              <div class="form-row">
+                <label>Max turns</label>
+                <input
+                  class="mono"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  value={maxTurnsInput()}
+                  onInput={(e) => setMaxTurnsInput(e.currentTarget.value)}
+                />
+              </div>
+              <div class="row-gap" style="margin-top:10px; margin-bottom:14px">
+                <button
+                  disabled={
+                    savingMaxTurns() ||
+                    !maxTurnsInput().trim() ||
+                    !(Number(maxTurnsInput()) >= 1 && Number(maxTurnsInput()) <= 1000)
+                  }
+                  onClick={() => {
+                    setSavingMaxTurns(true);
+                    void guard(
+                      () => api.patchConfig({ max_turns: Number(maxTurnsInput()) }),
+                      `Max turns set to ${maxTurnsInput()}`,
+                    ).finally(() => setSavingMaxTurns(false));
+                  }}
+                >
+                  {savingMaxTurns() ? "Saving…" : "Save"}
+                </button>
+              </div>
+              <label class="inherit-toggle">
+                <input
+                  type="checkbox"
+                  checked={config()?.subagents ?? false}
+                  disabled={togglingSubagents()}
+                  onChange={(e) => {
+                    const next = e.currentTarget.checked;
+                    setTogglingSubagents(true);
+                    void guard(
+                      () => api.patchConfig({ subagents: next }),
+                      next ? "Sub-agents enabled" : "Sub-agents disabled",
+                    ).finally(() => setTogglingSubagents(false));
+                  }}
+                />
+                Sub-agents — lets the agent delegate part of a run to a child agent
+              </label>
+            </Show>
           </section>
         </div>
 

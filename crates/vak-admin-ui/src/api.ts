@@ -243,6 +243,7 @@ export const api = {
     model?: string;
     max_turns?: number;
     theme?: string;
+    subagents?: boolean;
     /** `[memory]` toggles (docs/design/23-memory.md). Omitted = leave alone. */
     memory_search_enabled?: boolean;
     memory_write_enabled?: boolean;

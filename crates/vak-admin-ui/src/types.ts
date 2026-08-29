@@ -88,6 +88,7 @@ export interface ConfigInfo {
   max_turns: number;
   permission_mode: string;
   theme: string;
+  subagents: boolean;
   /** Resolved permission rule lists, exactly as the engine evaluates them. */
   permissions?: PermissionRules;
   /** `project_hash` of the workspace this server process is bound to.

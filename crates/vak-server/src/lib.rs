@@ -3871,7 +3871,7 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
         "max_tokens": cfg.max_tokens,
         "max_turns": state.core.effective_max_turns(),
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
-        "subagents": cfg.subagents,
+        "subagents": state.core.effective_subagents(),
         "max_retries": cfg.max_retries,
         "retry_base_backoff_ms": cfg.retry_base_backoff_ms,
         "request_timeout_secs": cfg.request_timeout_secs,
@@ -3929,6 +3929,10 @@ struct ConfigPatch {
     max_turns: Option<usize>,
     permission_mode: Option<String>,
     theme: Option<String>,
+    /// Whether sub-agent delegation (the `task` tool) is available. Absent
+    /// means "leave alone", same convention every field here uses.
+    #[serde(default)]
+    subagents: Option<bool>,
     /// `[memory]` toggles (docs/design/23-memory.md). Absent means "leave
     /// alone" — same convention every other field here already uses.
     #[serde(default)]
@@ -4051,6 +4055,18 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
         }
         changes.push(format!("theme={theme}"));
         state.core.apply_persisted_theme(theme);
+    }
+    if let Some(subagents) = body.subagents {
+        let persisted = if global {
+            vak_config::persist_global_subagents(subagents)
+        } else {
+            vak_config::persist_project_subagents(state.core.cwd(), subagents)
+        };
+        if persisted.is_err() {
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+        state.core.apply_persisted_subagents(subagents);
+        changes.push(format!("subagents={subagents}"));
     }
     if body.memory_search_enabled.is_some()
         || body.memory_write_enabled.is_some()
@@ -6845,5 +6861,39 @@ mod configuration_control_tests {
         let fresh = Core::new(dir.path().to_path_buf()).unwrap();
         fresh.set_sessions_home(dir.path().join("home"));
         assert!(!fresh.effective_memory_write_enabled());
+    }
+
+    /// Same live-without-restart guarantee as memory, for the `subagents`
+    /// toggle newly surfaced in the admin console's Settings page — it was
+    /// previously read from `Core::config()` directly at both call sites,
+    /// so a PATCH would have silently done nothing.
+    #[tokio::test]
+    async fn patch_config_subagents_applies_live_and_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core.clone());
+        assert!(core.effective_subagents(), "default is on");
+
+        let status = patch_config(
+            State(state.clone()),
+            Json(ConfigPatch {
+                subagents: Some(false),
+                ..Default::default()
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            !core.effective_subagents(),
+            "must apply live without a restart"
+        );
+
+        let fresh = Core::new(dir.path().to_path_buf()).unwrap();
+        fresh.set_sessions_home(dir.path().join("home"));
+        assert!(
+            !fresh.effective_subagents(),
+            "must be persisted to disk too"
+        );
     }
 }
