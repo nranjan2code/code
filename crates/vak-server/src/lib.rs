@@ -452,6 +452,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/ops/{service}/{action}", post(ops_action))
         .route("/ops/diagnostics", get(ops_diagnostics))
         .route("/finops", get(finops_status).patch(patch_finops))
+        .route("/voice/speak", post(voice_speak))
         .route("/memory", get(list_memory).post(append_memory))
         .route("/memory/cleanup", post(cleanup_memory))
         .route(
@@ -549,6 +550,139 @@ async fn ops_diagnostics(State(state): State<AppState>) -> Json<serde_json::Valu
 /// to show a real shape, short enough that a fixed-length zero-filled
 /// series is cheap to compute on every request.
 const FINOPS_TREND_DAYS: u32 = 14;
+
+/// Default voice used when nothing in the bot/chat inheritance chain (nor
+/// the request's own `voice_override`) names one — keeps `/voice/speak`
+/// usable out of the box without any admin configuration.
+const DEFAULT_VOICE_NAME: &str = "Kore";
+
+#[derive(serde::Deserialize)]
+struct VoiceSpeakBody {
+    text: String,
+    #[serde(default)]
+    bot_id: Option<String>,
+    #[serde(default)]
+    chat_key: Option<String>,
+    #[serde(default)]
+    voice_override: Option<vak_config::VoiceConfig>,
+}
+
+/// `POST /voice/speak`: synthesize `text` through the Gemini Live API using
+/// the resolved voice/persona (explicit `voice_override` > the named
+/// chat's/bot's resolved voice > a sensible built-in default), and return
+/// raw WAV bytes. Guarded by the same `require_bearer` middleware every
+/// other route on this router already sits behind.
+async fn voice_speak(
+    State(state): State<AppState>,
+    Json(body): Json<VoiceSpeakBody>,
+) -> axum::response::Response {
+    if body.text.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "text must not be empty" })),
+        )
+            .into_response();
+    }
+
+    // Resolution order: explicit override > resolved chat/bot voice > a
+    // built-in default. The chat lookup mirrors `core_for_entry`'s own
+    // bot/chat fold (`GatewayState::resolve_voice`), and a bare `bot_id`
+    // with no `chat_key` falls back to that bot's own tier directly.
+    let resolved = body.voice_override.clone().or_else(|| {
+        if let Some(chat_key) = body.chat_key.as_deref() {
+            state.gateway.resolve_voice(chat_key)
+        } else if let Some(bot_id) = body.bot_id.as_deref() {
+            state.gateway.bot_get(bot_id).and_then(|b| b.voice)
+        } else {
+            None
+        }
+    });
+    let voice_name = resolved
+        .as_ref()
+        .and_then(|v| v.voice_name.clone())
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_VOICE_NAME.to_string());
+    let persona = resolved.as_ref().and_then(|v| v.persona.clone());
+
+    let api_key = match vak_config::get_var("GEMINI_API_KEY")
+        .or_else(|| vak_config::get_var("GOOGLE_API_KEY"))
+        .filter(|k| !k.trim().is_empty())
+        .map(|k| k.trim().to_string())
+    {
+        Some(k) => k,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "no GEMINI_API_KEY/GOOGLE_API_KEY configured for voice synthesis"
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let config = vak_llm::google_live::GoogleLiveConfig::new(api_key);
+    let cancel = CancellationToken::new();
+    let mut receipt = vak_llm::WorkReceipt::new(
+        vak_llm::WorkPurpose::VoiceSynthesis,
+        "google",
+        &config.model,
+    );
+    let started = std::time::Instant::now();
+    let result = vak_llm::google_live::speak(
+        &config,
+        &body.text,
+        persona.as_deref(),
+        Some(voice_name.as_str()),
+        &cancel,
+    )
+    .await;
+
+    match result {
+        Ok(wav) => {
+            receipt.record(
+                vak_llm::AttemptReason::Initial,
+                vak_llm::FailureDomain::Unknown,
+                vak_llm::Settlement::Ok,
+                started.elapsed().as_millis() as u64,
+                None,
+                None,
+            );
+            (
+                StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "audio/wav")],
+                wav,
+            )
+                .into_response()
+        }
+        Err(e) => {
+            let (domain, settlement) = vak_llm::work::classify_error(&e);
+            receipt.record(
+                vak_llm::AttemptReason::Initial,
+                domain,
+                settlement,
+                started.elapsed().as_millis() as u64,
+                None,
+                Some(e.to_string()),
+            );
+            if cancel.is_cancelled() {
+                receipt.settle_cancelled();
+            }
+            let status = match &e {
+                vak_llm::LlmError::Auth(_) => StatusCode::BAD_REQUEST,
+                vak_llm::LlmError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
+                vak_llm::LlmError::RateLimit { .. } => StatusCode::TOO_MANY_REQUESTS,
+                vak_llm::LlmError::Overloaded(_) => StatusCode::SERVICE_UNAVAILABLE,
+                _ => StatusCode::BAD_GATEWAY,
+            };
+            (
+                status,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response()
+        }
+    }
+}
 
 /// FinOps projection from the append-only cost ledger. Unknown-priced rows
 /// are retained as `unknown_rows`; they are never reported as zero spend.
@@ -3767,6 +3901,11 @@ struct UpdateBotBody {
     /// See `permission_mode` above.
     #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
     workspace: Option<Option<String>>,
+    /// See `permission_mode` above: absent leaves the bot's voice alone,
+    /// explicit `null` clears it back to inherit, a `VoiceConfig` object
+    /// sets it.
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
+    voice: Option<Option<vak_config::VoiceConfig>>,
 }
 
 async fn update_bot(
@@ -3814,6 +3953,9 @@ async fn update_bot(
             Some(ws) if ws.trim().is_empty() => None,
             Some(ws) => Some(PathBuf::from(ws.trim())),
         };
+    }
+    if let Some(voice) = body.voice {
+        bot.voice = voice;
     }
     state.gateway.bot_upsert(&state.core, bot.clone());
     state.hub.emit_config_changed("bot_updated", &id);

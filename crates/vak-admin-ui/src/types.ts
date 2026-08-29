@@ -77,6 +77,20 @@ export interface Bot {
   permission_mode: PermissionMode | null;
   route: AllowlistRoute | null;
   workspace: string | null;
+  /// `null`/absent = inherit (no voice at this tier); a present object
+  /// pins a spoken voice + persona for this bot's replies.
+  voice?: VoiceConfig | null;
+}
+
+/// A pinned spoken voice + persona for Live API voice synthesis, mirroring
+/// `AllowlistRoute`'s "inherit unless overridden" idiom. Both fields are
+/// independently optional: a voice name with no persona, or vice versa.
+export interface VoiceConfig {
+  /// A Gemini Live API prebuilt voice name, e.g. "Kore", "Puck", "Zephyr".
+  voice_name?: string | null;
+  /// Free-text style directive fed into the synthesis system instruction,
+  /// e.g. "warm, upbeat, and enthusiastic".
+  persona?: string | null;
 }
 
 export interface ConfigInfo {
@@ -219,6 +233,9 @@ export interface AllowlistEntry {
   /// tier entirely and resolves purely against the workspace — the
   /// explicit "break inheritance" switch. Meaningless when `bot_id` is null.
   inherit_bot_policy: boolean;
+  /// `null`/absent = inherit this chat's bot's voice (or the bot's own
+  /// inherit chain); a present object pins a voice + persona for this chat.
+  voice?: VoiceConfig | null;
   added_at: string;
   added_by: string;
   first_seen_text: string | null;

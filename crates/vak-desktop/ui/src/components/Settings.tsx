@@ -654,6 +654,13 @@ export default function Settings() {
                 <Row title="Transcript detail" description="Control how much agent activity appears in conversations."><select value={density()} onChange={(event) => setDensity(event.currentTarget.value as Density)}><option value="outcome">Outcome</option><option value="balanced">Balanced</option><option value="audit">Audit</option></select></Row>
                 <Row title="Keyboard shortcuts" description="See every shortcut for navigation, tasks, and workspace tools."><button class="settings-button" onClick={() => { setSettingsOpen(false); setShowShortcuts(true); }}>View shortcuts</button></Row>
               </Group>
+              <Group title="Voice">
+                <Row title="Speak agent actions out loud" description="Narrate turn completions and permission prompts through the voice pipeline."><Switch label="Speak agent actions out loud" checked={uiPreferences.voiceEnabled} onChange={(value) => updateUiPreference("voiceEnabled", value)} /></Row>
+                <Show when={uiPreferences.voiceEnabled}>
+                  <Row title="Voice" description="The synthesized voice used for narration."><select value={uiPreferences.voiceName} onChange={(event) => updateUiPreference("voiceName", event.currentTarget.value)}><option value="Kore">Kore</option><option value="Puck">Puck</option><option value="Zephyr">Zephyr</option><option value="Charon">Charon</option><option value="Fenrir">Fenrir</option><option value="Aoede">Aoede</option></select></Row>
+                  <Row title="Persona" description="Optional style directive for how narration sounds."><input value={uiPreferences.voicePersona} placeholder="e.g. calm and concise" onInput={(event) => updateUiPreference("voicePersona", event.currentTarget.value)} /></Row>
+                </Show>
+              </Group>
               <Group title={scope() === "user" ? "Desktop" : "Project"}>
                 <Row title={scope() === "user" ? "Inheritance" : "Current workspace"} description={scope() === "user" ? "Projects inherit this scope unless their project settings override a value." : (config()?.paths.cwd ?? "")}><span class="settings-value">{scope() === "user" ? "Shared" : "Local"}</span></Row>
                 <Show when={scope() === "project"}><Row title="Project configuration" description="Persistent agent and tool settings for this repository."><button class="settings-button" onClick={() => void openProjectConfig()}>Open config</button></Row></Show>

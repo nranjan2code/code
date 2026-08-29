@@ -16,7 +16,7 @@ import type {
   GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval,
   PermissionMode, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
-  ActiveSubagent, SkillItem, SkillProposal, TaskItem, TranscriptEntry, WorkReceipt,
+  ActiveSubagent, SkillItem, SkillProposal, TaskItem, TranscriptEntry, VoiceConfig, WorkReceipt,
 } from "./types";
 
 // Chat surfaces with a bridge (crates/vak-server's InboundChannel impls) and
@@ -3850,6 +3850,82 @@ function ChannelPermissionPicker(props: {
   );
 }
 
+/// Gemini Live API's named prebuilt voices, as validated in the scratchpad
+/// script (docs/design plan, section 2) — the same set `google_live.rs`
+/// accepts for `voice_name`.
+const VOICE_NAMES = ["Kore", "Puck", "Zephyr", "Charon", "Fenrir", "Aoede"];
+
+/// Optional per-bot/per-chat voice + persona pin, parallel to
+/// `ChannelPermissionPicker`. Unchecked means inherit up the same
+/// `route`/`permission_mode` chain — `chat.voice.or(bot.voice)`, gated by
+/// `inherit_bot_policy`. A controlled component: the parent panel owns the
+/// signals and folds them into its own single Save call, exactly like
+/// `pinRoute`/`pinPerm` do today.
+function VoiceConfigEditor(props: {
+  pinned: boolean;
+  setPinned: (v: boolean) => void;
+  voiceName: string;
+  setVoiceName: (v: string) => void;
+  persona: string;
+  setPersona: (v: string) => void;
+  /// What this pin belongs to, for the toggle's label — "bot" or "chat".
+  subject: "bot" | "chat";
+}) {
+  const [previewing, setPreviewing] = createSignal(false);
+  let audioEl: HTMLAudioElement | undefined;
+
+  const preview = async () => {
+    setPreviewing(true);
+    try {
+      const blob = await api.speak({
+        text: "Hi, this is a preview of my voice.",
+        voice_override: {
+          voice_name: props.voiceName || null,
+          persona: props.persona || null,
+        },
+      });
+      if (!audioEl) audioEl = new Audio();
+      audioEl.src = URL.createObjectURL(blob);
+      await audioEl.play();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  return (
+    <>
+      <label class="inherit-toggle">
+        <input
+          type="checkbox"
+          checked={props.pinned}
+          onChange={(e) => props.setPinned(e.currentTarget.checked)}
+        />
+        Give this {props.subject === "bot" ? "bot" : "chat"} its own voice (otherwise it follows{" "}
+        {props.subject === "bot" ? "its parent" : "the bot"})
+      </label>
+      <Show when={props.pinned}>
+        <div class="binding-controls">
+          <select value={props.voiceName} onChange={(e) => props.setVoiceName(e.currentTarget.value)}>
+            <option value="">Default voice</option>
+            <For each={VOICE_NAMES}>{(v) => <option value={v}>{v}</option>}</For>
+          </select>
+          <button disabled={previewing()} onClick={() => void preview()}>
+            {previewing() ? "Playing…" : "Preview"}
+          </button>
+        </div>
+        <textarea
+          value={props.persona}
+          onInput={(e) => props.setPersona(e.currentTarget.value)}
+          placeholder="warm, upbeat, and enthusiastic"
+          rows={2}
+        />
+      </Show>
+    </>
+  );
+}
+
 function ChannelCapabilityPolicy(props: {
   value: ChannelPolicy;
   onChange: (value: ChannelPolicy) => void;
@@ -4023,6 +4099,9 @@ function ChannelAccessEditor(props: {
   const surfaceBots = () => props.bots.filter((b) => b.surface === surface());
   const [botId, setBotId] = createSignal(props.entry.bot_id ?? "");
   const [inheritBot, setInheritBot] = createSignal(props.entry.inherit_bot_policy);
+  const [pinVoice, setPinVoice] = createSignal(!!props.entry.voice);
+  const [voiceName, setVoiceName] = createSignal(props.entry.voice?.voice_name ?? "");
+  const [voicePersona, setVoicePersona] = createSignal(props.entry.voice?.persona ?? "");
 
   createEffect(async () => {
     if (!pinRoute() || !provider()) return;
@@ -4046,6 +4125,7 @@ function ChannelAccessEditor(props: {
         policy: policy(),
         bot_id: botId() || null,
         inherit_bot_policy: inheritBot(),
+        voice: pinVoice() ? { voice_name: voiceName() || null, persona: voicePersona() || null } : null,
       });
       pushToast("info", `Updated ${props.entry.key} — the next message rotates to a fresh session`);
       props.refresh();
@@ -4084,6 +4164,15 @@ function ChannelAccessEditor(props: {
           </label>
         </Show>
       </Show>
+      <VoiceConfigEditor
+        pinned={pinVoice()}
+        setPinned={setPinVoice}
+        voiceName={voiceName()}
+        setVoiceName={setVoiceName}
+        persona={voicePersona()}
+        setPersona={setVoicePersona}
+        subject="chat"
+      />
       <label class="inherit-toggle">
         <input type="checkbox" checked={pinRoute()} onChange={(e) => setPinRoute(e.currentTarget.checked)} />
         Give this channel its own model (otherwise it follows the project)
@@ -4394,6 +4483,9 @@ function BotAccessEditor(props: {
   const [pinPerm, setPinPerm] = createSignal(!!props.bot.permission_mode);
   const [perm, setPerm] = createSignal<PermissionMode>(props.bot.permission_mode ?? "workspace-write");
   const [policy, setPolicy] = createSignal<ChannelPolicy>(props.bot.policy ?? defaultChannelPolicy());
+  const [pinVoice, setPinVoice] = createSignal(!!props.bot.voice);
+  const [voiceName, setVoiceName] = createSignal(props.bot.voice?.voice_name ?? "");
+  const [voicePersona, setVoicePersona] = createSignal(props.bot.voice?.persona ?? "");
 
   createEffect(async () => {
     if (!pinRoute() || !provider()) return;
@@ -4414,6 +4506,7 @@ function BotAccessEditor(props: {
         route: pinRoute() && provider() && model() ? { provider: provider(), model: model() } : null,
         permission_mode: pinPerm() ? perm() : null,
         policy: policy(),
+        voice: pinVoice() ? { voice_name: voiceName() || null, persona: voicePersona() || null } : null,
       });
       pushToast("info", `${props.bot.label} updated — chats bound to it pick this up on their next message`);
       props.refresh();
@@ -4464,6 +4557,15 @@ function BotAccessEditor(props: {
         </div>
       </Show>
       <ChannelPermissionPicker pinned={pinPerm()} setPinned={setPinPerm} mode={perm()} setMode={setPerm} subject="bot" />
+      <VoiceConfigEditor
+        pinned={pinVoice()}
+        setPinned={setPinVoice}
+        voiceName={voiceName()}
+        setVoiceName={setVoiceName}
+        persona={voicePersona()}
+        setPersona={setVoicePersona}
+        subject="bot"
+      />
       <ChannelCapabilityPolicy value={policy()} onChange={setPolicy} />
       <div class="row-gap">
         <button disabled={busy()} onClick={() => void save()}>{busy() ? "Saving…" : "Save changes"}</button>

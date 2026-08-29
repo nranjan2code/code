@@ -16,6 +16,8 @@ pub enum WorkPurpose {
     Summarize,
     /// Completion-audit judge call (Phase H).
     Verify,
+    /// A Gemini Live API text-to-speech dispatch (voice/personality).
+    VoiceSynthesis,
 }
 
 /// Why a dispatch was made. `Retry` covers same-candidate transient

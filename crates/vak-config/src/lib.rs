@@ -481,6 +481,21 @@ impl ChannelPolicy {
     }
 }
 
+/// Optional spoken voice + persona for a bot/chat, resolved through the
+/// same bot→chat inheritance idiom as `route`/`permission_mode` (see
+/// `GatewayState::core_for_entry` in vak-server::gateway). `None` on a
+/// field means "no override for that piece"; the whole `VoiceConfig` being
+/// `None` on the entity means "inherit the parent tier's voice entirely".
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct VoiceConfig {
+    /// Live API prebuilt voice name, e.g. "Kore", "Puck", "Zephyr".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_name: Option<String>,
+    /// Style directive fed to the Live session as a system instruction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persona: Option<String>,
+}
+
 // Note: the `Bot` entity itself (id/surface/label/token_env/policy/
 // permission_mode/route/workspace) lives in `vak-server::gateway` next to
 // `AllowlistEntry` and `AllowlistRoute`, since it needs `AllowlistRoute` and

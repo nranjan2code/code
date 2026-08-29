@@ -65,6 +65,7 @@ import {
   splitRatio,
   setSplitRatio,
   paneSessions,
+  registerVoiceAudioElement,
 } from "./store";
 import type { SessionSummary } from "./types";
 import * as api from "./api";
@@ -892,6 +893,13 @@ export default function App() {
           <Show when={transcriptViewId()}>
             <TranscriptModal />
           </Show>
+          {/* Hidden playback element for /voice/speak narration; the store's
+              speak() helper drives it via registerVoiceAudioElement. */}
+          <audio
+            ref={(el) => registerVoiceAudioElement(el)}
+            style="display:none"
+            aria-hidden="true"
+          />
           <Toast />
           <SearchModal />
           <FeedsModal />

@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
+import * as api from "./api";
 import type {
   AgentEvent,
   AssistantMessage,
@@ -125,6 +126,10 @@ export interface UiPreferences {
   experimentalSkills: boolean;
   externalMedia: boolean;
   autoplayMedia: boolean;
+  /** Narrate turn completions / permission prompts through /voice/speak. */
+  voiceEnabled: boolean;
+  voiceName: string;
+  voicePersona: string;
 }
 
 const defaultUiPreferences: UiPreferences = {
@@ -139,6 +144,9 @@ const defaultUiPreferences: UiPreferences = {
   experimentalSkills: false,
   externalMedia: true,
   autoplayMedia: false,
+  voiceEnabled: false,
+  voiceName: "Kore",
+  voicePersona: "",
 };
 
 function loadUiPreferences(): UiPreferences {
@@ -200,6 +208,40 @@ export interface BestRun {
 // Dialog lifecycle: closed → config form → starting ([] pending) → runs.
 export const [bestOfOpen, setBestOfOpen] = createSignal(false);
 export const [bestOfRuns, setBestOfRuns] = createSignal<BestRun[] | null>(null);
+
+// ---- voice narration (docs/design: Voice & Personality for vak) ------------
+
+let voiceAudioEl: HTMLAudioElement | null = null;
+let voiceObjectUrl: string | null = null;
+
+/** Wired once by the <audio> element App mounts; see App.tsx. */
+export function registerVoiceAudioElement(el: HTMLAudioElement | null) {
+  voiceAudioEl = el;
+}
+
+/**
+ * Narrate a short phrase through /voice/speak when voice is enabled. Silent
+ * no-op when voice is off, the backend isn't ready, or the call fails --
+ * narration is a nice-to-have, never a reason to break the UI.
+ */
+export async function speak(text: string): Promise<void> {
+  if (!uiPreferences.voiceEnabled || !text.trim() || !api.isBackendReady()) return;
+  try {
+    const blob = await api.speak(text, {
+      voiceName: uiPreferences.voiceName,
+      persona: uiPreferences.voicePersona,
+    });
+    const url = URL.createObjectURL(blob);
+    if (voiceObjectUrl) URL.revokeObjectURL(voiceObjectUrl);
+    voiceObjectUrl = url;
+    if (voiceAudioEl) {
+      voiceAudioEl.src = url;
+      await voiceAudioEl.play();
+    }
+  } catch (err) {
+    console.error("vak: voice narration failed", err);
+  }
+}
 
 export function openInEditor(path: string) {
   setEditorPath(path);
@@ -568,6 +610,9 @@ export function applyEvent(
     if (ev.RunFinished.is_error) {
       note(b, id, ev.RunFinished.summary);
     }
+    // Short narration only -- the full summary can run long and reads
+    // awkwardly aloud; a one-word cue is enough to signal completion.
+    void speak(ev.RunFinished.is_error ? "Task failed." : "Done.");
     opts.onFinish?.(ev.RunFinished.summary);
   }
 }

@@ -29,6 +29,7 @@ import type {
   SkillProposal,
   TaskItem,
   TranscriptEntry,
+  VoiceConfig,
   WorkReceipt,
   ActiveSubagent,
 } from "./types";
@@ -64,6 +65,28 @@ async function handle<T>(res: Response): Promise<T> {
     throw new Error(detail);
   }
   return body as T;
+}
+
+/// Like `handle`, but for an endpoint that answers with raw bytes
+/// (`audio/wav`) rather than JSON — `/voice/speak`. A non-JSON error body
+/// still parses fine (`body` stays undefined), it just falls back to the
+/// bare status code.
+async function handleBlob(res: Response): Promise<Blob> {
+  if (res.status === 401 || res.status === 403) throw new AuthRequired();
+  if (!res.ok) {
+    const text = await res.text();
+    let detail = `${res.status}`;
+    if (text) {
+      try {
+        const body = JSON.parse(text) as Record<string, unknown>;
+        if (body && typeof body === "object" && "error" in body) detail = String(body.error);
+      } catch {
+        // not JSON — keep the bare status code
+      }
+    }
+    throw new Error(detail);
+  }
+  return res.blob();
 }
 
 export const api = {
@@ -205,6 +228,9 @@ export const api = {
       /// a string = bind to that bot id.
       bot_id?: string | null;
       inherit_bot_policy?: boolean;
+      /// Absent = leave alone; `null` = clear back to inherit; an object =
+      /// pin this chat's own voice.
+      voice?: VoiceConfig | null;
     },
   ): Promise<AllowlistEntry> =>
     fetch(`/admin/api/gateway/allowlist/${encodeURIComponent(key)}`, {
@@ -538,7 +564,10 @@ export const api = {
   updateBot: (
     id: string,
     patch: Partial<
-      Pick<import("./types").Bot, "label" | "policy" | "permission_mode" | "route" | "workspace">
+      Pick<
+        import("./types").Bot,
+        "label" | "policy" | "permission_mode" | "route" | "workspace" | "voice"
+      >
     >,
   ): Promise<{ bot: import("./types").Bot }> =>
     fetch(`/gateway/bots/${encodeURIComponent(id)}`, {
@@ -619,4 +648,21 @@ export const api = {
     fetch(`/feeds/sources/${encodeURIComponent(name)}`, {
       method: "DELETE",
     }).then((r) => handle(r)),
+
+  /// Synthesize speech via the Live API. Resolution order server-side is
+  /// `voice_override` > the resolved chat/bot voice (by `bot_id`/`chat_key`)
+  /// > a built-in default — used both for real gateway voice-notes and for
+  /// the admin console's Preview button, which always passes an explicit
+  /// `voice_override` so it hears the in-progress, unsaved config.
+  speak: (body: {
+    text: string;
+    bot_id?: string;
+    chat_key?: string;
+    voice_override?: VoiceConfig;
+  }): Promise<Blob> =>
+    fetch("/voice/speak", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => handleBlob(r)),
 };

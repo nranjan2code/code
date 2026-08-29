@@ -1098,6 +1098,12 @@ pub(crate) struct AllowlistPatchBody {
     bot_id: Option<Option<String>>,
     #[serde(default)]
     inherit_bot_policy: Option<bool>,
+    /// Absent leaves this chat's voice alone; explicit `null` clears it
+    /// back to inherit (bot tier, then no voice); a `VoiceConfig` object
+    /// pins this chat's own override. Same `deserialize_present` shape as
+    /// `bot_id` above, for the same reason.
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
+    voice: Option<Option<vak_config::VoiceConfig>>,
 }
 
 /// `PATCH /admin/api/gateway/allowlist/{key}` (docs/design/34 "Editing an
@@ -1186,6 +1192,7 @@ pub(crate) async fn patch_gateway_allowlist(
             .unwrap_or_default(),
         bot_id,
         body.inherit_bot_policy,
+        body.voice,
     ) else {
         return StatusCode::NOT_FOUND.into_response();
     };

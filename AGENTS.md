@@ -166,7 +166,12 @@ crates/vak-llm       unified provider API (anthropic / openai-responses /
                      dispatch ceiling (work.rs), frozen-ladder ordering:
                      demand-scored objectives, belief demotion,
                      cross-model fallbacks (route.rs) -- docs/design/27
-                     Phases A+B+R
+                     Phases A+B+R + Gemini Live voice synthesis
+                     (google_live.rs): BidiGenerateContent WebSocket
+                     session, wall-clock timeout + input-length cap since
+                     no upstream deadline exists otherwise, WAV wrapping,
+                     WorkPurpose::VoiceSynthesis receipts (docs/design/
+                     38-voice-personality.md)
 crates/vak-session   append-only JSONL trees, frozen contract, projection,
                       receipt entries (audit-only, projection-neutral),
                       compaction packet partitions (docs/design/27 Phase C),
@@ -243,7 +248,10 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      multi-bot-per-channel: `Bot` identities independent of
                      surface, bot->chat->workspace policy/permission/route
                      resolution chain, bots.json store, /gateway/bots CRUD
-                     (docs/design/34 Phase 5) +
+                     (docs/design/34 Phase 5) + per-bot/per-chat voice
+                     override riding the same inheritance chain and
+                     `inherit_bot_policy` switch as route/permission_mode,
+                     POST /voice/speak (docs/design/38-voice-personality.md) +
                      admin console: global event hub + SSE, cookie login
                      (HttpOnly SameSite=Strict) alongside bearer auth,
                      /admin/api/* data plane, embedded SolidJS SPA at
@@ -253,7 +261,9 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
 crates/vak-admin-ui  SolidJS + Vite admin console source; built dist is
                      committed so cargo builds need no node — observation,
                      operation, and interaction views per docs/design/
-                     33-admin-console.md
+                     33-admin-console.md, plus a VoiceConfigEditor
+                     (inherit-toggle + live Preview button) on the per-bot
+                     and per-chat panels (docs/design/38-voice-personality.md)
 crates/vak-desktop   Tauri 2 desktop app over an embedded secured_router —
                      SolidJS SPA with schema-v2 outcome-first semantic
                      timeline/AST registry: sessions, split view, approvals, diff
@@ -261,7 +271,12 @@ crates/vak-desktop   Tauri 2 desktop app over an embedded secured_router —
                      best-of-N, tasks (cron/script/pin), side chats,
                      memory tier editor, global search, diagnostics,
                      backup/digest cards, budget banner
-                     (docs/design/20-tauri-desktop.md, 29-personal-os.md)
+                     (docs/design/20-tauri-desktop.md, 29-personal-os.md) +
+                     voice narration of turn completions and approval
+                     prompts via a shared `<audio>` element and
+                     `/voice/speak` (no native audio crate — the webview
+                     plays the returned WAV Blob), Settings toggle + voice
+                     picker (docs/design/38-voice-personality.md)
 crates/vak-ops       service-control layer over launchd/systemd — status,
                      start/stop/restart, install/uninstall shared by tray,
                      TUI and desktop (docs/design/28-operations.md)

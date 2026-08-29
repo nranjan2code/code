@@ -544,6 +544,42 @@ export function mergePr(
   });
 }
 
+// ---- voice (docs/design: Voice & Personality for vak) -------------------------
+
+/** POSTs to /voice/speak and returns the raw audio/wav bytes as a Blob.
+ * Unlike req<T>(), the success body is audio, not JSON — only the error
+ * path parses JSON, mirroring req()'s error-shape handling. */
+export async function speak(
+  text: string,
+  opts?: { voiceName?: string; persona?: string },
+): Promise<Blob> {
+  const voice_override =
+    opts?.voiceName || opts?.persona
+      ? { voice_name: opts?.voiceName || undefined, persona: opts?.persona || undefined }
+      : undefined;
+  const res = await fetch(`${base}/voice/speak`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ text, voice_override }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let parsed: unknown = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = text;
+    }
+    const msg =
+      (parsed as { error?: string })?.error ?? `${res.status} ${res.statusText}`;
+    throw new Error(msg);
+  }
+  return res.blob();
+}
+
 // ---- SSE ---------------------------------------------------------------------
 
 export function openEventStream(

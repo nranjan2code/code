@@ -192,6 +192,11 @@ pub struct AllowlistEntry {
     pub workspace: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route: Option<AllowlistRoute>,
+    /// Voice/persona override for this chat. `None` inherits the bound
+    /// bot's (or workspace default's) voice, gated the same as `route` by
+    /// `inherit_bot_policy`. See `GatewayState::core_for_entry`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<vak_config::VoiceConfig>,
     /// Per-channel permission mode (docs/design/34 "Per-channel permission
     /// mode"). `None` inherits the target workspace's own configured mode,
     /// which is the pre-existing behavior and stays the default. `Some(m)`
@@ -282,6 +287,11 @@ pub struct Bot {
     pub route: Option<AllowlistRoute>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<PathBuf>,
+    /// Voice/persona override for this bot's spoken replies. `None`
+    /// inherits the workspace default (no voice); `Some` sets this bot's
+    /// tier for any chat that inherits it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<vak_config::VoiceConfig>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]
@@ -418,6 +428,7 @@ impl GatewayState {
                                 status: AllowlistStatus::Allowed,
                                 workspace: None,
                                 route: None,
+                                voice: None,
                                 permission_mode: None,
                                 policy: vak_config::ChannelPolicy::default(),
                                 added_at: now.clone(),
@@ -894,6 +905,7 @@ impl GatewayState {
                             status: AllowlistStatus::Pending,
                             workspace: None,
                             route: None,
+                            voice: None,
                             permission_mode: None,
                             policy: vak_config::ChannelPolicy::default(),
                             added_at: chrono::Utc::now().to_rfc3339(),
@@ -940,6 +952,7 @@ impl GatewayState {
                 status: AllowlistStatus::Allowed,
                 workspace: Some(workspace),
                 route,
+                voice: None,
                 permission_mode,
                 policy,
                 added_at: chrono::Utc::now().to_rfc3339(),
@@ -967,6 +980,7 @@ impl GatewayState {
                 status: AllowlistStatus::Denied,
                 workspace: None,
                 route: None,
+                voice: None,
                 permission_mode: None,
                 policy: vak_config::ChannelPolicy::default(),
                 added_at: chrono::Utc::now().to_rfc3339(),
@@ -1004,6 +1018,7 @@ impl GatewayState {
         policy: vak_config::ChannelPolicy,
         bot_id: Option<Option<String>>,
         inherit_bot_policy: Option<bool>,
+        voice: Option<Option<vak_config::VoiceConfig>>,
     ) -> Option<AllowlistEntry> {
         let entry = {
             let mut map = self
@@ -1023,6 +1038,9 @@ impl GatewayState {
             }
             if let Some(inherit) = inherit_bot_policy {
                 entry.inherit_bot_policy = inherit;
+            }
+            if let Some(voice) = voice {
+                entry.voice = voice;
             }
             entry.clone()
         };
@@ -1059,6 +1077,7 @@ impl GatewayState {
             entry.policy,
             Some(entry.bot_id),
             Some(entry.inherit_bot_policy),
+            Some(entry.voice),
         )
         .is_some()
     }
@@ -1118,6 +1137,25 @@ impl GatewayState {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(key)
             .and_then(|binding| Some((binding.provider.clone()?, binding.model.clone()?)))
+    }
+
+    /// The single answer to "what voice/persona does this channel speak
+    /// with": the chat's own override when it has one, otherwise its
+    /// bot's (unless inheritance was broken), otherwise `None` (no voice
+    /// configured — caller falls back to a built-in default). Mirrors
+    /// `effective_route_override` exactly.
+    pub(crate) fn resolve_voice(&self, key: &str) -> Option<vak_config::VoiceConfig> {
+        let entry = self
+            .allowlist_get(key)
+            .filter(|e| e.status == AllowlistStatus::Allowed);
+        entry.as_ref().and_then(|e| e.voice.clone()).or_else(|| {
+            entry
+                .as_ref()
+                .filter(|e| e.inherit_bot_policy)
+                .and_then(|e| e.bot_id.as_deref())
+                .and_then(|id| self.bot_get(id))
+                .and_then(|b| b.voice)
+        })
     }
 
     /// Drop the cached route revision for `key` without dropping the

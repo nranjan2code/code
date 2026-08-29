@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.11.22 — 2026-08-30
+
+### Voice & personality — Gemini Live synthesis for bots and desktop
+
+Every bot/chat already inherited policy, permission mode, and model route
+down the `Workspace → Bot → Chat` chain (docs/design/34). Voice was the
+missing tier: no per-bot spoken identity, no way to hear a persona before
+committing to it, and no audio capability in desktop at all. Closed with
+one mechanism instead of two parallel integrations
+(docs/design/38-voice-personality.md):
+
+- `VoiceConfig` (`voice_name` + `persona`) joins `route`/`permission_mode`
+  on both `Bot` and `AllowlistEntry`, resolved by the same
+  `inherit_bot_policy` switch and the same absent/`null`/object wire
+  idiom — no new override semantics to learn.
+- `crates/vak-llm/src/google_live.rs`: a from-scratch `BidiGenerateContent`
+  WebSocket client (the Live API has no SSE/REST form), mirroring
+  `google.rs`'s conventions. Enforces a 25s wall-clock timeout and a
+  2,000-char input cap that nothing upstream provided otherwise — without
+  them a stalled socket blocks the request task forever, and an unbounded
+  `text` field runs up billing on a paid per-call API.
+- `POST /voice/speak` serves three callers off one code path: the gateway
+  reply pipeline, desktop narration, and the admin console's Preview
+  button — all behind the existing bearer middleware, no new auth code.
+- Admin console gained a `VoiceConfigEditor` on both the bot and chat
+  panels, built from the exact `ChannelPermissionPicker` inherit-toggle
+  idiom already established for route/permission-mode.
+- Desktop gained its first audio capability: no native audio crate, the
+  webview just plays the WAV `Blob` `/voice/speak` returns through one
+  shared `<audio>` element, narrating turn completions ("Done."/"Task
+  failed.") and approval prompts (tool name + primary arg) — terse by
+  design, so narration never becomes the bottleneck on a verbose turn.
+
 ## 0.11.21 — 2026-08-29
 
 ### A live-editable Settings/Memory/FinOps pass, and a real duplicate-row fix
