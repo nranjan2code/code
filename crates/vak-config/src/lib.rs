@@ -1077,6 +1077,123 @@ fn persist_preferences_at(
     std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
 }
 
+/// Persist `[memory]` toggles for the current project without disturbing
+/// unrelated config (docs/design/23-memory.md). Mirrors
+/// [`persist_project_preferences`]'s atomic-write shape exactly.
+pub fn persist_project_memory_prefs(
+    cwd: &Path,
+    search_enabled: Option<bool>,
+    write_enabled: Option<bool>,
+    reflection: Option<bool>,
+    skill_proposals: Option<bool>,
+) -> Result<(), ConfigError> {
+    persist_memory_prefs_at(
+        project_path(cwd),
+        search_enabled,
+        write_enabled,
+        reflection,
+        skill_proposals,
+    )
+}
+
+/// Persist user-level `[memory]` defaults, inherited by project configs
+/// through [`load_with_trust`] until they set their own scoped override.
+pub fn persist_global_memory_prefs(
+    search_enabled: Option<bool>,
+    write_enabled: Option<bool>,
+    reflection: Option<bool>,
+    skill_proposals: Option<bool>,
+) -> Result<(), ConfigError> {
+    let path = global_path().ok_or_else(|| ConfigError::Write {
+        path: PathBuf::from("<user-config>"),
+        source: std::io::Error::other("user home is unavailable"),
+    })?;
+    persist_memory_prefs_at(
+        path,
+        search_enabled,
+        write_enabled,
+        reflection,
+        skill_proposals,
+    )
+}
+
+fn persist_memory_prefs_at(
+    path: PathBuf,
+    search_enabled: Option<bool>,
+    write_enabled: Option<bool>,
+    reflection: Option<bool>,
+    skill_proposals: Option<bool>,
+) -> Result<(), ConfigError> {
+    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = WRITE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut root = if path.is_file() {
+        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
+            path: path.clone(),
+            source,
+        })?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let Some(table) = root.as_table_mut() else {
+        return Err(ConfigError::Write {
+            path,
+            source: std::io::Error::other("top-level config must be a TOML table"),
+        });
+    };
+    if search_enabled.is_some()
+        || write_enabled.is_some()
+        || reflection.is_some()
+        || skill_proposals.is_some()
+    {
+        let memory = table
+            .entry("memory")
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+        let Some(memory) = memory.as_table_mut() else {
+            return Err(ConfigError::Write {
+                path,
+                source: std::io::Error::other("memory config must be a TOML table"),
+            });
+        };
+        if let Some(value) = search_enabled {
+            memory.insert("search_enabled".into(), toml::Value::Boolean(value));
+        }
+        if let Some(value) = write_enabled {
+            memory.insert("write_enabled".into(), toml::Value::Boolean(value));
+        }
+        if let Some(value) = reflection {
+            memory.insert("reflection".into(), toml::Value::Boolean(value));
+        }
+        if let Some(value) = skill_proposals {
+            memory.insert("skill_proposals".into(), toml::Value::Boolean(value));
+        }
+    }
+    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other(error.to_string()),
+    })?;
+    let parent = path.parent().ok_or_else(|| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other("config has no parent directory"),
+    })?;
+    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
+    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
+}
+
 fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }

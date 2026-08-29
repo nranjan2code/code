@@ -127,6 +127,14 @@ struct CoreInner {
     mode_runtime_pinned: std::sync::atomic::AtomicBool,
     theme_override: std::sync::Mutex<Option<String>>,
     theme_runtime_pinned: std::sync::atomic::AtomicBool,
+    /// Live overrides for `[memory]` toggles (docs/design/23-memory.md).
+    /// No CLI flag pins these today, so unlike route/theme/max_turns there
+    /// is no `*_runtime_pinned` counterpart — `refresh_persisted_preferences`
+    /// always takes the latest persisted value.
+    memory_search_enabled_override: std::sync::Mutex<Option<bool>>,
+    memory_write_enabled_override: std::sync::Mutex<Option<bool>>,
+    memory_reflection_override: std::sync::Mutex<Option<bool>>,
+    memory_skill_proposals_override: std::sync::Mutex<Option<bool>>,
     sandbox_backend_override: std::sync::Mutex<Option<String>>,
     provider_instance: std::sync::Mutex<Option<Arc<dyn Provider>>>,
     sessions_home_override: std::sync::Mutex<Option<PathBuf>>,
@@ -305,6 +313,10 @@ impl Core {
                 sandbox_backend_override: std::sync::Mutex::new(None),
                 theme_override: std::sync::Mutex::new(None),
                 theme_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
+                memory_search_enabled_override: std::sync::Mutex::new(None),
+                memory_write_enabled_override: std::sync::Mutex::new(None),
+                memory_reflection_override: std::sync::Mutex::new(None),
+                memory_skill_proposals_override: std::sync::Mutex::new(None),
                 provider_instance: std::sync::Mutex::new(None),
                 sessions_home_override: std::sync::Mutex::new(None),
                 breaker,
@@ -779,6 +791,58 @@ impl Core {
             .store(false, std::sync::atomic::Ordering::Release);
     }
 
+    /// Live-effective `[memory]` toggles (docs/design/23-memory.md): a
+    /// PATCH-applied override when one has been set this process's
+    /// lifetime, else whatever was persisted at construction/last refresh.
+    /// Every tool-registration and reflection call site must read through
+    /// these, never `self.inner.config.memory.*` directly, or a live PATCH
+    /// would silently do nothing until the process restarts.
+    pub fn effective_memory_search_enabled(&self) -> bool {
+        Self::read_override(&self.inner.memory_search_enabled_override)
+            .unwrap_or(self.inner.config.memory.search_enabled)
+    }
+
+    pub fn effective_memory_write_enabled(&self) -> bool {
+        Self::read_override(&self.inner.memory_write_enabled_override)
+            .unwrap_or(self.inner.config.memory.write_enabled)
+    }
+
+    pub fn effective_memory_reflection(&self) -> bool {
+        Self::read_override(&self.inner.memory_reflection_override)
+            .unwrap_or(self.inner.config.memory.reflection)
+    }
+
+    pub fn effective_memory_skill_proposals(&self) -> bool {
+        Self::read_override(&self.inner.memory_skill_proposals_override)
+            .unwrap_or(self.inner.config.memory.skill_proposals)
+    }
+
+    /// Set the live `[memory]` overrides all at once — used both by the
+    /// admin/desktop PATCH handler applying an explicit change and by
+    /// `refresh_persisted_preferences` picking up a value another process
+    /// wrote to disk.
+    pub fn apply_persisted_memory(
+        &self,
+        search_enabled: bool,
+        write_enabled: bool,
+        reflection: bool,
+        skill_proposals: bool,
+    ) {
+        Self::write_override(
+            &self.inner.memory_search_enabled_override,
+            Some(search_enabled),
+        );
+        Self::write_override(
+            &self.inner.memory_write_enabled_override,
+            Some(write_enabled),
+        );
+        Self::write_override(&self.inner.memory_reflection_override, Some(reflection));
+        Self::write_override(
+            &self.inner.memory_skill_proposals_override,
+            Some(skill_proposals),
+        );
+    }
+
     /// Refresh every non-security persisted preference. Permission mode is
     /// returned to the server control plane so it can revoke in-flight
     /// capabilities before applying a changed value.
@@ -819,6 +883,12 @@ impl Core {
         {
             self.apply_persisted_hooks(config.hooks.clone());
         }
+        self.apply_persisted_memory(
+            config.memory.search_enabled,
+            config.memory.write_enabled,
+            config.memory.reflection,
+            config.memory.skill_proposals,
+        );
         Ok(config.permission_mode)
     }
 
@@ -1006,13 +1076,13 @@ impl Core {
             names.push("browse".into());
         }
 
-        if self.inner.config.memory.search_enabled {
+        if self.effective_memory_search_enabled() {
             names.push("session_search".into());
         }
-        if self.inner.config.memory.write_enabled {
+        if self.effective_memory_write_enabled() {
             names.push("remember".into());
         }
-        if self.inner.config.memory.skill_proposals {
+        if self.effective_memory_skill_proposals() {
             names.push("propose_skill".into());
         }
         names
@@ -1844,7 +1914,7 @@ impl Core {
                 policy.mcp_deny,
             )));
         }
-        if self.inner.config.memory.search_enabled {
+        if self.effective_memory_search_enabled() {
             let exclude = session
                 .header()
                 .map(|h| h.session_id.clone())
@@ -1863,14 +1933,14 @@ impl Core {
             .header()
             .map(|h| h.session_id.clone())
             .unwrap_or_default();
-        if self.inner.config.memory.write_enabled {
+        if self.effective_memory_write_enabled() {
             tools.push(Arc::new(learning::RememberTool {
                 sessions_home: self.sessions_home(),
                 cwd: self.inner.cwd.clone(),
                 session_id: current_session.clone(),
             }));
         }
-        if self.inner.config.memory.skill_proposals {
+        if self.effective_memory_skill_proposals() {
             tools.push(Arc::new(learning::ProposeSkillTool {
                 sessions_home: self.sessions_home(),
                 cwd: self.inner.cwd.clone(),
@@ -2419,12 +2489,12 @@ impl Core {
         session: &SessionLog,
         final_text: &str,
     ) -> reflection::ReflectionOutcome {
-        if !self.config().memory.reflection {
+        if !self.effective_memory_reflection() {
             return reflection::ReflectionOutcome::Skipped {
                 reason: "reflection-disabled",
             };
         }
-        if !self.config().memory.write_enabled {
+        if !self.effective_memory_write_enabled() {
             return reflection::ReflectionOutcome::Skipped {
                 reason: "memory-writes-disabled",
             };

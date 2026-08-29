@@ -3881,6 +3881,12 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
         "circuit_breaker_cooldown_secs": cfg.circuit_breaker_cooldown_secs,
         "context_window": cfg.context_window,
         "theme": state.core.effective_theme(),
+        "memory": {
+            "search_enabled": state.core.effective_memory_search_enabled(),
+            "write_enabled": state.core.effective_memory_write_enabled(),
+            "reflection": state.core.effective_memory_reflection(),
+            "skill_proposals": state.core.effective_memory_skill_proposals(),
+        },
         "bell": cfg.ui.bell,
         "stop_policy": {
             "enabled": cfg.stop_policy.enabled,
@@ -3923,6 +3929,16 @@ struct ConfigPatch {
     max_turns: Option<usize>,
     permission_mode: Option<String>,
     theme: Option<String>,
+    /// `[memory]` toggles (docs/design/23-memory.md). Absent means "leave
+    /// alone" — same convention every other field here already uses.
+    #[serde(default)]
+    memory_search_enabled: Option<bool>,
+    #[serde(default)]
+    memory_write_enabled: Option<bool>,
+    #[serde(default)]
+    memory_reflection: Option<bool>,
+    #[serde(default)]
+    memory_skill_proposals: Option<bool>,
 }
 
 async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatch>) -> StatusCode {
@@ -4035,6 +4051,51 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
         }
         changes.push(format!("theme={theme}"));
         state.core.apply_persisted_theme(theme);
+    }
+    if body.memory_search_enabled.is_some()
+        || body.memory_write_enabled.is_some()
+        || body.memory_reflection.is_some()
+        || body.memory_skill_proposals.is_some()
+    {
+        let persisted = if global {
+            vak_config::persist_global_memory_prefs(
+                body.memory_search_enabled,
+                body.memory_write_enabled,
+                body.memory_reflection,
+                body.memory_skill_proposals,
+            )
+        } else {
+            vak_config::persist_project_memory_prefs(
+                state.core.cwd(),
+                body.memory_search_enabled,
+                body.memory_write_enabled,
+                body.memory_reflection,
+                body.memory_skill_proposals,
+            )
+        };
+        if persisted.is_err() {
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+        // `apply_persisted_memory` sets all four flags at once, so fields
+        // this PATCH didn't mention keep their current effective value
+        // rather than reverting to whatever was on disk before.
+        state.core.apply_persisted_memory(
+            body.memory_search_enabled
+                .unwrap_or_else(|| state.core.effective_memory_search_enabled()),
+            body.memory_write_enabled
+                .unwrap_or_else(|| state.core.effective_memory_write_enabled()),
+            body.memory_reflection
+                .unwrap_or_else(|| state.core.effective_memory_reflection()),
+            body.memory_skill_proposals
+                .unwrap_or_else(|| state.core.effective_memory_skill_proposals()),
+        );
+        changes.push(format!(
+            "memory(search={}, write={}, reflection={}, skill_proposals={})",
+            state.core.effective_memory_search_enabled(),
+            state.core.effective_memory_write_enabled(),
+            state.core.effective_memory_reflection(),
+            state.core.effective_memory_skill_proposals(),
+        ));
     }
     if !changes.is_empty() {
         vak_core::security_events::record(
@@ -6721,5 +6782,68 @@ mod configuration_control_tests {
             vak_config::PermissionMode::ReadOnly
         );
         assert!(handle.cancel.lock().unwrap().is_cancelled());
+    }
+
+    /// The bug this locks in: before `effective_memory_*` existed,
+    /// `Core::config().memory.*` was read directly at every call site, so
+    /// a live PATCH — or another process persisting a change to disk —
+    /// silently did nothing until the process restarted. Mirrors
+    /// `cross_process_mode_refresh_revokes_live_capability_before_apply`'s
+    /// shape for the memory tier instead of permission mode.
+    #[tokio::test]
+    async fn cross_process_memory_refresh_takes_effect_without_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        assert!(core.effective_memory_search_enabled(), "default is on");
+
+        vak_config::persist_project_memory_prefs(dir.path(), Some(false), None, None, None)
+            .unwrap();
+        core.refresh_persisted_preferences().unwrap();
+
+        assert!(
+            !core.effective_memory_search_enabled(),
+            "a disk change from another process must reach an already-running Core"
+        );
+        // Untouched flags keep their default, proving the write was
+        // scoped to exactly the one field this call named.
+        assert!(core.effective_memory_write_enabled());
+    }
+
+    /// `PATCH /config` end to end: persists to disk, applies live
+    /// immediately (no restart), and a field the PATCH didn't mention
+    /// keeps its current value rather than reverting to whatever was on
+    /// disk before this call.
+    #[tokio::test]
+    async fn patch_config_memory_flags_apply_live_and_persist() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core.clone());
+
+        let status = patch_config(
+            State(state.clone()),
+            Json(ConfigPatch {
+                memory_write_enabled: Some(false),
+                ..Default::default()
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        assert!(
+            !core.effective_memory_write_enabled(),
+            "must apply live without a restart"
+        );
+        assert!(
+            core.effective_memory_search_enabled(),
+            "a field this PATCH never mentioned must keep its value"
+        );
+
+        // Persisted to disk, not just the in-process override — a fresh
+        // Core over the same cwd sees it too.
+        let fresh = Core::new(dir.path().to_path_buf()).unwrap();
+        fresh.set_sessions_home(dir.path().join("home"));
+        assert!(!fresh.effective_memory_write_enabled());
     }
 }

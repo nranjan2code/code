@@ -238,7 +238,17 @@ export const api = {
       body: JSON.stringify({ mode }),
     }).then((r) => void handle(r)),
 
-  patchConfig: (patch: { provider?: string; model?: string; max_turns?: number; theme?: string }): Promise<void> =>
+  patchConfig: (patch: {
+    provider?: string;
+    model?: string;
+    max_turns?: number;
+    theme?: string;
+    /** `[memory]` toggles (docs/design/23-memory.md). Omitted = leave alone. */
+    memory_search_enabled?: boolean;
+    memory_write_enabled?: boolean;
+    memory_reflection?: boolean;
+    memory_skill_proposals?: boolean;
+  }): Promise<void> =>
     fetch("/config", {
       method: "PATCH",
       headers: { "content-type": "application/json" },

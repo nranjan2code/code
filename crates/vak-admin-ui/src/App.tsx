@@ -2721,7 +2721,7 @@ function ExtensionsSection() {
 
 function MemoryView() {
   const [memoryData, { refetch }] = createResource(() => api.memory());
-  const [configData] = createResource(() => api.config());
+  const [configData, { refetch: refetchConfig }] = createResource(() => api.config());
   const [scope, setScope] = createSignal<"profile" | "project">("project");
   const [tag, setTag] = createSignal("");
   const [noteText, setNoteText] = createSignal("");
@@ -2729,6 +2729,27 @@ function MemoryView() {
   const [editing, setEditing] = createSignal<string | null>(null);
   const [editText, setEditText] = createSignal("");
   const [cleaning, setCleaning] = createSignal(false);
+  const [togglingFlag, setTogglingFlag] = createSignal<string | null>(null);
+
+  // Real toggles, not a status readout: each flips exactly one [memory]
+  // config key, persisted to .vak/config.toml and applied to the live
+  // Core immediately (docs/design/23-memory.md) — no restart needed, and
+  // no other flag is touched by this call.
+  const toggleMemoryFlag = async (
+    key: "memory_search_enabled" | "memory_write_enabled" | "memory_reflection" | "memory_skill_proposals",
+    next: boolean,
+  ) => {
+    setTogglingFlag(key);
+    try {
+      await api.patchConfig({ [key]: next });
+      await refetchConfig();
+      pushToast("info", `${next ? "Enabled" : "Disabled"}`);
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setTogglingFlag(null);
+    }
+  };
 
   const cleanArtifacts = async () => {
     if (!confirmDestructive("Remove only abandoned memory lock/temp files and empty workspace folders? Notes will not be deleted.")) return;
@@ -2825,10 +2846,43 @@ function MemoryView() {
             </div>
             <button class="ghost small" disabled={cleaning()} onClick={() => void cleanArtifacts()}>{cleaning() ? "Cleaning…" : "Clean artifacts"}</button>
           </div>
-          <div class="stats-row" style="margin-bottom:12px">
-            <div><span class="dim">Search</span><strong>{configData()?.memory?.search_enabled ? "on" : "off"}</strong></div>
-            <div><span class="dim">Writes</span><strong>{configData()?.memory?.write_enabled ? "on" : "off"}</strong></div>
-            <div><span class="dim">Reflection</span><strong>{configData()?.memory?.reflection ? "on" : "off"}</strong></div>
+          <div class="cred-settings" style="margin-bottom:12px">
+            <label class="inherit-toggle">
+              <input
+                type="checkbox"
+                checked={configData()?.memory?.search_enabled ?? false}
+                disabled={configData.loading || togglingFlag() === "memory_search_enabled"}
+                onChange={(e) => void toggleMemoryFlag("memory_search_enabled", e.currentTarget.checked)}
+              />
+              Search past sessions — lets vak look up earlier conversations mid-run
+            </label>
+            <label class="inherit-toggle">
+              <input
+                type="checkbox"
+                checked={configData()?.memory?.write_enabled ?? false}
+                disabled={configData.loading || togglingFlag() === "memory_write_enabled"}
+                onChange={(e) => void toggleMemoryFlag("memory_write_enabled", e.currentTarget.checked)}
+              />
+              Write notes — lets vak save what it learns mid-run, not just what you add here
+            </label>
+            <label class="inherit-toggle">
+              <input
+                type="checkbox"
+                checked={configData()?.memory?.reflection ?? false}
+                disabled={configData.loading || togglingFlag() === "memory_reflection"}
+                onChange={(e) => void toggleMemoryFlag("memory_reflection", e.currentTarget.checked)}
+              />
+              Reflect after each run — a short pass proposing notes/skills from what just happened
+            </label>
+            <label class="inherit-toggle">
+              <input
+                type="checkbox"
+                checked={configData()?.memory?.skill_proposals ?? false}
+                disabled={configData.loading || togglingFlag() === "memory_skill_proposals"}
+                onChange={(e) => void toggleMemoryFlag("memory_skill_proposals", e.currentTarget.checked)}
+              />
+              Propose skills — lets reflection suggest new skills for you to review
+            </label>
           </div>
           <div class="form-row">
             <label>Applies to</label>
