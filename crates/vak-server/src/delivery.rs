@@ -356,12 +356,20 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
             supports_actions: false,
             template: None,
         },
-        // docs/design/34 Phase 3: both take Markdown, differ only in the
-        // per-message cap each API enforces.
-        "discord" | "slack" => DeliveryProfile {
+        "discord" => DeliveryProfile {
             surface: surface.into(),
-            markup: Markup::Markdown,
-            max_chars: Some(if surface == "discord" { 1900 } else { 3900 }),
+            markup: Markup::DiscordMarkdown,
+            max_chars: Some(1900),
+            supports_tables: false,
+            supports_code_blocks: true,
+            supports_links: true,
+            supports_actions: false,
+            template: None,
+        },
+        "slack" => DeliveryProfile {
+            surface: surface.into(),
+            markup: Markup::SlackMrkdwn,
+            max_chars: Some(3900),
             supports_tables: false,
             supports_code_blocks: true,
             supports_links: true,

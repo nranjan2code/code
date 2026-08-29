@@ -9,9 +9,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod client;
+pub mod discord;
 pub mod outbox;
 pub mod presentation;
 pub mod skills;
+pub mod slack;
 pub mod telegram;
 pub mod templates;
 
@@ -127,6 +129,8 @@ pub enum Markup {
     Plain,
     Markdown,
     TelegramHtml,
+    SlackMrkdwn,
+    DiscordMarkdown,
     Json,
 }
 
@@ -581,10 +585,12 @@ pub fn render(job: &DeliveryJob) -> Result<DeliveryPacket, DeliveryError> {
     }
 
     let (rendered, fallback_markdown, actions, coverage) = render_content(job)?;
-    let chunks = if matches!(job.profile.markup, Markup::TelegramHtml) {
-        telegram::split_html_chunks(&rendered, job.profile.max_chars)
-    } else {
-        chunk_text(&rendered, job.profile.max_chars)
+    let chunks = match job.profile.markup {
+        Markup::TelegramHtml => telegram::split_html_chunks(&rendered, job.profile.max_chars),
+        Markup::SlackMrkdwn | Markup::DiscordMarkdown => {
+            chunk_markdown_preserving_fences(&rendered, job.profile.max_chars)
+        }
+        _ => chunk_text(&rendered, job.profile.max_chars),
     };
     let payload = match job.profile.markup {
         Markup::Json => DeliveryPayload::Structured(job.content.clone()),
@@ -732,6 +738,8 @@ fn render_answer(answer: &AnswerDraft, markup: Markup) -> String {
         Markup::Plain => render_plain(answer),
         Markup::Markdown => answer.source_markdown.clone(),
         Markup::TelegramHtml => telegram::markdown_to_html(&answer.source_markdown),
+        Markup::SlackMrkdwn => slack::markdown_to_mrkdwn(&answer.source_markdown),
+        Markup::DiscordMarkdown => discord::markdown_to_discord(&answer.source_markdown),
         Markup::Json => String::new(),
     }
 }
@@ -739,6 +747,8 @@ fn render_answer(answer: &AnswerDraft, markup: Markup) -> String {
 fn render_text(markdown: &str, markup: Markup) -> String {
     match markup {
         Markup::TelegramHtml => telegram::markdown_to_html(markdown),
+        Markup::SlackMrkdwn => slack::markdown_to_mrkdwn(markdown),
+        Markup::DiscordMarkdown => discord::markdown_to_discord(markdown),
         Markup::Plain | Markup::Markdown | Markup::Json => markdown.to_string(),
     }
 }
@@ -973,6 +983,53 @@ fn chunk_text(text: &str, max_chars: Option<usize>) -> Vec<String> {
         while start < chars.len() && chars[start] == '\n' {
             start += 1;
         }
+    }
+    chunks
+}
+
+/// Chunk a Slack/Discord `mrkdwn`-ish message on line boundaries like
+/// [`chunk_text`], but close and reopen a fenced code block (```` ``` ````)
+/// at any boundary that falls inside one, so a split never leaves a
+/// dangling fence that swallows the rest of the message as code.
+fn chunk_markdown_preserving_fences(text: &str, max_chars: Option<usize>) -> Vec<String> {
+    let Some(max_chars) = max_chars else {
+        return vec![text.to_string()];
+    };
+    if text.chars().count() <= max_chars {
+        return vec![text.to_string()];
+    }
+
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut in_fence = false;
+    let mut fence_header = String::new();
+
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_start().trim_end_matches('\n');
+        let is_fence_marker = trimmed.starts_with("```");
+
+        let reserve = if in_fence { 4 } else { 0 }; // room for a closing "```\n"
+        if !current.is_empty() && current.chars().count() + line.chars().count() + reserve > max_chars
+        {
+            if in_fence {
+                current.push_str("```\n");
+            }
+            chunks.push(std::mem::take(&mut current));
+            if in_fence {
+                current.push_str(&fence_header);
+                current.push('\n');
+            }
+        }
+        current.push_str(line);
+        if is_fence_marker {
+            if !in_fence {
+                fence_header = trimmed.to_string();
+            }
+            in_fence = !in_fence;
+        }
+    }
+    if !current.trim().is_empty() {
+        chunks.push(current);
     }
     chunks
 }
