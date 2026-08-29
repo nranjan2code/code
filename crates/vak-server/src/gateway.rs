@@ -867,6 +867,19 @@ impl GatewayState {
                             ..legacy
                         },
                     );
+                    // The legacy row's *allowlist entry* stays — a third
+                    // bot arriving later needs it as the ancestor to
+                    // inherit from too, same as this one just did. But its
+                    // *binding/session* is now genuinely dead: every future
+                    // message for this physical chat will always carry a
+                    // bot id and therefore always route through a
+                    // bot-scoped key, never this one again. Left bound, it
+                    // would sit forever in the Chats list looking like a
+                    // confusing duplicate of the bot-scoped row — the exact
+                    // bug a live operator hit. `unbind` locks
+                    // `self.bindings`, a different mutex than the `map`
+                    // guard held here, so no deadlock.
+                    self.unbind(core, &legacy_key);
                     mutated = true;
                     AllowlistDecision::Allowed
                 } else {
@@ -2663,6 +2676,17 @@ mod tests {
         let legacy = gw.allowlist_get("telegram:8846301562").unwrap();
         assert_eq!(legacy.status, AllowlistStatus::Allowed);
 
+        // Seed a stale binding at the legacy key, as if a session had
+        // actually been dispatched there before bots existed — this is
+        // what must go away once a bot-scoped sibling takes over, so the
+        // Chats list doesn't show a dead duplicate.
+        gw.bind(
+            &core,
+            "telegram:8846301562".into(),
+            "fake-session".into(),
+            "rev".into(),
+        );
+
         let decision =
             gw.allowlist_resolve_inbound(&core, "telegram:8846301562:VakBot", "hi", Some("VakBot"));
         assert!(matches!(decision, AllowlistDecision::Allowed));
@@ -2670,11 +2694,20 @@ mod tests {
         assert_eq!(inherited.status, AllowlistStatus::Allowed);
         assert_eq!(inherited.bot_id.as_deref(), Some("VakBot"));
         assert_eq!(inherited.workspace, legacy.workspace);
-        // The legacy row itself is untouched — it stays around as the
-        // ancestor a third bot could still inherit from later.
+        // The legacy row's *allowlist entry* is untouched — it stays
+        // around as the ancestor a third bot could still inherit from
+        // later.
         assert_eq!(
             gw.allowlist_get("telegram:8846301562").unwrap().status,
             AllowlistStatus::Allowed
+        );
+        // Its *binding* is gone, though — that's the actual duplicate-row
+        // fix: nothing will ever dispatch to the legacy key again.
+        assert!(
+            gw.bindings_snapshot()
+                .iter()
+                .all(|(k, _)| k != "telegram:8846301562"),
+            "legacy binding must be unbound once a bot-scoped sibling exists"
         );
 
         // A second, independent bot on the same physical chat inherits
