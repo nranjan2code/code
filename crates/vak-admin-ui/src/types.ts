@@ -291,16 +291,38 @@ export interface DiscoveredModelsResponse {
   error?: string;
 }
 
+/// Matches `finops_status`'s actual JSON exactly (`vak-server/src/lib.rs`)
+/// — this used to name fields (`total_spend_usd`, `budget_admission`, …)
+/// the backend never sent, so every reader of it always saw `undefined`.
+export interface FinOpsRollupEntry {
+  name: string;
+  usd: number;
+  calls: number;
+}
+
+export interface FinOpsDailyPoint {
+  date: string;
+  usd: number;
+}
+
+export interface FinOpsAlertRow {
+  kind: string;
+  ts: string;
+  level: "eighty" | "full";
+  day_total_usd: number;
+  session_id: string;
+}
+
 export interface FinOpsStatus {
-  total_spend_usd?: number;
-  total_cost?: number;
-  total_input_tokens?: number;
-  total_output_tokens?: number;
-  budget_cap_usd?: number | null;
-  budget_admission?: string;
-  budget_exhausted?: boolean;
-  alert_rows?: Array<{ ts: string; level: string; message: string }>;
-  currency?: string;
+  day_usd: number;
+  run_cap_usd: number | null;
+  day_cap_usd: number | null;
+  unknown_rows: number;
+  total_rows: number;
+  by_provider: FinOpsRollupEntry[];
+  by_model: FinOpsRollupEntry[];
+  daily: FinOpsDailyPoint[];
+  recent_alerts: FinOpsAlertRow[];
 }
 
 export interface OpsStatus {

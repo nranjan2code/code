@@ -451,7 +451,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/ops/status", get(ops_status))
         .route("/ops/{service}/{action}", post(ops_action))
         .route("/ops/diagnostics", get(ops_diagnostics))
-        .route("/finops", get(finops_status))
+        .route("/finops", get(finops_status).patch(patch_finops))
         .route("/memory", get(list_memory).post(append_memory))
         .route("/memory/cleanup", post(cleanup_memory))
         .route(
@@ -545,35 +545,33 @@ async fn ops_diagnostics(State(state): State<AppState>) -> Json<serde_json::Valu
     }))
 }
 
-/// FinOps projection from the append-only cost ledger. Unknown-priced rows are
-/// retained as `unknown_rows`; they are never reported as zero spend.
+/// Trailing window for the admin console's spend trend chart — long enough
+/// to show a real shape, short enough that a fixed-length zero-filled
+/// series is cheap to compute on every request.
+const FINOPS_TREND_DAYS: u32 = 14;
+
+/// FinOps projection from the append-only cost ledger. Unknown-priced rows
+/// are retained as `unknown_rows`; they are never reported as zero spend.
+/// Caps are read through the live-effective accessors, not `Core::config()`
+/// directly, so a PATCH from `patch_finops` (below) is reflected
+/// immediately rather than only after a restart.
 async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let cfg = &state.core.config().finops;
-    let path = state.core.sessions_home().join("cost-log.jsonl");
-    let mut rows = Vec::new();
-    if let Ok(body) = std::fs::read_to_string(path) {
-        for line in body.lines() {
-            if let Ok(row) = serde_json::from_str::<vak_core::finops::CostRow>(line) {
-                rows.push(row);
-            }
-        }
-    }
+    let ledger = vak_core::finops::FinOpsLedger::new(&state.core.sessions_home());
+    let rows = ledger.all_rows();
     let now = chrono::Utc::now();
     let day_start = now
         .date_naive()
         .and_hms_opt(0, 0, 0)
         .and_then(|t| t.and_local_timezone(chrono::Utc).single());
-    let day_rows = rows
-        .iter()
-        .filter(|r| day_start.is_some_and(|start| r.ts >= start));
-    let day_usd: f64 = day_rows.clone().filter_map(|r| r.usd).sum();
-    let unknown_rows = day_rows.filter(|r| r.usd.is_none()).count();
-    let mut by_provider = std::collections::BTreeMap::<String, (f64, u64)>::new();
-    let mut by_model = std::collections::BTreeMap::<String, (f64, u64)>::new();
-    for row in rows
+    let day_rows: Vec<&vak_core::finops::CostRow> = rows
         .iter()
         .filter(|r| day_start.is_some_and(|start| r.ts >= start))
-    {
+        .collect();
+    let day_usd: f64 = day_rows.iter().filter_map(|r| r.usd).sum();
+    let unknown_rows = day_rows.iter().filter(|r| r.usd.is_none()).count();
+    let mut by_provider = std::collections::BTreeMap::<String, (f64, u64)>::new();
+    let mut by_model = std::collections::BTreeMap::<String, (f64, u64)>::new();
+    for row in &day_rows {
         let usd = row.usd.unwrap_or(0.0);
         let p = by_provider.entry(row.provider.clone()).or_default();
         p.0 += usd;
@@ -586,15 +584,99 @@ async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value>
         |source: std::collections::BTreeMap<String, (f64, u64)>| -> Vec<serde_json::Value> {
             source.into_iter().map(|(name, (usd, calls))| serde_json::json!({ "name": name, "usd": usd, "calls": calls })).collect()
         };
+    let daily: Vec<serde_json::Value> = ledger
+        .daily_totals(now, FINOPS_TREND_DAYS)
+        .into_iter()
+        .map(|(date, usd)| serde_json::json!({ "date": date.to_string(), "usd": usd }))
+        .collect();
     Json(serde_json::json!({
         "day_usd": day_usd,
-        "run_cap_usd": cfg.max_run_usd,
-        "day_cap_usd": cfg.max_day_usd,
+        "run_cap_usd": state.core.effective_finops_max_run_usd(),
+        "day_cap_usd": state.core.effective_finops_max_day_usd(),
         "unknown_rows": unknown_rows,
         "total_rows": rows.len(),
         "by_provider": rollup(by_provider),
         "by_model": rollup(by_model),
+        "daily": daily,
+        "recent_alerts": recent_budget_alerts(&state.core.sessions_home(), 10),
     }))
+}
+
+/// Most recent budget-alert rows, newest first, tolerant of corrupt or
+/// foreign lines exactly like [`vak_core::finops::last_alert`] is.
+fn recent_budget_alerts(home: &std::path::Path, limit: usize) -> Vec<serde_json::Value> {
+    let Ok(body) = std::fs::read_to_string(home.join("budget-alerts.jsonl")) else {
+        return Vec::new();
+    };
+    let mut rows: Vec<serde_json::Value> = body
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|row| row.get("kind").and_then(|k| k.as_str()) == Some("budget_alert"))
+        .collect();
+    rows.reverse();
+    rows.truncate(limit);
+    rows
+}
+
+#[derive(serde::Deserialize, Default)]
+struct FinopsPatch {
+    /// Absent = leave alone; explicit `null` = clear the cap; a number =
+    /// set it. Same [`gateway::deserialize_present`] shape as
+    /// `UpdateBotBody`'s fields, for the same reason: a plain
+    /// `Option<Option<f64>>` can't tell "not sent" from "sent as null"
+    /// apart otherwise.
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
+    max_run_usd: Option<Option<f64>>,
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
+    max_day_usd: Option<Option<f64>>,
+}
+
+/// `PATCH /finops` — set or clear the run/day budget caps, applied live
+/// (no restart) and persisted to `.vak/config.toml`'s `[finops]` table.
+async fn patch_finops(
+    State(state): State<AppState>,
+    Json(body): Json<FinopsPatch>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if body
+        .max_run_usd
+        .flatten()
+        .is_some_and(|v| !v.is_finite() || v < 0.0)
+        || body
+            .max_day_usd
+            .flatten()
+            .is_some_and(|v| !v.is_finite() || v < 0.0)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "a budget cap must be a non-negative number" })),
+        )
+            .into_response();
+    }
+    if body.max_run_usd.is_none() && body.max_day_usd.is_none() {
+        return StatusCode::OK.into_response();
+    }
+    if vak_config::persist_project_finops_caps(state.core.cwd(), body.max_run_usd, body.max_day_usd)
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    state
+        .core
+        .apply_persisted_finops_caps(body.max_run_usd, body.max_day_usd);
+    vak_core::security_events::record(
+        &state.core.sessions_home(),
+        vak_core::security_events::EventKind::ConfigChange,
+        "finops_caps_patched",
+        &format!(
+            "run={:?} day={:?}",
+            state.core.effective_finops_max_run_usd(),
+            state.core.effective_finops_max_day_usd()
+        ),
+        None,
+    );
+    state.hub.emit_config_changed("finops_caps_patched", "");
+    StatusCode::OK.into_response()
 }
 
 #[derive(serde::Deserialize)]
@@ -6341,7 +6423,7 @@ pub fn start_scheduler(state: &AppState) {
 /// targets it falls back to the log surface so an approaching cap is never
 /// discovered at denial time.
 pub async fn check_budget_alert(state: &AppState, session_id: &str) {
-    let Some(cap) = state.core.config().finops.max_day_usd else {
+    let Some(cap) = state.core.effective_finops_max_day_usd() else {
         return;
     };
     // Read through the EFFECTIVE sessions home (an embedded server may
@@ -6895,5 +6977,70 @@ mod configuration_control_tests {
             !fresh.effective_subagents(),
             "must be persisted to disk too"
         );
+    }
+
+    /// `PATCH /finops` sets a cap live and persists it; an explicit `null`
+    /// clears a previously-set cap rather than being indistinguishable
+    /// from the field being absent (the exact bug `deserialize_present`
+    /// exists to prevent, exercised here for a fresh field).
+    #[tokio::test]
+    async fn patch_finops_sets_and_clears_caps_live_and_persisted() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core.clone());
+        assert_eq!(core.effective_finops_max_run_usd(), None);
+
+        let status = patch_finops(
+            State(state.clone()),
+            Json(FinopsPatch {
+                max_run_usd: Some(Some(5.0)),
+                max_day_usd: None,
+            }),
+        )
+        .await;
+        assert_eq!(status.status(), StatusCode::OK);
+        assert_eq!(core.effective_finops_max_run_usd(), Some(5.0));
+
+        let fresh = Core::new(dir.path().to_path_buf()).unwrap();
+        fresh.set_sessions_home(dir.path().join("home"));
+        assert_eq!(
+            fresh.effective_finops_max_run_usd(),
+            Some(5.0),
+            "must be persisted to disk too"
+        );
+
+        // Explicit null clears it back to "no cap".
+        let status = patch_finops(
+            State(state.clone()),
+            Json(FinopsPatch {
+                max_run_usd: Some(None),
+                max_day_usd: None,
+            }),
+        )
+        .await;
+        assert_eq!(status.status(), StatusCode::OK);
+        assert_eq!(
+            core.effective_finops_max_run_usd(),
+            None,
+            "explicit null must clear the cap, not be a no-op"
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_finops_rejects_negative_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core.clone());
+        let status = patch_finops(
+            State(state),
+            Json(FinopsPatch {
+                max_run_usd: Some(Some(-1.0)),
+                max_day_usd: None,
+            }),
+        )
+        .await;
+        assert_eq!(status.status(), StatusCode::BAD_REQUEST);
     }
 }

@@ -359,6 +359,14 @@ export const api = {
   finops: (): Promise<FinOpsStatus> =>
     fetch("/finops").then((r) => handle(r)),
 
+  /** Absent = leave alone, `null` = clear the cap, a number = set it. */
+  patchFinops: (patch: { max_run_usd?: number | null; max_day_usd?: number | null }): Promise<void> =>
+    fetch("/finops", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }).then((r) => void handle(r)),
+
   opsStatus: (): Promise<OpsStatus> =>
     fetch("/ops/status").then((r) => handle(r)),
 

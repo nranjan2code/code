@@ -88,6 +88,44 @@ impl FinOpsLedger {
             None => 0.0,
         }
     }
+
+    /// Every row from the ledger, oldest first, for callers that need to
+    /// bucket or roll them up themselves (admin console trend chart,
+    /// provider/model breakdowns) rather than a single aggregate. Corrupt
+    /// lines are skipped, same tolerance `total_usd_since` already has.
+    pub fn all_rows(&self) -> Vec<CostRow> {
+        let Ok(f) = std::fs::File::open(&self.path) else {
+            return Vec::new();
+        };
+        BufReader::new(f)
+            .lines()
+            .map_while(Result::ok)
+            .filter_map(|line| serde_json::from_str::<CostRow>(&line).ok())
+            .collect()
+    }
+
+    /// One USD total per UTC calendar day, oldest first, for the trailing
+    /// `days` days including today — a fixed-length series so a chart never
+    /// has to guess whether a missing day means "no spend" or "no data
+    /// yet"; both render as `0.0`.
+    pub fn daily_totals(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+        days: u32,
+    ) -> Vec<(chrono::NaiveDate, f64)> {
+        let today = now.date_naive();
+        let mut totals: BTreeMap<chrono::NaiveDate, f64> = BTreeMap::new();
+        for row in self.all_rows() {
+            if let Some(usd) = row.usd {
+                *totals.entry(row.ts.date_naive()).or_insert(0.0) += usd;
+            }
+        }
+        (0..days)
+            .rev()
+            .filter_map(|offset| today.checked_sub_signed(chrono::Duration::days(offset as i64)))
+            .map(|day| (day, totals.get(&day).copied().unwrap_or(0.0)))
+            .collect()
+    }
 }
 
 /// Core-side SpendGate: run/day caps + pricing-driven estimates.
@@ -396,6 +434,48 @@ mod tests {
             })
             .unwrap();
         assert_eq!(ledger.day_total_usd(chrono::Utc::now()), 0.0);
+    }
+
+    fn row_on(day: chrono::NaiveDate, usd: Option<f64>) -> CostRow {
+        CostRow {
+            ts: day.and_hms_opt(12, 0, 0).unwrap().and_utc(),
+            model: "m".into(),
+            provider: "p".into(),
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_read_input_tokens: None,
+            usd,
+            source: "estimated".into(),
+            session_id: "s".into(),
+        }
+    }
+
+    /// The chart-feeding series: always exactly `days` entries, oldest
+    /// first ending at today, zero-filled for a day with no rows — a
+    /// sparse map would leave a chart guessing which days are "no spend"
+    /// versus simply absent.
+    #[test]
+    fn daily_totals_is_fixed_length_and_zero_fills_gaps() {
+        let dir = tempdir().unwrap();
+        let ledger = FinOpsLedger::new(dir.path());
+        let now = chrono::Utc::now();
+        let today = now.date_naive();
+        let two_days_ago = today - chrono::Duration::days(2);
+        ledger.append(&row_on(today, Some(3.0))).unwrap();
+        ledger.append(&row_on(today, Some(1.5))).unwrap();
+        ledger.append(&row_on(two_days_ago, Some(2.0))).unwrap();
+        // Unpriced rows must not silently count as zero spend where a
+        // priced row exists, nor crash the bucketing.
+        ledger.append(&row_on(today, None)).unwrap();
+
+        let series = ledger.daily_totals(now, 3);
+        assert_eq!(series.len(), 3);
+        assert_eq!(series[2].0, today);
+        assert!((series[2].1 - 4.5).abs() < 1e-9, "{:?}", series[2]);
+        assert_eq!(series[1].0, today - chrono::Duration::days(1));
+        assert_eq!(series[1].1, 0.0, "a day with no rows must zero-fill");
+        assert_eq!(series[0].0, two_days_ago);
+        assert!((series[0].1 - 2.0).abs() < 1e-9);
     }
 
     #[test]

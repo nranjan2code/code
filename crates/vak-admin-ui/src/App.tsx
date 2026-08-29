@@ -11,7 +11,8 @@ import {
   route, sessionsVersion, setAuthed, statsVersion, toasts,
 } from "./store";
 import type {
-  AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ChatSurfaceStatus, ConfigInfo, CorePoolEntry, DiscoveredModelsResponse, FinOpsStatus, HookConfig,
+  AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ChatSurfaceStatus, ConfigInfo, CorePoolEntry, DiscoveredModelsResponse,
+  FinOpsStatus, FinOpsDailyPoint, FinOpsRollupEntry, HookConfig,
   GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval,
   PermissionMode, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
@@ -65,6 +66,7 @@ const ICONS = {
   search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35",
   inbox: "M22 12h-6l-2 3h-4l-2-3H2M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z",
   security: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
+  finops: "M12 1v22 M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6",
   settings: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
 };
 
@@ -363,8 +365,10 @@ function Overview() {
 
   const feedItems = createMemo(() => [...feed()].reverse());
 
-  const spendUSD = createMemo(() => finops()?.total_spend_usd ?? finops()?.total_cost ?? 0);
-  const capUSD = createMemo(() => finops()?.budget_cap_usd ?? null);
+  // Today's spend against the day cap — the run cap is a per-turn ceiling,
+  // not a running total, so it has no meaningful "progress" to show here.
+  const spendUSD = createMemo(() => finops()?.day_usd ?? 0);
+  const capUSD = createMemo(() => finops()?.day_cap_usd ?? null);
   const spendProgress = createMemo(() => {
     const cap = capUSD();
     return cap && cap > 0 ? (spendUSD() / cap) * 100 : undefined;
@@ -434,10 +438,10 @@ function Overview() {
           }
         />
         <StatCard
-          label="Spent so far"
+          label="Spent today"
           value={`$${spendUSD().toFixed(4)}`}
           progress={spendProgress()}
-          sub={capUSD() ? `of your $${capUSD()!.toFixed(2)} budget` : "No budget set"}
+          sub={capUSD() ? `of your $${capUSD()!.toFixed(2)} daily budget` : "No daily budget set"}
           tone={spendProgress() && spendProgress()! > 90 ? "warn" : undefined}
         />
         <StatCard
@@ -2906,6 +2910,249 @@ function MemoryView() {
           </div>
         </section>
       </div>
+    </div>
+  );
+}
+
+// ---- FinOps -----------------------------------------------------------------
+
+/// A self-contained SVG bar chart for the 14-day spend trend — no charting
+/// dependency, since this is one series with no zoom/tooltip requirement.
+/// Every bar is drawn even at zero spend (a thin baseline tick), so a quiet
+/// day reads as "no spend", never as "no data".
+function SpendTrendChart(props: { points: FinOpsDailyPoint[]; capUsd: number | null }) {
+  const width = 640;
+  const height = 160;
+  const padding = { top: 10, right: 10, bottom: 24, left: 44 };
+  const plotW = width - padding.left - padding.right;
+  const plotH = height - padding.top - padding.bottom;
+
+  const maxUsd = createMemo(() => {
+    const max = Math.max(...props.points.map((p) => p.usd), props.capUsd ?? 0);
+    return max > 0 ? max * 1.15 : 1;
+  });
+  const barW = createMemo(() => (props.points.length ? plotW / props.points.length : 0));
+  const yFor = (usd: number) => padding.top + plotH * (1 - usd / maxUsd());
+  const capY = createMemo(() => (props.capUsd != null ? yFor(props.capUsd) : null));
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="Daily spend, last 14 days">
+      {/* Baseline */}
+      <line
+        x1={padding.left} y1={padding.top + plotH} x2={width - padding.right} y2={padding.top + plotH}
+        stroke="var(--border)" stroke-width="1"
+      />
+      <Show when={capY() != null}>
+        <line
+          x1={padding.left} y1={capY()!} x2={width - padding.right} y2={capY()!}
+          stroke="var(--accent)" stroke-width="1" stroke-dasharray="4 3" opacity="0.6"
+        />
+        <text x={width - padding.right} y={capY()! - 4} text-anchor="end" fill="var(--accent)" font-size="10">
+          cap ${props.capUsd!.toFixed(2)}
+        </text>
+      </Show>
+      <For each={props.points}>
+        {(p, i) => {
+          const x = padding.left + i() * barW() + barW() * 0.15;
+          const w = barW() * 0.7;
+          const y = yFor(p.usd);
+          const h = Math.max(padding.top + plotH - y, 1.5);
+          const label = p.date.slice(5); // MM-DD
+          return (
+            <g>
+              <title>{`${p.date}: $${p.usd.toFixed(4)}`}</title>
+              <rect x={x} y={y} width={w} height={h} rx="1.5" fill="var(--accent)" opacity={p.usd > 0 ? 0.85 : 0.25} />
+              <Show when={i() % 2 === 0 || props.points.length <= 8}>
+                <text
+                  x={x + w / 2}
+                  y={height - 6}
+                  text-anchor="middle"
+                  fill="var(--faint)"
+                  font-size="9"
+                >
+                  {label}
+                </text>
+              </Show>
+            </g>
+          );
+        }}
+      </For>
+    </svg>
+  );
+}
+
+function FinOpsRollupTable(props: { title: string; rows: FinOpsRollupEntry[] }) {
+  const total = createMemo(() => props.rows.reduce((a, r) => a + r.usd, 0));
+  return (
+    <div>
+      <span class="eyebrow">{props.title}</span>
+      <Show when={props.rows.length > 0} fallback={<p class="dim">No dispatches today.</p>}>
+        <table class="table">
+          <thead><tr><th>{props.title === "By provider" ? "provider" : "model"}</th><th>calls</th><th>usd</th><th>share</th></tr></thead>
+          <tbody>
+            <For each={[...props.rows].sort((a, b) => b.usd - a.usd)}>
+              {(r) => (
+                <tr>
+                  <td class="mono">{r.name || "(unknown)"}</td>
+                  <td>{r.calls}</td>
+                  <td class="mono">${r.usd.toFixed(4)}</td>
+                  <td class="dim">{total() > 0 ? `${((r.usd / total()) * 100).toFixed(0)}%` : "—"}</td>
+                </tr>
+              )}
+            </For>
+          </tbody>
+        </table>
+      </Show>
+    </div>
+  );
+}
+
+function FinOpsView() {
+  const [data, { refetch }] = createResource(() => api.finops());
+  const [runCapInput, setRunCapInput] = createSignal("");
+  const [dayCapInput, setDayCapInput] = createSignal("");
+  const [savingCaps, setSavingCaps] = createSignal(false);
+
+  let initialized = false;
+  createEffect(() => {
+    const d = data();
+    if (d && !initialized) {
+      initialized = true;
+      setRunCapInput(d.run_cap_usd != null ? String(d.run_cap_usd) : "");
+      setDayCapInput(d.day_cap_usd != null ? String(d.day_cap_usd) : "");
+    }
+  });
+
+  const parseCap = (raw: string): number | null | undefined => {
+    const trimmed = raw.trim();
+    if (trimmed === "") return null; // explicit clear
+    const n = Number(trimmed);
+    return Number.isFinite(n) && n >= 0 ? n : undefined; // undefined = invalid, don't send
+  };
+
+  const saveCaps = async () => {
+    const run = parseCap(runCapInput());
+    const day = parseCap(dayCapInput());
+    if (run === undefined || day === undefined) {
+      pushToast("alert", "A budget cap must be a non-negative number, or blank to clear it.");
+      return;
+    }
+    setSavingCaps(true);
+    try {
+      await api.patchFinops({ max_run_usd: run, max_day_usd: day });
+      pushToast("info", "Budget caps saved");
+      await refetch();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setSavingCaps(false);
+    }
+  };
+
+  const dayProgress = createMemo(() => {
+    const d = data();
+    if (!d || !d.day_cap_usd || d.day_cap_usd <= 0) return null;
+    return Math.min(100, (d.day_usd / d.day_cap_usd) * 100);
+  });
+
+  return (
+    <div class="view">
+      <PageHeader
+        title="FinOps"
+        description="What every dispatch is estimated to cost, where it goes, and the caps that keep it in check."
+      />
+      <Show when={!data.loading} fallback={<div class="cred-list"><span class="skel skel-block" /><span class="skel skel-block" /></div>}>
+        <Show when={!data.error} fallback={<LoadError message={`${data.error}`} onRetry={() => refetch()} />}>
+          <div class="stats-grid" style="margin-bottom:14px">
+            <StatCard
+              label="Spent today"
+              value={`$${(data()?.day_usd ?? 0).toFixed(4)}`}
+              progress={dayProgress() ?? undefined}
+              sub={data()?.day_cap_usd ? `of $${data()!.day_cap_usd!.toFixed(2)} daily budget` : "No daily budget set"}
+              tone={dayProgress() != null && dayProgress()! > 90 ? "warn" : undefined}
+            />
+            <StatCard
+              label="Run cap"
+              value={data()?.run_cap_usd != null ? `$${data()!.run_cap_usd!.toFixed(2)}` : "No limit"}
+              sub="Ceiling checked before every dispatch"
+            />
+            <StatCard
+              label="Dispatches today"
+              value={(data()?.by_provider ?? []).reduce((a, p) => a + p.calls, 0)}
+              sub={`${data()?.total_rows ?? 0} total in the ledger`}
+            />
+            <StatCard
+              label="Unpriced dispatches"
+              value={data()?.unknown_rows ?? 0}
+              sub="Model has no known price — cost is unknown, not zero"
+              tone={(data()?.unknown_rows ?? 0) > 0 ? "warn" : undefined}
+            />
+          </div>
+
+          <section class="panel" style="margin-bottom:14px">
+            <div class="panel-title-row">
+              <div>
+                <h2>Spend, last 14 days</h2>
+                <p class="dim">Estimated USD per day from the cost ledger. Every dollar figure here is an estimate — providers don't return real cost.</p>
+              </div>
+            </div>
+            <SpendTrendChart points={data()?.daily ?? []} capUsd={data()?.day_cap_usd ?? null} />
+          </section>
+
+          <div class="two-col">
+            <section class="panel">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Budget caps</h2>
+                  <p class="dim">Checked before every dispatch. Leave a field blank to remove that cap.</p>
+                </div>
+              </div>
+              <div class="form-row">
+                <label>Per-run cap (USD)</label>
+                <input class="mono" placeholder="No limit" value={runCapInput()} onInput={(e) => setRunCapInput(e.currentTarget.value)} />
+              </div>
+              <div class="form-row">
+                <label>Per-day cap (USD)</label>
+                <input class="mono" placeholder="No limit" value={dayCapInput()} onInput={(e) => setDayCapInput(e.currentTarget.value)} />
+              </div>
+              <div class="row-gap" style="margin-top:10px">
+                <button disabled={savingCaps()} onClick={() => void saveCaps()}>
+                  {savingCaps() ? "Saving…" : "Save caps"}
+                </button>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Recent budget alerts</h2>
+                  <p class="dim">Fired once per threshold per day — 80% and 100% of the daily cap.</p>
+                </div>
+              </div>
+              <Show when={(data()?.recent_alerts ?? []).length > 0} fallback={<p class="dim">No alerts yet.</p>}>
+                <ul class="hit-list">
+                  <For each={data()?.recent_alerts ?? []}>
+                    {(a) => (
+                      <li class="inbox-item">
+                        <div class="hit-meta">
+                          <span class={`chip chip-tone-${a.level === "full" ? "danger" : "warning"}`}>{a.level === "full" ? "100%" : "80%"}</span>
+                          <span class="when">{timeAgo(a.ts)}</span>
+                        </div>
+                        <div class="hit-snippet">Day spend was ${a.day_total_usd.toFixed(2)} · session {shortId(a.session_id)}</div>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </Show>
+            </section>
+          </div>
+
+          <div class="two-col" style="margin-top:14px">
+            <section class="panel"><FinOpsRollupTable title="By provider" rows={data()?.by_provider ?? []} /></section>
+            <section class="panel"><FinOpsRollupTable title="By model" rows={data()?.by_model ?? []} /></section>
+          </div>
+        </Show>
+      </Show>
     </div>
   );
 }
@@ -5504,6 +5751,7 @@ const NAV: NavItem[] = [
   { hash: "#/feeds", label: "Feeds", icon: ICONS.feeds },
   { hash: "#/search", label: "Search", icon: ICONS.search },
   { hash: "#/inbox", label: "Inbox", icon: ICONS.inbox, badge: () => unread().toString() || "" },
+  { hash: "#/finops", label: "FinOps", icon: ICONS.finops },
   { hash: "#/security", label: "Security", icon: ICONS.security },
   { hash: "#/settings", label: "Settings", icon: ICONS.settings },
 ];
@@ -6016,6 +6264,7 @@ export default function App() {
               <Match when={currentRoute() === "#/feeds"}><FeedsSection /></Match>
               <Match when={currentRoute() === "#/search"}><SearchView /></Match>
               <Match when={currentRoute() === "#/inbox"}><Inbox /></Match>
+              <Match when={currentRoute() === "#/finops"}><FinOpsView /></Match>
               <Match when={currentRoute() === "#/security"}><Security /></Match>
               <Match when={currentRoute() === "#/settings"}><Settings /></Match>
             </Switch>

@@ -137,6 +137,14 @@ struct CoreInner {
     memory_skill_proposals_override: std::sync::Mutex<Option<bool>>,
     /// Same no-pin, always-take-latest shape as the memory overrides above.
     subagents_override: std::sync::Mutex<Option<bool>>,
+    /// Live overrides for `[finops]` budget caps (docs/design/27 Phase D).
+    /// `None` = follow the persisted value; `Some(None)` = explicitly
+    /// cleared (no cap); `Some(Some(v))` = pinned to `v`. Distinct from
+    /// the other overrides here because "no cap" is a real, settable
+    /// value, not merely "unset" — a plain `Mutex<Option<f64>>` couldn't
+    /// tell "never overridden" from "overridden to no cap" apart.
+    finops_max_run_usd_override: std::sync::Mutex<Option<Option<f64>>>,
+    finops_max_day_usd_override: std::sync::Mutex<Option<Option<f64>>>,
     sandbox_backend_override: std::sync::Mutex<Option<String>>,
     provider_instance: std::sync::Mutex<Option<Arc<dyn Provider>>>,
     sessions_home_override: std::sync::Mutex<Option<PathBuf>>,
@@ -320,6 +328,8 @@ impl Core {
                 memory_reflection_override: std::sync::Mutex::new(None),
                 memory_skill_proposals_override: std::sync::Mutex::new(None),
                 subagents_override: std::sync::Mutex::new(None),
+                finops_max_run_usd_override: std::sync::Mutex::new(None),
+                finops_max_day_usd_override: std::sync::Mutex::new(None),
                 provider_instance: std::sync::Mutex::new(None),
                 sessions_home_override: std::sync::Mutex::new(None),
                 breaker,
@@ -856,6 +866,48 @@ impl Core {
         Self::write_override(&self.inner.subagents_override, Some(enabled));
     }
 
+    /// The `[finops]` config, with any live cap override substituted in —
+    /// pass this to [`finops::CoreSpendGate::new`] instead of
+    /// `self.config().finops` directly, or a PATCH-set cap would never
+    /// actually bind.
+    pub fn effective_finops(&self) -> vak_config::FinopsResolved {
+        let mut finops = self.inner.config.finops.clone();
+        if let Some(run) = Self::read_override(&self.inner.finops_max_run_usd_override) {
+            finops.max_run_usd = run;
+        }
+        if let Some(day) = Self::read_override(&self.inner.finops_max_day_usd_override) {
+            finops.max_day_usd = day;
+        }
+        finops
+    }
+
+    pub fn effective_finops_max_run_usd(&self) -> Option<f64> {
+        Self::read_override(&self.inner.finops_max_run_usd_override)
+            .unwrap_or(self.inner.config.finops.max_run_usd)
+    }
+
+    pub fn effective_finops_max_day_usd(&self) -> Option<f64> {
+        Self::read_override(&self.inner.finops_max_day_usd_override)
+            .unwrap_or(self.inner.config.finops.max_day_usd)
+    }
+
+    /// `None` for either cap leaves it at its current effective value —
+    /// same "absent means don't touch" convention `apply_persisted_memory`
+    /// uses, except here the value being set/kept is itself an
+    /// `Option<f64>` (a cap can legitimately be cleared to "none").
+    pub fn apply_persisted_finops_caps(
+        &self,
+        max_run_usd: Option<Option<f64>>,
+        max_day_usd: Option<Option<f64>>,
+    ) {
+        if let Some(run) = max_run_usd {
+            Self::write_override(&self.inner.finops_max_run_usd_override, Some(run));
+        }
+        if let Some(day) = max_day_usd {
+            Self::write_override(&self.inner.finops_max_day_usd_override, Some(day));
+        }
+    }
+
     /// Refresh every non-security persisted preference. Permission mode is
     /// returned to the server control plane so it can revoke in-flight
     /// capabilities before applying a changed value.
@@ -903,6 +955,10 @@ impl Core {
             config.memory.skill_proposals,
         );
         self.apply_persisted_subagents(config.subagents);
+        self.apply_persisted_finops_caps(
+            Some(config.finops.max_run_usd),
+            Some(config.finops.max_day_usd),
+        );
         Ok(config.permission_mode)
     }
 
@@ -1739,11 +1795,11 @@ impl Core {
         cfg.approver = approver.clone();
         // Pre-dispatch budget admission (docs/design/27 Phase D): active
         // whenever any finops knob is configured.
-        let f = &self.inner.config.finops;
+        let f = self.effective_finops();
         if f.max_run_usd.is_some() || f.max_day_usd.is_some() || !f.price_overrides.is_empty() {
             cfg.spend_gate = Some(Arc::new(finops::CoreSpendGate::new(
                 &self.inner.sessions_home,
-                f,
+                &f,
             )));
 
             // MEA substrate (Phase H): auditor sees the workspace delta between
@@ -2557,9 +2613,9 @@ impl Core {
 
         // Budget admission before any dispatch — the same CoreSpendGate
         // path that admits run turns, so caps bind identically here.
-        let f = &self.inner.config.finops;
+        let f = self.effective_finops();
         if f.max_run_usd.is_some() || f.max_day_usd.is_some() || !f.price_overrides.is_empty() {
-            let gate = finops::CoreSpendGate::new(&self.sessions_home(), f);
+            let gate = finops::CoreSpendGate::new(&self.sessions_home(), &f);
             let probe = vak_llm::Message {
                 role: vak_llm::Role::User,
                 content: vec![vak_llm::ContentBlock::text(tail.clone())],

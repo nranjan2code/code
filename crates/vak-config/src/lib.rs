@@ -1255,6 +1255,110 @@ fn persist_subagents_at(path: PathBuf, enabled: bool) -> Result<(), ConfigError>
     std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
 }
 
+/// Persist `[finops]` budget caps for the current project. `None` leaves
+/// that cap alone; `Some(None)` clears it (removes the key, so it reads
+/// back as "no cap" rather than as an explicit zero); `Some(Some(v))` sets
+/// it. Mirrors [`persist_project_preferences`]'s atomic-write shape.
+pub fn persist_project_finops_caps(
+    cwd: &Path,
+    max_run_usd: Option<Option<f64>>,
+    max_day_usd: Option<Option<f64>>,
+) -> Result<(), ConfigError> {
+    persist_finops_caps_at(project_path(cwd), max_run_usd, max_day_usd)
+}
+
+/// Persist the user-level `[finops]` defaults, inherited by project
+/// configs through [`load_with_trust`] until they set their own override.
+pub fn persist_global_finops_caps(
+    max_run_usd: Option<Option<f64>>,
+    max_day_usd: Option<Option<f64>>,
+) -> Result<(), ConfigError> {
+    let path = global_path().ok_or_else(|| ConfigError::Write {
+        path: PathBuf::from("<user-config>"),
+        source: std::io::Error::other("user home is unavailable"),
+    })?;
+    persist_finops_caps_at(path, max_run_usd, max_day_usd)
+}
+
+fn persist_finops_caps_at(
+    path: PathBuf,
+    max_run_usd: Option<Option<f64>>,
+    max_day_usd: Option<Option<f64>>,
+) -> Result<(), ConfigError> {
+    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = WRITE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut root = if path.is_file() {
+        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
+            path: path.clone(),
+            source,
+        })?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let Some(table) = root.as_table_mut() else {
+        return Err(ConfigError::Write {
+            path,
+            source: std::io::Error::other("top-level config must be a TOML table"),
+        });
+    };
+    if max_run_usd.is_some() || max_day_usd.is_some() {
+        let finops = table
+            .entry("finops")
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+        let Some(finops) = finops.as_table_mut() else {
+            return Err(ConfigError::Write {
+                path,
+                source: std::io::Error::other("finops config must be a TOML table"),
+            });
+        };
+        if let Some(run) = max_run_usd {
+            match run {
+                Some(v) => {
+                    finops.insert("max_run_usd".into(), toml::Value::Float(v));
+                }
+                None => {
+                    finops.remove("max_run_usd");
+                }
+            }
+        }
+        if let Some(day) = max_day_usd {
+            match day {
+                Some(v) => {
+                    finops.insert("max_day_usd".into(), toml::Value::Float(v));
+                }
+                None => {
+                    finops.remove("max_day_usd");
+                }
+            }
+        }
+    }
+    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other(error.to_string()),
+    })?;
+    let parent = path.parent().ok_or_else(|| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other("config has no parent directory"),
+    })?;
+    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
+    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
+}
+
 fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }

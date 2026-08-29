@@ -237,6 +237,29 @@ is therefore security work, aligned with `24-agent-security.md`.
 **Tests**: ledger append/settle ordering; cap refusal mid-run with typed
 error + receipt; day-window math across restarts; unattended auto-deny.
 
+**Admin console (0.11.20)**: the caps existed only as config.toml settings
+with no live-edit path, and the one existing admin surface — a single
+Overview stat — silently read fields (`total_spend_usd`, `budget_cap_usd`,
+…) the `/finops` handler never actually returned, so it always showed
+$0/no cap regardless of real spend. Fixed both:
+
+- `GET /finops`'s real shape (`day_usd`, `run_cap_usd`, `day_cap_usd`,
+  `unknown_rows`, `total_rows`, `by_provider`, `by_model`) gained a
+  14-day `daily` trend (`FinOpsLedger::daily_totals`, zero-filled so a
+  quiet day is distinguishable from missing data) and `recent_alerts`
+  (tail of `budget-alerts.jsonl`). The admin `FinOpsStatus` TypeScript
+  type now matches this exactly instead of naming fields that never
+  existed.
+- `PATCH /finops` sets or clears `max_run_usd`/`max_day_usd`, applied
+  live via the same override+`refresh_persisted_preferences` mechanism
+  route/theme/memory/subagents already use — `Core::effective_finops()`
+  is what `CoreSpendGate::new` is built from now, not
+  `Core::config().finops` directly, so a PATCH actually binds on the
+  very next dispatch instead of needing a restart.
+- A dedicated FinOps page (nav, not just an Overview stat): summary
+  cards, the 14-day bar chart, an editable-caps form, recent alerts, and
+  by-provider/by-model tables sorted by spend.
+
 ## Phase E — Runs → reusable flows (replay)
 
 Status: **core landed** — `flow adopt` from plan/flow-run ledgers
