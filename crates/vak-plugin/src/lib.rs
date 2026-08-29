@@ -63,6 +63,11 @@ fn io_error(path: impl Into<PathBuf>, source: std::io::Error) -> PluginError {
 pub enum ManifestFormat {
     Vak,
     Codex,
+    AgentPlugin,
+    Claude,
+    Copilot,
+    Cursor,
+    Gemini,
     AgentSkill,
 }
 
@@ -81,6 +86,11 @@ pub struct Components {
     pub commands: Vec<String>,
     pub mcp: Vec<String>,
     pub hooks: Vec<String>,
+    pub agents: Vec<String>,
+    pub rules: Vec<String>,
+    pub lsp: Vec<String>,
+    pub policies: Vec<String>,
+    pub themes: Vec<String>,
     pub presentation: Vec<String>,
     pub assets: Vec<String>,
 }
@@ -93,6 +103,11 @@ impl Components {
             .chain(self.commands.iter().map(|path| ("command", path)))
             .chain(self.mcp.iter().map(|path| ("MCP", path)))
             .chain(self.hooks.iter().map(|path| ("hook", path)))
+            .chain(self.agents.iter().map(|path| ("agent", path)))
+            .chain(self.rules.iter().map(|path| ("rule", path)))
+            .chain(self.lsp.iter().map(|path| ("LSP", path)))
+            .chain(self.policies.iter().map(|path| ("policy", path)))
+            .chain(self.themes.iter().map(|path| ("theme", path)))
             .chain(self.presentation.iter().map(|path| ("presentation", path)))
             .chain(self.assets.iter().map(|path| ("asset", path)))
     }
@@ -127,6 +142,11 @@ pub struct CapabilityInventory {
     pub commands: Vec<String>,
     pub mcp_manifests: Vec<String>,
     pub hooks: Vec<String>,
+    pub agents: Vec<String>,
+    pub rules: Vec<String>,
+    pub lsp_manifests: Vec<String>,
+    pub policies: Vec<String>,
+    pub themes: Vec<String>,
     pub presentation: Vec<String>,
     pub scripts: Vec<String>,
     pub executables: Vec<String>,
@@ -233,7 +253,50 @@ fn load_manifest(
                 path: codex_path,
                 source,
             })?;
-        return normalize_codex_manifest(root, &value);
+        return normalize_client_manifest(root, &value, ManifestFormat::Codex);
+    }
+
+    for (relative, format) in [
+        (".claude-plugin/plugin.json", ManifestFormat::Claude),
+        (".cursor-plugin/plugin.json", ManifestFormat::Cursor),
+        (".github/plugin/plugin.json", ManifestFormat::Copilot),
+        (".plugin/plugin.json", ManifestFormat::Copilot),
+    ] {
+        let path = root.join(relative);
+        if path.is_file() {
+            let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
+            let value = serde_json::from_slice(&bytes)
+                .map_err(|source| PluginError::Json { path, source })?;
+            return normalize_client_manifest(root, &value, format);
+        }
+    }
+
+    let agent_path = root.join("plugin.json");
+    if agent_path.is_file() {
+        let bytes = fs::read(&agent_path).map_err(|error| io_error(&agent_path, error))?;
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|source| PluginError::Json {
+                path: agent_path,
+                source,
+            })?;
+        let format = if value.get("$schema").and_then(serde_json::Value::as_str)
+            == Some("https://agent-plugins.org/schemas/1.0.0/plugin.schema.json")
+        {
+            ManifestFormat::AgentPlugin
+        } else {
+            ManifestFormat::Copilot
+        };
+        return normalize_client_manifest(root, &value, format);
+    }
+
+    let gemini_path = root.join("gemini-extension.json");
+    if gemini_path.is_file() {
+        let bytes = fs::read(&gemini_path).map_err(|error| io_error(&gemini_path, error))?;
+        let value = serde_json::from_slice(&bytes).map_err(|source| PluginError::Json {
+            path: gemini_path,
+            source,
+        })?;
+        return normalize_client_manifest(root, &value, ManifestFormat::Gemini);
     }
 
     let skill_path = root.join("SKILL.md");
@@ -261,13 +324,22 @@ fn load_manifest(
     Err(PluginError::ManifestMissing(root.to_path_buf()))
 }
 
-fn normalize_codex_manifest(
+fn normalize_client_manifest(
     root: &Path,
     value: &serde_json::Value,
+    format: ManifestFormat,
 ) -> Result<(PluginManifest, ManifestFormat, Vec<String>), PluginError> {
     let object = value
         .as_object()
-        .ok_or_else(|| PluginError::InvalidManifest("Codex manifest must be an object".into()))?;
+        .ok_or_else(|| PluginError::InvalidManifest("plugin manifest must be an object".into()))?;
+    if format == ManifestFormat::AgentPlugin {
+        let schema = object.get("$schema").and_then(serde_json::Value::as_str);
+        if schema != Some("https://agent-plugins.org/schemas/1.0.0/plugin.schema.json") {
+            return Err(PluginError::InvalidManifest(
+                "Agent Plugins 1.0 requires its canonical $schema".into(),
+            ));
+        }
+    }
     let name = required_string(object, "name")?;
     let version = object
         .get("version")
@@ -287,19 +359,51 @@ fn normalize_codex_manifest(
         .get("homepage")
         .and_then(serde_json::Value::as_str)
         .map(str::to_string);
-    let publisher = normalize_publisher(object.get("publisher"))?;
+    let publisher = normalize_publisher(object.get("publisher").or_else(|| object.get("author")))?;
     let mut components = Components {
         skills: string_or_strings(object.get("skills"), "skills")?,
         commands: string_or_strings(object.get("commands"), "commands")?,
         mcp: string_or_strings(object.get("mcp"), "mcp")?,
-        hooks: string_or_strings(object.get("hooks"), "hooks")?,
+        hooks: paths_or_inline(object.get("hooks"), "hooks", manifest_relative_path(format))?,
+        agents: string_or_strings(object.get("agents"), "agents")?,
+        rules: string_or_strings(object.get("rules"), "rules")?,
+        lsp: paths_or_inline(
+            object.get("lspServers"),
+            "lspServers",
+            manifest_relative_path(format),
+        )?,
+        policies: string_or_strings(object.get("policies"), "policies")?,
+        themes: paths_or_inline(
+            object.get("themes"),
+            "themes",
+            manifest_relative_path(format),
+        )?,
         presentation: string_or_strings(object.get("presentation"), "presentation")?,
         assets: string_or_strings(object.get("assets"), "assets")?,
     };
+    if object.get("mcpServers").is_some() {
+        components
+            .mcp
+            .push(manifest_relative_path(format).to_string());
+    }
+    if format == ManifestFormat::AgentPlugin {
+        components = Components::default();
+        add_conventional_component(root, "skills", &mut components.skills);
+        add_conventional_component(root, "mcp.json", &mut components.mcp);
+    }
     add_conventional_component(root, "skills", &mut components.skills);
     add_conventional_component(root, "commands", &mut components.commands);
     add_conventional_component(root, ".mcp.json", &mut components.mcp);
+    add_conventional_component(root, ".github/mcp.json", &mut components.mcp);
+    add_conventional_component(root, "mcp.json", &mut components.mcp);
     add_conventional_component(root, "hooks.json", &mut components.hooks);
+    add_conventional_component(root, "hooks/hooks.json", &mut components.hooks);
+    add_conventional_component(root, "agents", &mut components.agents);
+    add_conventional_component(root, "rules", &mut components.rules);
+    add_conventional_component(root, "lsp.json", &mut components.lsp);
+    add_conventional_component(root, ".github/lsp.json", &mut components.lsp);
+    add_conventional_component(root, "policies", &mut components.policies);
+    add_conventional_component(root, "themes", &mut components.themes);
     add_conventional_component(root, "presentation", &mut components.presentation);
     add_conventional_component(root, "assets", &mut components.assets);
     let known: BTreeSet<&str> = [
@@ -308,14 +412,31 @@ fn normalize_codex_manifest(
         "description",
         "license",
         "publisher",
+        "author",
         "homepage",
         "skills",
         "commands",
         "mcp",
+        "mcpServers",
         "hooks",
+        "agents",
+        "rules",
+        "lspServers",
+        "policies",
+        "themes",
         "presentation",
         "assets",
         "apps",
+        "$schema",
+        "extensions",
+        "category",
+        "tags",
+        "variables",
+        "settings",
+        "contextFileName",
+        "excludeTools",
+        "migratedTo",
+        "plan",
     ]
     .into_iter()
     .collect();
@@ -328,7 +449,7 @@ fn normalize_codex_manifest(
         Vec::new()
     } else {
         vec![format!(
-            "ignored unsupported declarative Codex manifest keys: {}",
+            "ignored unsupported declarative plugin manifest keys: {}",
             unknown.join(", ")
         )]
     };
@@ -343,9 +464,21 @@ fn normalize_codex_manifest(
             homepage,
             components,
         },
-        ManifestFormat::Codex,
+        format,
         warnings,
     ))
+}
+
+fn manifest_relative_path(format: ManifestFormat) -> &'static str {
+    match format {
+        ManifestFormat::Codex => ".codex-plugin/plugin.json",
+        ManifestFormat::Claude => ".claude-plugin/plugin.json",
+        ManifestFormat::Cursor => ".cursor-plugin/plugin.json",
+        ManifestFormat::Copilot => "plugin.json",
+        ManifestFormat::Gemini => "gemini-extension.json",
+        ManifestFormat::AgentPlugin => "plugin.json",
+        ManifestFormat::Vak | ManifestFormat::AgentSkill => "vak-plugin.json",
+    }
 }
 
 fn required_string(
@@ -417,6 +550,24 @@ fn string_or_strings(
         .collect()
 }
 
+fn paths_or_inline(
+    value: Option<&serde_json::Value>,
+    field: &str,
+    manifest_path: &str,
+) -> Result<Vec<String>, PluginError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    if value.is_object()
+        || value
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| !item.is_string()))
+    {
+        return Ok(vec![manifest_path.to_string()]);
+    }
+    string_or_strings(Some(value), field)
+}
+
 fn add_conventional_component(root: &Path, relative: &str, values: &mut Vec<String>) {
     if root.join(relative).exists() && !values.iter().any(|value| value == relative) {
         values.push(relative.to_string());
@@ -427,9 +578,9 @@ fn normalize_and_validate_manifest(
     manifest: &mut PluginManifest,
     root: &Path,
 ) -> Result<(), PluginError> {
-    manifest.name = normalize_id(&manifest.name).ok_or_else(|| {
+    manifest.name = normalize_plugin_id(&manifest.name).ok_or_else(|| {
         PluginError::InvalidManifest(
-            "name must be lowercase kebab-case using letters, digits, and dashes".into(),
+            "name must use lowercase letters, digits, dashes, or non-repeated dots".into(),
         )
     })?;
     Version::parse(&manifest.version).map_err(|error| {
@@ -463,6 +614,32 @@ fn normalize_id(value: &str) -> Option<String> {
         || value.ends_with('-')
         || !value.chars().all(|character| {
             character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
+    {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+fn normalize_plugin_id(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty()
+        || value.len() > 64
+        || !value
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_alphanumeric())
+        || !value
+            .chars()
+            .last()
+            .is_some_and(|character| character.is_ascii_alphanumeric())
+        || value.contains("--")
+        || value.contains("..")
+        || !value.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || character == '-'
+                || character == '.'
         })
     {
         return None;
@@ -668,6 +845,11 @@ fn inventory_capabilities(
     inventory.commands = component_files(root, &components.commands, Some("md"))?;
     inventory.mcp_manifests = component_files(root, &components.mcp, None)?;
     inventory.hooks = component_files(root, &components.hooks, None)?;
+    inventory.agents = component_files(root, &components.agents, Some("md"))?;
+    inventory.rules = component_files(root, &components.rules, None)?;
+    inventory.lsp_manifests = component_files(root, &components.lsp, None)?;
+    inventory.policies = component_files(root, &components.policies, Some("toml"))?;
+    inventory.themes = component_files(root, &components.themes, None)?;
     inventory.presentation = component_files(root, &components.presentation, None)?;
     inventory.assets = component_files(root, &components.assets, None)?;
     for file in files {

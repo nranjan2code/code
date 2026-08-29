@@ -72,6 +72,12 @@ installs a new immutable generation, compares capabilities, and only switches
 the active pointer after review. A downgrade is the same operation and is
 never implicit.
 
+The immutable provenance chain is catalog identity/revision → catalog snapshot
+digest → entry locator/pin → package digest → normalized manifest and capability
+inventory → registry generation → activation generation → frozen session
+contract → component dispatch and permission receipt. No link is inferred from
+a display name.
+
 ## Compatibility
 
 Vak owns the runtime contract and uses adapters at ingestion:
@@ -79,11 +85,15 @@ Vak owns the runtime contract and uses adapters at ingestion:
 | Input | Support | Rule |
 |---|---|---|
 | Agent Skills directory | native | `SKILL.md` plus scripts/references/assets |
+| Agent Plugins 1.0 `plugin.json` | native import | canonical portable skills + `mcp.json`; client extensions remain namespaced |
 | `.codex-plugin/plugin.json` | import | normalize supported skills, commands, MCP, hooks, assets |
 | `.agents/plugins/marketplace.json` | catalog import | catalog metadata only; packages still inspected locally |
-| `.claude-plugin/marketplace.json` / plugin | import | accept supported declarative components; reject unknown executable semantics |
-| Agent Plugins 1.0 | import | normalize only fields with an equivalent Vak boundary |
+| `.claude-plugin/plugin.json` / marketplace | import | skills, agents, commands, hooks, MCP, LSP and metadata through explicit adapters |
+| GitHub Copilot plugin / marketplace | import | root/alternate manifest locations, including Agent Plugins and Claude catalog compatibility |
+| `.cursor-plugin/plugin.json` / marketplace | import | supported declarative pieces; Agent Plugins use the portable adapter |
+| `gemini-extension.json` | import | skills, commands, hooks, agents, MCP, settings; policies may narrow, never allow |
 | MCP | protocol | stdio first; streamable HTTP and OAuth are later governed transports |
+| MCP Registry `server.json` | catalog import | namespace evidence and install metadata are recorded, then independently inspected |
 | MCP Apps UI | isolated future adapter | never mount arbitrary model-authored HTML in the native AST renderer |
 
 Unknown manifest keys are retained as diagnostics where possible and ignored
@@ -307,4 +317,3 @@ present stale activation as current.
 - Compatibility does not claim endorsement by another marketplace owner.
 - Public ranking, payments, reviews, and publisher analytics do not precede the
   secure local lifecycle.
-
