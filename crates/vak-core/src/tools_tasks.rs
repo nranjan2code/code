@@ -165,9 +165,7 @@ impl vak_tools::Tool for TasksTool {
                 let cron = str_arg("cron");
                 let every_secs = args.get("every_secs").and_then(Value::as_u64);
                 if cron.is_some() && every_secs.is_some() {
-                    return vak_tools::ToolOutput::error(
-                        "give 'cron' or 'every_secs', not both",
-                    );
+                    return vak_tools::ToolOutput::error("give 'cron' or 'every_secs', not both");
                 }
                 let (prompt, script) = match (prompt, script) {
                     (Some(p), None) => (p, None),
@@ -178,9 +176,7 @@ impl vak_tools::Tool for TasksTool {
                         );
                     }
                     (Some(_), Some(_)) => {
-                        return vak_tools::ToolOutput::error(
-                            "give 'prompt' or 'script', not both",
-                        );
+                        return vak_tools::ToolOutput::error("give 'prompt' or 'script', not both");
                     }
                 };
                 let deliver_to = str_arg("deliver_to").or_else(|| self.default_deliver_to.clone());
@@ -238,7 +234,11 @@ impl vak_tools::Tool for TasksTool {
                 }
                 vak_tools::ToolOutput::ok(format!(
                     "{} task {id}",
-                    if action == "enable" { "enabled" } else { "disabled" }
+                    if action == "enable" {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
                 ))
             }
             "remove" => {
@@ -295,7 +295,9 @@ mod tests {
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("created task agent-"));
 
-        let out = t.execute(&serde_json::json!({"action": "list"}), &ctx()).await;
+        let out = t
+            .execute(&serde_json::json!({"action": "list"}), &ctx())
+            .await;
         assert!(!out.is_error);
         assert!(out.content.contains("nightly digest"));
         assert!(out.content.contains("0 21 * * *"));

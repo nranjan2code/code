@@ -100,13 +100,10 @@ pub fn markdown_to_html(markdown: &str) -> String {
             }
         }
 
-        if let Some(quote_line) = trimmed.strip_prefix("> ").or_else(|| {
-            if trimmed == ">" {
-                Some("")
-            } else {
-                None
-            }
-        }) {
+        if let Some(quote_line) = trimmed
+            .strip_prefix("> ")
+            .or_else(|| if trimmed == ">" { Some("") } else { None })
+        {
             if blank_pending {
                 flush_quote(&mut out, &mut quote);
             }
@@ -181,7 +178,9 @@ fn split_ordered_item(trimmed: &str) -> Option<(String, &str)> {
         return None;
     }
     let (number, rest) = trimmed.split_at(digits_end);
-    let rest = rest.strip_prefix(". ").or_else(|| rest.strip_prefix(") "))?;
+    let rest = rest
+        .strip_prefix(". ")
+        .or_else(|| rest.strip_prefix(") "))?;
     Some((number.to_string(), rest))
 }
 

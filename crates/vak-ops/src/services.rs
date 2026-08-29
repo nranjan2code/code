@@ -206,7 +206,9 @@ fn read_bots(data_home: &Path) -> Vec<BotRecord> {
 /// env produces two long-pollers on the same bot and 409 Conflicts on the
 /// Telegram API.
 pub fn has_configured_bots(data_home: &Path, surface: &str) -> bool {
-    read_bots(data_home).into_iter().any(|b| b.surface == surface)
+    read_bots(data_home)
+        .into_iter()
+        .any(|b| b.surface == surface)
 }
 
 /// launchd/systemd labels only tolerate a narrow character set; a bot id is
@@ -1657,10 +1659,7 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let fake = Fake::with_pid(123);
 
-        write_bots_json(
-            data.path(),
-            &[("VakBot", "telegram"), ("Ops", "discord")],
-        );
+        write_bots_json(data.path(), &[("VakBot", "telegram"), ("Ops", "discord")]);
         sync_bots(
             Path::new("/opt/vak/bin/vak"),
             data.path(),

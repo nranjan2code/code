@@ -1009,7 +1009,8 @@ fn chunk_markdown_preserving_fences(text: &str, max_chars: Option<usize>) -> Vec
         let is_fence_marker = trimmed.starts_with("```");
 
         let reserve = if in_fence { 4 } else { 0 }; // room for a closing "```\n"
-        if !current.is_empty() && current.chars().count() + line.chars().count() + reserve > max_chars
+        if !current.is_empty()
+            && current.chars().count() + line.chars().count() + reserve > max_chars
         {
             if in_fence {
                 current.push_str("```\n");

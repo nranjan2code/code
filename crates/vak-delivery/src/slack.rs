@@ -140,7 +140,9 @@ fn split_ordered_item(trimmed: &str) -> Option<(String, &str)> {
         return None;
     }
     let (number, rest) = trimmed.split_at(digits_end);
-    let rest = rest.strip_prefix(". ").or_else(|| rest.strip_prefix(") "))?;
+    let rest = rest
+        .strip_prefix(". ")
+        .or_else(|| rest.strip_prefix(") "))?;
     Some((number.to_string(), rest))
 }
 

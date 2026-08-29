@@ -676,11 +676,7 @@ async fn voice_speak(
                 vak_llm::LlmError::Overloaded(_) => StatusCode::SERVICE_UNAVAILABLE,
                 _ => StatusCode::BAD_GATEWAY,
             };
-            (
-                status,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-                .into_response()
+            (status, Json(serde_json::json!({ "error": e.to_string() }))).into_response()
         }
     }
 }
@@ -6018,60 +6014,63 @@ async fn patch_task(
     // `update_tasks` can't itself carry an early `return` out of this async
     // fn, so the closure reports outcome via `Result` and the response is
     // built from that afterward.
-    let outcome = update_tasks(&state, |map| -> Result<TaskDef, (StatusCode, serde_json::Value)> {
-        let t = map.get_mut(&id).ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                serde_json::json!({ "error": format!("no task '{id}'") }),
-            )
-        })?;
-        // Apply to a candidate and validate BEFORE committing so a
-        // rejected patch never leaves half-mutated state behind.
-        let mut candidate = t.clone();
-        if let Some(v) = body.enabled {
-            candidate.enabled = v;
-        }
-        if let Some(v) = body.name {
-            candidate.name = v;
-        }
-        if let Some(v) = body.prompt {
-            candidate.prompt = v;
-        }
-        if let Some(v) = body.interval_secs
-            && v >= 60
-        {
-            candidate.interval_secs = v;
-        }
-        if let Some(v) = body.deliver_to {
-            candidate.deliver_to = v;
-        }
-        match body.schedule {
-            OptionalStr::Keep => {}
-            OptionalStr::Clear => candidate.schedule = None,
-            OptionalStr::Set(ref s) => candidate.schedule = Some(s.clone()),
-        }
-        match body.script {
-            OptionalStr::Keep => {}
-            OptionalStr::Clear => candidate.script = None,
-            OptionalStr::Set(ref s) => candidate.script = Some(s.clone()),
-        }
-        match body.model_pin {
-            OptionalStr::Keep => {}
-            OptionalStr::Clear => candidate.model_pin = None,
-            OptionalStr::Set(ref s) => candidate.model_pin = Some(s.clone()),
-        }
-        if let Err((status, payload)) = validate_task_fields(&candidate) {
-            return Err((status, payload));
-        }
-        *t = candidate.clone();
-        // Re-enabling reschedules interval tasks from now; dropping the
-        // cron marker makes the next tick recompute the schedule from
-        // scratch.
-        if body.enabled == Some(true) && t.schedule.is_none() {
-            t.last_run_at = None;
-        }
-        Ok(candidate)
-    });
+    let outcome = update_tasks(
+        &state,
+        |map| -> Result<TaskDef, (StatusCode, serde_json::Value)> {
+            let t = map.get_mut(&id).ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    serde_json::json!({ "error": format!("no task '{id}'") }),
+                )
+            })?;
+            // Apply to a candidate and validate BEFORE committing so a
+            // rejected patch never leaves half-mutated state behind.
+            let mut candidate = t.clone();
+            if let Some(v) = body.enabled {
+                candidate.enabled = v;
+            }
+            if let Some(v) = body.name {
+                candidate.name = v;
+            }
+            if let Some(v) = body.prompt {
+                candidate.prompt = v;
+            }
+            if let Some(v) = body.interval_secs
+                && v >= 60
+            {
+                candidate.interval_secs = v;
+            }
+            if let Some(v) = body.deliver_to {
+                candidate.deliver_to = v;
+            }
+            match body.schedule {
+                OptionalStr::Keep => {}
+                OptionalStr::Clear => candidate.schedule = None,
+                OptionalStr::Set(ref s) => candidate.schedule = Some(s.clone()),
+            }
+            match body.script {
+                OptionalStr::Keep => {}
+                OptionalStr::Clear => candidate.script = None,
+                OptionalStr::Set(ref s) => candidate.script = Some(s.clone()),
+            }
+            match body.model_pin {
+                OptionalStr::Keep => {}
+                OptionalStr::Clear => candidate.model_pin = None,
+                OptionalStr::Set(ref s) => candidate.model_pin = Some(s.clone()),
+            }
+            if let Err((status, payload)) = validate_task_fields(&candidate) {
+                return Err((status, payload));
+            }
+            *t = candidate.clone();
+            // Re-enabling reschedules interval tasks from now; dropping the
+            // cron marker makes the next tick recompute the schedule from
+            // scratch.
+            if body.enabled == Some(true) && t.schedule.is_none() {
+                t.last_run_at = None;
+            }
+            Ok(candidate)
+        },
+    );
     let updated = match outcome {
         Ok(updated) => updated,
         // `update_tasks` still writes tasks.json on the Err path (it can't

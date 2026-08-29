@@ -543,8 +543,7 @@ pub fn run_services_sync(prefix: Option<PathBuf>, names: Vec<String>) -> i32 {
     // supersede it — leaving it in `requested` would sync a second poller
     // against the same token env and cause duplicate-poll 409 Conflicts on
     // every `self update` / `self services-sync` from here on.
-    let legacy_telegram_superseded =
-        vak_ops::services::has_configured_bots(&data_home, "telegram");
+    let legacy_telegram_superseded = vak_ops::services::has_configured_bots(&data_home, "telegram");
     let requested: Vec<&str> = requested
         .into_iter()
         .filter(|&name| !(legacy_telegram_superseded && name == "com.vak.telegram"))

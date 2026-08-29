@@ -89,7 +89,9 @@ fn map_status_error(status: u16, body: &str) -> LlmError {
 /// default the `/voice/speak` endpoint uses when no voice is configured
 /// anywhere in the bot/chat inheritance chain).
 pub fn build_live_config(persona: Option<&str>, voice_name: Option<&str>) -> Value {
-    let voice = voice_name.filter(|v| !v.trim().is_empty()).unwrap_or("Kore");
+    let voice = voice_name
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or("Kore");
     let generation_config = json!({
         "responseModalities": ["AUDIO"],
         "speechConfig": {
@@ -191,10 +193,7 @@ async fn speak_inner(
     voice_name: Option<&str>,
     cancel: &CancellationToken,
 ) -> Result<Vec<u8>, LlmError> {
-    let url = format!(
-        "wss://{LIVE_WS_HOST}{LIVE_WS_PATH}?key={}",
-        config.api_key
-    );
+    let url = format!("wss://{LIVE_WS_HOST}{LIVE_WS_PATH}?key={}", config.api_key);
 
     let connect_fut = tokio_tungstenite::connect_async(&url);
     let (mut ws, _resp) = tokio::select! {
@@ -289,12 +288,11 @@ async fn speak_inner(
                 let Some(sc) = v.get("serverContent") else {
                     continue;
                 };
-                if let Some(parts) = sc
-                    .pointer("/modelTurn/parts")
-                    .and_then(|p| p.as_array())
-                {
+                if let Some(parts) = sc.pointer("/modelTurn/parts").and_then(|p| p.as_array()) {
                     for part in parts {
-                        if let Some(data) = part.pointer("/inlineData/data").and_then(|d| d.as_str()) {
+                        if let Some(data) =
+                            part.pointer("/inlineData/data").and_then(|d| d.as_str())
+                        {
                             use base64::Engine as _;
                             match base64::engine::general_purpose::STANDARD.decode(data) {
                                 Ok(bytes) => pcm.extend_from_slice(&bytes),
@@ -307,7 +305,11 @@ async fn speak_inner(
                         }
                     }
                 }
-                if sc.get("turnComplete").and_then(|b| b.as_bool()).unwrap_or(false) {
+                if sc
+                    .get("turnComplete")
+                    .and_then(|b| b.as_bool())
+                    .unwrap_or(false)
+                {
                     break;
                 }
             }

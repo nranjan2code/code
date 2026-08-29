@@ -7,8 +7,8 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use vak_agent::{SpendCheck, SpendGate};
@@ -761,7 +761,11 @@ mod tests {
             .unwrap();
 
         let rows = ledger.all_rows();
-        assert_eq!(rows.len(), 1, "the old row must be dropped, not the fresh one");
+        assert_eq!(
+            rows.len(),
+            1,
+            "the old row must be dropped, not the fresh one"
+        );
         assert_eq!(rows[0].usd, Some(2.0));
         // Aggregates must be unaffected by compaction for anything still
         // within the retention window.
@@ -796,8 +800,7 @@ mod tests {
         // sonnet est ~= $4.50/dispatch; cap admits exactly one.
         finops.max_day_usd = Some(5.0);
         let day_budget = Arc::new(Mutex::new(DayBudget::new()));
-        let gate_a =
-            CoreSpendGate::with_shared_day_budget(dir.path(), &finops, day_budget.clone());
+        let gate_a = CoreSpendGate::with_shared_day_budget(dir.path(), &finops, day_budget.clone());
         let gate_b = CoreSpendGate::with_shared_day_budget(dir.path(), &finops, day_budget);
 
         // Both "concurrent" calls check against the ledger before either
@@ -823,8 +826,7 @@ mod tests {
         // a second one at ~$9.00 total.
         finops.max_day_usd = Some(5.0);
         let day_budget = Arc::new(Mutex::new(DayBudget::new()));
-        let gate_a =
-            CoreSpendGate::with_shared_day_budget(dir.path(), &finops, day_budget.clone());
+        let gate_a = CoreSpendGate::with_shared_day_budget(dir.path(), &finops, day_budget.clone());
         gate_a.authorize(&check("claude-sonnet")).await.unwrap();
         gate_a.record_settled(
             "anthropic",
