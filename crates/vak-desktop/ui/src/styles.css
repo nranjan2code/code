@@ -561,13 +561,15 @@ body.is-resizing iframe { pointer-events: none; }
 .modal table { width: 100%; margin-bottom: 16px; border-collapse: collapse; }
 .modal td { padding: 5px 12px 5px 0; color: var(--muted); }
 kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: #4b4b45; border-radius: 5px; color: var(--text-soft); background: var(--surface-active); font-size: 10.5px; }
-.toast { position: fixed; z-index: 100; left: 50%; bottom: 45px; display: flex; align-items: center; gap: 8px; width: min(440px, calc(100vw - 32px)); min-height: 40px; padding: 8px 9px 8px 11px; border: 1px solid rgba(115,169,130,.35); border-radius: 10px; color: var(--text-soft); background: rgba(37,37,33,.96); box-shadow: var(--shadow-lg); transform: translateX(-50%); backdrop-filter: blur(10px); }
+.toast-stack { position: fixed; z-index: 100; left: 50%; bottom: 45px; transform: translateX(-50%); display: flex; flex-direction: column-reverse; gap: 8px; pointer-events: none; }
+.toast { position: relative; display: flex; align-items: center; gap: 8px; width: min(440px, calc(100vw - 32px)); min-height: 40px; padding: 8px 9px 8px 11px; border: 1px solid rgba(115,169,130,.35); border-radius: 10px; color: var(--text-soft); background: rgba(37,37,33,.96); box-shadow: var(--shadow-lg); backdrop-filter: blur(10px); pointer-events: auto; animation: toast-in .2s ease; }
 .toast.error { border-color: rgba(216,111,114,.4); }
 .toast-icon { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; color: var(--green); background: rgba(115,169,130,.1); }
 .toast.error .toast-icon { color: var(--red); background: rgba(216,111,114,.1); }
 .toast > span:nth-child(2) { flex: 1; }
 .toast > button { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 6px; color: var(--faint); }
 .toast > button:hover { color: var(--text); background: var(--surface-hover); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
 
 /* Settings workspace */
 .settings-shell { position: fixed; z-index: 90; inset: 0; display: grid; grid-template-columns: 310px minmax(0, 1fr); color: var(--text); background: var(--bg); animation: settings-in 150ms ease-out; }

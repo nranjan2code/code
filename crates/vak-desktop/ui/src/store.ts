@@ -79,7 +79,19 @@ export function paneSessions(): { left: string | null; right: string | null } {
     : { left: activeId(), right: splitId() };
 }
 export type Notice = { kind: "error" | "info"; text: string };
-export const [notice, setNotice] = createSignal<Notice | null>(null);
+export const [notices, setNotices] = createSignal<Notice[]>([]);
+
+export function setNotice(value: Notice | null) {
+  if (!value) {
+    setNotices([]);
+    return;
+  }
+  setNotices((prev) => [...prev.slice(-4), value]);
+}
+
+export function dismissNotice(index: number) {
+  setNotices((prev) => prev.filter((_, i) => i !== index));
+}
 
 /**
  * Live retry state per session.

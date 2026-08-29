@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import * as api from "../api";
 import Icon from "./Icon";
 
@@ -20,7 +20,7 @@ export default function OperationsPanel(props: { onNotice?: (text: string) => vo
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
   };
-  createEffect(() => { void refresh(); const timer = setInterval(() => void refresh(), 8000); return () => clearInterval(timer); });
+  createEffect(() => { void refresh(); const timer = setInterval(() => void refresh(), 8000); onCleanup(() => clearInterval(timer)); });
   const action = async (service: "gateway" | "telegram", verb: "start" | "stop" | "restart") => {
     try { await api.opsAction(service, verb); await refresh(); }
     catch (e) { props.onNotice?.(e instanceof Error ? e.message : String(e)); }

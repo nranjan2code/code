@@ -76,10 +76,15 @@ export default function EditorPane() {
       e.preventDefault();
       const el = e.currentTarget as HTMLTextAreaElement;
       const { selectionStart: s, selectionEnd: en, value } = el;
-      const next = `${value.slice(0, s)}  ${value.slice(en)}`;
+      // Detect the indentation of the current line to match existing style.
+      const lineStart = value.lastIndexOf("\n", s - 1) + 1;
+      const lineText = value.slice(lineStart, s);
+      const match = lineText.match(/^( +)/);
+      const indent = match ? match[1] : "  ";
+      const next = `${value.slice(0, s)}${indent}${value.slice(en)}`;
       setContent(next);
       queueMicrotask(() => {
-        el.selectionStart = el.selectionEnd = s + 2;
+        el.selectionStart = el.selectionEnd = s + indent.length;
       });
     }
   };

@@ -40,6 +40,7 @@ export default function FeedsModal() {
           <h3 id="feeds-modal-title">Search Feeds</h3>
           <form class="task-add-row" onSubmit={(e) => { e.preventDefault(); void search(); }}>
             <input class="search-input" placeholder="Search feed items..."
+                   ref={(el) => requestAnimationFrame(() => el.focus())}
                    value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />
             <button class="btn primary" type="submit" disabled={!query().trim() || busy()}>
               {busy() ? "..." : "Search"}

@@ -70,7 +70,7 @@ import type { SessionSummary } from "./types";
 import * as api from "./api";
 
 // Armed goal consumed by the next prompt (docs/design/27 Phase H).
-let armedGoal: { objective: string; criteria: string[] } | null = null;
+let armedGoal: { objective: string; criteria: string[]; sessionId: string } | null = null;
 import Sidebar from "./components/Sidebar";
 import ChatPane from "./components/ChatPane";
 import Composer from "./components/Composer";
@@ -336,11 +336,11 @@ export async function sendPrompt(
   if (text.trim().startsWith("/goal")) {
     const arg = text.trim().slice(5).trim();
     if (!arg) {
-      appendSystem(id, armedGoal ? `🎯 armed: ${armedGoal.objective} (${armedGoal.criteria.length} criteria)` : "no goal armed · usage: /goal <objective> -- c1; c2");
+      appendSystem(id, armedGoal?.sessionId === id ? `🎯 armed: ${armedGoal.objective} (${armedGoal.criteria.length} criteria)` : "no goal armed · usage: /goal <objective> -- c1; c2");
       return;
     }
     if (arg === "off") {
-      armedGoal = null;
+      if (armedGoal?.sessionId === id) armedGoal = null;
       appendSystem(id, "goal disarmed");
       return;
     }
@@ -354,12 +354,12 @@ export async function sendPrompt(
       appendSystem(id, "goal needs criteria: /goal <objective> -- c1; c2");
       return;
     }
-    armedGoal = { objective, criteria };
+    armedGoal = { objective, criteria, sessionId: id };
     appendSystem(id, `🎯 goal armed (${criteria.length} criteria) — next prompt will be audited`);
     return;
   }
 
-  const thisGoal = armedGoal;
+  const thisGoal = armedGoal?.sessionId === id ? armedGoal : null;
   armedGoal = null;
   appendUser(id, text);
   try {
@@ -707,6 +707,10 @@ export default function App() {
             pendingG = 0;
             setInboxOpen(true);
           }
+        } else if (e.key.length === 1) {
+          // Any printable key other than g/G resets the pending vim sequence
+          // so a stray g followed by unrelated typing cannot fire g→i later.
+          pendingG = 0;
         }
         return;
       }

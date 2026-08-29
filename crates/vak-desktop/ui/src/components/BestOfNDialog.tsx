@@ -103,6 +103,8 @@ function RunCard(props: { run: { session_id: string; branch: string } }) {
 export default function BestOfNDialog() {
   const runs = () => bestOfRuns();
   const close = () => {
+    for (const es of streams.values()) es.close();
+    streams.clear();
     setBestOfOpen(false);
     setBestOfRuns(null);
   };

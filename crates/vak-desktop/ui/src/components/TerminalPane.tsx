@@ -18,9 +18,19 @@ const pending = new Set<string>();
 export default function TerminalPane(props: { sessionId: string | null }) {
   let host!: HTMLDivElement;
 
+  let prevSid: string | null = null;
+
   createEffect(() => {
     const sid = props.sessionId;
-    if (!sid || !host) return;
+    if (!host) return;
+    // When the session changes, dispose the old terminal so PTY handles and
+    // xterm DOM roots don't accumulate across switches.
+    if (prevSid && prevSid !== sid) {
+      const old = live.get(prevSid);
+      if (old) old.dispose();
+    }
+    prevSid = sid;
+    if (!sid) return;
     if (live.has(sid) || pending.has(sid)) return;
     void mount(sid, host);
   });

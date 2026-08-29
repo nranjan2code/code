@@ -55,6 +55,7 @@ export default function SearchModal() {
               aria-label="Search transcripts and memory"
               value={query()}
               onInput={(e) => setQuery(e.currentTarget.value)}
+              ref={(el) => requestAnimationFrame(() => el.focus())}
             />
             <button
               type="button"

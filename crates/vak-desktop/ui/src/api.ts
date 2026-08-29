@@ -569,13 +569,13 @@ export function openEventStream(
     } catch {
       return; // not JSON: a keep-alive or comment frame, not an error
     }
-    try {
-      onEvent(parsed);
-    } catch (err) {
-      // Report and move on rather than either vanish (the defect this
-      // replaces) or take the whole stream down over one bad event.
-      console.error("vak: error handling agent event", parsed, err);
-    }
+      try {
+        onEvent(parsed);
+      } catch (eventErr) {
+        // Report and move on rather than either vanish (the defect this
+        // replaces) or take the whole stream down over one bad event.
+        console.error("vak: error handling agent event", parsed, eventErr);
+      }
   };
   es.onerror = () => onError?.();
   return es;

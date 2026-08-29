@@ -31,7 +31,10 @@ export default function DigestCard() {
     }
   };
 
-  createEffect(() => void refresh());
+  createEffect(() => {
+    const _ = days();
+    void refresh();
+  });
 
   // Top-3 models by spend; unpriced rows never masquerade as cheap models.
   const topModels = (): { name: string; usd: number; rows: number }[] =>
