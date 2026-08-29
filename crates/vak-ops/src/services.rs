@@ -1640,4 +1640,42 @@ mod tests {
             "com.vak.discord-weird_id_"
         );
     }
+
+    #[test]
+    fn has_configured_bots_reflects_bots_json_by_surface() {
+        let data = tempfile::tempdir().unwrap();
+        assert!(!has_configured_bots(data.path(), "telegram"));
+
+        write_bots_json(data.path(), &[("VakBot", "telegram")]);
+        assert!(has_configured_bots(data.path(), "telegram"));
+        assert!(!has_configured_bots(data.path(), "discord"));
+    }
+
+    #[test]
+    fn uninstall_bot_units_removes_every_bot_unit_regardless_of_bots_json() {
+        let (_d, paths) = tmp_paths("bots-uninstall");
+        let data = tempfile::tempdir().unwrap();
+        let fake = Fake::with_pid(123);
+
+        write_bots_json(
+            data.path(),
+            &[("VakBot", "telegram"), ("Ops", "discord")],
+        );
+        sync_bots(
+            Path::new("/opt/vak/bin/vak"),
+            data.path(),
+            "http://127.0.0.1:8901",
+            &paths,
+            &fake,
+        );
+        assert!(unit_file_path("com.vak.telegram-VakBot", &paths).exists());
+        assert!(unit_file_path("com.vak.discord-Ops", &paths).exists());
+
+        // Uninstall must remove every bot unit even though bots.json still
+        // lists them — an uninstall wants "wanted = nothing", not a diff
+        // against the still-present config file.
+        uninstall_bot_units(&paths, &fake);
+        assert!(!unit_file_path("com.vak.telegram-VakBot", &paths).exists());
+        assert!(!unit_file_path("com.vak.discord-Ops", &paths).exists());
+    }
 }

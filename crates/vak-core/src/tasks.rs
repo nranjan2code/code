@@ -759,6 +759,28 @@ mod tests {
     }
 
     #[test]
+    fn save_is_atomic_and_leaves_no_tmp_file_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = TaskStore::load(dir.path()).unwrap();
+        store.put(base_task());
+        store.save().unwrap();
+        assert!(tasks_file(dir.path()).is_file());
+        assert!(
+            !dir.path().join("tasks.json.tmp").exists(),
+            "the temp file used for the atomic rename must not survive a successful save"
+        );
+
+        // A second save (overwrite path) must round-trip cleanly too, and
+        // still leave no tmp file — this is the path a real crash-mid-write
+        // would otherwise corrupt with a plain `fs::write`.
+        store.put(base_task());
+        store.save().unwrap();
+        let reloaded = TaskStore::load(dir.path()).unwrap();
+        assert_eq!(reloaded.tasks.len(), 2);
+        assert!(!dir.path().join("tasks.json.tmp").exists());
+    }
+
+    #[test]
     fn corrupt_file_is_a_typed_error_not_silence() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(tasks_file(dir.path()), "{not json").unwrap();
