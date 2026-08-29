@@ -891,6 +891,7 @@ impl GatewayState {
     /// through the same stale-session-rotation path
     /// `PATCH .../bindings/{key}` already uses, rather than mutating
     /// allowlist state the binding/session layer never learns about.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn allowlist_patch(
         &self,
         core: &Core,
