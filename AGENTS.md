@@ -103,6 +103,13 @@
   whose contracts aren't clear from names (invariants especially).
 - No new dependencies without exact versions pinned in the workspace manifest
   and a one-line justification in the PR.
+- Output presentation is schema-v2 and semantic: `vak-delivery` owns the typed
+  `OutputTimeline`/`PresentationDocument` contract, exact Markdown fallback,
+  capability projection, and deterministic degradation. Desktop/native clients
+  render the closed AST registry; raw HTML and untrusted model-authored UI are
+  never mounted. Presentation snapshot/SSE endpoints are reconnectable
+  projections over the ledger and live events; legacy transcript, `AgentEvent`,
+  webhook, and channel text paths remain compatibility surfaces.
 - System prompt stays under 1500 tokens; changes require updating
   `docs/design/07-prompt.md` diff notes.
 - Config keys unknown to this version are ignored with a warning, never fatal.
@@ -128,7 +135,8 @@ crates/vak-store     SQLite FTS5 rebuildable index over session JSONL:
                      calls/results/thinking), structured metadata queries,
                      idempotent import, WAL mode — docs/design/23 +
                      33 (JSONL stays source of truth)
-crates/vak-delivery  channel-neutral output contract, safe templates,
+crates/vak-delivery  schema-v2 channel-neutral semantic output contract,
+                     closed AST/compiler, capability projection, safe templates,
                      exact Markdown fallback, ordered chunks, Telegram HTML,
                      isolated renderer worker, and append-only retry outbox
                      (docs/design/30-output-engineering.md)
@@ -185,6 +193,8 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      attachments inlined as text (image attachments stay
                      vision content), Telegram/webhook transports, and
                      outbox replay
+                     semantic presentation snapshots/SSE alongside legacy
+                     AgentEvent and transcript endpoints
                      (docs/design/22-gateway.md, 28-operations.md,
                      29-personal-os.md, 30-output-engineering.md) +
                      admin console: global event hub + SSE, cookie login
@@ -196,7 +206,8 @@ crates/vak-admin-ui  SolidJS + Vite admin console source; built dist is
                      operation, and interaction views per docs/design/
                      33-admin-console.md
 crates/vak-desktop   Tauri 2 desktop app over an embedded secured_router —
-                     SolidJS SPA: sessions, split view, approvals, diff
+                     SolidJS SPA with schema-v2 outcome-first semantic
+                     timeline/AST registry: sessions, split view, approvals, diff
                      review, subagents tab, MCP manager, image attachments,
                      best-of-N, tasks (cron/script/pin), side chats,
                      memory tier editor, global search, diagnostics,

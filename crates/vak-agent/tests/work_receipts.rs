@@ -277,6 +277,7 @@ async fn receipts_round_trip_through_disk() {
             EntryPayload::Compaction(_) => "compaction",
             EntryPayload::Receipt(_) => "receipt",
             EntryPayload::Goal(_) => "goal",
+            EntryPayload::Activity(_) => "activity",
         })
         .collect();
     assert_eq!(

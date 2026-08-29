@@ -32,6 +32,7 @@ pub enum EntryKind {
     Compaction,
     Receipt,
     Goal,
+    Activity,
 }
 
 impl EntryKind {
@@ -42,6 +43,7 @@ impl EntryKind {
             Self::Compaction => "compaction",
             Self::Receipt => "receipt",
             Self::Goal => "goal",
+            Self::Activity => "activity",
         }
     }
 
@@ -52,6 +54,7 @@ impl EntryKind {
             "compaction" => Some(Self::Compaction),
             "receipt" => Some(Self::Receipt),
             "goal" => Some(Self::Goal),
+            "activity" => Some(Self::Activity),
             _ => None,
         }
     }
@@ -247,6 +250,7 @@ impl Store {
             EntryPayload::Compaction(_) => EntryKind::Compaction,
             EntryPayload::Receipt(_) => EntryKind::Receipt,
             EntryPayload::Goal(_) => EntryKind::Goal,
+            EntryPayload::Activity(_) => EntryKind::Activity,
         };
 
         match &entry.payload {
@@ -327,6 +331,27 @@ impl Store {
                 tool_name: None,
                 content_text: format!("{} {}", g.objective, g.criteria.join(" ")),
                 is_error: false,
+            }),
+            EntryPayload::Activity(activity) => Some(IndexedEntry {
+                entry_id: entry.id.clone(),
+                session_id: session_id.to_string(),
+                project_hash: String::new(),
+                parent_id: entry.parent_id.clone(),
+                ts: entry.ts.to_rfc3339(),
+                kind,
+                role: Some("system".into()),
+                provider: None,
+                model: None,
+                tool_name: activity.data.get("tool").cloned(),
+                content_text: format!(
+                    "{} {}",
+                    activity.label,
+                    activity.detail.as_deref().unwrap_or_default()
+                ),
+                is_error: matches!(
+                    activity.status,
+                    vak_session::ActivityStatus::Failed | vak_session::ActivityStatus::Denied
+                ),
             }),
         }
     }

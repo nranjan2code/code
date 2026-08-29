@@ -1,10 +1,11 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
-import { activeId, density, itemsOf, hydratingId, openInEditor, type Item } from "../store";
+import { activeId, density, itemsOf, hydratingId, isRunning, openInEditor, presentationOf, type Item } from "../store";
 import { approve, openFileSmart } from "../App";
 import { renderMarkdown } from "../md";
 import { highlight, languageForFence } from "../highlight";
 import Icon from "./Icon";
+import PresentationTimelineView from "./PresentationRenderer";
 
 function EmptyChat() {
   return null;
@@ -24,7 +25,7 @@ function TranscriptSkeleton() {
 
 function visibleItems(list: Item[]): Item[] {
   const d = density();
-  if (d === "summary") {
+  if (d === "outcome") {
     return list.filter(
       (it) => it.kind === "user" || (it.kind === "assistant" && !it.streaming && it.text) || it.kind === "system" || (it.kind === "approval" && !it.resolved),
     );
@@ -84,7 +85,7 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
   const status = () => props.item.isError ? "Failed" : props.item.done ? "Completed" : "Running";
   const result = () => {
     const value = props.item.preview?.trim();
-    if (value) return value.slice(0, density() === "verbose" ? 4000 : 800);
+    if (value) return value.slice(0, density() === "audit" ? 4000 : 800);
     return props.item.done ? "No output returned." : "Waiting for a result…";
   };
 
@@ -113,7 +114,7 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
         )}
       </Show>
       <div class="tool-result" classList={{ err: props.item.isError }}>{result()}</div>
-      <details class="tool-details" open={open() || density() === "verbose"}>
+      <details class="tool-details" open={open() || density() === "audit"}>
         <summary>View request details</summary>
         <pre class="tool-args">{argsPretty()}</pre>
       </details>
@@ -214,9 +215,8 @@ async function colorizeCodeBlocks(root: HTMLElement) {
 export const Markdown = (props: { text: string; streaming?: boolean }): JSX.Element => {
   let el!: HTMLDivElement;
   createEffect(() => {
+    if (props.streaming) return;
     el.innerHTML = renderMarkdown(props.text);
-    if (props.streaming) el.classList.add("streaming");
-    else el.classList.remove("streaming");
     // Colour fenced code once the text has settled. Re-tokenising on every
     // streaming delta would burn CPU on output that is about to change.
     if (!props.streaming) void colorizeCodeBlocks(el);
@@ -236,7 +236,14 @@ export const Markdown = (props: { text: string; streaming?: boolean }): JSX.Elem
       if (/^[\w@.-]+(\/[\w@.-]+)+$|^\.[\w/-]+$/.test(pathText)) openInEditor(pathText);
     }
   };
-  return <div class="md" ref={el} onClick={onClick} />;
+  return (
+    <Show
+      when={!props.streaming}
+      fallback={<div class="md streaming semantic-stream-text">{props.text}</div>}
+    >
+      <div class="md" ref={el} onClick={onClick} />
+    </Show>
+  );
 };
 
 /**
@@ -336,10 +343,14 @@ export default function ChatPane(props: { sessionId?: string | null }) {
       <div class="chat" ref={scroller} onScroll={onScroll}>
         <Show when={sid()} fallback={<EmptyChat />}>
           <Show when={hydratingId() !== sid()} fallback={<TranscriptSkeleton />}>
-            <Show when={visibleItems(itemsOf(sid())).length} fallback={<EmptyChat />}>
-              <For each={visibleItems(itemsOf(sid()))}>
-                {(it) => <ItemView item={it} sessionId={sid()} />}
-              </For>
+            <Show when={!isRunning(sid()) && presentationOf(sid())?.items.length} fallback={
+              <Show when={visibleItems(itemsOf(sid())).length} fallback={<EmptyChat />}>
+                <For each={visibleItems(itemsOf(sid()))}>
+                  {(it) => <ItemView item={it} sessionId={sid()} />}
+                </For>
+              </Show>
+            }>
+              <PresentationTimelineView timeline={presentationOf(sid())!} sessionId={sid()!} />
             </Show>
           </Show>
         </Show>

@@ -132,6 +132,34 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::Goal(goal)))
     }
 
+    /// Appends a presentation/audit lifecycle fact. It is deliberately
+    /// excluded from `derive_messages`.
+    pub fn append_activity(
+        &mut self,
+        activity: crate::types::ActivityRecord,
+    ) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(parent, EntryPayload::Activity(activity)))
+    }
+
+    pub fn activities(
+        &self,
+    ) -> Vec<(
+        String,
+        chrono::DateTime<chrono::Utc>,
+        crate::types::ActivityRecord,
+    )> {
+        self.chain_to_root()
+            .into_iter()
+            .filter_map(|entry| match &entry.payload {
+                EntryPayload::Activity(activity) => {
+                    Some((entry.id.clone(), entry.ts, activity.clone()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Distinct bash commands that ran GREEN on the active chain, in
     /// first-run order (doc 27 Phase E adoption substrate). A command is
     /// settled when its tool_result is not an error.
@@ -324,7 +352,10 @@ impl SessionLog {
                     out.insert(0, (entry.id.clone(), summary_msg, true));
                 }
                 // Receipts and goal entries are audit, not model-visible input.
-                EntryPayload::Header(_) | EntryPayload::Receipt(_) | EntryPayload::Goal(_) => {}
+                EntryPayload::Header(_)
+                | EntryPayload::Receipt(_)
+                | EntryPayload::Goal(_)
+                | EntryPayload::Activity(_) => {}
             }
         }
         out

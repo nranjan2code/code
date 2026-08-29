@@ -12,6 +12,7 @@ export type IconName =
   | "code"
   | "diff"
   | "download"
+  | "file"
   | "folder"
   | "gear"
   | "git"
@@ -32,7 +33,8 @@ export type IconName =
   | "terminal"
   | "trash"
   | "timer"
-  | "tune";
+  | "tune"
+  | "warning";
 
 const paths: Record<IconName, () => JSX.Element> = {
   add: () => <><path d="M12 5v14M5 12h14" /></>,
@@ -46,6 +48,7 @@ const paths: Record<IconName, () => JSX.Element> = {
   code: () => <><path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14" /></>,
   diff: () => <><path d="M7 3v18M17 3v18M4 7h6M14 17h6M17 7v6M14 10h6" /></>,
   download: () => <><path d="M12 3v11m0 0 4-4m-4 4-4-4" /><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" /></>,
+  file: () => <><path d="M6 3h8l4 4v14H6Z" /><path d="M14 3v5h5M9 13h6M9 17h5" /></>,
   folder: () => <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />,
   gear: () => <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></>,
   git: () => <><circle cx="6" cy="5" r="2" /><circle cx="18" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><path d="M6 7v10M8 11h4a6 6 0 0 0 6-6" /></>,
@@ -67,6 +70,7 @@ const paths: Record<IconName, () => JSX.Element> = {
   timer: () => <><circle cx="12" cy="13" r="8" /><path d="M12 9v4l3 2M9 2h6" /></>,
   receipt: () => <><path d="M6 3h12v18l-2.5-1.5L13 21l-2.5-1.5L8 21l-2-1.5Z" /><path d="M9 8h6M9 12h6M9 16h3" /></>,
   tune: () => <><path d="M4 7h10M18 7h2M4 17h2M10 17h10" /><circle cx="16" cy="7" r="2" /><circle cx="8" cy="17" r="2" /></>,
+  warning: () => <><path d="M12 3 2.8 20h18.4Z" /><path d="M12 9v5M12 17.5v.1" /></>,
 };
 
 export default function Icon(props: { name: IconName; size?: number; class?: string }) {

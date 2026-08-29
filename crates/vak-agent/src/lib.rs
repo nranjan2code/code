@@ -713,14 +713,27 @@ impl Agent {
                                 .map(|open| open.remaining_secs * 1000 + 250)
                                 .unwrap_or(0);
                             let delay = delay.max(cooldown_ms);
+                            let reason = format!(
+                                "step exhausted ({e}); run-level re-attempt {run_attempt}/{}",
+                                self.config.run_retry_attempts
+                            );
+                            self.record_activity(
+                                vak_session::ActivityKind::Retry,
+                                vak_session::ActivityStatus::Running,
+                                format!("Retry attempt {run_attempt}"),
+                                Some(reason.clone()),
+                                [
+                                    ("attempt".into(), run_attempt.to_string()),
+                                    ("delay_ms".into(), delay.to_string()),
+                                ]
+                                .into(),
+                            )
+                            .await;
                             let _ = events
                                 .send(AgentEvent::RetryScheduled {
                                     attempt: run_attempt,
                                     delay_ms: delay,
-                                    reason: format!(
-                                        "step exhausted ({e}); run-level re-attempt {run_attempt}/{}",
-                                        self.config.run_retry_attempts
-                                    ),
+                                    reason,
                                 })
                                 .await;
                             if tokio::select! {
@@ -1250,6 +1263,31 @@ impl Agent {
         });
     }
 
+    async fn record_activity(
+        &self,
+        kind: vak_session::ActivityKind,
+        status: vak_session::ActivityStatus,
+        label: String,
+        detail: Option<String>,
+        data: std::collections::BTreeMap<String, String>,
+    ) {
+        let now = chrono::Utc::now();
+        let activity = vak_session::ActivityRecord {
+            activity_id: format!(
+                "activity-{}",
+                now.timestamp_nanos_opt()
+                    .unwrap_or_else(|| now.timestamp_micros() * 1_000)
+            ),
+            turn: None,
+            kind,
+            status,
+            label,
+            detail,
+            data,
+        };
+        let _ = self.session.lock().await.append_activity(activity);
+    }
+
     /// One provider completion with watchdog, retry/backoff (honoring
     /// Retry-After), circuit breaker, dispatch-ceiling enforcement, and
     /// per-attempt receipt recording. When `forward` is true, stream
@@ -1282,6 +1320,18 @@ impl Agent {
             leg_req.model = model.clone();
             ledger.receipt.stamp_leg(provider_arc.name(), model);
             if li > 0 && forward {
+                self.record_activity(
+                    vak_session::ActivityKind::RouteFallback,
+                    vak_session::ActivityStatus::Running,
+                    "Route fallback".into(),
+                    Some(format!("{}/{}", (*provider_arc).name(), model)),
+                    [
+                        ("provider".into(), (*provider_arc).name().to_string()),
+                        ("model".into(), model.clone()),
+                    ]
+                    .into(),
+                )
+                .await;
                 let _ = events
                     .send(AgentEvent::RouteFallback {
                         to_provider: (*provider_arc).name().to_string(),
@@ -1435,6 +1485,18 @@ impl Agent {
                                 e.retry_after_secs(),
                                 self.config.retry_base_backoff_ms,
                             );
+                            self.record_activity(
+                                vak_session::ActivityKind::Retry,
+                                vak_session::ActivityStatus::Running,
+                                format!("Retry attempt {attempt}"),
+                                Some(e.to_string()),
+                                [
+                                    ("attempt".into(), attempt.to_string()),
+                                    ("delay_ms".into(), delay.as_millis().to_string()),
+                                ]
+                                .into(),
+                            )
+                            .await;
                             let _ = events
                                 .send(AgentEvent::RetryScheduled {
                                     attempt,

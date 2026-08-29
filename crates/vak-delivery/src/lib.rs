@@ -10,10 +10,19 @@ use std::collections::BTreeMap;
 
 pub mod client;
 pub mod outbox;
+pub mod presentation;
 pub mod telegram;
 pub mod templates;
 
-pub const DELIVERY_SCHEMA_VERSION: u16 = 1;
+pub use presentation::{
+    ArtifactRef, CalloutTone, Citation, DocumentBlock, DocumentCoverage,
+    DocumentCoverageDisposition, InlineNode, OutputContent, OutputItem, OutputKind,
+    OutputProvenance, OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline,
+    PresentationDocument, SurfaceCapabilities, TableAlignment, compile_markdown, inline_text,
+    safe_link,
+};
+
+pub const DELIVERY_SCHEMA_VERSION: u16 = 2;
 
 /// The complete answer and its conservative structural projection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,6 +30,8 @@ pub struct AnswerDraft {
     pub schema_version: u16,
     pub source_markdown: String,
     pub blocks: Vec<Block>,
+    #[serde(default)]
+    pub document: PresentationDocument,
     #[serde(default)]
     pub metadata: BTreeMap<String, String>,
 }
@@ -31,11 +42,22 @@ impl AnswerDraft {
     pub fn from_markdown(source_markdown: impl Into<String>) -> Self {
         let source_markdown = source_markdown.into();
         let blocks = parse_blocks(&source_markdown);
+        let document = compile_markdown(source_markdown.clone());
         Self {
             schema_version: DELIVERY_SCHEMA_VERSION,
             source_markdown,
             blocks,
+            document,
             metadata: BTreeMap::new(),
+        }
+    }
+
+    fn presentation_document(&self) -> PresentationDocument {
+        if self.document.source_markdown == self.source_markdown && !self.document.blocks.is_empty()
+        {
+            self.document.clone()
+        } else {
+            compile_markdown(self.source_markdown.clone())
         }
     }
 }
@@ -214,6 +236,25 @@ impl DeliveryProfile {
             ));
         }
         Ok(())
+    }
+
+    /// Semantic capabilities consumed by native and constrained projectors.
+    /// Existing profile fields remain the compatibility wire contract.
+    pub fn capabilities(&self) -> SurfaceCapabilities {
+        let native = matches!(self.surface.as_str(), "desktop" | "tui" | "admin");
+        SurfaceCapabilities {
+            structured_blocks: matches!(self.markup, Markup::Json) || native,
+            tables: self.supports_tables,
+            code: self.supports_code_blocks,
+            links: self.supports_links,
+            media: native || matches!(self.markup, Markup::Json),
+            file_references: native || matches!(self.markup, Markup::Json),
+            actions: self.supports_actions,
+            color: native,
+            interactive: self.supports_actions || native,
+            accessible_plain: matches!(self.markup, Markup::Plain),
+            max_chars: self.max_chars,
+        }
     }
 }
 
@@ -448,6 +489,10 @@ pub struct DeliveryPacket {
     pub actions: Vec<DeliveryAction>,
     pub coverage: Vec<Coverage>,
     pub diagnostics: Vec<String>,
+    /// Native semantic projection. Text-only consumers can ignore this and
+    /// continue using `chunks` or `fallback_markdown`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation: Option<OutputTimeline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -508,6 +553,7 @@ pub fn render(job: &DeliveryJob) -> Result<DeliveryPacket, DeliveryError> {
         ));
     }
     if let DeliveryContent::Answer(answer) = &job.content
+        && answer.schema_version != 1
         && answer.schema_version != DELIVERY_SCHEMA_VERSION
     {
         return Err(DeliveryError::UnsupportedSchema(answer.schema_version));
@@ -544,6 +590,7 @@ pub fn render(job: &DeliveryJob) -> Result<DeliveryPacket, DeliveryError> {
         );
     }
 
+    let presentation = presentation_for_job(job);
     Ok(DeliveryPacket {
         schema_version: DELIVERY_SCHEMA_VERSION,
         job_id: job.job_id.clone(),
@@ -556,6 +603,37 @@ pub fn render(job: &DeliveryJob) -> Result<DeliveryPacket, DeliveryError> {
         actions,
         coverage,
         diagnostics,
+        presentation,
+    })
+}
+
+fn presentation_for_job(job: &DeliveryJob) -> Option<OutputTimeline> {
+    let DeliveryContent::Answer(answer) = &job.content else {
+        return None;
+    };
+    let document = answer.presentation_document();
+    Some(OutputTimeline {
+        schema_version: presentation::PRESENTATION_SCHEMA_VERSION,
+        session_id: String::new(),
+        cursor: None,
+        items: vec![OutputItem {
+            id: job.job_id.clone(),
+            timestamp: String::new(),
+            turn_id: job.job_id.clone(),
+            role: OutputRole::Assistant,
+            kind: match job.kind {
+                DeliveryKind::Assistant | DeliveryKind::TaskSummary | DeliveryKind::Alert => {
+                    OutputKind::Outcome
+                }
+                _ => OutputKind::Message,
+            },
+            status: OutputStatus::Succeeded,
+            content: OutputContent::Document { document },
+            provenance: None,
+            actions: Vec::new(),
+            fallback_text: answer.source_markdown.clone(),
+        }],
+        diagnostics: Vec::new(),
     })
 }
 
@@ -1032,6 +1110,41 @@ mod tests {
                 .all(|chunk| chunk.chars().count() <= 4096)
         );
         assert!(matches!(packet.payload, DeliveryPayload::Text(_)));
+        let presentation = packet
+            .presentation
+            .expect("schema v2 packet has a timeline");
+        assert_eq!(presentation.items.len(), 1);
+        let OutputContent::Document { document } = &presentation.items[0].content else {
+            panic!("answer must project to a document");
+        };
+        assert_eq!(document.source_markdown, answer.source_markdown);
+        assert_eq!(document.coverage.len(), document.blocks.len());
+        assert!(
+            document
+                .blocks
+                .iter()
+                .any(|block| matches!(block, DocumentBlock::Table { .. }))
+        );
+    }
+
+    #[test]
+    fn schema_one_answer_is_compiled_without_source_loss() {
+        let mut input = job(Markup::Plain, None);
+        let DeliveryContent::Answer(answer) = &mut input.content else {
+            panic!("test job must contain an answer");
+        };
+        answer.schema_version = 1;
+        answer.document = PresentationDocument::default();
+        let source = answer.source_markdown.clone();
+
+        let packet = render(&input).expect("schema one remains readable");
+        let timeline = packet
+            .presentation
+            .expect("legacy input gets a v2 projection");
+        let OutputContent::Document { document } = &timeline.items[0].content else {
+            panic!("legacy answer must compile to a document");
+        };
+        assert_eq!(document.source_markdown, source);
     }
 
     #[test]

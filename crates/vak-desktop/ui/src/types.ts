@@ -33,6 +33,105 @@ export interface Message {
   content: ContentBlock[];
 }
 
+export type OutputRole = "system" | "user" | "assistant" | "tool" | "subagent";
+export type OutputKind =
+  | "message"
+  | "information"
+  | "approval"
+  | "progress"
+  | "retry"
+  | "error"
+  | "outcome"
+  | "artifact";
+export type OutputStatus =
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "denied"
+  | "cancelled"
+  | "partial";
+
+export type InlineNode =
+  | { type: "text"; text: string }
+  | { type: "strong"; content: InlineNode[] }
+  | { type: "emphasis"; content: InlineNode[] }
+  | { type: "strikethrough"; content: InlineNode[] }
+  | { type: "code"; code: string }
+  | { type: "link"; label: InlineNode[]; url: string; title?: string | null; safe: boolean }
+  | { type: "image"; alt: string; url: string; title?: string | null; safe: boolean }
+  | { type: "soft_break" }
+  | { type: "hard_break" }
+  | { type: "raw_html"; html: string };
+
+export interface ArtifactRef {
+  name: string;
+  path?: string | null;
+  media_type?: string | null;
+  description?: string | null;
+}
+
+export type DocumentBlock =
+  | { type: "heading"; id: string; level: number; content: InlineNode[] }
+  | { type: "paragraph"; id: string; content: InlineNode[] }
+  | { type: "list"; id: string; ordered: boolean; start?: number | null; items: DocumentBlock[][] }
+  | { type: "table"; id: string; alignments: string[]; header: InlineNode[][]; rows: InlineNode[][][] }
+  | { type: "quote"; id: string; blocks: DocumentBlock[] }
+  | { type: "code"; id: string; language?: string | null; filename?: string | null; content: string }
+  | { type: "callout"; id: string; tone: string; title?: string | null; blocks: DocumentBlock[] }
+  | { type: "diff"; id: string; content: string }
+  | { type: "citations"; id: string; items: { label: string; url: string; title?: string | null }[] }
+  | { type: "media"; id: string; source: string; alt: string; media_type?: string | null }
+  | { type: "artifact_ref"; id: string; artifact: ArtifactRef }
+  | { type: "rule"; id: string }
+  | { type: "raw_markdown"; id: string; markdown: string; reason: string };
+
+export interface PresentationDocument {
+  schema_version: number;
+  source_markdown: string;
+  blocks: DocumentBlock[];
+  coverage: { block_id: string; disposition: "native" | "fallback"; diagnostic?: string | null }[];
+  metadata: Record<string, string>;
+  diagnostics: string[];
+}
+
+export type OutputContent =
+  | { type: "document"; document: PresentationDocument }
+  | { type: "information"; label: string; detail?: string | null }
+  | { type: "approval"; request_id: string; tool: string; args_json: string; reason: string; expires_at?: string | null }
+  | { type: "progress"; label: string; detail?: string | null; percent?: number | null }
+  | { type: "retry"; attempt: number; delay_ms: number; reason: string }
+  | { type: "error"; message: string; source?: string | null; retryable: boolean }
+  | { type: "outcome"; summary: string; document?: PresentationDocument | null }
+  | { type: "artifact"; artifact: ArtifactRef };
+
+export interface OutputAction {
+  id: string;
+  label: string;
+  verb: string;
+  data: Record<string, string>;
+}
+
+export interface OutputItem {
+  id: string;
+  timestamp: string;
+  turn_id: string;
+  role: OutputRole;
+  kind: OutputKind;
+  status: OutputStatus;
+  content: OutputContent;
+  actions: OutputAction[];
+  fallback_text: string;
+}
+
+export interface OutputTimeline {
+  schema_version: number;
+  session_id: string;
+  cursor?: string | null;
+  items: OutputItem[];
+  diagnostics: string[];
+}
+
 type StreamEvent =
   | { Start: { partial: AssistantMessage } }
   | { TextDelta: { delta: string; partial: AssistantMessage } }

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use vak_llm::{Message, Usage};
 
@@ -118,6 +119,47 @@ pub enum GoalStatus {
     },
 }
 
+/// Durable, projection-neutral lifecycle fact used to rebuild native output
+/// timelines. Activity never enters the model context and never replaces the
+/// message/tool records that remain the source of conversational truth.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActivityRecord {
+    pub activity_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<usize>,
+    #[serde(rename = "activity_kind")]
+    pub kind: ActivityKind,
+    pub status: ActivityStatus,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub data: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityKind {
+    Approval,
+    Retry,
+    RouteFallback,
+    Subagent,
+    Diagnostic,
+    Run,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityStatus {
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+    Denied,
+    Cancelled,
+    Partial,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EntryPayload {
@@ -129,6 +171,8 @@ pub enum EntryPayload {
     Receipt(vak_llm::WorkReceipt),
     /// Goal lifecycle (doc 27 Phase H). Never model-visible.
     Goal(GoalEntry),
+    /// UI/audit lifecycle facts; never model-visible.
+    Activity(ActivityRecord),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

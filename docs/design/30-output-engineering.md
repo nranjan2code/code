@@ -1,9 +1,10 @@
 # 30 — Output engineering and channel delivery
 
-Status: contract, isolated worker, trusted templates, Telegram projection,
-semantic webhook envelope, adapter registry, ordered multi-message output, and
-durable retry outbox implemented. Native desktop/TUI block widgets remain a
-presentation-layer extension; existing event and HIL controls are unchanged.
+Status: schema-v2 semantic timeline, deterministic CommonMark compiler,
+desktop native renderer, snapshot/SSE projection, isolated worker, trusted
+templates, Telegram projection, semantic webhook envelope, adapter registry,
+ordered multi-message output, and durable retry outbox implemented. TUI and
+additional native channel projectors remain follow-up work.
 
 ## Problem
 
@@ -15,6 +16,37 @@ models, accessibility needs, and hard payload limits.
 Formatting must not become a second source of truth. The session ledger keeps
 the complete assistant output. Delivery is a derived projection.
 
+## Semantic timeline
+
+The canonical path is:
+
+`ledger + live events → OutputTimeline → SurfaceCapabilities → native renderer or text fallback`
+
+Presentation is a deterministic, versioned projection. The ledger stays the
+authority and exact source Markdown stays available for export, audit, legacy
+clients, and emergency degradation. Schema v2 separates three axes that were
+previously conflated in prose and CSS:
+
+- `OutputRole`: system, user, assistant, tool, or subagent.
+- `OutputKind`: message, information, approval, progress, retry, error,
+  outcome, or artifact.
+- `OutputStatus`: pending, running, succeeded, failed, denied, cancelled, or
+  partial.
+
+An `OutputItem` has a stable ID, timestamp, turn ID, typed content,
+provenance, actions, and exact textual fallback. A `PresentationDocument`
+contains a closed block and inline AST for headings, paragraphs, lists,
+tables, quotes, code, diffs, callouts, citations, media, artifact references,
+and opaque fallback. `pulldown-cmark` compiles model Markdown without mounting
+raw HTML. Unsafe links remain readable but are not interactive. Every source
+construct is either represented by a trusted node or retained as an explicit
+fallback with a degradation diagnostic.
+
+`SurfaceCapabilities` describes structured blocks, tables, code, links,
+media, file references, actions, color, interactivity, accessibility/plain
+mode, and size. It is a projector input, not permission: an action still uses
+the existing approval and permission boundary.
+
 ## Contract
 
 `vak-delivery` defines six layers:
@@ -23,18 +55,21 @@ the complete assistant output. Delivery is a derived projection.
    assistant answer, task summary, alert, approval, progress update, and tool
    result are not interchangeable. System/developer/internal messages are
    control-plane data and are rejected by the external delivery renderer.
-2. `AnswerDraft` contains the exact source Markdown and a conservative block
-   projection. Unknown structures become `RawMarkdown`; they are never
+2. `AnswerDraft` contains the exact source Markdown, its legacy conservative
+   projection, and a `PresentationDocument`. Schema-v1 drafts are accepted and
+   compiled on read. Unknown structures become inert fallback; they are never
    dropped.
-3. `DeliveryProfile` declares the target's accepted markup and constraints.
+3. `DeliveryProfile` declares the target's accepted markup and constraints and
+   maps to `SurfaceCapabilities`.
 4. `TemplateSpec`/`TemplateRegistry` provide replaceable, declarative layouts.
    Templates contain literal text, approved slots, and bounded conditionals;
    they cannot execute code or access tools. Built-in, project, and user
    templates can be active. Agent-created templates are proposals until an
    explicit activation operation approves them. Higher-precedence active
    templates replace lower-precedence ones by ID.
-5. `DeliveryPacket` contains the rendered payload, exact Markdown fallback,
-   bounded chunks, block coverage, and diagnostics.
+5. `DeliveryPacket` contains the rendered payload, optional semantic timeline,
+   exact Markdown fallback, bounded chunks, block coverage, actions, and
+   diagnostics. Existing fields remain stable for legacy consumers.
 6. `vak-delivery-worker` is a separate line-oriented process. It renders jobs
    but does not own transport credentials, sessions, permissions, or the
    canonical ledger.
@@ -91,6 +126,35 @@ they know terminal width, theme, accessibility mode, and window state. The
 worker is primarily for Telegram, webhooks, scheduled tasks, and unattended
 surfaces. A small plain-text emergency path may remain in the server for
 critical failure alerts.
+
+## Durable lifecycle and reconnect
+
+`vak-session` stores projection-neutral `ActivityRecord` entries for approval
+transitions, retries, route fallback, significant diagnostics, and run
+completion. They are skipped by model-context derivation just like receipts;
+token deltas are intentionally not persisted. Old ledgers remain readable and
+are projected best-effort from messages, tool blocks, and receipts.
+
+The server exposes `GET /sessions/:id/presentation` for an idempotent snapshot
+and `GET /sessions/:id/presentation/events` for `Snapshot`, `ItemStarted`,
+`TextDelta`, `ItemReplaced`, and `ItemCompleted`. The first event on every SSE
+connection is a complete snapshot, so reconnect never depends on replaying a
+lost broadcast delta. Raw `AgentEvent` and Markdown transcript endpoints stay
+available for compatibility and forensic inspection.
+
+## Desktop projection
+
+The SolidJS desktop uses a closed component registry keyed by semantic node
+type. A completed turn is outcome-first: user request, blocking approval,
+outcome, artifact shelf, optional activity/audit, and persistent recovery for
+failed work. Outcome, Balanced, and Audit modes are different projections of
+the same timeline. Prose is continuous; only code, tables, diffs, callouts,
+artifacts, approvals, and recovery states get purpose-built containment.
+
+Active assistant text is appended without reparsing or mounting HTML. When a
+turn settles, hydration replaces it with the ledger-derived AST. Unknown nodes
+fall back visibly, links are scheme-checked, raw HTML is inert, and artifact
+and approval actions route through existing desktop commands.
 
 ## Multi-message rule
 
@@ -156,6 +220,11 @@ Primary references:
 2. Telegram conversion behind the worker with tag-safe chunking: complete.
 3. Semantic webhook envelope plus `text` fallback: complete.
 4. Stable semantic packet returned to sidecars and available to native clients:
-   complete. Native desktop/TUI block widgets remain future presentation work.
-5. Golden fixtures for tables, diffs, long Unicode, links, code, errors,
-   approvals, accessibility/plain mode, and unsupported features.
+   complete.
+5. Desktop outcome-first semantic renderer and reconnectable projection:
+   complete.
+6. TUI and richer Slack/Discord projectors: planned.
+7. Golden fixtures cover parser losslessness, nested structures, tables, code,
+   diffs, unsafe links/HTML, artifacts, lifecycle states, legacy drafts, and
+   unsupported capabilities; channel-specific accessibility and visual checks
+   remain part of each surface release gate.

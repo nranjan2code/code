@@ -8,6 +8,7 @@ import type {
   SessionSummary,
   ConfigSnapshot,
   WorkReceipt,
+  OutputTimeline,
 } from "./types";
 
 let base = "";
@@ -219,6 +220,10 @@ export function transcript(id: string): Promise<{
   messages: Message[];
 }> {
   return req(`/sessions/${id}/transcript`);
+}
+
+export function presentation(id: string): Promise<OutputTimeline> {
+  return req(`/sessions/${encodeURIComponent(id)}/presentation`);
 }
 
 /** Markdown export (shared renderer with the TUI); text, not JSON. */

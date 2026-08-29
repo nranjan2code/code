@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use tempfile::tempdir;
 
 use vak_llm::{ContentBlock, Message, Role, Usage};
-use vak_session::SessionLog;
 use vak_session::types::{EntryPayload, FrozenContract, MessageMeta, MessageRecord, SessionHeader};
+use vak_session::{ActivityKind, ActivityRecord, ActivityStatus, SessionLog};
 
 fn header() -> SessionHeader {
     SessionHeader {
@@ -71,6 +71,32 @@ fn append_and_derive_roundtrip() {
         reopened.header().unwrap().contract.model,
         "claude-sonnet-4-5"
     );
+}
+
+#[test]
+fn activity_roundtrips_without_entering_model_context() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("activity.jsonl");
+    let mut log = SessionLog::create(path.clone(), header()).unwrap();
+    log.append_message(user_msg("keep me visible")).unwrap();
+    log.append_activity(ActivityRecord {
+        activity_id: "retry-1".into(),
+        turn: Some(1),
+        kind: ActivityKind::Retry,
+        status: ActivityStatus::Succeeded,
+        label: "Recovered after retry".into(),
+        detail: Some("provider timeout".into()),
+        data: [("attempt".into(), "1".into())].into(),
+    })
+    .unwrap();
+    assert_eq!(log.derive_messages().len(), 1);
+    drop(log);
+
+    let reopened = SessionLog::open(path).unwrap();
+    assert_eq!(reopened.derive_messages().len(), 1);
+    let activities = reopened.activities();
+    assert_eq!(activities.len(), 1);
+    assert_eq!(activities[0].2.activity_id, "retry-1");
 }
 
 #[test]

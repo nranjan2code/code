@@ -64,6 +64,8 @@ clap = { version = "4", features = ["derive", "env"] }
 uuid = { version = "1", features = ["v7"] }
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
+# Standards-compliant CommonMark AST for lossless, surface-neutral output projection.
+pulldown-cmark = "=0.13.4"
 walkdir = "2"
 # checkpoint file-content encoding
 base64 = "0.22"

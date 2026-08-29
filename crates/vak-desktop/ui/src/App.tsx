@@ -23,6 +23,7 @@ import {
   setSessions,
   setUsageFor,
   hydrateFromTranscript,
+  hydrateFromPresentation,
   dockTab,
   diffTarget,
   showShortcuts,
@@ -152,9 +153,13 @@ export async function refreshSessions() {
 async function hydrate(id: string) {
   setHydratingId(id);
   try {
-    const t = await api.transcript(id);
+    const [t, presentation] = await Promise.all([
+      api.transcript(id),
+      api.presentation(id).catch(() => null),
+    ]);
     if (!isRunning(id)) {
       hydrateFromTranscript(id, t.messages);
+      if (presentation) hydrateFromPresentation(id, presentation);
       setUsageFor(id, t.usage);
     }
   } catch (error) {
@@ -224,7 +229,9 @@ async function notify(title: string, body: string) {
 }
 
 function onFinished(id: string, summary: string) {
-  void refreshSessions();
+  hydrateFromPresentation(id, { schema_version: 2, session_id: id, items: [], diagnostics: [] });
+  markRunning(id, false);
+  void Promise.all([refreshSessions(), hydrate(id)]);
   if (document.hidden && id === activeId()) {
     const s = sessions().find((x) => x.session_id === id);
     void notify("Vak run finished", `${s?.title ?? "Session"} — ${summary}`);

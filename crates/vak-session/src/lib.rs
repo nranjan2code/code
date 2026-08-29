@@ -16,6 +16,6 @@ pub use search::{
     search_all, search_extended,
 };
 pub use types::{
-    CompactionEntry, Entry, EntryPayload, FrozenContract, MessageMeta, MessageRecord, SessionError,
-    SessionHeader,
+    ActivityKind, ActivityRecord, ActivityStatus, CompactionEntry, Entry, EntryPayload,
+    FrozenContract, MessageMeta, MessageRecord, SessionError, SessionHeader,
 };

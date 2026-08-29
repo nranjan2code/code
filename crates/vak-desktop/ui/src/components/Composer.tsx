@@ -486,9 +486,9 @@ export default function Composer(props: { cwd: string }) {
               onChange={(e) => setDensity(e.currentTarget.value as Density)}
               title="Transcript detail"
             >
-              <option value="summary">summary</option>
-              <option value="normal">normal</option>
-              <option value="verbose">verbose</option>
+              <option value="outcome">outcome</option>
+              <option value="balanced">balanced</option>
+              <option value="audit">audit</option>
             </select>
             <span class="composer-tokens" title={`Input ${inTok()} tokens · output ${outTok()} tokens`}>
               {inTok()} in · {outTok()} out

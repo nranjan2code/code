@@ -47,6 +47,7 @@ pub mod discord;
 mod events;
 mod gateway;
 mod heartbeat;
+mod presentation;
 mod rate_limit;
 pub mod slack;
 pub mod telegram;
@@ -87,6 +88,11 @@ pub(crate) struct SessionHandle {
     /// Pending approval gates scoped to THIS session — a client holding
     /// session A can never resolve session B's approvals.
     pub(crate) pending: Arc<Mutex<HashMap<String, ApprovalRequest>>>,
+    /// Lifecycle facts produced while the runner owns the SessionLog. They
+    /// are appended atomically when the runner returns the ledger.
+    pub(crate) activity_buffer: Arc<Mutex<Vec<vak_session::ActivityRecord>>>,
+    /// Reconnectable presentation state while the runner owns the ledger.
+    pub(crate) presentation: Arc<Mutex<vak_delivery::OutputTimeline>>,
     /// Notified when an SSE consumer attaches, so runs don't start (and
     /// finish) before anyone is listening.
     pub(crate) subscribed: Arc<tokio::sync::Notify>,
@@ -224,6 +230,7 @@ struct HttpApprover {
     pending: Arc<Mutex<HashMap<String, ApprovalRequest>>>,
     /// Owning session, so admin-console surfaces can attribute gates.
     session_id: String,
+    activity_buffer: Arc<Mutex<Vec<vak_session::ActivityRecord>>>,
 }
 
 #[async_trait::async_trait]
@@ -251,6 +258,23 @@ impl Approver for HttpApprover {
             args_json: args_json.to_string(),
             reason: reason.to_string(),
         });
+        self.activity_buffer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(vak_session::ActivityRecord {
+                activity_id: format!("approval-{id}"),
+                turn: None,
+                kind: vak_session::ActivityKind::Approval,
+                status: vak_session::ActivityStatus::Pending,
+                label: format!("Approval required for {tool}"),
+                detail: Some(reason.to_string()),
+                data: [
+                    ("request_id".into(), id.clone()),
+                    ("tool".into(), tool.to_string()),
+                    ("args_json".into(), args_json.to_string()),
+                ]
+                .into(),
+            });
         if let Some(hub) = events::global() {
             hub.emit(events::SystemEvent::ApprovalRequested {
                 id: id.clone(),
@@ -264,6 +288,30 @@ impl Approver for HttpApprover {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&id);
+        self.activity_buffer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(vak_session::ActivityRecord {
+                activity_id: format!("approval-{id}"),
+                turn: None,
+                kind: vak_session::ActivityKind::Approval,
+                status: if approved {
+                    vak_session::ActivityStatus::Succeeded
+                } else {
+                    vak_session::ActivityStatus::Denied
+                },
+                label: format!(
+                    "Approval {} for {tool}",
+                    if approved { "granted" } else { "denied" }
+                ),
+                detail: Some(reason.to_string()),
+                data: [
+                    ("request_id".into(), id.clone()),
+                    ("tool".into(), tool.to_string()),
+                    ("args_json".into(), args_json.to_string()),
+                ]
+                .into(),
+            });
         if let Some(hub) = events::global() {
             hub.emit(if approved {
                 events::SystemEvent::ApprovalGranted {
@@ -337,6 +385,11 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/subagents/{child}/stop", post(stop_subagent))
         .route("/sessions/{id}/approvals/{req_id}", post(answer_approval))
         .route("/sessions/{id}/events", get(events_sse))
+        .route("/sessions/{id}/presentation", get(presentation_snapshot))
+        .route(
+            "/sessions/{id}/presentation/events",
+            get(presentation_events_sse),
+        )
         .route("/sessions/{id}/transcript", get(transcript))
         .route("/sessions/{id}/transcript.md", get(transcript_markdown))
         .route("/sessions/{id}/side", post(side_chat))
@@ -1154,6 +1207,10 @@ pub(crate) fn register_handle(
 ) -> Arc<SessionHandle> {
     let (events_tx, _) = broadcast::channel(1024);
     let (side_events_tx, _) = broadcast::channel(1024);
+    let presentation = Arc::new(Mutex::new(crate::presentation::snapshot(&id, &session)));
+    let mut presentation_rx = events_tx.subscribe();
+    let presentation_state = presentation.clone();
+    let presentation_activities = Arc::new(Mutex::new(Vec::new()));
     let handle = Arc::new(SessionHandle {
         id: id.clone(),
         cwd,
@@ -1162,10 +1219,72 @@ pub(crate) fn register_handle(
         cancel: Arc::new(std::sync::Mutex::new(CancellationToken::new())),
         events_tx,
         pending: Arc::new(Mutex::new(HashMap::new())),
+        activity_buffer: presentation_activities.clone(),
+        presentation,
         subscribed: Arc::new(tokio::sync::Notify::new()),
         side_events_tx,
         side_cancel: Arc::new(std::sync::Mutex::new(CancellationToken::new())),
     });
+    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        let observer_id = id.clone();
+        runtime.spawn(async move {
+            loop {
+                match presentation_rx.recv().await {
+                    Ok(event) => {
+                        if let Some(projected) =
+                            crate::presentation::live_event(&observer_id, event.clone())
+                        {
+                            crate::presentation::apply_stream_event(
+                                &mut presentation_state
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+                                projected,
+                            );
+                        }
+                        let activity = match event {
+                            AgentEvent::SubagentStarted { label } => {
+                                Some(vak_session::ActivityRecord {
+                                    activity_id: format!("subagent-{label}"),
+                                    turn: None,
+                                    kind: vak_session::ActivityKind::Subagent,
+                                    status: vak_session::ActivityStatus::Running,
+                                    label,
+                                    detail: Some("Subagent started".into()),
+                                    data: std::collections::BTreeMap::new(),
+                                })
+                            }
+                            AgentEvent::SubagentFinished {
+                                label,
+                                is_error,
+                                elapsed_ms,
+                            } => Some(vak_session::ActivityRecord {
+                                activity_id: format!("subagent-{label}"),
+                                turn: None,
+                                kind: vak_session::ActivityKind::Subagent,
+                                status: if is_error {
+                                    vak_session::ActivityStatus::Failed
+                                } else {
+                                    vak_session::ActivityStatus::Succeeded
+                                },
+                                label,
+                                detail: Some(format!("Completed in {elapsed_ms} ms")),
+                                data: std::collections::BTreeMap::new(),
+                            }),
+                            _ => None,
+                        };
+                        if let Some(activity) = activity {
+                            presentation_activities
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .push(activity);
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
     state
         .sessions
         .lock()
@@ -1384,6 +1503,7 @@ fn summarize_jsonl(
                         vak_session::EntryPayload::Compaction(_) => {}
                         vak_session::EntryPayload::Receipt(_) => {}
                         vak_session::EntryPayload::Goal(_) => {}
+                        vak_session::EntryPayload::Activity(_) => {}
                     }
                 }
                 if title.is_some() && entries > 400 {
@@ -1560,6 +1680,7 @@ async fn run_prompt(
         events_tx: handle.events_tx.clone(),
         pending: handle.pending.clone(),
         session_id: handle.id.clone(),
+        activity_buffer: handle.activity_buffer.clone(),
     });
     let events = mpsc_to_broadcast(handle.events_tx.clone());
     let steering = handle.steering.clone();
@@ -1650,17 +1771,53 @@ async fn run_prompt(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = CancellationToken::new();
         match outcome {
-            Ok((o, session_log)) => {
+            Ok((o, mut session_log)) => {
                 let (summary, is_error) = match &o {
                     vak_agent::TurnOutcome::Completed { .. } => ("completed".to_string(), false),
                     vak_agent::TurnOutcome::Aborted { .. } => ("aborted".to_string(), false),
                     vak_agent::TurnOutcome::Failed { error } => (format!("failed: {error}"), true),
                     vak_agent::TurnOutcome::MaxTurnsReached => ("max_turns".to_string(), true),
                 };
+                let activity_status = match &o {
+                    vak_agent::TurnOutcome::Completed { .. } => {
+                        vak_session::ActivityStatus::Succeeded
+                    }
+                    vak_agent::TurnOutcome::Aborted { .. } => {
+                        vak_session::ActivityStatus::Cancelled
+                    }
+                    vak_agent::TurnOutcome::Failed { .. }
+                    | vak_agent::TurnOutcome::MaxTurnsReached => {
+                        vak_session::ActivityStatus::Failed
+                    }
+                };
+                let _ = session_log.append_activity(vak_session::ActivityRecord {
+                    activity_id: format!("run-{run_id}-{}", chrono::Utc::now().timestamp_micros()),
+                    turn: None,
+                    kind: vak_session::ActivityKind::Run,
+                    status: activity_status,
+                    label: "Run finished".into(),
+                    detail: Some(summary.clone()),
+                    data: std::collections::BTreeMap::new(),
+                });
+                let buffered = std::mem::take(
+                    &mut *handle
+                        .activity_buffer
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                );
+                for activity in buffered {
+                    let _ = session_log.append_activity(activity);
+                }
+                *handle
+                    .presentation
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    crate::presentation::snapshot(&run_id, &session_log);
                 hub.emit_agent_summary(&summary, Some(run_id.clone()));
-                let _ = handle
-                    .events_tx
-                    .send(AgentEvent::RunFinished { summary, is_error });
+                let _ = handle.events_tx.send(AgentEvent::RunFinished {
+                    summary: summary.clone(),
+                    is_error,
+                });
                 index_session_later(admin_store.clone(), sessions_home.clone(), run_id.clone());
                 // Background reflection seam (docs/design/29 P1): after the
                 // summary is recorded and while this task still owns the
@@ -1683,7 +1840,20 @@ async fn run_prompt(
             Err(e) => {
                 // Same leak class: restore from the durable ledger so the
                 // handle does not stay wedged on "run in progress".
-                if let Some(restored) = reopen_ledger(&core, &run_id) {
+                if let Some(mut restored) = reopen_ledger(&core, &run_id) {
+                    for activity in std::mem::take(
+                        &mut *handle
+                            .activity_buffer
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner),
+                    ) {
+                        let _ = restored.append_activity(activity);
+                    }
+                    *handle
+                        .presentation
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                        crate::presentation::snapshot(&run_id, &restored);
                     *handle
                         .session
                         .lock()
@@ -1958,6 +2128,99 @@ async fn events_sse(
         None => Box::pin(tokio_stream::once(Ok(
             Event::default().data("{\"error\":\"unknown session\"}")
         ))),
+    };
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+async fn presentation_snapshot(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Some(handle) = state.get(&id) {
+        let guard = handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(session) = guard.as_ref() {
+            return Json(crate::presentation::snapshot(&id, session)).into_response();
+        }
+        let mut timeline = handle
+            .presentation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        timeline.diagnostics.push("run in progress".into());
+        return Json(timeline).into_response();
+    }
+    match open_historical_session(&state, &id) {
+        Some(session) => Json(crate::presentation::snapshot(&id, &session)).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "unknown session" })),
+        )
+            .into_response(),
+    }
+}
+
+async fn presentation_events_sse(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
+    use tokio_stream::StreamExt;
+    use tokio_stream::wrappers::BroadcastStream;
+
+    let stream: std::pin::Pin<
+        Box<dyn tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
+    > = match state.get(&id) {
+        Some(handle) => {
+            let rx = handle.events_tx.subscribe();
+            let initial = {
+                let guard = handle
+                    .session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                guard
+                    .as_ref()
+                    .map(|session| crate::presentation::snapshot(&id, session))
+                    .unwrap_or_else(|| {
+                        handle
+                            .presentation
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .clone()
+                    })
+            };
+            let initial = vak_delivery::OutputStreamEvent::Snapshot { timeline: initial };
+            let initial = tokio_stream::once(Ok(
+                Event::default().data(serde_json::to_string(&initial).unwrap_or_default())
+            ));
+            handle.subscribed.notify_one();
+            let live_id = id.clone();
+            let live = BroadcastStream::new(rx).filter_map(move |event| match event {
+                Ok(event) => {
+                    crate::presentation::live_event(&live_id, event).map(|projected| {
+                        Ok(Event::default()
+                            .data(serde_json::to_string(&projected).unwrap_or_default()))
+                    })
+                }
+                Err(_) => Some(Ok(Event::default().data("{\"lagged\":true}"))),
+            });
+            Box::pin(initial.chain(live))
+        }
+        None => match open_historical_session(&state, &id) {
+            Some(session) => {
+                let event = vak_delivery::OutputStreamEvent::Snapshot {
+                    timeline: crate::presentation::snapshot(&id, &session),
+                };
+                Box::pin(tokio_stream::once(Ok(
+                    Event::default().data(serde_json::to_string(&event).unwrap_or_default())
+                )))
+            }
+            None => Box::pin(tokio_stream::once(Ok(
+                Event::default().data("{\"error\":\"unknown session\"}")
+            ))),
+        },
     };
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
@@ -4241,10 +4504,12 @@ async fn side_chat(
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let side_tx = handle.side_events_tx.clone();
+    let side_activity = Arc::new(Mutex::new(Vec::new()));
     let approver: Arc<dyn Approver> = Arc::new(HttpApprover {
         events_tx: handle.events_tx.clone(),
         pending: handle.pending.clone(),
         session_id: handle.id.clone(),
+        activity_buffer: side_activity.clone(),
     });
     let events = mpsc_to_broadcast(side_tx.clone());
     let cancel = handle
@@ -4276,12 +4541,24 @@ async fn side_chat(
         };
         let turn_ok = matches!(&outcome, Ok((_, _)));
         if let Ok((_, mut restored)) = outcome {
+            for activity in std::mem::take(
+                &mut *side_activity
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            ) {
+                let _ = restored.append_activity(activity);
+            }
             // Rewind the branch pointer to the main line: the side entries
             // remain in the ledger as a sibling branch — reconstructable via
             // their parent chain, invisible to derive_messages().
             if let Some(main_tail) = &tail_main {
                 let _ = restored.branch_at(main_tail);
             }
+            *handle
+                .presentation
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                crate::presentation::snapshot(&id, &restored);
             *handle
                 .session
                 .lock()
@@ -4484,6 +4761,7 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str) {
         events_tx: handle.events_tx.clone(),
         pending: handle.pending.clone(),
         session_id: handle.id.clone(),
+        activity_buffer: handle.activity_buffer.clone(),
     });
     let events = mpsc_to_broadcast(handle.events_tx.clone());
     let steering = Arc::new(SteeringQueues::new());
@@ -4523,7 +4801,19 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str) {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = CancellationToken::new();
         match outcome {
-            Ok((_, restored)) => {
+            Ok((_, mut restored)) => {
+                for activity in std::mem::take(
+                    &mut *h2
+                        .activity_buffer
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                ) {
+                    let _ = restored.append_activity(activity);
+                }
+                *h2.presentation
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    crate::presentation::snapshot(&turn_session_id, &restored);
                 *h2.session
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);

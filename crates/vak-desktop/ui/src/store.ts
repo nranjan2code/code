@@ -9,9 +9,10 @@ import type {
   Message,
   SessionSummary,
   Usage,
+  OutputTimeline,
 } from "./types";
 
-export type Density = "normal" | "verbose" | "summary";
+export type Density = "outcome" | "balanced" | "audit";
 
 export type Item =
   | { kind: "user"; text: string }
@@ -46,7 +47,7 @@ export const [health, setHealth] = createSignal<Health | null>(null);
 // usable credential exists for the current provider.
 export const [providers, setProviders] = createSignal<import("./types").ProvidersResponse | null>(null);
 export const [setupNeeded, setSetupNeeded] = createSignal(false);
-export const [density, setDensity] = createSignal<Density>("normal");
+export const [density, setDensity] = createSignal<Density>("outcome");
 export const [dockTab, setDockTab] = createSignal<"preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | null>(null);
 export const [showShortcuts, setShowShortcuts] = createSignal(false);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
@@ -186,6 +187,7 @@ export function openInEditor(path: string) {
 const [itemsBySession, setItemsBySession] = createStore<Record<string, Item[]>>({});
 const [runningMap, setRunningMap] = createStore<Record<string, boolean>>({});
 const [usageBySession, setUsageBySession] = createStore<Record<string, Usage>>({});
+const [presentationBySession, setPresentationBySession] = createStore<Record<string, OutputTimeline>>({});
 
 // ---- selectors -------------------------------------------------------------
 
@@ -200,6 +202,14 @@ export function isRunning(id: string | null, bucket: Bucket = "main"): boolean {
 
 export function usageOf(id: string | null): Usage {
   return (id && usageBySession[id]) || {};
+}
+
+export function presentationOf(id: string | null): OutputTimeline | null {
+  return id ? (presentationBySession[id] ?? null) : null;
+}
+
+export function hydrateFromPresentation(id: string, timeline: OutputTimeline) {
+  setPresentationBySession(id, timeline);
 }
 
 // ---- buckets: "main" transcript vs "side" (/btw) branch --------------------
@@ -580,4 +590,5 @@ export function resetSessionView(id: string) {
     setItemsBySession(key, []);
     setRunningMap(key, false);
   }
+  setPresentationBySession(id, { schema_version: 2, session_id: id, items: [], diagnostics: [] });
 }
