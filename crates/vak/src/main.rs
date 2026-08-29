@@ -16,6 +16,7 @@ mod format;
 mod inbox;
 mod install;
 mod memory;
+mod plugins;
 mod tasks;
 mod update_check;
 
@@ -268,6 +269,7 @@ async fn main() {
         },
         Some(Command::Memory { action }) => memory::run_memory(cwd, action),
         Some(Command::SkillsReview { action }) => run_skills_review(cwd, action),
+        Some(Command::Plugins { action }) => plugins::run_plugins(cwd, action),
         Some(Command::Checkpoints { action }) => run_checkpoints(cwd, action).await,
         Some(Command::Telegram {
             server,

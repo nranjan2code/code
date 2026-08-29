@@ -341,11 +341,12 @@ fn normalize_client_manifest(
         }
     }
     let name = required_string(object, "name")?;
-    let version = object
+    let source_version = object
         .get("version")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("0.0.0+local")
         .to_string();
+    let (version, version_warning) = normalize_external_version(&source_version);
     let description = object
         .get("description")
         .and_then(serde_json::Value::as_str)
@@ -445,7 +446,7 @@ fn normalize_client_manifest(
         .filter(|key| !known.contains(key.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    let warnings = if unknown.is_empty() {
+    let mut warnings = if unknown.is_empty() {
         Vec::new()
     } else {
         vec![format!(
@@ -453,6 +454,9 @@ fn normalize_client_manifest(
             unknown.join(", ")
         )]
     };
+    if let Some(warning) = version_warning {
+        warnings.push(warning);
+    }
     Ok((
         PluginManifest {
             schema: REGISTRY_SCHEMA,
@@ -467,6 +471,20 @@ fn normalize_client_manifest(
         format,
         warnings,
     ))
+}
+
+fn normalize_external_version(source: &str) -> (String, Option<String>) {
+    if Version::parse(source).is_ok() {
+        return (source.to_string(), None);
+    }
+    let digest = Sha256::digest(source.as_bytes());
+    let normalized = format!("0.0.0+source.{}", &hex::encode(digest)[..12]);
+    (
+        normalized.clone(),
+        Some(format!(
+            "source version {source:?} is not semantic; normalized internally as {normalized}"
+        )),
+    )
 }
 
 fn manifest_relative_path(format: ManifestFormat) -> &'static str {
@@ -964,6 +982,8 @@ pub struct InstalledPlugin {
     pub publisher: Option<Publisher>,
     pub format: ManifestFormat,
     pub source: String,
+    #[serde(default)]
+    pub trace_id: String,
     pub package_path: PathBuf,
     pub scope: InstallScope,
     pub enabled: bool,
@@ -977,6 +997,27 @@ pub struct PluginRegistry {
     pub schema: u32,
     pub generation: u64,
     pub plugins: BTreeMap<String, InstalledPlugin>,
+    #[serde(default)]
+    pub audit: Vec<PluginAuditEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PluginAuditAction {
+    Installed,
+    Removed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginAuditEvent {
+    pub generation: u64,
+    pub at_unix: u64,
+    pub action: PluginAuditAction,
+    pub plugin: String,
+    pub version: String,
+    pub digest: String,
+    pub trace_id: String,
+    pub source: String,
 }
 
 impl Default for PluginRegistry {
@@ -985,6 +1026,7 @@ impl Default for PluginRegistry {
             schema: REGISTRY_SCHEMA,
             generation: 0,
             plugins: BTreeMap::new(),
+            audit: Vec::new(),
         }
     }
 }
@@ -1076,6 +1118,9 @@ impl PluginStore {
         } else {
             self.copy_verified(&inspection, &package_path)?;
         }
+        let installed_at_unix = now_unix();
+        let source = inspection.root.display().to_string();
+        let trace_id = format!("install:{}:{}", inspection.manifest.name, inspection.digest);
         let installed = InstalledPlugin {
             name: inspection.manifest.name.clone(),
             version: inspection.manifest.version.clone(),
@@ -1084,11 +1129,12 @@ impl PluginStore {
             license: inspection.manifest.license,
             publisher: inspection.manifest.publisher,
             format: inspection.format,
-            source: inspection.root.display().to_string(),
+            source: source.clone(),
+            trace_id: trace_id.clone(),
             package_path,
             scope: options.scope,
             enabled: false,
-            installed_at_unix: now_unix(),
+            installed_at_unix,
             capabilities: inspection.capabilities,
             warnings: inspection.warnings,
         };
@@ -1096,12 +1142,22 @@ impl PluginStore {
             .plugins
             .insert(installed.name.clone(), installed.clone());
         registry.generation = registry.generation.saturating_add(1);
+        registry.audit.push(PluginAuditEvent {
+            generation: registry.generation,
+            at_unix: installed_at_unix,
+            action: PluginAuditAction::Installed,
+            plugin: installed.name.clone(),
+            version: installed.version.clone(),
+            digest: installed.digest.clone(),
+            trace_id,
+            source,
+        });
         self.save(&registry)?;
         Ok(installed)
     }
 
     pub fn remove(&self, name: &str) -> Result<InstalledPlugin, PluginError> {
-        let name = normalize_id(name)
+        let name = normalize_plugin_id(name)
             .ok_or_else(|| PluginError::InvalidManifest("invalid plugin name".into()))?;
         let _lock = RegistryLock::acquire(&self.home.join("plugins"))?;
         let mut registry = self.load()?;
@@ -1119,10 +1175,20 @@ impl PluginStore {
                 package_path.display()
             )));
         }
+        registry.generation = registry.generation.saturating_add(1);
+        registry.audit.push(PluginAuditEvent {
+            generation: registry.generation,
+            at_unix: now_unix(),
+            action: PluginAuditAction::Removed,
+            plugin: installed.name.clone(),
+            version: installed.version.clone(),
+            digest: installed.digest.clone(),
+            trace_id: installed.trace_id.clone(),
+            source: installed.source.clone(),
+        });
+        self.save(&registry)?;
         fs::remove_dir_all(&package_path).map_err(|error| io_error(&package_path, error))?;
         prune_empty_parents(&package_path, &packages_root)?;
-        registry.generation = registry.generation.saturating_add(1);
-        self.save(&registry)?;
         Ok(installed)
     }
 

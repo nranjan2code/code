@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
 #[command(name = "Vak", version, about = "A coding agent harness")]
@@ -113,6 +113,11 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: SkillsReviewAction,
     },
+    /// Inspect and manage immutable, disabled-by-default plugin packages
+    Plugins {
+        #[command(subcommand)]
+        action: PluginAction,
+    },
     /// Bridge a Telegram bot to a running gateway (docs/design/22-gateway.md)
     Telegram {
         /// Gateway base URL, e.g. http://127.0.0.1:8901
@@ -185,6 +190,55 @@ pub(crate) enum Command {
     Inbox {
         #[command(subcommand)]
         action: Option<InboxAction>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(crate) enum PluginScopeArg {
+    User,
+    Workspace,
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum PluginAction {
+    /// Inspect a local package without installing or executing it
+    Inspect {
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Copy a reviewed local package into immutable storage, disabled
+    Install {
+        path: PathBuf,
+        #[arg(long, value_enum, default_value_t = PluginScopeArg::User)]
+        scope: PluginScopeArg,
+        /// Proceed when the package declares no license
+        #[arg(long)]
+        allow_unlicensed: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List installed packages for one scope
+    List {
+        #[arg(long, value_enum, default_value_t = PluginScopeArg::User)]
+        scope: PluginScopeArg,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show append-only install and removal provenance
+    Audit {
+        #[arg(long, value_enum, default_value_t = PluginScopeArg::User)]
+        scope: PluginScopeArg,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Unregister and remove one immutable package generation
+    Remove {
+        name: String,
+        #[arg(long, value_enum, default_value_t = PluginScopeArg::User)]
+        scope: PluginScopeArg,
+        #[arg(long)]
+        json: bool,
     },
 }
 
