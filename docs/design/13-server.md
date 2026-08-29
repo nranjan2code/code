@@ -15,6 +15,8 @@ consumers.
 | POST | `/sessions/:id/steering` `{text}` | queue mid-run input |
 | POST | `/sessions/:id/approvals/:rid` `{approve}` | resolve a permission gate |
 | GET | `/sessions/:id/events` | SSE stream of `AgentEvent` JSON |
+| GET | `/sessions/:id/presentation` | reconnectable schema-v2 `OutputTimeline` snapshot; deterministic projection of the ledger and live state |
+| GET | `/sessions/:id/presentation/events` | SSE stream of semantic presentation events (`Snapshot`, `ItemStarted`, `TextDelta`, `ItemReplaced`, `ItemCompleted`) |
 | GET | `/sessions/:id/transcript` | derived messages + usage; historical (non-attached) sessions fall back to opening the ledger from disk — error bodies stay 200-wrapped for wire compatibility |
 | GET | `/sessions/:id/transcript.md` | markdown export through the shared `transcript_md` renderer (byte-parity with TUI export); same disk fallback, proper 404 when unknown |
 | GET | `/sessions` | persisted session summaries (sidebar projection) |
