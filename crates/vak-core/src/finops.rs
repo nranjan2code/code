@@ -796,9 +796,11 @@ mod tests {
     #[tokio::test]
     async fn concurrent_authorize_calls_cannot_jointly_exceed_the_day_cap() {
         let dir = tempdir().unwrap();
-        let mut finops = vak_config::FinopsResolved::default();
         // sonnet est ~= $4.50/dispatch; cap admits exactly one.
-        finops.max_day_usd = Some(5.0);
+        let finops = vak_config::FinopsResolved {
+            max_day_usd: Some(5.0),
+            ..Default::default()
+        };
         let day_budget = Arc::new(Mutex::new(DayBudget::new()));
         let gate_a = CoreSpendGate::with_shared_day_budget(dir.path(), &finops, day_budget.clone());
         let gate_b = CoreSpendGate::with_shared_day_budget(dir.path(), &finops, day_budget);
@@ -820,11 +822,13 @@ mod tests {
     #[tokio::test]
     async fn record_settled_updates_the_shared_day_budget_for_later_gates() {
         let dir = tempdir().unwrap();
-        let mut finops = vak_config::FinopsResolved::default();
         // sonnet est ~= $4.50/dispatch; cap admits exactly one, so a
         // gate that doesn't see gate_a's settlement would wrongly admit
         // a second one at ~$9.00 total.
-        finops.max_day_usd = Some(5.0);
+        let finops = vak_config::FinopsResolved {
+            max_day_usd: Some(5.0),
+            ..Default::default()
+        };
         let day_budget = Arc::new(Mutex::new(DayBudget::new()));
         let gate_a = CoreSpendGate::with_shared_day_budget(dir.path(), &finops, day_budget.clone());
         gate_a.authorize(&check("claude-sonnet")).await.unwrap();

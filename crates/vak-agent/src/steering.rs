@@ -149,7 +149,7 @@ mod tests {
         assert_eq!(drained.len(), MAX_QUEUE_LEN);
         // Oldest entries (0..10) were evicted; the newest survive in order.
         let vak_llm::ContentBlock::Text { text } = &drained[0].content[0] else {
-            panic!("expected text block");
+            unreachable!("expected text block");
         };
         assert_eq!(text, "msg 10");
     }

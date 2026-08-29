@@ -214,7 +214,7 @@ async fn speak_inner(
     };
 
     let setup = build_setup_message(&config.model, persona, voice_name);
-    let send_setup = ws.send(Message::Text(setup.to_string().into()));
+    let send_setup = ws.send(Message::Text(setup.to_string()));
     tokio::select! {
         _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
         r = send_setup => r.map_err(|e| LlmError::Network(e.to_string()))?,
@@ -259,7 +259,7 @@ async fn speak_inner(
     }
 
     let turn = build_client_content(text);
-    let send_turn = ws.send(Message::Text(turn.to_string().into()));
+    let send_turn = ws.send(Message::Text(turn.to_string()));
     tokio::select! {
         _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
         r = send_turn => r.map_err(|e| LlmError::Network(e.to_string()))?,
@@ -331,6 +331,7 @@ async fn speak_inner(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]
@@ -382,7 +383,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let err = speak(&config, &text, None, None, &cancel)
             .await
-            .expect_err("oversized text must be rejected before any network call");
+            .unwrap_err();
         assert!(matches!(err, LlmError::InvalidRequest(_)));
     }
 
