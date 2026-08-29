@@ -399,17 +399,17 @@ pub async fn add_feed_source(
         source_block.push_str(&format!("url = \"{}\"\n", escape_toml(url)));
     }
     source_block.push_str(&format!("interval = \"{}\"\n", escape_toml(interval)));
-    if let Some(tags_str) = &tags {
-        if !tags_str.is_empty() {
-            source_block.push_str(&format!(
-                "tags = [{}]\n",
-                tags_str
-                    .split(", ")
-                    .map(|t| format!("\"{}\"", escape_toml(t)))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
+    if let Some(tags_str) = &tags
+        && !tags_str.is_empty()
+    {
+        source_block.push_str(&format!(
+            "tags = [{}]\n",
+            tags_str
+                .split(", ")
+                .map(|t| format!("\"{}\"", escape_toml(t)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
     }
     source_block.push_str(&format!("trust = \"{}\"\n", escape_toml(trust)));
     source_block.push_str("enabled = true\n");
