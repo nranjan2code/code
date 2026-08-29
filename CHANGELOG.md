@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.11.20 — 2026-08-29
+
+### Bot-scoped channel identity, and the multi-bot units that make it real
+
+0.11.19 gave a bot its own token, policy, and permission tier, but shipped
+with two gaps this release closes.
+
+First, the boring but load-bearing one: `services-sync` never actually
+spawned a bridge process per bot — the only Telegram unit was a single
+static one with no `--bot-id`, so it fell back to the dead legacy
+`TELEGRAM_BOT_TOKEN` slot and neither configured bot ever polled Telegram.
+Service sync now reads `bots.json` and reconciles one `com.vak.<surface>-
+<id>` unit per bot on every install, update, and manual sync, pruning units
+for bots that get deleted. Creating, deleting, or rotating a bot's key now
+also reconciles its unit immediately from the admin console, no restart
+needed. Along the way, each bridge process now tells the gateway which bot
+it is on every inbound message (it always knew — it just never said), so a
+new chat is attributed to its bot from the first message instead of
+forcing an operator to pick one by hand for a fact the bridge already had.
+
+Second, the bigger one: a *channel*'s identity was still `surface:chat`,
+shared by every bot on it — two bots in the same physical chat collided
+onto one conversation and one policy, and outbound replies picked one
+bot's token for the whole surface arbitrarily (0.11.19's documented
+"known gap"). A channel key is now `surface:chat:bot_id` whenever a bridge
+names its own bot, giving each bot on a physical chat its own session,
+policy, and permission tier — genuinely independent, not just
+independently configured. An already-approved chat, or a `chat_allowlist`
+config row, needs no re-approval the moment a bot id starts arriving: it's
+inherited forward automatically. Outbound delivery now resolves the exact
+bot a reply belongs to instead of guessing. See
+docs/design/34-channel-onboarding.md Phase 6.
+
+Also: the admin console's Connect page gained a real settings panel per
+bot (workspace, model, permission mode, and the same tools/MCP/skills/
+automations/network policy editor the per-chat view already had), and the
+Chats list gained a BOT column so a channel's bot binding is visible at a
+glance instead of only in the row editor. Fixed a `PATCH` bug along the
+way where clearing a bot's (or a chat's bot binding's) field back to
+"unset" via an explicit `null` silently did nothing — a classic
+`Option<Option<T>>` deserialization trap.
+
 ## 0.11.19 — 2026-08-29
 
 ### Multi-bot-per-channel

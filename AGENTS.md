@@ -112,6 +112,32 @@
     chat resolves purely against the workspace, same as before bots
     existed. A `Bot`'s token is never returned by the admin API once set,
     matching the legacy per-surface token's own never-shown-again property.
+24. **One physical chat served by several bots gets one identity per bot,
+    never one shared identity.** A key is `surface:chat` for a legacy/
+    single-bot chat, or `surface:chat:bot_id` once a bridge's inbound
+    payload names its own bot id (`gateway_inbound`, `vak-server/src/
+    gateway.rs`) — the bot id is a third segment, not folded into `chat`,
+    so `legacy_key_for` can strip it back off. Two bots in the same
+    physical chat therefore get two independent `AllowlistEntry` rows, two
+    independent sessions/bindings, and two independently-resolved policy
+    chains (rule 23) — never one shared conversation governed by whichever
+    bot's row happens to exist. `allowlist_resolve_inbound` is the one
+    place a bot-scoped key is minted: seen for the first time, it inherits
+    an already-`Allowed` legacy `surface:chat` row's
+    workspace/policy/route (a chat approved before bots were scoped into
+    the key, or a `chat_allowlist` config row, must not need a needless
+    re-approval the moment a bot id starts arriving) rather than starting
+    a fresh pending review — this is a real map mutation, not merely a
+    read, so it must persist the allowlist file like any other write.
+    Outbound delivery mirrors the same rule: `AdapterRegistry`
+    (`vak-server/src/delivery.rs`) resolves a bot-scoped target through a
+    `(surface, bot_id)`-keyed adapter map, never the single per-surface
+    fallback, so a reply is never sent under a different bot's token than
+    the one the chat is actually bound to — a target naming an
+    unconfigured bot must fail loudly, not silently fall back to some
+    other bot's identity. Any new code that builds or parses a delivery
+    target or allowlist key must preserve this three-segment shape rather
+    than assuming exactly `surface:address`.
 
 ## Code rules
 

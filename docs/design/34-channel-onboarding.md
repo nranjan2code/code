@@ -647,26 +647,79 @@ concurrently with the first and receives that bot's messages independently.
 Outbound delivery (`AdapterRegistry::built_in`, `vak-server/src/delivery.rs`)
 falls back to any configured multi-bot token when the legacy env var for a
 surface is unset, so a bot created purely through the new flow can send
-replies too — **known limitation**: with two or more bots configured on the
-same surface, outbound reply routing is not yet bot-scoped (it picks one
-arbitrarily); fixing that means changing the `surface:address` delivery
-target format everywhere it's built and parsed, which is deliberately out of
-scope for this phase.
+replies too. Phase 5 shipped this arbitrarily (with two or more bots on one
+surface, outbound reply routing picked one token regardless of which bot a
+chat was actually bound to) — Phase 6 below closes that gap.
 
 **Admin UI.** Connect and Credentials both grow an "+ Add another bot" list
 below the existing single-slot rows (`ExtraBotsList`/`BotRow`,
 `vak-admin-ui/src/App.tsx`) — this is the concrete answer to "why can't I
 add a second bot". The live per-chat editor (`ChannelAccessEditor`) gained a
 bot picker scoped to the chat's surface and an "Inherit this bot's policy..."
-checkbox bound to `inherit_bot_policy`.
+checkbox bound to `inherit_bot_policy`. `BotAccessEditor` gives a bot its own
+settings panel under Connect, built from the exact same components
+(`WorkspacePicker`, `ChannelPermissionPicker`, `ChannelCapabilityPolicy`) the
+per-chat editor uses, rather than a second, different-looking form.
 
-## Non-goals (still, even after phases 2-5)
+## Phase 6: bot-scoped channel identity (0.11.20)
+
+Phase 5 gave a bot its own token, policy, and permission tier, but a
+*channel*'s identity was still `surface:chat` — one allowlist entry, one
+session, one policy, no matter how many bots were actually members of that
+physical chat. Two bots added to the same Telegram group collided onto one
+shared conversation and whichever bot's row happened to hold the policy;
+outbound replies picked one bot's token for the whole surface arbitrarily
+(Phase 5's documented limitation, quoted above). This phase makes a channel
+genuinely support multiple independent bots, not just multiple bots that
+happen to share a surface.
+
+**Key scheme.** An allowlist/session/binding key stays `surface:chat` for a
+legacy or single-bot chat; once an inbound bridge tells the gateway its own
+bot id (`InboundRequest.bot_id`/`InboundBody.bot_id`, threaded from
+`--bot-id`), the key becomes `surface:chat:bot_id`
+(`gateway_inbound`, `vak-server/src/gateway.rs`). `legacy_key_for` strips the
+third segment back off. Because every multi-bot bridge already sends its own
+bot id (the fix that preceded this phase), every chat routed through one
+becomes bot-scoped automatically — no configuration or opt-in needed.
+
+**Non-breaking migration.** A bot-scoped key seen by
+`allowlist_resolve_inbound` for the first time checks for an already-
+`Allowed` legacy `surface:chat` row and, if found, clones its
+workspace/route/policy/permission forward under the new key instead of
+starting a fresh pending review. This covers both a chat approved through
+the admin console before bots were scoped into the key, and a
+`chat_allowlist` row seeded from `config.toml` — either would otherwise stop
+matching the instant a bridge started sending a bot id, forcing a needless
+re-approval. A second bot joining the same physical chat inherits
+independently too, producing its own entry rather than sharing the first
+bot's.
+
+**Bot-scoped outbound delivery.** `AdapterRegistry` (`vak-server/src/
+delivery.rs`) now holds one adapter per `(surface, bot_id)`, built from
+every bot in `bots.json` with a token set, not just one arbitrary pick per
+surface. `resolve` reads the bot id off a three-part target and returns that
+bot's own adapter; a target naming a bot with no token configured fails with
+a specific error rather than silently answering under a different bot's
+identity. `deliver_record` normalizes the target back to `surface:address`
+before calling an adapter's `send`, so none of the four existing
+per-adapter `target.split_once(':')` call sites needed to learn about the
+bot id segment.
+
+**What did not change.** The synchronous per-turn reply path (a bridge
+process posts to `/gateway/inbound` with `wait: true` and replies with its
+own `bot_token` directly) was already correctly bot-scoped before this phase
+— it never went through `AdapterRegistry` at all, since each bridge process
+*is* one bot. Only proactive/asynchronous delivery (approval forwarding,
+scheduled pushes) needed the fix above.
+
+## Non-goals (still, even after phases 2-6)
 
 - No cross-machine/cross-account process isolation (see Phase 2's "what
   stays single-process").
 - No email, SMS, or other non-chat surfaces — deferred until a concrete
   need names one; the `InboundChannel` trait doesn't preclude it, but
   nothing here designs for it yet.
-- No bot-scoped outbound reply routing yet when multiple bots share a
-  surface (Phase 5 "known limitation" above) — the delivery target format
-  would need to carry a bot id, not just `surface:address`.
+- The admin UI does not yet visually group a physical chat's several
+  bot-scoped rows together as "one chat, N bots" — Chats lists them as
+  separate rows (each independently editable, which is correct), but
+  nothing yet says "these three rows are the same Telegram group."
