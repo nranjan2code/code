@@ -47,6 +47,17 @@ pub struct TaskTool {
     deps: Arc<TaskDeps>,
 }
 
+struct RegistryGuard {
+    registry: Arc<SubagentRegistry>,
+    id: String,
+}
+
+impl Drop for RegistryGuard {
+    fn drop(&mut self) {
+        self.registry.unregister(&self.id);
+    }
+}
+
 /// A live child agent: its steering queues and cancellation token, so an
 /// attached UI can push steering or stop it while the parent's task tool
 /// call is still blocking.
@@ -312,7 +323,7 @@ impl TaskTool {
             .and_then(|l| l.as_str())
             .map(String::from)
             .unwrap_or_else(|| prompt.chars().take(48).collect());
-        if let Some(registry) = &self.deps.registry {
+        let _registry_guard = if let Some(registry) = &self.deps.registry {
             registry.register(
                 session_id.clone(),
                 SubagentHandle {
@@ -323,7 +334,13 @@ impl TaskTool {
                     parent_session_id: self.deps.parent_session_id.clone(),
                 },
             );
-        }
+            Some(RegistryGuard {
+                registry: registry.clone(),
+                id: session_id.clone(),
+            })
+        } else {
+            None
+        };
         let (ev_tx, mut ev_rx) = tokio::sync::mpsc::channel::<crate::AgentEvent>(256);
         // Always drain the child stream (a full channel would deadlock the
         // child loop); tool calls are additionally forwarded to the parent
@@ -378,10 +395,6 @@ impl TaskTool {
                 .await;
         }
         let _ = pump.await;
-        if let Some(registry) = &self.deps.registry {
-            registry.unregister(&session_id);
-        }
-
         match outcome {
             crate::TurnOutcome::Completed { response } => {
                 let text = response.text_content();

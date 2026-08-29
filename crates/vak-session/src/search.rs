@@ -54,6 +54,11 @@ pub struct ExternalDoc {
     /// Stable identifier surfaced in `session_id` of the hit (e.g. the tag).
     pub id: String,
     pub text: String,
+    /// Original document timestamp. `None` preserves the legacy caller
+    /// contract; durable memory callers always provide it.
+    pub ts: Option<DateTime<Utc>>,
+    /// Result role (`memory` or `profile`) shown to surfaces.
+    pub role: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -101,8 +106,8 @@ pub fn search_extended(
             hit: SessionHit {
                 session_id: doc.id.clone(),
                 entry_id: String::new(),
-                ts: Utc::now(),
-                role: "memory".into(),
+                ts: doc.ts.unwrap_or_else(Utc::now),
+                role: doc.role.clone().unwrap_or_else(|| "memory".into()),
                 score: base + MEMORY_BONUS,
                 snippet: snippet_for(&doc.text, &terms),
             },
@@ -142,6 +147,17 @@ pub fn search_all(
     limit: usize,
     exclude_session: Option<&str>,
 ) -> Result<Vec<ProjectHit>, SearchError> {
+    search_all_extended(home, query, limit, exclude_session, &[])
+}
+
+/// Cross-project search with curated documents included in the same ranking.
+pub fn search_all_extended(
+    home: &Path,
+    query: &str,
+    limit: usize,
+    exclude_session: Option<&str>,
+    extras: &[ExternalDoc],
+) -> Result<Vec<ProjectHit>, SearchError> {
     let terms = tokenize(query);
     let phrase = normalize(query);
     if terms.is_empty() || phrase.is_empty() {
@@ -149,7 +165,23 @@ pub fn search_all(
     }
     let limit = limit.clamp(1, 50);
 
-    let mut ranked: Vec<RankedHit> = Vec::new();
+    let mut ranked: Vec<RankedHit> = extras
+        .iter()
+        .filter_map(|doc| {
+            let base = score_text(&doc.text, &terms, &phrase);
+            (base > 0.0).then(|| RankedHit {
+                hit: SessionHit {
+                    session_id: doc.id.clone(),
+                    entry_id: String::new(),
+                    ts: doc.ts.unwrap_or_else(Utc::now),
+                    role: doc.role.clone().unwrap_or_else(|| "memory".into()),
+                    score: base + MEMORY_BONUS,
+                    snippet: snippet_for(&doc.text, &terms),
+                },
+                project_hash: None,
+            })
+        })
+        .collect();
     let root = home.join("sessions");
     let mut projects: Vec<PathBuf> = match std::fs::read_dir(&root) {
         Ok(read) => read
@@ -509,6 +541,8 @@ mod tests {
         let extras = vec![ExternalDoc {
             id: "deploy".into(),
             text: "decision: rollback windows pause the deploy pipeline".into(),
+            ts: None,
+            role: None,
         }];
         let hits = search_extended(&home, &cwd, "deploy rollback", 5, None, &extras).unwrap();
         assert!(hits.len() >= 2);

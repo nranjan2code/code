@@ -90,6 +90,8 @@ impl vak_tools::Tool for SessionSearchTool {
                 ExternalDoc {
                     id: key,
                     text: format!("[{}{}] {}", n.kind, tag_suffix(&n.tag), n.text),
+                    ts: Some(n.ts),
+                    role: Some("memory".into()),
                 }
             })
             .collect();
@@ -106,6 +108,8 @@ impl vak_tools::Tool for SessionSearchTool {
                     extras.push(ExternalDoc {
                         id: id.clone(),
                         text: format!("[{}{}] {}", n.kind, tag_suffix(&n.tag), n.text),
+                        ts: Some(n.ts),
+                        role: Some("profile".into()),
                     });
                     id
                 })

@@ -441,6 +441,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/ops/diagnostics", get(ops_diagnostics))
         .route("/finops", get(finops_status))
         .route("/memory", get(list_memory).post(append_memory))
+        .route("/memory/cleanup", post(cleanup_memory))
         .route(
             "/memory/{note_id}",
             axum::routing::patch(amend_memory_note).delete(forget_memory_note),
@@ -669,6 +670,28 @@ async fn list_memory(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({ "notes": blocks }))
 }
 
+async fn cleanup_memory(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let report = vak_core::memory::cleanup_artifacts(
+        &state.core.sessions_home(),
+        std::time::Duration::from_secs(86_400),
+    );
+    vak_core::security_events::record(
+        &state.core.sessions_home(),
+        vak_core::security_events::EventKind::ConfigChange,
+        "memory_cleanup",
+        &format!(
+            "locks={} temps={} empty_dirs={}",
+            report.removed_locks, report.removed_temps, report.removed_empty_dirs
+        ),
+        None,
+    );
+    Json(serde_json::json!({
+        "removed_locks": report.removed_locks,
+        "removed_temps": report.removed_temps,
+        "removed_empty_dirs": report.removed_empty_dirs,
+    }))
+}
+
 /// Resolve a note id to the markdown store it lives in. The workspace tier/// is per-cwd; the profile tier is global (`<home>/memory/user/USER.md`).
 #[derive(serde::Deserialize)]
 struct AppendMemoryBody {
@@ -714,6 +737,13 @@ async fn append_memory(
                 MemoryScope::Workspace => "workspace",
                 MemoryScope::Profile => "profile",
             };
+            vak_core::security_events::record(
+                &home,
+                vak_core::security_events::EventKind::ConfigChange,
+                "memory_append",
+                &format!("scope={scope_str} note_id={}", note.id),
+                None,
+            );
             (StatusCode::CREATED, Json(note_payload(&note, scope_str))).into_response()
         }
         Err(e) => (
@@ -751,11 +781,20 @@ async fn forget_memory_note(
     use axum::response::IntoResponse;
     let path = memory_store_path(&state, q.scope.unwrap_or_default());
     match vak_core::memory::forget_note(&path, &note_id) {
-        Ok(bytes) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "forgotten": note_id, "bytes": bytes })),
-        )
-            .into_response(),
+        Ok(bytes) => {
+            vak_core::security_events::record(
+                &state.core.sessions_home(),
+                vak_core::security_events::EventKind::ConfigChange,
+                "memory_forget",
+                &format!("scope={:?} note_id={note_id}", q.scope.unwrap_or_default()),
+                None,
+            );
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "forgotten": note_id, "bytes": bytes })),
+            )
+                .into_response()
+        }
         Err(e) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": e })),
@@ -792,11 +831,23 @@ async fn amend_memory_note(
     }
     let path = memory_store_path(&state, body.scope.unwrap_or_default());
     match vak_core::memory::amend_note(&path, &note_id, &body.text) {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "amended": note_id })),
-        )
-            .into_response(),
+        Ok(()) => {
+            vak_core::security_events::record(
+                &state.core.sessions_home(),
+                vak_core::security_events::EventKind::ConfigChange,
+                "memory_amend",
+                &format!(
+                    "scope={:?} note_id={note_id}",
+                    body.scope.unwrap_or_default()
+                ),
+                None,
+            );
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "amended": note_id })),
+            )
+                .into_response()
+        }
         Err(e) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": e })),
@@ -881,14 +932,57 @@ async fn search_sessions(
     let limit = q.limit.unwrap_or(vak_session::DEFAULT_LIMIT);
     let exclude = q.exclude.clone();
     let all = q.all;
+    let mut extras = Vec::new();
+    let mut workspace_notes = vak_core::memory::list_notes(&home, &cwd);
+    if all {
+        let root = home.join("memory");
+        if let Ok(entries) = std::fs::read_dir(&root) {
+            workspace_notes.clear();
+            for entry in entries.flatten() {
+                let path = entry.path().join("MEMORY.md");
+                if let Ok(raw) = std::fs::read_to_string(path) {
+                    workspace_notes.extend(vak_core::memory::parse_blocks(&raw));
+                }
+            }
+        }
+    }
+    for note in workspace_notes {
+        let id = if note.tag.is_empty() {
+            note.id.clone()
+        } else {
+            note.tag.clone()
+        };
+        extras.push(vak_session::ExternalDoc {
+            id,
+            text: format!("[{}] {}", note.kind, note.text),
+            ts: Some(note.ts),
+            role: Some("memory".into()),
+        });
+    }
+    for note in vak_core::memory::list_profile_notes(&home) {
+        let id = format!(
+            "profile/{}",
+            if note.tag.is_empty() {
+                note.id.clone()
+            } else {
+                note.tag.clone()
+            }
+        );
+        extras.push(vak_session::ExternalDoc {
+            id,
+            text: format!("[{}] {}", note.kind, note.text),
+            ts: Some(note.ts),
+            role: Some("profile".into()),
+        });
+    }
     match tokio::task::spawn_blocking(move || {
         // Both hit shapes are Serialize; the workspace path keeps its flat
         // SessionHit wire shape, cross-project adds the project_hash wrapper.
         let searched = if all {
-            vak_session::search_all(&home, &query, limit, exclude.as_deref())
+            vak_session::search_all_extended(&home, &query, limit, exclude.as_deref(), &extras)
                 .map(|hits| serde_json::to_value(&hits).map_err(|e| e.to_string()))
         } else {
-            vak_session::search(&home, &cwd, &query, limit, exclude.as_deref())
+            vak_session::search_extended(&home, &cwd, &query, limit, exclude.as_deref(), &extras)
                 .map(|hits| serde_json::to_value(&hits).map_err(|e| e.to_string()))
         };
         match searched {

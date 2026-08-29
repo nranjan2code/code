@@ -124,6 +124,32 @@ async fn memory_writes_disabled_skips_without_dispatch() {
 }
 
 #[tokio::test]
+async fn read_only_reflection_skips_without_writing_memory() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_in(
+        &dir,
+        "permission_mode = \"read-only\"\n[memory]\nreflection = true\n",
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    core.set_provider_instance(Arc::new(Counting {
+        calls: calls.clone(),
+        reply: GOOD_REPLY,
+        fail: false,
+        hold: None,
+    }));
+    let session = core.start_session().await.unwrap();
+    let out = core.reflect_after_turn(&session, "all done").await;
+    assert_eq!(
+        out,
+        vak_core::reflection::ReflectionOutcome::Skipped {
+            reason: "permission-mode-read-only"
+        }
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(vak_core::memory::list_notes(&core.sessions_home(), core.cwd()).is_empty());
+}
+
+#[tokio::test]
 async fn budget_denied_skips_before_any_dispatch() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");

@@ -508,6 +508,12 @@ pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serd
         "max_turns": state.core.effective_max_turns(),
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
         "theme": state.core.effective_theme(),
+        "memory": {
+            "search_enabled": cfg.memory.search_enabled,
+            "write_enabled": cfg.memory.write_enabled,
+            "skill_proposals": cfg.memory.skill_proposals,
+            "reflection": cfg.memory.reflection,
+        },
         // The session list at `/admin/api/sessions` spans every project the
         // store indexes, but archive/delete/run/steer on a session only
         // reach a ledger file under *this* process's own workspace

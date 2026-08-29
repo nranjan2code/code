@@ -1,5 +1,4 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   density,
@@ -144,18 +143,16 @@ export default function Settings() {
     }
   }
 
-  async function addProfileNote() {
+  async function addMemoryNote() {
     const text = noteText().trim();
     if (!text) return;
     try {
-      await invoke<{ id: string; ts: string }>("append_profile_note", {
-        draft: { kind: noteKind().trim() || "preference", tag: noteTag().trim(), text },
-      });
+      await api.appendMemory(tier(), text, noteKind().trim() || "fact", noteTag().trim());
       setNoteText("");
       setNoteTag("");
       setAddingNote(false);
       await refreshLearning();
-      setNotice({ kind: "info", text: "Note appended to your USER.md profile — recalled in every project." });
+      setNotice({ kind: "info", text: tier() === "profile" ? "Profile note saved — recalled in every project." : "Workspace note saved." });
     } catch (e) {
       setNotice({ kind: "error", text: `Could not append note: ${e instanceof Error ? e.message : String(e)}` });
     }
@@ -921,17 +918,15 @@ export default function Settings() {
                         <label>Kind<input value={noteKind()} aria-label="Note kind" onInput={(e) => setNoteKind(e.currentTarget.value)} /></label>
                         <label>Tag <span class="label-hint">optional</span><input value={noteTag()} aria-label="Note tag" onInput={(e) => setNoteTag(e.currentTarget.value)} /></label>
                       </div>
-                      <textarea rows={2} placeholder="Something that should hold across every project…" aria-label="Note text" value={noteText()} onInput={(e) => setNoteText(e.currentTarget.value)} />
+                      <textarea rows={2} placeholder={tier() === "profile" ? "Something that should hold across every project…" : "Something that should hold in this workspace…"} aria-label="Note text" value={noteText()} onInput={(e) => setNoteText(e.currentTarget.value)} />
                       <div class="task-add-row">
-                        <button class="btn primary" disabled={!noteText().trim() || !noteKind().trim()} onClick={() => void addProfileNote()}>Append note</button>
+                        <button class="btn primary" disabled={!noteText().trim() || !noteKind().trim()} onClick={() => void addMemoryNote()}>Append note</button>
                         <button class="btn" onClick={() => setAddingNote(false)}>Cancel</button>
                       </div>
                     </div>
                   }
                 >
-                  <Show when={tier() === "profile"}>
-                    <div class="task-add-row"><button class="btn" onClick={() => setAddingNote(true)}><Icon name="add" /> Add profile note</button></div>
-                  </Show>
+                  <div class="task-add-row"><button class="btn" onClick={() => setAddingNote(true)}><Icon name="add" /> Add {tier() === "profile" ? "profile" : "workspace"} note</button></div>
                 </Show>
                 <Show
                   when={tierNotes().length > 0}

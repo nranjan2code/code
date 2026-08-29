@@ -200,7 +200,9 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      admin console: global event hub + SSE, cookie login
                      (HttpOnly SameSite=Strict) alongside bearer auth,
                      /admin/api/* data plane, embedded SolidJS SPA at
-                     /admin (docs/design/33-admin-console.md)
+                     /admin (docs/design/33-admin-console.md), including
+                     memory CRUD/cleanup and live parent-scoped subagent
+                     controls
 crates/vak-admin-ui  SolidJS + Vite admin console source; built dist is
                      committed so cargo builds need no node — observation,
                      operation, and interaction views per docs/design/

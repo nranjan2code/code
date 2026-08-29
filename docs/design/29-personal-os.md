@@ -42,7 +42,7 @@ phase: CLI/TUI, desktop SPA, and gateway channels where delivery applies.
 
 | Capability | TUI/CLI | Desktop | Channels |
 |---|---|---|---|
-| Memory profile + forget/amend | `/memory`, `vak memory` | Learning page: profile tier tab, forget (confirm), inline amend | — |
+| Memory profile + forget/amend/cleanup | `/memory`, `vak memory` | Admin/desktop Learning page: profile tier, effective policy status, cleanup artifacts, forget (confirm), inline amend | — |
 | Cross-project search | `/search --all`, CLI | Search page w/ global toggle | — |
 | Tasks/cron/watchdog/pinning | `/tasks`, `vak tasks` | TasksModal: schedule grammar field, script field, model pin, catch-up badge | watchdog + task summaries delivered via existing transports |
 | Budget alerts | TUI status strip marker | Budget card alert state | 80%/100% push once per window |

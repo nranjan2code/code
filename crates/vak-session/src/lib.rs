@@ -13,7 +13,7 @@ pub mod types;
 pub use log::{SessionLog, SessionPath};
 pub use search::{
     DEFAULT_LIMIT, ExternalDoc, MEMORY_BONUS, ProjectHit, SearchError, SessionHit, search,
-    search_all, search_extended,
+    search_all, search_all_extended, search_extended,
 };
 pub use types::{
     ActivityKind, ActivityRecord, ActivityStatus, CompactionEntry, Entry, EntryPayload,

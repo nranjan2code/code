@@ -30,6 +30,7 @@ import type {
   TaskItem,
   TranscriptEntry,
   WorkReceipt,
+  ActiveSubagent,
 } from "./types";
 
 export class AuthRequired extends Error {
@@ -114,6 +115,21 @@ export const api = {
       handle(r),
     );
   },
+
+  subagents: (sessionId: string): Promise<{ subagents: ActiveSubagent[] }> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/subagents`).then((r) => handle(r)),
+
+  steerSubagent: (sessionId: string, childId: string, text: string): Promise<void> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/subagents/${encodeURIComponent(childId)}/steer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+    }).then((r) => void handle(r)),
+
+  stopSubagent: (sessionId: string, childId: string): Promise<void> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/subagents/${encodeURIComponent(childId)}/stop`, {
+      method: "POST",
+    }).then((r) => void handle(r)),
 
   search: (
     q: string,
@@ -411,8 +427,18 @@ export const api = {
       }),
     }).then((r) => void handle(r)),
 
-  forgetMemory: (noteId: string): Promise<void> =>
-    fetch(`/memory/${encodeURIComponent(noteId)}`, { method: "DELETE" }).then((r) => void handle(r)),
+  forgetMemory: (noteId: string, scope: "workspace" | "profile"): Promise<void> =>
+    fetch(`/memory/${encodeURIComponent(noteId)}?scope=${scope}`, { method: "DELETE" }).then((r) => void handle(r)),
+
+  amendMemory: (noteId: string, scope: "workspace" | "profile", text: string): Promise<void> =>
+    fetch(`/memory/${encodeURIComponent(noteId)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, scope }),
+    }).then((r) => void handle(r)),
+
+  cleanupMemory: (): Promise<{ removed_locks: number; removed_temps: number; removed_empty_dirs: number }> =>
+    fetch("/memory/cleanup", { method: "POST" }).then((r) => handle(r)),
 
   doctor: (): Promise<{ report: string; ok: boolean }> =>
     fetch("/doctor").then((r) => handle(r)),

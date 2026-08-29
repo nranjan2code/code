@@ -15,7 +15,7 @@ import type {
   GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval,
   PermissionMode, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
-  SkillItem, SkillProposal, TaskItem, TranscriptEntry, WorkReceipt,
+  ActiveSubagent, SkillItem, SkillProposal, TaskItem, TranscriptEntry, WorkReceipt,
 } from "./types";
 
 // Chat surfaces with a bridge (crates/vak-server's InboundChannel impls) and
@@ -946,6 +946,45 @@ function Transcript(props: { sessionId: string }) {
   const [loading, setLoading] = createSignal(true);
   const [live, setLive] = createSignal(false);
   const [running, setRunning] = createSignal(false);
+  const [subagentData, { refetch: refetchSubagents }] = createResource(
+    () => props.sessionId,
+    (id) => api.subagents(id),
+  );
+  const [subagentBusy, setSubagentBusy] = createSignal("");
+
+  createEffect(() => {
+    void props.sessionId;
+    const timer = window.setInterval(() => refetchSubagents(), 3000);
+    onCleanup(() => window.clearInterval(timer));
+  });
+
+  const stopChild = async (child: ActiveSubagent) => {
+    if (!confirmDestructive(`Stop subagent “${child.label}”? Its ledger will remain available.`)) return;
+    setSubagentBusy(child.id);
+    try {
+      await api.stopSubagent(props.sessionId, child.id);
+      pushToast("info", "Subagent stop requested");
+      refetchSubagents();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setSubagentBusy("");
+    }
+  };
+
+  const steerChild = async (child: ActiveSubagent) => {
+    const text = window.prompt(`Steer ${child.label}`, "");
+    if (!text?.trim()) return;
+    setSubagentBusy(child.id);
+    try {
+      await api.steerSubagent(props.sessionId, child.id, text.trim());
+      pushToast("info", "Steering queued");
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setSubagentBusy("");
+    }
+  };
 
   // `diff` and `receipts` are served off the live in-memory session handle,
   // not the store index the transcript list itself reads from — a session
@@ -1138,6 +1177,32 @@ function Transcript(props: { sessionId: string }) {
       <Switch>
         {/* Transcript Tab */}
         <Match when={activeTab() === "transcript"}>
+          <Show when={(subagentData()?.subagents?.length ?? 0) > 0}>
+            <section class="panel" style="margin-bottom:12px">
+              <div class="panel-title-row">
+                <div><h2>Live subagents</h2><p class="dim">Child sessions share this workspace’s memory policy; their ledgers remain after they finish.</p></div>
+                <button class="ghost small" onClick={() => refetchSubagents()}>Refresh</button>
+              </div>
+              <table class="table">
+                <thead><tr><th>label</th><th>child session</th><th>elapsed</th><th /></tr></thead>
+                <tbody>
+                  <For each={subagentData()?.subagents ?? []}>
+                    {(child) => <tr>
+                      <td>{child.label}</td>
+                      <td class="mono dim">{shortId(child.id)}</td>
+                      <td>{child.elapsed_secs}s</td>
+                      <td>
+                        <div class="row-gap">
+                          <button class="ghost small" disabled={subagentBusy() === child.id} onClick={() => void steerChild(child)}>Steer</button>
+                          <button class="danger small" disabled={subagentBusy() === child.id} onClick={() => void stopChild(child)}>Stop</button>
+                        </div>
+                      </td>
+                    </tr>}
+                  </For>
+                </tbody>
+              </table>
+            </section>
+          </Show>
           <div class="toolbar" style="margin-top:-6px; margin-bottom:10px">
             <select value={kind()} onChange={(e) => setKind(e.currentTarget.value)}>
               <For each={KIND_FILTERS}>{(f) => <option value={f.id}>{f.label}</option>}</For>
@@ -2656,10 +2721,27 @@ function ExtensionsSection() {
 
 function MemoryView() {
   const [memoryData, { refetch }] = createResource(() => api.memory());
+  const [configData] = createResource(() => api.config());
   const [scope, setScope] = createSignal<"profile" | "project">("project");
   const [tag, setTag] = createSignal("");
   const [noteText, setNoteText] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  const [editing, setEditing] = createSignal<string | null>(null);
+  const [editText, setEditText] = createSignal("");
+  const [cleaning, setCleaning] = createSignal(false);
+
+  const cleanArtifacts = async () => {
+    if (!confirmDestructive("Remove only abandoned memory lock/temp files and empty workspace folders? Notes will not be deleted.")) return;
+    setCleaning(true);
+    try {
+      const report = await api.cleanupMemory();
+      pushToast("info", `Cleaned ${report.removed_locks} locks, ${report.removed_temps} temp files, ${report.removed_empty_dirs} empty folders`);
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setCleaning(false);
+    }
+  };
 
   const addNote = async () => {
     if (!noteText().trim() || busy()) return;
@@ -2680,7 +2762,8 @@ function MemoryView() {
   const forget = async (id: string) => {
     if (!confirmDestructive("Forget this note? Vak stops taking it into account.")) return;
     try {
-      await api.forgetMemory(id);
+      const note = memoryData()?.notes?.find((m) => m.id === id);
+      await api.forgetMemory(id, note?.scope === "profile" ? "profile" : "workspace");
       pushToast("info", "Forgotten");
       refetch();
     } catch (err) {
@@ -2706,8 +2789,23 @@ function MemoryView() {
                         <Show when={m.tag}><strong class="mono">{m.tag}</strong></Show>
                         <span class="when">{timeAgo(m.ts)}</span>
                       </div>
-                      <div class="hit-snippet">{m.text}</div>
+                      <Show when={editing() === m.id} fallback={<div class="hit-snippet">{m.text}</div>}>
+                        <textarea value={editText()} onInput={(e) => setEditText(e.currentTarget.value)} />
+                        <button class="small" onClick={async () => {
+                          if (!editText().trim()) return;
+                          try {
+                            await api.amendMemory(m.id, m.scope === "profile" ? "profile" : "workspace", editText().trim());
+                            setEditing(null); refetch();
+                            pushToast("info", "Memory amended");
+                          } catch (err) {
+                            pushToast("alert", `${err}`);
+                          }
+                        }}>Save</button>
+                      </Show>
                       <div class="row-gap" style="margin-top:8px">
+                        <Show when={editing() !== m.id}>
+                          <button class="small" onClick={() => { setEditing(m.id); setEditText(m.text); }}>Amend</button>
+                        </Show>
                         <button class="danger small" onClick={() => forget(m.id)}>Forget</button>
                       </div>
                     </li>
@@ -2725,6 +2823,12 @@ function MemoryView() {
               <h2>Add a note</h2>
               <p class="dim">Vak reads these at the start of every session.</p>
             </div>
+            <button class="ghost small" disabled={cleaning()} onClick={() => void cleanArtifacts()}>{cleaning() ? "Cleaning…" : "Clean artifacts"}</button>
+          </div>
+          <div class="stats-row" style="margin-bottom:12px">
+            <div><span class="dim">Search</span><strong>{configData()?.memory?.search_enabled ? "on" : "off"}</strong></div>
+            <div><span class="dim">Writes</span><strong>{configData()?.memory?.write_enabled ? "on" : "off"}</strong></div>
+            <div><span class="dim">Reflection</span><strong>{configData()?.memory?.reflection ? "on" : "off"}</strong></div>
           </div>
           <div class="form-row">
             <label>Applies to</label>

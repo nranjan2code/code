@@ -97,6 +97,12 @@ is bounded by `[gateway.rate_limit]`.
 | `/gateway/bindings/:key` | PATCH | Set provider/model pair, or `{}` to inherit workspace default |
 | `/gateway/bindings/:key/rotate` | POST | Detach session; preserve ledger; create fresh on next inbound |
 | `/gateway/bindings/:key` | DELETE | Remove binding and override; preserve session ledger |
+| `/memory` (secured shared route) | GET, POST | List or append workspace/profile memory notes |
+| `/memory/:note_id` (secured shared route) | PATCH, DELETE | Amend or explicitly forget one scoped note |
+| `/memory/cleanup` (secured shared route) | POST | Remove abandoned memory artifacts and empty workspace directories; never notes |
+| `/sessions/:id/subagents` (secured shared route) | GET | List live child agents for a session |
+| `/sessions/:id/subagents/:child/steer` (secured shared route) | POST | Queue steering text for a live child, parent-scoped |
+| `/sessions/:id/subagents/:child/stop` (secured shared route) | POST | Cancel a live child, parent-scoped |
 
 Answering approvals, running prompts, steering, cancelling, mode changes,
 config patches, inbox acks reuse the EXISTING secured routes. Config patches
@@ -114,6 +120,10 @@ side runs, deny pending approvals) before the new mode is exposed.
 steering`, `/sessions/:id/cancel`, `/config/mode`, `PATCH /config`,
 `/inbox/:id/ack`). The console is just another client of the same contract.
 
+Memory and subagent lifecycle routes are also secured shared routes rather
+than duplicated under `/admin/api`; the Admin SPA uses the same authorization
+and workspace-scope enforcement as desktop and gateway clients.
+
 ## Console views
 
 - **Overview** — stat cards, system health, pending-approval card with
@@ -130,7 +140,9 @@ steering`, `/sessions/:id/cancel`, `/config/mode`, `PATCH /config`,
   kind/role filters, pagination, **Live tail** toggle (session-scoped SSE →
   debounced refetch), Cancel button while a run is active, and the
   **composer**: Enter-to-send prompts, mid-run sends become steering, ×1–×4
-  selector fans out best-of-N candidates.
+  selector fans out best-of-N candidates. A live-subagents panel lists child
+  session id, elapsed time, and parent-scoped Steer/Stop actions; child ledgers
+  remain available after completion or cancellation.
 - **Search** — debounced global FTS5 with `<mark>` highlighted snippets;
   click-through to transcripts.
 - **Inbox** — attention entries with unread badge (30 s poll) and acks.
@@ -139,6 +151,9 @@ steering`, `/sessions/:id/cancel`, `/config/mode`, `PATCH /config`,
 - **Settings** — provider/model editor (dirty-tracked), permission-mode
   cards (ReadOnly / WorkspaceWrite / FullAccess with consequences stated),
   gateway status, index rebuild, sign out.
+- **Memory** — workspace and global profile notes with provenance, inline
+  amend/explicit forget, effective search/write/reflection status, and a
+  confirmed cleanup action for abandoned lock/temp artifacts.
 
 ### Gateway information architecture
 

@@ -83,6 +83,12 @@ export interface ConfigInfo {
    * from this can only be read (transcript, checkpoints), never mutated,
    * from this console instance. */
   workspace_project_hash?: string;
+  memory?: {
+    search_enabled: boolean;
+    write_enabled: boolean;
+    skill_proposals: boolean;
+    reflection: boolean;
+  };
 }
 
 export interface PermissionRules {
@@ -376,6 +382,13 @@ export interface SessionCheckpoint {
   ts: string;
   commit_hash?: string;
   message?: string;
+}
+
+export interface ActiveSubagent {
+  id: string;
+  label: string;
+  elapsed_secs: number;
+  parent_session_id: string;
 }
 
 export interface FeedSourceType {

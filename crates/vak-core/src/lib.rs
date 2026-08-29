@@ -619,6 +619,64 @@ impl Core {
             .and_then(|p| p.clone())
     }
 
+    /// Whether a channel overlay permits a named capability. Inheritance is
+    /// represented by no policy and therefore permits the capability here;
+    /// the ordinary permission engine still decides whether execution is
+    /// allowed for the current mode.
+    pub fn channel_tool_allowed(&self, tool: &str) -> bool {
+        self.channel_policy()
+            .is_none_or(|policy| Self::allowed_by(&policy.tools_allow, &policy.tools_deny, tool))
+    }
+
+    pub fn memory_write_allowed(&self) -> bool {
+        if !self.channel_tool_allowed("remember") {
+            return false;
+        }
+        let mut rules = self.extra_allow_snapshot();
+        if let Some(policy) = self.channel_policy() {
+            if let Some(allow) = policy.tools_allow {
+                if allow.is_empty() {
+                    rules.extend(
+                        [
+                            "read",
+                            "write",
+                            "edit",
+                            "bash",
+                            "glob",
+                            "grep",
+                            "remember",
+                            "propose_skill",
+                        ]
+                        .into_iter()
+                        .map(|tool| format!("-{tool}")),
+                    );
+                } else {
+                    rules.extend(allow.into_iter().map(|pattern| format!("+{pattern}")));
+                }
+            }
+            rules.extend(
+                policy
+                    .tools_deny
+                    .into_iter()
+                    .map(|pattern| format!("-{pattern}")),
+            );
+        }
+        let Ok(engine) =
+            build_engine_for_mode(&self.inner.config, &rules, self.effective_permission_mode())
+        else {
+            return false;
+        };
+        let mode = match self.effective_permission_mode() {
+            vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
+            vak_config::PermissionMode::WorkspaceWrite => vak_permission::Mode::WorkspaceWrite,
+            vak_config::PermissionMode::FullAccess => vak_permission::Mode::FullAccess,
+        };
+        matches!(
+            engine.evaluate("remember", &serde_json::json!({}), mode, &self.inner.cwd),
+            vak_permission::Decision::Allow
+        )
+    }
+
     fn policy_matches(patterns: &[String], value: &str) -> bool {
         patterns.iter().any(|pattern| {
             globset::Glob::new(pattern)
@@ -958,6 +1016,9 @@ impl Core {
             names.push("propose_skill".into());
         }
         names
+            .into_iter()
+            .filter(|name| self.channel_tool_allowed(name))
+            .collect()
     }
 
     fn provider_auth(&self) -> Result<ProviderAuth, CoreError> {
@@ -1828,6 +1889,11 @@ impl Core {
         if self.inner.config.tools.browse {
             tools.push(Arc::new(vak_tools::WebBrowseTool));
         }
+        // Apply channel visibility after every tool has been assembled. Memory
+        // and optional tools are added below the base registry, so filtering
+        // only the initial built-in vector would leak capabilities through an
+        // explicit channel allowlist.
+        tools.retain(|tool| self.channel_tool_allowed(tool.name()));
         cfg.tools = tools;
         let hooks: Option<std::sync::Arc<Vec<vak_hooks::HookDef>>> = Some(std::sync::Arc::new(
             build_hooks_from(&self.effective_hooks())?,
@@ -2175,6 +2241,23 @@ mod channel_mcp_network_tests {
             "github did not match the pattern; must be untouched"
         );
     }
+
+    #[test]
+    fn channel_allowlist_removes_memory_capabilities_from_advertised_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.apply_channel_policy(vak_config::ChannelPolicy {
+            tools_allow: Some(vec!["read".into()]),
+            ..Default::default()
+        });
+        let names = core.tool_names();
+        assert!(
+            !names
+                .iter()
+                .any(|n| matches!(n.as_str(), "remember" | "propose_skill" | "session_search"))
+        );
+        assert!(!core.channel_tool_allowed("remember"));
+    }
 }
 
 pub fn build_engine(
@@ -2346,6 +2429,19 @@ impl Core {
                 reason: "memory-writes-disabled",
             };
         }
+        if matches!(
+            self.effective_permission_mode(),
+            vak_config::PermissionMode::ReadOnly
+        ) {
+            return reflection::ReflectionOutcome::Skipped {
+                reason: "permission-mode-read-only",
+            };
+        }
+        if !self.memory_write_allowed() {
+            return reflection::ReflectionOutcome::Skipped {
+                reason: "memory-write-not-authorized",
+            };
+        }
         let sid = session
             .header()
             .map(|h| h.session_id.clone())
@@ -2423,6 +2519,10 @@ impl Core {
             };
         }
         let home = self.sessions_home();
+        let mut proposals = proposals;
+        if !self.channel_tool_allowed("propose_skill") {
+            proposals.skill = None;
+        }
         match reflection::apply(home.as_path(), self.cwd(), &sid, &proposals) {
             Ok((notes_added, skills_proposed)) => reflection::ReflectionOutcome::Reflected {
                 notes_added,

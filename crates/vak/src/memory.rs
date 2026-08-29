@@ -18,6 +18,15 @@ pub fn run_memory(cwd: PathBuf, action: Option<crate::cli::MemoryAction>) -> i32
     let home = core.sessions_home();
     let workspace = core.cwd().clone();
     match action.unwrap_or(crate::cli::MemoryAction::List { profile: false }) {
+        crate::cli::MemoryAction::Clean { older_than_secs } => {
+            let report =
+                memory::cleanup_artifacts(&home, std::time::Duration::from_secs(older_than_secs));
+            println!(
+                "cleaned {} locks, {} temp files, {} empty workspace directories",
+                report.removed_locks, report.removed_temps, report.removed_empty_dirs
+            );
+            0
+        }
         crate::cli::MemoryAction::List { profile } => {
             list(&home, &workspace, profile);
             0

@@ -185,6 +185,13 @@ export function listMemory(): Promise<{ notes: NoteBlock[] }> {
   return req("/memory");
 }
 
+export function appendMemory(scope: MemoryScope, text: string, kind = "fact", tag = ""): Promise<NoteBlock> {
+  return req("/memory", {
+    method: "POST",
+    body: JSON.stringify({ scope, text, kind, tag }),
+  });
+}
+
 export function listProposals(): Promise<{ proposals: SkillProposal[] }> {
   return req("/skills/proposals");
 }

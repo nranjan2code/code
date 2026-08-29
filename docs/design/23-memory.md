@@ -45,7 +45,7 @@ and simple.
 | Surface | Access |
 |---|---|
 | Agent loop | `session_search` tool, injected in `Core::run_turn_with` next to task/MCP |
-| TUI/desktop/server | `GET /search?q=…&limit=…` over the same function |
+| TUI/desktop/server/admin | `GET /search?q=…&limit=…` over the same function; Admin exposes scoped CRUD and cleanup controls |
 | Future | compaction integration: auto-cite prior sessions in summaries |
 
 ## Configuration
@@ -66,6 +66,20 @@ keys still warn per convention.
   and are legitimate knowledge.
 - Search reads only; it never mutates ledgers, and respects the frozen
   contract (no rewriting, branching untouched).
+
+## Operational invariants (2026-08)
+
+All durable-memory writes use a per-store lock and atomic temp-file replacement;
+append, amend, and forget are bounded and reject control characters in header
+metadata. Server and desktop search use the same curated-document ranking as
+the agent tool, including stored provenance timestamps. Channel overlays are
+applied after the complete tool set is assembled, and background reflection is
+skipped in read-only or channel-denied contexts.
+Retention is conservative: age alone never deletes a durable note. `vak memory
+clean` removes only abandoned lock/temp artifacts and empty workspace
+directories; stale knowledge is removed explicitly with `forget` or amended in
+place. There is no automatic “dream”/overnight consolidation pass; reflection
+is bounded to at most two deduplicated proposals after a clean completion.
 
 ## Phases
 

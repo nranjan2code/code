@@ -96,6 +96,23 @@ skill_proposals  = true   # propose_skill available; queue always reviewable
 Local-only and workspace-scoped, hence not privileged — but ReadOnly mode
 still denies both tools outright.
 
+Reflection is an effectful write path, not an exception to permissions: it is
+skipped in `ReadOnly` mode, honors channel tool overlays, and applies through
+the same guarded memory/proposal repository used by the interactive tools.
+
+### Subagent ownership and termination
+
+Each delegated agent receives its own child JSONL session and context window,
+linked by `parent_session_id`. It does not receive a private memory file:
+`remember` writes to the parent workspace tier (or the global profile tier
+when explicitly selected), with the child session id preserved as provenance.
+The child ledger remains on disk after completion, cancellation, or process
+restart, so partial work is auditable and searchable. The live registry is
+ephemeral; terminated children are removed from it even if their future is
+aborted, and a process crash naturally clears the registry while preserving
+the ledger. A child that dies before calling `remember` contributes no durable
+memory and is not auto-promoted by reflection.
+
 ## Phases
 
 | Phase | Delivers | Exit criterion |
