@@ -229,7 +229,10 @@ async function notify(title: string, body: string) {
 }
 
 function onFinished(id: string, summary: string) {
-  hydrateFromPresentation(id, { schema_version: 2, session_id: id, items: [], diagnostics: [] });
+  // Keep the live transcript visible until the reconnectable snapshot has
+  // arrived. Clearing the presentation here created a blank/legacy flash
+  // between RunFinished and hydrate(), which was especially noticeable on
+  // the first turn of a task.
   markRunning(id, false);
   void Promise.all([refreshSessions(), hydrate(id)]);
   if (document.hidden && id === activeId()) {

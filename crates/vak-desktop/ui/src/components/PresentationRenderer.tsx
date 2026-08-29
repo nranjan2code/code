@@ -10,6 +10,7 @@ import type {
 import { density, openInEditor } from "../store";
 import { approve, openFileSmart } from "../App";
 import Icon from "./Icon";
+import MarkdownView from "./MarkdownView";
 
 function safeUrl(value: string, media = false): boolean {
   const normalized = value.trim().toLowerCase();
@@ -140,6 +141,10 @@ function Blocks(props: { blocks: DocumentBlock[] }): JSX.Element {
 }
 
 export function PresentationDocumentView(props: { document: PresentationDocument }) {
+  const plain = () => props.document.blocks.every((block) => ["heading", "paragraph", "list", "quote", "rule"].includes(block.type));
+  if (plain() && props.document.source_markdown.trim()) {
+    return <MarkdownView text={props.document.source_markdown} />;
+  }
   return (
     <div class="semantic-document">
       <Blocks blocks={props.document.blocks} />

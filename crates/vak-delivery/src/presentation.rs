@@ -613,10 +613,15 @@ fn nodes_to_blocks(
     let mut blocks = Vec::new();
     for node in nodes {
         match node {
-            Node::Paragraph(children) => blocks.push(DocumentBlock::Paragraph {
-                id: ids.next(),
-                content: nodes_to_inline(children),
-            }),
+            Node::Paragraph(children) => {
+                let content = nodes_to_inline(children);
+                if !content.is_empty() {
+                    blocks.push(DocumentBlock::Paragraph {
+                        id: ids.next(),
+                        content,
+                    });
+                }
+            }
             Node::Heading(level, children) => blocks.push(DocumentBlock::Heading {
                 id: ids.next(),
                 level,
