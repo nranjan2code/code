@@ -95,6 +95,23 @@
     sidecar (e.g. delete-all-archived) must re-derive and apply that same
     per-item existence check, not iterate the sidecar's full keyspace on
     the assumption that every key belongs to this workspace.
+23. **A bot is its own identity, not a synonym for its surface.**
+    Multi-bot-per-channel (docs/design/34 Phase 5) means `telegram`/
+    `discord`/`slack` name a *transport*, not a credential slot — more than
+    one `Bot` (`vak-server/src/gateway.rs`) can share a surface, each with
+    its own token, policy, permission_mode, and route. Capability/permission
+    resolution is a three-tier chain, bot → chat → workspace, composed with
+    the same override-or-inherit convention every other tier here already
+    uses: `ChannelPolicy::merge` for allow/deny (chat's `_allow` wins when
+    set else falls back to the bot's; `_deny` lists concatenate, never
+    override, since they only remove access), `PermissionMode::capped_by`
+    chained twice (chat capped by bot capped by workspace — never
+    escalates), and route falling through chat → bot → legacy binding →
+    workspace default. `AllowlistEntry.inherit_bot_policy` is the literal
+    "break inheritance" switch: `false` skips the bot tier entirely and the
+    chat resolves purely against the workspace, same as before bots
+    existed. A `Bot`'s token is never returned by the admin API once set,
+    matching the legacy per-surface token's own never-shown-again property.
 
 ## Code rules
 
@@ -197,6 +214,10 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      AgentEvent and transcript endpoints
                      (docs/design/22-gateway.md, 28-operations.md,
                      29-personal-os.md, 30-output-engineering.md) +
+                     multi-bot-per-channel: `Bot` identities independent of
+                     surface, bot->chat->workspace policy/permission/route
+                     resolution chain, bots.json store, /gateway/bots CRUD
+                     (docs/design/34 Phase 5) +
                      admin console: global event hub + SSE, cookie login
                      (HttpOnly SameSite=Strict) alongside bearer auth,
                      /admin/api/* data plane, embedded SolidJS SPA at
@@ -222,9 +243,10 @@ crates/vak-tray      menu-bar controller: colour-coded service dot,
                      start/stop/restart/install/uninstall, logs, watchdog
                      with auto-restart + notifications
 crates/vak      binary: tui / exec / plan / flow / serve [--gateway] /
-                     telegram / eval / checkpoints / config dump / sessions
-                     / doctor / backup / digest / tasks / memory / inbox
-                     (+ first-run wizard, opt-in update check)
+                     telegram|discord|slack [--bot-id <id>] / eval /
+                     checkpoints / config dump / sessions / doctor / backup
+                     / digest / tasks / memory / inbox (+ first-run wizard,
+                     opt-in update check)
 docs/design/         architecture decisions — update with behavior changes;
                      security boundaries and roadmap in 24-agent-security.md
 scripts/             dev utilities (mock servers, PTY/HTTP smoke drivers)

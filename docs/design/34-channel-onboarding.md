@@ -1,12 +1,14 @@
 # 34 — Channel onboarding: lifecycle, governance, admin/desktop UX
 
-Status: **Phases 1, 2, and 3 implemented, plus the capability-overlay phase
-in 0.11.3** — allowlist store, gateway pending lifecycle, admin API
+Status: **Phases 1, 2, 3, and 4 implemented, plus multi-bot-per-channel
+(Phase 5, 0.11.19)** — allowlist store, gateway pending lifecycle, admin API
 routes, Admin UI panels, the multi-tenant `CorePool`, the Discord and
 Slack bridges, `PATCH .../allowlist/{key}` (unified with the existing
 binding route-override path), the `vak doctor` "gateway channels" check
-with `--repair` wiring for expired pending entries, and the
-known-workspaces picker. See each phase section below for what landed.
+with `--repair` wiring for expired pending entries, the
+known-workspaces picker, channel capability overlays, and now a first-class
+`Bot` identity independent of surface. See each phase section below for
+what landed.
 
 Two sub-pieces are deliberately **deferred**, not silently dropped:
 
@@ -586,10 +588,85 @@ permission rules remain the security boundary, and that secrets stay
 workspace-owned. The policy does not copy API keys into channel state or grant
 an overlay access to a workspace it was not already approved to use.
 
-## Non-goals (still, even after phases 2-4)
+## Phase 5: multi-bot-per-channel (0.11.19)
+
+Before this phase a "channel" (`telegram`/`discord`/`slack`) *was* the bot:
+`Core::bot_token_env` mapped each surface to exactly one env var
+(`TELEGRAM_BOT_TOKEN`, etc.), and setting a second token for the same
+surface silently overwrote the first — there was no way to run two Telegram
+bots side by side, and no policy tier scoped to a bot identity rather than a
+chat or a workspace.
+
+**Data model.** `Bot { id, surface, label, token_env, policy, permission_mode,
+route, workspace }` (`vak-server/src/gateway.rs`) is now a first-class
+entity, independent of the legacy single-slot env vars, stored in
+`<sessions_home>/gateway/bots.json` next to `allowlist.json`/`bindings.json`.
+`AllowlistEntry` gained `bot_id: Option<String>` (which bot this chat is
+bound to) and `inherit_bot_policy: bool` (default `true` — the explicit
+"break inheritance" switch: when `false`, the chat resolves purely against
+the workspace and the bot tier is skipped entirely).
+
+**Resolution chain.** Dispatch now composes three tiers — **bot → chat →
+workspace** — reusing the pre-existing `Option<T>` = inherit / `Some(T)` =
+override convention rather than inventing a new one:
+
+- *Capability policy*: `ChannelPolicy::merge(bot_policy, chat_policy)`
+  (`vak-config/src/lib.rs`) folds the two tiers before `Core::apply_channel_policy`
+  runs — an `_allow` list from the chat wins outright when set, otherwise
+  falls back to the bot's; `_deny` lists concatenate across tiers since
+  denies only ever remove access, never grant it.
+- *Permission mode*: chat pin capped by bot mode capped by workspace mode
+  (`GatewayState::core_for_entry`), via the same `PermissionMode::capped_by`
+  the chat→workspace cap already used — a bot can narrow but never widen
+  what the workspace allows, and a chat can narrow but never widen what its
+  bot allows.
+- *Model/route*: `effective_route_override` now falls through chat route →
+  bot route → legacy per-binding override → workspace default.
+
+**Storage and credentials.** A bot's token is stored under its own env var
+(`BOT_TOKEN__<ID>` by convention, though the migration path below reuses the
+existing legacy var name), set/cleared via `PUT/DELETE
+/gateway/bots/:id/token` — never returned by the admin API once set, same
+property the legacy per-surface token slot already had. `GET/POST
+/gateway/bots` and `PATCH/DELETE /gateway/bots/:id` manage the row itself
+(label, policy, permission_mode, route, workspace).
+
+**Migration.** The first time `bots.json` doesn't exist, `GatewayState::load`
+synthesizes one `Bot` row per surface that already has a legacy token
+configured, pointing at the *same* env var the legacy slot uses — so an
+existing single-bot deployment shows up as an editable bot identity
+immediately, without any operator action and without changing which env var
+the running bridge reads.
+
+**Bridges run per bot, not per surface.** `vak telegram/discord/slack
+--bot-id <id>` (`vak/src/cli.rs`, `vak/src/main.rs`) resolves its token from
+that specific bot's `token_env` instead of the fixed legacy slot. Because
+`TelegramBridge`'s `InstanceLock` was already keyed by token (not global), a
+second `vak telegram --bot-id telegram-sales --server ...` process runs
+concurrently with the first and receives that bot's messages independently.
+Outbound delivery (`AdapterRegistry::built_in`, `vak-server/src/delivery.rs`)
+falls back to any configured multi-bot token when the legacy env var for a
+surface is unset, so a bot created purely through the new flow can send
+replies too — **known limitation**: with two or more bots configured on the
+same surface, outbound reply routing is not yet bot-scoped (it picks one
+arbitrarily); fixing that means changing the `surface:address` delivery
+target format everywhere it's built and parsed, which is deliberately out of
+scope for this phase.
+
+**Admin UI.** Connect and Credentials both grow an "+ Add another bot" list
+below the existing single-slot rows (`ExtraBotsList`/`BotRow`,
+`vak-admin-ui/src/App.tsx`) — this is the concrete answer to "why can't I
+add a second bot". The live per-chat editor (`ChannelAccessEditor`) gained a
+bot picker scoped to the chat's surface and an "Inherit this bot's policy..."
+checkbox bound to `inherit_bot_policy`.
+
+## Non-goals (still, even after phases 2-5)
 
 - No cross-machine/cross-account process isolation (see Phase 2's "what
   stays single-process").
 - No email, SMS, or other non-chat surfaces — deferred until a concrete
   need names one; the `InboundChannel` trait doesn't preclude it, but
   nothing here designs for it yet.
+- No bot-scoped outbound reply routing yet when multiple bots share a
+  surface (Phase 5 "known limitation" above) — the delivery target format
+  would need to carry a bot id, not just `surface:address`.

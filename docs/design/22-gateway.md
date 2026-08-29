@@ -266,7 +266,9 @@ reach Telegram: `deliver()` only had `log`/`webhook` adapters registered, so
 a forwarded gate to a Telegram approver failed the async push and denied
 closed. A `TelegramAdapter` (`crates/vak-server/src/delivery.rs`) now
 registers under the `telegram` scheme whenever `TELEGRAM_BOT_TOKEN` is
-configured, rendering `DeliveryPacket.actions` (the existing
+configured — or, since docs/design/34 Phase 5 (multi-bot-per-channel), when
+no legacy token is set but at least one `Bot` row for the surface has one —
+rendering `DeliveryPacket.actions` (the existing
 approve/deny `ApprovalPayload` actions) as a Telegram
 `reply_markup.inline_keyboard` instead of requiring a typed `yes`/`no`.
 Button taps arrive as `callback_query` updates; the bridge's

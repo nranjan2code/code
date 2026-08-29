@@ -442,6 +442,52 @@ pub struct ChannelPolicy {
     pub mcp_network_deny: Vec<String>,
 }
 
+impl ChannelPolicy {
+    /// Fold a lower tier (e.g. bot) and a higher tier (e.g. chat) into the
+    /// single effective policy applied at dispatch. Restrictive-only: an
+    /// `_allow` list from the higher tier wins outright when present (it is
+    /// itself already capped against whatever it's allowed to name), a
+    /// missing `_allow` falls back to the lower tier's, and `_deny` lists
+    /// concatenate across tiers since denies only ever remove, never add,
+    /// access. `lower` is the more permissive default (bot), `higher` is
+    /// the more specific override (chat).
+    pub fn merge(lower: &ChannelPolicy, higher: &ChannelPolicy) -> ChannelPolicy {
+        fn merge_allow(
+            lower: &Option<Vec<String>>,
+            higher: &Option<Vec<String>>,
+        ) -> Option<Vec<String>> {
+            higher.clone().or_else(|| lower.clone())
+        }
+        fn merge_deny(lower: &[String], higher: &[String]) -> Vec<String> {
+            let mut out = lower.to_vec();
+            for item in higher {
+                if !out.contains(item) {
+                    out.push(item.clone());
+                }
+            }
+            out
+        }
+        ChannelPolicy {
+            tools_allow: merge_allow(&lower.tools_allow, &higher.tools_allow),
+            tools_deny: merge_deny(&lower.tools_deny, &higher.tools_deny),
+            mcp_allow: merge_allow(&lower.mcp_allow, &higher.mcp_allow),
+            mcp_deny: merge_deny(&lower.mcp_deny, &higher.mcp_deny),
+            skills_allow: merge_allow(&lower.skills_allow, &higher.skills_allow),
+            skills_deny: merge_deny(&lower.skills_deny, &higher.skills_deny),
+            hooks_allow: merge_allow(&lower.hooks_allow, &higher.hooks_allow),
+            hooks_deny: merge_deny(&lower.hooks_deny, &higher.hooks_deny),
+            mcp_network_deny: merge_deny(&lower.mcp_network_deny, &higher.mcp_network_deny),
+        }
+    }
+}
+
+// Note: the `Bot` entity itself (id/surface/label/token_env/policy/
+// permission_mode/route/workspace) lives in `vak-server::gateway` next to
+// `AllowlistEntry` and `AllowlistRoute`, since it needs `AllowlistRoute` and
+// vak-config must not depend on vak-server. It reuses `ChannelPolicy::merge`
+// and `PermissionMode::capped_by` from here for its slot in the bot → chat →
+// workspace resolution chain.
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct HookConfig {
     pub event: String,
@@ -2206,6 +2252,50 @@ mod tests {
         assert_eq!(FullAccess.capped_by(WorkspaceWrite), WorkspaceWrite);
         assert_eq!(ReadOnly.capped_by(FullAccess), ReadOnly);
         assert_eq!(WorkspaceWrite.capped_by(WorkspaceWrite), WorkspaceWrite);
+    }
+
+    /// `ChannelPolicy::merge` is the bot→chat fold used at dispatch
+    /// (`core_for_entry`): the chat's own `_allow` wins when set, denies
+    /// concatenate, and an unset chat field falls back to the bot's.
+    #[test]
+    fn channel_policy_merge_lets_chat_allow_win_and_denies_accumulate() {
+        let bot = ChannelPolicy {
+            tools_allow: Some(vec!["read".into(), "write".into()]),
+            tools_deny: vec!["shell".into()],
+            ..ChannelPolicy::default()
+        };
+        let chat = ChannelPolicy {
+            tools_allow: Some(vec!["read".into()]),
+            tools_deny: vec!["fetch".into()],
+            ..ChannelPolicy::default()
+        };
+        let merged = ChannelPolicy::merge(&bot, &chat);
+        // Chat's narrower allow list wins outright.
+        assert_eq!(merged.tools_allow, Some(vec!["read".to_string()]));
+        // Denies from both tiers accumulate — restrictive-only.
+        assert_eq!(
+            merged.tools_deny,
+            vec!["shell".to_string(), "fetch".to_string()]
+        );
+    }
+
+    #[test]
+    fn channel_policy_merge_falls_back_to_bot_when_chat_is_unset() {
+        let bot = ChannelPolicy {
+            mcp_allow: Some(vec!["search/*".into()]),
+            ..ChannelPolicy::default()
+        };
+        let chat = ChannelPolicy::default();
+        let merged = ChannelPolicy::merge(&bot, &chat);
+        assert_eq!(merged.mcp_allow, Some(vec!["search/*".to_string()]));
+    }
+
+    #[test]
+    fn channel_policy_merge_of_two_defaults_is_default() {
+        assert_eq!(
+            ChannelPolicy::merge(&ChannelPolicy::default(), &ChannelPolicy::default()),
+            ChannelPolicy::default()
+        );
     }
 
     fn write_project_config(dir: &Path, text: &str) {

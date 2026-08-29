@@ -113,7 +113,22 @@ scripts/release.sh --base-url URL   gate, build, checksum, emit release.json
 clippy -D warnings`, `cargo test`, a clean working tree, and an unused
 `v<version>` tag before it builds anything. It then writes
 `dist/<version>/` containing the binaries, `SHA256SUMS`, and the
-`release.json` feed that `self update` consumes.
+`release.json` feed that `self update` consumes. Gates and compilation share
+one isolated Cargo target directory that is removed when the script exits;
+release-only package identities never accumulate in the developer `target/`.
+The script requires 15 GiB free by default (override with
+`VAK_RELEASE_MIN_FREE_GB`) and builds only the three packages that own shipped
+components.
+
+`build.sh` keeps incremental artifacts for the current workspace version but
+runs `cargo clean` when the shared workspace version changes. This is required
+because every crate inherits that version and Cargo otherwise retains the old
+hashed package identities indefinitely. `--no-desktop` excludes both the
+frontend and Rust desktop package. Dev and test profiles retain line-table
+debugging instead of full debug information, and tests disable incremental
+state because one-shot test harness caches cost more disk than they save here.
+`bump-version.sh` removes the now-invalid repository target generation and uses
+Cargo metadata, rather than a workspace compilation, to refresh `Cargo.lock`.
 
 ## Canonical filesystem layout
 

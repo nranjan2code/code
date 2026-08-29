@@ -46,7 +46,7 @@ mod delivery;
 pub mod discord;
 mod events;
 mod feeds;
-mod gateway;
+pub mod gateway;
 mod heartbeat;
 mod presentation;
 mod rate_limit;
@@ -432,6 +432,18 @@ fn router_with_state(state: AppState) -> Router {
         .route(
             "/config/bot-token/{surface}",
             put(put_bot_token).delete(delete_bot_token),
+        )
+        // Multi-bot-per-surface (docs/design/34, multi-bot): a `Bot` is an
+        // independent identity, so it gets its own id-addressed routes
+        // rather than reusing the one-slot-per-surface ones above.
+        .route("/gateway/bots", get(list_bots).post(create_bot))
+        .route(
+            "/gateway/bots/{id}",
+            axum::routing::patch(update_bot).delete(delete_bot),
+        )
+        .route(
+            "/gateway/bots/{id}/token",
+            put(put_bot_id_token).delete(delete_bot_id_token),
         )
         .route("/providers", get(list_providers))
         .route("/providers/{name}/models", get(discover_models))
@@ -3554,6 +3566,214 @@ async fn delete_bot_token(
                 "configured": removed.shadowed_by_env,
                 "shadowed_by_env": removed.shadowed_by_env,
                 "restarted": restarted,
+            }))
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+// ---- Multi-bot (docs/design/34, multi-bot-per-channel) --------------------
+
+fn bot_env_var(id: &str) -> String {
+    // A dedicated env var per bot id, distinct from the legacy per-surface
+    // slots (`TELEGRAM_BOT_TOKEN` etc.) so a second bot never overwrites
+    // the first one's token in the shared `.env` file.
+    format!("BOT_TOKEN__{}", id.to_uppercase().replace('-', "_"))
+}
+
+async fn list_bots(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "bots": state.gateway.bots_snapshot() }))
+}
+
+#[derive(serde::Deserialize)]
+struct CreateBotBody {
+    id: String,
+    surface: String,
+    label: String,
+}
+
+async fn create_bot(
+    State(state): State<AppState>,
+    Json(body): Json<CreateBotBody>,
+) -> axum::response::Response {
+    let id = body.id.trim();
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "bot id must be non-empty alphanumeric/hyphen" })),
+        )
+            .into_response();
+    }
+    if vak_core::Core::bot_token_env(&body.surface).is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(
+                serde_json::json!({ "error": format!("unknown chat surface '{}'", body.surface) }),
+            ),
+        )
+            .into_response();
+    }
+    if state.gateway.bot_get(id).is_some() {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": format!("bot '{id}' already exists") })),
+        )
+            .into_response();
+    }
+    let bot = crate::gateway::Bot {
+        id: id.to_string(),
+        surface: body.surface.clone(),
+        label: if body.label.trim().is_empty() {
+            id.to_string()
+        } else {
+            body.label.trim().to_string()
+        },
+        token_env: bot_env_var(id),
+        ..Default::default()
+    };
+    state.gateway.bot_upsert(&state.core, bot.clone());
+    state.hub.emit_config_changed("bot_created", id);
+    Json(serde_json::json!({ "bot": bot })).into_response()
+}
+
+#[derive(serde::Deserialize, Default)]
+struct UpdateBotBody {
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    policy: Option<vak_config::ChannelPolicy>,
+    #[serde(default)]
+    permission_mode: Option<String>,
+    #[serde(default)]
+    route: Option<crate::gateway::AllowlistRoute>,
+    #[serde(default)]
+    workspace: Option<String>,
+}
+
+async fn update_bot(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<UpdateBotBody>,
+) -> axum::response::Response {
+    let Some(mut bot) = state.gateway.bot_get(&id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("no bot '{id}'") })),
+        )
+            .into_response();
+    };
+    if let Some(label) = body.label {
+        bot.label = label;
+    }
+    if let Some(policy) = body.policy {
+        bot.policy = policy;
+    }
+    if let Some(raw) = body.permission_mode {
+        match crate::parse_mode(raw.trim()) {
+            Some(mode) => bot.permission_mode = Some(mode),
+            None if raw.trim().is_empty() => bot.permission_mode = None,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(
+                        serde_json::json!({ "error": format!("unknown permission_mode '{raw}'") }),
+                    ),
+                )
+                    .into_response();
+            }
+        }
+    }
+    if let Some(route) = body.route {
+        bot.route = Some(route);
+    }
+    if let Some(ws) = body.workspace {
+        bot.workspace = if ws.trim().is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(ws.trim()))
+        };
+    }
+    state.gateway.bot_upsert(&state.core, bot.clone());
+    state.hub.emit_config_changed("bot_updated", &id);
+    Json(serde_json::json!({ "bot": bot })).into_response()
+}
+
+async fn delete_bot(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> StatusCode {
+    if state.gateway.bot_remove(&state.core, &id) {
+        state.hub.emit_config_changed("bot_deleted", &id);
+        StatusCode::OK
+    } else {
+        StatusCode::NOT_FOUND
+    }
+}
+
+async fn put_bot_id_token(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<TelegramTokenBody>,
+) -> axum::response::Response {
+    let Some(bot) = state.gateway.bot_get(&id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("no bot '{id}'") })),
+        )
+            .into_response();
+    };
+    match state.core.set_bot_token(&bot.token_env, &body.token) {
+        Ok(env_var) => {
+            vak_core::security_events::record(
+                &state.core.sessions_home(),
+                vak_core::security_events::EventKind::ProviderKeyChange,
+                "bot_token_set",
+                &id,
+                None,
+            );
+            state.hub.emit_config_changed("bot_token_set", &id);
+            Json(serde_json::json!({ "id": id, "env_var": env_var, "configured": true }))
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_bot_id_token(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> axum::response::Response {
+    let Some(bot) = state.gateway.bot_get(&id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("no bot '{id}'") })),
+        )
+            .into_response();
+    };
+    match state.core.remove_bot_token(&bot.token_env) {
+        Ok(removed) => {
+            vak_core::security_events::record(
+                &state.core.sessions_home(),
+                vak_core::security_events::EventKind::ProviderKeyChange,
+                "bot_token_removed",
+                &format!("id={id} shadowed={}", removed.shadowed_by_env),
+                None,
+            );
+            state.hub.emit_config_changed("bot_token_removed", &id);
+            Json(serde_json::json!({
+                "id": id,
+                "env_var": removed.env_var,
+                "configured": removed.shadowed_by_env,
+                "shadowed_by_env": removed.shadowed_by_env,
             }))
             .into_response()
         }

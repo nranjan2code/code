@@ -122,6 +122,13 @@ pub(crate) enum Command {
         /// env var is the normal path so secrets never appear in `ps`)
         #[arg(long)]
         token: Option<String>,
+        /// Run as this bot identity instead of the legacy single
+        /// `TELEGRAM_BOT_TOKEN` slot (multi-bot-per-channel, docs/design/34).
+        /// Its token is read from the env var recorded for this id in the
+        /// admin console's Bots list. Run one `vak telegram --bot-id ...`
+        /// process per bot to have more than one Telegram bot live at once.
+        #[arg(long)]
+        bot_id: Option<String>,
     },
     /// Bridge a Discord bot to a running gateway (docs/design/34 Phase 3)
     Discord {
@@ -132,6 +139,9 @@ pub(crate) enum Command {
         /// env var is the normal path so secrets never appear in `ps`)
         #[arg(long)]
         token: Option<String>,
+        /// See `telegram --bot-id`.
+        #[arg(long)]
+        bot_id: Option<String>,
     },
     /// Bridge a Slack bot to a running gateway (docs/design/34 Phase 3)
     Slack {
@@ -142,6 +152,9 @@ pub(crate) enum Command {
         /// env var is the normal path so secrets never appear in `ps`)
         #[arg(long)]
         token: Option<String>,
+        /// See `telegram --bot-id`.
+        #[arg(long)]
+        bot_id: Option<String>,
     },
     /// Diagnose provider auth, config warnings, and extensions
     Doctor {

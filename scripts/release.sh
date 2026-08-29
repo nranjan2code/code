@@ -40,6 +40,36 @@ done
 cd "$ROOT_DIR"
 VERSION="$(workspace_version)"
 
+# A release changes the identity of every workspace crate. Keeping those
+# one-shot test and release artifacts in the developer target directory made
+# each version accumulate indefinitely. Build in an isolated directory shared
+# by all gates in this run, then remove it on every normal exit.
+RELEASE_TARGET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vak-release.XXXXXX")"
+cleanup_release_target() {
+    case "$RELEASE_TARGET_DIR" in
+        */vak-release.*) rm -rf -- "$RELEASE_TARGET_DIR" ;;
+        *) printf 'warning: refusing to remove unexpected release target %s\n' \
+               "$RELEASE_TARGET_DIR" >&2 ;;
+    esac
+}
+trap cleanup_release_target EXIT HUP INT TERM
+export CARGO_TARGET_DIR="$RELEASE_TARGET_DIR"
+ARTIFACT_BIN_DIR="$ROOT_DIR/target/release"
+
+MIN_FREE_GB="${VAK_RELEASE_MIN_FREE_GB:-15}"
+if [[ ! "$MIN_FREE_GB" =~ ^[0-9]+$ ]]; then
+    printf 'error: VAK_RELEASE_MIN_FREE_GB must be a non-negative integer\n' >&2
+    exit 2
+fi
+AVAILABLE_KB="$(df -Pk "$ROOT_DIR" | awk 'NR == 2 { print $4 }')"
+REQUIRED_KB=$((MIN_FREE_GB * 1024 * 1024))
+if ((AVAILABLE_KB < REQUIRED_KB)); then
+    printf 'error: release needs at least %s GiB free for bounded staging; only %s GiB is available\n' \
+        "$MIN_FREE_GB" "$((AVAILABLE_KB / 1024 / 1024))" >&2
+    exit 1
+fi
+printf 'release staging: %s (removed on exit)\n' "$RELEASE_TARGET_DIR"
+
 # ---- gates ----------------------------------------------------------
 # docs/design/32-release-engineering.md: gate before build, so a release
 # is never assembled from a tree that would not pass review.
@@ -139,7 +169,9 @@ if [[ "$BUILD" == true ]]; then
     printf '\n== build ==\n'
     # The binary stamps this into its own manifest, so an installed
     # build can be traced back to a commit.
-    VAK_GIT_SHA="$GIT_SHA" cargo build --release --workspace
+    VAK_GIT_SHA="$GIT_SHA" cargo build --release \
+        --package vak --package vak-desktop --package vak-delivery
+    ARTIFACT_BIN_DIR="$RELEASE_TARGET_DIR/release"
 else
     printf '\n== build skipped ==\n'
 fi
@@ -154,7 +186,7 @@ OPTIONAL=("vak-desktop" "vak-delivery-worker")
 
 collected=()
 for name in "${REQUIRED[@]}"; do
-    src="$ROOT_DIR/target/release/$name"
+    src="$ARTIFACT_BIN_DIR/$name"
     if [[ ! -x "$src" ]]; then
         printf 'error: required component %s missing at %s\n' "$name" "$src" >&2
         exit 1
@@ -163,7 +195,7 @@ for name in "${REQUIRED[@]}"; do
     collected+=("$name:true")
 done
 for name in "${OPTIONAL[@]}"; do
-    src="$ROOT_DIR/target/release/$name"
+    src="$ARTIFACT_BIN_DIR/$name"
     if [[ -x "$src" ]]; then
         cp "$src" "$OUT/$name"
         collected+=("$name:false")

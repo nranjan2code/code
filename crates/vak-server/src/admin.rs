@@ -899,6 +899,8 @@ fn allowlist_entry_json(e: &crate::gateway::AllowlistEntry) -> serde_json::Value
         "effective_permission_mode": resolved.as_ref().map(|r| r.effective),
         "permission_capped": resolved.as_ref().is_some_and(|r| r.was_capped()),
         "policy": e.policy,
+        "bot_id": e.bot_id,
+        "inherit_bot_policy": e.inherit_bot_policy,
         "added_at": e.added_at,
         "added_by": e.added_by,
         "first_seen_text": e.first_seen_text,
@@ -942,6 +944,16 @@ pub(crate) struct AllowlistApproveBody {
     permission_mode: Option<String>,
     #[serde(default)]
     policy: Option<vak_config::ChannelPolicy>,
+    /// Bind this chat to a bot identity (multi-bot-per-channel). `null`/
+    /// absent/`""` unbinds it — the chat then resolves purely against the
+    /// workspace, same as before bots existed.
+    #[serde(default)]
+    bot_id: Option<String>,
+    /// Whether to inherit the bound bot's policy/permission_mode/route as a
+    /// tier below this chat's own. Defaults to `true`; ignored when no
+    /// `bot_id` is set.
+    #[serde(default = "crate::gateway::default_true")]
+    inherit_bot_policy: bool,
 }
 
 /// Audit an override that the workspace's own boundary will cap down, at
@@ -1010,6 +1022,12 @@ pub(crate) async fn approve_gateway_allowlist(
         Ok(m) => m,
         Err(()) => return StatusCode::BAD_REQUEST.into_response(),
     };
+    let bot_id = body
+        .bot_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
     let entry = state.gateway.allowlist_approve(
         &state.core,
         &key,
@@ -1017,6 +1035,8 @@ pub(crate) async fn approve_gateway_allowlist(
         route,
         permission_mode,
         body.policy.unwrap_or_default(),
+        bot_id,
+        body.inherit_bot_policy,
         "admin",
     );
     vak_core::security_events::record(
@@ -1066,6 +1086,15 @@ pub(crate) struct AllowlistPatchBody {
     permission_mode: Option<String>,
     #[serde(default)]
     policy: Option<vak_config::ChannelPolicy>,
+    /// See `AllowlistApproveBody::bot_id`. `None` here (field simply
+    /// absent) means "leave whatever bot binding is already set" — unlike
+    /// approve, patch is an edit-in-place and must not silently unbind a
+    /// chat just because a caller's PATCH body didn't mention bots at all.
+    /// Send an explicit `null` to unbind.
+    #[serde(default)]
+    bot_id: Option<Option<String>>,
+    #[serde(default)]
+    inherit_bot_policy: Option<bool>,
 }
 
 /// `PATCH /admin/api/gateway/allowlist/{key}` (docs/design/34 "Editing an
@@ -1136,6 +1165,13 @@ pub(crate) async fn patch_gateway_allowlist(
         Err(()) => return StatusCode::BAD_REQUEST.into_response(),
     };
     let existing = state.gateway.allowlist_get(&key);
+    let bot_id = body.bot_id.map(|inner| {
+        inner
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    });
     let Some(entry) = state.gateway.allowlist_patch(
         &state.core,
         &key,
@@ -1145,6 +1181,8 @@ pub(crate) async fn patch_gateway_allowlist(
         body.policy
             .or_else(|| existing.as_ref().map(|e| e.policy.clone()))
             .unwrap_or_default(),
+        bot_id,
+        body.inherit_bot_policy,
     ) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -1817,6 +1855,8 @@ mod tests {
             None,
             Some(vak_config::PermissionMode::ReadOnly),
             vak_config::ChannelPolicy::default(),
+            None,
+            true,
             "admin",
         );
         state.gateway.allowlist_patch_route_if_allowed(

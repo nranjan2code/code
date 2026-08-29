@@ -118,6 +118,24 @@ fn allowlist_path(home: &std::path::Path) -> PathBuf {
     home.join("gateway").join("allowlist.json")
 }
 
+fn bots_path(home: &std::path::Path) -> PathBuf {
+    home.join("gateway").join("bots.json")
+}
+
+/// Read-only lookup of one bot's token env var by id, straight from
+/// `bots.json`, without needing a running `GatewayState` — the `vak
+/// telegram/discord/slack --bot-id` CLI bridges are separate short-lived
+/// processes that never construct one, but still need to resolve which env
+/// var holds their token (docs/design/34, multi-bot).
+pub fn bot_token_env_for_id(sessions_home: &std::path::Path, id: &str) -> Option<String> {
+    let raw = std::fs::read_to_string(bots_path(sessions_home)).ok()?;
+    let file: BotsFile = serde_json::from_str(&raw).ok()?;
+    file.bots
+        .into_iter()
+        .find(|b| b.id == id)
+        .map(|b| b.token_env)
+}
+
 /// Truncation cap for `first_seen_text` on a freshly pending entry — kept
 /// only for operator review, never used as agent input.
 const FIRST_SEEN_TEXT_MAX_CHARS: usize = 500;
@@ -156,12 +174,26 @@ pub struct AllowlistEntry {
     /// selected workspace; an explicit empty allow list denies that class.
     #[serde(default, skip_serializing_if = "is_default_channel_policy")]
     pub policy: vak_config::ChannelPolicy,
+    /// Which `Bot` this chat is bound to, when the surface has more than
+    /// one. `None` keeps today's behavior (surface's sole/legacy bot).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_id: Option<String>,
+    /// Whether this chat inherits its bot's policy/permission_mode/route as
+    /// a tier below its own (default) or resolves purely against the
+    /// workspace, ignoring the bot entirely — the explicit "break
+    /// inheritance" switch. Meaningless when `bot_id` is `None`.
+    #[serde(default = "default_true")]
+    pub inherit_bot_policy: bool,
     pub added_at: String,
     pub added_by: String,
     /// Only meaningful while `status == Pending` — the first message text
     /// that triggered this entry, truncated for operator review.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_seen_text: Option<String>,
+}
+
+pub(crate) fn default_true() -> bool {
+    true
 }
 
 fn is_default_channel_policy(policy: &vak_config::ChannelPolicy) -> bool {
@@ -172,6 +204,39 @@ fn is_default_channel_policy(policy: &vak_config::ChannelPolicy) -> bool {
 struct AllowlistFile {
     schema: u32,
     entries: Vec<AllowlistEntry>,
+}
+
+/// A gateway bot identity: one credential/token slot, independently
+/// addressable even when it shares a `surface` with other bots. Sits
+/// between the workspace and a chat's `AllowlistEntry` in the
+/// policy/permission/route resolution chain (`core_for_entry`,
+/// `resolve_channel_permission`) — see `vak_config::ChannelPolicy::merge`
+/// and `vak_config::PermissionMode::capped_by`.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct Bot {
+    /// Stable slug, e.g. "telegram-support". Chosen at creation, immutable.
+    pub id: String,
+    /// "telegram" | "discord" | "slack".
+    pub surface: String,
+    /// Operator-facing name shown in the admin console.
+    pub label: String,
+    /// Name of the env var holding this bot's token. The token value
+    /// itself is never stored here or returned by the admin API.
+    pub token_env: String,
+    #[serde(default, skip_serializing_if = "is_default_channel_policy")]
+    pub policy: vak_config::ChannelPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<vak_config::PermissionMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<AllowlistRoute>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<PathBuf>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct BotsFile {
+    schema: u32,
+    bots: Vec<Bot>,
 }
 
 /// Outcome of resolving an inbound key against the allowlist store, so the
@@ -198,6 +263,10 @@ pub struct GatewayState {
     /// Live, schema-versioned allowlist store (docs/design/34). Authoritative
     /// once it exists on disk; seeded once from `chat_allowlist` otherwise.
     allowlist: Mutex<HashMap<String, AllowlistEntry>>,
+    /// Bot identities (docs/design/34, multi-bot). Keyed by `Bot::id`.
+    /// Independent of `allowlist`/`bindings` on purpose: several chats can
+    /// share a bot, and a bot can exist with no chats bound to it yet.
+    bots: Mutex<HashMap<String, Bot>>,
     /// Multi-tenant Core pool (docs/design/34 Phase 2). The gateway's own
     /// default workspace is the pool's permanent entry; every other
     /// workspace an allowlist entry names is lazily started here.
@@ -303,6 +372,8 @@ impl GatewayState {
                                 added_at: now.clone(),
                                 added_by: "config_import".into(),
                                 first_seen_text: None,
+                                bot_id: None,
+                                inherit_bot_policy: true,
                             },
                         )
                     })
@@ -314,9 +385,47 @@ impl GatewayState {
             }
         };
 
+        // Bot store: authoritative once bots.json exists. The *first* time
+        // it doesn't, auto-migrate one synthesized `Bot` per surface that
+        // already has a legacy single-slot token configured — so an
+        // existing Telegram/Discord/Slack setup shows up as a real, editable
+        // bot identity immediately rather than staying invisible until an
+        // operator manually recreates it. The synthesized row points at the
+        // *same* env var the legacy slot already uses (not a new
+        // `BOT_TOKEN__*` one), so nothing about the running bridge changes.
+        let bots_file_path = bots_path(&core.sessions_home());
+        let bots: HashMap<String, Bot> = match std::fs::read_to_string(&bots_file_path) {
+            Ok(raw) => serde_json::from_str::<BotsFile>(&raw)
+                .map(|file| file.bots.into_iter().map(|b| (b.id.clone(), b)).collect())
+                .unwrap_or_default(),
+            Err(_) => {
+                let migrated: HashMap<String, Bot> = ["telegram", "discord", "slack"]
+                    .iter()
+                    .filter(|s| Core::bot_token_configured(s))
+                    .filter_map(|s| {
+                        Core::bot_token_env(s).map(|env| {
+                            let bot = Bot {
+                                id: (*s).to_string(),
+                                surface: (*s).to_string(),
+                                label: format!("{s} (migrated)"),
+                                token_env: env.to_string(),
+                                ..Bot::default()
+                            };
+                            (bot.id.clone(), bot)
+                        })
+                    })
+                    .collect();
+                if !migrated.is_empty() {
+                    persist_bots_map(&bots_file_path, &migrated);
+                }
+                migrated
+            }
+        };
+
         let state = GatewayState {
             enabled: force || gw.enabled,
             bindings: Mutex::new(bindings),
+            bots: Mutex::new(bots),
             approvals: if forward_ok {
                 "forward".into()
             } else {
@@ -365,25 +474,48 @@ impl GatewayState {
     /// provider/model.
     pub(crate) fn core_for_entry(&self, default_core: &Core, key: &str) -> Result<Core, String> {
         let entry = self.allowlist_get(key);
-        let workspace = entry
+        let allowed_entry = entry
             .as_ref()
+            .filter(|e| e.status == AllowlistStatus::Allowed);
+        let workspace = allowed_entry
             .and_then(|e| e.workspace.clone())
             .unwrap_or_else(|| default_core.cwd().clone());
-        // Only an `allowed` entry's override counts. A pending/denied one
-        // never reaches dispatch, but reading the field unconditionally
-        // would make the pool key depend on a non-authoritative record.
-        let permission_override = entry
-            .as_ref()
-            .filter(|e| e.status == AllowlistStatus::Allowed)
-            .and_then(|e| e.permission_mode);
+        // Bot tier: only consulted when the chat both names a bot and has
+        // not opted out of inheriting from it (`inherit_bot_policy`). A
+        // dangling `bot_id` (removed bot) resolves as "no bot tier", same
+        // as an unset one — never a hard failure at dispatch.
+        let bot = allowed_entry
+            .filter(|e| e.inherit_bot_policy)
+            .and_then(|e| e.bot_id.as_deref())
+            .and_then(|id| self.bot_get(id));
+
+        // Policy: bot policy (lower tier) folded under the chat's own
+        // (higher tier) via the same restrictive-only merge used to
+        // reconcile any two policy layers.
+        let chat_policy = allowed_entry.map(|e| e.policy.clone()).unwrap_or_default();
+        let policy = match &bot {
+            Some(b) => vak_config::ChannelPolicy::merge(&b.policy, &chat_policy),
+            None => chat_policy,
+        };
+
+        // Permission mode: chat pin capped by bot mode (itself already
+        // capped by the workspace inside `resolve_at_with_policy`) so a bot
+        // can narrow but never widen what the workspace allows, and a chat
+        // can narrow but never widen what its bot allows.
+        let permission_override = match (allowed_entry.and_then(|e| e.permission_mode), &bot) {
+            (Some(chat_mode), Some(b)) => Some(match b.permission_mode {
+                Some(bot_mode) => chat_mode.capped_by(bot_mode),
+                None => chat_mode,
+            }),
+            (Some(chat_mode), None) => Some(chat_mode),
+            (None, Some(b)) => b.permission_mode,
+            (None, None) => None,
+        };
+
         self.core_pool.resolve_at_with_policy(
             &workspace,
             permission_override,
-            entry
-                .as_ref()
-                .filter(|e| e.status == AllowlistStatus::Allowed)
-                .map(|e| e.policy.clone())
-                .unwrap_or_default(),
+            policy,
             std::time::Instant::now(),
         )
     }
@@ -558,6 +690,58 @@ impl GatewayState {
         removed
     }
 
+    // ---- Bot store (multi-bot-per-channel) ---------------------------------
+
+    /// Snapshot of all bots, sorted by id. Secrets never included — a `Bot`
+    /// row only ever holds the env var *name*, not the token value.
+    pub(crate) fn bots_snapshot(&self) -> Vec<Bot> {
+        let mut bots: Vec<Bot> = self
+            .bots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect();
+        bots.sort_by(|a, b| a.id.cmp(&b.id));
+        bots
+    }
+
+    pub(crate) fn bot_get(&self, id: &str) -> Option<Bot> {
+        self.bots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(id)
+            .cloned()
+    }
+
+    /// Insert or replace a bot row wholesale (create, rename label, or edit
+    /// policy/permission_mode/route/workspace). `token_env` is set
+    /// separately from the actual secret by the caller before this is
+    /// invoked, keeping the write here free of the token value itself.
+    pub(crate) fn bot_upsert(&self, core: &Core, bot: Bot) {
+        self.bots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(bot.id.clone(), bot);
+        persist_bots(core, self);
+    }
+
+    /// Remove a bot row. Chats whose `bot_id` names it keep the id on
+    /// record (a dangling reference resolves as "no bot" at dispatch,
+    /// same as an unset `bot_id`) rather than being silently rewritten.
+    pub(crate) fn bot_remove(&self, core: &Core, id: &str) -> bool {
+        let removed = self
+            .bots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(id)
+            .is_some();
+        if removed {
+            persist_bots(core, self);
+        }
+        removed
+    }
+
     // ---- Allowlist store (docs/design/34-channel-onboarding.md) -----------
 
     /// Snapshot of all allowlist entries, any status, sorted by key.
@@ -615,6 +799,8 @@ impl GatewayState {
                         added_at: chrono::Utc::now().to_rfc3339(),
                         added_by: "gateway".into(),
                         first_seen_text: Some(truncated),
+                        bot_id: None,
+                        inherit_bot_policy: true,
                     },
                 );
                 AllowlistDecision::NewlyPending
@@ -638,6 +824,8 @@ impl GatewayState {
         route: Option<AllowlistRoute>,
         permission_mode: Option<vak_config::PermissionMode>,
         policy: vak_config::ChannelPolicy,
+        bot_id: Option<String>,
+        inherit_bot_policy: bool,
         added_by: &str,
     ) -> AllowlistEntry {
         let entry = {
@@ -655,6 +843,8 @@ impl GatewayState {
                 added_at: chrono::Utc::now().to_rfc3339(),
                 added_by: added_by.to_string(),
                 first_seen_text: None,
+                bot_id,
+                inherit_bot_policy,
             };
             map.insert(key.to_string(), entry.clone());
             entry
@@ -680,6 +870,8 @@ impl GatewayState {
                 added_at: chrono::Utc::now().to_rfc3339(),
                 added_by: added_by.to_string(),
                 first_seen_text: None,
+                bot_id: None,
+                inherit_bot_policy: true,
             };
             map.insert(key.to_string(), entry.clone());
             entry
@@ -707,6 +899,8 @@ impl GatewayState {
         route: Option<AllowlistRoute>,
         permission_mode: Option<vak_config::PermissionMode>,
         policy: vak_config::ChannelPolicy,
+        bot_id: Option<Option<String>>,
+        inherit_bot_policy: Option<bool>,
     ) -> Option<AllowlistEntry> {
         let entry = {
             let mut map = self
@@ -721,6 +915,12 @@ impl GatewayState {
             entry.route = route;
             entry.permission_mode = permission_mode;
             entry.policy = policy;
+            if let Some(bot_id) = bot_id {
+                entry.bot_id = bot_id;
+            }
+            if let Some(inherit) = inherit_bot_policy {
+                entry.inherit_bot_policy = inherit;
+            }
             entry.clone()
         };
         persist_allowlist(core, self);
@@ -754,6 +954,8 @@ impl GatewayState {
             route,
             entry.permission_mode,
             entry.policy,
+            Some(entry.bot_id),
+            Some(entry.inherit_bot_policy),
         )
         .is_some()
     }
@@ -790,10 +992,21 @@ impl GatewayState {
     /// pre-existing `PATCH .../bindings/{key}` surface). One source of
     /// truth read at dispatch, so the two admin surfaces cannot drift.
     fn effective_route_override(&self, key: &str) -> Option<(String, String)> {
-        if let Some(route) = self
+        let entry = self
             .allowlist_get(key)
-            .filter(|e| e.status == AllowlistStatus::Allowed)
-            .and_then(|e| e.route)
+            .filter(|e| e.status == AllowlistStatus::Allowed);
+        if let Some(route) = entry.as_ref().and_then(|e| e.route.clone()) {
+            return Some((route.provider, route.model));
+        }
+        // Bot tier: the chat named no route of its own, so fall through to
+        // its bot's route (if any, and if inheritance wasn't broken) before
+        // the legacy binding override / workspace default.
+        if let Some(route) = entry
+            .as_ref()
+            .filter(|e| e.inherit_bot_policy)
+            .and_then(|e| e.bot_id.as_deref())
+            .and_then(|id| self.bot_get(id))
+            .and_then(|b| b.route)
         {
             return Some((route.provider, route.model));
         }
@@ -963,6 +1176,36 @@ fn persist_allowlist(core: &Core, gw: &GatewayState) {
         .clone();
     let path = allowlist_path(&core.sessions_home());
     write_allowlist_file(&path, &entries);
+}
+
+fn persist_bots(core: &Core, gw: &GatewayState) {
+    let bots = gw
+        .bots
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    persist_bots_map(&bots_path(&core.sessions_home()), &bots);
+}
+
+/// Atomic temp-file+rename write, same pattern as `write_allowlist_file`.
+/// Free function (not a `GatewayState` method) so the one-time migration in
+/// `GatewayState::load` can call it before a `GatewayState` exists.
+fn persist_bots_map(path: &std::path::Path, bots: &HashMap<String, Bot>) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut sorted: Vec<Bot> = bots.values().cloned().collect();
+    sorted.sort_by(|a, b| a.id.cmp(&b.id));
+    let file = BotsFile {
+        schema: 1,
+        bots: sorted,
+    };
+    if let Ok(json) = serde_json::to_string_pretty(&file) {
+        let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        if std::fs::write(&temp, json).is_ok() {
+            let _ = std::fs::rename(temp, path);
+        }
+    }
 }
 
 /// Atomic temp-file+rename write, same pattern as `persist_bindings`.
@@ -2209,6 +2452,8 @@ mod tests {
             }),
             None,
             vak_config::ChannelPolicy::default(),
+            None,
+            true,
             "admin",
         );
         assert_eq!(approved.status, AllowlistStatus::Allowed);
@@ -2269,6 +2514,8 @@ mod tests {
             None,
             None,
             vak_config::ChannelPolicy::default(),
+            None,
+            true,
             "admin",
         );
         assert!(matches!(

@@ -23,8 +23,10 @@ if ! is_semver "$target"; then
 fi
 if [[ "$target" == "$current" ]]; then
     printf 'already at %s\n' "$current"
+    VERSION_CHANGED=false
 else
     printf 'bumping %s → %s\n' "$current" "$target"
+    VERSION_CHANGED=true
 fi
 
 cd "$ROOT_DIR"
@@ -42,8 +44,16 @@ awk -v v="$target" '
 mv "$tmp" Cargo.toml
 printf '  ✓ Cargo.toml\n'
 
-printf 'refreshing Cargo.lock…\n'
-cargo check --workspace --quiet
+if [[ "$VERSION_CHANGED" == true && -d "$ROOT_DIR/target" ]]; then
+    printf 'removing Cargo artifacts invalidated by the workspace version…\n'
+    cargo clean --target-dir "$ROOT_DIR/target"
+fi
+
+# Resolving metadata refreshes path-package versions in Cargo.lock without
+# compiling a complete new workspace generation merely to update the lockfile.
+printf 'refreshing Cargo.lock metadata…\n'
+HOST_TARGET="$(rustc -vV | awk '/^host:/ { print $2 }')"
+cargo metadata --format-version 1 --filter-platform "$HOST_TARGET" >/dev/null
 
 "$ROOT_DIR/scripts/check-version.sh"
 printf '\nnext: review `git diff`, commit, then scripts/release.sh\n'

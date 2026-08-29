@@ -64,6 +64,21 @@ export interface ChatSurfaceStatus {
   managed_service: boolean;
 }
 
+/// One bot identity (multi-bot-per-channel). Independent of chat bindings —
+/// several chats can share a bot, and a chat's `bot_id` names one of these.
+/// The token itself is never part of this shape; it's set/cleared via
+/// `PUT/DELETE /gateway/bots/:id/token`, mirroring `ChatSurfaceStatus`.
+export interface Bot {
+  id: string;
+  surface: string;
+  label: string;
+  token_env: string;
+  policy: ChannelPolicy;
+  permission_mode: PermissionMode | null;
+  route: AllowlistRoute | null;
+  workspace: string | null;
+}
+
 export interface ConfigInfo {
   provider: string;
   model: string;
@@ -196,6 +211,13 @@ export interface AllowlistEntry {
   /// reduced — the console must not show it as a live grant.
   permission_capped: boolean;
   policy: ChannelPolicy;
+  /// Which `Bot` (if any) this chat is bound to, when its surface has more
+  /// than one configured.
+  bot_id: string | null;
+  /// `false` = this chat ignores its bot's policy/permission_mode/route
+  /// tier entirely and resolves purely against the workspace — the
+  /// explicit "break inheritance" switch. Meaningless when `bot_id` is null.
+  inherit_bot_policy: boolean;
   added_at: string;
   added_by: string;
   first_seen_text: string | null;

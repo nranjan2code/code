@@ -176,7 +176,16 @@ export const api = {
 
   approveGatewayAllowlist: (
     key: string,
-    body: { workspace?: string; route?: AllowlistRoute; permission_mode?: PermissionMode; policy?: ChannelPolicy } = {},
+    body: {
+      workspace?: string;
+      route?: AllowlistRoute;
+      permission_mode?: PermissionMode;
+      policy?: ChannelPolicy;
+      /// Bind to a bot identity (multi-bot-per-channel). Omitted/empty = no bot.
+      bot_id?: string;
+      /// Defaults to true server-side; only send `false` to break inheritance.
+      inherit_bot_policy?: boolean;
+    } = {},
   ): Promise<AllowlistEntry> =>
     fetch(`/admin/api/gateway/allowlist/${encodeURIComponent(key)}/approve`, {
       method: "POST",
@@ -192,6 +201,10 @@ export const api = {
       // Omitted / empty clears the pin back to "inherit the workspace".
       permission_mode?: PermissionMode | "";
       policy?: ChannelPolicy;
+      /// Absent = leave the current bot binding alone; `null` = unbind;
+      /// a string = bind to that bot id.
+      bot_id?: string | null;
+      inherit_bot_policy?: boolean;
     },
   ): Promise<AllowlistEntry> =>
     fetch(`/admin/api/gateway/allowlist/${encodeURIComponent(key)}`, {
@@ -484,6 +497,56 @@ export const api = {
     surface: string,
   ): Promise<{ surface: string; env_var: string; configured: boolean; restarted: boolean }> =>
     fetch(`/config/bot-token/${encodeURIComponent(surface)}`, { method: "DELETE" }).then((r) => handle(r)),
+
+  /** Multi-bot-per-channel (docs/design/34, multi-bot): a `Bot` is an
+   * independent credential/policy identity, distinct from the single
+   * surface-keyed slot `putBotToken` manages. Several bots can share a
+   * surface; a chat picks which one it's bound to via its `bot_id`. */
+  listBots: (): Promise<{ bots: import("./types").Bot[] }> =>
+    fetch("/gateway/bots").then((r) => handle(r)),
+
+  createBot: (
+    id: string,
+    surface: string,
+    label: string,
+  ): Promise<{ bot: import("./types").Bot }> =>
+    fetch("/gateway/bots", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, surface, label }),
+    }).then((r) => handle(r)),
+
+  updateBot: (
+    id: string,
+    patch: Partial<
+      Pick<import("./types").Bot, "label" | "policy" | "permission_mode" | "route" | "workspace">
+    >,
+  ): Promise<{ bot: import("./types").Bot }> =>
+    fetch(`/gateway/bots/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }).then((r) => handle(r)),
+
+  deleteBot: (id: string): Promise<void> =>
+    fetch(`/gateway/bots/${encodeURIComponent(id)}`, { method: "DELETE" }).then(() => undefined),
+
+  putBotIdToken: (
+    id: string,
+    token: string,
+  ): Promise<{ id: string; env_var: string; configured: boolean }> =>
+    fetch(`/gateway/bots/${encodeURIComponent(id)}/token`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token }),
+    }).then((r) => handle(r)),
+
+  removeBotIdToken: (
+    id: string,
+  ): Promise<{ id: string; env_var: string; configured: boolean }> =>
+    fetch(`/gateway/bots/${encodeURIComponent(id)}/token`, { method: "DELETE" }).then((r) =>
+      handle(r),
+    ),
 
   feedSourceTypes: (): Promise<{ source_types: import("./types").FeedSourceType[] }> =>
     fetch("/feeds/sources").then((r) => handle(r)),

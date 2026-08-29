@@ -14,6 +14,8 @@
 
 set -Eeuo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/version.sh
+source "$ROOT_DIR/scripts/version.sh"
 
 INSTALL=true
 DESKTOP=true
@@ -41,6 +43,26 @@ command -v cargo >/dev/null || { printf 'cargo is required.\n' >&2; exit 1; }
 # Versions must agree before anything is stamped into a bundle.
 "$ROOT_DIR/scripts/check-version.sh"
 
+# Every workspace crate inherits the release version. Cargo retains the old
+# package identities after a version bump, so allowing versions to accumulate
+# in one target directory grows it without bound. Preserve incremental builds
+# within a version, but start a fresh cache when that shared identity changes.
+VERSION="$(workspace_version)"
+VERSION_STAMP="$ROOT_DIR/target/.vak-workspace-version"
+PREVIOUS_VERSION=""
+if [[ -f "$VERSION_STAMP" ]]; then
+    PREVIOUS_VERSION="$(<"$VERSION_STAMP")"
+fi
+if [[ -d "$ROOT_DIR/target" && "$PREVIOUS_VERSION" != "$VERSION" ]]; then
+    CLEAN=true
+    if [[ -n "$PREVIOUS_VERSION" ]]; then
+        printf 'workspace version changed (%s → %s); stale Cargo artifacts will be cleaned\n' \
+            "$PREVIOUS_VERSION" "$VERSION"
+    else
+        printf 'unversioned Cargo artifacts found; establishing a bounded build cache\n'
+    fi
+fi
+
 if [[ "$CLEAN" == true ]]; then
     printf '\n== clean ==\n'
     cargo clean
@@ -60,17 +82,30 @@ fi
 
 printf '\n== build (%s) ==\n' "$PROFILE"
 GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+packages=(--package vak --package vak-delivery)
+if [[ "$DESKTOP" == true ]]; then
+    packages+=(--package vak-desktop)
+fi
 if [[ "$PROFILE" == release ]]; then
-    VAK_GIT_SHA="$GIT_SHA" cargo build --release --workspace
+    VAK_GIT_SHA="$GIT_SHA" cargo build --release "${packages[@]}"
     BIN_DIR="$ROOT_DIR/target/release"
 else
-    VAK_GIT_SHA="$GIT_SHA" cargo build --workspace
+    VAK_GIT_SHA="$GIT_SHA" cargo build "${packages[@]}"
     BIN_DIR="$ROOT_DIR/target/debug"
 fi
+mkdir -p "$ROOT_DIR/target"
+printf '%s\n' "$VERSION" > "$VERSION_STAMP"
 
 if [[ "$INSTALL" != true ]]; then
     printf '\nbuilt into %s (not installed)\n' "$BIN_DIR"
+    du -sh "$ROOT_DIR/target" 2>/dev/null || true
     exit 0
+fi
+
+# The installer discovers optional sibling binaries. Do not let a desktop
+# binary left by an earlier build defeat an explicit --no-desktop request.
+if [[ "$DESKTOP" != true ]]; then
+    rm -f -- "$BIN_DIR/vak-desktop"
 fi
 
 printf '\n== install ==\n'
@@ -83,3 +118,6 @@ printf '\n== verify ==\n'
 verify_args=(self verify)
 [[ -n "$PREFIX" ]] && verify_args+=(--prefix "$PREFIX")
 "$BIN_DIR/vak" "${verify_args[@]}"
+
+printf '\n== disk usage ==\n'
+du -sh "$ROOT_DIR/target" 2>/dev/null || true

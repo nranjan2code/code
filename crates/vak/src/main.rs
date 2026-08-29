@@ -269,9 +269,21 @@ async fn main() {
         Some(Command::Memory { action }) => memory::run_memory(cwd, action),
         Some(Command::SkillsReview { action }) => run_skills_review(cwd, action),
         Some(Command::Checkpoints { action }) => run_checkpoints(cwd, action).await,
-        Some(Command::Telegram { server, token }) => run_telegram(server, token).await,
-        Some(Command::Discord { server, token }) => run_discord(server, token).await,
-        Some(Command::Slack { server, token }) => run_slack(server, token).await,
+        Some(Command::Telegram {
+            server,
+            token,
+            bot_id,
+        }) => run_telegram(server, token, bot_id).await,
+        Some(Command::Discord {
+            server,
+            token,
+            bot_id,
+        }) => run_discord(server, token, bot_id).await,
+        Some(Command::Slack {
+            server,
+            token,
+            bot_id,
+        }) => run_slack(server, token, bot_id).await,
         Some(Command::Flow { action }) => run_flow(cwd, action).await,
         Some(Command::Doctor { trust, repair }) => {
             let trusted = resolve_trust(&cwd, trust, false);
@@ -1512,13 +1524,39 @@ fn bridge_bot_token(env_var: &str) -> Option<String> {
     }
 }
 
+/// Resolve which env var a bridge should read its token from: the legacy
+/// single per-surface slot by default, or — when `--bot-id` names a bot
+/// created in the admin console's Bots list (multi-bot-per-channel,
+/// docs/design/34) — that bot's own env var, so a second `vak telegram
+/// --bot-id ...` process can run alongside the first with a different
+/// token. `None` only when `--bot-id` was given but no such bot exists.
+fn bridge_token_env_var(legacy_env_var: &str, bot_id: Option<&str>) -> Option<String> {
+    match bot_id {
+        None => Some(legacy_env_var.to_string()),
+        Some(id) => {
+            let sessions_home = vak_config::paths::data_home();
+            match vak_server::gateway::bot_token_env_for_id(&sessions_home, id) {
+                Some(env_var) => Some(env_var),
+                None => {
+                    eprintln!(
+                        "error: no bot '{id}' — create it first in the admin console's Bots list"
+                    );
+                    None
+                }
+            }
+        }
+    }
+}
+
 /// `vak discord` (docs/design/34 Phase 3) — same flag shape as
 /// `vak telegram`, same env-first credential handling.
-async fn run_discord(server: String, token_flag: Option<String>) -> i32 {
-    let (Some(token), Some(bot_token)) = (
-        bridge_gateway_token(token_flag),
-        bridge_bot_token("DISCORD_BOT_TOKEN"),
-    ) else {
+async fn run_discord(server: String, token_flag: Option<String>, bot_id: Option<String>) -> i32 {
+    let Some(env_var) = bridge_token_env_var("DISCORD_BOT_TOKEN", bot_id.as_deref()) else {
+        return 2;
+    };
+    let (Some(token), Some(bot_token)) =
+        (bridge_gateway_token(token_flag), bridge_bot_token(&env_var))
+    else {
         return 2;
     };
     let bridge = vak_server::discord::DiscordBridge::from_env(server, token, bot_token);
@@ -1538,11 +1576,13 @@ async fn run_discord(server: String, token_flag: Option<String>) -> i32 {
 }
 
 /// `vak slack` (docs/design/34 Phase 3).
-async fn run_slack(server: String, token_flag: Option<String>) -> i32 {
-    let (Some(token), Some(bot_token)) = (
-        bridge_gateway_token(token_flag),
-        bridge_bot_token("SLACK_BOT_TOKEN"),
-    ) else {
+async fn run_slack(server: String, token_flag: Option<String>, bot_id: Option<String>) -> i32 {
+    let Some(env_var) = bridge_token_env_var("SLACK_BOT_TOKEN", bot_id.as_deref()) else {
+        return 2;
+    };
+    let (Some(token), Some(bot_token)) =
+        (bridge_gateway_token(token_flag), bridge_bot_token(&env_var))
+    else {
         return 2;
     };
     let bridge = vak_server::slack::SlackBridge::from_env(server, token, bot_token);
@@ -1561,11 +1601,14 @@ async fn run_slack(server: String, token_flag: Option<String>) -> i32 {
     }
 }
 
-async fn run_telegram(server: String, token_flag: Option<String>) -> i32 {
+async fn run_telegram(server: String, token_flag: Option<String>, bot_id: Option<String>) -> i32 {
+    let Some(env_var) = bridge_token_env_var("TELEGRAM_BOT_TOKEN", bot_id.as_deref()) else {
+        return 2;
+    };
     let Some(token) = bridge_gateway_token(token_flag) else {
         return 2;
     };
-    let Some(bot_token) = bridge_bot_token("TELEGRAM_BOT_TOKEN") else {
+    let Some(bot_token) = bridge_bot_token(&env_var) else {
         return 2;
     };
     let api_base = vak_config::get_var("TELEGRAM_API_BASE")

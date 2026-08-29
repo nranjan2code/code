@@ -39,7 +39,35 @@ struct AdapterRegistry {
 }
 
 impl AdapterRegistry {
-    fn built_in() -> Self {
+    /// Legacy single-slot token for `surface`, falling back to *some*
+    /// configured multi-bot (docs/design/34) row on that surface when the
+    /// legacy env var is unset — so a deployment that only ever went
+    /// through the new "Add another bot" flow (no `TELEGRAM_BOT_TOKEN` set
+    /// directly) can still deliver outbound replies, not just receive
+    /// inbound ones. When more than one bot is configured for a surface
+    /// this necessarily picks one arbitrarily (outbound replies are not
+    /// yet bot-scoped — see docs/34 multi-bot follow-up); the legacy slot,
+    /// when set, always wins so existing single-bot behavior is unchanged.
+    fn resolve_surface_token(
+        sessions_home: &std::path::Path,
+        legacy_env_var: &str,
+        surface: &str,
+    ) -> Option<String> {
+        if let Some(token) = vak_config::get_var(legacy_env_var) {
+            return Some(token);
+        }
+        let raw = std::fs::read_to_string(sessions_home.join("gateway").join("bots.json")).ok()?;
+        let file: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        file.get("bots")?.as_array()?.iter().find_map(|b| {
+            if b.get("surface")?.as_str()? != surface {
+                return None;
+            }
+            let env_var = b.get("token_env")?.as_str()?;
+            vak_config::get_var(env_var)
+        })
+    }
+
+    fn built_in(sessions_home: &std::path::Path) -> Self {
         let mut registry = Self {
             adapters: HashMap::new(),
         };
@@ -51,7 +79,9 @@ impl AdapterRegistry {
         // currently talking. Registered only when a bot token is
         // configured so an unconfigured deployment fails with the same
         // clear "unsupported gateway surface" error as before.
-        if let Some(bot_token) = vak_config::get_var("TELEGRAM_BOT_TOKEN") {
+        if let Some(bot_token) =
+            Self::resolve_surface_token(sessions_home, "TELEGRAM_BOT_TOKEN", "telegram")
+        {
             let api_base = vak_config::get_var("TELEGRAM_API_BASE")
                 .unwrap_or_else(|| "https://api.telegram.org".into());
             registry.register(TelegramAdapter {
@@ -62,14 +92,18 @@ impl AdapterRegistry {
         // Same rule for the Phase 3 surfaces (docs/design/34): registered
         // only when a bot token exists, so an unconfigured deployment
         // still fails with the clear "unsupported gateway surface" error.
-        if let Some(bot_token) = vak_config::get_var("DISCORD_BOT_TOKEN") {
+        if let Some(bot_token) =
+            Self::resolve_surface_token(sessions_home, "DISCORD_BOT_TOKEN", "discord")
+        {
             registry.register(DiscordAdapter {
                 bot_token,
                 api_base: vak_config::get_var("DISCORD_API_BASE")
                     .unwrap_or_else(|| "https://discord.com/api/v10".into()),
             });
         }
-        if let Some(bot_token) = vak_config::get_var("SLACK_BOT_TOKEN") {
+        if let Some(bot_token) =
+            Self::resolve_surface_token(sessions_home, "SLACK_BOT_TOKEN", "slack")
+        {
             registry.register(SlackAdapter {
                 bot_token,
                 api_base: vak_config::get_var("SLACK_API_BASE")
@@ -120,7 +154,7 @@ impl DeliveryRuntime {
         Self {
             outbox: Outbox::new(core.sessions_home().join("delivery").join("jobs")),
             worker,
-            adapters: AdapterRegistry::built_in(),
+            adapters: AdapterRegistry::built_in(&core.sessions_home()),
             serial: tokio::sync::Mutex::new(()),
         }
     }

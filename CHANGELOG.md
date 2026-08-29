@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.11.19 — 2026-08-29
+
+### Multi-bot-per-channel
+
+A channel used to be its bot: `TELEGRAM_BOT_TOKEN`/`DISCORD_BOT_TOKEN`/
+`SLACK_BOT_TOKEN` were one env var per surface, and setting a second token
+silently overwrote the first — there was no way to run two bots on the same
+platform, and no way to give one bot its own tools/MCP/skills/hooks/network
+policy, permission mode, or model separate from a chat's own settings.
+
+`Bot` is now a first-class identity, independent of surface: its own token,
+its own `ChannelPolicy`, permission mode, route, and workspace, stored in
+`bots.json` alongside the existing allowlist/bindings stores. Resolution is
+a three-tier chain — bot → chat → workspace — composed with the same
+inherit-or-override convention the rest of the gateway already uses:
+capability allow-lists let the more specific tier win while deny-lists
+accumulate, permission modes cap in sequence (never escalating), and
+model/route falls through chat → bot → legacy binding → workspace default.
+Each chat's `inherit_bot_policy` flag is the explicit "break inheritance"
+switch — flip it off and the chat resolves purely against the workspace,
+ignoring its bot's tier entirely.
+
+`vak telegram/discord/slack --bot-id <id>` runs a bridge process against a
+specific bot's token, so a second bot on the same platform actually
+receives its own messages — not just holds a saved credential nobody reads.
+Existing single-token deployments auto-migrate into one synthesized `Bot`
+row per configured surface on first load, so nothing changes for anyone
+who doesn't touch this. The admin console's Connect and Credentials tabs
+gained an "+ Add another bot" list, and the live chat editor gained a bot
+picker and the inherit toggle. See docs/design/34-channel-onboarding.md
+Phase 5 for the full design, including the one known gap: outbound replies
+aren't yet bot-scoped when two bots share a surface.
+
 ## 0.11.18 — 2026-08-29
 
 ### Feed pipeline, and an admin console pass for non-technical operators

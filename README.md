@@ -164,17 +164,20 @@ cargo run -p vak-desktop
 
 ### Install
 
-`scripts/build.sh` builds the workspace and then hands placement to the
-managed installer, which owns the install root and its manifest:
+`scripts/build.sh` builds the shipped components and then hands placement to
+the managed installer, which owns the install root and its manifest:
 
 ```bash
 scripts/build.sh
 ```
 
-`--no-install` builds without placing anything, `--no-desktop` skips the
-frontend, and `--prefix DIR` installs somewhere other than the platform
-default. Every `self` subcommand accepts the same `--prefix`, so a custom
-install stays inspectable and removable:
+`--no-install` builds without placing anything, `--no-desktop` excludes the
+desktop frontend and Rust package, and `--prefix DIR` installs somewhere other
+than the platform default. The build cache is cleaned automatically after a
+workspace-version bump, preventing old identities for all workspace crates
+from accumulating. The version-bump script also refreshes `Cargo.lock` without
+compiling the entire workspace. Every `self` subcommand accepts the same
+`--prefix`, so a custom install stays inspectable and removable:
 
 ```bash
 vak self status         # build vs manifest vs service units
@@ -228,7 +231,11 @@ fails if a second stamp reappears anywhere.
 `release.sh` builds, checksums each artifact, and writes
 `dist/<version>/release.json` — the feed `vak self update` reads. Every
 artifact carries a SHA-256 that `self update` verifies before installing;
-an artifact without one is refused.
+an artifact without one is refused. Release checks and compilation use an
+isolated temporary Cargo target directory that is removed on exit, so frequent
+version bumps do not enlarge the developer `target/`. The release preflight
+requires 15 GiB free by default; set `VAK_RELEASE_MIN_FREE_GB` to adjust that
+threshold for the build host.
 
 ### Server and gateway
 

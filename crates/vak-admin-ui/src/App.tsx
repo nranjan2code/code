@@ -11,7 +11,7 @@ import {
   route, sessionsVersion, setAuthed, statsVersion, toasts,
 } from "./store";
 import type {
-  AllowlistEntry, BestOfNRun, ChannelPolicy, ChatSurfaceStatus, ConfigInfo, CorePoolEntry, DiscoveredModelsResponse, FinOpsStatus, HookConfig,
+  AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ChatSurfaceStatus, ConfigInfo, CorePoolEntry, DiscoveredModelsResponse, FinOpsStatus, HookConfig,
   GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval,
   PermissionMode, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
@@ -3227,6 +3227,7 @@ function GatewayBindingEditor(props: {
   allowlistEntry: AllowlistEntry | undefined;
   knownWorkspaces: string[];
   corePool: CorePoolEntry[];
+  bots: Bot[];
   refresh: () => void;
 }) {
   const [editing, setEditing] = createSignal(false);
@@ -3383,6 +3384,7 @@ function GatewayBindingEditor(props: {
           providers={props.providers}
           knownWorkspaces={props.knownWorkspaces}
           corePool={props.corePool}
+          bots={props.bots}
           refresh={() => {
             setEditing(false);
             props.refresh();
@@ -3635,6 +3637,7 @@ function ChannelAccessEditor(props: {
   providers: ProviderSummary[];
   knownWorkspaces: string[];
   corePool: CorePoolEntry[];
+  bots: Bot[];
   refresh: () => void;
 }) {
   const [workspace, setWorkspace] = createSignal(props.entry.workspace ?? "");
@@ -3650,6 +3653,13 @@ function ChannelAccessEditor(props: {
     props.entry.permission_mode ?? props.entry.workspace_permission_mode ?? "workspace-write",
   );
   const [policy, setPolicy] = createSignal<ChannelPolicy>(props.entry.policy ?? defaultChannelPolicy());
+  // Multi-bot-per-channel: which bot (if any) this chat is bound to, and
+  // whether it inherits that bot's policy/permission/route tier or breaks
+  // inheritance and resolves purely against the workspace.
+  const surface = () => props.entry.key.split(":")[0];
+  const surfaceBots = () => props.bots.filter((b) => b.surface === surface());
+  const [botId, setBotId] = createSignal(props.entry.bot_id ?? "");
+  const [inheritBot, setInheritBot] = createSignal(props.entry.inherit_bot_policy);
 
   createEffect(async () => {
     if (!pinRoute() || !provider()) return;
@@ -3671,6 +3681,8 @@ function ChannelAccessEditor(props: {
         // "" clears the pin back to inheriting the workspace default.
         permission_mode: pinPerm() ? perm() : "",
         policy: policy(),
+        bot_id: botId() || null,
+        inherit_bot_policy: inheritBot(),
       });
       pushToast("info", `Updated ${props.entry.key} — the next message rotates to a fresh session`);
       props.refresh();
@@ -3694,6 +3706,21 @@ function ChannelAccessEditor(props: {
         known={props.knownWorkspaces}
         corePool={props.corePool}
       />
+      <Show when={surfaceBots().length > 0}>
+        <label class="inherit-toggle">
+          Bot
+          <select value={botId()} onChange={(e) => setBotId(e.currentTarget.value)}>
+            <option value="">No bot (workspace only)</option>
+            <For each={surfaceBots()}>{(b) => <option value={b.id}>{b.label}</option>}</For>
+          </select>
+        </label>
+        <Show when={botId()}>
+          <label class="inherit-toggle">
+            <input type="checkbox" checked={inheritBot()} onChange={(e) => setInheritBot(e.currentTarget.checked)} />
+            Inherit this bot's policy, permission mode, and model (uncheck to resolve against the project only)
+          </label>
+        </Show>
+      </Show>
       <label class="inherit-toggle">
         <input type="checkbox" checked={pinRoute()} onChange={(e) => setPinRoute(e.currentTarget.checked)} />
         Give this channel its own model (otherwise it follows the project)
@@ -3973,6 +4000,166 @@ function CredentialRow(props: { surface: string; state: ChatSurfaceStatus | unde
   );
 }
 
+/// A second (or third...) bot on a surface that already has its legacy
+/// single-token slot filled — or a surface's first bot, run as a named
+/// identity from the start rather than the anonymous per-surface slot.
+/// Each row is its own credential *and* its own policy/permission/route
+/// tier that a chat can inherit from (see `ChannelPolicy::merge` server-side).
+function BotRow(props: { bot: Bot; refresh: () => void }) {
+  const [editing, setEditing] = createSignal(false);
+  const [draft, setDraft] = createSignal("");
+  const [busy, setBusy] = createSignal<"save" | "remove" | "delete" | null>(null);
+
+  const save = async () => {
+    const token = draft().trim();
+    if (!token) return;
+    setBusy("save");
+    try {
+      await api.putBotIdToken(props.bot.id, token);
+      setEditing(false);
+      setDraft("");
+      pushToast("info", `${props.bot.label} token saved`);
+      props.refresh();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const removeToken = async () => {
+    if (!window.confirm(`Remove ${props.bot.label}'s token? Its chats go quiet until you set a new one.`)) return;
+    setBusy("remove");
+    try {
+      await api.removeBotIdToken(props.bot.id);
+      pushToast("info", `${props.bot.label} token removed`);
+      props.refresh();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const deleteBot = async () => {
+    if (!window.confirm(`Delete the bot "${props.bot.label}"? Chats bound to it fall back to no bot tier.`)) return;
+    setBusy("delete");
+    try {
+      await api.deleteBot(props.bot.id);
+      pushToast("info", `${props.bot.label} deleted`);
+      props.refresh();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div class="cred-row">
+      <div class="cred-id">
+        <SurfaceBadge channelKey={`${props.bot.surface}:`} />
+        <span class="binding-meta">{props.bot.label}</span>
+        <code class="binding-meta">{props.bot.token_env}</code>
+      </div>
+      <span class="spacer" />
+      <Show
+        when={editing()}
+        fallback={
+          <div class="row-gap">
+            <button class="ghost small" onClick={() => setEditing(true)}>Set token</button>
+            <button class="danger small" disabled={busy() === "remove"} onClick={() => void removeToken()}>Remove token</button>
+            <button class="danger small" disabled={busy() === "delete"} onClick={() => void deleteBot()}>Delete bot</button>
+          </div>
+        }
+      >
+        <div class="cred-edit">
+          <input
+            type="password"
+            autocomplete="off"
+            spellcheck={false}
+            autofocus
+            placeholder={`Paste ${props.bot.label}'s token`}
+            value={draft()}
+            onInput={(e) => setDraft(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void save();
+              if (e.key === "Escape") setEditing(false);
+            }}
+          />
+          <button disabled={busy() === "save" || !draft().trim()} onClick={() => void save()}>
+            {busy() === "save" ? "Saving…" : "Save"}
+          </button>
+          <button class="ghost small" onClick={() => { setEditing(false); setDraft(""); }}>Cancel</button>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+/// Extra bots beyond each surface's single legacy slot, plus the form to
+/// add one — this is the whole "I can't add a second bot" gap: the legacy
+/// `CredentialRow` above is capped at one row per surface by construction,
+/// this list is not.
+function ExtraBotsList(props: { ctx: GatewayCtx }) {
+  const [adding, setAdding] = createSignal(false);
+  const [id, setId] = createSignal("");
+  const [surface, setSurface] = createSignal<string>(KNOWN_SURFACES[0]);
+  const [label, setLabel] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+
+  const create = async () => {
+    if (!id().trim()) return;
+    setBusy(true);
+    try {
+      await api.createBot(id().trim(), surface(), label().trim() || id().trim());
+      pushToast("info", `Bot "${id().trim()}" added — set its token below`);
+      setAdding(false);
+      setId("");
+      setLabel("");
+      props.ctx.refresh();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div class="cred-list" style={{ "margin-top": "0.75rem" }}>
+      <Show when={props.ctx.bots().length > 0}>
+        <For each={props.ctx.bots()}>{(bot) => <BotRow bot={bot} refresh={props.ctx.refresh} />}</For>
+      </Show>
+      <Show
+        when={adding()}
+        fallback={
+          <button class="ghost small" onClick={() => setAdding(true)}>+ Add another bot</button>
+        }
+      >
+        <div class="cred-edit">
+          <select value={surface()} onInput={(e) => setSurface(e.currentTarget.value)}>
+            <For each={KNOWN_SURFACES}>{(s) => <option value={s}>{SURFACE_LABEL[s] ?? s}</option>}</For>
+          </select>
+          <input
+            placeholder="id, e.g. telegram-sales"
+            value={id()}
+            onInput={(e) => setId(e.currentTarget.value)}
+          />
+          <input
+            placeholder="Label (optional)"
+            value={label()}
+            onInput={(e) => setLabel(e.currentTarget.value)}
+          />
+          <button disabled={busy() || !id().trim()} onClick={() => void create()}>
+            {busy() ? "Adding…" : "Add"}
+          </button>
+          <button class="ghost small" onClick={() => setAdding(false)}>Cancel</button>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
 /// Everything the four gateway screens read, fetched once at the section
 /// level so a refresh on one screen is a refresh on all of them.
 interface GatewayCtx {
@@ -3984,6 +4171,11 @@ interface GatewayCtx {
   surfaces: () => ChatSurfaceStatus[];
   surfacesLoading: () => boolean;
   configured: () => ChatSurfaceStatus[];
+  /// Extra bot identities beyond each surface's single legacy token slot
+  /// (multi-bot-per-channel). A surface can be run with zero of these (the
+  /// legacy slot alone) or several, each independently policed.
+  bots: () => Bot[];
+  botsLoading: () => boolean;
   refresh: () => void;
 }
 
@@ -4172,6 +4364,7 @@ A connected chat — a Telegram group, a Discord channel, a Slack conversation �
                                 allowlistEntry={entry()}
                                 knownWorkspaces={props.ctx.status()?.known_workspaces ?? []}
                                 corePool={props.ctx.status()?.core_pool.entries ?? []}
+                                bots={props.ctx.bots()}
                                 refresh={props.ctx.refresh}
                               />
                             </td>
@@ -4263,6 +4456,7 @@ function ConnectView(props: { ctx: GatewayCtx }) {
                 </For>
               </div>
             </Show>
+            <ExtraBotsList ctx={props.ctx} />
           </div>
         </li>
 
@@ -4369,6 +4563,7 @@ function CredentialsView(props: { ctx: GatewayCtx }) {
           </For>
         </div>
       </Show>
+      <ExtraBotsList ctx={props.ctx} />
     </section>
   );
 }
@@ -4496,11 +4691,13 @@ function GatewaySection() {
   const [allowlist, { refetch: refetchAllowlist }] = createResource(() => api.gatewayAllowlist());
   const [providers] = createResource(() => api.providers().catch(() => ({ providers: [] })));
   const [surfaces, { refetch: refetchSurfaces }] = createResource(() => api.chatSurfaces().catch(() => []));
+  const [bots, { refetch: refetchBots }] = createResource(() => api.listBots().catch(() => ({ bots: [] })));
 
   const refresh = () => {
     refetchStatus();
     refetchAllowlist();
     refetchSurfaces();
+    refetchBots();
   };
 
   const entries = createMemo(() => allowlist()?.entries ?? []);
@@ -4513,6 +4710,8 @@ function GatewaySection() {
     surfaces: () => surfaces() ?? [],
     surfacesLoading: () => surfaces.loading,
     configured: createMemo(() => (surfaces() ?? []).filter((s) => s.configured)),
+    bots: () => bots()?.bots ?? [],
+    botsLoading: () => bots.loading,
     refresh,
   };
 
