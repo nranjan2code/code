@@ -25,11 +25,15 @@ pub enum PluginError {
     UnsafePackage(String),
     #[error("plugin package exceeds limit: {0}")]
     LimitExceeded(String),
-    #[error("plugin '{0}' is already installed with different content; remove it before installing another generation")]
+    #[error(
+        "plugin '{0}' is already installed with different content; remove it before installing another generation"
+    )]
     AlreadyInstalled(String),
     #[error("plugin '{0}' is not installed")]
     NotInstalled(String),
-    #[error("plugin '{0}' has no declared license; pass allow_unlicensed only after reviewing its terms")]
+    #[error(
+        "plugin '{0}' has no declared license; pass allow_unlicensed only after reviewing its terms"
+    )]
     Unlicensed(String),
     #[error("plugin registry is busy; another mutation may be in progress")]
     RegistryBusy,
@@ -89,11 +93,7 @@ impl Components {
             .chain(self.commands.iter().map(|path| ("command", path)))
             .chain(self.mcp.iter().map(|path| ("MCP", path)))
             .chain(self.hooks.iter().map(|path| ("hook", path)))
-            .chain(
-                self.presentation
-                    .iter()
-                    .map(|path| ("presentation", path)),
-            )
+            .chain(self.presentation.iter().map(|path| ("presentation", path)))
             .chain(self.assets.iter().map(|path| ("asset", path)))
     }
 }
@@ -191,7 +191,10 @@ pub fn inspect_package_with_limits(
     let capabilities = inventory_capabilities(&root, &manifest.components, &files)?;
     let mut warnings = manifest_warnings;
     if manifest.license.is_none() {
-        warnings.push("no license declared; marketplace availability does not grant redistribution rights".into());
+        warnings.push(
+            "no license declared; marketplace availability does not grant redistribution rights"
+                .into(),
+        );
     }
     if manifest.publisher.is_none() {
         warnings.push("no publisher identity declared".into());
@@ -357,7 +360,9 @@ fn required_string(
         .ok_or_else(|| PluginError::InvalidManifest(format!("missing non-empty '{field}'")))
 }
 
-fn normalize_publisher(value: Option<&serde_json::Value>) -> Result<Option<Publisher>, PluginError> {
+fn normalize_publisher(
+    value: Option<&serde_json::Value>,
+) -> Result<Option<Publisher>, PluginError> {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -371,9 +376,9 @@ fn normalize_publisher(value: Option<&serde_json::Value>) -> Result<Option<Publi
             url: None,
         }));
     }
-    let object = value
-        .as_object()
-        .ok_or_else(|| PluginError::InvalidManifest("publisher must be a string or object".into()))?;
+    let object = value.as_object().ok_or_else(|| {
+        PluginError::InvalidManifest("publisher must be a string or object".into())
+    })?;
     let name = required_string(object, "name")?;
     let id = object
         .get("id")
@@ -428,7 +433,10 @@ fn normalize_and_validate_manifest(
         )
     })?;
     Version::parse(&manifest.version).map_err(|error| {
-        PluginError::InvalidManifest(format!("version '{}' is not semver: {error}", manifest.version))
+        PluginError::InvalidManifest(format!(
+            "version '{}' is not semver: {error}",
+            manifest.version
+        ))
     })?;
     if manifest.schema > REGISTRY_SCHEMA {
         return Err(PluginError::InvalidManifest(format!(
@@ -453,9 +461,9 @@ fn normalize_id(value: &str) -> Option<String> {
     if value.is_empty()
         || value.starts_with('-')
         || value.ends_with('-')
-        || !value
-            .chars()
-            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-')
+        || !value.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
     {
         return None;
     }
@@ -497,8 +505,8 @@ fn collect_files(root: &Path, limits: InspectLimits) -> Result<Vec<PackageFile>,
         if depth == 0 {
             continue;
         }
-        let metadata = fs::symlink_metadata(entry.path())
-            .map_err(|error| io_error(entry.path(), error))?;
+        let metadata =
+            fs::symlink_metadata(entry.path()).map_err(|error| io_error(entry.path(), error))?;
         if metadata.file_type().is_symlink() {
             return Err(PluginError::UnsafePackage(format!(
                 "symbolic links are not allowed: {}",
@@ -552,7 +560,9 @@ fn collect_files(root: &Path, limits: InspectLimits) -> Result<Vec<PackageFile>,
     }
     files.sort_by(|left, right| left.path.cmp(&right.path));
     if files.is_empty() {
-        return Err(PluginError::InvalidManifest("package contains no files".into()));
+        return Err(PluginError::InvalidManifest(
+            "package contains no files".into(),
+        ));
     }
     Ok(files)
 }
@@ -646,7 +656,9 @@ fn inventory_capabilities(
                 .map_err(|error| io_error(&absolute, error))?
                 .filter_map(Result::ok)
                 .filter(|entry| entry.path().join("SKILL.md").is_file())
-                .map(|entry| parse_skill_header(&entry.path().join("SKILL.md")).map(|header| header.0))
+                .map(|entry| {
+                    parse_skill_header(&entry.path().join("SKILL.md")).map(|header| header.0)
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             inventory.skills.append(&mut names);
         }
@@ -660,9 +672,10 @@ fn inventory_capabilities(
     inventory.assets = component_files(root, &components.assets, None)?;
     for file in files {
         let path = Path::new(&file.path);
-        if path.components().any(|component| {
-            matches!(component, Component::Normal(value) if value == "scripts")
-        }) {
+        if path
+            .components()
+            .any(|component| matches!(component, Component::Normal(value) if value == "scripts"))
+        {
             inventory.scripts.push(file.path.clone());
         }
         if file.executable {
@@ -691,16 +704,23 @@ fn component_files(
                 PluginError::UnsafePackage(format!("could not inventory component: {error}"))
             })?;
             if !entry.file_type().is_file()
-                || extension.is_some_and(|expected| entry.path().extension().is_none_or(|actual| actual != expected))
+                || extension.is_some_and(|expected| {
+                    entry
+                        .path()
+                        .extension()
+                        .is_none_or(|actual| actual != expected)
+                })
             {
                 continue;
             }
-            output.push(portable_path(entry.path().strip_prefix(root).map_err(|_| {
-                PluginError::UnsafePackage(format!(
-                    "component escaped root: {}",
-                    entry.path().display()
-                ))
-            })?)?);
+            output.push(portable_path(entry.path().strip_prefix(root).map_err(
+                |_| {
+                    PluginError::UnsafePackage(format!(
+                        "component escaped root: {}",
+                        entry.path().display()
+                    ))
+                },
+            )?)?);
         }
     }
     output.sort();
@@ -714,7 +734,10 @@ fn parse_skill_header(path: &Path) -> Result<(String, String), PluginError> {
         PluginError::InvalidManifest(format!("skill has no YAML frontmatter: {}", path.display()))
     })?;
     let (frontmatter, _) = rest.split_once("---").ok_or_else(|| {
-        PluginError::InvalidManifest(format!("skill frontmatter is not closed: {}", path.display()))
+        PluginError::InvalidManifest(format!(
+            "skill frontmatter is not closed: {}",
+            path.display()
+        ))
     })?;
     let mut name = None;
     let mut description = String::new();
@@ -734,7 +757,10 @@ fn parse_skill_header(path: &Path) -> Result<(String, String), PluginError> {
         })
         .and_then(|value| normalize_id(&value))
         .ok_or_else(|| {
-            PluginError::InvalidManifest(format!("skill needs a valid kebab-case name: {}", path.display()))
+            PluginError::InvalidManifest(format!(
+                "skill needs a valid kebab-case name: {}",
+                path.display()
+            ))
         })?;
     Ok((name, description))
 }
@@ -941,16 +967,16 @@ impl PluginStore {
         for file in &inspection.files {
             let relative = path_from_portable(&file.path);
             let source = inspection.root.join(&relative);
-            let source_meta = fs::symlink_metadata(&source)
-                .map_err(|error| io_error(&source, error))?;
+            let source_meta =
+                fs::symlink_metadata(&source).map_err(|error| io_error(&source, error))?;
             if !source_meta.is_file() || source_meta.file_type().is_symlink() {
                 return Err(PluginError::UnsafePackage(format!(
                     "source changed during install: {}",
                     source.display()
                 )));
             }
-            let canonical_source = fs::canonicalize(&source)
-                .map_err(|error| io_error(&source, error))?;
+            let canonical_source =
+                fs::canonicalize(&source).map_err(|error| io_error(&source, error))?;
             if !canonical_source.starts_with(&inspection.root) {
                 return Err(PluginError::UnsafePackage(format!(
                     "source escaped package during install: {}",
@@ -970,23 +996,22 @@ impl PluginStore {
             ));
         }
         let staged_path = staging.keep();
-        fs::rename(&staged_path, destination)
-            .map_err(|error| io_error(destination, error))?;
+        fs::rename(&staged_path, destination).map_err(|error| io_error(destination, error))?;
         Ok(())
     }
 
     fn save(&self, registry: &PluginRegistry) -> Result<(), PluginError> {
         let path = self.registry_path();
-        let parent = path.parent().ok_or_else(|| {
-            PluginError::UnsafePackage("registry path has no parent".into())
-        })?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| PluginError::UnsafePackage("registry path has no parent".into()))?;
         fs::create_dir_all(parent).map_err(|error| io_error(parent, error))?;
         let bytes = serde_json::to_vec_pretty(registry).map_err(|source| PluginError::Json {
             path: path.clone(),
             source,
         })?;
-        let mut staged = tempfile::NamedTempFile::new_in(parent)
-            .map_err(|error| io_error(parent, error))?;
+        let mut staged =
+            tempfile::NamedTempFile::new_in(parent).map_err(|error| io_error(parent, error))?;
         staged
             .write_all(&bytes)
             .map_err(|error| io_error(staged.path(), error))?;
@@ -1196,7 +1221,10 @@ mod tests {
             .unwrap();
         assert!(!installed.enabled);
         assert!(installed.package_path.is_dir());
-        assert_eq!(inspect_package(&installed.package_path).unwrap().digest, installed.digest);
+        assert_eq!(
+            inspect_package(&installed.package_path).unwrap().digest,
+            installed.digest
+        );
         assert_eq!(store.list().unwrap().len(), 1);
         let idempotent = store
             .install_local(source.path(), InstallOptions::default())
