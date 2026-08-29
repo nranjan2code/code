@@ -4361,6 +4361,18 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
   const botLabel = (botId: string | null | undefined) =>
     botId ? (botsById().get(botId)?.label ?? botId) : null;
 
+  // Multi-bot-per-channel: a chat bound to a specific bot has a three-part
+  // key (`surface:address:bot_id`) so the same physical chat served by
+  // several bots gets independent entries. The bot id already has its own
+  // column (`botLabel` above); repeating it in the chat id itself would
+  // just be visual noise, so this strips that segment for display only —
+  // `binding.target` (used for every API call, filter match, and the row
+  // key) is never touched.
+  const displayChatId = (target: string) => {
+    const parts = target.split(":");
+    return parts.length > 2 ? parts.slice(0, 2).join(":") : target;
+  };
+
   const rows = createMemo(() => {
     const needle = filter().trim().toLowerCase();
     if (!needle) return props.ctx.status()?.bindings ?? [];
@@ -4485,7 +4497,7 @@ A connected chat — a Telegram group, a Discord channel, a Slack conversation �
                           onClick={() => setExpanded(open() ? "" : binding.target)}
                           onKeyDown={(e) => e.key === "Enter" && setExpanded(open() ? "" : binding.target)}
                         >
-                          <td class="mono">{binding.target}</td>
+                          <td class="mono">{displayChatId(binding.target)}</td>
                           <td><SurfaceBadge channelKey={binding.target} /></td>
                           <td>
                             <Show when={botLabel(entry()?.bot_id)} fallback={<span class="dim">—</span>}>

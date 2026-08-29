@@ -138,6 +138,20 @@ fn bots_path(home: &std::path::Path) -> PathBuf {
     home.join("gateway").join("bots.json")
 }
 
+/// Multi-bot-per-channel (docs/design/34 Phase 5 follow-up): an allowlist
+/// key is `surface:chat` for a legacy/single-bot chat, or
+/// `surface:chat:bot_id` once a specific bot is scoped into it — the bot id
+/// is the third segment precisely so [`legacy_key_for`] can strip it back
+/// off. Returns `None` for a key that is already legacy-shaped (nothing to
+/// strip) or malformed.
+fn legacy_key_for(key: &str) -> Option<String> {
+    let mut parts = key.splitn(3, ':');
+    let surface = parts.next()?;
+    let chat = parts.next()?;
+    parts.next()?; // only a genuinely 3-part (bot-scoped) key has a legacy form
+    Some(format!("{surface}:{chat}"))
+}
+
 /// Read-only lookup of one bot's token env var by id, straight from
 /// `bots.json`, without needing a running `GatewayState` — the `vak
 /// telegram/discord/slack --bot-id` CLI bridges are separate short-lived
@@ -816,35 +830,72 @@ impl GatewayState {
             .allowlist
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Distinct from `decision` below: repeat traffic from an already-
+        // `Allowed` key takes the same `AllowlistDecision::Allowed` value
+        // as the freshly-inherited case, but must not re-persist the file
+        // on every single inbound message — only a real map mutation
+        // (a fresh Pending row, or a fresh inherited-Allowed row) should.
+        let mut mutated = false;
         let decision = match map.get(key).map(|e| e.status) {
             Some(AllowlistStatus::Allowed) => AllowlistDecision::Allowed,
             Some(AllowlistStatus::Denied) => AllowlistDecision::Denied,
             Some(AllowlistStatus::Pending) => AllowlistDecision::StillPending,
             None => {
-                let truncated: String = first_seen_text
-                    .chars()
-                    .take(FIRST_SEEN_TEXT_MAX_CHARS)
-                    .collect();
-                map.insert(
-                    key.to_string(),
-                    AllowlistEntry {
-                        key: key.to_string(),
-                        status: AllowlistStatus::Pending,
-                        workspace: None,
-                        route: None,
-                        permission_mode: None,
-                        policy: vak_config::ChannelPolicy::default(),
-                        added_at: chrono::Utc::now().to_rfc3339(),
-                        added_by: "gateway".into(),
-                        first_seen_text: Some(truncated),
-                        bot_id: bot_id.map(str::to_string),
-                        inherit_bot_policy: true,
-                    },
-                );
-                AllowlistDecision::NewlyPending
+                // Multi-bot-per-channel (docs/design/34 Phase 5 follow-up):
+                // a bot-scoped key (`surface:chat:bot_id`) seen for the
+                // first time inherits an already-allowed legacy
+                // (`surface:chat`) entry's approval/workspace/policy when
+                // one exists — the same physical chat an operator already
+                // trusted, just now seen through a second bot. Without
+                // this, every existing approved chat would need a needless
+                // re-approval the moment its bridge started sending a
+                // bot id, and a `chat_allowlist` entry in config.toml
+                // (also just a row in this same map) would silently stop
+                // matching too.
+                if let Some(legacy_key) = legacy_key_for(key)
+                    && let Some(legacy) = map.get(&legacy_key).cloned()
+                    && legacy.status == AllowlistStatus::Allowed
+                {
+                    map.insert(
+                        key.to_string(),
+                        AllowlistEntry {
+                            key: key.to_string(),
+                            bot_id: bot_id.map(str::to_string),
+                            added_by: format!("gateway (inherited from {legacy_key})"),
+                            added_at: chrono::Utc::now().to_rfc3339(),
+                            first_seen_text: None,
+                            ..legacy
+                        },
+                    );
+                    mutated = true;
+                    AllowlistDecision::Allowed
+                } else {
+                    let truncated: String = first_seen_text
+                        .chars()
+                        .take(FIRST_SEEN_TEXT_MAX_CHARS)
+                        .collect();
+                    map.insert(
+                        key.to_string(),
+                        AllowlistEntry {
+                            key: key.to_string(),
+                            status: AllowlistStatus::Pending,
+                            workspace: None,
+                            route: None,
+                            permission_mode: None,
+                            policy: vak_config::ChannelPolicy::default(),
+                            added_at: chrono::Utc::now().to_rfc3339(),
+                            added_by: "gateway".into(),
+                            first_seen_text: Some(truncated),
+                            bot_id: bot_id.map(str::to_string),
+                            inherit_bot_policy: true,
+                        },
+                    );
+                    mutated = true;
+                    AllowlistDecision::NewlyPending
+                }
             }
         };
-        if matches!(decision, AllowlistDecision::NewlyPending) {
+        if mutated {
             drop(map);
             persist_allowlist(core, self);
         }
@@ -1506,7 +1557,18 @@ async fn gateway_inbound(
         )
             .into_response();
     }
-    let key = format!("{}:{}", body.surface.trim(), body.chat.trim());
+    // Multi-bot-per-channel: a chat's key is scoped to the bot that
+    // delivered the message whenever the bridge knows its own bot id
+    // (`--bot-id`), so the same physical chat served by several bots gets
+    // one independent allowlist entry, session, and policy per bot instead
+    // of all of them colliding onto one shared conversation. Legacy/
+    // single-bot bridges (no bot id) keep the original two-part key
+    // unchanged. See `legacy_key_for` for the one-time migration this
+    // implies for an already-approved chat or a `chat_allowlist` row.
+    let key = match body.bot_id.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+        Some(bot_id) => format!("{}:{}:{bot_id}", body.surface.trim(), body.chat.trim()),
+        None => format!("{}:{}", body.surface.trim(), body.chat.trim()),
+    };
     // 0c-01/0c-02/docs/design/34: chat allowlist — reject messages from
     // unknown chats, but record a reviewable *pending* entry instead of a
     // flat rejection so the operator has a forward path to "let it
@@ -2577,6 +2639,90 @@ mod tests {
             .filter(|e| e.status == AllowlistStatus::Pending)
             .count();
         assert_eq!(pending_count, 1, "no duplicate pending entry created");
+    }
+
+    /// Multi-bot-per-channel (docs/design/34 Phase 5 follow-up): a chat
+    /// already trusted under its legacy two-part key must not force a
+    /// fresh approval the moment its bridge starts sending a bot id — the
+    /// same physical chat, now seen through a bot, inherits the existing
+    /// grant. And a *second* bot joining that same physical chat gets its
+    /// own independent entry too, inherited from the same legacy row —
+    /// this is the actual "a channel can have multiple independent bots"
+    /// capability, not just the UI to configure it.
+    #[test]
+    fn bot_scoped_key_inherits_approval_from_already_allowed_legacy_key() {
+        let (_dir, core) = core_with_config(
+            "[memory]\nreflection = false\n[gateway]\nchat_allowlist = [\"telegram:8846301562\"]\n",
+        );
+        let gw = GatewayState::load(&core, true);
+        let legacy = gw.allowlist_get("telegram:8846301562").unwrap();
+        assert_eq!(legacy.status, AllowlistStatus::Allowed);
+
+        let decision = gw.allowlist_resolve_inbound(
+            &core,
+            "telegram:8846301562:VakBot",
+            "hi",
+            Some("VakBot"),
+        );
+        assert!(matches!(decision, AllowlistDecision::Allowed));
+        let inherited = gw.allowlist_get("telegram:8846301562:VakBot").unwrap();
+        assert_eq!(inherited.status, AllowlistStatus::Allowed);
+        assert_eq!(inherited.bot_id.as_deref(), Some("VakBot"));
+        assert_eq!(inherited.workspace, legacy.workspace);
+        // The legacy row itself is untouched — it stays around as the
+        // ancestor a third bot could still inherit from later.
+        assert_eq!(
+            gw.allowlist_get("telegram:8846301562").unwrap().status,
+            AllowlistStatus::Allowed
+        );
+
+        // A second, independent bot on the same physical chat inherits
+        // too, and gets a genuinely separate entry from the first bot's.
+        let decision2 = gw.allowlist_resolve_inbound(
+            &core,
+            "telegram:8846301562:Vakyartha",
+            "hi",
+            Some("Vakyartha"),
+        );
+        assert!(matches!(decision2, AllowlistDecision::Allowed));
+        let inherited2 = gw.allowlist_get("telegram:8846301562:Vakyartha").unwrap();
+        assert_eq!(inherited2.bot_id.as_deref(), Some("Vakyartha"));
+        assert_ne!(
+            gw.allowlist_get("telegram:8846301562:VakBot").unwrap().bot_id,
+            inherited2.bot_id,
+            "each bot must get its own entry, not share one"
+        );
+    }
+
+    /// No legacy approval to inherit means the normal pending-review path,
+    /// same as any other never-seen chat.
+    #[test]
+    fn bot_scoped_key_starts_pending_when_no_legacy_approval_exists() {
+        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        let gw = GatewayState::load(&core, true);
+        let decision =
+            gw.allowlist_resolve_inbound(&core, "telegram:555:NewBot", "hi", Some("NewBot"));
+        assert!(matches!(decision, AllowlistDecision::NewlyPending));
+        let entry = gw.allowlist_get("telegram:555:NewBot").unwrap();
+        assert_eq!(entry.status, AllowlistStatus::Pending);
+    }
+
+    #[test]
+    fn legacy_key_for_strips_bot_id_and_is_none_for_shorter_keys() {
+        assert_eq!(
+            legacy_key_for("telegram:123:VakBot"),
+            Some("telegram:123".to_string())
+        );
+        assert_eq!(legacy_key_for("telegram:123"), None);
+        assert_eq!(legacy_key_for("telegram"), None);
+    }
+
+    #[test]
+    fn inbound_resolve_dispatches_allowed_and_denied_keys() {
+        let (_dir, core) = core_with_config(
+            "[memory]\nreflection = false\n[gateway]\nchat_allowlist = [\"testonly:0\"]\n",
+        );
+        let gw = GatewayState::load(&core, true);
 
         // Allowed key dispatches normally.
         gw.allowlist_approve(

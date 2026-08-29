@@ -35,7 +35,17 @@ trait ChannelAdapter: Send + Sync {
 }
 
 struct AdapterRegistry {
+    /// Legacy per-surface fallback, used for a two-part target
+    /// (`surface:address`, no bot id) exactly as before multi-bot-per-
+    /// channel existed.
     adapters: HashMap<&'static str, Arc<dyn ChannelAdapter>>,
+    /// One adapter per configured bot, keyed by (surface, bot id) — used
+    /// for a three-part target (`surface:address:bot_id`), so a reply goes
+    /// out with *that* bot's own token rather than whichever token happens
+    /// to be registered first for the surface (docs/design/34 Phase 5
+    /// "known limitation", now fixed: the delivery target carries the bot
+    /// id, so this map can pick the exact adapter instead of guessing).
+    bot_adapters: HashMap<(String, String), Arc<dyn ChannelAdapter>>,
 }
 
 impl AdapterRegistry {
@@ -45,9 +55,11 @@ impl AdapterRegistry {
     /// through the new "Add another bot" flow (no `TELEGRAM_BOT_TOKEN` set
     /// directly) can still deliver outbound replies, not just receive
     /// inbound ones. When more than one bot is configured for a surface
-    /// this necessarily picks one arbitrarily (outbound replies are not
-    /// yet bot-scoped — see docs/34 multi-bot follow-up); the legacy slot,
-    /// when set, always wins so existing single-bot behavior is unchanged.
+    /// this necessarily picks one arbitrarily; a target naming a specific
+    /// bot never goes through this path (see `all_bot_tokens`/
+    /// `bot_adapters`) — this fallback exists only for a target with no
+    /// bot id at all. The legacy slot, when set, always wins so existing
+    /// single-bot behavior is unchanged.
     fn resolve_surface_token(
         sessions_home: &std::path::Path,
         legacy_env_var: &str,
@@ -56,20 +68,46 @@ impl AdapterRegistry {
         if let Some(token) = vak_config::get_var(legacy_env_var) {
             return Some(token);
         }
-        let raw = std::fs::read_to_string(sessions_home.join("gateway").join("bots.json")).ok()?;
-        let file: serde_json::Value = serde_json::from_str(&raw).ok()?;
-        file.get("bots")?.as_array()?.iter().find_map(|b| {
-            if b.get("surface")?.as_str()? != surface {
-                return None;
-            }
-            let env_var = b.get("token_env")?.as_str()?;
-            vak_config::get_var(env_var)
-        })
+        Self::all_bot_tokens(sessions_home, surface)
+            .into_iter()
+            .next()
+            .map(|(_, token)| token)
+    }
+
+    /// Every configured bot on `surface` with a token actually set, as
+    /// (bot id, token) pairs — the multi-bot counterpart of
+    /// `resolve_surface_token`'s single arbitrary pick, used to give each
+    /// bot its own adapter instead of collapsing them into one.
+    fn all_bot_tokens(sessions_home: &std::path::Path, surface: &str) -> Vec<(String, String)> {
+        let Ok(raw) = std::fs::read_to_string(sessions_home.join("gateway").join("bots.json"))
+        else {
+            return Vec::new();
+        };
+        let Ok(file) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            return Vec::new();
+        };
+        file.get("bots")
+            .and_then(|b| b.as_array())
+            .map(|bots| {
+                bots.iter()
+                    .filter_map(|b| {
+                        if b.get("surface")?.as_str()? != surface {
+                            return None;
+                        }
+                        let id = b.get("id")?.as_str()?.to_string();
+                        let env_var = b.get("token_env")?.as_str()?;
+                        let token = vak_config::get_var(env_var)?;
+                        Some((id, token))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn built_in(sessions_home: &std::path::Path) -> Self {
         let mut registry = Self {
             adapters: HashMap::new(),
+            bot_adapters: HashMap::new(),
         };
         registry.register(LogAdapter);
         registry.register(WebhookAdapter);
@@ -110,6 +148,42 @@ impl AdapterRegistry {
                     .unwrap_or_else(|| "https://slack.com/api".into()),
             });
         }
+        let telegram_api_base = vak_config::get_var("TELEGRAM_API_BASE")
+            .unwrap_or_else(|| "https://api.telegram.org".into());
+        for (id, bot_token) in Self::all_bot_tokens(sessions_home, "telegram") {
+            registry.register_bot(
+                "telegram",
+                id,
+                TelegramAdapter {
+                    bot_token,
+                    api_base: telegram_api_base.clone(),
+                },
+            );
+        }
+        let discord_api_base = vak_config::get_var("DISCORD_API_BASE")
+            .unwrap_or_else(|| "https://discord.com/api/v10".into());
+        for (id, bot_token) in Self::all_bot_tokens(sessions_home, "discord") {
+            registry.register_bot(
+                "discord",
+                id,
+                DiscordAdapter {
+                    bot_token,
+                    api_base: discord_api_base.clone(),
+                },
+            );
+        }
+        let slack_api_base =
+            vak_config::get_var("SLACK_API_BASE").unwrap_or_else(|| "https://slack.com/api".into());
+        for (id, bot_token) in Self::all_bot_tokens(sessions_home, "slack") {
+            registry.register_bot(
+                "slack",
+                id,
+                SlackAdapter {
+                    bot_token,
+                    api_base: slack_api_base.clone(),
+                },
+            );
+        }
         registry
     }
 
@@ -117,14 +191,39 @@ impl AdapterRegistry {
         self.adapters.insert(adapter.scheme(), Arc::new(adapter));
     }
 
+    fn register_bot(&mut self, surface: &str, bot_id: String, adapter: impl ChannelAdapter + 'static) {
+        self.bot_adapters
+            .insert((surface.to_string(), bot_id), Arc::new(adapter));
+    }
+
+    /// A delivery target is `surface:address` for a legacy/single-bot
+    /// chat, or `surface:address:bot_id` for one scoped to a specific bot
+    /// (multi-bot-per-channel) — the third segment, when present, always
+    /// wins over the legacy per-surface fallback so a reply is never sent
+    /// under the wrong bot's identity.
     fn resolve(&self, target: &str) -> Result<(Arc<dyn ChannelAdapter>, String), String> {
-        let Some((scheme, address)) = target.split_once(':') else {
-            return Err(format!(
-                "invalid delivery target '{target}': expected '<surface>:<address>'"
-            ));
-        };
+        let mut parts = target.splitn(3, ':');
+        let scheme = parts.next().filter(|s| !s.is_empty()).ok_or_else(|| {
+            format!("invalid delivery target '{target}': expected '<surface>:<address>'")
+        })?;
+        let address = parts.next().ok_or_else(|| {
+            format!("invalid delivery target '{target}': expected '<surface>:<address>'")
+        })?;
         if address.trim().is_empty() {
             return Err(format!("delivery target '{target}' has an empty address"));
+        }
+        if let Some(bot_id) = parts.next().filter(|b| !b.trim().is_empty()) {
+            return self
+                .bot_adapters
+                .get(&(scheme.to_string(), bot_id.to_string()))
+                .cloned()
+                .map(|adapter| (adapter, address.to_string()))
+                // Named but not (yet) configured with a token: fail loudly
+                // rather than silently falling back to a different bot's
+                // token, which would reply under the wrong identity.
+                .ok_or_else(|| {
+                    format!("delivery target '{target}' names bot '{bot_id}', which has no token configured")
+                });
         }
         self.adapters
             .get(scheme)
@@ -183,8 +282,15 @@ impl DeliveryRuntime {
         core: &Core,
         record: OutboxRecord,
     ) -> Result<DeliveryPacket, String> {
-        let packet = self.render(&record.job).await?;
-        let (adapter, _) = self.adapters.resolve(&record.job.target)?;
+        let mut packet = self.render(&record.job).await?;
+        let (adapter, address) = self.adapters.resolve(&record.job.target)?;
+        // Each adapter's own `send` re-derives its address from
+        // `packet.target` via a plain `surface:address` split — normalize
+        // away a three-part bot-scoped target (`surface:address:bot_id`)
+        // here, once, rather than teaching every adapter about the bot id
+        // segment it has no use for once the right adapter is already
+        // picked.
+        packet.target = format!("{}:{address}", adapter.scheme());
         adapter.send(core, &packet).await?;
         self.outbox
             .mark_delivered(&record.job.job_id, packet.clone())
@@ -799,5 +905,94 @@ mod tests {
         let markup = inline_keyboard_markup(&[]);
         let row = markup["inline_keyboard"][0].as_array().unwrap();
         assert!(row.is_empty());
+    }
+
+    fn telegram_adapter(token: &str) -> Arc<dyn ChannelAdapter> {
+        Arc::new(TelegramAdapter {
+            bot_token: token.into(),
+            api_base: "http://localhost".into(),
+        })
+    }
+
+    /// The whole point of a bot-scoped delivery target: two bots on the
+    /// same surface must resolve to two distinct adapters (and therefore
+    /// two distinct tokens), not whichever one happens to be registered
+    /// first — the exact "known limitation" docs/design/34 Phase 5 called
+    /// out and this change fixes. Compared by `Arc::ptr_eq` rather than by
+    /// field, since `resolve` hands back a trait object.
+    #[test]
+    fn bot_scoped_target_resolves_to_that_bots_own_adapter() {
+        let vakbot = telegram_adapter("vakbot-token");
+        let vakyartha = telegram_adapter("vakyartha-token");
+        let registry = AdapterRegistry {
+            adapters: HashMap::new(),
+            bot_adapters: HashMap::from([
+                (("telegram".to_string(), "VakBot".to_string()), vakbot.clone()),
+                (
+                    ("telegram".to_string(), "Vakyartha".to_string()),
+                    vakyartha.clone(),
+                ),
+            ]),
+        };
+
+        let (adapter_a, address_a) = registry.resolve("telegram:8846301562:VakBot").unwrap();
+        assert_eq!(address_a, "8846301562");
+        assert!(Arc::ptr_eq(&adapter_a, &vakbot), "must pick VakBot's own adapter");
+        assert!(!Arc::ptr_eq(&adapter_a, &vakyartha));
+
+        let (adapter_b, address_b) = registry.resolve("telegram:8846301562:Vakyartha").unwrap();
+        assert_eq!(address_b, "8846301562");
+        assert!(
+            Arc::ptr_eq(&adapter_b, &vakyartha),
+            "must pick Vakyartha's own adapter, not VakBot's"
+        );
+    }
+
+    /// Naming a bot that has no token configured must fail loudly, never
+    /// silently fall back to a different bot's token — that would reply
+    /// under the wrong identity without anyone noticing.
+    #[test]
+    fn bot_scoped_target_naming_an_unknown_bot_is_a_clear_error() {
+        let registry = AdapterRegistry {
+            adapters: HashMap::new(),
+            bot_adapters: HashMap::from([(
+                ("telegram".to_string(), "VakBot".to_string()),
+                telegram_adapter("vakbot-token"),
+            )]),
+        };
+        let err = registry
+            .resolve("telegram:8846301562:SomeOtherBot")
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.contains("SomeOtherBot"), "{err}");
+        assert!(err.contains("no token configured"), "{err}");
+    }
+
+    /// A legacy two-part target (no bot id) must still resolve through the
+    /// per-surface fallback exactly as before — single-bot deployments see
+    /// no behavior change even once other bots are registered.
+    #[test]
+    fn legacy_two_part_target_still_uses_the_surface_fallback() {
+        let legacy = telegram_adapter("legacy-token");
+        let registry = AdapterRegistry {
+            adapters: HashMap::from([("telegram", legacy.clone())]),
+            bot_adapters: HashMap::from([(
+                ("telegram".to_string(), "VakBot".to_string()),
+                telegram_adapter("vakbot-token"),
+            )]),
+        };
+        let (adapter, address) = registry.resolve("telegram:8846301562").unwrap();
+        assert_eq!(address, "8846301562");
+        assert!(Arc::ptr_eq(&adapter, &legacy));
+    }
+
+    #[test]
+    fn resolve_rejects_targets_with_no_address_or_empty_address() {
+        let registry = AdapterRegistry {
+            adapters: HashMap::from([("telegram", telegram_adapter("t"))]),
+            bot_adapters: HashMap::new(),
+        };
+        assert!(registry.resolve("telegram").is_err());
+        assert!(registry.resolve("telegram:").is_err());
     }
 }
