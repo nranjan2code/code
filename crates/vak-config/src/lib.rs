@@ -402,6 +402,13 @@ pub struct ChannelPolicy {
     pub skills_deny: Vec<String>,
     pub hooks_allow: Option<Vec<String>>,
     pub hooks_deny: Vec<String>,
+    /// Server-name patterns (matched the same way as `mcp_allow`/`mcp_deny`)
+    /// for which this channel forces outbound network off, even when the
+    /// server's own `McpServerConfig.network` is `true`. Restrictive only —
+    /// there is deliberately no matching "network_allow": a channel can
+    /// only take network access away from a server it can already reach,
+    /// never grant it to one the server config itself denies.
+    pub mcp_network_deny: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

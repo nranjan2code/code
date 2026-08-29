@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.11.14 — 2026-08-29
+
+### Per-channel MCP network override
+
+`ChannelPolicy` could restrict which MCP servers a channel sees, but
+outbound network access was only ever a global, per-server setting
+(`McpServerConfig.network`) — there was no way to let one channel use a
+server with network on while another channel using the same server got
+it forced off. Added `mcp_network_deny: Vec<String>` to `ChannelPolicy`
+(same `name/*` pattern shape as `mcp_allow`/`mcp_deny`), enforced in
+`Core::filter_mcp`: restrictive only — a channel can take network away
+from a server the config already grants it to, never grant it to one the
+server config itself denies. Exposed on the Gateway → Channel → Edit
+access screen, under MCP tools.
+
 ## 0.11.13 — 2026-08-29
 
 ### Admin console: real CRUD, and the write bugs that surfaced building it

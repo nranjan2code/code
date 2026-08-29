@@ -650,6 +650,16 @@ impl Core {
                         .any(|pattern| pattern.starts_with(&format!("{name}/")))
             })
         });
+        // Restrictive only: a channel can force a server's network off, but
+        // there is no matching grant — a server the config itself denies
+        // network to stays denied no matter what a channel policy says.
+        // Same pattern shape as mcp_allow/mcp_deny above (`name/*`).
+        for (name, server) in config.servers.iter_mut() {
+            let server_pattern = format!("{name}/*");
+            if server.network && Self::policy_matches(&policy.mcp_network_deny, &server_pattern) {
+                server.network = false;
+            }
+        }
         config
     }
 
@@ -2093,6 +2103,77 @@ impl Core {
             Some(sb) => sb.name().to_string(),
             None => "off".to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod channel_mcp_network_tests {
+    use super::Core;
+    use std::collections::BTreeMap;
+
+    fn core_with_servers(dir: &std::path::Path, servers: &[(&str, bool)]) -> Core {
+        let mut servers_toml = String::new();
+        for (name, network) in servers {
+            servers_toml.push_str(&format!(
+                "[mcp.servers.{name}]\ncommand = \"echo\"\nnetwork = {network}\n"
+            ));
+        }
+        let vak = dir.join(".vak");
+        std::fs::create_dir_all(&vak).unwrap();
+        std::fs::write(vak.join("config.toml"), servers_toml).unwrap();
+        Core::new_with_trust(dir.to_path_buf(), true).unwrap()
+    }
+
+    fn network_map(core: &Core) -> BTreeMap<String, bool> {
+        core.effective_mcp()
+            .servers
+            .into_iter()
+            .map(|(name, server)| (name, server.network))
+            .collect()
+    }
+
+    /// A channel policy that only *removes* network from a server the
+    /// config already grants it to — never adds it to one the config
+    /// denies. That asymmetry is the whole point (AGENTS.md rule 20:
+    /// overlays are restrictive-only).
+    #[test]
+    fn channel_policy_can_only_take_network_away_never_grant_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core_with_servers(dir.path(), &[("tavily", true), ("sandboxed", false)]);
+        assert_eq!(
+            network_map(&core),
+            BTreeMap::from([("tavily".into(), true), ("sandboxed".into(), false)]),
+            "sanity: both servers report their own configured network setting with no policy"
+        );
+
+        core.apply_channel_policy(vak_config::ChannelPolicy {
+            mcp_network_deny: vec!["tavily/*".into(), "sandboxed/*".into()],
+            ..Default::default()
+        });
+        assert_eq!(
+            network_map(&core),
+            BTreeMap::from([("tavily".into(), false), ("sandboxed".into(), false)]),
+            "tavily's network must be forced off; sandboxed already was and stays off"
+        );
+    }
+
+    /// An un-matched server keeps its own configured value; the deny list
+    /// is per-server, not a channel-wide network kill switch.
+    #[test]
+    fn network_deny_pattern_only_affects_matching_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core_with_servers(dir.path(), &[("tavily", true), ("github", true)]);
+        core.apply_channel_policy(vak_config::ChannelPolicy {
+            mcp_network_deny: vec!["tavily/*".into()],
+            ..Default::default()
+        });
+        let map = network_map(&core);
+        assert!(!map["tavily"]);
+        assert!(
+            map["github"],
+            "github did not match the pattern; must be untouched"
+        );
     }
 }
 

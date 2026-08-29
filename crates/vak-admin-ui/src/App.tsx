@@ -3066,6 +3066,7 @@ function defaultChannelPolicy(): ChannelPolicy {
     skills_deny: [],
     hooks_allow: null,
     hooks_deny: [],
+    mcp_network_deny: [],
   };
 }
 
@@ -3161,6 +3162,14 @@ function ChannelCapabilityPolicy(props: {
           <div class="binding-meta">Allow patterns; available: {Object.keys(mcp()?.servers ?? {}).join(", ") || "none"}</div>
           <input class="mono" placeholder="deny patterns, e.g. github/*" value={list(props.value.mcp_deny)}
             onInput={(e) => update({ mcp_deny: csv(e.currentTarget.value) })} />
+          <label class="eyebrow" style="margin-top:10px;display:block">Force network off for this channel</label>
+          <div class="binding-meta">
+            Takes network away from a server that has it on; cannot grant network to one that
+            doesn't. The server's own network setting (Extensions → MCP servers) still applies to
+            every other channel.
+          </div>
+          <input class="mono" placeholder="e.g. tavily/*" value={list(props.value.mcp_network_deny)}
+            onInput={(e) => update({ mcp_network_deny: csv(e.currentTarget.value) })} />
         </div>
         <div>
           <label class="eyebrow">Skills visible to the agent</label>
