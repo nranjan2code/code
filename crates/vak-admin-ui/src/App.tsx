@@ -2723,6 +2723,16 @@ function ExtensionsSection() {
 
 // ---- Memory & Recall -------------------------------------------------------
 
+/// Age → lifecycle bucket for the freshness dot on each note card. Memory
+/// notes never expire on their own (docs/design/23-memory.md), so this is
+/// purely a "how long has vak been carrying this" signal, not a TTL.
+function noteAgeBucket(ts: string): "fresh" | "aging" | "stale" {
+  const days = (Date.now() - new Date(ts).getTime()) / 86_400_000;
+  if (days < 7) return "fresh";
+  if (days < 30) return "aging";
+  return "stale";
+}
+
 function MemoryView() {
   const [memoryData, { refetch }] = createResource(() => api.memory());
   const [configData, { refetch: refetchConfig }] = createResource(() => api.config());
@@ -2734,6 +2744,30 @@ function MemoryView() {
   const [editText, setEditText] = createSignal("");
   const [cleaning, setCleaning] = createSignal(false);
   const [togglingFlag, setTogglingFlag] = createSignal<string | null>(null);
+  const [filterScope, setFilterScope] = createSignal<"all" | "profile" | "workspace">("all");
+  const [query, setQuery] = createSignal("");
+
+  const notes = createMemo(() => memoryData()?.notes ?? []);
+  const profileCount = createMemo(() => notes().filter((n) => n.scope === "profile").length);
+  const projectCount = createMemo(() => notes().filter((n) => n.scope !== "profile").length);
+  const staleCount = createMemo(() => notes().filter((n) => noteAgeBucket(n.ts) === "stale").length);
+  const oldestAgo = createMemo(() => {
+    const list = notes();
+    if (!list.length) return "—";
+    const oldest = list.reduce((a, b) => (new Date(a.ts) < new Date(b.ts) ? a : b));
+    return timeAgo(oldest.ts);
+  });
+  const visibleNotes = createMemo(() => {
+    const q = query().trim().toLowerCase();
+    return notes().filter((n) => {
+      if (filterScope() !== "all") {
+        const bucket = n.scope === "profile" ? "profile" : "workspace";
+        if (bucket !== filterScope()) return false;
+      }
+      if (q && !n.text.toLowerCase().includes(q) && !(n.tag ?? "").toLowerCase().includes(q)) return false;
+      return true;
+    });
+  });
 
   // Real toggles, not a status readout: each flips exactly one [memory]
   // config key, persisted to .vak/config.toml and applied to the live
@@ -2796,25 +2830,84 @@ function MemoryView() {
     }
   };
 
+  const flagCards: Array<{
+    key: "memory_search_enabled" | "memory_write_enabled" | "memory_reflection" | "memory_skill_proposals";
+    on: () => boolean;
+    title: string;
+    desc: string;
+  }> = [
+    { key: "memory_search_enabled", on: () => configData()?.memory?.search_enabled ?? false, title: "Search past sessions", desc: "Lets vak look up earlier conversations mid-run." },
+    { key: "memory_write_enabled", on: () => configData()?.memory?.write_enabled ?? false, title: "Write notes", desc: "Lets vak save what it learns mid-run, not just what you add here." },
+    { key: "memory_reflection", on: () => configData()?.memory?.reflection ?? false, title: "Reflect after each run", desc: "A short pass proposing notes/skills from what just happened." },
+    { key: "memory_skill_proposals", on: () => configData()?.memory?.skill_proposals ?? false, title: "Propose skills", desc: "Lets reflection suggest new skills for you to review." },
+  ];
+
   return (
     <div class="view">
-      <PageHeader title="Memory" description="Things vak should keep in mind between sessions — about you, or about this project." />
+      <PageHeader
+        title="Memory"
+        description="Things vak should keep in mind between sessions — about you, or about this project."
+        actions={<button class="ghost small" disabled={cleaning()} onClick={() => void cleanArtifacts()}>{cleaning() ? "Cleaning…" : "Clean artifacts"}</button>}
+      />
+
+      <div class="stat-strip">
+        <StatCard label="Total memories" value={notes().length} />
+        <StatCard label="About me" value={profileCount()} sub="carried across every project" />
+        <StatCard label="About this project" value={projectCount()} />
+        <StatCard label="Oldest note" value={oldestAgo()} tone={staleCount() > 0 ? "warn" : undefined} sub={staleCount() > 0 ? `${staleCount()} unrevisited 30+ days` : undefined} />
+      </div>
+
+      <section class="panel">
+        <h2>Governance</h2>
+        <p class="dim" style="margin-top:-4px">What vak is allowed to do with memory, live — no restart needed.</p>
+        <div class="toggle-card-grid" style="margin-top:10px">
+          <For each={flagCards}>
+            {(f) => (
+              <div class="toggle-card" data-on={f.on()}>
+                <div class="toggle-card-body">
+                  <strong>{f.title}</strong>
+                  <span>{f.desc}</span>
+                </div>
+                <label class="toggle">
+                  <input
+                    type="checkbox"
+                    checked={f.on()}
+                    disabled={configData.loading || togglingFlag() === f.key}
+                    onChange={(e) => void toggleMemoryFlag(f.key, e.currentTarget.checked)}
+                  />
+                </label>
+              </div>
+            )}
+          </For>
+        </div>
+      </section>
+
       <div class="two-col">
         <section class="panel">
-          <h2>What vak remembers ({memoryData()?.notes?.length ?? 0})</h2>
+          <h2>What vak remembers ({notes().length})</h2>
+          <div class="memory-toolbar">
+            <input class="search-input" placeholder="Filter by text or label…" value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />
+            <div class="scope-tabs">
+              <button classList={{ active: filterScope() === "all" }} onClick={() => setFilterScope("all")}>All</button>
+              <button classList={{ active: filterScope() === "profile" }} onClick={() => setFilterScope("profile")}>About me</button>
+              <button classList={{ active: filterScope() === "workspace" }} onClick={() => setFilterScope("workspace")}>This project</button>
+            </div>
+          </div>
           <Show when={!memoryData.loading} fallback={<div class="empty">Loading…</div>}>
             <Show when={!memoryData.error} fallback={<LoadError message={`${memoryData.error}`} onRetry={() => refetch()} />}>
-            <Show when={(memoryData()?.notes?.length ?? 0) > 0} fallback={<div class="empty">Nothing remembered yet. Add a note on the right.</div>}>
+            <Show when={notes().length > 0} fallback={<div class="empty">Nothing remembered yet. Add a note on the right.</div>}>
+            <Show when={visibleNotes().length > 0} fallback={<div class="empty">No memories match that filter.</div>}>
               <ul class="hit-list">
-                <For each={memoryData()?.notes ?? []}>
+                <For each={visibleNotes()}>
                   {(m: MemoryItem) => (
-                    <li class="inbox-item">
-                      <div class="hit-meta">
+                    <li class="note-card">
+                      <div class="note-head">
+                        <span class="note-freshness" data-age={noteAgeBucket(m.ts)} title={`Last touched ${timeAgo(m.ts)}`} />
                         <span class={`chip ${m.scope === "profile" ? "chip-mode" : "chip-tool"}`} title={m.scope}>{m.scope === "profile" ? "about me" : "about this project"}</span>
                         <Show when={m.tag}><strong class="mono">{m.tag}</strong></Show>
-                        <span class="when">{timeAgo(m.ts)}</span>
+                        <span class="dim" style="margin-left:auto; font-size:11px">{timeAgo(m.ts)}</span>
                       </div>
-                      <Show when={editing() === m.id} fallback={<div class="hit-snippet">{m.text}</div>}>
+                      <Show when={editing() === m.id} fallback={<div class="note-text">{m.text}</div>}>
                         <textarea value={editText()} onInput={(e) => setEditText(e.currentTarget.value)} />
                         <button class="small" onClick={async () => {
                           if (!editText().trim()) return;
@@ -2827,16 +2920,21 @@ function MemoryView() {
                           }
                         }}>Save</button>
                       </Show>
-                      <div class="row-gap" style="margin-top:8px">
+                      <div class="note-foot">
                         <Show when={editing() !== m.id}>
                           <button class="small" onClick={() => { setEditing(m.id); setEditText(m.text); }}>Amend</button>
                         </Show>
+                        <Show when={m.session_id}>
+                          <button class="ghost small" onClick={() => navigate(`#/sessions/${m.session_id}`)}>From this session</button>
+                        </Show>
+                        <span class="spacer" />
                         <button class="danger small" onClick={() => forget(m.id)}>Forget</button>
                       </div>
                     </li>
                   )}
                 </For>
               </ul>
+            </Show>
             </Show>
             </Show>
           </Show>
@@ -2848,45 +2946,6 @@ function MemoryView() {
               <h2>Add a note</h2>
               <p class="dim">Vak reads these at the start of every session.</p>
             </div>
-            <button class="ghost small" disabled={cleaning()} onClick={() => void cleanArtifacts()}>{cleaning() ? "Cleaning…" : "Clean artifacts"}</button>
-          </div>
-          <div class="cred-settings" style="margin-bottom:12px">
-            <label class="inherit-toggle">
-              <input
-                type="checkbox"
-                checked={configData()?.memory?.search_enabled ?? false}
-                disabled={configData.loading || togglingFlag() === "memory_search_enabled"}
-                onChange={(e) => void toggleMemoryFlag("memory_search_enabled", e.currentTarget.checked)}
-              />
-              Search past sessions — lets vak look up earlier conversations mid-run
-            </label>
-            <label class="inherit-toggle">
-              <input
-                type="checkbox"
-                checked={configData()?.memory?.write_enabled ?? false}
-                disabled={configData.loading || togglingFlag() === "memory_write_enabled"}
-                onChange={(e) => void toggleMemoryFlag("memory_write_enabled", e.currentTarget.checked)}
-              />
-              Write notes — lets vak save what it learns mid-run, not just what you add here
-            </label>
-            <label class="inherit-toggle">
-              <input
-                type="checkbox"
-                checked={configData()?.memory?.reflection ?? false}
-                disabled={configData.loading || togglingFlag() === "memory_reflection"}
-                onChange={(e) => void toggleMemoryFlag("memory_reflection", e.currentTarget.checked)}
-              />
-              Reflect after each run — a short pass proposing notes/skills from what just happened
-            </label>
-            <label class="inherit-toggle">
-              <input
-                type="checkbox"
-                checked={configData()?.memory?.skill_proposals ?? false}
-                disabled={configData.loading || togglingFlag() === "memory_skill_proposals"}
-                onChange={(e) => void toggleMemoryFlag("memory_skill_proposals", e.currentTarget.checked)}
-              />
-              Propose skills — lets reflection suggest new skills for you to review
-            </label>
           </div>
           <div class="form-row">
             <label>Applies to</label>
