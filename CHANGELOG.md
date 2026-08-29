@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.11.21 — 2026-08-29
+
+### A live-editable Settings/Memory/FinOps pass, and a real duplicate-row fix
+
+Follow-on to 0.11.20's bot-scoped channel identity, found while verifying
+it live against real Telegram traffic.
+
+Fixed a live duplicate-row bug: a chat manually bot-bound before
+auto-attribution existed kept a dead, bound session alive under its legacy
+key once a bot-scoped sibling took over — it never received traffic again
+but still showed as a confusing near-duplicate in Chats. Its stale
+session is now unbound the moment a bot-scoped key inherits from it; the
+legacy allowlist row itself stays, so a later bot still has an ancestor to
+inherit from.
+
+The admin console's Memory, Settings, and FinOps pages all had the same
+shape of gap: a value the backend tracked but either never actually
+returned to the console, or had no live-apply path at all — a change
+would silently do nothing until a restart, or the field simply always
+read `undefined`/`$0`. Fixed all three the same way, extending the
+override+refresh mechanism route/theme/max_turns already used:
+
+- Memory's search/write/reflection/skill-proposals toggles are real
+  checkboxes now, not dead status text.
+- Settings gained working Max turns and Sub-agents controls.
+- FinOps gained a whole dedicated page — spend trend chart, budget caps
+  you can actually edit, by-provider/by-model breakdowns, recent
+  alerts — replacing an Overview stat that always read $0 because its
+  type never matched what `/finops` actually sent.
+
 ## 0.11.20 — 2026-08-29
 
 ### Bot-scoped channel identity, and the multi-bot units that make it real
