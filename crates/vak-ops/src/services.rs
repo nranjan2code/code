@@ -592,6 +592,28 @@ fn sync_one(spec: &ServiceSpec, paths: &Paths, runner: &dyn CommandRunner) -> Sy
     }
 }
 
+/// Bootstrap can lose a transient race — e.g. the manager hasn't finished
+/// tearing down the just-booted-out registration yet — and fail once even
+/// though the unit is fine. A single failure here used to be terminal: the
+/// caller fell back to restoring the previous unit's *content* but left the
+/// service unloaded, silently, with nothing to notice or retry it (the
+/// telegram bridge going dark across a `self update` traced back to exactly
+/// this). Retry a few times with a short backoff before giving up.
+const LOAD_RETRIES: u32 = 3;
+const LOAD_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
+
+fn load_with_retries(name: &str, unit_path: &Path, runner: &dyn CommandRunner) -> bool {
+    for attempt in 0..LOAD_RETRIES {
+        if load(name, unit_path, runner) {
+            return true;
+        }
+        if attempt + 1 < LOAD_RETRIES {
+            std::thread::sleep(LOAD_RETRY_DELAY);
+        }
+    }
+    false
+}
+
 fn sync_one_inner(
     spec: &ServiceSpec,
     paths: &Paths,
@@ -635,7 +657,7 @@ fn sync_one_inner(
     // "already bootstrapped" and roll back a perfectly good unit.
     unload(spec.name, runner);
     write_atomic(&unit_path, &rendered)?;
-    if load(spec.name, &unit_path, runner) {
+    if load_with_retries(spec.name, &unit_path, runner) {
         Ok(if previous.is_some() {
             SyncAction::Updated
         } else {
