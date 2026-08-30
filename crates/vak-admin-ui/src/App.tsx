@@ -6041,10 +6041,19 @@ function FeedsSection() {
   const [searchResults, setSearchResults] = createSignal<import("./types").FeedSearchResponse | null>(null);
   const [searching, setSearching] = createSignal(false);
   const [wizardOpen, setWizardOpen] = createSignal(false);
+  const [alertFormOpen, setAlertFormOpen] = createSignal(false);
 
   const [stats, { refetch: refetchStats }] = createResource(() => api.feedStats().catch(() => null));
   const [sourceTypes] = createResource(() => api.feedSourceTypes().catch(() => ({ source_types: [] })));
   const [alerts, { refetch: refetchAlerts }] = createResource(() => api.feedAlerts().catch(() => ({ alerts: [] })));
+  const [configuredSources, { refetch: refetchConfigured }] = createResource(() =>
+    api.feedConfiguredSources().catch(() => ({ sources: [], total: 0 })),
+  );
+
+  const refetchAll = () => {
+    refetchStats();
+    refetchConfigured();
+  };
 
   const doSearch = async () => {
     const q = searchQuery().trim();
@@ -6059,11 +6068,43 @@ function FeedsSection() {
     setSearching(false);
   };
 
+  const toggleSource = async (src: import("./types").ConfiguredFeedSource) => {
+    try {
+      await api.feedUpdateSource(src.name, { enabled: !src.enabled });
+      pushToast("info", `${src.name} ${src.enabled ? "disabled" : "enabled"}`);
+      refetchConfigured();
+    } catch (e) {
+      pushToast("alert", `Could not update "${src.name}": ${e}`);
+    }
+  };
+
+  const removeSource = async (name: string) => {
+    if (!confirm(`Remove source "${name}"? This stops it from being checked, but keeps items already collected.`)) return;
+    try {
+      await api.feedDeleteSource(name);
+      pushToast("info", `Source "${name}" removed`);
+      refetchAll();
+    } catch (e) {
+      pushToast("alert", `Could not remove "${name}": ${e}`);
+    }
+  };
+
+  const removeAlert = async (name: string) => {
+    if (!confirm(`Delete alert "${name}"?`)) return;
+    try {
+      await api.feedDeleteAlert(name);
+      pushToast("info", `Alert "${name}" deleted`);
+      refetchAlerts();
+    } catch (e) {
+      pushToast("alert", `Could not delete alert "${name}": ${e}`);
+    }
+  };
+
   const triggerIngest = async () => {
     try {
       const res = await api.feedIngest();
       pushToast("info", `Found ${res.new_items} new item${res.new_items === 1 ? "" : "s"} across ${res.sources_ingested} source${res.sources_ingested === 1 ? "" : "s"}`);
-      refetchStats();
+      refetchAll();
     } catch (e) {
       pushToast("alert", `Could not check for new items: ${e}`);
     }
@@ -6171,8 +6212,42 @@ function FeedsSection() {
       <Show when={tab() === "sources"}>
         <section class="panel">
           <div class="panel-title-row">
-            <div><h2>What you can follow</h2><p class="dim">Pick any of these when adding a source.</p></div>
+            <div><h2>Your sources</h2><p class="dim">What vak is currently checking, grouped by tag.</p></div>
             <button class="small" onClick={() => setWizardOpen(true)}>Add a source</button>
+          </div>
+          <Show
+            when={configuredSources() && configuredSources()!.sources.length > 0}
+            fallback={<div class="empty">No sources yet. Add one below to get started.</div>}
+          >
+            <For each={configuredSources()!.sources}>
+              {(src) => (
+                <div class="feed-source-card">
+                  <div class="icon">{src.source_type === "hacker_news" ? "🔥" : src.source_type === "youtube" ? "▶" : "📡"}</div>
+                  <div class="info">
+                    <div class="name">{src.name}</div>
+                    <div class="meta">
+                      {FEED_TYPE_LABELS[src.source_type] ?? src.source_type}
+                      <Show when={src.check_interval}> · every {src.check_interval}</Show>
+                      <Show when={src.trust}> · {src.trust} trust</Show>
+                      <Show when={src.url}> · <a href={src.url} target="_blank" rel="noreferrer">{src.url}</a></Show>
+                    </div>
+                  </div>
+                  <div class="actions" style={{ display: "flex", gap: "6px", "align-items": "center" }}>
+                    <span class={`chip ${src.enabled ? "chip-tone-success" : "chip-tone-danger"}`}>
+                      {src.enabled ? "on" : "off"}
+                    </span>
+                    <button class="ghost small" onClick={() => toggleSource(src)}>{src.enabled ? "Disable" : "Enable"}</button>
+                    <button class="ghost small" onClick={() => removeSource(src.name)}>Remove</button>
+                  </div>
+                </div>
+              )}
+            </For>
+          </Show>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title-row">
+            <div><h2>What you can follow</h2><p class="dim">Pick any of these when adding a source.</p></div>
           </div>
           <Show when={sourceTypes()}>
             <For each={sourceTypes()!.source_types}>
@@ -6199,23 +6274,39 @@ function FeedsSection() {
 
       <Show when={tab() === "alerts"}>
         <section class="panel">
-          <div class="panel-title-row"><div><h2>Alerts</h2><p class="dim">Tell vak to flag an item when it mentions something you care about.</p></div></div>
-          <Show when={alerts()!.alerts.length === 0}>
+          <div class="panel-title-row">
+            <div><h2>Alerts</h2><p class="dim">Tell vak to flag an item when it mentions something you care about.</p></div>
+            <button class="small" onClick={() => setAlertFormOpen(true)}>New alert</button>
+          </div>
+          <Show when={alertFormOpen()}>
+            <AlertForm
+              onClose={() => setAlertFormOpen(false)}
+              onAdded={() => { setAlertFormOpen(false); refetchAlerts(); }}
+            />
+          </Show>
+          <Show when={alerts.loading}>
+            <div class="empty">Loading…</div>
+          </Show>
+          <Show when={!alerts.loading && (alerts()?.alerts.length ?? 0) === 0}>
             <div class="empty">No alerts set up yet.</div>
           </Show>
-          <For each={alerts()!.alerts}>
+          <For each={alerts()?.alerts ?? []}>
             {(alert) => (
               <div class="feed-alert-card">
                 <div class="info">
                   <div class="name">{alert.name}</div>
                   <div class="match">
-                    <Show when={alert.match_config?.keywords}>mentions {alert.match_config!.keywords!.join(", ")}</Show>
-                    <Show when={alert.match_config?.tags}> · tagged {alert.match_config!.tags!.join(", ")}</Show>
+                    <Show when={alert.match_config?.keywords?.length}>mentions {alert.match_config!.keywords!.join(", ")}</Show>
+                    <Show when={alert.match_config?.tags?.length}> · tagged {alert.match_config!.tags!.join(", ")}</Show>
+                    <Show when={alert.match_config?.sources?.length}> · from {alert.match_config!.sources!.join(", ")}</Show>
                   </div>
                 </div>
-                <span class={`chip ${alert.enabled ? "chip-tone-success" : "chip-tone-danger"}`}>
-                  {alert.enabled ? "on" : "off"}
-                </span>
+                <div style={{ display: "flex", gap: "6px", "align-items": "center" }}>
+                  <span class={`chip ${alert.enabled ? "chip-tone-success" : "chip-tone-danger"}`}>
+                    {alert.enabled ? "on" : "off"}
+                  </span>
+                  <button class="ghost small" onClick={() => removeAlert(alert.name)}>Delete</button>
+                </div>
               </div>
             )}
           </For>
@@ -6247,8 +6338,60 @@ function FeedsSection() {
       </Show>
 
       <Show when={wizardOpen()}>
-        <FeedWizard onClose={() => setWizardOpen(false)} onAdded={() => { setWizardOpen(false); refetchStats(); }} />
+        <FeedWizard onClose={() => setWizardOpen(false)} onAdded={() => { setWizardOpen(false); refetchAll(); }} />
       </Show>
+    </div>
+  );
+}
+
+function AlertForm(props: { onClose: () => void; onAdded: () => void }) {
+  const [name, setName] = createSignal("");
+  const [keywords, setKeywords] = createSignal("");
+  const [tags, setTags] = createSignal("");
+  const [deliverTo, setDeliverTo] = createSignal("");
+  const [saving, setSaving] = createSignal(false);
+
+  const canSubmit = () => name().trim() && (keywords().trim() || tags().trim());
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await api.feedAddAlert({
+        name: name().trim(),
+        keywords: keywords().trim() ? keywords().split(",").map((k) => k.trim()).filter(Boolean) : [],
+        tags: tags().trim() ? tags().split(",").map((t) => t.trim()).filter(Boolean) : [],
+        deliver_to: deliverTo().trim() || undefined,
+      });
+      pushToast("info", `Alert "${name()}" created`);
+      props.onAdded();
+    } catch (e) {
+      pushToast("alert", `Could not create alert: ${e}`);
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div class="panel" style={{ "margin-bottom": "12px", background: "var(--panel-alt, rgba(255,255,255,0.03))" }}>
+      <div class="form-row">
+        <label>Name</label>
+        <input value={name()} onInput={(e) => setName(e.currentTarget.value)} placeholder="Funding rounds" />
+      </div>
+      <div class="form-row">
+        <label>Keywords</label>
+        <input value={keywords()} onInput={(e) => setKeywords(e.currentTarget.value)} placeholder="series a, seed round — comma separated" />
+      </div>
+      <div class="form-row">
+        <label>Tags</label>
+        <input value={tags()} onInput={(e) => setTags(e.currentTarget.value)} placeholder="funding, startups — comma separated" />
+      </div>
+      <div class="form-row">
+        <label>Deliver to</label>
+        <input value={deliverTo()} onInput={(e) => setDeliverTo(e.currentTarget.value)} placeholder="Chat key, webhook, or leave blank" />
+      </div>
+      <div style={{ display: "flex", gap: "8px", "margin-top": "8px" }}>
+        <button class="ghost" onClick={props.onClose}>Cancel</button>
+        <button onClick={submit} disabled={!canSubmit() || saving()}>{saving() ? "Saving…" : "Create alert"}</button>
+      </div>
     </div>
   );
 }

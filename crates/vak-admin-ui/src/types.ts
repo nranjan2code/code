@@ -567,6 +567,16 @@ export interface FeedStats {
   }>;
 }
 
+export interface ConfiguredFeedSource {
+  id: string;
+  name: string;
+  source_type: string;
+  url?: string;
+  trust: string;
+  enabled: boolean;
+  check_interval?: string;
+}
+
 export interface FeedAlertRule {
   id: number;
   name: string;

@@ -677,6 +677,39 @@ export const api = {
       method: "DELETE",
     }).then((r) => handle(r)),
 
+  feedConfiguredSources: (): Promise<{ sources: import("./types").ConfiguredFeedSource[]; total: number }> =>
+    fetch("/feeds/sources/configured").then((r) => handle(r)),
+
+  feedUpdateSource: (
+    name: string,
+    patch: { enabled?: boolean; interval?: string; trust?: string; tags?: string[] },
+  ): Promise<{ status: string }> =>
+    fetch(`/feeds/sources/${encodeURIComponent(name)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }).then((r) => handle(r)),
+
+  feedAddAlert: (alert: {
+    name: string;
+    keywords?: string[];
+    tags?: string[];
+    sources?: string[];
+    action?: string;
+    deliver_to?: string;
+    cooldown_minutes?: number;
+  }): Promise<{ status: string }> =>
+    fetch("/feeds/alerts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(alert),
+    }).then((r) => handle(r)),
+
+  feedDeleteAlert: (name: string): Promise<{ status: string }> =>
+    fetch(`/feeds/alerts/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }).then((r) => handle(r)),
+
   /// Synthesize speech via the Live API. Resolution order server-side is
   /// `voice_override` > the resolved chat/bot voice (by `bot_id`/`chat_key`)
   /// > a built-in default — used both for real gateway voice-notes and for
