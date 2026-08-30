@@ -150,7 +150,7 @@ def search(
     if not query_tokens:
         return _empty_response(query)
 
-    con = get_db()
+    con = get_db(read_only=True)
 
     conditions = ["1=1"]
     params: list[Any] = []
@@ -343,7 +343,7 @@ def get_latest(
     tags: list[str] | None = None,
     limit: int = 20,
 ) -> dict:
-    con = get_db()
+    con = get_db(read_only=True)
     conditions = ["1=1"]
     params: list[Any] = []
 

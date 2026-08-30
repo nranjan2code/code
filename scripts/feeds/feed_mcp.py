@@ -262,7 +262,7 @@ def handle_feed_stats(args: dict) -> dict:
 
 
 def handle_feed_sources(args: dict) -> dict:
-    con = get_db()
+    con = get_db(read_only=True)
     rows = con.execute(
         "SELECT id, name, source_type, url, trust, enabled, check_interval FROM feeds ORDER BY name"
     ).fetchall()
@@ -291,7 +291,7 @@ def handle_feed_item(args: dict) -> dict:
 
 
 def handle_feed_alerts(args: dict) -> dict:
-    con = get_db()
+    con = get_db(read_only=True)
     rows = con.execute(
         "SELECT id, name, match_config, action, deliver_to, hook_command, cooldown_minutes, enabled FROM alerts ORDER BY name"
     ).fetchall()

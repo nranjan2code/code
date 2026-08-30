@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sys
+import time
 import tomllib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -198,18 +199,90 @@ def load_source_registry(workspace: str | Path | None = None) -> dict[str, dict]
 
 
 # ─── DuckDB Helpers ───
+#
+# DuckDB allows either multiple concurrent read-only connections, or a
+# single read-write connection -- never both. The admin UI fires several
+# read endpoints (stats, sources, alerts) as parallel HTTP requests, each
+# of which spawns its own python3 subprocess; when those raced to open
+# get_db()'s old always-read-write connection, one lost the exclusive
+# lock and the request 500'd (a real, reproducible failure -- not a flake
+# to shrug off). Pure readers now open read_only=True so they can freely
+# overlap with each other; writers still take the exclusive lock, but any
+# caller that loses a race retries with backoff instead of failing hard.
 
-def get_db():
+_LOCK_RETRY_ATTEMPTS = 5
+_LOCK_RETRY_BASE_DELAY_S = 0.05  # 50ms, 100ms, 200ms, 400ms, 800ms
+
+
+def get_db(read_only: bool = False):
     import duckdb
+
     path = db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    con = duckdb.connect(str(path))
-    con.execute("SET enable_progress_bar = false")
-    return con
+
+    # A read-only open of a file that doesn't exist yet raises in DuckDB;
+    # fall back to a normal (write) connection so the caller gets a valid,
+    # empty database instead of an IOException. init_feed_system() always
+    # runs init_db() before any reader in this pipeline is reachable, so
+    # in practice this only matters for callers used outside that flow.
+    effective_read_only = read_only and path.exists()
+
+    # Every mode retries: two readers never conflict with each other, but
+    # a reader can still land while a short-lived writer (an ingest run)
+    # holds the exclusive lock, and two writers can race the same way the
+    # bug report did before reads were split out. The holder in both
+    # cases is a subprocess that opens, does its work, and closes within
+    # milliseconds, so a short backoff clears almost every real conflict
+    # instead of surfacing it as a 500.
+    last_err: Exception | None = None
+    for attempt in range(_LOCK_RETRY_ATTEMPTS):
+        try:
+            con = duckdb.connect(str(path), read_only=effective_read_only)
+            con.execute("SET enable_progress_bar = false")
+            return con
+        except duckdb.Error as e:
+            last_err = e
+            if attempt == _LOCK_RETRY_ATTEMPTS - 1:
+                raise
+            time.sleep(_LOCK_RETRY_BASE_DELAY_S * (2 ** attempt))
+    raise last_err  # pragma: no cover — loop always returns or raises
+
+
+def _schema_exists() -> bool:
+    """Cheap read-only check for whether init.sql has already run.
+
+    Every script in this pipeline calls init_feed_system() -> init_db() on
+    startup, including the pure-read paths (a single admin-UI page load
+    spawns three separate subprocesses this way). Re-running "CREATE TABLE
+    IF NOT EXISTS ..." is a no-op once the schema exists, but doing it via
+    a write connection still takes the exclusive lock every time -- which
+    is most of what was left contending after get_db() split off read-only
+    readers. Checking first via a read-only connection lets a fully-warm
+    database skip the write path entirely.
+    """
+    import duckdb
+
+    if not db_path().exists():
+        return False
+    try:
+        con = get_db(read_only=True)
+    except duckdb.Error:
+        return False
+    try:
+        con.execute("SELECT 1 FROM feeds LIMIT 0")
+        return True
+    except duckdb.Error:
+        return False
+    finally:
+        con.close()
 
 
 def init_db() -> None:
     import duckdb
+
+    if _schema_exists():
+        return
+
     schema_path = Path(__file__).parent / "schemas" / "init.sql"
     if not schema_path.exists():
         logger.error("Schema file not found: %s", schema_path)
@@ -341,7 +414,7 @@ def prune_seen(days: int = 90) -> int:
 
 
 def get_feed_id_by_name(name: str) -> int | None:
-    con = get_db()
+    con = get_db(read_only=True)
     try:
         row = con.execute("SELECT id FROM feeds WHERE name = ?", (name,)).fetchone()
         return row[0] if row else None
@@ -350,7 +423,7 @@ def get_feed_id_by_name(name: str) -> int | None:
 
 
 def get_all_feeds() -> list[dict]:
-    con = get_db()
+    con = get_db(read_only=True)
     try:
         rows = con.execute("SELECT id, name, source_type, url, trust, enabled, check_interval FROM feeds").fetchall()
         return [{"id": r[0], "name": r[1], "source_type": r[2], "url": r[3],
@@ -360,7 +433,7 @@ def get_all_feeds() -> list[dict]:
 
 
 def get_item(item_id: int) -> dict | None:
-    con = get_db()
+    con = get_db(read_only=True)
     try:
         row = con.execute(
             "SELECT id, feed_id, external_id, title, url, author, summary, content, "
@@ -381,7 +454,7 @@ def get_item(item_id: int) -> dict | None:
 
 
 def get_items(limit: int = 50, source: str = "", tags: list[str] | None = None) -> list[dict]:
-    con = get_db()
+    con = get_db(read_only=True)
     try:
         conditions = []
         params: list[Any] = []
@@ -419,7 +492,7 @@ def get_items(limit: int = 50, source: str = "", tags: list[str] | None = None) 
 
 
 def get_stats() -> dict:
-    con = get_db()
+    con = get_db(read_only=True)
     try:
         total_items = con.execute("SELECT COUNT(*) FROM items").fetchone()[0]
         total_feeds = con.execute("SELECT COUNT(*) FROM feeds").fetchone()[0]
@@ -477,7 +550,7 @@ def store_alert(alert: AlertConfig) -> int:
 
 
 def get_alerts() -> list[dict]:
-    con = get_db()
+    con = get_db(read_only=True)
     try:
         rows = con.execute("SELECT id, name, match_config, action, deliver_to, hook_command, cooldown_minutes, enabled FROM alerts").fetchall()
         result = []
@@ -495,7 +568,7 @@ def get_alerts() -> list[dict]:
 
 
 def check_alert_cooldown(alert_id: int, cooldown_minutes: int) -> bool:
-    con = get_db()
+    con = get_db(read_only=True)
     try:
         row = con.execute(
             """SELECT delivered_at FROM alert_log
