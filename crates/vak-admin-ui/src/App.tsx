@@ -6042,12 +6042,18 @@ function FeedsSection() {
   const [searching, setSearching] = createSignal(false);
   const [wizardOpen, setWizardOpen] = createSignal(false);
   const [alertFormOpen, setAlertFormOpen] = createSignal(false);
+  const [editingSource, setEditingSource] = createSignal<string | null>(null);
+  const [editInterval, setEditInterval] = createSignal("");
+  const [editTrust, setEditTrust] = createSignal("");
 
-  const [stats, { refetch: refetchStats }] = createResource(() => api.feedStats().catch(() => null));
-  const [sourceTypes] = createResource(() => api.feedSourceTypes().catch(() => ({ source_types: [] })));
-  const [alerts, { refetch: refetchAlerts }] = createResource(() => api.feedAlerts().catch(() => ({ alerts: [] })));
+  // Errors are surfaced (via LoadError), not swallowed to an empty/null
+  // value — a script/MCP failure here used to render as an indefinite
+  // "Loading…" with no way to tell a slow fetch from a broken backend.
+  const [stats, { refetch: refetchStats }] = createResource(() => api.feedStats());
+  const [sourceTypes] = createResource(() => api.feedSourceTypes());
+  const [alerts, { refetch: refetchAlerts }] = createResource(() => api.feedAlerts());
   const [configuredSources, { refetch: refetchConfigured }] = createResource(() =>
-    api.feedConfiguredSources().catch(() => ({ sources: [], total: 0 })),
+    api.feedConfiguredSources(),
   );
 
   const refetchAll = () => {
@@ -6086,6 +6092,23 @@ function FeedsSection() {
       refetchAll();
     } catch (e) {
       pushToast("alert", `Could not remove "${name}": ${e}`);
+    }
+  };
+
+  const startEditSource = (src: import("./types").ConfiguredFeedSource) => {
+    setEditingSource(src.name);
+    setEditInterval(src.check_interval || "1h");
+    setEditTrust(src.trust || "medium");
+  };
+
+  const saveEditSource = async (name: string) => {
+    try {
+      await api.feedUpdateSource(name, { interval: editInterval(), trust: editTrust() });
+      pushToast("info", `"${name}" updated`);
+      setEditingSource(null);
+      refetchConfigured();
+    } catch (e) {
+      pushToast("alert", `Could not update "${name}": ${e}`);
     }
   };
 
@@ -6128,6 +6151,7 @@ function FeedsSection() {
       </div>
 
       <Show when={tab() === "overview"}>
+        <Show when={!stats.error} fallback={<LoadError message={`${stats.error}`} onRetry={() => refetchStats()} />}>
         <Show when={stats()} fallback={<div class="empty">Loading…</div>}>
           <div class="feed-stats-row">
             <div class="feed-stat">
@@ -6163,6 +6187,7 @@ function FeedsSection() {
               </For>
             </section>
           </Show>
+        </Show>
         </Show>
         <section class="panel">
           <div class="panel-title-row"><div><h2>Search</h2></div></div>
@@ -6215,6 +6240,7 @@ function FeedsSection() {
             <div><h2>Your sources</h2><p class="dim">What vak is currently checking, grouped by tag.</p></div>
             <button class="small" onClick={() => setWizardOpen(true)}>Add a source</button>
           </div>
+          <Show when={!configuredSources.error} fallback={<LoadError message={`${configuredSources.error}`} onRetry={() => refetchConfigured()} />}>
           <Show
             when={configuredSources() && configuredSources()!.sources.length > 0}
             fallback={<div class="empty">No sources yet. Add one below to get started.</div>}
@@ -6225,23 +6251,48 @@ function FeedsSection() {
                   <div class="icon">{src.source_type === "hacker_news" ? "🔥" : src.source_type === "youtube" ? "▶" : "📡"}</div>
                   <div class="info">
                     <div class="name">{src.name}</div>
-                    <div class="meta">
-                      {FEED_TYPE_LABELS[src.source_type] ?? src.source_type}
-                      <Show when={src.check_interval}> · every {src.check_interval}</Show>
-                      <Show when={src.trust}> · {src.trust} trust</Show>
-                      <Show when={src.url}> · <a href={src.url} target="_blank" rel="noreferrer">{src.url}</a></Show>
-                    </div>
+                    <Show
+                      when={editingSource() === src.name}
+                      fallback={
+                        <div class="meta">
+                          {FEED_TYPE_LABELS[src.source_type] ?? src.source_type}
+                          <Show when={src.check_interval}> · every {src.check_interval}</Show>
+                          <Show when={src.trust}> · {src.trust} trust</Show>
+                          <Show when={src.url}> · <a href={src.url} target="_blank" rel="noreferrer">{src.url}</a></Show>
+                        </div>
+                      }
+                    >
+                      <div class="toolbar" style={{ "margin-top": "6px" }}>
+                        <select value={editInterval()} onChange={(e) => setEditInterval(e.currentTarget.value)}>
+                          <option value="5m">Every 5 minutes</option>
+                          <option value="15m">Every 15 minutes</option>
+                          <option value="30m">Every 30 minutes</option>
+                          <option value="1h">Every hour</option>
+                          <option value="6h">Every 6 hours</option>
+                          <option value="1d">Daily</option>
+                        </select>
+                        <select value={editTrust()} onChange={(e) => setEditTrust(e.currentTarget.value)}>
+                          <option value="high">High trust</option>
+                          <option value="medium">Medium trust</option>
+                          <option value="low">Low trust</option>
+                        </select>
+                        <button class="small" onClick={() => saveEditSource(src.name)}>Save</button>
+                        <button class="ghost small" onClick={() => setEditingSource(null)}>Cancel</button>
+                      </div>
+                    </Show>
                   </div>
                   <div class="actions" style={{ display: "flex", gap: "6px", "align-items": "center" }}>
                     <span class={`chip ${src.enabled ? "chip-tone-success" : "chip-tone-danger"}`}>
                       {src.enabled ? "on" : "off"}
                     </span>
+                    <button class="ghost small" onClick={() => startEditSource(src)}>Edit</button>
                     <button class="ghost small" onClick={() => toggleSource(src)}>{src.enabled ? "Disable" : "Enable"}</button>
                     <button class="ghost small" onClick={() => removeSource(src.name)}>Remove</button>
                   </div>
                 </div>
               )}
             </For>
+          </Show>
           </Show>
         </section>
 
@@ -6284,6 +6335,7 @@ function FeedsSection() {
               onAdded={() => { setAlertFormOpen(false); refetchAlerts(); }}
             />
           </Show>
+          <Show when={!alerts.error} fallback={<LoadError message={`${alerts.error}`} onRetry={() => refetchAlerts()} />}>
           <Show when={alerts.loading}>
             <div class="empty">Loading…</div>
           </Show>
@@ -6310,6 +6362,7 @@ function FeedsSection() {
               </div>
             )}
           </For>
+          </Show>
         </section>
       </Show>
 
@@ -6451,6 +6504,7 @@ function FeedWizard(props: { onClose: () => void; onAdded: () => void }) {
   const [url, setUrl] = createSignal("");
   const [interval, setInterval] = createSignal("1h");
   const [tags, setTags] = createSignal("");
+  const [trust, setTrust] = createSignal("medium");
   const [sourceTypes] = createResource(() => api.feedSourceTypes());
 
   const typeOptions = () => {
@@ -6485,6 +6539,7 @@ function FeedWizard(props: { onClose: () => void; onAdded: () => void }) {
       url: url() || undefined,
       interval: interval(),
       tags: tags() ? tags().split(",").map((t) => t.trim()) : [],
+      trust: trust(),
     };
     try {
       await api.feedAddSource(source);
@@ -6544,6 +6599,14 @@ function FeedWizard(props: { onClose: () => void; onAdded: () => void }) {
             <div class="form-row">
               <label>Tags</label>
               <input value={tags()} onInput={(e) => setTags(e.currentTarget.value)} placeholder="tech, news — separate with commas" />
+            </div>
+            <div class="form-row">
+              <label>Trust level</label>
+              <select value={trust()} onChange={(e) => setTrust(e.currentTarget.value)}>
+                <option value="high">High — weighs in more on search/alerts</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low — noted but discounted</option>
+              </select>
             </div>
             <div style={{ "margin-top": "12px", display: "flex", gap: "8px" }}>
               <button class="ghost" onClick={() => setStep(1)}>Back</button>
