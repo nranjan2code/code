@@ -120,6 +120,13 @@ pub(crate) fn repair_known_failures(core: &Core, report: &health::HealthReport) 
             });
             continue;
         }
+        if check.label == "install layout" {
+            lines.push(match health::repair_legacy_home_split() {
+                Ok(msg) => format!("install layout: {msg}"),
+                Err(msg) => format!("install layout ({detail}): {msg}"),
+            });
+            continue;
+        }
         if check.label == "self version parity" {
             lines.push(format!("self version parity ({detail}): reinstalling…"));
             // Reinstalling from a unit test would rewrite the developer's
