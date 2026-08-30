@@ -175,7 +175,11 @@ fn unwrap_mcp_response(response: Value) -> Result<Value, (StatusCode, String)> {
 
     let result = response.get("result").cloned().unwrap_or(json!({}));
 
-    if result.get("isError").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if result
+        .get("isError")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         let msg = result
             .get("content")
             .and_then(|c| c.get(0))
@@ -551,7 +555,13 @@ fn remove_array_table_block(content: &str, table: &str, name: &str) -> Option<St
 
 /// Set (or add) a scalar `field = value` line inside a `[[table]]` block
 /// matched by name, replacing the existing line for that field if present.
-fn set_field_in_block(content: &str, table: &str, name: &str, field: &str, value_line: &str) -> Option<String> {
+fn set_field_in_block(
+    content: &str,
+    table: &str,
+    name: &str,
+    field: &str,
+    value_line: &str,
+) -> Option<String> {
     let lines: Vec<&str> = content.lines().collect();
     let (start, end) = find_array_table_block(&lines, table, name)?;
     let mut new_lines: Vec<String> = lines[..=start].iter().map(|l| l.to_string()).collect();
@@ -657,7 +667,12 @@ pub async fn update_feed_source(
             "enabled",
             &format!("enabled = {}", enabled),
         )
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Source '{}' not found", name)))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Source '{}' not found", name),
+            )
+        })?;
         touched = true;
     }
 
@@ -669,7 +684,12 @@ pub async fn update_feed_source(
             "interval",
             &format!("interval = \"{}\"", escape_toml(interval)),
         )
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Source '{}' not found", name)))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Source '{}' not found", name),
+            )
+        })?;
         touched = true;
     }
 
@@ -681,7 +701,12 @@ pub async fn update_feed_source(
             "trust",
             &format!("trust = \"{}\"", escape_toml(trust)),
         )
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Source '{}' not found", name)))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Source '{}' not found", name),
+            )
+        })?;
         touched = true;
     }
 
@@ -699,7 +724,12 @@ pub async fn update_feed_source(
             "tags",
             &format!("tags = [{}]", tags_str),
         )
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Source '{}' not found", name)))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Source '{}' not found", name),
+            )
+        })?;
         touched = true;
     }
 
@@ -766,7 +796,12 @@ pub async fn add_feed_alert(
         payload
             .get(key)
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str()).map(String::from).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(String::from)
+                    .collect()
+            })
             .unwrap_or_default()
     };
     let keywords = str_array("keywords");
@@ -784,7 +819,10 @@ pub async fn add_feed_alert(
         .get("action")
         .and_then(|v| v.as_str())
         .unwrap_or("deliver");
-    let deliver_to = payload.get("deliver_to").and_then(|v| v.as_str()).unwrap_or("");
+    let deliver_to = payload
+        .get("deliver_to")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let cooldown_minutes = payload
         .get("cooldown_minutes")
         .and_then(|v| v.as_i64())
@@ -859,12 +897,8 @@ pub async fn delete_feed_alert(
         )
     })?;
 
-    let new_content = remove_array_table_block(&content, "alerts", &name).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            format!("Alert '{}' not found", name),
-        )
-    })?;
+    let new_content = remove_array_table_block(&content, "alerts", &name)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Alert '{}' not found", name)))?;
 
     write_config_atomically(&config_path, &new_content).await?;
 
@@ -881,10 +915,7 @@ pub fn routes() -> Router<AppState> {
             "/feeds/sources",
             get(list_source_types).post(add_feed_source),
         )
-        .route(
-            "/feeds/sources/configured",
-            get(list_configured_sources),
-        )
+        .route("/feeds/sources/configured", get(list_configured_sources))
         .route(
             "/feeds/sources/{name}",
             delete(delete_feed_source).patch(update_feed_source),
@@ -894,10 +925,7 @@ pub fn routes() -> Router<AppState> {
         .route("/feeds/items/{id}", get(get_feed_item))
         .route("/feeds/search", get(search_feed_items))
         .route("/feeds/stats", get(get_feed_stats))
-        .route(
-            "/feeds/alerts",
-            get(get_feed_alerts).post(add_feed_alert),
-        )
+        .route("/feeds/alerts", get(get_feed_alerts).post(add_feed_alert))
         .route("/feeds/alerts/{name}", delete(delete_feed_alert))
         .route("/feeds/ingest", post(trigger_ingestion))
 }
