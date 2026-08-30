@@ -271,6 +271,21 @@ pub fn bot_service_specs(
         .collect()
 }
 
+pub fn configured_bot_service_specs(
+    bin_path: &Path,
+    data_home: &Path,
+    gateway_url: &str,
+) -> Vec<ServiceSpec> {
+    let bin_dir = bin_path.parent().unwrap_or(Path::new("/"));
+    bot_service_specs(
+        bin_dir,
+        &super::home(),
+        &vak_config::paths::default_workspace(),
+        data_home,
+        gateway_url,
+    )
+}
+
 /// Units matching `com.vak.<surface>-*` on disk that are no longer in
 /// `wanted` get stopped, deregistered, and their unit file removed — the
 /// counterpart to a bot being deleted or renamed in the admin console.
@@ -328,16 +343,7 @@ pub fn sync_bots(
     paths: &Paths,
     runner: &dyn CommandRunner,
 ) -> Vec<SyncOutcome> {
-    let bin_dir = bin_path.parent().unwrap_or(Path::new("/"));
-    let home_dir = super::home();
-    let default_workspace = vak_config::paths::default_workspace();
-    let specs = bot_service_specs(
-        bin_dir,
-        &home_dir,
-        &default_workspace,
-        data_home,
-        gateway_url,
-    );
+    let specs = configured_bot_service_specs(bin_path, data_home, gateway_url);
     let wanted: Vec<String> = specs.iter().map(|s| s.name.clone()).collect();
     prune_stale_bot_units(&wanted, paths, runner);
     sync_specs(&specs, paths, runner)
@@ -846,6 +852,9 @@ fn sync_one_inner(
     if previous.as_deref() == Some(rendered.as_str()) {
         return if !was_running {
             if start(&spec.name, runner) {
+                if binary_newer_than_unit(&spec.bin_path, &unit_path) {
+                    write_atomic(&unit_path, &rendered)?;
+                }
                 Ok(SyncAction::Restarted)
             } else {
                 Err(format!("start {} failed", spec.name))

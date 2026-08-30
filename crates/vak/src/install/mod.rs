@@ -423,12 +423,25 @@ pub fn run_status(prefix: Option<PathBuf>) -> i32 {
             return 1;
         }
     };
-    let rows = vak_ops::services::services_status(
+    let data_home = vak_config::paths::data_home();
+    let legacy_telegram_superseded = vak_ops::services::has_configured_bots(&data_home, "telegram");
+    let names = vak_ops::services::default_service_names(&cli);
+    let names: Vec<&str> = names
+        .iter()
+        .copied()
+        .filter(|&name| !(legacy_telegram_superseded && name == "com.vak.telegram"))
+        .collect();
+    let mut specs: Vec<_> = vak_ops::services::resolve_specs(&cli, &names)
+        .into_iter()
+        .flatten()
+        .collect();
+    specs.extend(vak_ops::services::configured_bot_service_specs(
         &cli,
-        // Same set `services-sync` would write, so an optional component
-        // this build never shipped is not reported as an unregistered
-        // service the operator is told to go and sync.
-        &vak_ops::services::default_service_names(&cli),
+        &data_home,
+        &vak_ops::OpsConfig::detect().base_url(),
+    ));
+    let rows = vak_ops::services::status_specs(
+        &specs,
         &vak_ops::services::Paths::default(),
         &vak_ops::services::SystemRunner,
     );
