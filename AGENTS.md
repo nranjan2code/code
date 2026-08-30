@@ -148,6 +148,22 @@
     launchd/systemd PID state is process truth and `KeepAlive` is the sole
     automatic restart owner. Health probes describe readiness; a transient
     timeout may notify but must never authorize a competing restart.
+26. **The Operations Center is an evidence projection, never a synthetic
+    dashboard.** `/ops/center` derives resource state from live session
+    handles, gateway/CorePool snapshots, service-manager probes, durable task,
+    outbox, security, and health data. Missing or unavailable state remains
+    explicit; operational metrics must never be mock, sample, or placeholder
+    values. Operations URLs preserve `workspace` and `time` query context, and
+    every internal drill-down link carries that context forward. Resource
+    detail views stop at raw session JSONL, provider work receipts, durable
+    outbox records, incident evidence, or manager state. Incident fingerprints
+    reconcile open, resolved, and reopened records in
+    `<sessions_home>/operations/incidents.jsonl`; service and delivery actions
+    append before/after verification receipts to
+    `<sessions_home>/operations/actions.jsonl`. Blocking service probes such
+    as `reqwest::blocking` must run on a blocking worker, never inside an async
+    request handler. Desktop and tray Operations Center links use the same
+    bound listener port and bearer/cookie authentication as the admin console.
 
 ## Code rules
 
@@ -266,12 +282,16 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      (HttpOnly SameSite=Strict) alongside bearer auth,
                      /admin/api/* data plane, embedded SolidJS SPA at
                      /admin (docs/design/33-admin-console.md), including
-                     memory CRUD/cleanup and live parent-scoped subagent
-                     controls
+                     memory CRUD/cleanup, live parent-scoped subagent
+                     controls, and the evidence-backed Operations Center
+                     (`/ops/center`, durable incidents, action receipts, and
+                     bookmarkable resource drill-downs)
 crates/vak-admin-ui  SolidJS + Vite admin console source; built dist is
                      committed so cargo builds need no node — observation,
                      operation, and interaction views per docs/design/
-                     33-admin-console.md, plus a VoiceConfigEditor
+                     33-admin-console.md, including the six-area navigation,
+                     persistent Operations context bar, and raw-evidence
+                     drill-downs, plus a VoiceConfigEditor
                      (inherit-toggle + live Preview button) on the per-bot
                      and per-chat panels (docs/design/38-voice-personality.md)
 crates/vak-desktop   Tauri 2 desktop app over an embedded secured_router —

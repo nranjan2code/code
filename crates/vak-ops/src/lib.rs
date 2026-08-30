@@ -93,6 +93,7 @@ impl OpsConfig {
         OpsConfig {
             port: std::env::var("VAK_PORT")
                 .ok()
+                .or_else(|| vak_config::get_var("VAK_PORT"))
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(8901),
         }

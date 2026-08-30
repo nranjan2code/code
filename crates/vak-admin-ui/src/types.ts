@@ -42,8 +42,12 @@ export interface SecurityEvent {
 
 export interface HealthInfo {
   status: string;
+  posture?: "healthy" | "degraded" | string;
   provider: string;
   model: string;
+  provider_source?: string;
+  model_source?: string;
+  route_revision?: string;
   permission_mode: string;
   sandbox: string;
   context_window: number;
@@ -358,6 +362,89 @@ export interface OpsDiagnostics {
     approvals: { mode: string; approver: string | null; pending: number };
   };
   flows: Array<{ name: string; runs: number }>;
+}
+
+export interface OperationsSnapshot {
+  generated_at: string;
+  server: {
+    pid: number;
+    version: string;
+    uptime_secs: number;
+    cwd: string;
+    posture: "healthy" | "degraded" | string;
+  };
+  health: HealthInfo & {
+    checks: Array<{ label: string; status: "pass" | "fail" | string; detail: string }>;
+    facts: string[];
+    failures: number;
+  };
+  services: OpsStatus;
+  gateway: {
+    enabled: boolean;
+    approvals: { pending: number; mode: string; approver: string | null };
+    bindings: Array<{
+      target: string;
+      session_id: string | null;
+      workspace: string | null;
+      provider: string | null;
+      model: string | null;
+      route_revision: string | null;
+    }>;
+  };
+  pool: {
+    max: number;
+    idle_secs: number;
+    entries: CorePoolEntry[];
+  };
+  runs: Array<{
+    session_id: string;
+    workspace: string;
+    state: "running" | "waiting_approval" | string;
+    pending_approvals: Array<{ id: string; tool: string; reason: string; requested_at: string }>;
+  }>;
+  tasks: Array<TaskItem & { cwd?: string; next_fire?: string | null; running?: boolean }>;
+  outbox: {
+    pending: number;
+    dead_letter: number;
+    error?: string | null;
+    records: Array<{
+      job_id: string;
+      target: string;
+      kind: string;
+      state: "pending" | "delivered" | "dead_letter" | string;
+      attempts: number;
+      created_at_ms: number;
+      updated_at_ms: number;
+      last_error: string | null;
+    }>;
+  };
+  security: SecurityEvent[];
+  incidents: Array<{
+    id: string;
+    fingerprint?: string;
+    severity: "critical" | "warning" | "info" | string;
+    status?: "investigating" | "resolved" | string;
+    source: string;
+    title: string;
+    detail: string;
+    first_seen?: string;
+    last_seen?: string;
+    occurrences?: number;
+    workspace?: string | null;
+    evidence?: string[];
+    resolution?: string | null;
+  }>;
+  actions: Array<{
+    receipt_id: string;
+    service: string;
+    action: string;
+    requested_at: string;
+    completed_at: string;
+    succeeded: boolean;
+    verification: { status: string; before: string; after: string; detail: string };
+    persisted: boolean;
+  }>;
+  ops_port: number;
 }
 
 export interface McpServerConfig {

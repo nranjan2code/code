@@ -113,7 +113,7 @@ pub const SERVICES: &[ServiceDef] = &[
     ServiceDef {
         name: "com.vak.telegram",
         bin_file: "vak",
-        args: &["telegram", "--server", "http://127.0.0.1:8901"],
+        args: &["telegram", "--server"],
         log_file: "telegram.log",
         keep_alive: true,
         workspace_scoped: true,
@@ -380,6 +380,20 @@ pub fn restart_bot_unit(surface: &str, id: &str, runner: &dyn CommandRunner) -> 
 }
 
 impl ServiceDef {
+    fn resolved_args(&self, port: u16) -> Vec<String> {
+        let mut args: Vec<String> = self.args.iter().map(|a| (*a).to_string()).collect();
+        match self.name {
+            "com.vak.gateway" => {
+                args.extend(["--port".into(), port.to_string()]);
+            }
+            "com.vak.telegram" => {
+                args.push(super::OpsConfig { port }.base_url());
+            }
+            _ => {}
+        }
+        args
+    }
+
     /// Resolve against an install prefix: `bin_dir` holds the release
     /// binaries; logs land in the canonical platform logs dir
     /// (`~/Library/Logs/vak` / XDG state) — never inside data.
@@ -387,7 +401,7 @@ impl ServiceDef {
         ServiceSpec {
             name: self.name.to_string(),
             bin_path: bin_dir.join(self.bin_file),
-            args: self.args.iter().map(|a| (*a).to_string()).collect(),
+            args: self.resolved_args(super::OpsConfig::detect().port),
             log_path: vak_config::paths::logs_dir().join(self.log_file),
             // Non-workspace-scoped services get the account home: they
             // choose their own project at runtime. Headless services use the
@@ -1206,6 +1220,22 @@ mod tests {
             };
             assert_eq!(spec.working_dir, expected, "{}", def.name);
         }
+    }
+
+    #[test]
+    fn service_templates_follow_the_resolved_port() {
+        let gateway = def_named("com.vak.gateway").resolved_args(9123);
+        assert_eq!(gateway.last().map(String::as_str), Some("9123"));
+        assert_eq!(
+            gateway.get(gateway.len() - 2).map(String::as_str),
+            Some("--port")
+        );
+
+        let telegram = def_named("com.vak.telegram").resolved_args(9123);
+        assert_eq!(
+            telegram,
+            vec!["telegram", "--server", "http://127.0.0.1:9123",]
+        );
     }
 
     /// An optional component the build never produced must not get a unit

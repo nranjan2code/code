@@ -16,6 +16,7 @@ import type {
   MemoryItem,
   OpsDiagnostics,
   OpsStatus,
+  OperationsSnapshot,
   PendingApproval,
   PermissionMode,
   ProviderListResponse,
@@ -180,6 +181,21 @@ export const api = {
 
   gatewayStatus: () =>
     fetch("/admin/api/gateway/status").then((r) => handle<GatewayStatus>(r)),
+
+  operations: (): Promise<OperationsSnapshot> =>
+    fetch("/ops/center").then((r) => handle<OperationsSnapshot>(r)),
+
+  operationsOutbox: (): Promise<{ records: OperationsSnapshot["outbox"]["records"] }> =>
+    fetch("/ops/outbox").then((r) => handle(r)),
+
+  operationsActions: (): Promise<{ actions: OperationsSnapshot["actions"] }> =>
+    fetch("/ops/actions").then((r) => handle(r)),
+
+  replayOperationsOutbox: (jobId: string): Promise<{ ok: boolean; job_id: string }> =>
+    fetch(`/ops/outbox/${encodeURIComponent(jobId)}/replay`, { method: "POST" }).then((r) => handle(r)),
+
+  opsAction: (service: "gateway" | "telegram", action: "start" | "stop" | "restart" | "install" | "uninstall"): Promise<{ ok: boolean; action?: string; error?: string; receipt_id?: string; receipt_persisted?: boolean; verification?: { status: string; before: string; after: string; detail: string } }> =>
+    fetch(`/ops/${service}/${action}`, { method: "POST" }).then((r) => handle(r)),
 
   patchGatewayWorkspace: (workspace: string | null): Promise<{ workspace: string; restart_required: boolean }> =>
     fetch("/admin/api/gateway/workspace", {
@@ -360,8 +376,14 @@ export const api = {
   diff: (sessionId: string): Promise<SessionDiff> =>
     fetch(`/sessions/${encodeURIComponent(sessionId)}/diff`).then((r) => handle(r)),
 
-  receipts: (sessionId: string): Promise<WorkReceipt[]> =>
-    fetch(`/sessions/${encodeURIComponent(sessionId)}/receipts`).then((r) => handle(r)),
+  receipts: async (sessionId: string): Promise<WorkReceipt[]> => {
+    const res = await fetch(`/sessions/${encodeURIComponent(sessionId)}/receipts`);
+    // A deep-linked historical session may have no live in-memory handle;
+    // that is an evidence state, not a client failure. Render an empty
+    // receipt set and keep the ledger timeline available.
+    if (res.status === 404) return [];
+    return handle(res);
+  },
 
   checkpoints: (sessionId: string): Promise<{ checkpoints: SessionCheckpoint[] }> =>
     fetch(`/sessions/${encodeURIComponent(sessionId)}/checkpoints`).then((r) => handle(r)),
@@ -526,8 +548,10 @@ export const api = {
   cleanupMemory: (): Promise<{ removed_locks: number; removed_temps: number; removed_empty_dirs: number }> =>
     fetch("/memory/cleanup", { method: "POST" }).then((r) => handle(r)),
 
-  doctor: (): Promise<{ report: string; ok: boolean }> =>
-    fetch("/doctor").then((r) => handle(r)),
+  doctor: (sessionId?: string): Promise<{ report: string; ok: boolean; failures?: number; checks?: Array<{ label: string; ok: boolean; detail: string }>; facts?: string[] }> => {
+    const query = sessionId ? `?session=${encodeURIComponent(sessionId)}` : "";
+    return fetch(`/doctor${query}`).then((r) => handle(r));
+  },
 
   inbox: (unreadOnly = false, limit = 100): Promise<{ entries: InboxEntry[]; unread_count: number }> => {
     const p = new URLSearchParams({ limit: String(limit) });

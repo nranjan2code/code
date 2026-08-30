@@ -225,6 +225,91 @@ async fn http_lifecycle_run_events_transcript() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn operations_center_is_a_real_evidence_projection() {
+    let provider = Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::new()),
+    });
+    let (base, _server) = spawn_server(provider, vak_config::PermissionMode::ReadOnly).await;
+    let body: serde_json::Value = reqwest::get(format!("{base}/ops/center"))
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(body["server"]["pid"].as_u64().is_some());
+    assert!(body["server"]["uptime_secs"].as_u64().is_some());
+    assert!(body["health"]["checks"].is_array());
+    assert!(body["pool"]["entries"].is_array());
+    assert!(body["runs"].is_array());
+    assert!(body["outbox"]["records"].is_array());
+    assert!(body["incidents"].is_array());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn secured_operations_center_uses_the_bound_port() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::new(dir.path().to_path_buf()).unwrap();
+    core.set_sessions_home(dir.path().join("home"));
+    std::mem::forget(dir);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (app, token) = vak_server::secured_router_with_port(core, false, addr.port());
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = reqwest::Client::new();
+
+    let unauthenticated = client
+        .get(format!("http://{addr}/ops/center"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthenticated.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let body: serde_json::Value = client
+        .get(format!("http://{addr}/ops/center"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["ops_port"], addr.port());
+    assert_eq!(body["server"]["pid"], std::process::id());
+    assert!(body["server"]["uptime_secs"].as_u64().is_some());
+    assert_eq!(body["services"]["gateway_healthy"], true);
+
+    let outbox: serde_json::Value = client
+        .get(format!("http://{addr}/ops/outbox"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(outbox["records"].is_array());
+
+    let replay_missing = client
+        .post(format!("http://{addr}/ops/outbox/not-a-real-job/replay"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(replay_missing.status(), reqwest::StatusCode::CONFLICT);
+
+    handle.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn approval_flow_resolves_over_http() {
     // First turn requests bash (workspace-write => ask); we approve over HTTP.
     let provider = Arc::new(Scripted {

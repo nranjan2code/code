@@ -524,6 +524,38 @@ pub(crate) fn start_replay(core: &Core) {
     });
 }
 
+/// Read the durable outbox for the operations surfaces. Records are returned
+/// as-is so the console can distinguish pending, delivered and dead-lettered
+/// work without inventing a second status store.
+pub(crate) fn outbox_records(core: &Core) -> Result<Vec<OutboxRecord>, String> {
+    runtime(core)
+        .outbox
+        .list()
+        .map_err(|error| error.to_string())
+}
+
+/// Replay one pending or dead-lettered job through the same serialized
+/// renderer/adapter path as the background worker. A missing job is surfaced
+/// as an error; no new delivery target or capability is inferred here.
+pub(crate) async fn replay_outbox_job(core: &Core, job_id: &str) -> Result<(), String> {
+    let runtime = runtime(core);
+    let _serial = runtime.serial.lock().await;
+    let record = runtime
+        .outbox
+        .get(job_id)
+        .map_err(|error| error.to_string())?;
+    if record.state == vak_delivery::outbox::OutboxState::Delivered {
+        return Err("delivery job is already delivered".into());
+    }
+    match runtime.deliver_record(core, record.clone()).await {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            let _ = runtime.outbox.mark_failed(job_id, &error);
+            Err(error)
+        }
+    }
+}
+
 struct LogAdapter;
 
 #[async_trait]

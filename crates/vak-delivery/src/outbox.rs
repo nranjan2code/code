@@ -103,6 +103,28 @@ impl Outbox {
     }
 
     pub fn pending(&self) -> Result<Vec<OutboxRecord>, OutboxError> {
+        let mut records = self.list_filtered(|record| record.state == OutboxState::Pending)?;
+        // Replay is oldest-first so a busy outbox cannot starve its earliest
+        // durable job behind a stream of newer alerts.
+        records.sort_by_key(|record| (record.created_at_ms, record.job.job_id.clone()));
+        Ok(records)
+    }
+
+    /// Read every persisted delivery record, newest updates first. The
+    /// operations console uses this for evidence and replay; the source of
+    /// truth remains the append-preserving JSON files.
+    pub fn list(&self) -> Result<Vec<OutboxRecord>, OutboxError> {
+        self.list_filtered(|_| true)
+    }
+
+    pub fn get(&self, job_id: &str) -> Result<OutboxRecord, OutboxError> {
+        read_record(&self.record_path(job_id))
+    }
+
+    fn list_filtered(
+        &self,
+        include: impl Fn(&OutboxRecord) -> bool,
+    ) -> Result<Vec<OutboxRecord>, OutboxError> {
         if !self.root.exists() {
             return Ok(Vec::new());
         }
@@ -114,11 +136,12 @@ impl Outbox {
                 continue;
             }
             let record = read_record(&path)?;
-            if record.state == OutboxState::Pending {
+            if include(&record) {
                 records.push(record);
             }
         }
-        records.sort_by_key(|record| (record.created_at_ms, record.job.job_id.clone()));
+        records.sort_by_key(|record| (record.updated_at_ms, record.job.job_id.clone()));
+        records.reverse();
         Ok(records)
     }
 

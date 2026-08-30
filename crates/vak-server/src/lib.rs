@@ -48,6 +48,7 @@ mod events;
 mod feeds;
 pub mod gateway;
 mod heartbeat;
+mod operations;
 mod presentation;
 mod rate_limit;
 pub mod slack;
@@ -57,7 +58,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 
@@ -108,6 +109,15 @@ pub(crate) struct SessionHandle {
 #[derive(Clone)]
 pub struct AppState {
     pub core: Core,
+    /// Monotonic start point for this server state. Keeping it on the state
+    /// avoids reporting the first Operations request as process start and
+    /// keeps embedded/test routers independent from one another.
+    started_at: Instant,
+    /// Port used by the bound server. Plain routers use the configured
+    /// operations default; `serve_with` overwrites this with its actual
+    /// listener port so health probes and the console never drift from the
+    /// process being inspected.
+    ops_port: u16,
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     /// Live best-of-N runs keyed by child session id.
     pub(crate) best_runs: Arc<Mutex<HashMap<String, BestRunMeta>>>,
@@ -162,6 +172,8 @@ impl AppState {
         );
         AppState {
             core,
+            started_at: Instant::now(),
+            ops_port: vak_ops::OpsConfig::detect().port,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             best_runs: Arc::new(Mutex::new(HashMap::new())),
             tasks: Arc::new(Mutex::new(HashMap::new())),
@@ -468,6 +480,14 @@ fn router_with_state(state: AppState) -> Router {
         .route("/providers/{name}/models", get(discover_models))
         .route("/search", get(search_sessions))
         .route("/ops/status", get(ops_status))
+        .route("/ops/center", get(operations_center))
+        .route("/ops/actions", get(operations_actions))
+        .route("/ops/incidents", get(operations_incidents))
+        .route("/ops/outbox", get(operations_outbox))
+        .route(
+            "/ops/outbox/{job_id}/replay",
+            post(replay_operations_outbox),
+        )
         .route("/ops/{service}/{action}", post(ops_action))
         .route("/ops/diagnostics", get(ops_diagnostics))
         .route("/finops", get(finops_status).patch(patch_finops))
@@ -506,9 +526,19 @@ fn ops_payload(cfg: &vak_ops::OpsConfig) -> serde_json::Value {
     })
 }
 
-async fn ops_status(State(_state): State<AppState>) -> Json<serde_json::Value> {
-    let cfg = vak_ops::OpsConfig::detect();
-    Json(ops_payload(&cfg))
+async fn ops_status(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let mut cfg = vak_ops::OpsConfig::detect();
+    cfg.port = state.ops_port;
+    let payload = tokio::task::spawn_blocking(move || ops_payload(&cfg))
+        .await
+        .unwrap_or_else(|_| {
+            serde_json::json!({
+                "gateway": { "state": "unknown" },
+                "telegram": { "state": "unknown" },
+                "gateway_healthy": false,
+            })
+        });
+    Json(payload)
 }
 
 /// Read-only operational projection for desktop/TUI surfaces. This keeps
@@ -516,7 +546,8 @@ async fn ops_status(State(_state): State<AppState>) -> Json<serde_json::Value> {
 /// exposing credentials or implementation paths.
 async fn ops_diagnostics(State(state): State<AppState>) -> Json<serde_json::Value> {
     refresh_control_plane(&state);
-    let cfg = vak_ops::OpsConfig::detect();
+    let mut cfg = vak_ops::OpsConfig::detect();
+    cfg.port = state.ops_port;
     let root = state.core.sessions_home().join("flow-runs");
     let mut flows = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&root) {
@@ -535,16 +566,18 @@ async fn ops_diagnostics(State(state): State<AppState>) -> Json<serde_json::Valu
     }
     flows.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
     let gateway = state.gateway.snapshot();
+    let services = tokio::task::spawn_blocking(move || ops_payload(&cfg))
+        .await
+        .unwrap_or_else(|_| {
+            serde_json::json!({
+                "gateway": { "state": "unknown" },
+                "telegram": { "state": "unknown" },
+                "gateway_healthy": false,
+            })
+        });
     Json(serde_json::json!({
-        "health": {
-            "status": "ok",
-            "provider": state.core.effective_provider(),
-            "model": state.core.effective_model(),
-            "sandbox": state.core.effective_sandbox_name(),
-            "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
-            "warnings": state.core.config().warnings,
-        },
-        "services": ops_payload(&cfg),
+        "health": health_projection(&state),
+        "services": services,
         "gateway": {
             "enabled": state.gateway.enabled,
             "bindings": gateway.into_iter().map(|(target, binding)| serde_json::json!({
@@ -563,6 +596,430 @@ async fn ops_diagnostics(State(state): State<AppState>) -> Json<serde_json::Valu
         },
         "flows": flows,
     }))
+}
+
+fn operation_services(cfg: &vak_ops::OpsConfig) -> serde_json::Value {
+    let gateway = vak_ops::status(vak_ops::Service::Gateway, cfg);
+    let telegram = vak_ops::status(vak_ops::Service::Telegram, cfg);
+    serde_json::json!({
+        "gateway": { "state": gateway.to_string() },
+        "telegram": { "state": telegram.to_string() },
+        "gateway_healthy": vak_ops::health_ok(cfg),
+    })
+}
+
+fn operation_runs(state: &AppState) -> Vec<serde_json::Value> {
+    state
+        .live_handles()
+        .into_iter()
+        .filter_map(|handle| {
+            let active = handle
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none();
+            let pending = handle
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .values()
+                .map(|request| {
+                    serde_json::json!({
+                        "id": request.id,
+                        "tool": request.tool,
+                        "reason": request.reason,
+                        "requested_at": request.requested_at,
+                    })
+                })
+                .collect::<Vec<_>>();
+            if !active && pending.is_empty() {
+                return None;
+            }
+            Some(serde_json::json!({
+                "session_id": handle.id,
+                "workspace": handle.cwd,
+                "state": if !pending.is_empty() { "waiting_approval" } else { "running" },
+                "pending_approvals": pending,
+            }))
+        })
+        .collect()
+}
+
+fn operation_tasks(state: &AppState) -> Vec<serde_json::Value> {
+    let tasks = state
+        .tasks
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let next_fire = state
+        .next_fire
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let inflight = state
+        .script_inflight
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    tasks
+        .values()
+        .map(|task| {
+            let mut value = serde_json::to_value(task).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "next_fire".into(),
+                    next_fire
+                        .get(&task.id)
+                        .map(|fire| serde_json::Value::String(fire.to_rfc3339()))
+                        .unwrap_or(serde_json::Value::Null),
+                );
+                object.insert(
+                    "running".into(),
+                    serde_json::Value::Bool(inflight.contains(&task.id)),
+                );
+            }
+            value
+        })
+        .collect()
+}
+
+fn operation_outbox(state: &AppState) -> Result<(Vec<serde_json::Value>, usize, usize), String> {
+    let records = delivery::outbox_records(&state.core)?;
+    let pending = records
+        .iter()
+        .filter(|record| record.state == vak_delivery::outbox::OutboxState::Pending)
+        .count();
+    let dead = records
+        .iter()
+        .filter(|record| record.state == vak_delivery::outbox::OutboxState::DeadLetter)
+        .count();
+    let rows = records
+        .into_iter()
+        .take(200)
+        .map(|record| {
+            serde_json::json!({
+                "job_id": record.job.job_id,
+                "target": record.job.target,
+                "kind": record.job.kind,
+                "state": record.state,
+                "attempts": record.attempts,
+                "created_at_ms": record.created_at_ms,
+                "updated_at_ms": record.updated_at_ms,
+                "last_error": record.last_error,
+            })
+        })
+        .collect();
+    Ok((rows, pending, dead))
+}
+
+/// Unified, evidence-backed projection for the Operations Center. Every row
+/// is derived from an existing ledger, manager probe, or in-process handle;
+/// unavailable state stays explicit instead of being painted green.
+async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Value> {
+    refresh_control_plane(&state);
+    load_tasks(&state);
+    let health = health_projection(&state);
+    let mut service_cfg = vak_ops::OpsConfig::detect();
+    service_cfg.port = state.ops_port;
+    let ops_port = service_cfg.port;
+    let services = tokio::task::spawn_blocking(move || operation_services(&service_cfg))
+        .await
+        .unwrap_or_else(|_| {
+            serde_json::json!({
+                "gateway": { "state": "unknown" },
+                "telegram": { "state": "unknown" },
+                "gateway_healthy": false,
+            })
+        });
+    let default_route = state.core.effective_route();
+    let gateway = state.gateway.snapshot();
+    let pool = state
+        .gateway
+        .core_pool
+        .snapshot_at(Instant::now())
+        .into_iter()
+        .map(|entry| {
+            serde_json::json!({
+                "workspace": entry.workspace,
+                "is_default": entry.is_default,
+                "state": "warm",
+                "idle_secs": entry.idle_secs,
+                "permission_override": entry.permission_override,
+                "effective_permission_mode": entry.effective_permission_mode,
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut bound_targets = std::collections::HashSet::new();
+    let mut bindings = gateway
+        .into_iter()
+        .map(|(target, binding)| {
+            bound_targets.insert(target.clone());
+            serde_json::json!({
+                "target": target,
+                "session_id": binding.session_id,
+                "workspace": binding.workspace,
+                "provider": binding
+                    .provider
+                    .unwrap_or_else(|| default_route.provider.clone()),
+                "model": binding.model.unwrap_or_else(|| default_route.model.clone()),
+                "route_revision": binding
+                    .route_revision
+                    .unwrap_or_else(|| default_route.revision.clone()),
+            })
+        })
+        .collect::<Vec<_>>();
+    for entry in state.gateway.allowlist_snapshot() {
+        if entry.status != gateway::AllowlistStatus::Allowed || bound_targets.contains(&entry.key) {
+            continue;
+        }
+        bindings.push(serde_json::json!({
+            "target": entry.key,
+            "session_id": null,
+            "workspace": state.gateway.workspace_for_entry(&state.core, &entry.key),
+            "provider": entry.route.as_ref().map(|route| route.provider.clone()).unwrap_or_else(|| state.core.effective_provider()),
+            "model": entry.route.as_ref().map(|route| route.model.clone()).unwrap_or_else(|| state.core.effective_model()),
+            "route_revision": entry.route.as_ref().map(|route| format!("channel:{}:{}", route.provider, route.model)).unwrap_or_else(|| state.core.effective_route().revision),
+            "cold": true,
+        }));
+    }
+    let (outbox, outbox_pending, outbox_dead, outbox_error) = match operation_outbox(&state) {
+        Ok((rows, pending, dead)) => (rows, pending, dead, None),
+        Err(error) => (Vec::new(), 0, 0, Some(error)),
+    };
+    let runs = operation_runs(&state);
+    let approvals = state
+        .live_handles()
+        .into_iter()
+        .map(|handle| {
+            handle
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len()
+        })
+        .sum::<usize>();
+    let security = vak_core::security_events::list(&state.core.sessions_home(), 30)
+        .into_iter()
+        .map(|event| serde_json::to_value(event).unwrap_or_else(|_| serde_json::json!({})))
+        .collect::<Vec<_>>();
+    let workspace = Some(state.core.cwd().to_string_lossy().into_owned());
+    let mut candidates = Vec::new();
+    if health["failures"].as_u64().unwrap_or(0) > 0 {
+        let evidence = health["checks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|check| check["status"] == "fail")
+            .filter_map(|check| check["label"].as_str().map(str::to_string))
+            .collect();
+        candidates.push(operations::IncidentCandidate {
+            fingerprint: "doctor:health-checks".to_string(),
+            severity: "critical".to_string(),
+            source: "doctor".to_string(),
+            title: "Health checks need attention".to_string(),
+            detail: format!("{} check(s) failed", health["failures"]),
+            workspace: workspace.clone(),
+            evidence,
+        });
+    }
+    if approvals > 0 {
+        candidates.push(operations::IncidentCandidate {
+            fingerprint: "permission:pending-approvals".to_string(),
+            severity: "warning".to_string(),
+            source: "permission-engine".to_string(),
+            title: "Runs are waiting for approval".to_string(),
+            detail: format!("{approvals} approval gate(s) are blocking work"),
+            workspace: workspace.clone(),
+            evidence: runs
+                .iter()
+                .filter_map(|run| run["session_id"].as_str().map(|id| format!("session:{id}")))
+                .collect(),
+        });
+    }
+    if outbox_pending > 0 || outbox_dead > 0 {
+        candidates.push(operations::IncidentCandidate {
+            fingerprint: "delivery:outbox".to_string(),
+            severity: if outbox_dead > 0 {
+                "critical"
+            } else {
+                "warning"
+            }
+            .to_string(),
+            source: "delivery".to_string(),
+            title: "Outbound delivery needs attention".to_string(),
+            detail: format!("{outbox_pending} pending, {outbox_dead} dead-lettered"),
+            workspace: workspace.clone(),
+            evidence: outbox
+                .iter()
+                .filter(|row| row["state"] != "delivered")
+                .filter_map(|row| row["job_id"].as_str().map(|id| format!("outbox:{id}")))
+                .collect(),
+        });
+    }
+    if let Some(error) = &outbox_error {
+        candidates.push(operations::IncidentCandidate {
+            fingerprint: "delivery:outbox-read".to_string(),
+            severity: "critical".to_string(),
+            source: "delivery".to_string(),
+            title: "Delivery evidence is unavailable".to_string(),
+            detail: error.clone(),
+            workspace: workspace.clone(),
+            evidence: vec!["outbox:read".to_string()],
+        });
+    }
+    if services["gateway"]["state"] != "running" && state.gateway.enabled {
+        candidates.push(operations::IncidentCandidate {
+            fingerprint: "service:gateway".to_string(),
+            severity: "warning".to_string(),
+            source: "service-manager".to_string(),
+            title: "Gateway service is not running".to_string(),
+            detail: services["gateway"]["state"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string(),
+            workspace: workspace.clone(),
+            evidence: vec!["service:gateway".to_string()],
+        });
+    }
+    let incidents = operations::reconcile(&state.core.sessions_home(), candidates)
+        .into_iter()
+        .map(|incident| serde_json::to_value(incident).unwrap_or_else(|_| serde_json::json!({})))
+        .collect::<Vec<_>>();
+    Json(serde_json::json!({
+        "generated_at": Utc::now(),
+        "server": {
+            "pid": std::process::id(),
+            "version": env!("CARGO_PKG_VERSION"),
+            "uptime_secs": state.started_at.elapsed().as_secs(),
+            "cwd": state.core.cwd(),
+            "posture": health["posture"],
+        },
+        "health": health,
+        "services": services,
+        "gateway": {
+            "enabled": state.gateway.enabled,
+            "approvals": { "pending": approvals, "mode": state.gateway.approvals_mode(), "approver": state.gateway.approver_target() },
+            "bindings": bindings,
+        },
+        "pool": {
+            "max": state.core.config().gateway.core_pool_max,
+            "idle_secs": state.core.config().gateway.core_pool_idle_secs,
+            "entries": pool,
+        },
+        "runs": runs,
+        "tasks": operation_tasks(&state),
+        "outbox": { "pending": outbox_pending, "dead_letter": outbox_dead, "records": outbox, "error": outbox_error },
+        "security": security,
+        "incidents": incidents,
+        "actions": operations::recent_actions(&state.core.sessions_home(), 50),
+        "ops_port": ops_port,
+    }))
+}
+
+async fn operations_actions(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "actions": operations::recent_actions(&state.core.sessions_home(), 200),
+    }))
+}
+
+async fn operations_incidents(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "incidents": operations::list(&state.core.sessions_home()),
+    }))
+}
+
+async fn operations_outbox(State(state): State<AppState>) -> axum::response::Response {
+    match delivery::outbox_records(&state.core) {
+        Ok(records) => Json(serde_json::json!({
+            "records": records.into_iter().take(500).map(|record| serde_json::json!({
+                "job_id": record.job.job_id,
+                "target": record.job.target,
+                "kind": record.job.kind,
+                "state": record.state,
+                "attempts": record.attempts,
+                "created_at_ms": record.created_at_ms,
+                "updated_at_ms": record.updated_at_ms,
+                "last_error": record.last_error,
+            })).collect::<Vec<_>>(),
+        }))
+        .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+async fn replay_operations_outbox(
+    State(state): State<AppState>,
+    Path(job_id): Path<String>,
+) -> axum::response::Response {
+    let state_label = |state: vak_delivery::outbox::OutboxState| match state {
+        vak_delivery::outbox::OutboxState::Pending => "pending",
+        vak_delivery::outbox::OutboxState::Delivered => "delivered",
+        vak_delivery::outbox::OutboxState::DeadLetter => "dead_letter",
+    };
+    let before = delivery::outbox_records(&state.core)
+        .ok()
+        .and_then(|records| {
+            records
+                .into_iter()
+                .find(|record| record.job.job_id == job_id)
+        })
+        .map(|record| state_label(record.state).to_string())
+        .unwrap_or_else(|| "not found".to_string());
+    let requested_at = Utc::now();
+    match delivery::replay_outbox_job(&state.core, &job_id).await {
+        Ok(()) => {
+            let after = delivery::outbox_records(&state.core)
+                .ok()
+                .and_then(|records| {
+                    records
+                        .into_iter()
+                        .find(|record| record.job.job_id == job_id)
+                })
+                .map(|record| state_label(record.state).to_string())
+                .unwrap_or_else(|| "not found".to_string());
+            let verification_status = if after == "delivered" {
+                "verified"
+            } else {
+                "pending"
+            };
+            let mut receipt = operations::ActionReceipt {
+                receipt_id: format!("OP-{}", uuid::Uuid::now_v7().simple()),
+                service: format!("outbox:{job_id}"),
+                action: "replay".to_string(),
+                requested_at,
+                completed_at: Utc::now(),
+                succeeded: true,
+                verification: operations::ActionVerification {
+                    status: verification_status.to_string(),
+                    before,
+                    after,
+                    detail: if verification_status == "verified" {
+                        "The adapter delivered the replayed job during the verification probe."
+                    } else {
+                        "Replay was accepted; the durable outbox record remains pending until the adapter confirms delivery."
+                    }
+                    .to_string(),
+                },
+                persisted: false,
+            };
+            receipt.persisted =
+                operations::record_action(&state.core.sessions_home(), &receipt).is_ok();
+            Json(serde_json::json!({
+                "ok": true,
+                "job_id": job_id,
+                "receipt_id": receipt.receipt_id,
+                "receipt_persisted": receipt.persisted,
+                "verification": receipt.verification,
+            }))
+            .into_response()
+        }
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
 }
 
 /// Trailing window for the admin console's spend trend chart — long enough
@@ -835,6 +1292,7 @@ struct OpsActionQuery {
 }
 
 async fn ops_action(
+    State(state): State<AppState>,
     Path((service, action)): Path<(String, String)>,
     axum::extract::Query(q): axum::extract::Query<OpsActionQuery>,
 ) -> axum::response::Response {
@@ -852,29 +1310,68 @@ async fn ops_action(
             .into_response();
     };
     let mut cfg = vak_ops::OpsConfig::detect();
+    cfg.port = state.ops_port;
     if let Some(port) = q.port {
         cfg.port = port;
     }
-    let result = match action.as_str() {
+    let before = vak_ops::status(svc, &cfg).to_string();
+    let requested_at = Utc::now();
+    let (result, succeeded) = match action.as_str() {
         "start" => {
-            vak_ops::start(svc, &cfg);
-            serde_json::json!({ "ok": true, "action": "start" })
+            let ok = vak_ops::start(svc, &cfg);
+            (
+                if ok {
+                    serde_json::json!({ "ok": true, "action": "start" })
+                } else {
+                    serde_json::json!({
+                        "ok": false,
+                        "action": "start",
+                        "error": format!("service manager failed to start {service}"),
+                    })
+                },
+                ok,
+            )
         }
         "stop" => {
-            vak_ops::stop(svc, &cfg);
-            serde_json::json!({ "ok": true, "action": "stop" })
+            let ok = vak_ops::stop(svc, &cfg);
+            (
+                if ok {
+                    serde_json::json!({ "ok": true, "action": "stop" })
+                } else {
+                    serde_json::json!({
+                        "ok": false,
+                        "action": "stop",
+                        "error": format!("service manager failed to stop {service}"),
+                    })
+                },
+                ok,
+            )
         }
         "restart" => {
-            vak_ops::restart(svc, &cfg);
-            serde_json::json!({ "ok": true, "action": "restart" })
+            let ok = vak_ops::restart(svc, &cfg);
+            (
+                if ok {
+                    serde_json::json!({ "ok": true, "action": "restart" })
+                } else {
+                    serde_json::json!({
+                        "ok": false,
+                        "action": "restart",
+                        "error": format!("service manager failed to restart {service}"),
+                    })
+                },
+                ok,
+            )
         }
         "install" => match vak_ops::install(svc, &cfg) {
-            Ok(()) => serde_json::json!({ "ok": true, "action": "install" }),
-            Err(e) => serde_json::json!({ "ok": false, "error": e }),
+            Ok(()) => (serde_json::json!({ "ok": true, "action": "install" }), true),
+            Err(e) => (serde_json::json!({ "ok": false, "error": e }), false),
         },
         "uninstall" => match vak_ops::uninstall(svc, &cfg) {
-            Ok(()) => serde_json::json!({ "ok": true, "action": "uninstall" }),
-            Err(e) => serde_json::json!({ "ok": false, "error": e }),
+            Ok(()) => (
+                serde_json::json!({ "ok": true, "action": "uninstall" }),
+                true,
+            ),
+            Err(e) => (serde_json::json!({ "ok": false, "error": e }), false),
         },
         other => {
             return (
@@ -884,7 +1381,74 @@ async fn ops_action(
                 .into_response();
         }
     };
-    (StatusCode::OK, Json(result)).into_response()
+    let after = vak_ops::status(svc, &cfg).to_string();
+    let desired_reached = match action.as_str() {
+        "start" | "restart" | "install" => after == "running",
+        "stop" => matches!(after.as_str(), "stopped" | "not installed"),
+        "uninstall" => after == "not installed",
+        _ => false,
+    };
+    let verification_status = if !succeeded {
+        "failed"
+    } else if desired_reached {
+        "verified"
+    } else {
+        "pending"
+    };
+    let verification_detail = if !succeeded {
+        "The service manager rejected the requested operation; the post-action probe is authoritative."
+    } else if desired_reached {
+        "The post-action service-manager probe reached the requested state."
+    } else {
+        "The manager accepted the request but the desired state is not visible yet; keep the receipt and re-probe."
+    };
+    let mut receipt = operations::ActionReceipt {
+        receipt_id: format!("OP-{}", uuid::Uuid::now_v7().simple()),
+        service: service.clone(),
+        action: action.clone(),
+        requested_at,
+        completed_at: Utc::now(),
+        succeeded,
+        verification: operations::ActionVerification {
+            status: verification_status.to_string(),
+            before,
+            after,
+            detail: verification_detail.to_string(),
+        },
+        persisted: false,
+    };
+    receipt.persisted = operations::record_action(&state.core.sessions_home(), &receipt).is_ok();
+    let receipt_json = serde_json::to_value(&receipt).unwrap_or_else(|_| serde_json::json!({}));
+    let mut result = result;
+    if let Some(object) = result.as_object_mut() {
+        object.insert(
+            "receipt_id".to_string(),
+            serde_json::json!(receipt.receipt_id),
+        );
+        object.insert(
+            "verification".to_string(),
+            receipt_json["verification"].clone(),
+        );
+        object.insert(
+            "receipt_persisted".to_string(),
+            serde_json::json!(receipt.persisted),
+        );
+    }
+    if succeeded {
+        vak_core::security_events::record(
+            &state.core.sessions_home(),
+            vak_core::security_events::EventKind::ConfigChange,
+            "service_action",
+            &format!("service={service} action={action}"),
+            None,
+        );
+        state
+            .hub
+            .emit_config_changed("service_action", &format!("{service}:{action}"));
+        (StatusCode::OK, Json(result)).into_response()
+    } else {
+        (StatusCode::CONFLICT, Json(result)).into_response()
+    }
 }
 
 fn note_payload(n: &vak_core::memory::NoteBlock, scope: &str) -> serde_json::Value {
@@ -1263,6 +1827,13 @@ pub fn secured_router(core: Core) -> (Router, String) {
 /// long-lived clients can survive process restarts. Otherwise a fresh
 /// per-process token is minted as before. The variable is never logged.
 pub fn secured_router_with(core: Core, force_gateway: bool) -> (Router, String) {
+    secured_router_with_port(core, force_gateway, vak_ops::OpsConfig::detect().port)
+}
+
+/// Same secured stack with the actual listener port carried into operational
+/// probes. `serve_with` uses this so a non-default `--port` cannot make the
+/// console probe a different process.
+pub fn secured_router_with_port(core: Core, force_gateway: bool, port: u16) -> (Router, String) {
     // Tauri can use either its custom scheme or the loopback-style origin,
     // depending on the platform and WebView runtime, plus vite dev servers.
     let origins = [
@@ -1294,6 +1865,7 @@ pub fn secured_router_with(core: Core, force_gateway: bool) -> (Router, String) 
             axum::http::header::CONTENT_TYPE,
         ]);
     let mut state = AppState::new(core);
+    state.ops_port = port;
     if force_gateway {
         state.enable_gateway();
     }
@@ -1353,9 +1925,10 @@ pub async fn serve_with(
     // reach an unauthenticated agent and drive arbitrary tool execution
     // plus self-approval. Every serve() instance gets a per-process
     // bearer token; /health stays open.
-    let (app, token) = secured_router_with(core, force_gateway);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    eprintln!("Vak server listening on http://{addr}");
+    let actual_addr = listener.local_addr()?;
+    let (app, token) = secured_router_with_port(core, force_gateway, actual_addr.port());
+    eprintln!("Vak server listening on http://{actual_addr}");
     // Same source the real token-selection logic above (auth_token, in
     // AppState::new) already checks: `vak_config::get_var` also sees a
     // value that only reached the process through a loaded `.env` file
@@ -1525,11 +2098,33 @@ pub(crate) async fn require_bearer(
     }
 }
 
-async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
-    refresh_control_plane(&state);
+fn health_projection(state: &AppState) -> serde_json::Value {
+    let report = vak_core::health::collect(&state.core, None);
+    let checks: Vec<serde_json::Value> = report
+        .checks
+        .into_iter()
+        .map(|check| match check.detail {
+            Ok(detail) => {
+                serde_json::json!({ "label": check.label, "status": "pass", "detail": detail })
+            }
+            Err(detail) => {
+                serde_json::json!({ "label": check.label, "status": "fail", "detail": detail })
+            }
+        })
+        .collect();
     let route = state.core.effective_route();
-    Json(serde_json::json!({
+    let posture = if report.failures == 0 {
+        "healthy"
+    } else {
+        "degraded"
+    };
+    serde_json::json!({
+        // `status = ok` is retained for existing health clients; posture is
+        // the truthful operational signal and is what the Operations Center
+        // renders. This keeps the compatibility contract without hiding
+        // failed doctor checks.
         "status": "ok",
+        "posture": posture,
         "provider": route.provider,
         "model": route.model,
         "provider_source": route.provider_source,
@@ -1540,7 +2135,15 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
         "context_window": state.core.config().context_window,
         "cwd": state.core.cwd(),
         "warnings": state.core.config().warnings,
-    }))
+        "checks": checks,
+        "facts": report.facts,
+        "failures": report.failures,
+    })
+}
+
+async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
+    refresh_control_plane(&state);
+    Json(health_projection(&state))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2736,7 +3339,20 @@ struct DoctorQuery {
 }
 
 fn health_report_json(report: vak_core::health::HealthReport) -> serde_json::Value {
+    let ok = report.failures == 0;
+    let report_text = report
+        .checks
+        .iter()
+        .map(|check| match &check.detail {
+            Ok(detail) => format!("✓ {} — {detail}", check.label),
+            Err(detail) => format!("✗ {} — {detail}", check.label),
+        })
+        .chain(report.facts.iter().map(|fact| format!("· {fact}")))
+        .collect::<Vec<_>>()
+        .join("\n");
     serde_json::json!({
+        "ok": ok,
+        "report": report_text,
         "failures": report.failures,
         "checks": report.checks.iter().map(|c| serde_json::json!({
             "label": c.label,
@@ -3951,7 +4567,8 @@ async fn put_telegram_token(
             // reads the fresh .env on the way back up. If the bridge isn't
             // installed as a service yet, this is a harmless no-op — the
             // caller still gets `restarted: false` to reflect that.
-            let cfg = vak_ops::OpsConfig::detect();
+            let mut cfg = vak_ops::OpsConfig::detect();
+            cfg.port = state.ops_port;
             let restarted = vak_ops::restart(vak_ops::Service::Telegram, &cfg);
             Json(serde_json::json!({
                 "env_var": env_var,
@@ -3986,7 +4603,8 @@ async fn delete_telegram_token(State(state): State<AppState>) -> axum::response:
                 .emit_config_changed("telegram_token_removed", "telegram");
             // Same best-effort kick as on save, so a removed token doesn't
             // keep serving off a stale in-memory credential.
-            let cfg = vak_ops::OpsConfig::detect();
+            let mut cfg = vak_ops::OpsConfig::detect();
+            cfg.port = state.ops_port;
             let restarted = vak_ops::restart(vak_ops::Service::Telegram, &cfg);
             Json(serde_json::json!({
                 "env_var": removed.env_var,
@@ -4033,8 +4651,10 @@ async fn put_bot_token(
                 None,
             );
             state.hub.emit_config_changed("bot_token_set", &surface);
-            let restarted = surface == "telegram"
-                && vak_ops::restart(vak_ops::Service::Telegram, &vak_ops::OpsConfig::detect());
+            let mut cfg = vak_ops::OpsConfig::detect();
+            cfg.port = state.ops_port;
+            let restarted =
+                surface == "telegram" && vak_ops::restart(vak_ops::Service::Telegram, &cfg);
             Json(serde_json::json!({
                 "surface": surface,
                 "env_var": env_var,
@@ -4072,8 +4692,10 @@ async fn delete_bot_token(
                 None,
             );
             state.hub.emit_config_changed("bot_token_removed", &surface);
-            let restarted = surface == "telegram"
-                && vak_ops::restart(vak_ops::Service::Telegram, &vak_ops::OpsConfig::detect());
+            let mut cfg = vak_ops::OpsConfig::detect();
+            cfg.port = state.ops_port;
+            let restarted =
+                surface == "telegram" && vak_ops::restart(vak_ops::Service::Telegram, &cfg);
             Json(serde_json::json!({
                 "surface": surface,
                 "env_var": removed.env_var,
@@ -4103,11 +4725,11 @@ async fn delete_bot_token(
 /// install manifest: this handler runs inside the gateway process itself
 /// (`vak serve --gateway --trust`), so the currently-executing binary path
 /// *is* the correct one to launch bridge processes from.
-fn sync_bot_units(core: &vak_core::Core) {
+fn sync_bot_units(core: &vak_core::Core, port: u16) {
     let Ok(bin_path) = std::env::current_exe() else {
         return;
     };
-    let gateway_url = vak_ops::OpsConfig::detect().base_url();
+    let gateway_url = vak_ops::OpsConfig { port }.base_url();
     let _ = vak_ops::sync_bots(
         &bin_path,
         &core.sessions_home(),
@@ -4175,7 +4797,7 @@ async fn create_bot(
         ..Default::default()
     };
     state.gateway.bot_upsert(&state.core, bot.clone());
-    sync_bot_units(&state.core);
+    sync_bot_units(&state.core, state.ops_port);
     state.hub.emit_config_changed("bot_created", id);
     Json(serde_json::json!({ "bot": bot })).into_response()
 }
@@ -4265,7 +4887,7 @@ async fn delete_bot(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> StatusCode {
     if state.gateway.bot_remove(&state.core, &id) {
-        sync_bot_units(&state.core);
+        sync_bot_units(&state.core, state.ops_port);
         state.hub.emit_config_changed("bot_deleted", &id);
         StatusCode::OK
     } else {
@@ -4299,7 +4921,7 @@ async fn put_bot_id_token(
             // re-reads its env var (see `restart_bot_unit`'s doc comment).
             // A first-time token set has no unit yet — `sync_bot_units`
             // creates and starts it, and `restart_bot_unit` then no-ops.
-            sync_bot_units(&state.core);
+            sync_bot_units(&state.core, state.ops_port);
             let restarted = vak_ops::restart_bot_unit(&bot.surface, &id, &vak_ops::SystemRunner);
             Json(serde_json::json!({
                 "id": id,

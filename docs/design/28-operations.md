@@ -40,6 +40,10 @@ launches all reveal and focus that same window.
 
 - A left click and the `Open Vak` menu item reveal and focus the main
   window; `Quit Vak` ends the desktop process explicitly.
+- `Open Admin Console` opens the distributed admin shell at its overview;
+  `Open Operations Center` opens the same authenticated shell directly at
+  `#/operations`. Both resolve the configured gateway port and reuse the
+  pinned token when one exists.
 - Closing the main window hides it, preserving the local embedded backend and
   the tray until the user explicitly quits. Durable gateway and Telegram work
   remains independently supervised by the platform service manager.
@@ -149,10 +153,81 @@ recipient process.
 
 | Surface | Access |
 |---|---|
-| Tray | native menu |
+| Tray | native menu — Open Admin Console or Open Operations Center |
 | TUI | `/services [start\|stop\|restart] [gateway\|telegram]` |
 | Desktop | Settings ▸ Services (5 s poll) and Learning pages |
-| HTTP | `GET /ops/status`, `POST /ops/{gateway\|telegram}/{action}` |
+| HTTP | `GET /ops/status`, `GET /ops/diagnostics`, `GET /ops/center`, `GET /ops/incidents`, `GET /ops/actions`, `GET /ops/outbox`, `POST /ops/{gateway\|telegram}/{action}`, `POST /ops/outbox/{job_id}/replay` |
+
+### Operations Center projection
+
+`GET /ops/center` is the read-only control-plane snapshot used by the admin
+console. It combines the doctor report (including a separate `posture` signal
+so the legacy `/health` `status = ok` contract remains intact), platform
+service state, gateway bindings and approval count, warm CorePool entries,
+live session handles, scheduled tasks and next-fire markers, security events,
+and the durable delivery outbox. Incidents are derived only from those
+sources: failed checks, blocked approvals, service drift, or pending/dead
+delivery jobs. An unreadable outbox is itself a critical incident rather than
+an empty queue. The incident projection is reconciled into the append-only
+`<sessions_home>/operations/incidents.jsonl` ledger: repeated observations
+are grouped by fingerprint, disappearance records a resolution, and a later
+reappearance reopens the same causal record. `GET /ops/incidents` exposes the
+folded history for audit consumers.
+
+`GET /ops/outbox` exposes metadata for all persisted jobs. The replay endpoint
+re-enters the same serialized renderer and adapter path as the background
+replay worker; delivered jobs are rejected and a failed replay remains
+durable with its incremented attempt/error state. Service actions return a
+conflict on a manager failure and append an audit event; the HTTP probe never
+starts a competing supervisor.
+
+Every mutating operations endpoint returns an operation receipt with a
+stable id, before/after manager or outbox state, and an explicit
+`verified`/`pending`/`failed` verification result. Receipts are also appended
+to `<sessions_home>/operations/actions.jsonl` and surfaced in the center;
+they remain useful when a manager accepts a request but takes time to reach
+the target state.
+
+### Operations Center navigation contract
+
+The embedded admin shell exposes one stable control-plane route:
+`/admin#/operations`. It is the Operations area within the six-area admin
+shell, with the following operator views rather than a separate monitoring
+product:
+
+| Area | Route | Evidence it owns |
+|---|---|---|
+| Posture | `#/operations` | server health, topology, uptime, and first-hop posture |
+| Work | `#/operations/work` | live runs, approval gates, and scheduled work |
+| Runtime | `#/operations/runtime` | service-manager state, CorePool occupancy, action receipts |
+| Channels | `#/operations/channels` | bindings, route provenance, durable delivery and replay |
+| Automations | `#/operations/automations` | task cadence, workspace, model pin, and last run |
+| Providers / spend | `#/operations/providers` | effective route, provenance, sandbox, and security evidence |
+| Incidents | `#/operations/incidents` | correlated open/resolved history and Doctor checks |
+
+The workspace and time-window selectors are URL parameters (`workspace` and
+`time=live|1h|24h|7d|custom`). Internal links preserve both parameters, so a
+bookmark always reopens the same operational scope. Detail routes descend
+from the same namespace — for example
+`#/operations/work/runs/<session>`,
+`#/operations/channels/<target>`,
+`#/operations/channels/delivery/<job>`, and
+`#/operations/incidents/<incident>` — and each ends at raw ledger, receipt,
+outbox, incident, or manager evidence. A missing record is rendered as an
+explicit historical/unavailable state; the UI never invents a green value.
+
+Service-manager probes that use a blocking client execute on a blocking worker
+before the response is assembled. This keeps `/ops/status`, `/ops/diagnostics`,
+and `/ops/center` safe under Tokio and prevents shutdown-time runtime panics.
+
+The listener's actual port is carried into the server state and all service
+health probes. Generated gateway and Telegram units resolve their port at sync
+time, so a non-default `VAK_PORT`/listener cannot silently leave the console or
+bridge pointed at `8901`.
+
+The desktop and menu-bar tray use that same recorded listener port and pinned
+token when opening `/admin` or `/admin#/operations`; the native launch path is
+therefore bound to the exact server instance the operator is already watching.
 
 ## Test isolation convention
 

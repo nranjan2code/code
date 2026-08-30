@@ -20,6 +20,7 @@ use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 const TRAY_ID: &str = "vak";
 const TRAY_OPEN_ID: &str = "desktop.open";
 const TRAY_ADMIN_ID: &str = "desktop.admin";
+const TRAY_OPERATIONS_ID: &str = "desktop.operations";
 const TRAY_WATCHDOG_ID: &str = "desktop.watchdog";
 const TRAY_QUIT_ID: &str = "desktop.quit";
 const GATEWAY: usize = 0;
@@ -175,6 +176,13 @@ fn build_tray_menu(
 ) -> tauri::Result<Menu<tauri::Wry>> {
     let open = MenuItem::with_id(app, TRAY_OPEN_ID, "Open Vak", true, None::<&str>)?;
     let admin = MenuItem::with_id(app, TRAY_ADMIN_ID, "Open Admin Console", true, None::<&str>)?;
+    let operations = MenuItem::with_id(
+        app,
+        TRAY_OPERATIONS_ID,
+        "Open Operations Center",
+        true,
+        None::<&str>,
+    )?;
     let separator = PredefinedMenuItem::separator(app)?;
     let gateway = service_menu(app, GATEWAY, states[GATEWAY])?;
     let separator_gateway = PredefinedMenuItem::separator(app)?;
@@ -190,7 +198,8 @@ fn build_tray_menu(
     )?;
     let separator_watchdog = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, TRAY_QUIT_ID, "Quit Vak", true, None::<&str>)?;
-    let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&open, &admin, &separator];
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
+        vec![&open, &admin, &operations, &separator];
     items.extend(
         gateway
             .iter()
@@ -268,19 +277,30 @@ fn pinned_gateway_token() -> Option<String> {
         })
 }
 
-fn open_admin_console() {
+fn open_admin_path(route: &str) {
     let config = vak_ops::OpsConfig::detect();
     if vak_ops::status(vak_ops::Service::Gateway, &config) != vak_ops::State::Running {
         notify("Vak", "Start the gateway service first.");
         return;
     }
     let url = match pinned_gateway_token() {
-        Some(token) => format!("http://127.0.0.1:{}/admin?token={token}", config.port),
-        None => format!("http://127.0.0.1:{}/admin", config.port),
+        Some(token) => format!(
+            "http://127.0.0.1:{}/admin?token={token}{route}",
+            config.port
+        ),
+        None => format!("http://127.0.0.1:{}/admin{route}", config.port),
     };
     if let Err(error) = std::process::Command::new("open").arg(url).spawn() {
         notify("Vak", &format!("Could not open the admin console: {error}"));
     }
+}
+
+fn open_admin_console() {
+    open_admin_path("#/overview");
+}
+
+fn open_operations_center() {
+    open_admin_path("#/operations");
 }
 
 fn run_service_action(app: &AppHandle, service: vak_ops::Service, action: &str) {
@@ -309,6 +329,7 @@ fn handle_tray_menu(app: &AppHandle, id: &str) {
     match id {
         TRAY_OPEN_ID => show_main_window(app),
         TRAY_ADMIN_ID => open_admin_console(),
+        TRAY_OPERATIONS_ID => open_operations_center(),
         TRAY_WATCHDOG_ID => {
             let tray = app.state::<TrayState>();
             let new_value = !tray.watchdog.load(Ordering::SeqCst);
@@ -720,6 +741,10 @@ fn main() {
     if let Err(e) = vak_config::paths::migrate_legacy_home() {
         eprintln!("[warn] home migration skipped: {e}");
     }
+    // The tray is installed before the async project/backend bootstrap. Load
+    // the user environment synchronously so its service status and admin
+    // links use a configured VAK_PORT from the first paint onward.
+    vak_config::load_env_file(&vak_home().join(".env"));
     let internal = std::env::args_os().nth(1);
     #[cfg(target_os = "linux")]
     {

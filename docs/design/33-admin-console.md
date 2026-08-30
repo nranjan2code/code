@@ -5,7 +5,7 @@ secured server) is the canonical management surface for vak:
 observation, operation, and interaction against the same audited core the
 TUI and desktop use.
 
-Status: **shipped** (Phases 1–3). All endpoints live behind the standard
+Status: **shipped**. All endpoints live behind the standard
 auth stack; nothing here bypasses permission checks or brokered tools.
 
 ## Goals
@@ -14,10 +14,19 @@ auth stack; nothing here bypasses permission checks or brokered tools.
   (`include_dir`) — no separate web tier, no node at runtime.
 - **Canonical client**: run prompts, steer active runs, fan out best-of-N,
   answer approvals, switch modes — from any browser on the LAN.
-- **Real-time by default**: a global event hub feeds SSE; every view
-  reflects live state without polling.
+- **Real-time by default**: a global event hub feeds SSE for event-driven
+  views; control-plane snapshots use a bounded refresh interval because
+  service-manager probes and durable ledgers are read as a coherent sample.
+- **Operations first**: a single evidence-backed control plane makes server,
+  CorePool, channels, runs, approvals, services, delivery and doctor state
+  navigable from posture → subsystem → resource → incident.
 - **Rebuildable intelligence**: SQLite FTS5 index over JSONL ledgers.
   JSONL remains the source of truth; dropping `store.db` is always safe.
+
+The Operations Center is part of this same embedded shell. It is a
+bookmarkable, evidence-first control plane over the server, CorePool, gateway,
+channels, work, delivery, automations, providers, incidents, and Doctor
+checks; it is not a second source of operational truth.
 
 ## Architecture
 
@@ -44,6 +53,31 @@ errors, heartbeat.
 The SSE endpoint `GET /admin/api/events` streams them all. Browsers
 subscribe with `EventSource`; auth rides the session cookie because
 `EventSource` cannot send headers.
+
+### Operations URL contract
+
+The Operations Center uses hash routes so a browser refresh never loses the
+operator's place. Its context bar writes the selected workspace and time
+window into the query string and every Operations link carries those values:
+
+| Route | Purpose |
+|---|---|
+| `#/operations` | Posture and topology overview |
+| `#/operations/work` | Sessions, active runs, approvals, scheduled work |
+| `#/operations/runtime` | Service manager, CorePool, action receipts |
+| `#/operations/channels` | Gateway bindings and delivery outbox |
+| `#/operations/automations` | Durable scheduled task definitions and state |
+| `#/operations/providers` | Effective provider/model route and provenance |
+| `#/operations/incidents` | Durable correlated incident queue and history |
+| `#/operations/work/runs/:id` | Run ledger and provider receipt trail |
+| `#/operations/channels/:target` | Binding identity, route, and dependencies |
+| `#/operations/channels/delivery/:job` | Outbox record, replay, and verification |
+| `#/operations/incidents/:id` | Incident timeline, correlation, and Doctor |
+
+The browser can therefore move from posture → subsystem → resource → incident
+→ raw evidence without losing scope. Detail screens use actual server
+responses; historical or unavailable records are labelled rather than filled
+with placeholders.
 
 ### Store (FTS5 index)
 
@@ -88,6 +122,11 @@ is bounded by `[gateway.rate_limit]`.
 | `/bestofn` | GET | Active candidate runs |
 | `/events` | GET | SSE stream of SystemEvents |
 | `/security` | GET | Security-events audit log, kind-filterable |
+| `/ops/center` | GET | Unified operational posture and evidence snapshot |
+| `/ops/incidents` | GET | Folded durable incident history |
+| `/ops/actions` | GET | Operation receipts and post-action verification |
+| `/ops/outbox` | GET | Durable delivery records and retry/dead-letter state |
+| `/ops/outbox/:job_id/replay` | POST | Replay one non-delivered outbox job through the canonical delivery path |
 | `/store/rebuild` | POST | Full index rebuild (mutation ⇒ POST) |
 | `/store/import/:id` | POST | Import one session's JSONL |
 | `/config` | GET | Effective config snapshot, including provider/model provenance |
@@ -128,6 +167,22 @@ and workspace-scope enforcement as desktop and gateway clients.
 
 - **Overview** — stat cards, system health, pending-approval card with
   Approve/Deny (live via SSE), activity feed.
+- **Operations** — first-class control plane with Posture, Live work,
+  Runtime & pools, Channels & delivery, Automations, Providers, and Incidents
+  routes. The
+  Posture view renders a selectable topology (server → gateway/CorePool →
+  work/delivery), live run and service cards, and an inspector. Deeper routes
+  expose approval gates, manager-backed service actions, pool idle state,
+  route provenance, durable outbox replay, security evidence, and doctor
+  checks. Empty or unavailable data is labelled explicitly; the page does not
+  infer health from a missing record.
+  The context bar keeps workspace and time-window scope in the URL, alongside
+  connection, approval, incident, search, and Doctor affordances. Internal
+  drill-down links carry that context into run, binding, delivery, and
+  incident detail pages. Each detail page links the next evidence layer and
+  stops at the raw transcript, receipt, manager probe, or outbox record rather
+  than inventing a summary. Resolved incidents remain visible as history;
+  operation mutations show their durable receipt and verification state.
 - **Sessions** — filterable catalog; "+ New session"; per-row Archive/
   Unarchive, Delete (archived only, soft — the ledger file is kept), and
   Export `.md`, plus a bulk "Delete all archived". A **workspace** column
@@ -154,6 +209,14 @@ and workspace-scope enforcement as desktop and gateway clients.
 - **Memory** — workspace and global profile notes with provenance, inline
   amend/explicit forget, effective search/write/reflection status, and a
   confirmed cleanup action for abandoned lock/temp artifacts.
+
+The Operations Center's mutation contract is deliberately auditable. Service
+actions and delivery replays return a receipt id plus before/after verification
+and append the receipt to `operations/actions.jsonl`. Current probe candidates
+are folded into `operations/incidents.jsonl`, where repeated observations are
+grouped by fingerprint, disappearance records resolution, and reappearance
+reopens the same incident. The Admin UI displays both ledgers and links them
+back to the affected run, binding, or outbox record.
 
 ### Gateway information architecture
 

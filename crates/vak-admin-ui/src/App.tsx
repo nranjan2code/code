@@ -1,5 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { api, AuthRequired } from "./api";
+import { OperationsCenter } from "./OperationsCenter";
 import { clock, shortId, timeAgo } from "./time";
 import {
   AccessPicker, BUILTIN_TOOLS, MATCHER_TOOLS, MatcherBuilder, ScheduleBuilder,
@@ -58,6 +59,7 @@ const Icon = (props: { d: string; size?: number }) => (
 
 const ICONS = {
   overview: "M3 3v18h18M7 15l4-6 4 4 5-8",
+  operations: "M4 6h16M4 12h16M4 18h16 M8 6v12 M16 6v12",
   sessions: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87",
   integrations: "M16.5 9.4 7.55 4.24a1.78 1.78 0 0 0-2.5 1.55v12.42a1.78 1.78 0 0 0 2.5 1.55L16.5 14.6a1.78 1.78 0 0 0 0-3.2z M21 12h-3 M3 12h1",
   gateway: "M4 4h16v12H4z M8 20h8 M12 16v4 M8 8h.01 M12 8h4 M8 12h8",
@@ -511,7 +513,7 @@ function Overview() {
         <section class="panel">
           <div class="panel-title-row"><div><h2>What is running</h2><p>Live status of each part of the system.</p></div><button class="ghost small" onClick={() => navigate("#/gateway")}>Open gateway</button></div>
           <div class="posture-list">
-            <div><span class={`status-mark ${health()?.status === "ok" ? "good" : "bad"}`} /> <span>Vak itself</span><strong>{health()?.status ?? "Loading…"}</strong></div>
+            <div><span class={`status-mark ${(health()?.posture ?? (health()?.status === "ok" ? "healthy" : "degraded")) === "healthy" ? "good" : "bad"}`} /> <span>Vak itself</span><strong>{health()?.posture ?? health()?.status ?? "Loading…"}</strong></div>
             <div><span class={`status-mark ${ops()?.gateway_healthy ? "good" : "bad"}`} /> <span>Chat gateway</span><strong>{ops()?.gateway?.state ?? "Unknown"}</strong></div>
             <div><span class={`status-mark ${gateway()?.enabled ? "good" : "neutral"}`} /> <span>Connected chats</span><strong>{gateway()?.bindings.length ?? "…"}</strong></div>
             <div><span class="status-mark neutral" /> <span>What it may do</span><strong>{config()?.permission_mode ?? health()?.permission_mode ? modeLabel(config()?.permission_mode ?? health()?.permission_mode) : "…"}</strong></div>
@@ -5982,6 +5984,7 @@ interface NavItem {
   hash: string;
   label: string;
   icon: string;
+  group: "Home" | "Work" | "Operations" | "Governance" | "Knowledge" | "Settings";
   badge?: () => string;
   /// Sub-destinations, rendered in the sidebar while the section is open.
   children?: readonly { readonly hash: string; readonly label: string }[];
@@ -5991,14 +5994,45 @@ interface NavItem {
   activeChild?: () => string;
 }
 
+const OPERATIONS_TABS = [
+  { hash: "#/operations", label: "Posture" },
+  { hash: "#/operations/work", label: "Live work" },
+  { hash: "#/operations/runtime", label: "Runtime & pools" },
+  { hash: "#/operations/channels", label: "Channels & delivery" },
+  { hash: "#/operations/automations", label: "Automations" },
+  { hash: "#/operations/providers", label: "Providers" },
+  { hash: "#/operations/incidents", label: "Incidents" },
+] as const;
+
+const operationsTab = () => {
+  const current = route().split("?", 1)[0];
+  return OPERATIONS_TABS.find((tab) => current === tab.hash || current.startsWith(`${tab.hash}/`))?.hash ?? "#/operations";
+};
+
+function navHref(hash: string): string {
+  if (!hash.startsWith("#/operations")) return hash;
+  const queryIndex = route().indexOf("?");
+  return queryIndex >= 0 ? `${hash}${route().slice(queryIndex)}` : hash;
+}
+
 const NAV: NavItem[] = [
-  { hash: "#/overview", label: "Overview", icon: ICONS.overview },
-  { hash: "#/sessions", label: "Sessions", icon: ICONS.sessions },
+  { group: "Home", hash: "#/overview", label: "Home", icon: ICONS.overview },
+  { group: "Work", hash: "#/sessions", label: "Sessions", icon: ICONS.sessions },
+  { group: "Work", hash: "#/inbox", label: "Approvals", icon: ICONS.inbox, badge: () => unread().toString() || "" },
+  {
+    group: "Operations",
+    hash: "#/operations",
+    label: "Operations",
+    icon: ICONS.operations,
+    children: OPERATIONS_TABS,
+    activeChild: operationsTab,
+  },
   // Extensions are four distinct governance questions — what external
   // processes can be started, what instructions are loaded, what intercepts
   // a run, what runs unattended — and they read as four screens for the
   // same reason the Gateway does.
   {
+    group: "Governance",
     hash: "#/integrations",
     label: "Extensions",
     icon: ICONS.integrations,
@@ -6011,19 +6045,19 @@ const NAV: NavItem[] = [
   // the destination is nameable from the nav rather than found by
   // scrolling one long view.
   {
+    group: "Governance",
     hash: "#/gateway",
-    label: "Gateway",
+    label: "Channels",
     icon: ICONS.gateway,
     children: GATEWAY_TABS,
     activeChild: gatewayTab,
   },
-  { hash: "#/memory", label: "Memory", icon: ICONS.memory },
-  { hash: "#/feeds", label: "Feeds", icon: ICONS.feeds },
-  { hash: "#/search", label: "Search", icon: ICONS.search },
-  { hash: "#/inbox", label: "Inbox", icon: ICONS.inbox, badge: () => unread().toString() || "" },
-  { hash: "#/finops", label: "FinOps", icon: ICONS.finops },
-  { hash: "#/security", label: "Security", icon: ICONS.security },
-  { hash: "#/settings", label: "Settings", icon: ICONS.settings },
+  { group: "Governance", hash: "#/security", label: "Security", icon: ICONS.security },
+  { group: "Knowledge", hash: "#/memory", label: "Memory", icon: ICONS.memory },
+  { group: "Knowledge", hash: "#/feeds", label: "Feeds", icon: ICONS.feeds },
+  { group: "Knowledge", hash: "#/search", label: "Search", icon: ICONS.search },
+  { group: "Settings", hash: "#/finops", label: "FinOps", icon: ICONS.finops },
+  { group: "Settings", hash: "#/settings", label: "Settings", icon: ICONS.settings },
 ];
 
 /// Source types arrive as the registry's own ids. Print the name people use.
@@ -6680,6 +6714,17 @@ export default function App() {
     return NAV.find((n) => r.startsWith(n.hash))?.hash ?? "#/overview";
   };
 
+  const operationsSection = () => {
+    const r = route().split("?", 1)[0];
+    if (r === "#/operations/work") return "work" as const;
+    if (r === "#/operations/runtime") return "runtime" as const;
+    if (r === "#/operations/channels") return "channels" as const;
+    if (r === "#/operations/automations") return "automations" as const;
+    if (r === "#/operations/providers") return "providers" as const;
+    if (r === "#/operations/incidents") return "incidents" as const;
+    return "overview" as const;
+  };
+
   return (
     <Switch>
       <Match when={authed() === null}>
@@ -6694,9 +6739,12 @@ export default function App() {
             <div class="brand"><span class="brand-mark"><img src="/admin/vak-icon.png" alt="" /></span> vak</div>
             <nav>
               <For each={NAV}>
-                {(item) => (
+                {(item, index) => (
                   <>
-                    <a href={item.hash} classList={{ active: currentRoute() === item.hash }}>
+                    <Show when={index() === 0 || NAV[index() - 1].group !== item.group}>
+                      <div class="nav-group-label">{item.group}</div>
+                    </Show>
+                    <a href={navHref(item.hash)} classList={{ active: currentRoute() === item.hash }}>
                       <Icon d={item.icon} />
                       {item.label}
                       <Show when={"badge" in item && item.badge?.() && Number(item.badge!()) > 0}>
@@ -6709,7 +6757,7 @@ export default function App() {
                           {(child) => (
                             <a
                               class="sub"
-                              href={child.hash}
+                              href={navHref(child.hash)}
                               classList={{ active: item.activeChild?.() === child.hash }}
                             >
                               {child.label}
@@ -6731,6 +6779,7 @@ export default function App() {
             <Switch>
               <Match when={currentRoute() === "#/overview"}><Overview /></Match>
               <Match when={currentRoute() === "#/sessions"}><Sessions /></Match>
+              <Match when={currentRoute() === "#/operations"}><OperationsCenter section={operationsSection()} /></Match>
               <Match when={currentRoute() === "transcript"}>
                 <Transcript sessionId={route().slice("#/sessions/".length)} />
               </Match>

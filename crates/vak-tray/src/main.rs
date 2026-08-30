@@ -230,7 +230,7 @@ impl Ui {
         // Commands are encoded as (slot << 8) | action; see build_menu.
         let slot = (id >> 8) as usize;
         let action = id & 0xff;
-        let cfg = vak_ops::OpsConfig::detect();
+        let cfg = ops_config();
         match action {
             ACT_START => {
                 let _ = vak_ops::start(service(slot), &cfg);
@@ -258,6 +258,7 @@ impl Ui {
             ACT_QUIT => std::process::exit(0),
             ACT_OPEN_DESKTOP => open_desktop(),
             ACT_OPEN_ADMIN => open_admin_console(),
+            ACT_OPEN_OPERATIONS => open_operations_center(),
             _ => {}
         }
     }
@@ -273,6 +274,7 @@ const ACT_WATCHDOG_TOGGLE: u32 = 7;
 const ACT_QUIT: u32 = 8;
 const ACT_OPEN_DESKTOP: u32 = 9;
 const ACT_OPEN_ADMIN: u32 = 10;
+const ACT_OPEN_OPERATIONS: u32 = 11;
 
 fn persist_watchdog(on: bool) {
     // home() is already the canonical data home; a further ".vak"
@@ -320,12 +322,14 @@ fn desktop_binary() -> Option<std::path::PathBuf> {
 /// existing window instead of duplicating it, so this never needs to
 /// track that state here. Spawned detached — the tray outlives the
 /// window and must not wait on it or inherit its lifetime.
-/// Loopback port the managed gateway always binds -- the CLI's compiled-in
-/// default (`serve --gateway` with no `--port`), and what the managed
-/// launchd unit's `ProgramArguments` in vak-ops::services::SERVICES
-/// always execs. There is no per-install override for the managed
-/// service today, so this is safe to hardcode rather than plumb through.
-const GATEWAY_PORT: u16 = 8901;
+/// Resolve the managed gateway port from the same user-level environment as
+/// the server. The legacy tray is launched directly by the session manager,
+/// so it does not pass through the CLI's dotenv-loading path first.
+fn ops_config() -> vak_ops::OpsConfig {
+    let env_path = vak_config::paths::data_home().join(".env");
+    vak_config::replace_env_files(&[env_path.as_path()]);
+    vak_ops::OpsConfig::detect()
+}
 
 /// The token pinned into the canonical `.env` at `self install`
 /// (`ensure_gateway_token`, crates/vak/src/install/mod.rs). `None`
@@ -358,14 +362,14 @@ fn pinned_gateway_token() -> Option<String> {
 /// `?token=` uses; the value is the same bearer token already used for
 /// every other authenticated request, not a weaker credential minted
 /// for this purpose.
-fn open_admin_console() {
-    let cfg = vak_ops::OpsConfig::detect();
+fn open_admin_path(route: &str) {
+    let cfg = ops_config();
     if vak_ops::status(vak_ops::Service::Gateway, &cfg) != vak_ops::State::Running {
         notify("vak", "start the gateway service first (Gateway → Start)");
         return;
     }
     let url = match pinned_gateway_token() {
-        Some(token) => format!("http://127.0.0.1:{GATEWAY_PORT}/admin?token={token}"),
+        Some(token) => format!("http://127.0.0.1:{}/admin?token={token}{route}", cfg.port),
         None => {
             // Older install: no pinned token to build a one-click link
             // with. The console still works -- open it to the manual
@@ -374,12 +378,20 @@ fn open_admin_console() {
                 "vak",
                 "no pinned token found — reinstall to enable one-click login; opening manual login",
             );
-            format!("http://127.0.0.1:{GATEWAY_PORT}/admin")
+            format!("http://127.0.0.1:{}/admin{route}", cfg.port)
         }
     };
     if let Err(e) = std::process::Command::new("open").arg(url).spawn() {
         notify("vak", &format!("could not open admin console: {e}"));
     }
+}
+
+fn open_admin_console() {
+    open_admin_path("#/overview");
+}
+
+fn open_operations_center() {
+    open_admin_path("#/operations");
 }
 
 fn open_desktop() {
@@ -495,7 +507,7 @@ fn main() {
         .build()
         .expect("event loop");
 
-    let cfg = vak_ops::OpsConfig::detect();
+    let cfg = ops_config();
     let proxy = event_loop.create_proxy();
 
     // Watchdog + poller thread: computes truth every 3 s, pushes a refresh
@@ -578,7 +590,7 @@ fn main() {
 // ---- menu construction ------------------------------------------------------
 
 fn states_now() -> [vak_ops::State; 2] {
-    let cfg = vak_ops::OpsConfig::detect();
+    let cfg = ops_config();
     [
         vak_ops::status(vak_ops::Service::Gateway, &cfg),
         vak_ops::status(vak_ops::Service::Telegram, &cfg),
@@ -599,12 +611,19 @@ fn status_tooltip(states: &[vak_ops::State; 2]) -> String {
 
 fn build_menu(states: &[vak_ops::State; 2], watchdog_on: bool) -> Menu {
     let menu = Menu::new();
-    // Top of the menu, always present: the two actions a user is
+    // Top of the menu, always present: the three actions a user is
     // actually looking for. Everything below is service plumbing.
     let open = MenuItem::with_id(ACT_OPEN_DESKTOP.to_string(), "Open Vak", true, None);
     let _ = menu.append(&open);
     let admin = MenuItem::with_id(ACT_OPEN_ADMIN.to_string(), "Open Admin Console", true, None);
     let _ = menu.append(&admin);
+    let operations = MenuItem::with_id(
+        ACT_OPEN_OPERATIONS.to_string(),
+        "Open Operations Center",
+        true,
+        None,
+    );
+    let _ = menu.append(&operations);
     let _ = menu.append(&PredefinedMenuItem::separator());
     for (i, st) in states.iter().enumerate() {
         let dot = match st {
