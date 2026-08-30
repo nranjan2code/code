@@ -1314,6 +1314,12 @@ pub fn secured_router_with(core: Core, force_gateway: bool) -> (Router, String) 
     // Local routines: fires due scheduled tasks while this server lives.
     start_scheduler(&state);
     delivery::start_replay(&state.core);
+    // Start MCP tool discovery now, not at the first session's first turn:
+    // a process sits idle through real human seconds before any message
+    // arrives, so this spends that idle time on the same background
+    // warm-up `system_prompt()` would otherwise trigger far too late to
+    // matter for a single-turn task (see `Core::warm_mcp`).
+    state.core.warm_mcp();
     // Background index sync: keeps the admin console populated from the
     // very first boot. Idempotent; never blocks request handling.
     if let Some(store) = state.store.clone() {

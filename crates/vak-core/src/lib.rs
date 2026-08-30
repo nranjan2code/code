@@ -648,6 +648,27 @@ impl Core {
         }
     }
 
+    /// Kick the MCP tool-inventory warm-up as early as possible: right
+    /// after boot, not at the first session's first turn.
+    ///
+    /// `system_prompt()` also triggers this lazily, but a session's first
+    /// turn gives the background discovery pass only the gap between
+    /// session creation and that turn's `AgentConfig` build — often under
+    /// a second, nowhere near enough for a cold `npx <mcp-server>` spawn.
+    /// A process boots once and then sits idle through real human seconds
+    /// (reading the sidebar, picking "New task", typing) before the first
+    /// message ever arrives; starting the same background pass here
+    /// instead spends that idle time productively, so even a single-turn
+    /// task's very first `system_prompt()` call has a real chance of
+    /// finding the rich catalog already in `cached_mcp_inventory()`
+    /// instead of falling back to the name-only line.
+    ///
+    /// Fire-and-forget, like the warm-up it triggers: never blocks the
+    /// caller, and calling it when nothing is configured is a no-op.
+    pub fn warm_mcp(&self) {
+        self.mcp_manager();
+    }
+
     pub fn effective_mcp(&self) -> vak_config::McpConfig {
         let mut config = self
             .inner
