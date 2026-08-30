@@ -6071,12 +6071,20 @@ fn tasks_file(core: &Core) -> PathBuf {
 /// anything called `update_tasks`, since the removed id would still be on
 /// disk and get merged straight back into memory.
 fn load_tasks(state: &AppState) {
+    // The disk read itself must happen while holding the lock, not before
+    // it: reading first and only acquiring the lock to apply the snapshot
+    // leaves a gap where a concurrent `update_tasks` (create/update/delete)
+    // can mutate memory *and* persist in between the read and the replace.
+    // This function would then overwrite that fresh insert with the stale
+    // pre-mutation snapshot it already had in hand, silently losing it —
+    // exactly the kind of loss the merge-vs-replace note below was written
+    // to prevent, just moved one step earlier.
+    let mut map = state
+        .tasks
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     match vak_core::tasks::TaskStore::load(&state.core.sessions_home()) {
         Ok(store) => {
-            let mut map = state
-                .tasks
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
             *map = store.all().into_iter().map(|t| (t.id.clone(), t)).collect();
         }
         // A corrupt tasks file is surfaced loudly, never silently dropped:
