@@ -269,7 +269,11 @@ def _schema_exists() -> bool:
     except duckdb.Error:
         return False
     try:
-        con.execute("SELECT 1 FROM feeds LIMIT 0")
+        # Checks removed_at specifically, not just that `feeds` exists --
+        # that column was added after the table itself, and a DB created
+        # before that migration must still take the init_db() write path
+        # once so ALTER TABLE ... ADD COLUMN IF NOT EXISTS actually runs.
+        con.execute("SELECT removed_at FROM feeds LIMIT 0")
         return True
     except duckdb.Error:
         return False
@@ -430,9 +434,88 @@ def get_feed_id_by_name(name: str) -> int | None:
 def get_all_feeds() -> list[dict]:
     con = get_db(read_only=True)
     try:
-        rows = con.execute("SELECT id, name, source_type, url, trust, enabled, check_interval FROM feeds").fetchall()
+        rows = con.execute(
+            "SELECT id, name, source_type, url, trust, enabled, check_interval "
+            "FROM feeds WHERE removed_at IS NULL"
+        ).fetchall()
         return [{"id": r[0], "name": r[1], "source_type": r[2], "url": r[3],
                  "trust": r[4], "enabled": r[5], "check_interval": r[6]} for r in rows]
+    finally:
+        con.close()
+
+
+# ─── Source CRUD (admin console) ───
+#
+# The admin UI's "Your sources" list reads directly from this `feeds`
+# table (see feed_mcp.py's handle_feed_sources) -- it does not read
+# feeds.toml. A source that was never round-tripped through
+# add_feed_source's TOML writer (e.g. seeded by an early/manual ingest,
+# as happened in production) has no feeds.toml entry at all, so the old
+# TOML-only update/delete handlers in crates/vak-server/src/feeds.rs
+# 404'd on every edit or remove of it -- the UI showed the source, but
+# every mutation silently failed. These operate on the actual displayed
+# row instead. `feeds` rows are never hard-deleted: items.feed_id is a
+# foreign key into them (DuckDB enforces it), so "remove" soft-deletes
+# via removed_at and get_all_feeds()/handle_feed_sources() both filter
+# it out, while ingested items and their source attribution survive.
+
+def update_feed_row(
+    name: str,
+    enabled: bool | None = None,
+    interval: str | None = None,
+    trust: str | None = None,
+) -> bool:
+    """Update a feeds row by name. Returns False if no non-removed row matches."""
+    sets: list[str] = []
+    params: list[Any] = []
+    if enabled is not None:
+        sets.append("enabled = ?")
+        params.append(enabled)
+    if interval is not None:
+        sets.append("check_interval = ?")
+        params.append(interval)
+    if trust is not None:
+        sets.append("trust = ?")
+        params.append(trust)
+    if not sets:
+        return False
+
+    con = get_db()
+    try:
+        # DuckDB's cursor.rowcount is always -1 for UPDATE (unreliable for
+        # existence checks, and -1 is truthy in Python besides), so check
+        # separately rather than trust it.
+        exists = con.execute(
+            "SELECT 1 FROM feeds WHERE name = ? AND removed_at IS NULL", (name,)
+        ).fetchone()
+        if not exists:
+            return False
+        params.append(name)
+        con.execute(
+            f"UPDATE feeds SET {', '.join(sets)} "
+            f"WHERE name = ? AND removed_at IS NULL",
+            params,
+        )
+        return True
+    finally:
+        con.close()
+
+
+def remove_feed_row(name: str) -> bool:
+    """Soft-delete a feeds row by name. Returns False if no live row matches."""
+    con = get_db()
+    try:
+        exists = con.execute(
+            "SELECT 1 FROM feeds WHERE name = ? AND removed_at IS NULL", (name,)
+        ).fetchone()
+        if not exists:
+            return False
+        con.execute(
+            "UPDATE feeds SET enabled = false, removed_at = current_timestamp "
+            "WHERE name = ? AND removed_at IS NULL",
+            (name,),
+        )
+        return True
     finally:
         con.close()
 

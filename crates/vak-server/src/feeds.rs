@@ -84,6 +84,55 @@ async fn run_feed_script(
     })
 }
 
+/// Like `run_feed_script`, but for the admin-console CRUD subcommands
+/// (`--remove-source` / `--update-source`) that print `{"status": "ok" |
+/// "not_found", ...}` to stdout and use the exit code only as a signal,
+/// not as proof of a crash. `run_feed_script` treats any non-zero exit
+/// as a hard failure and only looks at stderr, which would swallow the
+/// well-formed "not found" response these emit on stdout. Parses stdout
+/// as JSON regardless of exit status; only a genuine crash (unparseable
+/// stdout) surfaces via stderr.
+async fn run_feed_admin_script(
+    cwd: &std::path::Path,
+    script: &str,
+    args: &[&str],
+) -> Result<Value, (StatusCode, String)> {
+    let dir = feeds_dir(cwd);
+    let script_path = dir.join(script);
+
+    if !script_path.exists() {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Feed script not found: {}", script_path.display()),
+        ));
+    }
+
+    let output = Command::new("python3")
+        .arg(&script_path)
+        .args(args)
+        .current_dir(&dir)
+        .env("PYTHONPATH", dir.to_string_lossy().to_string())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to run feed script: {e}"),
+            )
+        })?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(&stdout).map_err(|_| {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Feed script error: {stderr}"),
+        )
+    })
+}
+
 /// Run a request through the feed MCP server.
 async fn run_feed_mcp_request(
     cwd: &std::path::Path,
@@ -604,143 +653,168 @@ async fn write_config_atomically(
 }
 
 /// DELETE /feeds/sources/{name} — Remove a feed source from config.
+/// DELETE /feeds/sources/{name} — Remove a feed source.
+///
+/// The `feeds` DuckDB row is the actual source of truth for what "Your
+/// sources" displays (see feed_utils.remove_feed_row's doc comment for
+/// why deleting only from feeds.toml here used to 404 on every source
+/// that had no TOML entry to begin with — which, in practice, was all of
+/// them). Soft-deletes the DB row first and treats that as authoritative
+/// for success/404; a matching feeds.toml entry is then removed too on a
+/// best-effort basis, purely so scheduled ingestion doesn't recreate it.
 pub async fn delete_feed_source(
     Path(name): Path<String>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let cwd = state.core.cwd();
-    let config_path = feeds_config_path(cwd);
 
-    if !config_path.exists() {
-        return Err((StatusCode::NOT_FOUND, "Config file not found".into()));
-    }
+    let removed = run_feed_admin_script(cwd, "feed_ingest.py", &["--remove-source", &name])
+        .await?
+        .get("status")
+        .and_then(|s| s.as_str())
+        == Some("ok");
 
-    let content = tokio::fs::read_to_string(&config_path).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to read config: {e}"),
-        )
-    })?;
-
-    let new_content = remove_array_table_block(&content, "sources", &name).ok_or_else(|| {
-        (
+    if !removed {
+        return Err((
             StatusCode::NOT_FOUND,
             format!("Source '{}' not found", name),
-        )
-    })?;
+        ));
+    }
 
-    write_config_atomically(&config_path, &new_content).await?;
+    let config_path = feeds_config_path(cwd);
+    if config_path.exists()
+        && let Ok(content) = tokio::fs::read_to_string(&config_path).await
+        && let Some(new_content) = remove_array_table_block(&content, "sources", &name)
+    {
+        let _ = write_config_atomically(&config_path, &new_content).await;
+    }
 
     Ok(Json(json!({
         "status": "ok",
-        "message": format!("Source '{}' removed from {}", name, config_path.display()),
+        "message": format!("Source '{}' removed", name),
     })))
 }
 
-/// PATCH /feeds/sources/{name} — Update a source's enabled/interval/tags/trust fields.
+/// PATCH /feeds/sources/{name} — Update a source's enabled/interval/trust fields.
+///
+/// Same DB-primary, TOML-best-effort shape as `delete_feed_source` — see
+/// its doc comment. `tags` is accepted by the request body for backward
+/// compatibility with existing callers but only applied to feeds.toml:
+/// the `feeds` table has no tags column, so it can't be reflected in
+/// what the UI displays either way.
 pub async fn update_feed_source(
     Path(name): Path<String>,
     State(state): State<AppState>,
     Json(payload): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let cwd = state.core.cwd();
-    let config_path = feeds_config_path(cwd);
 
-    if !config_path.exists() {
-        return Err((StatusCode::NOT_FOUND, "Config file not found".into()));
-    }
+    let enabled = payload.get("enabled").and_then(|v| v.as_bool());
+    let interval = payload.get("interval").and_then(|v| v.as_str());
+    let trust = payload.get("trust").and_then(|v| v.as_str());
+    let tags = payload.get("tags").and_then(|v| v.as_array());
 
-    let mut content = tokio::fs::read_to_string(&config_path).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to read config: {e}"),
-        )
-    })?;
-
-    let mut touched = false;
-
-    if let Some(enabled) = payload.get("enabled").and_then(|v| v.as_bool()) {
-        content = set_field_in_block(
-            &content,
-            "sources",
-            &name,
-            "enabled",
-            &format!("enabled = {}", enabled),
-        )
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                format!("Source '{}' not found", name),
-            )
-        })?;
-        touched = true;
-    }
-
-    if let Some(interval) = payload.get("interval").and_then(|v| v.as_str()) {
-        content = set_field_in_block(
-            &content,
-            "sources",
-            &name,
-            "interval",
-            &format!("interval = \"{}\"", escape_toml(interval)),
-        )
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                format!("Source '{}' not found", name),
-            )
-        })?;
-        touched = true;
-    }
-
-    if let Some(trust) = payload.get("trust").and_then(|v| v.as_str()) {
-        content = set_field_in_block(
-            &content,
-            "sources",
-            &name,
-            "trust",
-            &format!("trust = \"{}\"", escape_toml(trust)),
-        )
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                format!("Source '{}' not found", name),
-            )
-        })?;
-        touched = true;
-    }
-
-    if let Some(tags) = payload.get("tags").and_then(|v| v.as_array()) {
-        let tags_str = tags
-            .iter()
-            .filter_map(|v| v.as_str())
-            .map(|t| format!("\"{}\"", escape_toml(t)))
-            .collect::<Vec<_>>()
-            .join(", ");
-        content = set_field_in_block(
-            &content,
-            "sources",
-            &name,
-            "tags",
-            &format!("tags = [{}]", tags_str),
-        )
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                format!("Source '{}' not found", name),
-            )
-        })?;
-        touched = true;
-    }
-
-    if !touched {
+    if enabled.is_none() && interval.is_none() && trust.is_none() && tags.is_none() {
         return Err((
             StatusCode::BAD_REQUEST,
             "No recognized fields to update (enabled, interval, trust, tags)".into(),
         ));
     }
 
-    write_config_atomically(&config_path, &content).await?;
+    if enabled.is_some() || interval.is_some() || trust.is_some() {
+        let mut args: Vec<String> = vec!["--update-source".into(), name.clone()];
+        if let Some(e) = enabled {
+            args.push("--set-enabled".into());
+            args.push(if e { "true" } else { "false" }.into());
+        }
+        if let Some(i) = interval {
+            args.push("--set-interval".into());
+            args.push(i.into());
+        }
+        if let Some(t) = trust {
+            args.push("--set-trust".into());
+            args.push(t.into());
+        }
+        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let updated = run_feed_admin_script(cwd, "feed_ingest.py", &arg_refs)
+            .await?
+            .get("status")
+            .and_then(|s| s.as_str())
+            == Some("ok");
+        if !updated {
+            return Err((
+                StatusCode::NOT_FOUND,
+                format!("Source '{}' not found", name),
+            ));
+        }
+    }
+
+    // Best-effort mirror into feeds.toml: only applies fields to an
+    // entry that already exists there, and never turns a DB-only update
+    // into a hard failure if the source has no TOML entry at all.
+    let config_path = feeds_config_path(cwd);
+    if config_path.exists()
+        && let Ok(mut content) = tokio::fs::read_to_string(&config_path).await
+    {
+        let mut touched = false;
+        if let Some(e) = enabled
+            && let Some(next) = set_field_in_block(
+                &content,
+                "sources",
+                &name,
+                "enabled",
+                &format!("enabled = {}", e),
+            )
+        {
+            content = next;
+            touched = true;
+        }
+        if let Some(i) = interval
+            && let Some(next) = set_field_in_block(
+                &content,
+                "sources",
+                &name,
+                "interval",
+                &format!("interval = \"{}\"", escape_toml(i)),
+            )
+        {
+            content = next;
+            touched = true;
+        }
+        if let Some(t) = trust
+            && let Some(next) = set_field_in_block(
+                &content,
+                "sources",
+                &name,
+                "trust",
+                &format!("trust = \"{}\"", escape_toml(t)),
+            )
+        {
+            content = next;
+            touched = true;
+        }
+        if let Some(tags) = tags {
+            let tags_str = tags
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(|t| format!("\"{}\"", escape_toml(t)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            if let Some(next) = set_field_in_block(
+                &content,
+                "sources",
+                &name,
+                "tags",
+                &format!("tags = [{}]", tags_str),
+            ) {
+                content = next;
+                touched = true;
+            }
+        }
+        if touched {
+            let _ = write_config_atomically(&config_path, &content).await;
+        }
+    }
 
     Ok(Json(json!({
         "status": "ok",

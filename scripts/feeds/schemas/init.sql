@@ -18,8 +18,13 @@ CREATE TABLE IF NOT EXISTS feeds (
     trust VARCHAR DEFAULT 'medium',
     enabled BOOLEAN DEFAULT true,
     check_interval VARCHAR DEFAULT '1h',
-    created_at TIMESTAMP DEFAULT current_timestamp
+    created_at TIMESTAMP DEFAULT current_timestamp,
+    removed_at TIMESTAMP
 );
+
+-- Existing databases created before removed_at existed need it added
+-- explicitly; CREATE TABLE IF NOT EXISTS above is a no-op for them.
+ALTER TABLE feeds ADD COLUMN IF NOT EXISTS removed_at TIMESTAMP;
 
 CREATE TABLE IF NOT EXISTS items (
     id INTEGER DEFAULT nextval('items_id_seq') PRIMARY KEY,

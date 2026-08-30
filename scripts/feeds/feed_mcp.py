@@ -264,7 +264,8 @@ def handle_feed_stats(args: dict) -> dict:
 def handle_feed_sources(args: dict) -> dict:
     con = get_db(read_only=True)
     rows = con.execute(
-        "SELECT id, name, source_type, url, trust, enabled, check_interval FROM feeds ORDER BY name"
+        "SELECT id, name, source_type, url, trust, enabled, check_interval "
+        "FROM feeds WHERE removed_at IS NULL ORDER BY name"
     ).fetchall()
     con.close()
 

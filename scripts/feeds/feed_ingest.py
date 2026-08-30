@@ -35,8 +35,10 @@ from feed_utils import (
     log_alert,
     parse_interval,
     prune_seen,
+    remove_feed_row,
     store_feed,
     store_item,
+    update_feed_row,
 )
 from sources import get_driver
 
@@ -451,6 +453,18 @@ def main():
     parser.add_argument("--source", "-s", help="Ingest a specific source by name")
     parser.add_argument("--init", action="store_true", help="Initialize DB only")
     parser.add_argument("--stats", action="store_true", help="Print stats only")
+    # Admin-console CRUD against the live `feeds` table -- see
+    # feed_utils.update_feed_row/remove_feed_row for why this operates on
+    # the DB directly instead of feeds.toml (which is what the UI
+    # actually displays and what update/remove in
+    # crates/vak-server/src/feeds.rs call through to). Not exposed via
+    # feed_mcp.py's tool list: that surface is reachable by LLM agents,
+    # and source removal shouldn't be an agent-callable tool.
+    parser.add_argument("--remove-source", metavar="NAME", help="Soft-delete a source by name")
+    parser.add_argument("--update-source", metavar="NAME", help="Update a source by name")
+    parser.add_argument("--set-enabled", choices=["true", "false"], help="With --update-source")
+    parser.add_argument("--set-interval", help="With --update-source")
+    parser.add_argument("--set-trust", choices=["high", "medium", "low"], help="With --update-source")
     args = parser.parse_args()
 
     if args.init:
@@ -464,6 +478,26 @@ def main():
         stats = get_stats()
         print(json.dumps(stats, indent=2))
         return
+
+    if args.remove_source:
+        init_feed_system(args.workspace)
+        ok = remove_feed_row(args.remove_source)
+        print(json.dumps({"status": "ok" if ok else "not_found", "name": args.remove_source}))
+        sys.exit(0 if ok else 1)
+
+    if args.update_source:
+        init_feed_system(args.workspace)
+        enabled = None
+        if args.set_enabled is not None:
+            enabled = args.set_enabled == "true"
+        ok = update_feed_row(
+            args.update_source,
+            enabled=enabled,
+            interval=args.set_interval,
+            trust=args.set_trust,
+        )
+        print(json.dumps({"status": "ok" if ok else "not_found", "name": args.update_source}))
+        sys.exit(0 if ok else 1)
 
     summary = run_ingestion(args.workspace, args.source)
     print(json.dumps(summary, indent=2))
