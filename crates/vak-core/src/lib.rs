@@ -158,11 +158,20 @@ struct CoreInner {
     /// provider -> (fetched_at, model ids). Discovery is a network call;
     /// pickers re-read it constantly, so results are memoised briefly.
     models_cache: std::sync::Mutex<HashMap<String, (std::time::Instant, Vec<String>)>>,
-    /// Cached MCP capability section appended to the system prompt; None
-    /// until a run with servers configured populates it.
     /// Runtime MCP table override (desktop/TUI management surface).
     mcp_override: std::sync::Mutex<Option<vak_config::McpConfig>>,
     mcp_runtime_pinned: std::sync::atomic::AtomicBool,
+    /// One `McpManager` per distinct server set, reused across turns so
+    /// spawned server processes (e.g. `npx tavily-mcp`) and their live
+    /// connections survive a whole session instead of respawning every
+    /// turn. Keyed by a fingerprint of the resolved server set so a
+    /// runtime `set_mcp_servers` call or a plugin enable/disable — both of
+    /// which change what `effective_mcp()` returns — transparently swaps
+    /// in a fresh manager instead of serving a stale one. The inventory
+    /// (server -> tool name/description pairs) is filled in by a
+    /// best-effort background warm-up and read by `system_prompt()`; a
+    /// turn never blocks on it — see `mcp_manager()` / `cached_mcp_inventory()`.
+    mcp_cache: std::sync::Mutex<Option<McpCache>>,
     /// Runtime hook override (desktop/TUI management surface).
     hooks_override: std::sync::Mutex<Option<Vec<vak_config::HookConfig>>>,
     hooks_runtime_pinned: std::sync::atomic::AtomicBool,
@@ -372,6 +381,7 @@ impl Core {
                 beliefs: Arc::new(routing::BeliefState::new()),
                 spend_gates: std::sync::Mutex::new(HashMap::new()),
                 day_budget: Arc::new(std::sync::Mutex::new(finops::DayBudget::new())),
+                mcp_cache: std::sync::Mutex::new(None),
             }),
         })
     }
@@ -852,6 +862,151 @@ impl Core {
         config
     }
 
+    /// Resolve `effective_mcp()` into the shape `vak_mcp::McpManager` wants:
+    /// `${VAR}` in env values expanded through the standard secret path,
+    /// fail-closed per server (an unresolved reference drops that server
+    /// rather than starting it half-configured). Shared by the per-turn
+    /// tool list and `mcp_manager()` so the two never resolve servers two
+    /// different ways.
+    fn resolved_mcp_servers(&self) -> Vec<(String, vak_mcp::ServerConfig)> {
+        self.effective_mcp()
+            .servers
+            .into_iter()
+            .filter_map(|(name, s)| {
+                let mut env = Vec::with_capacity(s.env.len());
+                for (k, v) in &s.env {
+                    match interpolate_env_var(v) {
+                        Some(resolved) => env.push((k.clone(), resolved)),
+                        None => {
+                            eprintln!("[mcp] server '{name}' skipped: unresolved environment variable in '{v}' (define it in .env)");
+                            return None;
+                        }
+                    }
+                }
+                Some((
+                    name,
+                    vak_mcp::ServerConfig {
+                        command: s.command,
+                        args: s.args,
+                        env,
+                        network: s.network,
+                    },
+                ))
+            })
+            .collect()
+    }
+
+    /// Long-lived `McpManager` for this Core, reused across turns instead
+    /// of rebuilt per turn — `McpManager::get` caches one live connection
+    /// per server, so a manager rebuilt every turn meant every turn that
+    /// touched MCP respawned every configured server's process from
+    /// scratch. Returns `None` when no servers are configured.
+    ///
+    /// Keyed by a fingerprint of the resolved server set: a runtime
+    /// `set_mcp_servers` call or a plugin being enabled/disabled changes
+    /// what `effective_mcp()` returns, and the fingerprint mismatch swaps
+    /// in a fresh manager (dropping the old one, which shuts its clients
+    /// down on drop) rather than serving stale servers indefinitely.
+    ///
+    /// Turn admission still never blocks on an optional integration: this
+    /// only constructs the manager (no I/O — `ServerConfig` is inert until
+    /// something calls `.get()` on it) and fires a best-effort background
+    /// warm-up of the tool inventory that `system_prompt()` picks up once
+    /// it lands.
+    fn mcp_manager(&self) -> Option<Arc<vak_mcp::McpManager>> {
+        let servers = self.resolved_mcp_servers();
+        if servers.is_empty() {
+            *self
+                .inner
+                .mcp_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+            return None;
+        }
+        let fp = mcp_fingerprint(&servers);
+        {
+            let cache = self
+                .inner
+                .mcp_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(c) = cache.as_ref()
+                && c.fingerprint == fp
+            {
+                return Some(c.manager.clone());
+            }
+        }
+        let manager = Arc::new(vak_mcp::McpManager::new_sandboxed(
+            servers.into_iter().collect(),
+            self.inner.cwd.clone(),
+            self.build_sandbox(),
+        ));
+        {
+            let mut cache = self
+                .inner
+                .mcp_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *cache = Some(McpCache {
+                fingerprint: fp,
+                manager: manager.clone(),
+                inventory: None,
+                warming: false,
+            });
+        }
+        self.spawn_mcp_inventory_warm(fp, manager.clone());
+        Some(manager)
+    }
+
+    /// Kick a background discovery pass for `system_prompt()`'s rich MCP
+    /// section, if one for this exact server set (`fp`) isn't already
+    /// running or done. Best-effort: a slow or failing server degrades to
+    /// a per-server error line inside the inventory (see
+    /// `McpManager::inventory`), never to a panic or a blocked turn.
+    fn spawn_mcp_inventory_warm(&self, fp: u64, manager: Arc<vak_mcp::McpManager>) {
+        {
+            let mut cache = self
+                .inner
+                .mcp_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match cache.as_mut() {
+                Some(c) if c.fingerprint == fp && !c.warming && c.inventory.is_none() => {
+                    c.warming = true;
+                }
+                _ => return,
+            }
+        }
+        let core = self.clone();
+        tokio::spawn(async move {
+            let inventory = manager.inventory().await;
+            let mut cache = core
+                .inner
+                .mcp_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(c) = cache.as_mut()
+                && c.fingerprint == fp
+            {
+                c.inventory = Some(inventory);
+                c.warming = false;
+            }
+        });
+    }
+
+    /// Whatever the background warm-up has landed so far, for
+    /// `system_prompt()`. `None` means "not ready yet" (or discovery
+    /// hasn't been triggered this session) — callers fall back to the
+    /// name-only `mcp_config_section`, never block waiting for this.
+    fn cached_mcp_inventory(&self) -> Option<McpInventory> {
+        self.inner
+            .mcp_cache
+            .lock()
+            .ok()?
+            .as_ref()
+            .and_then(|c| c.inventory.clone())
+    }
+
     /// Replace lifecycle hooks for subsequent turns without restarting the
     /// desktop/server process. Persistence is owned by the server surface.
     pub fn set_hooks(&self, hooks: Vec<vak_config::HookConfig>) {
@@ -1272,13 +1427,25 @@ impl Core {
             DEFAULT_SYSTEM_PROMPT.replace("{{version}}", APP_VERSION)
         };
         let discovered = self.skills();
-        let mcp = self.effective_mcp();
-        let servers = mcp.servers.keys().cloned().collect::<Vec<_>>();
+        // Ensure a manager exists and a background discovery pass is (or
+        // becomes) in flight for the current server set, then use whatever
+        // it has produced so far. A cold session or a slow/failing server
+        // means `cached_mcp_inventory()` is still `None` here — that's the
+        // expected steady state for the very first turn, and this call
+        // never blocks waiting for it to fill in.
+        self.mcp_manager();
+        let mcp_section_text = match self.cached_mcp_inventory() {
+            Some(inventory) if !inventory.is_empty() => mcp_section(&inventory),
+            _ => {
+                let servers = self.effective_mcp().servers.into_keys().collect::<Vec<_>>();
+                mcp_config_section(&servers)
+            }
+        };
         format!(
             "{}{}{}",
             base,
             skills::prompt_section(&discovered),
-            mcp_config_section(&servers)
+            mcp_section_text
         )
     }
 
@@ -2123,48 +2290,14 @@ impl Core {
                 registry: Some(self.inner.subagents.clone()),
             })));
         }
-        let mcp_cfg = self.effective_mcp();
-        if !mcp_cfg.servers.is_empty() {
-            let servers = mcp_cfg
-                .servers
-                .iter()
-                .filter_map(|(name, s)| {
-                    // ${VAR} in env values resolves through the standard
-                    // secret path (runtime override → process env →
-                    // .env files), so keys stay out of config.toml.
-                    // Unresolved references skip the pair rather than
-                    // handing the server a literal "${...}".
-                    // Fail closed: one unresolved reference drops the whole
-                    // server rather than starting it half-configured.
-                    let mut env = Vec::with_capacity(s.env.len());
-                    for (k, v) in &s.env {
-                        match interpolate_env_var(v) {
-                            Some(resolved) => env.push((k.clone(), resolved)),
-                            None => {
-                                eprintln!("[mcp] server '{name}' skipped: unresolved environment variable in '{v}' (define it in .env)");
-                                return None;
-                            }
-                        }
-                    }
-                    Some((
-                        name.clone(),
-                        vak_mcp::ServerConfig {
-                            command: s.command.clone(),
-                            args: s.args.clone(),
-                            env,
-                            network: s.network,
-                        },
-                    ))
-                })
-                .collect();
-            let manager = Arc::new(vak_mcp::McpManager::new_sandboxed(
-                servers,
-                self.inner.cwd.clone(),
-                self.build_sandbox(),
-            ));
-            // Turn admission never starts an optional integration. The
-            // system prompt already advertises configured server names;
-            // this lazy meta-tool connects and discovers tools on use.
+        if let Some(manager) = self.mcp_manager() {
+            // Turn admission never blocks on an optional integration: the
+            // manager above is reused across turns (built once per
+            // resolved server set — see `mcp_manager()`) and this lazy
+            // meta-tool only actually connects when the model calls it.
+            // `system_prompt()` advertises what's configured — richly,
+            // once `spawn_mcp_inventory_warm` has a result, or by name
+            // only until then.
             let policy = self.channel_policy().unwrap_or_default();
             let context = self.plugin_mcp_invocation_context();
             let recorder = Arc::new(move |server: &str, tool: &str, success: bool| {
@@ -3002,8 +3135,52 @@ pub fn interpolate_env_var(value: &str) -> Option<String> {
     Some(out)
 }
 
-/// Compact capability section from an MCP inventory snapshot.
-#[cfg(test)]
+/// `CoreInner::mcp_cache`'s payload: the manager currently live for
+/// `fingerprint`'s server set, plus whatever the background inventory
+/// warm-up has produced for it so far.
+/// server name -> (tool name, description) pairs, as returned by
+/// `McpManager::inventory()`.
+type McpInventory = Vec<(String, Vec<(String, String)>)>;
+
+struct McpCache {
+    fingerprint: u64,
+    manager: Arc<vak_mcp::McpManager>,
+    inventory: Option<McpInventory>,
+    /// True while a `spawn_mcp_inventory_warm` task for this fingerprint
+    /// is in flight, so a burst of turns doesn't each fire their own
+    /// discovery pass against the same server set.
+    warming: bool,
+}
+
+/// Identifies one resolved MCP server set for cache-invalidation purposes:
+/// two calls that resolve to the same names/commands/args/env/network
+/// settings get the same fingerprint and reuse one manager; anything that
+/// changes what `effective_mcp()` returns (a runtime `set_mcp_servers`, a
+/// plugin enabled/disabled) changes the fingerprint and rebuilds. Not a
+/// security boundary — only used to decide "same manager or not".
+fn mcp_fingerprint(servers: &[(String, vak_mcp::ServerConfig)]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut sorted: Vec<&(String, vak_mcp::ServerConfig)> = servers.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for (name, cfg) in sorted {
+        name.hash(&mut hasher);
+        cfg.command.hash(&mut hasher);
+        cfg.args.hash(&mut hasher);
+        cfg.network.hash(&mut hasher);
+        for (k, v) in &cfg.env {
+            k.hash(&mut hasher);
+            v.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
+
+/// Compact capability section from an MCP inventory snapshot
+/// (`McpManager::inventory`). Used by `system_prompt()` once the
+/// background warm-up in `Core::spawn_mcp_inventory_warm` has a result;
+/// `mcp_config_section` below is the name-only fallback for before that
+/// (or when discovery failed for every server).
 fn mcp_section(inventory: &[(String, Vec<(String, String)>)]) -> String {
     if inventory.is_empty() {
         return String::new();
@@ -3014,6 +3191,15 @@ tool (action \"call\", server, tool, arguments). Prefer these over guessing \
 when the task matches:\n",
     );
     for (server, tools) in inventory {
+        // `McpManager::inventory` degrades a connect/list failure to a
+        // single ("error", <message>) pseudo-tool per server; render it as
+        // an error, not as a callable tool named "error".
+        if let [(name, msg)] = tools.as_slice()
+            && name.as_str() == "error"
+        {
+            out.push_str(&format!("- {server}: unavailable ({msg})\n"));
+            continue;
+        }
         if tools.is_empty() {
             out.push_str(&format!("- {server}: (no tools)\n"));
             continue;
@@ -3135,6 +3321,55 @@ mod plugin_runtime_tests {
         assert_eq!(server.command, "lookup-bin");
         assert_eq!(server.args, ["--safe"]);
         assert!(!server.network);
+    }
+
+    /// The whole point of caching `McpManager` on `Core` (see
+    /// `mcp_manager()`): a hot plugin enable/disable — the same kind of
+    /// on-the-fly change `set_mcp_servers` makes at runtime — must be
+    /// picked up on the very next call, not require a restart, while an
+    /// unrelated repeat call in between reuses the same manager instance
+    /// rather than respawning server connections for no reason.
+    #[tokio::test]
+    async fn mcp_manager_reuses_instance_and_picks_up_hot_plugin_toggle() {
+        let dir = tempfile::tempdir().unwrap();
+        let package = dir.path().join("plugin");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(
+            package.join("vak-plugin.json"),
+            r#"{"schema":1,"name":"tools-pack","version":"1.0.0","description":"Tools","license":"MIT","components":{"mcp":["mcp.json"]}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            package.join("mcp.json"),
+            r#"{"mcpServers":{"lookup":{"command":"lookup-bin","args":["--safe"]}}}"#,
+        )
+        .unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let store = vak_plugin::PluginStore::new(dir.path().join(".vak"));
+        store
+            .install_local(package.as_path(), vak_plugin::InstallOptions::default())
+            .unwrap();
+
+        // Nothing configured yet: no manager.
+        assert!(core.mcp_manager().is_none());
+
+        // Enable on the fly: next call sees the new server immediately.
+        store.enable("tools-pack").unwrap();
+        let first = core.mcp_manager().unwrap();
+        assert_eq!(first.server_names(), vec!["plugin.tools-pack.lookup"]);
+
+        // Same server set: same manager instance (no respawn/reconnect).
+        let second = core.mcp_manager().unwrap();
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "unchanged server set must reuse the cached manager"
+        );
+
+        // Disable on the fly: next call sees it's gone immediately, no
+        // restart required.
+        store.disable("tools-pack").unwrap();
+        assert!(core.mcp_manager().is_none());
     }
 }
 
