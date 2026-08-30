@@ -401,11 +401,16 @@ def _index_content(con, item_id: int, content: str) -> None:
 
 
 def prune_seen(days: int = 90) -> int:
+    # DuckDB doesn't accept a placeholder for the numeric part of an
+    # INTERVAL literal ("INTERVAL ? DAY" is a parser error, not a runtime
+    # one -- it fails on every call). `? * INTERVAL 1 DAY` parameterizes
+    # a multiplication instead, which DuckDB does support, and keeps
+    # `days` as a bound parameter rather than a string-interpolated value.
     con = get_db()
     try:
         result = con.execute(
-            "DELETE FROM seen WHERE first_seen < NOW() - INTERVAL ? DAY",
-            (days,),
+            "DELETE FROM seen WHERE first_seen < NOW() - (? * INTERVAL 1 DAY)",
+            (int(days),),
         )
         count = result.rowcount if hasattr(result, 'rowcount') else 0
         return count
