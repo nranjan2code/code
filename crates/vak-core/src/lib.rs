@@ -2140,7 +2140,10 @@ impl Core {
                     for (k, v) in &s.env {
                         match interpolate_env_var(v) {
                             Some(resolved) => env.push((k.clone(), resolved)),
-                            None => return None,
+                            None => {
+                                eprintln!("[mcp] server '{name}' skipped: unresolved environment variable in '{v}' (define it in .env)");
+                                return None;
+                            }
                         }
                     }
                     Some((

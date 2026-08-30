@@ -100,6 +100,78 @@ pub fn persist_gateway_workspace_at(
     Ok(())
 }
 
+/// Canonical toolchain search directories across standard locations (Homebrew, Cargo, Local, System, version managers).
+/// Essential for macOS GUI app bundles and daemon/service processes where shell profile is not evaluated.
+pub fn canonical_toolchain_paths() -> Vec<PathBuf> {
+    let home = base_home();
+    let mut dirs = Vec::new();
+
+    // Homebrew / standard system paths
+    for dir in [
+        "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ] {
+        let p = PathBuf::from(dir);
+        if p.is_dir() && !dirs.contains(&p) {
+            dirs.push(p);
+        }
+    }
+
+    // User toolchains
+    for sub in [
+        ".cargo/bin",
+        ".local/bin",
+        "bin",
+        ".local/share/pnpm",
+        "Library/pnpm",
+        ".local/share/fnm/current/bin",
+        ".fnm/current/bin",
+        ".asdf/shims",
+        ".local/share/mise/shims",
+        ".pyenv/shims",
+    ] {
+        let p = home.join(sub);
+        if p.is_dir() && !dirs.contains(&p) {
+            dirs.push(p);
+        }
+    }
+
+    // Scan active node versions in nvm
+    let nvm_node = home.join(".nvm/versions/node");
+    if nvm_node.is_dir()
+        && let Ok(entries) = std::fs::read_dir(&nvm_node)
+    {
+        for entry in entries.flatten() {
+            let bin = entry.path().join("bin");
+            if bin.is_dir() && !dirs.contains(&bin) {
+                dirs.push(bin);
+            }
+        }
+    }
+
+    dirs
+}
+
+/// Computes an augmented PATH value merging the current process PATH with canonical toolchain paths.
+pub fn augmented_process_path() -> std::ffi::OsString {
+    let mut parts: Vec<PathBuf> = Vec::new();
+    if let Some(existing) = std::env::var_os("PATH") {
+        parts.extend(std::env::split_paths(&existing).filter(|p| !p.as_os_str().is_empty()));
+    }
+    for toolchain_path in canonical_toolchain_paths() {
+        if !parts.contains(&toolchain_path) {
+            parts.push(toolchain_path);
+        }
+    }
+    std::env::join_paths(parts).unwrap_or_default()
+}
+
 /// All three homes derived from one override decision. Pure so tests can
 /// exercise both branches without touching process-global environment.
 struct Homes {

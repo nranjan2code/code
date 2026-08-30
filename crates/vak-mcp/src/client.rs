@@ -94,8 +94,17 @@ impl McpClient {
         if let Some(dir) = command_path.parent() {
             path_parts.push(dir.to_path_buf());
         }
+        for toolchain_path in vak_config::paths::canonical_toolchain_paths() {
+            if !path_parts.contains(&toolchain_path) {
+                path_parts.push(toolchain_path);
+            }
+        }
         if let Some(path) = std::env::var_os("PATH") {
-            path_parts.extend(std::env::split_paths(&path).filter(|p| !p.as_os_str().is_empty()));
+            for p in std::env::split_paths(&path).filter(|p| !p.as_os_str().is_empty()) {
+                if !path_parts.contains(&p) {
+                    path_parts.push(p);
+                }
+            }
         }
         cmd.env(
             "PATH",
@@ -323,8 +332,8 @@ fn resolve_command(command: &str) -> PathBuf {
             }
         }
     }
-    for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
-        let candidate = PathBuf::from(dir).join(command);
+    for dir in vak_config::paths::canonical_toolchain_paths() {
+        let candidate = dir.join(command);
         if candidate.is_file() {
             return candidate;
         }

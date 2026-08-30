@@ -12,6 +12,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+vak-config = { workspace = true }
 vak-tools = { workspace = true }
 
 [dev-dependencies]

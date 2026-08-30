@@ -709,6 +709,12 @@ fn backend_info(state: State<'_, BackendState>) -> BackendInfo {
 }
 
 fn main() {
+    // Augment GUI process PATH with canonical toolchain paths so brokers and MCP servers resolve node/python/etc.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("PATH", vak_config::paths::augmented_process_path());
+    }
+
     // Canonical layout migration (doc 32): pre-0.8 dotdir → Library/XDG
     // homes. One-time rename; no-op when absent or overridden.
     if let Err(e) = vak_config::paths::migrate_legacy_home() {

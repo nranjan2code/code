@@ -87,6 +87,10 @@ impl PermissionEngine {
             Mode::ReadOnly => {
                 if READ_TOOLS.contains(&tool) {
                     scoped_read_decision(tool, args, cwd)
+                } else if tool == "mcp"
+                    && args.get("action").and_then(|a| a.as_str()) == Some("list")
+                {
+                    Decision::Allow
                 } else {
                     Decision::Deny {
                         reason: format!(
@@ -98,6 +102,9 @@ impl PermissionEngine {
             Mode::WorkspaceWrite => {
                 if READ_TOOLS.contains(&tool) {
                     return scoped_read_decision(tool, args, cwd);
+                }
+                if tool == "mcp" && args.get("action").and_then(|a| a.as_str()) == Some("list") {
+                    return Decision::Allow;
                 }
                 if WRITE_TOOLS.contains(&tool) {
                     return match args.get("path").and_then(|p| p.as_str()) {
