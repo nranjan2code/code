@@ -5880,6 +5880,7 @@ dependencies = [
  "vak-llm",
  "vak-mcp",
  "vak-permission",
+ "vak-plugin",
  "vak-session",
  "vak-tools",
  "walkdir",
@@ -6032,7 +6033,9 @@ dependencies = [
 name = "vak-plugin"
 version = "0.11.24"
 dependencies = [
+ "base64 0.22.1",
  "hex",
+ "ring",
  "semver",
  "serde",
  "serde_json",
@@ -6075,6 +6078,7 @@ dependencies = [
  "vak-hooks",
  "vak-llm",
  "vak-ops",
+ "vak-plugin",
  "vak-session",
  "vak-store",
  "vak-tools",

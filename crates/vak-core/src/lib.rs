@@ -644,12 +644,101 @@ impl Core {
     }
 
     pub fn effective_mcp(&self) -> vak_config::McpConfig {
-        if let Ok(c) = self.inner.mcp_override.lock()
-            && let Some(cfg) = c.as_ref()
-        {
-            return self.filter_mcp(cfg.clone());
+        let mut config = self
+            .inner
+            .mcp_override
+            .lock()
+            .ok()
+            .and_then(|c| c.clone())
+            .unwrap_or_else(|| self.inner.config.mcp.clone());
+        self.extend_enabled_plugin_mcp(&mut config);
+        self.filter_mcp(config)
+    }
+
+    fn extend_enabled_plugin_mcp(&self, config: &mut vak_config::McpConfig) {
+        for root in [
+            self.inner.cwd.join(".vak"),
+            self.inner.sessions_home.clone(),
+        ] {
+            let Ok(plugins) = vak_plugin::PluginStore::new(root).enabled() else {
+                continue;
+            };
+            for plugin in plugins {
+                for relative in plugin.capabilities.mcp_manifests {
+                    let path = plugin.package_path.join(&relative);
+                    let Ok(bytes) = std::fs::read(&path) else {
+                        continue;
+                    };
+                    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+                        continue;
+                    };
+                    let Some(servers) = value
+                        .get("mcpServers")
+                        .and_then(serde_json::Value::as_object)
+                    else {
+                        continue;
+                    };
+                    for (name, raw) in servers {
+                        let Some(command) = raw.get("command").and_then(serde_json::Value::as_str)
+                        else {
+                            continue;
+                        };
+                        let args = raw
+                            .get("args")
+                            .and_then(serde_json::Value::as_array)
+                            .map(|values| {
+                                values
+                                    .iter()
+                                    .filter_map(serde_json::Value::as_str)
+                                    .map(str::to_string)
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let env = raw
+                            .get("env")
+                            .and_then(serde_json::Value::as_object)
+                            .map(|values| {
+                                values
+                                    .iter()
+                                    .filter_map(|(key, value)| {
+                                        value.as_str().map(|v| (key.clone(), v.to_string()))
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let key = format!("plugin.{}.{}", plugin.name, name);
+                        config
+                            .servers
+                            .entry(key)
+                            .or_insert(vak_config::McpServerConfig {
+                                command: command.to_string(),
+                                args,
+                                env,
+                                network: false,
+                            });
+                    }
+                }
+            }
         }
-        self.filter_mcp(self.inner.config.mcp.clone())
+    }
+
+    fn plugin_mcp_invocation_context(&self) -> Vec<(vak_plugin::PluginStore, String, String)> {
+        let mut context = Vec::new();
+        for root in [
+            self.inner.cwd.join(".vak"),
+            self.inner.sessions_home.clone(),
+        ] {
+            let store = vak_plugin::PluginStore::new(root);
+            let Ok(plugins) = store.enabled() else {
+                continue;
+            };
+            context.extend(
+                plugins
+                    .into_iter()
+                    .map(|plugin| (store.clone(), plugin.name, plugin.trace_id)),
+            );
+        }
+        context
     }
 
     pub fn apply_channel_policy(&self, policy: vak_config::ChannelPolicy) {
@@ -801,6 +890,21 @@ impl Core {
         } else {
             self.inner.config.hooks.clone()
         };
+        let mut hooks = hooks;
+        for store_home in [self.sessions_home(), self.inner.cwd.join(".vak")] {
+            let store = vak_plugin::PluginStore::new(store_home);
+            if let Ok(plugin_hooks) = store.enabled_hooks() {
+                hooks.extend(plugin_hooks.into_iter().map(|(_plugin, hook)| {
+                    vak_config::HookConfig {
+                        event: hook.event,
+                        matcher: hook.matcher,
+                        command: hook.command,
+                        timeout_ms: hook.timeout_ms,
+                        enabled: true,
+                    }
+                }));
+            }
+        }
         let Some(policy) = self.channel_policy() else {
             return hooks;
         };
@@ -1187,7 +1291,25 @@ impl Core {
     }
 
     pub fn skills(&self) -> Vec<skills::Skill> {
-        let skills = skills::discover(&self.inner.cwd, &self.inner.sessions_home);
+        let mut plugin_roots = Vec::new();
+        for (root, label) in [
+            (self.inner.cwd.join(".vak"), "workspace".to_string()),
+            (self.inner.sessions_home.clone(), "user".to_string()),
+        ] {
+            if let Ok(enabled) = vak_plugin::PluginStore::new(&root).enabled() {
+                plugin_roots.extend(enabled.into_iter().map(|plugin| {
+                    (
+                        plugin.package_path,
+                        format!("plugin:{}:{}:{}", label, plugin.name, plugin.trace_id),
+                    )
+                }));
+            }
+        }
+        let skills = skills::discover_with_plugins(
+            &self.inner.cwd,
+            &self.inner.sessions_home,
+            &plugin_roots,
+        );
         let Some(policy) = self.channel_policy() else {
             return skills;
         };
@@ -1205,7 +1327,25 @@ impl Core {
     }
 
     pub fn custom_commands(&self) -> Vec<custom_commands::CustomCommand> {
-        custom_commands::discover(&self.inner.cwd, &self.inner.sessions_home)
+        let mut plugin_roots = Vec::new();
+        for (root, label) in [
+            (self.inner.cwd.join(".vak"), "workspace".to_string()),
+            (self.inner.sessions_home.clone(), "user".to_string()),
+        ] {
+            if let Ok(enabled) = vak_plugin::PluginStore::new(&root).enabled() {
+                plugin_roots.extend(enabled.into_iter().map(|plugin| {
+                    (
+                        plugin.package_path,
+                        format!("plugin:{}:{}:{}", label, plugin.name, plugin.trace_id),
+                    )
+                }));
+            }
+        }
+        custom_commands::discover_with_plugins(
+            &self.inner.cwd,
+            &self.inner.sessions_home,
+            &plugin_roots,
+        )
     }
 
     pub fn tool_names(&self) -> Vec<String> {
@@ -2058,10 +2198,25 @@ impl Core {
                 cfg.system_prompt.push_str(&sec);
             }
             let policy = self.channel_policy().unwrap_or_default();
-            tools.push(Arc::new(vak_mcp::McpTool::with_policy(
+            let context = self.plugin_mcp_invocation_context();
+            let recorder = Arc::new(move |server: &str, tool: &str, success: bool| {
+                for (store, plugin, trace_id) in &context {
+                    if server.starts_with(&format!("plugin.{plugin}.")) {
+                        let _ = store.record_invocation(
+                            trace_id,
+                            plugin,
+                            &format!("mcp:{server}/{tool}"),
+                            success,
+                        );
+                        break;
+                    }
+                }
+            });
+            tools.push(Arc::new(vak_mcp::McpTool::with_policy_and_recorder(
                 manager,
                 policy.mcp_allow,
                 policy.mcp_deny,
+                recorder,
             )));
         }
         if self.effective_memory_search_enabled() {
@@ -2132,6 +2287,33 @@ impl Core {
             build_hooks_from(&self.effective_hooks())?,
         ));
         cfg.hooks = hooks.clone();
+        let plugin_hooks: Vec<_> = [self.sessions_home(), self.inner.cwd.join(".vak")]
+            .into_iter()
+            .flat_map(|home| {
+                vak_plugin::PluginStore::new(home)
+                    .enabled_hooks()
+                    .unwrap_or_default()
+            })
+            .collect();
+        let user_home = self.sessions_home();
+        let workspace_home = self.inner.cwd.join(".vak");
+        cfg.hook_recorder = Some(Arc::new(move |hook: &vak_hooks::HookDef, success: bool| {
+            if let Some((plugin, _)) = plugin_hooks
+                .iter()
+                .find(|(_, candidate)| candidate.command == hook.command)
+            {
+                let store = vak_plugin::PluginStore::new(match plugin.scope {
+                    vak_plugin::InstallScope::User => &user_home,
+                    vak_plugin::InstallScope::Workspace => &workspace_home,
+                });
+                let _ = store.record_invocation(
+                    &plugin.trace_id,
+                    &plugin.name,
+                    &format!("hook:{}", hook.event.as_str()),
+                    success,
+                );
+            }
+        }));
 
         // session-start hooks fire once per run, before any tool or
         // checkpoint activity. A block aborts the run before it starts.
@@ -2144,7 +2326,7 @@ impl Core {
                 .header()
                 .map(|h| h.session_id.clone())
                 .unwrap_or_default();
-            let outcome = vak_hooks::run_hooks(
+            let outcome = vak_hooks::run_hooks_with_recorder(
                 hook_defs.clone(),
                 vak_hooks::HookEvent::SessionStart,
                 &session_id,
@@ -2152,6 +2334,7 @@ impl Core {
                 None,
                 None,
                 &cancel,
+                cfg.hook_recorder.as_deref(),
             )
             .await;
             if outcome.blocked {
@@ -2946,6 +3129,43 @@ mod mcp_section_tests {
         assert_eq!(mcp_section(&[]), "");
         let s = mcp_section(&[("x".into(), vec![])]);
         assert!(s.contains("- x: (no tools)"));
+    }
+}
+
+#[cfg(test)]
+mod plugin_runtime_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn enabled_plugin_mcp_is_namespaced_and_disabled_plugin_is_invisible() {
+        let dir = tempfile::tempdir().unwrap();
+        let package = dir.path().join("plugin");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(
+            package.join("vak-plugin.json"),
+            r#"{"schema":1,"name":"tools-pack","version":"1.0.0","description":"Tools","license":"MIT","components":{"mcp":["mcp.json"]}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            package.join("mcp.json"),
+            r#"{"mcpServers":{"lookup":{"command":"lookup-bin","args":["--safe"]}}}"#,
+        )
+        .unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let store = vak_plugin::PluginStore::new(dir.path().join(".vak"));
+        store
+            .install_local(package.as_path(), vak_plugin::InstallOptions::default())
+            .unwrap();
+        assert!(core.effective_mcp().servers.is_empty());
+        store.enable("tools-pack").unwrap();
+        let servers = core.effective_mcp().servers;
+        let server = servers.get("plugin.tools-pack.lookup").unwrap();
+        assert_eq!(server.command, "lookup-bin");
+        assert_eq!(server.args, ["--safe"]);
+        assert!(!server.network);
     }
 }
 

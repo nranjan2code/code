@@ -1354,6 +1354,7 @@ function Transcript(props: { sessionId: string }) {
 /// — the same shape the Gateway section uses.
 const EXTENSION_TABS = [
   { hash: "#/integrations", label: "Connected apps" },
+  { hash: "#/integrations/plugins", label: "Plugins" },
   { hash: "#/integrations/skills", label: "Skills" },
   { hash: "#/integrations/hooks", label: "Automations" },
   { hash: "#/integrations/tasks", label: "Scheduled tasks" },
@@ -1365,6 +1366,9 @@ function extensionsTab(): string {
 }
 
 interface ExtensionsCtx {
+  plugins: () => import("./types").PluginItem[];
+  pluginsLoading: () => boolean;
+  refetchPlugins: () => void;
   mcp: () => Record<string, McpServerConfig>;
   mcpLoading: () => boolean;
   refetchMcp: () => void;
@@ -1939,6 +1943,73 @@ When several rules match the same call, the strictest one wins — blocked beats
       </section>
     </>
   );
+}
+
+function PluginsView(props: { ctx: ExtensionsCtx }) {
+  const [path, setPath] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const [sourcePath, setSourcePath] = createSignal("");
+  const [sourceLabel, setSourceLabel] = createSignal("");
+  const [keyId, setKeyId] = createSignal("");
+  const [publicKey, setPublicKey] = createSignal("");
+  const [signature, setSignature] = createSignal("");
+  const [sources, { refetch: refetchSources }] = createResource(() => api.pluginSources().catch(() => ({ sources: [] })));
+  const refresh = props.ctx.refetchPlugins;
+  const install = async (update: boolean) => {
+    const value = path().trim();
+    if (!value || busy()) return;
+    setBusy(true);
+    try {
+      if (update) await api.pluginUpdate(value);
+      else await api.pluginInstall(value);
+      pushToast("info", update ? "Plugin generation staged" : "Plugin installed disabled");
+      setPath("");
+      refresh();
+      void refetchSources();
+    } catch (error) {
+      pushToast("alert", `${error}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const action = async (name: string, operation: "enable" | "disable" | "rollback" | "remove") => {
+    if (busy()) return;
+    setBusy(true);
+    try {
+      await api.pluginAction(name, operation);
+      pushToast("info", `${name} ${operation}d`);
+      refresh();
+    } catch (error) {
+      pushToast("alert", `${error}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <section class="stack">
+    <div class="panel">
+      <div class="panel-title-row"><div><h2>Install a reviewed package</h2><p>Packages are inspected, content-addressed, and installed disabled until you enable them.</p></div></div>
+      <div class="form-row"><label>Local package directory</label><input class="mono" placeholder="/path/to/plugin" value={path()} onInput={(e) => setPath(e.currentTarget.value)} /></div>
+      <div class="row-gap"><button disabled={busy() || !path().trim()} onClick={() => void install(false)}>Install disabled</button><button class="ghost" disabled={busy() || !path().trim()} onClick={() => void install(true)}>Stage update</button></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title-row"><div><h2>Catalog sources</h2><p>Register a local marketplace snapshot for review. Sources start disabled and are revalidated before activation.</p></div></div>
+      <div class="form-row"><label>Catalog directory<input class="mono" value={sourcePath()} onInput={(e) => setSourcePath(e.currentTarget.value)} placeholder="/path/to/catalog" /></label></div>
+      <div class="form-row"><label>Label<input value={sourceLabel()} onInput={(e) => setSourceLabel(e.currentTarget.value)} placeholder="Team catalog" /></label></div>
+      <details class="advanced"><summary>Detached Ed25519 evidence (optional)</summary><div class="form-row"><label>Key ID<input class="mono" value={keyId()} onInput={(e) => setKeyId(e.currentTarget.value)} /></label><label>Public key (base64)<input class="mono" value={publicKey()} onInput={(e) => setPublicKey(e.currentTarget.value)} /></label><label>Signature (base64)<input class="mono" value={signature()} onInput={(e) => setSignature(e.currentTarget.value)} /></label></div></details>
+      <button disabled={busy() || !sourcePath().trim()} onClick={async () => { setBusy(true); try { const signed = keyId() && publicKey() && signature() ? { key_id: keyId(), public_key: publicKey(), signature: signature() } : undefined; await api.pluginRegisterSource(sourcePath(), sourceLabel() || "Local catalog", signed); setSourcePath(""); setSourceLabel(""); setKeyId(""); setPublicKey(""); setSignature(""); void refetchSources(); pushToast("info", "Catalog source registered disabled"); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>Register source</button>
+      <Show when={(sources()?.sources ?? []).length > 0}><div class="capability-list" style={{ "margin-top": "12px" }}><For each={sources()?.sources ?? []}>{(source) => <div class="capability-item"><div class="panel-title-row"><span><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small></span><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 12)}</code></div><code>{source.trace_id}</code><div class="settings-actions"><button class="settings-button" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable"); void refetchSources(); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button class="settings-button danger" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke"); void refetchSources(); } finally { setBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
+    </div>
+    <Show when={!props.ctx.pluginsLoading()} fallback={<div class="panel"><div class="spin" /></div>}>
+      <For each={props.ctx.plugins()} fallback={<div class="panel empty"><h2>No installed plugins</h2><p>Install a local package after reviewing its publisher, license, capabilities, and digest.</p></div>}>
+        {(plugin) => <article class="panel">
+          <div class="panel-title-row"><div><h2>{plugin.name}</h2><p>{plugin.description || "No description"}</p></div><span class={`chip ${plugin.enabled ? "chip-tone-allow" : "chip-tone-ask"}`}>{plugin.enabled ? "Enabled" : "Disabled"}</span></div>
+          <div class="meta-grid"><span>v{plugin.version}</span><span>{plugin.scope}</span><span>{plugin.format}</span><span class="mono" title={plugin.digest}>sha256:{plugin.digest.slice(0, 12)}</span></div>
+          <p class="dim mono" title={plugin.trace_id}>trace {plugin.trace_id}</p>
+          <div class="row-gap"><button onClick={() => void action(plugin.name, plugin.enabled ? "disable" : "enable")}>{plugin.enabled ? "Disable" : "Enable"}</button><button class="ghost" onClick={() => void action(plugin.name, "rollback")}>Rollback</button><button class="danger" onClick={() => void action(plugin.name, "remove")}>Remove</button></div>
+        </article>}
+      </For>
+    </Show>
+  </section>;
 }
 
 // ---- Extensions › Skills ---------------------------------------------------
@@ -2618,10 +2689,14 @@ function ExtensionsSection() {
   const [mcp, mcpActions] = createResource(() => api.mcpServers());
   const [hooks, hooksActions] = createResource(() => api.hooks());
   const [skills, skillsActions] = createResource(() => api.skills());
+  const [plugins, pluginsActions] = createResource(() => api.plugins());
   const [proposals, proposalsActions] = createResource(() => api.skillProposals());
   const [tasks, tasksActions] = createResource(() => api.tasks());
 
   const ctx: ExtensionsCtx = {
+    plugins: () => plugins()?.plugins ?? [],
+    pluginsLoading: () => plugins.loading,
+    refetchPlugins: () => void pluginsActions.refetch(),
     mcp: () => mcp()?.servers ?? {},
     mcpLoading: () => mcp.loading,
     refetchMcp: () => void mcpActions.refetch(),
@@ -2655,6 +2730,7 @@ function ExtensionsSection() {
       ["connected apps", mcp],
       ["automations", hooks],
       ["skills", skills],
+      ["plugins", plugins],
       ["skill proposals", proposals],
       ["scheduled tasks", tasks],
     ] as const) {
@@ -2713,6 +2789,7 @@ function ExtensionsSection() {
 
       <Switch>
         <Match when={extensionsTab() === "#/integrations"}><McpServersView ctx={ctx} /></Match>
+        <Match when={extensionsTab() === "#/integrations/plugins"}><PluginsView ctx={ctx} /></Match>
         <Match when={extensionsTab() === "#/integrations/skills"}><SkillsView ctx={ctx} /></Match>
         <Match when={extensionsTab() === "#/integrations/hooks"}><HooksView ctx={ctx} /></Match>
         <Match when={extensionsTab() === "#/integrations/tasks"}><TasksView ctx={ctx} /></Match>

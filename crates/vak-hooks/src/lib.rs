@@ -50,6 +50,8 @@ pub struct HookOutcome {
     pub reason: Option<String>,
 }
 
+pub type HookRecorder<'a> = &'a (dyn Fn(&HookDef, bool) + Send + Sync);
+
 impl HookOutcome {
     fn merge(&mut self, other: HookOutcome) {
         if other.blocked && !self.blocked {
@@ -90,6 +92,20 @@ pub async fn run_hooks(
     extra: Option<&str>,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> HookOutcome {
+    run_hooks_with_recorder(hooks, event, session_id, cwd, tool, extra, cancel, None).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_hooks_with_recorder(
+    hooks: Arc<Vec<HookDef>>,
+    event: HookEvent,
+    session_id: &str,
+    cwd: &Path,
+    tool: Option<(&str, &Value)>,
+    extra: Option<&str>,
+    cancel: &tokio_util::sync::CancellationToken,
+    recorder: Option<HookRecorder<'_>>,
+) -> HookOutcome {
     let mut combined = HookOutcome::default();
     for hook in hooks.iter() {
         if hook.event != event {
@@ -102,6 +118,9 @@ pub async fn run_hooks(
         }
 
         let outcome = run_one(hook, event, session_id, cwd, tool, extra, cancel).await;
+        if let Some(recorder) = recorder {
+            recorder(hook, !outcome.blocked);
+        }
         combined.merge(outcome);
         if combined.blocked {
             return combined;

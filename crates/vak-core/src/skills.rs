@@ -10,13 +10,23 @@ pub struct Skill {
     pub name: String,
     pub description: String,
     pub path: PathBuf,
+    pub provenance: Option<String>,
 }
 
 pub fn discover(cwd: &Path, home: &Path) -> Vec<Skill> {
-    let mut roots = vec![cwd.join(".vak/skills"), home.join("skills")];
-    roots.dedup();
+    discover_with_plugins(cwd, home, &[])
+}
+
+pub fn discover_with_plugins(cwd: &Path, home: &Path, plugins: &[(PathBuf, String)]) -> Vec<Skill> {
+    let mut roots = vec![(cwd.join(".vak/skills"), None), (home.join("skills"), None)];
+    roots.extend(
+        plugins
+            .iter()
+            .map(|(root, provenance)| (root.join("skills"), Some(provenance.clone()))),
+    );
+    roots.dedup_by(|a, b| a.0 == b.0);
     let mut out = Vec::new();
-    for root in roots {
+    for (root, provenance) in roots {
         let Ok(entries) = std::fs::read_dir(&root) else {
             continue;
         };
@@ -25,7 +35,8 @@ pub fn discover(cwd: &Path, home: &Path) -> Vec<Skill> {
             if !skill_path.is_file() {
                 continue;
             }
-            if let Some(skill) = parse(&skill_path) {
+            if let Some(mut skill) = parse(&skill_path) {
+                skill.provenance = provenance.clone();
                 out.push(skill);
             }
         }
@@ -61,6 +72,7 @@ pub fn parse(path: &Path) -> Option<Skill> {
         name,
         description,
         path: path.to_path_buf(),
+        provenance: None,
     })
 }
 

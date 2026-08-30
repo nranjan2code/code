@@ -22,6 +22,7 @@ vak-hooks = { workspace = true }
 vak-llm = { workspace = true }
 vak-mcp = { workspace = true }
 vak-permission = { workspace = true }
+vak-plugin = { workspace = true }
 vak-session = { workspace = true }
 vak-tools = { workspace = true }
 walkdir = { workspace = true }

@@ -79,6 +79,8 @@ subtle = "2"
 semver = "1"
 # Artifact integrity for downloaded release binaries
 sha2 = "0.10"
+# Ed25519 verification for signed plugin/catalog evidence; no signing or key generation.
+ring = "=0.17.14"
 hex = "0.4"
 # Embeds the built admin SPA (crates/vak-admin-ui/dist) into the binary
 include_dir = "0.7"

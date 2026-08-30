@@ -163,6 +163,33 @@ export interface DiscoveredSkill {
   description: string;
   source?: string;
   scope?: string;
+  provenance?: string | null;
+}
+
+export interface InstalledPlugin {
+  name: string;
+  version: string;
+  digest: string;
+  description: string;
+  format: string;
+  scope: "workspace" | "user";
+  enabled: boolean;
+  trace_id: string;
+  capabilities: Record<string, unknown>;
+  warnings: string[];
+}
+
+export interface MarketplaceSource {
+  id: string;
+  label: string;
+  root: string;
+  format: string;
+  catalog_digest: string;
+  trace_id: string;
+  trust: string;
+  enabled: boolean;
+  registered_at_unix: number;
+  signature?: { algorithm: string; key_id: string; public_key: string; signature: string; verified: boolean; revoked: boolean } | null;
 }
 
 export interface HookConfig {
@@ -484,6 +511,42 @@ export function listSkills(): Promise<{
   skills: DiscoveredSkill[];
 }> {
   return req("/skills");
+}
+
+export function listPlugins(): Promise<{ plugins: InstalledPlugin[] }> {
+  return req("/plugins");
+}
+
+export function listPluginSources(): Promise<{ sources: MarketplaceSource[] }> {
+  return req("/plugins/sources");
+}
+
+export function registerPluginSource(path: string, label: string, signature?: { key_id: string; public_key: string; signature: string }): Promise<MarketplaceSource> {
+  return req("/plugins/sources", { method: "POST", body: JSON.stringify({ path, label, trust: "manual-review", ...(signature ?? {}) }) });
+}
+
+export function pluginKeyAction(keyId: string, action: "revoke" | "restore"): Promise<unknown> {
+  return req(`/plugins/keys/${encodeURIComponent(keyId)}/${action}`, { method: "POST", body: "{}" });
+}
+
+export function pluginSourceAction(id: string, action: "enable" | "disable"): Promise<MarketplaceSource> {
+  return req(`/plugins/sources/${encodeURIComponent(id)}/${action}`, { method: "POST", body: "{}" });
+}
+
+export function installPlugin(path: string, scope: "workspace" | "user"): Promise<InstalledPlugin> {
+  return req("/plugins/install", { method: "POST", body: JSON.stringify({ path, scope }) });
+}
+
+export function updatePlugin(path: string, scope: "workspace" | "user"): Promise<InstalledPlugin> {
+  return req("/plugins/update", { method: "POST", body: JSON.stringify({ path, scope }) });
+}
+
+export function pluginAction(name: string, action: "enable" | "disable" | "rollback"): Promise<InstalledPlugin> {
+  return req(`/plugins/${encodeURIComponent(name)}/${action}`, { method: "POST", body: "{}" });
+}
+
+export function removePlugin(name: string): Promise<InstalledPlugin> {
+  return req(`/plugins/${encodeURIComponent(name)}`, { method: "DELETE" });
 }
 
 export interface FileResponse {

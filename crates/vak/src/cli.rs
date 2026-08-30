@@ -199,8 +199,51 @@ pub(crate) enum PluginScopeArg {
     Workspace,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(crate) enum MarketplaceTrustArg {
+    ManualReview,
+    PinnedCommit,
+    LocalOnly,
+}
+
 #[derive(Subcommand, Debug)]
 pub(crate) enum PluginAction {
+    /// Inspect and hash a Codex, Claude, Copilot, or Cursor catalog snapshot
+    CatalogInspect {
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Register a catalog snapshot for explicit review; it starts disabled
+    CatalogRegister {
+        path: PathBuf,
+        #[arg(long, default_value = "local catalog")]
+        label: String,
+        #[arg(long, value_enum, default_value_t = MarketplaceTrustArg::ManualReview)]
+        trust: MarketplaceTrustArg,
+        #[arg(long, value_enum, default_value_t = PluginScopeArg::User)]
+        scope: PluginScopeArg,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List registered catalog snapshots and their trust state
+    CatalogSources {
+        #[arg(long, value_enum, default_value_t = PluginScopeArg::User)]
+        scope: PluginScopeArg,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Materialize and install one explicitly selected catalog entry.
+    CatalogInstall {
+        catalog: PathBuf,
+        name: String,
+        #[arg(long, value_enum, default_value_t = PluginScopeArg::User)]
+        scope: PluginScopeArg,
+        #[arg(long)]
+        allow_unlicensed: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Inspect a local package without installing or executing it
     Inspect {
         path: PathBuf,
@@ -215,6 +258,48 @@ pub(crate) enum PluginAction {
         /// Proceed when the package declares no license
         #[arg(long)]
         allow_unlicensed: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect and stage a new immutable generation without activating it
+    Update {
+        path: PathBuf,
+        #[arg(long, value_enum, default_value_t = PluginScopeArg::User)]
+        scope: PluginScopeArg,
+        #[arg(long)]
+        allow_unlicensed: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Enable the currently selected generation
+    Enable {
+        name: String,
+        #[arg(long, value_enum, default_value_t = PluginScopeArg::User)]
+        scope: PluginScopeArg,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Disable a plugin without uninstalling it
+    Disable {
+        name: String,
+        #[arg(long, value_enum, default_value_t = PluginScopeArg::User)]
+        scope: PluginScopeArg,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Select the previous immutable generation and leave it disabled
+    Rollback {
+        name: String,
+        #[arg(long, value_enum, default_value_t = PluginScopeArg::User)]
+        scope: PluginScopeArg,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List every immutable generation retained for a plugin
+    Versions {
+        name: String,
+        #[arg(long, value_enum, default_value_t = PluginScopeArg::User)]
+        scope: PluginScopeArg,
         #[arg(long)]
         json: bool,
     },
@@ -767,5 +852,47 @@ mod tests {
             }
             other => panic!("unexpected: {other:?}"),
         }
+    }
+
+    #[test]
+    fn plugin_lifecycle_commands_parse() {
+        assert!(matches!(
+            parse(&["plugins", "catalog-inspect", "./catalog"]),
+            Command::Plugins {
+                action: PluginAction::CatalogInspect { .. }
+            }
+        ));
+        assert!(matches!(
+            parse(&["plugins", "inspect", "./sample", "--json"]),
+            Command::Plugins {
+                action: PluginAction::Inspect { json: true, .. }
+            }
+        ));
+        assert!(matches!(
+            parse(&[
+                "plugins",
+                "install",
+                "./sample",
+                "--scope",
+                "workspace",
+                "--allow-unlicensed"
+            ]),
+            Command::Plugins {
+                action: PluginAction::Install {
+                    scope: PluginScopeArg::Workspace,
+                    allow_unlicensed: true,
+                    ..
+                }
+            }
+        ));
+        assert!(matches!(
+            parse(&["plugins", "audit"]),
+            Command::Plugins {
+                action: PluginAction::Audit {
+                    scope: PluginScopeArg::User,
+                    ..
+                }
+            }
+        ));
     }
 }

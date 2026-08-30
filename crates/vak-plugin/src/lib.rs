@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
+use base64::Engine;
+
 pub const REGISTRY_SCHEMA: u32 = 1;
 
 #[derive(Debug, thiserror::Error)]
@@ -166,6 +168,412 @@ pub struct PackageInspection {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MarketplaceFormat {
+    Codex,
+    Claude,
+    Copilot,
+    Cursor,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CatalogEntry {
+    pub name: String,
+    pub source: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CatalogInspection {
+    pub name: String,
+    pub format: MarketplaceFormat,
+    pub path: PathBuf,
+    pub digest: String,
+    pub trace_id: String,
+    pub entries: Vec<CatalogEntry>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MarketplaceTrust {
+    ManualReview,
+    PinnedCommit,
+    LocalOnly,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarketplaceSource {
+    pub id: String,
+    pub label: String,
+    pub root: PathBuf,
+    pub format: MarketplaceFormat,
+    pub catalog_digest: String,
+    pub trace_id: String,
+    pub trust: MarketplaceTrust,
+    pub enabled: bool,
+    pub registered_at_unix: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<SignatureEvidence>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarketplaceSourceRegistry {
+    pub schema: u32,
+    #[serde(default)]
+    pub sources: BTreeMap<String, MarketplaceSource>,
+    #[serde(default)]
+    pub revoked_keys: BTreeSet<String>,
+}
+
+pub const SOURCE_REGISTRY_SCHEMA: u32 = 1;
+
+pub fn inspect_catalog(root: &Path) -> Result<CatalogInspection, PluginError> {
+    let (path, format) = find_catalog(root)?;
+    let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|source| PluginError::Json {
+            path: path.clone(),
+            source,
+        })?;
+    let object = value.as_object().ok_or_else(|| {
+        PluginError::InvalidManifest("marketplace manifest must be an object".into())
+    })?;
+    let name = required_string(object, "name")?;
+    let name = normalize_plugin_id(&name).ok_or_else(|| {
+        PluginError::InvalidManifest("marketplace name is not a valid identifier".into())
+    })?;
+    let plugins = object
+        .get("plugins")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| PluginError::InvalidManifest("marketplace needs a plugins array".into()))?;
+    if plugins.len() > 500 {
+        return Err(PluginError::LimitExceeded(
+            "marketplace contains more than 500 entries".into(),
+        ));
+    }
+    let mut entries = Vec::with_capacity(plugins.len());
+    let mut names = BTreeSet::new();
+    let mut warnings = Vec::new();
+    for (index, plugin) in plugins.iter().enumerate() {
+        let plugin = plugin.as_object().ok_or_else(|| {
+            PluginError::InvalidManifest(format!(
+                "marketplace plugin entry {index} must be an object"
+            ))
+        })?;
+        let entry_name = required_string(plugin, "name")?;
+        let entry_name = normalize_plugin_id(&entry_name).ok_or_else(|| {
+            PluginError::InvalidManifest(format!(
+                "marketplace plugin entry {index} has an invalid name"
+            ))
+        })?;
+        if !names.insert(entry_name.clone()) {
+            return Err(PluginError::InvalidManifest(format!(
+                "marketplace repeats plugin name {entry_name:?}"
+            )));
+        }
+        let source = plugin.get("source").ok_or_else(|| {
+            PluginError::InvalidManifest(format!("marketplace plugin {entry_name:?} has no source"))
+        })?;
+        validate_catalog_source(source, &entry_name)?;
+        let license = optional_string(plugin, "license")?;
+        if license.is_none() {
+            warnings.push(format!(
+                "plugin {entry_name:?} declares no license; catalog presence grants no redistribution right"
+            ));
+        }
+        entries.push(CatalogEntry {
+            name: entry_name,
+            source: source.clone(),
+            version: optional_string(plugin, "version")?,
+            description: optional_string(plugin, "description")?,
+            license,
+        });
+    }
+    let digest = hex::encode(Sha256::digest(&bytes));
+    let trace_id = format!("catalog:{name}:{digest}");
+    Ok(CatalogInspection {
+        name,
+        format,
+        path,
+        digest,
+        trace_id,
+        entries,
+        warnings,
+    })
+}
+
+/// Materialize one catalog entry without running any repository content.
+/// Local paths are confined to the catalog root; remote entries must resolve
+/// to an HTTPS Git repository and a full commit SHA before `git` is invoked.
+pub fn materialize_catalog_entry(
+    catalog_root: &Path,
+    entry: &CatalogEntry,
+    destination_root: &Path,
+) -> Result<PathBuf, PluginError> {
+    let source = &entry.source;
+    if let Some(path) = source.as_str() {
+        if path.starts_with("https://") || path.starts_with("git@") {
+            return Err(PluginError::UnsafePackage(format!(
+                "catalog entry {:?} remote sources require an object with a pinned commit sha",
+                entry.name
+            )));
+        }
+        let candidate = catalog_root.join(path);
+        let canonical =
+            fs::canonicalize(&candidate).map_err(|error| io_error(&candidate, error))?;
+        let catalog =
+            fs::canonicalize(catalog_root).map_err(|error| io_error(catalog_root, error))?;
+        if !canonical.starts_with(&catalog) {
+            return Err(PluginError::UnsafePackage(format!(
+                "catalog entry {:?} escapes its catalog root",
+                entry.name
+            )));
+        }
+        return Ok(canonical);
+    }
+    let object = source.as_object().ok_or_else(|| {
+        PluginError::InvalidManifest(format!(
+            "catalog entry {:?} has an invalid source",
+            entry.name
+        ))
+    })?;
+    if let Some(path) = object.get("path").and_then(serde_json::Value::as_str) {
+        let candidate = catalog_root.join(path);
+        let canonical =
+            fs::canonicalize(&candidate).map_err(|error| io_error(&candidate, error))?;
+        let catalog =
+            fs::canonicalize(catalog_root).map_err(|error| io_error(catalog_root, error))?;
+        if !canonical.starts_with(&catalog) {
+            return Err(PluginError::UnsafePackage(format!(
+                "catalog entry {:?} escapes its catalog root",
+                entry.name
+            )));
+        }
+        return Ok(canonical);
+    }
+    let sha = object
+        .get("sha")
+        .and_then(serde_json::Value::as_str)
+        .filter(|sha| sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or_else(|| {
+            PluginError::UnsafePackage(format!(
+                "catalog entry {:?} needs a full pinned commit sha",
+                entry.name
+            ))
+        })?;
+    let url = if let Some(repo) = object.get("repo").and_then(serde_json::Value::as_str) {
+        if !repo.contains('/') || repo.starts_with('/') || repo.contains("..") {
+            return Err(PluginError::UnsafePackage(format!(
+                "catalog entry {:?} has an invalid repository",
+                entry.name
+            )));
+        }
+        format!("https://github.com/{repo}.git")
+    } else {
+        object
+            .get("url")
+            .or_else(|| object.get("source"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|url| url.starts_with("https://"))
+            .ok_or_else(|| {
+                PluginError::UnsafePackage(format!(
+                    "catalog entry {:?} only supports HTTPS Git URLs",
+                    entry.name
+                ))
+            })?
+            .to_string()
+    };
+    fs::create_dir_all(destination_root).map_err(|error| io_error(destination_root, error))?;
+    let destination = destination_root.join(format!("{}-{sha}", entry.name));
+    if destination.exists() {
+        let checked = git_checked_out_commit(&destination)?;
+        if checked == sha {
+            return Ok(destination);
+        }
+        return Err(PluginError::UnsafePackage(format!(
+            "existing catalog checkout has unexpected commit: {}",
+            destination.display()
+        )));
+    }
+    let clone = std::process::Command::new("git")
+        .args(["clone", "--filter=blob:none", "--no-checkout", "--", &url])
+        .arg(&destination)
+        .output()
+        .map_err(|error| io_error(&destination, error))?;
+    if !clone.status.success() {
+        return Err(PluginError::UnsafePackage(format!(
+            "git clone failed for catalog entry {:?}: {}",
+            entry.name,
+            String::from_utf8_lossy(&clone.stderr).trim()
+        )));
+    }
+    let fetch = std::process::Command::new("git")
+        .args(["-C"])
+        .arg(&destination)
+        .args(["fetch", "--depth=1", "origin", sha])
+        .output()
+        .map_err(|error| io_error(&destination, error))?;
+    if !fetch.status.success() {
+        let _ = fs::remove_dir_all(&destination);
+        return Err(PluginError::UnsafePackage(format!(
+            "git fetch of pinned commit failed for {:?}: {}",
+            entry.name,
+            String::from_utf8_lossy(&fetch.stderr).trim()
+        )));
+    }
+    let checkout = std::process::Command::new("git")
+        .args(["-C"])
+        .arg(&destination)
+        .args(["checkout", "--detach", sha])
+        .output()
+        .map_err(|error| io_error(&destination, error))?;
+    if !checkout.status.success() || git_checked_out_commit(&destination)? != sha {
+        let _ = fs::remove_dir_all(&destination);
+        return Err(PluginError::UnsafePackage(format!(
+            "git checkout did not produce pinned commit for {:?}",
+            entry.name
+        )));
+    }
+    Ok(destination)
+}
+
+fn git_checked_out_commit(path: &Path) -> Result<String, PluginError> {
+    let output = std::process::Command::new("git")
+        .args(["-C"])
+        .arg(path)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map_err(|error| io_error(path, error))?;
+    if !output.status.success() {
+        return Err(PluginError::UnsafePackage(format!(
+            "unable to verify checkout commit: {}",
+            path.display()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn find_catalog(root: &Path) -> Result<(PathBuf, MarketplaceFormat), PluginError> {
+    let candidates = [
+        (".agents/plugins/marketplace.json", MarketplaceFormat::Codex),
+        (".claude-plugin/marketplace.json", MarketplaceFormat::Claude),
+        (
+            ".github/plugin/marketplace.json",
+            MarketplaceFormat::Copilot,
+        ),
+        (".plugin/marketplace.json", MarketplaceFormat::Copilot),
+        (".cursor-plugin/marketplace.json", MarketplaceFormat::Cursor),
+        ("marketplace.json", MarketplaceFormat::Copilot),
+    ];
+    for (relative, format) in candidates {
+        let path = root.join(relative);
+        if path.is_file() {
+            return Ok((path, format));
+        }
+    }
+    Err(PluginError::ManifestMissing(root.to_path_buf()))
+}
+
+fn optional_string(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<Option<String>, PluginError> {
+    match object.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_str()
+            .map(|value| Some(value.to_string()))
+            .ok_or_else(|| {
+                PluginError::InvalidManifest(format!(
+                    "marketplace field {field:?} must be a string"
+                ))
+            }),
+    }
+}
+
+fn validate_catalog_source(source: &serde_json::Value, name: &str) -> Result<(), PluginError> {
+    if let Some(locator) = source.as_str() {
+        if locator.trim().is_empty() {
+            return Err(PluginError::InvalidManifest(format!(
+                "marketplace plugin {name:?} source must not be empty"
+            )));
+        }
+        if locator.starts_with("./") || locator.starts_with("../") {
+            validate_relative_catalog_path(locator, name)?;
+        }
+        if locator.starts_with("https://") || locator.starts_with("git@") {
+            return Err(PluginError::UnsafePackage(format!(
+                "marketplace plugin {name:?} remote sources must include a pinned commit sha"
+            )));
+        }
+        return Ok(());
+    }
+    let Some(object) = source.as_object() else {
+        return Err(PluginError::InvalidManifest(format!(
+            "marketplace plugin {name:?} source must be a non-empty string or object"
+        )));
+    };
+    if object.is_empty() {
+        return Err(PluginError::InvalidManifest(format!(
+            "marketplace plugin {name:?} source object is empty"
+        )));
+    }
+    let has_locator = ["repo", "url", "path", "source"]
+        .iter()
+        .any(|field| object.get(*field).is_some_and(serde_json::Value::is_string));
+    if !has_locator {
+        return Err(PluginError::InvalidManifest(format!(
+            "marketplace plugin {name:?} source object has no recognized locator"
+        )));
+    }
+    if let Some(sha) = object.get("sha") {
+        let valid = sha
+            .as_str()
+            .is_some_and(|sha| sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        if !valid {
+            return Err(PluginError::InvalidManifest(format!(
+                "marketplace plugin {name:?} source sha must be a full 40-character commit hash"
+            )));
+        }
+    }
+    if let Some(path) = object.get("path").and_then(serde_json::Value::as_str) {
+        validate_relative_catalog_path(path, name)?;
+    }
+    let remote = ["repo", "url", "source"].iter().any(|field| {
+        object
+            .get(*field)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| value != "github" && value != "git")
+    }) || object.get("repo").is_some();
+    if remote && object.get("sha").is_none() {
+        return Err(PluginError::UnsafePackage(format!(
+            "marketplace plugin {name:?} remote sources require a pinned commit sha"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_relative_catalog_path(path: &str, name: &str) -> Result<(), PluginError> {
+    let candidate = Path::new(path);
+    if candidate.is_absolute()
+        || candidate
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(PluginError::UnsafePackage(format!(
+            "marketplace plugin {name:?} source path must stay inside its catalog"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct InspectLimits {
     pub max_files: usize,
@@ -253,7 +661,12 @@ fn load_manifest(
                 path: codex_path,
                 source,
             })?;
-        return normalize_client_manifest(root, &value, ManifestFormat::Codex);
+        return normalize_client_manifest(
+            root,
+            &value,
+            ManifestFormat::Codex,
+            ".codex-plugin/plugin.json",
+        );
     }
 
     for (relative, format) in [
@@ -267,7 +680,7 @@ fn load_manifest(
             let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
             let value = serde_json::from_slice(&bytes)
                 .map_err(|source| PluginError::Json { path, source })?;
-            return normalize_client_manifest(root, &value, format);
+            return normalize_client_manifest(root, &value, format, relative);
         }
     }
 
@@ -286,7 +699,7 @@ fn load_manifest(
         } else {
             ManifestFormat::Copilot
         };
-        return normalize_client_manifest(root, &value, format);
+        return normalize_client_manifest(root, &value, format, "plugin.json");
     }
 
     let gemini_path = root.join("gemini-extension.json");
@@ -296,7 +709,12 @@ fn load_manifest(
             path: gemini_path,
             source,
         })?;
-        return normalize_client_manifest(root, &value, ManifestFormat::Gemini);
+        return normalize_client_manifest(
+            root,
+            &value,
+            ManifestFormat::Gemini,
+            "gemini-extension.json",
+        );
     }
 
     let skill_path = root.join("SKILL.md");
@@ -328,6 +746,7 @@ fn normalize_client_manifest(
     root: &Path,
     value: &serde_json::Value,
     format: ManifestFormat,
+    manifest_path: &str,
 ) -> Result<(PluginManifest, ManifestFormat, Vec<String>), PluginError> {
     let object = value
         .as_object()
@@ -365,27 +784,17 @@ fn normalize_client_manifest(
         skills: string_or_strings(object.get("skills"), "skills")?,
         commands: string_or_strings(object.get("commands"), "commands")?,
         mcp: string_or_strings(object.get("mcp"), "mcp")?,
-        hooks: paths_or_inline(object.get("hooks"), "hooks", manifest_relative_path(format))?,
+        hooks: paths_or_inline(object.get("hooks"), "hooks", manifest_path)?,
         agents: string_or_strings(object.get("agents"), "agents")?,
         rules: string_or_strings(object.get("rules"), "rules")?,
-        lsp: paths_or_inline(
-            object.get("lspServers"),
-            "lspServers",
-            manifest_relative_path(format),
-        )?,
+        lsp: paths_or_inline(object.get("lspServers"), "lspServers", manifest_path)?,
         policies: string_or_strings(object.get("policies"), "policies")?,
-        themes: paths_or_inline(
-            object.get("themes"),
-            "themes",
-            manifest_relative_path(format),
-        )?,
+        themes: paths_or_inline(object.get("themes"), "themes", manifest_path)?,
         presentation: string_or_strings(object.get("presentation"), "presentation")?,
         assets: string_or_strings(object.get("assets"), "assets")?,
     };
     if object.get("mcpServers").is_some() {
-        components
-            .mcp
-            .push(manifest_relative_path(format).to_string());
+        components.mcp.push(manifest_path.to_string());
     }
     if format == ManifestFormat::AgentPlugin {
         components = Components::default();
@@ -485,18 +894,6 @@ fn normalize_external_version(source: &str) -> (String, Option<String>) {
             "source version {source:?} is not semantic; normalized internally as {normalized}"
         )),
     )
-}
-
-fn manifest_relative_path(format: ManifestFormat) -> &'static str {
-    match format {
-        ManifestFormat::Codex => ".codex-plugin/plugin.json",
-        ManifestFormat::Claude => ".claude-plugin/plugin.json",
-        ManifestFormat::Cursor => ".cursor-plugin/plugin.json",
-        ManifestFormat::Copilot => "plugin.json",
-        ManifestFormat::Gemini => "gemini-extension.json",
-        ManifestFormat::AgentPlugin => "plugin.json",
-        ManifestFormat::Vak | ManifestFormat::AgentSkill => "vak-plugin.json",
-    }
 }
 
 fn required_string(
@@ -998,6 +1395,8 @@ pub struct PluginRegistry {
     pub generation: u64,
     pub plugins: BTreeMap<String, InstalledPlugin>,
     #[serde(default)]
+    pub versions: BTreeMap<String, Vec<InstalledPlugin>>,
+    #[serde(default)]
     pub audit: Vec<PluginAuditEvent>,
 }
 
@@ -1005,6 +1404,10 @@ pub struct PluginRegistry {
 #[serde(rename_all = "kebab-case")]
 pub enum PluginAuditAction {
     Installed,
+    Updated,
+    Enabled,
+    Disabled,
+    RolledBack,
     Removed,
 }
 
@@ -1020,12 +1423,66 @@ pub struct PluginAuditEvent {
     pub source: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginInvocationEvent {
+    pub at_unix: u64,
+    pub trace_id: String,
+    pub plugin: String,
+    pub capability: String,
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginHook {
+    pub event: String,
+    #[serde(rename = "match", default)]
+    pub matcher: Option<String>,
+    pub command: String,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignatureEvidence {
+    pub algorithm: String,
+    pub key_id: String,
+    pub public_key: String,
+    pub signature: String,
+    pub verified: bool,
+    pub revoked: bool,
+}
+
+/// Verify detached Ed25519 evidence over an exact byte sequence. Key trust
+/// and revocation policy remain caller-owned; a valid signature alone never
+/// grants runtime capabilities.
+pub fn verify_ed25519_signature(
+    message: &[u8],
+    public_key_base64: &str,
+    signature_base64: &str,
+) -> Result<(), PluginError> {
+    let key = base64::engine::general_purpose::STANDARD
+        .decode(public_key_base64)
+        .map_err(|error| {
+            PluginError::UnsafePackage(format!("invalid Ed25519 public key encoding: {error}"))
+        })?;
+    let signature = base64::engine::general_purpose::STANDARD
+        .decode(signature_base64)
+        .map_err(|error| {
+            PluginError::UnsafePackage(format!("invalid Ed25519 signature encoding: {error}"))
+        })?;
+    let verifier = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key);
+    verifier
+        .verify(message, &signature)
+        .map_err(|_| PluginError::UnsafePackage("Ed25519 signature verification failed".into()))
+}
+
 impl Default for PluginRegistry {
     fn default() -> Self {
         Self {
             schema: REGISTRY_SCHEMA,
             generation: 0,
             plugins: BTreeMap::new(),
+            versions: BTreeMap::new(),
             audit: Vec::new(),
         }
     }
@@ -1046,6 +1503,7 @@ impl Default for InstallOptions {
     }
 }
 
+#[derive(Clone)]
 pub struct PluginStore {
     home: PathBuf,
 }
@@ -1061,6 +1519,222 @@ impl PluginStore {
 
     pub fn packages_root(&self) -> PathBuf {
         self.home.join("plugins/packages")
+    }
+
+    pub fn source_registry_path(&self) -> PathBuf {
+        self.home.join("plugins/sources.json")
+    }
+
+    pub fn invocation_log_path(&self) -> PathBuf {
+        self.home.join("plugins/invocations.jsonl")
+    }
+
+    pub fn record_invocation(
+        &self,
+        trace_id: &str,
+        plugin: &str,
+        capability: &str,
+        success: bool,
+    ) -> Result<(), PluginError> {
+        let _lock = RegistryLock::acquire(&self.home.join("plugins"))?;
+        let path = self.invocation_log_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| io_error(parent, error))?;
+        }
+        let event = PluginInvocationEvent {
+            at_unix: now_unix(),
+            trace_id: trace_id.to_string(),
+            plugin: plugin.to_string(),
+            capability: capability.to_string(),
+            success,
+        };
+        let bytes = serde_json::to_vec(&event).map_err(|source| PluginError::Json {
+            path: path.clone(),
+            source,
+        })?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|error| io_error(&path, error))?;
+        file.write_all(&bytes)
+            .map_err(|error| io_error(&path, error))?;
+        file.write_all(b"\n")
+            .map_err(|error| io_error(&path, error))?;
+        file.sync_data().map_err(|error| io_error(&path, error))
+    }
+
+    pub fn invocations(&self) -> Result<Vec<PluginInvocationEvent>, PluginError> {
+        let path = self.invocation_log_path();
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let text = fs::read_to_string(&path).map_err(|error| io_error(&path, error))?;
+        text.lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                serde_json::from_str(line).map_err(|source| PluginError::Json {
+                    path: path.clone(),
+                    source,
+                })
+            })
+            .collect()
+    }
+
+    pub fn load_sources(&self) -> Result<MarketplaceSourceRegistry, PluginError> {
+        let path = self.source_registry_path();
+        if !path.exists() {
+            return Ok(MarketplaceSourceRegistry {
+                schema: SOURCE_REGISTRY_SCHEMA,
+                ..MarketplaceSourceRegistry::default()
+            });
+        }
+        let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
+        let registry: MarketplaceSourceRegistry =
+            serde_json::from_slice(&bytes).map_err(|source| PluginError::Json {
+                path: path.clone(),
+                source,
+            })?;
+        if registry.schema > SOURCE_REGISTRY_SCHEMA {
+            return Err(PluginError::InvalidManifest(format!(
+                "marketplace source registry schema {} is newer than supported schema {SOURCE_REGISTRY_SCHEMA}",
+                registry.schema
+            )));
+        }
+        Ok(registry)
+    }
+
+    pub fn register_catalog_source(
+        &self,
+        root: &Path,
+        label: &str,
+        trust: MarketplaceTrust,
+    ) -> Result<MarketplaceSource, PluginError> {
+        self.register_catalog_source_with_signature(root, label, trust, None)
+    }
+
+    pub fn register_catalog_source_with_signature(
+        &self,
+        root: &Path,
+        label: &str,
+        trust: MarketplaceTrust,
+        signature: Option<SignatureEvidence>,
+    ) -> Result<MarketplaceSource, PluginError> {
+        let inspection = inspect_catalog(root)?;
+        let signature = match signature {
+            Some(mut evidence) => {
+                if evidence.revoked
+                    || evidence.algorithm != "ed25519"
+                    || verify_ed25519_signature(
+                        inspection.digest.as_bytes(),
+                        &evidence.public_key,
+                        &evidence.signature,
+                    )
+                    .is_err()
+                {
+                    return Err(PluginError::UnsafePackage(
+                        "catalog signature evidence is not valid or is revoked".into(),
+                    ));
+                }
+                evidence.verified = true;
+                Some(evidence)
+            }
+            None => None,
+        };
+        let canonical = fs::canonicalize(root).map_err(|error| io_error(root, error))?;
+        let id = format!("{}:{}", inspection.name, inspection.digest);
+        let source = MarketplaceSource {
+            id: id.clone(),
+            label: label.trim().to_string(),
+            root: canonical,
+            format: inspection.format,
+            catalog_digest: inspection.digest,
+            trace_id: inspection.trace_id,
+            trust,
+            enabled: false,
+            registered_at_unix: now_unix(),
+            signature,
+        };
+        let _lock = RegistryLock::acquire(&self.home.join("plugins"))?;
+        let mut registry = self.load_sources()?;
+        registry.schema = SOURCE_REGISTRY_SCHEMA;
+        registry.sources.insert(id, source.clone());
+        self.save_sources(&registry)?;
+        Ok(source)
+    }
+
+    pub fn set_key_revoked(&self, key_id: &str, revoked: bool) -> Result<(), PluginError> {
+        if key_id.trim().is_empty() {
+            return Err(PluginError::InvalidManifest(
+                "key id must not be empty".into(),
+            ));
+        }
+        let _lock = RegistryLock::acquire(&self.home.join("plugins"))?;
+        let mut registry = self.load_sources()?;
+        if revoked {
+            registry.revoked_keys.insert(key_id.to_string());
+        } else {
+            registry.revoked_keys.remove(key_id);
+        }
+        self.save_sources(&registry)
+    }
+
+    pub fn list_sources(&self) -> Result<Vec<MarketplaceSource>, PluginError> {
+        Ok(self.load_sources()?.sources.into_values().collect())
+    }
+
+    pub fn set_source_enabled(
+        &self,
+        id: &str,
+        enabled: bool,
+    ) -> Result<MarketplaceSource, PluginError> {
+        let _lock = RegistryLock::acquire(&self.home.join("plugins"))?;
+        let mut registry = self.load_sources()?;
+        let source = registry
+            .sources
+            .get_mut(id)
+            .ok_or_else(|| PluginError::NotInstalled(id.to_string()))?;
+        let current = inspect_catalog(&source.root)?;
+        if current.digest != source.catalog_digest {
+            return Err(PluginError::UnsafePackage(format!(
+                "marketplace catalog changed since registration: {}",
+                source.root.display()
+            )));
+        }
+        if let Some(signature) = &source.signature {
+            if signature.revoked || registry.revoked_keys.contains(&signature.key_id) {
+                return Err(PluginError::UnsafePackage(format!(
+                    "marketplace source key is revoked: {}",
+                    signature.key_id
+                )));
+            }
+            if !signature.verified {
+                return Err(PluginError::UnsafePackage(
+                    "marketplace source signature is not verified".into(),
+                ));
+            }
+        }
+        source.enabled = enabled;
+        let source = source.clone();
+        self.save_sources(&registry)?;
+        Ok(source)
+    }
+
+    fn save_sources(&self, registry: &MarketplaceSourceRegistry) -> Result<(), PluginError> {
+        let path = self.source_registry_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| io_error(parent, error))?;
+        }
+        let bytes = serde_json::to_vec_pretty(registry).map_err(|source| PluginError::Json {
+            path: path.clone(),
+            source,
+        })?;
+        let temp = path.with_extension("json.tmp");
+        let mut file = File::create(&temp).map_err(|error| io_error(&temp, error))?;
+        file.write_all(&bytes)
+            .map_err(|error| io_error(&temp, error))?;
+        file.sync_all().map_err(|error| io_error(&temp, error))?;
+        fs::rename(&temp, &path).map_err(|error| io_error(&path, error))
     }
 
     pub fn load(&self) -> Result<PluginRegistry, PluginError> {
@@ -1085,6 +1759,62 @@ impl PluginStore {
 
     pub fn list(&self) -> Result<Vec<InstalledPlugin>, PluginError> {
         Ok(self.load()?.plugins.into_values().collect())
+    }
+
+    pub fn enabled(&self) -> Result<Vec<InstalledPlugin>, PluginError> {
+        Ok(self
+            .load()?
+            .plugins
+            .into_values()
+            .filter(|plugin| plugin.enabled)
+            .collect())
+    }
+
+    pub fn enabled_hooks(&self) -> Result<Vec<(InstalledPlugin, PluginHook)>, PluginError> {
+        let mut hooks = Vec::new();
+        for plugin in self.enabled()? {
+            for relative in &plugin.capabilities.hooks {
+                let path = plugin.package_path.join(relative);
+                let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
+                let value: serde_json::Value =
+                    serde_json::from_slice(&bytes).map_err(|source| PluginError::Json {
+                        path: path.clone(),
+                        source,
+                    })?;
+                let entries = value.get("hooks").cloned().unwrap_or(value);
+                let entries = if let Some(array) = entries.as_array() {
+                    array.clone()
+                } else {
+                    vec![entries]
+                };
+                for entry in entries {
+                    let hook: PluginHook = serde_json::from_value(entry).map_err(|error| {
+                        PluginError::InvalidManifest(format!(
+                            "plugin '{}' hook {} is invalid: {error}",
+                            plugin.name, relative
+                        ))
+                    })?;
+                    if hook.command.trim().is_empty() {
+                        return Err(PluginError::InvalidManifest(format!(
+                            "plugin '{}' hook {} has an empty command",
+                            plugin.name, relative
+                        )));
+                    }
+                    hooks.push((plugin.clone(), hook));
+                }
+            }
+        }
+        Ok(hooks)
+    }
+
+    pub fn versions(&self, name: &str) -> Result<Vec<InstalledPlugin>, PluginError> {
+        let name = normalize_plugin_id(name)
+            .ok_or_else(|| PluginError::InvalidManifest("invalid plugin name".into()))?;
+        let registry = self.load()?;
+        if let Some(versions) = registry.versions.get(&name) {
+            return Ok(versions.clone());
+        }
+        Ok(registry.plugins.get(&name).cloned().into_iter().collect())
     }
 
     pub fn install_local(
@@ -1124,7 +1854,7 @@ impl PluginStore {
         let installed = InstalledPlugin {
             name: inspection.manifest.name.clone(),
             version: inspection.manifest.version.clone(),
-            digest: inspection.digest,
+            digest: inspection.digest.clone(),
             description: inspection.manifest.description,
             license: inspection.manifest.license,
             publisher: inspection.manifest.publisher,
@@ -1141,6 +1871,11 @@ impl PluginStore {
         registry
             .plugins
             .insert(installed.name.clone(), installed.clone());
+        registry
+            .versions
+            .entry(installed.name.clone())
+            .or_default()
+            .push(installed.clone());
         registry.generation = registry.generation.saturating_add(1);
         registry.audit.push(PluginAuditEvent {
             generation: registry.generation,
@@ -1156,6 +1891,173 @@ impl PluginStore {
         Ok(installed)
     }
 
+    pub fn update_local(
+        &self,
+        source: &Path,
+        options: InstallOptions,
+    ) -> Result<InstalledPlugin, PluginError> {
+        let inspection = inspect_package(source)?;
+        if inspection.manifest.license.is_none() && !options.allow_unlicensed {
+            return Err(PluginError::Unlicensed(inspection.manifest.name));
+        }
+        let _lock = RegistryLock::acquire(&self.home.join("plugins"))?;
+        let mut registry = self.load()?;
+        let current = registry
+            .plugins
+            .get(&inspection.manifest.name)
+            .cloned()
+            .ok_or_else(|| PluginError::NotInstalled(inspection.manifest.name.clone()))?;
+        if current.digest == inspection.digest {
+            return Ok(current);
+        }
+        if registry
+            .versions
+            .get(&inspection.manifest.name)
+            .is_some_and(|items| items.iter().any(|item| item.digest == inspection.digest))
+        {
+            return Err(PluginError::AlreadyInstalled(
+                inspection.manifest.name.clone(),
+            ));
+        }
+        let package_path = self.package_path(&inspection);
+        if package_path.exists() {
+            let existing = inspect_package(&package_path)?;
+            if existing.digest != inspection.digest {
+                return Err(PluginError::UnsafePackage(format!(
+                    "immutable package destination has unexpected content: {}",
+                    package_path.display()
+                )));
+            }
+        } else {
+            self.copy_verified(&inspection, &package_path)?;
+        }
+        let installed_at_unix = now_unix();
+        let source = inspection.root.display().to_string();
+        let installed = InstalledPlugin {
+            name: inspection.manifest.name.clone(),
+            version: inspection.manifest.version.clone(),
+            digest: inspection.digest.clone(),
+            description: inspection.manifest.description,
+            license: inspection.manifest.license,
+            publisher: inspection.manifest.publisher,
+            format: inspection.format,
+            source: source.clone(),
+            trace_id: format!("update:{}:{}", inspection.manifest.name, inspection.digest),
+            package_path,
+            scope: options.scope,
+            enabled: false,
+            installed_at_unix,
+            capabilities: inspection.capabilities,
+            warnings: inspection.warnings,
+        };
+        registry
+            .versions
+            .entry(installed.name.clone())
+            .or_default()
+            .push(installed.clone());
+        // Updating selects the new immutable generation, but it remains disabled
+        // until an operator explicitly enables the plugin.
+        registry
+            .plugins
+            .insert(installed.name.clone(), installed.clone());
+        registry.generation = registry.generation.saturating_add(1);
+        registry.audit.push(PluginAuditEvent {
+            generation: registry.generation,
+            at_unix: installed_at_unix,
+            action: PluginAuditAction::Updated,
+            plugin: installed.name.clone(),
+            version: installed.version.clone(),
+            digest: installed.digest.clone(),
+            trace_id: installed.trace_id.clone(),
+            source,
+        });
+        self.save(&registry)?;
+        Ok(installed)
+    }
+
+    pub fn enable(&self, name: &str) -> Result<InstalledPlugin, PluginError> {
+        self.set_enabled(name, true)
+    }
+
+    pub fn disable(&self, name: &str) -> Result<InstalledPlugin, PluginError> {
+        self.set_enabled(name, false)
+    }
+
+    fn set_enabled(&self, name: &str, enabled: bool) -> Result<InstalledPlugin, PluginError> {
+        let name = normalize_plugin_id(name)
+            .ok_or_else(|| PluginError::InvalidManifest("invalid plugin name".into()))?;
+        let _lock = RegistryLock::acquire(&self.home.join("plugins"))?;
+        let mut registry = self.load()?;
+        let mut plugin = registry
+            .plugins
+            .get(&name)
+            .cloned()
+            .ok_or_else(|| PluginError::NotInstalled(name.clone()))?;
+        if plugin.enabled == enabled {
+            return Ok(plugin);
+        }
+        plugin.enabled = enabled;
+        registry.plugins.insert(name.clone(), plugin.clone());
+        registry.generation = registry.generation.saturating_add(1);
+        registry.audit.push(PluginAuditEvent {
+            generation: registry.generation,
+            at_unix: now_unix(),
+            action: if enabled {
+                PluginAuditAction::Enabled
+            } else {
+                PluginAuditAction::Disabled
+            },
+            plugin: plugin.name.clone(),
+            version: plugin.version.clone(),
+            digest: plugin.digest.clone(),
+            trace_id: plugin.trace_id.clone(),
+            source: plugin.source.clone(),
+        });
+        self.save(&registry)?;
+        Ok(plugin)
+    }
+
+    pub fn rollback(&self, name: &str) -> Result<InstalledPlugin, PluginError> {
+        let name = normalize_plugin_id(name)
+            .ok_or_else(|| PluginError::InvalidManifest("invalid plugin name".into()))?;
+        let _lock = RegistryLock::acquire(&self.home.join("plugins"))?;
+        let mut registry = self.load()?;
+        let current = registry
+            .plugins
+            .get(&name)
+            .cloned()
+            .ok_or_else(|| PluginError::NotInstalled(name.clone()))?;
+        let previous = registry
+            .versions
+            .get(&name)
+            .and_then(|items| {
+                items
+                    .iter()
+                    .rev()
+                    .find(|item| item.digest != current.digest)
+            })
+            .cloned()
+            .ok_or_else(|| {
+                PluginError::InvalidManifest(format!("plugin {name:?} has no previous generation"))
+            })?;
+        let mut previous = previous;
+        previous.enabled = false;
+        registry.plugins.insert(name.clone(), previous.clone());
+        registry.generation = registry.generation.saturating_add(1);
+        registry.audit.push(PluginAuditEvent {
+            generation: registry.generation,
+            at_unix: now_unix(),
+            action: PluginAuditAction::RolledBack,
+            plugin: previous.name.clone(),
+            version: previous.version.clone(),
+            digest: previous.digest.clone(),
+            trace_id: previous.trace_id.clone(),
+            source: previous.source.clone(),
+        });
+        self.save(&registry)?;
+        Ok(previous)
+    }
+
     pub fn remove(&self, name: &str) -> Result<InstalledPlugin, PluginError> {
         let name = normalize_plugin_id(name)
             .ok_or_else(|| PluginError::InvalidManifest("invalid plugin name".into()))?;
@@ -1167,13 +2069,22 @@ impl PluginStore {
             .ok_or_else(|| PluginError::NotInstalled(name.clone()))?;
         let packages_root = fs::canonicalize(self.packages_root())
             .map_err(|error| io_error(self.packages_root(), error))?;
-        let package_path = fs::canonicalize(&installed.package_path)
-            .map_err(|error| io_error(&installed.package_path, error))?;
-        if !package_path.starts_with(&packages_root) || package_path == packages_root {
-            return Err(PluginError::UnsafePackage(format!(
-                "registry package path is outside the managed store: {}",
-                package_path.display()
-            )));
+        let package_paths = registry
+            .versions
+            .remove(&name)
+            .unwrap_or_else(|| vec![installed.clone()])
+            .into_iter()
+            .map(|item| item.package_path)
+            .collect::<Vec<_>>();
+        for package_path in &package_paths {
+            let package_path =
+                fs::canonicalize(package_path).map_err(|error| io_error(package_path, error))?;
+            if !package_path.starts_with(&packages_root) || package_path == packages_root {
+                return Err(PluginError::UnsafePackage(format!(
+                    "registry package path is outside the managed store: {}",
+                    package_path.display()
+                )));
+            }
         }
         registry.generation = registry.generation.saturating_add(1);
         registry.audit.push(PluginAuditEvent {
@@ -1187,8 +2098,15 @@ impl PluginStore {
             source: installed.source.clone(),
         });
         self.save(&registry)?;
-        fs::remove_dir_all(&package_path).map_err(|error| io_error(&package_path, error))?;
-        prune_empty_parents(&package_path, &packages_root)?;
+        for package_path in package_paths {
+            let package_path =
+                fs::canonicalize(&package_path).map_err(|error| io_error(&package_path, error))?;
+            if package_path.exists() {
+                fs::remove_dir_all(&package_path)
+                    .map_err(|error| io_error(&package_path, error))?;
+                prune_empty_parents(&package_path, &packages_root)?;
+            }
+        }
         Ok(installed)
     }
 
@@ -1417,6 +2335,131 @@ mod tests {
         assert_eq!(inspected.capabilities.mcp_manifests, [".mcp.json"]);
     }
 
+    #[test]
+    fn imports_agent_plugins_one_with_fixed_locations_and_dotted_name() {
+        let temp = tempfile::tempdir().unwrap();
+        write(
+            &temp.path().join("plugin.json"),
+            r#"{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"acme.tools","version":"release-7","license":"MIT","skills":"ignored-by-fixed-discovery"}"#,
+        );
+        write(
+            &temp.path().join("skills/review/SKILL.md"),
+            "---\nname: review\ndescription: Review code.\n---\nReview.\n",
+        );
+        write(
+            &temp.path().join("mcp.json"),
+            r#"{"$schema":"https://agent-plugins.org/schemas/1.0.0/mcp.schema.json","mcpServers":{}}"#,
+        );
+        let inspected = inspect_package(temp.path()).unwrap();
+        assert_eq!(inspected.format, ManifestFormat::AgentPlugin);
+        assert_eq!(inspected.manifest.name, "acme.tools");
+        assert!(inspected.manifest.version.starts_with("0.0.0+source."));
+        assert_eq!(inspected.capabilities.skills, ["review"]);
+        assert_eq!(inspected.capabilities.mcp_manifests, ["mcp.json"]);
+    }
+
+    #[test]
+    fn imports_claude_and_cursor_client_components() {
+        for (manifest, format) in [
+            (".claude-plugin/plugin.json", ManifestFormat::Claude),
+            (".cursor-plugin/plugin.json", ManifestFormat::Cursor),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            write(
+                &temp.path().join(manifest),
+                r#"{"name":"client-pack","version":"1.0.0","license":"MIT","hooks":{"PreToolUse":[]},"mcpServers":{"tools":{"command":"tool"}}}"#,
+            );
+            write(
+                &temp.path().join("agents/reviewer.md"),
+                "Review carefully.\n",
+            );
+            let inspected = inspect_package(temp.path()).unwrap();
+            assert_eq!(inspected.format, format);
+            assert_eq!(inspected.capabilities.hooks, [manifest]);
+            assert_eq!(inspected.capabilities.mcp_manifests, [manifest]);
+            assert_eq!(inspected.capabilities.agents, ["agents/reviewer.md"]);
+        }
+    }
+
+    #[test]
+    fn imports_gemini_extension_without_granting_policy() {
+        let temp = tempfile::tempdir().unwrap();
+        write(
+            &temp.path().join("gemini-extension.json"),
+            r#"{"name":"gemini-pack","version":"1.0.0","license":"MIT","mcpServers":{"tools":{"command":"tool"}},"themes":[{"name":"dark"}]}"#,
+        );
+        write(
+            &temp.path().join("policies/restrict.toml"),
+            "decision = \"ask_user\"\n",
+        );
+        let inspected = inspect_package(temp.path()).unwrap();
+        assert_eq!(inspected.format, ManifestFormat::Gemini);
+        assert_eq!(
+            inspected.capabilities.mcp_manifests,
+            ["gemini-extension.json"]
+        );
+        assert_eq!(inspected.capabilities.themes, ["gemini-extension.json"]);
+        assert_eq!(inspected.capabilities.policies, ["policies/restrict.toml"]);
+    }
+
+    #[test]
+    fn inspects_compatible_catalog_with_snapshot_trace() {
+        let temp = tempfile::tempdir().unwrap();
+        write(
+            &temp.path().join(".claude-plugin/marketplace.json"),
+            r#"{
+  "name":"team-catalog",
+  "plugins":[
+    {"name":"local-tools","version":"1.0.0","license":"MIT","source":"./plugins/local-tools"},
+    {"name":"remote-tools","source":{"source":"github","repo":"acme/tools","sha":"0123456789abcdef0123456789abcdef01234567"}}
+  ]
+}"#,
+        );
+        let first = inspect_catalog(temp.path()).unwrap();
+        let second = inspect_catalog(temp.path()).unwrap();
+        assert_eq!(first.format, MarketplaceFormat::Claude);
+        assert_eq!(first.entries.len(), 2);
+        assert_eq!(first.digest, second.digest);
+        assert_eq!(
+            first.trace_id,
+            format!("catalog:team-catalog:{}", first.digest)
+        );
+        assert_eq!(first.warnings.len(), 1);
+    }
+
+    #[test]
+    fn catalog_rejects_duplicates_and_bad_pins() {
+        let duplicate = tempfile::tempdir().unwrap();
+        write(
+            &duplicate.path().join("marketplace.json"),
+            r#"{"name":"bad","plugins":[{"name":"same","source":"./a"},{"name":"same","source":"./b"}]}"#,
+        );
+        assert!(matches!(
+            inspect_catalog(duplicate.path()),
+            Err(PluginError::InvalidManifest(_))
+        ));
+
+        let bad_pin = tempfile::tempdir().unwrap();
+        write(
+            &bad_pin.path().join(".cursor-plugin/marketplace.json"),
+            r#"{"name":"bad-pin","plugins":[{"name":"tool","source":{"repo":"a/b","sha":"short"}}]}"#,
+        );
+        assert!(matches!(
+            inspect_catalog(bad_pin.path()),
+            Err(PluginError::InvalidManifest(_))
+        ));
+
+        let escaping = tempfile::tempdir().unwrap();
+        write(
+            &escaping.path().join("marketplace.json"),
+            r#"{"name":"escape","plugins":[{"name":"tool","source":"../outside"}]}"#,
+        );
+        assert!(matches!(
+            inspect_catalog(escaping.path()),
+            Err(PluginError::UnsafePackage(_))
+        ));
+    }
+
     #[cfg(unix)]
     #[test]
     fn rejects_symlinks_and_hard_links() {
@@ -1482,6 +2525,11 @@ mod tests {
         assert_eq!(removed.digest, installed.digest);
         assert!(!installed.package_path.exists());
         assert!(store.list().unwrap().is_empty());
+        let registry = store.load().unwrap();
+        assert_eq!(registry.generation, 2);
+        assert_eq!(registry.audit.len(), 2);
+        assert_eq!(registry.audit[0].trace_id, installed.trace_id);
+        assert_eq!(registry.audit[1].trace_id, installed.trace_id);
     }
 
     #[test]
@@ -1522,6 +2570,199 @@ mod tests {
         assert!(matches!(
             store.install_local(source.path(), InstallOptions::default()),
             Err(PluginError::AlreadyInstalled(_))
+        ));
+    }
+
+    #[test]
+    fn lifecycle_keeps_generations_and_audits_every_transition() {
+        let source = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        package(source.path());
+        let store = PluginStore::new(home.path());
+        let first = store
+            .install_local(source.path(), InstallOptions::default())
+            .unwrap();
+        let enabled = store.enable("daily-brief").unwrap();
+        assert!(enabled.enabled);
+        let disabled = store.disable("daily-brief").unwrap();
+        assert!(!disabled.enabled);
+        write(&source.path().join("commands/brief.md"), "New content.\n");
+        let second = store
+            .update_local(source.path(), InstallOptions::default())
+            .unwrap();
+        assert_ne!(first.digest, second.digest);
+        assert!(!second.enabled);
+        assert_eq!(store.versions("daily-brief").unwrap().len(), 2);
+        let rolled_back = store.rollback("daily-brief").unwrap();
+        assert_eq!(rolled_back.digest, first.digest);
+        assert!(!rolled_back.enabled);
+        let actions: Vec<_> = store
+            .load()
+            .unwrap()
+            .audit
+            .into_iter()
+            .map(|event| event.action)
+            .collect();
+        assert_eq!(
+            actions,
+            vec![
+                PluginAuditAction::Installed,
+                PluginAuditAction::Enabled,
+                PluginAuditAction::Disabled,
+                PluginAuditAction::Updated,
+                PluginAuditAction::RolledBack,
+            ]
+        );
+    }
+
+    #[test]
+    fn catalog_sources_are_registered_disabled_with_snapshot_provenance() {
+        let catalog = tempfile::tempdir().unwrap();
+        write(
+            &catalog.path().join("marketplace.json"),
+            r#"{"name":"team","plugins":[{"name":"tool","source":"./tool"}]}"#,
+        );
+        let home = tempfile::tempdir().unwrap();
+        let store = PluginStore::new(home.path());
+        let source = store
+            .register_catalog_source(
+                catalog.path(),
+                "Team catalog",
+                MarketplaceTrust::ManualReview,
+            )
+            .unwrap();
+        assert!(!source.enabled);
+        assert_eq!(source.format, MarketplaceFormat::Copilot);
+        assert!(source.trace_id.starts_with("catalog:team:"));
+        assert_eq!(store.list_sources().unwrap(), vec![source.clone()]);
+        assert!(store.set_source_enabled(&source.id, true).unwrap().enabled);
+        assert!(store.load_sources().unwrap().sources[&source.id].enabled);
+        write(
+            &catalog.path().join("marketplace.json"),
+            r#"{"name":"team","plugins":[]}"#,
+        );
+        assert!(matches!(
+            store.set_source_enabled(&source.id, false),
+            Err(PluginError::UnsafePackage(_))
+        ));
+        store
+            .record_invocation(&source.trace_id, "tool", "mcp:plugin.tool.lookup", true)
+            .unwrap();
+        assert_eq!(store.invocations().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn signed_catalog_source_verifies_and_can_be_enabled() {
+        use ring::rand::SystemRandom;
+        use ring::signature::{Ed25519KeyPair, KeyPair};
+
+        let catalog = tempfile::tempdir().unwrap();
+        write(
+            &catalog.path().join("marketplace.json"),
+            r#"{"name":"signed-team","plugins":[{"name":"tool","source":"./tool"}]}"#,
+        );
+        let inspection = inspect_catalog(catalog.path()).unwrap();
+        let rng = SystemRandom::new();
+        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+        let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        let public_key =
+            base64::engine::general_purpose::STANDARD.encode(key_pair.public_key().as_ref());
+        let signature = base64::engine::general_purpose::STANDARD
+            .encode(key_pair.sign(inspection.digest.as_bytes()).as_ref());
+        let home = tempfile::tempdir().unwrap();
+        let store = PluginStore::new(home.path());
+        let source = store
+            .register_catalog_source_with_signature(
+                catalog.path(),
+                "Signed catalog",
+                MarketplaceTrust::PinnedCommit,
+                Some(SignatureEvidence {
+                    algorithm: "ed25519".into(),
+                    key_id: "team-key".into(),
+                    public_key,
+                    signature,
+                    verified: false,
+                    revoked: false,
+                }),
+            )
+            .unwrap();
+        assert!(source.signature.as_ref().unwrap().verified);
+        assert!(store.set_source_enabled(&source.id, true).unwrap().enabled);
+        store.set_key_revoked("team-key", true).unwrap();
+        assert!(matches!(
+            store.set_source_enabled(&source.id, false),
+            Err(PluginError::UnsafePackage(_))
+        ));
+    }
+
+    #[test]
+    fn enabled_plugin_hooks_are_loaded_from_real_manifest_files() {
+        let source = tempfile::tempdir().unwrap();
+        package(source.path());
+        write(
+            &source.path().join("vak-plugin.json"),
+            r#"{"schema":1,"name":"daily-brief","version":"1.2.3","description":"Prepare a daily brief.","license":"MIT","components":{"skills":["skills"],"commands":["commands"],"hooks":["hooks.json"]}}"#,
+        );
+        write(
+            &source.path().join("hooks.json"),
+            r#"{"hooks":[{"event":"pre_tool_use","match":"bash","command":"printf hook","timeout_ms":2500}]}"#,
+        );
+        let home = tempfile::tempdir().unwrap();
+        let store = PluginStore::new(home.path());
+        store
+            .install_local(source.path(), InstallOptions::default())
+            .unwrap();
+        store.enable("daily-brief").unwrap();
+        let hooks = store.enabled_hooks().unwrap();
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0].1.event, "pre_tool_use");
+        assert_eq!(hooks[0].1.matcher.as_deref(), Some("bash"));
+        assert_eq!(hooks[0].1.command, "printf hook");
+    }
+
+    #[test]
+    fn materializes_local_catalog_entry_and_rejects_unpinned_remote() {
+        let catalog = tempfile::tempdir().unwrap();
+        write(
+            &catalog.path().join("marketplace.json"),
+            r#"{"name":"team","plugins":[{"name":"tool","source":"./tool"}]}"#,
+        );
+        write(
+            &catalog.path().join("tool/vak-plugin.json"),
+            r#"{"schema":1,"name":"tool","version":"1.0.0","description":"Tool","license":"MIT"}"#,
+        );
+        let inspection = inspect_catalog(catalog.path()).unwrap();
+        let local = materialize_catalog_entry(
+            catalog.path(),
+            &inspection.entries[0],
+            &catalog.path().join("downloads"),
+        )
+        .unwrap();
+        assert!(local.ends_with("tool"));
+        let remote = CatalogEntry {
+            name: "remote".into(),
+            source: serde_json::json!("https://github.com/acme/tool.git"),
+            version: None,
+            description: None,
+            license: None,
+        };
+        assert!(matches!(
+            materialize_catalog_entry(catalog.path(), &remote, &catalog.path().join("downloads")),
+            Err(PluginError::UnsafePackage(_))
+        ));
+    }
+
+    #[test]
+    fn signature_verification_rejects_malformed_or_wrong_evidence() {
+        assert!(matches!(
+            verify_ed25519_signature(b"catalog", "not-base64", "not-base64"),
+            Err(PluginError::UnsafePackage(_))
+        ));
+        let key = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
+        let sig = base64::engine::general_purpose::STANDARD.encode([0u8; 64]);
+        assert!(matches!(
+            verify_ed25519_signature(b"catalog", &key, &sig),
+            Err(PluginError::UnsafePackage(_))
         ));
     }
 }

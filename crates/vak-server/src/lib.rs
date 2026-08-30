@@ -74,6 +74,7 @@ use vak_agent::{AgentEvent, Approver, SteeringQueues};
 use vak_core::Core;
 pub use vak_core::tasks::{TaskDef, WtMeta};
 use vak_llm::Provider;
+use vak_plugin::{InstallOptions, InstallScope, MarketplaceTrust, PluginStore, SignatureEvidence};
 use vak_session::SessionLog;
 
 pub(crate) struct SessionHandle {
@@ -364,6 +365,23 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/archived", delete(delete_all_archived))
         .route("/sessions/{id}", delete(delete_session))
         .route("/skills", get(list_skills))
+        .route("/plugins", get(list_plugins))
+        .route("/plugins/audit", get(plugin_audit))
+        .route("/plugins/invocations", get(plugin_invocations))
+        .route(
+            "/plugins/sources",
+            get(plugin_sources).post(plugin_register_source),
+        )
+        .route("/plugins/sources/{id}/enable", post(plugin_source_enable))
+        .route("/plugins/sources/{id}/disable", post(plugin_source_disable))
+        .route("/plugins/keys/{id}/revoke", post(plugin_key_revoke))
+        .route("/plugins/keys/{id}/restore", post(plugin_key_restore))
+        .route("/plugins/install", post(plugin_install))
+        .route("/plugins/update", post(plugin_update))
+        .route("/plugins/{name}/enable", post(plugin_enable))
+        .route("/plugins/{name}/disable", post(plugin_disable))
+        .route("/plugins/{name}/rollback", post(plugin_rollback))
+        .route("/plugins/{name}", delete(plugin_remove))
         .route("/sessions/{id}/pr", get(session_pr))
         .route("/sessions/{id}/pr/merge", post(pr_merge))
         .route("/tasks", get(list_tasks).post(create_task))
@@ -3273,10 +3291,266 @@ async fn list_skills(State(state): State<AppState>) -> Json<serde_json::Value> {
                 "description": s.description,
                 "path": s.path.display().to_string(),
                 "scope": scope,
+                "provenance": s.provenance,
             })
         })
         .collect();
     Json(serde_json::json!({ "skills": skills }))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PluginMutation {
+    path: Option<PathBuf>,
+    #[serde(default)]
+    scope: Option<InstallScope>,
+    #[serde(default)]
+    allow_unlicensed: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PluginSourceMutation {
+    path: PathBuf,
+    #[serde(default)]
+    label: String,
+    #[serde(default = "default_marketplace_trust")]
+    trust: MarketplaceTrust,
+    key_id: Option<String>,
+    public_key: Option<String>,
+    signature: Option<String>,
+}
+
+fn default_marketplace_trust() -> MarketplaceTrust {
+    MarketplaceTrust::ManualReview
+}
+
+fn plugin_store(state: &AppState, scope: InstallScope) -> PluginStore {
+    let root = match scope {
+        InstallScope::User => state.core.sessions_home(),
+        InstallScope::Workspace => state.core.cwd().join(".vak"),
+    };
+    PluginStore::new(root)
+}
+
+async fn list_plugins(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let mut plugins = Vec::new();
+    for scope in [InstallScope::User, InstallScope::Workspace] {
+        if let Ok(items) = plugin_store(&state, scope).list() {
+            plugins.extend(items.into_iter().map(|plugin| {
+                serde_json::json!({
+                    "name": plugin.name,
+                    "version": plugin.version,
+                    "digest": plugin.digest,
+                    "description": plugin.description,
+                    "format": plugin.format,
+                    "scope": plugin.scope,
+                    "enabled": plugin.enabled,
+                    "trace_id": plugin.trace_id,
+                    "capabilities": plugin.capabilities,
+                    "warnings": plugin.warnings,
+                })
+            }));
+        }
+    }
+    Json(serde_json::json!({ "plugins": plugins }))
+}
+
+async fn plugin_audit(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let mut events = Vec::new();
+    for scope in [InstallScope::User, InstallScope::Workspace] {
+        if let Ok(registry) = plugin_store(&state, scope).load() {
+            events.extend(registry.audit);
+        }
+    }
+    events.sort_by_key(|event| event.at_unix);
+    Json(serde_json::json!({ "audit": events }))
+}
+
+async fn plugin_invocations(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let mut events = Vec::new();
+    for scope in [InstallScope::User, InstallScope::Workspace] {
+        if let Ok(items) = plugin_store(&state, scope).invocations() {
+            events.extend(items);
+        }
+    }
+    events.sort_by_key(|event| event.at_unix);
+    Json(serde_json::json!({ "invocations": events }))
+}
+
+async fn plugin_sources(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let mut sources = Vec::new();
+    for scope in [InstallScope::User, InstallScope::Workspace] {
+        if let Ok(items) = plugin_store(&state, scope).list_sources() {
+            sources.extend(items);
+        }
+    }
+    Json(serde_json::json!({ "sources": sources }))
+}
+
+async fn plugin_register_source(
+    State(state): State<AppState>,
+    Json(request): Json<PluginSourceMutation>,
+) -> axum::response::Response {
+    let evidence = match (request.key_id, request.public_key, request.signature) {
+        (None, None, None) => None,
+        (Some(key_id), Some(public_key), Some(signature)) => Some(SignatureEvidence {
+            algorithm: "ed25519".into(),
+            key_id,
+            public_key,
+            signature,
+            verified: false,
+            revoked: false,
+        }),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "key_id, public_key, and signature must be supplied together",
+            )
+                .into_response();
+        }
+    };
+    plugin_result(
+        plugin_store(&state, InstallScope::Workspace).register_catalog_source_with_signature(
+            &request.path,
+            &request.label,
+            request.trust,
+            evidence,
+        ),
+    )
+}
+
+async fn plugin_source_enable(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    plugin_result(plugin_store(&state, InstallScope::Workspace).set_source_enabled(&id, true))
+}
+
+async fn plugin_source_disable(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    plugin_result(plugin_store(&state, InstallScope::Workspace).set_source_enabled(&id, false))
+}
+
+async fn plugin_key_revoke(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    plugin_result(
+        plugin_store(&state, InstallScope::Workspace)
+            .set_key_revoked(&id, true)
+            .map(|_| serde_json::json!({"revoked": id})),
+    )
+}
+
+async fn plugin_key_restore(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    plugin_result(
+        plugin_store(&state, InstallScope::Workspace)
+            .set_key_revoked(&id, false)
+            .map(|_| serde_json::json!({"revoked": false, "key_id": id})),
+    )
+}
+
+fn plugin_result(
+    result: Result<impl serde::Serialize, vak_plugin::PluginError>,
+) -> axum::response::Response {
+    match result {
+        Ok(value) => (StatusCode::OK, Json(value)).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn plugin_install(
+    State(state): State<AppState>,
+    Json(request): Json<PluginMutation>,
+) -> axum::response::Response {
+    let Some(path) = request.path else {
+        return (StatusCode::BAD_REQUEST, "path is required").into_response();
+    };
+    let scope = request.scope.unwrap_or(InstallScope::Workspace);
+    plugin_result(plugin_store(&state, scope).install_local(
+        &path,
+        InstallOptions {
+            allow_unlicensed: request.allow_unlicensed,
+            scope,
+        },
+    ))
+}
+
+async fn plugin_update(
+    State(state): State<AppState>,
+    Json(request): Json<PluginMutation>,
+) -> axum::response::Response {
+    let Some(path) = request.path else {
+        return (StatusCode::BAD_REQUEST, "path is required").into_response();
+    };
+    let scope = request.scope.unwrap_or(InstallScope::Workspace);
+    plugin_result(plugin_store(&state, scope).update_local(
+        &path,
+        InstallOptions {
+            allow_unlicensed: request.allow_unlicensed,
+            scope,
+        },
+    ))
+}
+
+async fn plugin_enable(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> axum::response::Response {
+    let workspace = plugin_store(&state, InstallScope::Workspace).enable(&name);
+    plugin_result(match workspace {
+        Err(vak_plugin::PluginError::NotInstalled(_)) => {
+            plugin_store(&state, InstallScope::User).enable(&name)
+        }
+        result => result,
+    })
+}
+
+async fn plugin_disable(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> axum::response::Response {
+    let workspace = plugin_store(&state, InstallScope::Workspace).disable(&name);
+    plugin_result(match workspace {
+        Err(vak_plugin::PluginError::NotInstalled(_)) => {
+            plugin_store(&state, InstallScope::User).disable(&name)
+        }
+        result => result,
+    })
+}
+
+async fn plugin_rollback(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> axum::response::Response {
+    let workspace = plugin_store(&state, InstallScope::Workspace).rollback(&name);
+    plugin_result(match workspace {
+        Err(vak_plugin::PluginError::NotInstalled(_)) => {
+            plugin_store(&state, InstallScope::User).rollback(&name)
+        }
+        result => result,
+    })
+}
+
+async fn plugin_remove(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> axum::response::Response {
+    let workspace = plugin_store(&state, InstallScope::Workspace).remove(&name);
+    plugin_result(match workspace {
+        Err(vak_plugin::PluginError::NotInstalled(_)) => {
+            plugin_store(&state, InstallScope::User).remove(&name)
+        }
+        result => result,
+    })
 }
 
 #[derive(serde::Deserialize)]

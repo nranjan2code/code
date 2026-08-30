@@ -391,6 +391,33 @@ export interface SkillItem {
   description?: string;
   /** Discovery root the skill came from: `<cwd>/.vak/skills` or the user home. */
   scope?: "workspace" | "user";
+  provenance?: string | null;
+}
+
+export interface PluginItem {
+  name: string;
+  version: string;
+  digest: string;
+  description: string;
+  format: string;
+  scope: "workspace" | "user";
+  enabled: boolean;
+  trace_id: string;
+  capabilities: Record<string, unknown>;
+  warnings: string[];
+}
+
+export interface MarketplaceSource {
+  id: string;
+  label: string;
+  root: string;
+  format: string;
+  catalog_digest: string;
+  trace_id: string;
+  trust: string;
+  enabled: boolean;
+  registered_at_unix: number;
+  signature?: { algorithm: string; key_id: string; public_key: string; signature: string; verified: boolean; revoked: boolean } | null;
 }
 
 export interface SkillProposal {

@@ -144,6 +144,7 @@ pub struct AgentConfig {
     pub approver: Option<Arc<dyn Approver>>,
     pub sandbox: Option<Arc<dyn vak_tools::sandbox::Sandbox>>,
     pub hooks: Option<Arc<Vec<vak_hooks::HookDef>>>,
+    pub hook_recorder: Option<HookRecorder>,
     /// Retries for transient provider errors (429/529/network) per step.
     pub max_retries: u32,
     /// Exponential backoff base: delay = base * 2^(attempt-1), jittered.
@@ -187,6 +188,8 @@ pub struct AgentConfig {
     pub max_audit_blocks: u32,
 }
 
+pub type HookRecorder = Arc<dyn Fn(&vak_hooks::HookDef, bool) + Send + Sync>;
+
 impl AgentConfig {
     pub fn new(system_prompt: impl Into<String>) -> Self {
         AgentConfig {
@@ -200,6 +203,7 @@ impl AgentConfig {
             approver: None,
             sandbox: None,
             hooks: None,
+            hook_recorder: None,
             max_retries: 3,
             retry_base_backoff_ms: 500,
             request_timeout: Some(std::time::Duration::from_secs(600)),
@@ -799,7 +803,7 @@ impl Agent {
                         .header()
                         .map(|h| h.contract_cwd())
                         .unwrap_or_else(|| ".".into());
-                    let stop = vak_hooks::run_hooks(
+                    let stop = vak_hooks::run_hooks_with_recorder(
                         hooks.clone(),
                         vak_hooks::HookEvent::Stop,
                         &session_id,
@@ -807,6 +811,7 @@ impl Agent {
                         None,
                         Some(&response.text_content()),
                         &cancel,
+                        self.config.hook_recorder.as_deref(),
                     )
                     .await;
                     if stop.blocked && turn + 1 < self.config.max_turns {
@@ -1544,6 +1549,7 @@ impl Agent {
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
         let sandbox = self.config.sandbox.clone();
         let hooks = self.config.hooks.clone();
+        let hook_recorder = self.config.hook_recorder.clone();
         let session_id = self
             .session
             .lock()
@@ -1575,6 +1581,7 @@ impl Agent {
                                 &cwd,
                                 &session_id,
                                 hooks.as_ref(),
+                                hook_recorder.as_ref(),
                                 sandbox.as_ref(),
                                 cancel,
                                 events,
@@ -1639,6 +1646,7 @@ impl Agent {
                 let sandbox = sandbox.clone();
                 let session_id = session_id.clone();
                 let hooks = hooks.clone();
+                let hook_recorder = hook_recorder.clone();
                 join.spawn(async move {
                     let r = execute_one(
                         call,
@@ -1646,6 +1654,7 @@ impl Agent {
                         &cwd,
                         &session_id,
                         hooks.as_ref(),
+                        hook_recorder.as_ref(),
                         sandbox.as_ref(),
                         &cancel,
                         &events,
@@ -1675,6 +1684,7 @@ async fn execute_one(
     cwd: &std::path::Path,
     session_id: &str,
     hooks: Option<&Arc<Vec<vak_hooks::HookDef>>>,
+    hook_recorder: Option<&HookRecorder>,
     sandbox: Option<&Arc<dyn vak_tools::sandbox::Sandbox>>,
     cancel: &CancellationToken,
     events: &mpsc::Sender<AgentEvent>,
@@ -1688,7 +1698,7 @@ async fn execute_one(
         .await;
 
     if let Some(hooks) = hooks {
-        let pre = vak_hooks::run_hooks(
+        let pre = vak_hooks::run_hooks_with_recorder(
             hooks.clone(),
             vak_hooks::HookEvent::PreToolUse,
             session_id,
@@ -1696,6 +1706,7 @@ async fn execute_one(
             Some((&call.name, &call.input)),
             None,
             cancel,
+            hook_recorder.map(|recorder| &**recorder),
         )
         .await;
         if pre.blocked {
@@ -1749,7 +1760,7 @@ async fn execute_one(
             ToolRunOutput::Ok(content) => content.as_str(),
             ToolRunOutput::Err(content) => content.as_str(),
         };
-        let post = vak_hooks::run_hooks(
+        let post = vak_hooks::run_hooks_with_recorder(
             hooks.clone(),
             vak_hooks::HookEvent::PostToolUse,
             session_id,
@@ -1757,6 +1768,7 @@ async fn execute_one(
             Some((&hook_name, &hook_input)),
             Some(post_reason),
             cancel,
+            hook_recorder.map(|recorder| &**recorder),
         )
         .await;
         if post.blocked && matches!(output, ToolRunOutput::Ok(_)) {

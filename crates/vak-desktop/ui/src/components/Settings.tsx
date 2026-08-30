@@ -164,10 +164,18 @@ export default function Settings() {
   const [mcpDirty, setMcpDirty] = createSignal(false);
   const [mcpSaving, setMcpSaving] = createSignal(false);
   const [skills, setSkills] = createSignal<api.DiscoveredSkill[]>([]);
+  const [plugins, setPlugins] = createSignal<api.InstalledPlugin[]>([]);
+  const [pluginSources, setPluginSources] = createSignal<api.MarketplaceSource[]>([]);
+  const [sourcePath, setSourcePath] = createSignal("");
+  const [sourceKeyId, setSourceKeyId] = createSignal("");
+  const [sourcePublicKey, setSourcePublicKey] = createSignal("");
+  const [sourceSignature, setSourceSignature] = createSignal("");
+  const [pluginPath, setPluginPath] = createSignal("");
+  const [pluginBusy, setPluginBusy] = createSignal(false);
   const [hooks, setHooks] = createSignal<api.HookConfig[]>([]);
   const [hooksDirty, setHooksDirty] = createSignal(false);
   const [hooksSaving, setHooksSaving] = createSignal(false);
-  const [capabilityTab, setCapabilityTab] = createSignal<"mcp" | "skills" | "hooks">("mcp");
+  const [capabilityTab, setCapabilityTab] = createSignal<"mcp" | "skills" | "hooks" | "plugins">("mcp");
 
   async function refreshMcp() {
     try {
@@ -181,13 +189,60 @@ export default function Settings() {
 
   async function refreshCapabilities() {
     try {
-      const [skillResult, hookResult] = await Promise.all([api.listSkills(), scope() === "user" ? api.getGlobalHooks() : api.getHooks()]);
+      const [skillResult, hookResult, pluginResult, sourceResult] = await Promise.all([api.listSkills(), scope() === "user" ? api.getGlobalHooks() : api.getHooks(), api.listPlugins(), api.listPluginSources()]);
       setSkills(skillResult.skills ?? []);
       setHooks(hookResult.hooks ?? []);
+      setPlugins(pluginResult.plugins ?? []);
+      setPluginSources(sourceResult.sources ?? []);
       setHooksDirty(false);
     } catch (e) {
       setNotice({ kind: "error", text: `Could not load capabilities: ${e instanceof Error ? e.message : String(e)}` });
     }
+  }
+
+  async function mutatePlugin(name: string, action: "enable" | "disable" | "rollback" | "remove") {
+    if (pluginBusy()) return;
+    setPluginBusy(true);
+    try {
+      if (action === "remove") await api.removePlugin(name);
+      else await api.pluginAction(name, action);
+      await refreshCapabilities();
+      setNotice({ kind: "info", text: `${name} ${action === "remove" ? "removed" : `${action}d`}.` });
+    } catch (e) {
+      setNotice({ kind: "error", text: `Plugin action failed: ${e instanceof Error ? e.message : String(e)}` });
+    } finally { setPluginBusy(false); }
+  }
+
+  async function installPlugin(update = false) {
+    const path = pluginPath().trim();
+    if (!path || pluginBusy()) return;
+    setPluginBusy(true);
+    try {
+      const pluginScope = scope() === "user" ? "user" : "workspace";
+      if (update) await api.updatePlugin(path, pluginScope);
+      else await api.installPlugin(path, pluginScope);
+      setPluginPath("");
+      await refreshCapabilities();
+      setNotice({ kind: "info", text: update ? "Plugin generation staged disabled." : "Plugin installed disabled." });
+    } catch (e) {
+      setNotice({ kind: "error", text: `Plugin install failed: ${e instanceof Error ? e.message : String(e)}` });
+    } finally { setPluginBusy(false); }
+  }
+
+  async function registerPluginSource() {
+    const path = sourcePath().trim();
+    if (!path || pluginBusy()) return;
+    setPluginBusy(true);
+    try {
+      const signed = sourceKeyId() && sourcePublicKey() && sourceSignature() ? { key_id: sourceKeyId(), public_key: sourcePublicKey(), signature: sourceSignature() } : undefined;
+      await api.registerPluginSource(path, "Desktop catalog", signed);
+      setSourcePath("");
+      setSourceKeyId(""); setSourcePublicKey(""); setSourceSignature("");
+      await refreshCapabilities();
+      setNotice({ kind: "info", text: "Catalog source registered disabled." });
+    } catch (e) {
+      setNotice({ kind: "error", text: `Catalog registration failed: ${e instanceof Error ? e.message : String(e)}` });
+    } finally { setPluginBusy(false); }
   }
 
   async function saveHooks() {
@@ -989,6 +1044,7 @@ export default function Settings() {
                 <button classList={{ active: capabilityTab() === "mcp" }} onClick={() => setCapabilityTab("mcp")}><Icon name="plug" /><span>MCP servers</span><em>{Object.keys(mcpServers() ?? {}).length}</em></button>
                 <button classList={{ active: capabilityTab() === "skills" }} onClick={() => setCapabilityTab("skills")}><Icon name="spark" /><span>Skills</span><em>{skills().length}</em></button>
                 <button classList={{ active: capabilityTab() === "hooks" }} onClick={() => setCapabilityTab("hooks")}><Icon name="tune" /><span>Hooks</span><em>{hooks().length}</em></button>
+                <button classList={{ active: capabilityTab() === "plugins" }} onClick={() => setCapabilityTab("plugins")}><Icon name="grid" /><span>Plugins</span><em>{plugins().length}</em></button>
               </nav>
               <Show when={capabilityTab() === "mcp"}>
                 <Group title="Tool servers"><Show when={mcpServers()} fallback={<Row title="Loading servers…" description="Reading the effective MCP configuration."><span /></Row>}>
@@ -1011,6 +1067,18 @@ export default function Settings() {
               </Show>
               <Show when={capabilityTab() === "hooks"}>
                 <Group title="Lifecycle automation"><div class="settings-callout"><Icon name="shield" /><div><strong>Hooks run commands at controlled lifecycle points.</strong><span>Keep commands short and review every change. A disabled hook never runs.</span></div></div><Show when={hooks().length > 0} fallback={<div class="capability-empty"><Icon name="tune" /><strong>No hooks configured</strong><span>Add a hook to run a safe, repeatable action at session or tool lifecycle events.</span></div>}><div class="hook-editor"><For each={hooks()}>{(hook, index) => <div class="hook-row"><div class="hook-row-head"><span class="capability-state" classList={{ ready: hook.enabled !== false, muted: hook.enabled === false }}>{hook.enabled === false ? "Disabled" : "Enabled"}</span><Switch checked={hook.enabled !== false} label={`Enable hook ${index() + 1}`} onChange={(v) => updateHook(index(), { enabled: v })} /><button class="settings-button danger" onClick={() => removeHook(index())}><Icon name="trash" /></button></div><label>Lifecycle event<select value={hook.event} onChange={(e) => updateHook(index(), { event: e.currentTarget.value })}><option value="session_start">Session start</option><option value="pre_tool_use">Before a tool runs</option><option value="post_tool_use">After a tool runs</option><option value="stop">Task stop</option></select></label><label>Tool matcher <span class="label-hint">optional</span><input value={hook.matcher ?? ""} placeholder="bash, write, or leave blank" onInput={(e) => updateHook(index(), { matcher: e.currentTarget.value })} /></label><label>Command<input class="hook-command" value={hook.command} placeholder="e.g. cargo fmt --all --check" onInput={(e) => updateHook(index(), { command: e.currentTarget.value })} /></label><label>Timeout (ms)<input type="number" min="100" max="120000" value={hook.timeout_ms ?? 10000} onInput={(e) => updateHook(index(), { timeout_ms: Number(e.currentTarget.value) || 10000 })} /></label></div>}</For></div></Show><div class="settings-actions"><button class="btn" onClick={addHook}><Icon name="add" /> Add hook</button><button class="btn primary" disabled={!hooksDirty() || hooksSaving()} onClick={() => void saveHooks()}>{hooksSaving() ? "Saving…" : "Save hooks"}</button><Show when={hooksDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div></Group>
+              </Show>
+              <Show when={capabilityTab() === "plugins"}>
+                <Group title="Installed plugins">
+                  <div class="settings-callout"><Icon name="shield" /><div><strong>Plugins are installed disabled.</strong><span>Each generation is content-addressed and remains inactive until you explicitly enable it. Review the digest, publisher, and capabilities first.</span></div></div>
+                  <div class="mcp-fields"><label>Package directory<input class="mono" placeholder="/path/to/plugin" value={pluginPath()} onInput={(e) => setPluginPath(e.currentTarget.value)} /></label><div class="settings-actions"><button class="btn" disabled={!pluginPath().trim() || pluginBusy()} onClick={() => void installPlugin(false)}>Install disabled</button><button class="btn primary" disabled={!pluginPath().trim() || pluginBusy()} onClick={() => void installPlugin(true)}>Stage update</button><button class="settings-button" disabled={pluginBusy()} onClick={async () => { const picked = await openFileDialog({ directory: true, multiple: false }); if (typeof picked === "string") setPluginPath(picked); }}>Choose…</button></div></div>
+                  <div class="mcp-fields"><label>Catalog directory<input class="mono" placeholder="/path/to/catalog" value={sourcePath()} onInput={(e) => setSourcePath(e.currentTarget.value)} /></label><div class="settings-actions"><button class="settings-button" disabled={!sourcePath().trim() || pluginBusy()} onClick={() => void registerPluginSource()}>Register catalog source</button></div></div>
+                  <details class="advanced"><summary>Detached Ed25519 evidence (optional)</summary><div class="mcp-fields"><label>Key ID<input class="mono" value={sourceKeyId()} onInput={(e) => setSourceKeyId(e.currentTarget.value)} /></label><label>Public key (base64)<input class="mono" value={sourcePublicKey()} onInput={(e) => setSourcePublicKey(e.currentTarget.value)} /></label><label>Signature (base64)<input class="mono" value={sourceSignature()} onInput={(e) => setSourceSignature(e.currentTarget.value)} /></label></div></details>
+                  <Show when={pluginSources().length > 0}><div class="capability-list"><For each={pluginSources()}>{(source) => <div class="capability-item"><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 16)}</code><div class="settings-actions"><button class="settings-button" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable"); await refreshCapabilities(); } finally { setPluginBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button class="settings-button danger" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke"); await refreshCapabilities(); } finally { setPluginBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
+                  <Show when={plugins().length > 0} fallback={<div class="capability-empty"><Icon name="grid" /><strong>No plugins installed</strong><span>Install a reviewed local package to make its skills, commands, and integrations available.</span></div>}>
+                    <div class="capability-list"><For each={plugins()}>{(plugin) => <details class="capability-item"><summary><span><strong>{plugin.name}</strong><small>v{plugin.version} · {plugin.scope} · {plugin.format}</small></span><span class="capability-state" classList={{ ready: plugin.enabled, muted: !plugin.enabled }}>{plugin.enabled ? "Enabled" : "Disabled"}</span></summary><div class="capability-detail"><p>{plugin.description || "No description provided."}</p><code title={plugin.digest}>sha256:{plugin.digest.slice(0, 16)}</code><code>{plugin.trace_id}</code><div class="settings-actions"><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, plugin.enabled ? "disable" : "enable")}>{plugin.enabled ? "Disable" : "Enable"}</button><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "rollback")}>Rollback</button><button class="settings-button danger" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "remove")}>Remove</button></div></div></details>}</For></div>
+                  </Show>
+                </Group>
               </Show>
             </Show>
 

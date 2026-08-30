@@ -27,6 +27,8 @@ import type {
   SessionListItem,
   SkillItem,
   SkillProposal,
+  PluginItem,
+  MarketplaceSource,
   TaskItem,
   TranscriptEntry,
   VoiceConfig,
@@ -434,6 +436,25 @@ export const api = {
 
   skills: (): Promise<{ skills: SkillItem[] }> =>
     fetch("/skills").then((r) => handle(r)),
+
+  plugins: (): Promise<{ plugins: PluginItem[] }> =>
+    fetch("/plugins").then((r) => handle(r)),
+  pluginAudit: (): Promise<{ audit: unknown[] }> =>
+    fetch("/plugins/audit").then((r) => handle(r)),
+  pluginSources: (): Promise<{ sources: MarketplaceSource[] }> =>
+    fetch("/plugins/sources").then((r) => handle(r)),
+  pluginRegisterSource: (path: string, label: string, signature?: { key_id: string; public_key: string; signature: string }): Promise<MarketplaceSource> =>
+    fetch("/plugins/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, label, trust: "manual-review", ...(signature ?? {}) }) }).then((r) => handle(r)),
+  pluginKeyAction: (keyId: string, action: "revoke" | "restore"): Promise<unknown> =>
+    fetch(`/plugins/keys/${encodeURIComponent(keyId)}/${action}`, { method: "POST" }).then((r) => handle(r)),
+  pluginSourceAction: (id: string, action: "enable" | "disable"): Promise<MarketplaceSource> =>
+    fetch(`/plugins/sources/${encodeURIComponent(id)}/${action}`, { method: "POST" }).then((r) => handle(r)),
+  pluginInstall: (path: string, scope: "workspace" | "user" = "workspace"): Promise<PluginItem> =>
+    fetch("/plugins/install", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, scope }) }).then((r) => handle(r)),
+  pluginUpdate: (path: string, scope: "workspace" | "user" = "workspace"): Promise<PluginItem> =>
+    fetch("/plugins/update", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, scope }) }).then((r) => handle(r)),
+  pluginAction: (name: string, action: "enable" | "disable" | "rollback" | "remove"): Promise<PluginItem> =>
+    fetch(action === "remove" ? `/plugins/${encodeURIComponent(name)}` : `/plugins/${encodeURIComponent(name)}/${action}`, { method: action === "remove" ? "DELETE" : "POST" }).then((r) => handle(r)),
 
   skillProposals: (): Promise<{ proposals: SkillProposal[] }> =>
     fetch("/skills/proposals").then((r) => handle(r)),

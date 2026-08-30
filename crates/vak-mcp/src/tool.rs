@@ -7,12 +7,15 @@ use vak_tools::{Tool, ToolContext, ToolOutput};
 
 use crate::manager::McpManager;
 
+type InvocationRecorder = Arc<dyn Fn(&str, &str, bool) + Send + Sync>;
+
 /// One meta-tool exposing every configured MCP server without dumping tool
 /// descriptions into context. The model lists on demand, then calls.
 pub struct McpTool {
     manager: Arc<McpManager>,
     allow: Option<Vec<String>>,
     deny: Vec<String>,
+    invocation_recorder: Option<InvocationRecorder>,
 }
 
 impl McpTool {
@@ -21,6 +24,7 @@ impl McpTool {
             manager,
             allow: None,
             deny: Vec::new(),
+            invocation_recorder: None,
         }
     }
 
@@ -33,6 +37,21 @@ impl McpTool {
             manager,
             allow,
             deny,
+            invocation_recorder: None,
+        }
+    }
+
+    pub fn with_policy_and_recorder(
+        manager: Arc<McpManager>,
+        allow: Option<Vec<String>>,
+        deny: Vec<String>,
+        recorder: InvocationRecorder,
+    ) -> Self {
+        Self {
+            manager,
+            allow,
+            deny,
+            invocation_recorder: Some(recorder),
         }
     }
 
@@ -128,6 +147,9 @@ impl McpTool {
             .unwrap_or(Value::Object(Default::default()));
 
         if !self.allowed(server, tool) {
+            if let Some(record) = &self.invocation_recorder {
+                record(server, tool, false);
+            }
             return ToolOutput::error(format!(
                 "MCP capability denied by channel policy: {server}/{tool}"
             ));
@@ -135,17 +157,30 @@ impl McpTool {
 
         let client = match self.manager.get(server).await {
             Ok(c) => c,
-            Err(e) => return ToolOutput::error(format!("cannot connect to '{server}': {e}")),
+            Err(e) => {
+                if let Some(record) = &self.invocation_recorder {
+                    record(server, tool, false);
+                }
+                return ToolOutput::error(format!("cannot connect to '{server}': {e}"));
+            }
         };
         match client.call_tool(tool, arguments).await {
             Ok(text) => {
+                if let Some(record) = &self.invocation_recorder {
+                    record(server, tool, true);
+                }
                 if text.is_empty() {
                     ToolOutput::ok("(empty result)")
                 } else {
                     ToolOutput::ok(text)
                 }
             }
-            Err(e) => ToolOutput::error(format!("mcp call failed: {e}")),
+            Err(e) => {
+                if let Some(record) = &self.invocation_recorder {
+                    record(server, tool, false);
+                }
+                ToolOutput::error(format!("mcp call failed: {e}"))
+            }
         }
     }
 }

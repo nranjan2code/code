@@ -15,6 +15,14 @@ pub struct CustomCommand {
 }
 
 pub fn discover(cwd: &Path, home: &Path) -> Vec<CustomCommand> {
+    discover_with_plugins(cwd, home, &[])
+}
+
+pub fn discover_with_plugins(
+    cwd: &Path,
+    home: &Path,
+    plugins: &[(std::path::PathBuf, String)],
+) -> Vec<CustomCommand> {
     let mut out = Vec::new();
     let mut roots: Vec<(std::path::PathBuf, String)> = vec![
         (cwd.join(".vak/plugins"), String::new()),
@@ -40,6 +48,13 @@ pub fn discover(cwd: &Path, home: &Path) -> Vec<CustomCommand> {
                 &mut out,
             );
         }
+    }
+    for (root, provenance) in plugins {
+        collect_dir(
+            &root.join("commands"),
+            &format!("{provenance}:commands"),
+            &mut out,
+        );
     }
     for (root, label) in roots.iter().skip(1) {
         collect_dir(root, label, &mut out);
