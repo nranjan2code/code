@@ -467,10 +467,20 @@ inherits the user layer through `vak_config::load_with_trust`; a project value
 overrides the corresponding user value and no project selection ever changes
 the user default by accident.
 
+The Settings surface itself always exposes a **Shared / This project** switch,
+so the entry point does not become an invisible scope rule. Shared is the
+default layer; a project can add a local capability or explicitly replace a
+same-named MCP server for that project only. Hooks are additive across the two
+layers, while skills and plugins visibly retain their source scope. Plugin,
+catalog, and key actions carry an explicit scope too: an action on a shared
+item can never silently mutate an equally named project item.
+
 The API makes this distinction explicit: `PATCH /config/global` and
 `GET|PUT /config/mcp/global` mutate the user layer; `PATCH /config` and
 `GET|PUT /config/mcp` address the active project. Writes are atomic and reload
 the running Core before responding, so Desktop, Admin, gateway cores, and
 future turns all observe the same real configuration. Secrets remain in the
 user `.env`/secret store and MCP configuration only contains an environment
-variable reference such as `${TAVILY_API_KEY}`.
+variable reference such as `${TAVILY_API_KEY}`. Feeds remain workspace-scoped:
+they are data and sources belonging to the active project, never an implicit
+global capability.

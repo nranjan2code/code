@@ -545,6 +545,11 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
     let mut bound_targets = std::collections::HashSet::new();
     for (target, binding) in gw.bindings_snapshot() {
         bound_targets.insert(target.clone());
+        let configured_workspace = gw.workspace_override_for_entry(&target);
+        let effective_workspace = configured_workspace
+            .clone()
+            .or_else(|| binding.workspace.clone())
+            .unwrap_or_else(|| state.core.cwd().to_path_buf());
         let channel_override = binding.provider.clone().zip(binding.model.clone());
         let (provider, model, source, revision) = match &channel_override {
             Some((provider, model)) => (
@@ -579,7 +584,7 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
             .as_ref()
             .map(|header| {
                 let mut reasons = Vec::new();
-                if header.cwd != *state.core.cwd() {
+                if header.cwd != effective_workspace {
                     reasons.push("workspace_changed");
                 }
                 if header.contract.provider != provider {
@@ -600,8 +605,8 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
         bindings.push(serde_json::json!({
             "target": target,
             "session_id": binding.session_id,
-            "workspace": state.core.cwd(),
-            "configured_workspace": binding.workspace,
+            "workspace": effective_workspace,
+            "configured_workspace": configured_workspace,
             "override": channel_override.map(|(provider, model)| serde_json::json!({
                 "provider": provider,
                 "model": model,
@@ -649,15 +654,12 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
                 default_route.revision.clone(),
             ),
         };
-        let workspace = entry
-            .workspace
-            .clone()
-            .unwrap_or_else(|| state.core.cwd().to_path_buf());
+        let workspace = gw.workspace_for_entry(&state.core, &entry.key);
         bindings.push(serde_json::json!({
             "target": entry.key,
             "session_id": null,
             "workspace": workspace,
-            "configured_workspace": entry.workspace,
+            "configured_workspace": gw.workspace_override_for_entry(&entry.key),
             "override": channel_override.map(|(provider, model)| serde_json::json!({
                 "provider": provider,
                 "model": model,
@@ -696,6 +698,7 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
     Json(serde_json::json!({
         "enabled": gw.enabled,
         "workspace": state.core.cwd(),
+        "canonical_default_workspace": vak_config::paths::default_workspace(),
         "default_route": default_route,
         "bindings": bindings,
         "chat_allowlist": state.core.config().gateway.chat_allowlist,
@@ -713,6 +716,70 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
     }))
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct GatewayWorkspaceBody {
+    pub workspace: Option<String>,
+}
+
+pub(crate) async fn patch_gateway_workspace(
+    State(state): State<AppState>,
+    Json(body): Json<GatewayWorkspaceBody>,
+) -> Response {
+    let workspace = body
+        .workspace
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let selected = match workspace {
+        None => None,
+        Some(value) => {
+            let path = PathBuf::from(value);
+            if !path.is_absolute() || !path.is_dir() {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "workspace must be an existing absolute directory"
+                    })),
+                )
+                    .into_response();
+            }
+            match std::fs::canonicalize(path) {
+                Ok(path) => Some(path),
+                Err(error) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({ "error": error.to_string() })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+    };
+    let data_home = state.core.sessions_home();
+    if let Err(error) =
+        vak_config::paths::persist_gateway_workspace_at(&data_home, selected.as_deref())
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response();
+    }
+    let effective = vak_config::paths::gateway_workspace_at(
+        &data_home,
+        &vak_config::paths::default_workspace(),
+    );
+    state.hub.emit_config_changed(
+        "gateway_workspace_changed",
+        &effective.display().to_string(),
+    );
+    Json(serde_json::json!({
+        "workspace": effective,
+        "restart_required": effective.as_path() != state.core.cwd().as_path(),
+    }))
+    .into_response()
+}
+
 /// Workspaces vak has session ledgers for, newest-first, plus the
 /// gateway's own cwd and any currently pooled workspace.
 ///
@@ -722,7 +789,19 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
 /// `Core` start.
 fn known_workspaces(state: &AppState) -> Vec<String> {
     use std::io::BufRead;
-    let mut seen: Vec<String> = vec![state.core.cwd().display().to_string()];
+    let mut seen: Vec<String> = vec![vak_config::paths::default_workspace().display().to_string()];
+    let gateway_workspace = vak_config::paths::gateway_workspace_at(
+        &state.core.sessions_home(),
+        &vak_config::paths::default_workspace(),
+    );
+    let gateway_workspace_text = gateway_workspace.display().to_string();
+    if gateway_workspace_text != seen[0] {
+        seen.push(gateway_workspace_text);
+    }
+    let current = state.core.cwd().display().to_string();
+    if !seen.contains(&current) {
+        seen.push(current);
+    }
     let mut push = |path: String| {
         if !path.is_empty() && !seen.contains(&path) && !is_scratch_workspace(&path) {
             seen.push(path);
@@ -1271,6 +1350,10 @@ pub(crate) fn routes() -> axum::Router<AppState> {
         )
         .route("/admin/api/config", get(get_config_admin))
         .route("/admin/api/gateway/status", get(gateway_status_admin))
+        .route(
+            "/admin/api/gateway/workspace",
+            axum::routing::patch(patch_gateway_workspace),
+        )
         .route(
             "/admin/api/gateway/bindings/{key}",
             patch(patch_gateway_binding).delete(delete_gateway_binding_admin),
@@ -2111,6 +2194,39 @@ mod tests {
             .find(|binding| binding["target"] == "telegram:67")
             .expect("approved cold channel must be visible");
         assert!(binding["session_id"].is_null());
+        assert_eq!(binding["stale"], false);
+    }
+
+    #[tokio::test]
+    async fn gateway_status_reports_an_existing_bindings_configured_workspace() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let app = authed_app(&state);
+        approve(
+            &app,
+            &token,
+            "telegram%3A68",
+            r#"{"workspace":"/tmp/chat-workspace"}"#,
+        )
+        .await;
+        state
+            .gateway
+            .set_route_override(&state.core, "telegram:68".into(), None);
+
+        let req = Request::builder()
+            .uri("/admin/api/gateway/status")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let json = body_json(app.oneshot(req).await.unwrap()).await;
+        let binding = json["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|binding| binding["target"] == "telegram:68")
+            .expect("existing binding must be visible");
+        assert_eq!(binding["workspace"], "/tmp/chat-workspace");
+        assert_eq!(binding["configured_workspace"], "/tmp/chat-workspace");
         assert_eq!(binding["stale"], false);
     }
 

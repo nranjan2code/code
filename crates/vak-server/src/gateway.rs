@@ -539,9 +539,6 @@ impl GatewayState {
         let allowed_entry = entry
             .as_ref()
             .filter(|e| e.status == AllowlistStatus::Allowed);
-        let workspace = allowed_entry
-            .and_then(|e| e.workspace.clone())
-            .unwrap_or_else(|| default_core.cwd().clone());
         // Bot tier: only consulted when the chat both names a bot and has
         // not opted out of inheriting from it (`inherit_bot_policy`). A
         // dangling `bot_id` (removed bot) resolves as "no bot tier", same
@@ -550,6 +547,10 @@ impl GatewayState {
             .filter(|e| e.inherit_bot_policy)
             .and_then(|e| e.bot_id.as_deref())
             .and_then(|id| self.bot_get(id));
+        let workspace = allowed_entry
+            .and_then(|e| e.workspace.clone())
+            .or_else(|| bot.as_ref().and_then(|b| b.workspace.clone()))
+            .unwrap_or_else(|| default_core.cwd().clone());
 
         // Policy: bot policy (lower tier) folded under the chat's own
         // (higher tier) via the same restrictive-only merge used to
@@ -580,6 +581,34 @@ impl GatewayState {
             policy,
             std::time::Instant::now(),
         )
+    }
+
+    pub(crate) fn workspace_for_entry(&self, default_core: &Core, key: &str) -> PathBuf {
+        let entry = self.allowlist_get(key);
+        let allowed = entry
+            .as_ref()
+            .filter(|e| e.status == AllowlistStatus::Allowed);
+        let bot = allowed
+            .filter(|e| e.inherit_bot_policy)
+            .and_then(|e| e.bot_id.as_deref())
+            .and_then(|id| self.bot_get(id));
+        allowed
+            .and_then(|e| e.workspace.clone())
+            .or_else(|| bot.and_then(|b| b.workspace))
+            .unwrap_or_else(|| default_core.cwd().to_path_buf())
+    }
+
+    pub(crate) fn workspace_override_for_entry(&self, key: &str) -> Option<PathBuf> {
+        let entry = self.allowlist_get(key)?;
+        if entry.status != AllowlistStatus::Allowed {
+            return None;
+        }
+        let bot = entry
+            .inherit_bot_policy
+            .then_some(entry.bot_id.as_deref())
+            .flatten()
+            .and_then(|id| self.bot_get(id));
+        entry.workspace.or_else(|| bot.and_then(|b| b.workspace))
     }
 
     pub(crate) fn set_enabled(&mut self, enabled: bool) {

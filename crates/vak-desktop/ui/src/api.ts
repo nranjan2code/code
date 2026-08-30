@@ -513,24 +513,24 @@ export function listSkills(): Promise<{
   return req("/skills");
 }
 
-export function listPlugins(): Promise<{ plugins: InstalledPlugin[] }> {
-  return req("/plugins");
+export function listPlugins(scope?: "user" | "workspace"): Promise<{ plugins: InstalledPlugin[] }> {
+  return req(`/plugins${scope ? `?scope=${scope}` : ""}`);
 }
 
-export function listPluginSources(): Promise<{ sources: MarketplaceSource[] }> {
-  return req("/plugins/sources");
+export function listPluginSources(scope?: "user" | "workspace"): Promise<{ sources: MarketplaceSource[] }> {
+  return req(`/plugins/sources${scope ? `?scope=${scope}` : ""}`);
 }
 
 export function registerPluginSource(path: string, label: string, signature?: { key_id: string; public_key: string; signature: string }): Promise<MarketplaceSource> {
   return req("/plugins/sources", { method: "POST", body: JSON.stringify({ path, label, trust: "manual-review", ...(signature ?? {}) }) });
 }
 
-export function pluginKeyAction(keyId: string, action: "revoke" | "restore"): Promise<unknown> {
-  return req(`/plugins/keys/${encodeURIComponent(keyId)}/${action}`, { method: "POST", body: "{}" });
+export function pluginKeyAction(keyId: string, action: "revoke" | "restore", scope: "user" | "workspace"): Promise<unknown> {
+  return req(`/plugins/keys/${encodeURIComponent(keyId)}/${action}?scope=${scope}`, { method: "POST", body: "{}" });
 }
 
-export function pluginSourceAction(id: string, action: "enable" | "disable"): Promise<MarketplaceSource> {
-  return req(`/plugins/sources/${encodeURIComponent(id)}/${action}`, { method: "POST", body: "{}" });
+export function pluginSourceAction(id: string, action: "enable" | "disable", scope: "user" | "workspace"): Promise<MarketplaceSource> {
+  return req(`/plugins/sources/${encodeURIComponent(id)}/${action}?scope=${scope}`, { method: "POST", body: "{}" });
 }
 
 export function installPlugin(path: string, scope: "workspace" | "user"): Promise<InstalledPlugin> {
@@ -541,12 +541,12 @@ export function updatePlugin(path: string, scope: "workspace" | "user"): Promise
   return req("/plugins/update", { method: "POST", body: JSON.stringify({ path, scope }) });
 }
 
-export function pluginAction(name: string, action: "enable" | "disable" | "rollback"): Promise<InstalledPlugin> {
-  return req(`/plugins/${encodeURIComponent(name)}/${action}`, { method: "POST", body: "{}" });
+export function pluginAction(name: string, action: "enable" | "disable" | "rollback", scope: "user" | "workspace"): Promise<InstalledPlugin> {
+  return req(`/plugins/${encodeURIComponent(name)}/${action}?scope=${scope}`, { method: "POST", body: "{}" });
 }
 
-export function removePlugin(name: string): Promise<InstalledPlugin> {
-  return req(`/plugins/${encodeURIComponent(name)}`, { method: "DELETE" });
+export function removePlugin(name: string, scope: "user" | "workspace"): Promise<InstalledPlugin> {
+  return req(`/plugins/${encodeURIComponent(name)}?scope=${scope}`, { method: "DELETE" });
 }
 
 export interface FileResponse {

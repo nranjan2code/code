@@ -5299,6 +5299,20 @@ const sourceLabel = (source: string | undefined) =>
 
 function GatewayHealthView(props: { ctx: GatewayCtx }) {
   const pool = () => props.ctx.status()?.core_pool;
+  const [workspace, setWorkspace] = createSignal("");
+  const [workspaceDirty, setWorkspaceDirty] = createSignal(false);
+  createEffect(() => {
+    const current = props.ctx.status()?.workspace;
+    if (current && !workspaceDirty()) setWorkspace(current);
+  });
+  const saveWorkspace = async () => {
+    const result = await api.patchGatewayWorkspace(workspace());
+    setWorkspaceDirty(false);
+    props.ctx.refresh();
+    if (result.restart_required) {
+      window.setTimeout(() => window.location.reload(), 1200);
+    }
+  };
   return (
     <>
       <section class="panel gateway-summary">
@@ -5330,6 +5344,24 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
             </div>
           </div>
         </Show>
+        <div class="panel-subsection" style="margin-top:14px">
+          <div class="panel-title-row">
+            <div>
+              <h3>Default project folder</h3>
+              <p class="dim">New gateway chats start at the canonical <code>~/vak-home</code> unless you choose another folder. Bot and chat overrides remain independent below.</p>
+            </div>
+            <button disabled={!workspaceDirty()} onClick={() => void saveWorkspace()}>Save folder</button>
+          </div>
+          <WorkspacePicker
+            value={workspace() || props.ctx.status()?.workspace || ""}
+            onChange={(value) => { setWorkspace(value); setWorkspaceDirty(true); }}
+            known={props.ctx.status()?.known_workspaces ?? []}
+            corePool={pool()?.entries ?? []}
+          />
+          <button class="ghost small" onClick={() => { setWorkspace(props.ctx.status()?.canonical_default_workspace ?? ""); setWorkspaceDirty(true); }}>
+            Use canonical ~/vak-home
+          </button>
+        </div>
       </section>
 
       <section class="panel" style="margin-top:14px">

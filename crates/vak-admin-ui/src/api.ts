@@ -181,6 +181,13 @@ export const api = {
   gatewayStatus: () =>
     fetch("/admin/api/gateway/status").then((r) => handle<GatewayStatus>(r)),
 
+  patchGatewayWorkspace: (workspace: string | null): Promise<{ workspace: string; restart_required: boolean }> =>
+    fetch("/admin/api/gateway/workspace", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspace }),
+    }).then((r) => handle(r)),
+
   patchGatewayBinding: (target: string, route: { provider?: string; model?: string }): Promise<void> =>
     fetch(`/admin/api/gateway/bindings/${encodeURIComponent(target)}`, {
       method: "PATCH",

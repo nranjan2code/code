@@ -59,17 +59,18 @@ impl McpClient {
         // A network-egress server is a deliberate trust decision from
         // privileged config; the OS command wrapper would deny its sockets,
         // so it spawns directly (env still scrubbed to the explicit set).
+        let command_path = resolve_command(&config.command);
         let mut cmd = if let (Some(sandbox), false) = (sandbox, config.network) {
-            let command = std::iter::once(config.command.as_str())
-                .chain(config.args.iter().map(String::as_str))
-                .map(shell_quote)
+            let command = std::iter::once(command_path.to_string_lossy().to_string())
+                .chain(config.args.iter().cloned())
+                .map(|part| shell_quote(&part))
                 .collect::<Vec<_>>()
                 .join(" ");
             let mut cmd = Command::new("sh");
             cmd.arg("-c").arg(sandbox.wrap(&command));
             cmd
         } else {
-            let mut cmd = Command::new(&config.command);
+            let mut cmd = Command::new(&command_path);
             cmd.args(&config.args);
             cmd
         };
@@ -89,7 +90,7 @@ impl McpClient {
         // `#!/usr/bin/env` (npx→node) need the same prefix that worked for
         // the command itself.
         let mut path_parts: Vec<PathBuf> = Vec::new();
-        if let Some(dir) = std::path::Path::new(&config.command).parent() {
+        if let Some(dir) = command_path.parent() {
             path_parts.push(dir.to_path_buf());
         }
         if let Some(path) = std::env::var_os("PATH") {
@@ -306,6 +307,28 @@ impl McpClient {
             Ok(text)
         }
     }
+}
+
+fn resolve_command(command: &str) -> PathBuf {
+    let path = PathBuf::from(command);
+    if path.is_absolute() || command.contains(std::path::MAIN_SEPARATOR) {
+        return path;
+    }
+    if let Some(paths) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            let candidate = dir.join(command);
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+    for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
+        let candidate = PathBuf::from(dir).join(command);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    path
 }
 
 fn shell_quote(value: &str) -> String {

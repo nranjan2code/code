@@ -53,7 +53,7 @@ each deliberate:
 |---|---|---|
 | `RunAtLoad` / `WantedBy` | yes | yes — the whole point |
 | `KeepAlive` / `Restart` | `true` / `always` | `false` / `no` |
-| `WorkingDirectory` | the workspace `services-sync` ran from | the account home |
+| `WorkingDirectory` | the canonical default workspace (`~/vak-home`) | the account home |
 | `LimitLoadToSessionType` | absent | `Aqua` |
 | shipped always | yes | only when the build produced `vak-desktop` |
 

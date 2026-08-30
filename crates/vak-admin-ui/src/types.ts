@@ -173,6 +173,7 @@ export interface CorePoolStatus {
 export interface GatewayStatus {
   enabled: boolean;
   workspace: string;
+  canonical_default_workspace: string;
   default_route: RouteInfo;
   bindings: GatewayBinding[];
   chat_allowlist: string[];

@@ -321,11 +321,16 @@ async fn main() {
             gateway,
             trust,
         }) => {
-            let trusted = resolve_trust(&cwd, trust, false);
+            let serve_cwd = if gateway {
+                vak_config::paths::gateway_workspace()
+            } else {
+                cwd
+            };
+            let trusted = resolve_trust(&serve_cwd, trust, false);
             if trusted {
-                vak_config::load_env_file(std::path::Path::new(".env"));
+                vak_config::load_env_file(&serve_cwd.join(".env"));
             }
-            run_serve(cwd, port, gateway, trusted).await
+            run_serve(serve_cwd, port, gateway, trusted).await
         }
     };
     std::process::exit(code);

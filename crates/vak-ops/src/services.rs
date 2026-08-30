@@ -5,8 +5,9 @@
 //! credentials: the binary self-sources `data_home()/.env`, so regenerating
 //! units can never strand auth. Logs stay at the platform `logs_dir()` and
 //! user data remains under the canonical platform data home.
-//! The unit working directory is captured when `self services-sync` runs, so
-//! the gateway loads the selected workspace's config and project `.env`.
+//! Headless units always run from [`vak_config::paths::default_workspace`],
+//! so invoking `self services-sync` from a source checkout or another project
+//! can never silently rebind the gateway and channel bridges to that directory.
 //!
 //! All manager interaction goes through [`CommandRunner`], so tests inject a
 //! recorder instead of shelling out to launchctl/systemctl.
@@ -74,10 +75,10 @@ pub struct ServiceDef {
     /// Manager-level resurrection (launchd `KeepAlive`, systemd
     /// `Restart=always`).
     pub keep_alive: bool,
-    /// Whether the unit must be pinned to the workspace `services-sync`
-    /// was run from. Headless servers load that workspace's config and
-    /// project `.env`; a GUI app that picks its own project in-app must
-    /// not be silently bound to one directory.
+    /// Whether the unit must be pinned to Vak's canonical default workspace.
+    /// Headless servers load that workspace's config and project `.env`; a
+    /// GUI app that picks its own project in-app instead runs from the account
+    /// home and must not be silently bound to one directory.
     pub workspace_scoped: bool,
     /// The binary ships only when the build produced it (see `COMPONENTS`
     /// in the installer). A unit exec'ing a path that does not exist is
@@ -239,7 +240,7 @@ pub fn bot_service_name(surface: &str, id: &str) -> String {
 pub fn bot_service_specs(
     bin_dir: &Path,
     home_dir: &Path,
-    working_dir: &Path,
+    default_workspace: &Path,
     data_home: &Path,
     gateway_url: &str,
 ) -> Vec<ServiceSpec> {
@@ -260,7 +261,7 @@ pub fn bot_service_specs(
                     b.id,
                 ],
                 log_path: vak_config::paths::logs_dir().join(log_file),
-                working_dir: working_dir.to_path_buf(),
+                working_dir: default_workspace.to_path_buf(),
                 home_dir: home_dir.to_path_buf(),
                 path_env: std::env::var("PATH").unwrap_or_default(),
                 keep_alive: true,
@@ -329,8 +330,14 @@ pub fn sync_bots(
 ) -> Vec<SyncOutcome> {
     let bin_dir = bin_path.parent().unwrap_or(Path::new("/"));
     let home_dir = super::home();
-    let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-    let specs = bot_service_specs(bin_dir, &home_dir, &working_dir, data_home, gateway_url);
+    let default_workspace = vak_config::paths::default_workspace();
+    let specs = bot_service_specs(
+        bin_dir,
+        &home_dir,
+        &default_workspace,
+        data_home,
+        gateway_url,
+    );
     let wanted: Vec<String> = specs.iter().map(|s| s.name.clone()).collect();
     prune_stale_bot_units(&wanted, paths, runner);
     sync_specs(&specs, paths, runner)
@@ -362,18 +369,17 @@ impl ServiceDef {
     /// Resolve against an install prefix: `bin_dir` holds the release
     /// binaries; logs land in the canonical platform logs dir
     /// (`~/Library/Logs/vak` / XDG state) — never inside data.
-    pub fn spec(&self, bin_dir: &Path, home_dir: &Path, working_dir: &Path) -> ServiceSpec {
+    pub fn spec(&self, bin_dir: &Path, home_dir: &Path, default_workspace: &Path) -> ServiceSpec {
         ServiceSpec {
             name: self.name.to_string(),
             bin_path: bin_dir.join(self.bin_file),
             args: self.args.iter().map(|a| (*a).to_string()).collect(),
             log_path: vak_config::paths::logs_dir().join(self.log_file),
             // Non-workspace-scoped services get the account home: they
-            // choose their own project at runtime, so inheriting whichever
-            // directory `services-sync` happened to run from would record
-            // a workspace they never honour.
+            // choose their own project at runtime. Headless services use the
+            // canonical default workspace, never the caller's current dir.
             working_dir: if self.workspace_scoped {
-                working_dir.to_path_buf()
+                default_workspace.to_path_buf()
             } else {
                 home_dir.to_path_buf()
             },
@@ -975,15 +981,15 @@ pub fn default_service_names(bin_path: &Path) -> Vec<&'static str> {
 /// as Err entries so callers can report them individually.
 pub fn resolve_specs(bin_path: &Path, names: &[&str]) -> Vec<Result<ServiceSpec, String>> {
     let bin_dir = bin_path.parent().unwrap_or(Path::new("/"));
-    let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
     let home_dir = super::home();
+    let default_workspace = vak_config::paths::default_workspace();
     names
         .iter()
         .map(|name| {
             SERVICES
                 .iter()
                 .find(|def| def.name == *name)
-                .map(|def| def.spec(bin_dir, &home_dir, &working_dir))
+                .map(|def| def.spec(bin_dir, &home_dir, &default_workspace))
                 .ok_or_else(|| format!("unknown service: {name}"))
         })
         .collect()
@@ -1167,17 +1173,20 @@ mod tests {
         }
     }
 
-    /// `services-sync` records the workspace it ran from, so the gateway
-    /// serves that project. The desktop app picks its project in its own
-    /// UI, so binding it to whichever directory happened to be current
-    /// would record a workspace it never honours.
+    /// Headless services use the canonical default workspace regardless of
+    /// the caller's cwd. The desktop app picks its project in its own UI, so
+    /// its service starts from the account home instead.
     #[test]
-    fn only_workspace_scoped_services_capture_the_sync_directory() {
+    fn workspace_scoped_services_use_the_canonical_default() {
         let home = Path::new("/Users/x");
-        let cwd = Path::new("/some/workspace");
+        let default_workspace = Path::new("/Users/x/vak-home");
         for def in SERVICES {
-            let spec = def.spec(Path::new("/b"), home, cwd);
-            let expected = if def.workspace_scoped { cwd } else { home };
+            let spec = def.spec(Path::new("/b"), home, default_workspace);
+            let expected = if def.workspace_scoped {
+                default_workspace
+            } else {
+                home
+            };
             assert_eq!(spec.working_dir, expected, "{}", def.name);
         }
     }
@@ -1546,6 +1555,7 @@ mod tests {
             ],
         );
         assert!(vakbot.keep_alive);
+        assert_eq!(vakbot.working_dir, Path::new("/workspace"));
         // Every rendered unit must still carry zero secrets — the token
         // lives only in the env var the bridge process reads for itself.
         let plist = render_launchd_plist(vakbot);

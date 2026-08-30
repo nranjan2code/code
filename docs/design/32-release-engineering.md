@@ -19,7 +19,8 @@ no plists pointing into build trees, no spot-fixing deploys.
    cleaned at any time without touching a running deployment.
 3. **Services are generated, never hand-edited.** `self services-sync`
    renders launchd/systemd units from templates (vak-ops) referencing the
-   *installed* path and the workspace directory from which sync was run,
+   *installed* path and the canonical default workspace resolved by
+   `vak_config::paths::default_workspace()`,
    unloads stale units, loads the new ones. Sync is idempotent: identical
    content + healthy process ⇒ no-op. The working directory is part of the
    service contract so gateway config and project `.env` are not replaced by

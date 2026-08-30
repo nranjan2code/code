@@ -2177,16 +2177,18 @@ impl Core {
                 tokio::time::timeout(std::time::Duration::from_secs(20), manager.inventory())
                     .await
                     .unwrap_or_default();
-            let section = mcp_section(&fetched);
-            if !fetched.is_empty() {
-                let mut cache = self
-                    .inner
-                    .mcp_inventory
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if cache.is_none() {
-                    *cache = Some(section.clone());
-                }
+            let section = if fetched.is_empty() {
+                mcp_config_section(&mcp_cfg.servers.keys().cloned().collect::<Vec<_>>())
+            } else {
+                mcp_section(&fetched)
+            };
+            let mut cache = self
+                .inner
+                .mcp_inventory
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if cache.is_none() {
+                *cache = Some(section.clone());
             }
             let cached = self
                 .inner

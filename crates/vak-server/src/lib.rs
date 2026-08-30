@@ -61,7 +61,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -3331,9 +3331,24 @@ fn plugin_store(state: &AppState, scope: InstallScope) -> PluginStore {
     PluginStore::new(root)
 }
 
-async fn list_plugins(State(state): State<AppState>) -> Json<serde_json::Value> {
+#[derive(Debug, serde::Deserialize)]
+struct PluginScopeQuery {
+    scope: Option<InstallScope>,
+}
+
+fn requested_plugin_scopes(scope: Option<InstallScope>) -> Vec<InstallScope> {
+    scope.map_or_else(
+        || vec![InstallScope::User, InstallScope::Workspace],
+        |scope| vec![scope],
+    )
+}
+
+async fn list_plugins(
+    State(state): State<AppState>,
+    Query(query): Query<PluginScopeQuery>,
+) -> Json<serde_json::Value> {
     let mut plugins = Vec::new();
-    for scope in [InstallScope::User, InstallScope::Workspace] {
+    for scope in requested_plugin_scopes(query.scope) {
         if let Ok(items) = plugin_store(&state, scope).list() {
             plugins.extend(items.into_iter().map(|plugin| {
                 serde_json::json!({
@@ -3376,9 +3391,12 @@ async fn plugin_invocations(State(state): State<AppState>) -> Json<serde_json::V
     Json(serde_json::json!({ "invocations": events }))
 }
 
-async fn plugin_sources(State(state): State<AppState>) -> Json<serde_json::Value> {
+async fn plugin_sources(
+    State(state): State<AppState>,
+    Query(query): Query<PluginScopeQuery>,
+) -> Json<serde_json::Value> {
     let mut sources = Vec::new();
-    for scope in [InstallScope::User, InstallScope::Workspace] {
+    for scope in requested_plugin_scopes(query.scope) {
         if let Ok(items) = plugin_store(&state, scope).list_sources() {
             sources.extend(items);
         }
@@ -3421,23 +3439,32 @@ async fn plugin_register_source(
 async fn plugin_source_enable(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    plugin_result(plugin_store(&state, InstallScope::Workspace).set_source_enabled(&id, true))
+    plugin_result(
+        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace))
+            .set_source_enabled(&id, true),
+    )
 }
 
 async fn plugin_source_disable(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    plugin_result(plugin_store(&state, InstallScope::Workspace).set_source_enabled(&id, false))
+    plugin_result(
+        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace))
+            .set_source_enabled(&id, false),
+    )
 }
 
 async fn plugin_key_revoke(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
     plugin_result(
-        plugin_store(&state, InstallScope::Workspace)
+        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace))
             .set_key_revoked(&id, true)
             .map(|_| serde_json::json!({"revoked": id})),
     )
@@ -3446,9 +3473,10 @@ async fn plugin_key_revoke(
 async fn plugin_key_restore(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
     plugin_result(
-        plugin_store(&state, InstallScope::Workspace)
+        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace))
             .set_key_revoked(&id, false)
             .map(|_| serde_json::json!({"revoked": false, "key_id": id})),
     )
@@ -3504,53 +3532,41 @@ async fn plugin_update(
 async fn plugin_enable(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    let workspace = plugin_store(&state, InstallScope::Workspace).enable(&name);
-    plugin_result(match workspace {
-        Err(vak_plugin::PluginError::NotInstalled(_)) => {
-            plugin_store(&state, InstallScope::User).enable(&name)
-        }
-        result => result,
-    })
+    plugin_result(
+        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace)).enable(&name),
+    )
 }
 
 async fn plugin_disable(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    let workspace = plugin_store(&state, InstallScope::Workspace).disable(&name);
-    plugin_result(match workspace {
-        Err(vak_plugin::PluginError::NotInstalled(_)) => {
-            plugin_store(&state, InstallScope::User).disable(&name)
-        }
-        result => result,
-    })
+    plugin_result(
+        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace)).disable(&name),
+    )
 }
 
 async fn plugin_rollback(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    let workspace = plugin_store(&state, InstallScope::Workspace).rollback(&name);
-    plugin_result(match workspace {
-        Err(vak_plugin::PluginError::NotInstalled(_)) => {
-            plugin_store(&state, InstallScope::User).rollback(&name)
-        }
-        result => result,
-    })
+    plugin_result(
+        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace)).rollback(&name),
+    )
 }
 
 async fn plugin_remove(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    Query(query): Query<PluginScopeQuery>,
 ) -> axum::response::Response {
-    let workspace = plugin_store(&state, InstallScope::Workspace).remove(&name);
-    plugin_result(match workspace {
-        Err(vak_plugin::PluginError::NotInstalled(_)) => {
-            plugin_store(&state, InstallScope::User).remove(&name)
-        }
-        result => result,
-    })
+    plugin_result(
+        plugin_store(&state, query.scope.unwrap_or(InstallScope::Workspace)).remove(&name),
+    )
 }
 
 #[derive(serde::Deserialize)]

@@ -93,12 +93,10 @@ pub fn run_install(prefix: Option<PathBuf>, force: bool) -> i32 {
     }
 }
 
-/// Points the durable-service units at a real workspace on a truly fresh
-/// install, instead of leaving "which directory" to whatever cwd
-/// `self services-sync` is later run from (docs/design/32 invariant 3 is
-/// correct as a mechanism, but named no default — an operator who ran
-/// `services-sync` from inside the vak source checkout while developing
-/// it got an always-on Telegram bridge silently bound to the dev repo).
+/// Creates and activates the canonical default workspace on a truly fresh
+/// install. Service generation independently resolves this same path, so a
+/// later `self services-sync` can never rebind the gateway to its caller's
+/// current directory.
 ///
 /// Only acts when NEITHER service is configured with the platform
 /// service manager yet (`vak_ops::status` reports `NotInstalled` for
@@ -125,23 +123,12 @@ fn bootstrap_default_workspace_if_fresh() {
         );
         return;
     }
-    let original_cwd = std::env::current_dir().ok();
-    if std::env::set_current_dir(&workspace).is_err() {
-        eprintln!(
-            "warning: could not switch into default workspace {}",
-            workspace.display()
-        );
-        return;
-    }
     println!();
     println!(
         "no services configured yet — bootstrapping the default workspace at {}",
         workspace.display()
     );
     let code = run_services_sync(None, Vec::new());
-    if let Some(cwd) = original_cwd {
-        let _ = std::env::set_current_dir(cwd);
-    }
     // Leave the gateway server running: it's what serves the admin
     // console, and an operator needs that reachable right after install
     // to actually configure anything (provider key, channels) — a
@@ -520,6 +507,14 @@ pub fn run_services_sync(prefix: Option<PathBuf>, names: Vec<String>) -> i32 {
         }
     };
     let data_home = vak_config::paths::data_home();
+    let default_workspace = vak_config::paths::default_workspace();
+    if let Err(error) = std::fs::create_dir_all(&default_workspace) {
+        eprintln!(
+            "error: could not create default workspace {}: {error}",
+            default_workspace.display()
+        );
+        return 1;
+    }
 
     let requested: Vec<&str> = if names.is_empty() {
         let retired = vak_ops::services::RETIRED_SERVICES;

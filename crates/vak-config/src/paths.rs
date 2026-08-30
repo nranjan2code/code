@@ -60,6 +60,46 @@ pub fn default_workspace() -> PathBuf {
     base_home().join("vak-home")
 }
 
+/// The gateway's persisted workspace selection. An absent or malformed
+/// selection intentionally falls back to the canonical default workspace.
+pub fn gateway_workspace() -> PathBuf {
+    gateway_workspace_at(&data_home(), &default_workspace())
+}
+
+/// Resolve the gateway workspace from an explicit data home. This variant
+/// keeps server tests isolated when a `Core` uses a temporary sessions home.
+pub fn gateway_workspace_at(data: &std::path::Path, default: &std::path::Path) -> PathBuf {
+    let path = data.join("gateway/default-workspace");
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|raw| PathBuf::from(raw.trim()))
+        .filter(|workspace| workspace.is_absolute() && workspace.is_dir())
+        .unwrap_or_else(|| default.to_path_buf())
+}
+
+/// Persist or clear the user-selected gateway workspace atomically.
+pub fn persist_gateway_workspace_at(
+    data: &std::path::Path,
+    workspace: Option<&std::path::Path>,
+) -> Result<(), std::io::Error> {
+    let dir = data.join("gateway");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("default-workspace");
+    match workspace {
+        Some(workspace) => {
+            let temp = dir.join(format!(".default-workspace.{}.tmp", std::process::id()));
+            std::fs::write(&temp, format!("{}\n", workspace.display()))?;
+            std::fs::rename(temp, path)?;
+        }
+        None => match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        },
+    }
+    Ok(())
+}
+
 /// All three homes derived from one override decision. Pure so tests can
 /// exercise both branches without touching process-global environment.
 struct Homes {
@@ -271,5 +311,27 @@ mod tests {
             resolve_base_home(Some(PathBuf::from("relative")), None),
             PathBuf::from("/")
         );
+    }
+
+    #[test]
+    fn gateway_workspace_sidecar_defaults_and_round_trips() {
+        let data = tempfile::tempdir().unwrap();
+        let default = PathBuf::from("/Users/example/vak-home");
+        assert_eq!(gateway_workspace_at(data.path(), &default), default);
+        let selected = tempfile::tempdir().unwrap();
+        persist_gateway_workspace_at(data.path(), Some(selected.path())).unwrap();
+        assert_eq!(gateway_workspace_at(data.path(), &default), selected.path());
+        persist_gateway_workspace_at(data.path(), None).unwrap();
+        assert_eq!(gateway_workspace_at(data.path(), &default), default);
+    }
+
+    #[test]
+    fn gateway_workspace_ignores_relative_or_missing_sidecars() {
+        let data = tempfile::tempdir().unwrap();
+        let path = data.path().join("gateway/default-workspace");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "relative\n").unwrap();
+        let default = PathBuf::from("/Users/example/vak-home");
+        assert_eq!(gateway_workspace_at(data.path(), &default), default);
     }
 }

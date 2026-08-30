@@ -33,11 +33,11 @@ work, because `gateway.chat_allowlist` is a config-file-only setting with
 no UI, no runtime API, and no visible pending-request state — the operator
 had to grep `security-events.jsonl` to find out why, then hand-edit a
 `.vak/config.toml` and manually bounce the gateway process to apply it.
-Separately, the gateway's default workspace silently became whatever
+Separately, the gateway's default workspace once silently became whatever
 directory `vak self services-sync` happened to be run from (the tool's own
-source checkout, in the incident), because nothing in the onboarding path
-ever asks "which workspace should this channel talk to?" This doc is the
-design for closing both gaps together, since they're the same underlying
+source checkout, in the incident). Durable services now always use the
+canonical `~/vak-home`; this doc also answers "which workspace should this
+channel talk to?" These are the same underlying
 problem: **adding a channel/chat has no first-class lifecycle** — today
 it's an implicit side effect of config files and shell commands, not a
 flow with visible state, approval, and governance.
@@ -56,9 +56,9 @@ flow with visible state, approval, and governance.
   by an operator who thinks to look, after the fact, with no forward
   path from "I see it was rejected" to "now let it through" except
   re-editing the same file.
-- The gateway's workspace is the process's `cwd` (`docs/design/32-release-engineering.md`
-  invariant 3: services execute from "the workspace captured by `self
-  services-sync`"). `GatewayBinding` *does* carry a per-binding
+- The gateway's workspace is the canonical default workspace
+  (`vak_config::paths::default_workspace()`), independent of the directory
+  where service management is invoked. `GatewayBinding` *does* carry a per-binding
   `workspace` override in the data model (`admin.rs`'s
   `configured_workspace` field), but nothing in any UI or bridge ever
   sets it — so every channel silently inherits the process workspace,

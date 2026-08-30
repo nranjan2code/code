@@ -47,10 +47,11 @@
     limitation") before attempting a fix; a straightforward one already
     reproducibly broke `busy_message_is_steered_not_dropped` for reasons
     not yet root-caused.
-18. **Durable services retain workspace identity.** Generated launchd/systemd
-    units must execute from the workspace captured by `self services-sync` so
-    gateway and Telegram runs load that workspace's config and project `.env`,
-    rather than the service manager's default directory. Units must also carry
+18. **Durable services use the canonical default workspace.** Generated
+    launchd/systemd units for the gateway and channel bridges must execute from
+    `vak_config::paths::default_workspace()` (`~/vak-home` for each account),
+    never the directory where `self services-sync` happened to run. Per-chat
+    workspace overrides remain explicit gateway state. Units must also carry
     the invoking user's non-secret `HOME`; a sanitized manager environment may
     otherwise resolve the workspace as the platform data home and migrate its
     `.vak` directory away. Canonical path resolution must never use the

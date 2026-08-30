@@ -9,6 +9,7 @@ import {
   setNotice,
   setProviders,
   setSettingsOpen,
+  setSettingsScope,
   settingsScope,
   setSetupNeeded,
   setShowShortcuts,
@@ -61,6 +62,7 @@ function fmt(value: number): string {
 
 export default function Settings() {
   const scope = () => settingsScope();
+  const capabilityScope = () => scope() === "user" ? "user" as const : "workspace" as const;
   const [page, setPage] = createSignal<Page>(pendingSettingsPage() ?? "general");
   const [query, setQuery] = createSignal("");
   const [config, setConfig] = createSignal<ConfigSnapshot | null>(null);
@@ -176,6 +178,9 @@ export default function Settings() {
   const [hooksDirty, setHooksDirty] = createSignal(false);
   const [hooksSaving, setHooksSaving] = createSignal(false);
   const [capabilityTab, setCapabilityTab] = createSignal<"mcp" | "skills" | "hooks" | "plugins">("mcp");
+  const visibleSkills = createMemo(() =>
+    scope() === "user" ? skills().filter((skill) => skill.scope === "user") : skills(),
+  );
 
   async function refreshMcp() {
     try {
@@ -189,7 +194,7 @@ export default function Settings() {
 
   async function refreshCapabilities() {
     try {
-      const [skillResult, hookResult, pluginResult, sourceResult] = await Promise.all([api.listSkills(), scope() === "user" ? api.getGlobalHooks() : api.getHooks(), api.listPlugins(), api.listPluginSources()]);
+      const [skillResult, hookResult, pluginResult, sourceResult] = await Promise.all([api.listSkills(), scope() === "user" ? api.getGlobalHooks() : api.getHooks(), api.listPlugins(capabilityScope()), api.listPluginSources(capabilityScope())]);
       setSkills(skillResult.skills ?? []);
       setHooks(hookResult.hooks ?? []);
       setPlugins(pluginResult.plugins ?? []);
@@ -204,8 +209,8 @@ export default function Settings() {
     if (pluginBusy()) return;
     setPluginBusy(true);
     try {
-      if (action === "remove") await api.removePlugin(name);
-      else await api.pluginAction(name, action);
+      if (action === "remove") await api.removePlugin(name, capabilityScope());
+      else await api.pluginAction(name, action, capabilityScope());
       await refreshCapabilities();
       setNotice({ kind: "info", text: `${name} ${action === "remove" ? "removed" : `${action}d`}.` });
     } catch (e) {
@@ -683,7 +688,12 @@ export default function Settings() {
       <aside class="settings-nav">
         <button class="settings-back" onClick={() => setSettingsOpen(false)}><Icon name="chevron" /><span>Back to Vak</span></button>
         <div class="settings-search"><Icon name="search" /><input aria-label="Search settings" placeholder="Search settings…" value={query()} onInput={(event) => setQuery(event.currentTarget.value)} /></div>
-        <div class="settings-nav-label">{scope() === "user" ? "User settings" : "Project settings"}</div>
+        <div class="settings-nav-label">Settings scope</div>
+        <div class="settings-scope-toggle" role="group" aria-label="Settings scope">
+          <button classList={{ active: scope() === "user" }} onClick={() => setSettingsScope("user")}>Shared</button>
+          <button classList={{ active: scope() === "project" }} onClick={() => setSettingsScope("project")}>This project</button>
+        </div>
+        <p class="settings-scope-copy">Shared is your default. This project only changes what belongs to this folder.</p>
         <nav>
           <For each={visiblePages()} fallback={<div class="settings-no-results">No matching settings</div>}>
             {(item) => <button classList={{ active: page() === item.id }} onClick={() => { setPage(item.id); setQuery(""); }}><Icon name={item.icon} /><span>{item.label}</span></button>}
@@ -1039,10 +1049,11 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "integrations"}>
-              <header><h1>Capabilities</h1><p>{scope() === "user" ? "Shared capabilities inherited by every project. Secrets stay in the protected user store." : "This project's effective capabilities. Add or change a server here only when this project needs an override."}</p></header>
+              <header><h1>Capabilities</h1><p>{scope() === "user" ? "Shared capabilities are available to every project. A project may add its own capability or override a same-named MCP server." : "Edit only this folder’s capabilities. Shared capabilities remain available unless this project deliberately replaces a same-named MCP server."}</p></header>
+              <div class="settings-callout scope-callout"><Icon name={scope() === "user" ? "layers" : "folder"} /><div><strong>{scope() === "user" ? "Shared defaults apply everywhere." : "You are changing this project only."}</strong><span>{scope() === "user" ? "Project-specific changes never rewrite these shared settings." : "Use Shared above to change your defaults for every project."}</span></div></div>
               <nav class="capability-tabs" aria-label="Capability types">
                 <button classList={{ active: capabilityTab() === "mcp" }} onClick={() => setCapabilityTab("mcp")}><Icon name="plug" /><span>MCP servers</span><em>{Object.keys(mcpServers() ?? {}).length}</em></button>
-                <button classList={{ active: capabilityTab() === "skills" }} onClick={() => setCapabilityTab("skills")}><Icon name="spark" /><span>Skills</span><em>{skills().length}</em></button>
+                <button classList={{ active: capabilityTab() === "skills" }} onClick={() => setCapabilityTab("skills")}><Icon name="spark" /><span>Skills</span><em>{visibleSkills().length}</em></button>
                 <button classList={{ active: capabilityTab() === "hooks" }} onClick={() => setCapabilityTab("hooks")}><Icon name="tune" /><span>Hooks</span><em>{hooks().length}</em></button>
                 <button classList={{ active: capabilityTab() === "plugins" }} onClick={() => setCapabilityTab("plugins")}><Icon name="grid" /><span>Plugins</span><em>{plugins().length}</em></button>
               </nav>
@@ -1057,12 +1068,12 @@ export default function Settings() {
                       </div>}</For>
                     </Show>
                     <div class="settings-actions"><button class="btn" onClick={addServer}><Icon name="add" /> Add server</button><button class="btn primary" disabled={!mcpDirty() || mcpSaving()} onClick={() => void saveMcp()}>{mcpSaving() ? "Saving…" : "Save & apply"}</button><Show when={mcpDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
-                    <p class="settings-hint">{scope() === "user" ? "These are user-owned server definitions, shared by projects. Secrets are referenced by name and never shown here." : "Project definitions override a same-named shared server. Network access is off unless explicitly enabled; secrets remain user-owned."}</p>
+                    <p class="settings-hint">{scope() === "user" ? "These are your shared server definitions. Projects inherit them. Secrets are referenced by name and never shown here." : "A same-named project server replaces the shared one for this folder only. Network is off until you turn it on; secrets stay user-owned."}</p>
                   </div>
                 </Show></Group>
               </Show>
               <Show when={capabilityTab() === "skills"}>
-                <Group title={`Discovered skills (${skills().length})`}><Show when={skills().length > 0} fallback={<div class="capability-empty"><Icon name="spark" /><strong>No skills discovered</strong><span>Add a SKILL.md under the project or your Vak home directory, then reload this page.</span></div>}><p class="settings-hint">Skills are source-controlled instruction files. Their displayed scope is real: user skills are inherited; project skills belong only to this folder.</p><div class="capability-list"><For each={skills()}>{(skill) => <details class="capability-item"><summary><span><strong>{skill.name}</strong><small>{skill.scope ?? "Project or user"}</small></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show><button class="settings-button" onClick={() => setNotice({ kind: "info", text: `${skill.name} is available from the task composer.` })}>Use in a task</button></div></details>}</For></div></Show></Group>
+                <Group title={`Discovered skills (${visibleSkills().length})`}><Show when={visibleSkills().length > 0} fallback={<div class="capability-empty"><Icon name="spark" /><strong>No skills discovered</strong><span>{scope() === "user" ? "Add a SKILL.md to your Vak home to make it available everywhere." : "Add a SKILL.md to this project or use Shared to add one everywhere."}</span></div>}><p class="settings-hint">{scope() === "user" ? "These are shared skills. They are inherited by every project." : "Shared skills and this project’s skills are both available here. Each item shows where it came from."}</p><div class="capability-list"><For each={visibleSkills()}>{(skill) => <details class="capability-item"><summary><span><strong>{skill.name}</strong><small>{skill.scope === "user" ? "Shared" : "This project"}</small></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show><button class="settings-button" onClick={() => setNotice({ kind: "info", text: `${skill.name} is available from the task composer.` })}>Use in a task</button></div></details>}</For></div></Show></Group>
                 <Group title={`Pending proposals (${proposals().length})`}><Show when={proposals().length > 0} fallback={<Row title="No proposals waiting" description="The agent can suggest reusable skills; they stay inactive until you review them."><span class="settings-status good">Clear</span></Row>}><For each={proposals()}>{(proposal) => <div class="setting-row"><div class="setting-copy"><strong>{proposal.name}</strong><span>{proposal.description}</span></div><div class="setting-control"><button class="settings-button" onClick={() => void promote(proposal.id)}>Review & promote</button><button class="settings-button danger" onClick={() => void reject(proposal.id)}>Reject</button></div></div>}</For></Show></Group>
               </Show>
               <Show when={capabilityTab() === "hooks"}>
@@ -1074,7 +1085,7 @@ export default function Settings() {
                   <div class="mcp-fields"><label>Package directory<input class="mono" placeholder="/path/to/plugin" value={pluginPath()} onInput={(e) => setPluginPath(e.currentTarget.value)} /></label><div class="settings-actions"><button class="btn" disabled={!pluginPath().trim() || pluginBusy()} onClick={() => void installPlugin(false)}>Install disabled</button><button class="btn primary" disabled={!pluginPath().trim() || pluginBusy()} onClick={() => void installPlugin(true)}>Stage update</button><button class="settings-button" disabled={pluginBusy()} onClick={async () => { const picked = await openFileDialog({ directory: true, multiple: false }); if (typeof picked === "string") setPluginPath(picked); }}>Choose…</button></div></div>
                   <div class="mcp-fields"><label>Catalog directory<input class="mono" placeholder="/path/to/catalog" value={sourcePath()} onInput={(e) => setSourcePath(e.currentTarget.value)} /></label><div class="settings-actions"><button class="settings-button" disabled={!sourcePath().trim() || pluginBusy()} onClick={() => void registerPluginSource()}>Register catalog source</button></div></div>
                   <details class="advanced"><summary>Detached Ed25519 evidence (optional)</summary><div class="mcp-fields"><label>Key ID<input class="mono" value={sourceKeyId()} onInput={(e) => setSourceKeyId(e.currentTarget.value)} /></label><label>Public key (base64)<input class="mono" value={sourcePublicKey()} onInput={(e) => setSourcePublicKey(e.currentTarget.value)} /></label><label>Signature (base64)<input class="mono" value={sourceSignature()} onInput={(e) => setSourceSignature(e.currentTarget.value)} /></label></div></details>
-                  <Show when={pluginSources().length > 0}><div class="capability-list"><For each={pluginSources()}>{(source) => <div class="capability-item"><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 16)}</code><div class="settings-actions"><button class="settings-button" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable"); await refreshCapabilities(); } finally { setPluginBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button class="settings-button danger" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke"); await refreshCapabilities(); } finally { setPluginBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
+                  <Show when={pluginSources().length > 0}><div class="capability-list"><For each={pluginSources()}>{(source) => <div class="capability-item"><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 16)}</code><div class="settings-actions"><button class="settings-button" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable", capabilityScope()); await refreshCapabilities(); } finally { setPluginBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button class="settings-button danger" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke", capabilityScope()); await refreshCapabilities(); } finally { setPluginBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
                   <Show when={plugins().length > 0} fallback={<div class="capability-empty"><Icon name="grid" /><strong>No plugins installed</strong><span>Install a reviewed local package to make its skills, commands, and integrations available.</span></div>}>
                     <div class="capability-list"><For each={plugins()}>{(plugin) => <details class="capability-item"><summary><span><strong>{plugin.name}</strong><small>v{plugin.version} · {plugin.scope} · {plugin.format}</small></span><span class="capability-state" classList={{ ready: plugin.enabled, muted: !plugin.enabled }}>{plugin.enabled ? "Enabled" : "Disabled"}</span></summary><div class="capability-detail"><p>{plugin.description || "No description provided."}</p><code title={plugin.digest}>sha256:{plugin.digest.slice(0, 16)}</code><code>{plugin.trace_id}</code><div class="settings-actions"><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, plugin.enabled ? "disable" : "enable")}>{plugin.enabled ? "Disable" : "Enable"}</button><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "rollback")}>Rollback</button><button class="settings-button danger" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "remove")}>Remove</button></div></div></details>}</For></div>
                   </Show>
