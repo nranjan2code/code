@@ -6006,7 +6006,9 @@ const OPERATIONS_TABS = [
 
 const operationsTab = () => {
   const current = route().split("?", 1)[0] || "#/overview";
-  return OPERATIONS_TABS.find((tab) => current === tab.hash || current.startsWith(`${tab.hash}/`))?.hash ?? "#/operations";
+  const exact = OPERATIONS_TABS.find((tab) => current === tab.hash);
+  if (exact) return exact.hash;
+  return OPERATIONS_TABS.slice(1).find((tab) => current.startsWith(`${tab.hash}/`))?.hash ?? "#/operations";
 };
 
 function navHref(hash: string): string {

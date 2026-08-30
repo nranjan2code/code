@@ -384,8 +384,8 @@ export function OperationsCenter(props: { section?: Section }) {
   const hasDetail = createMemo(() => Boolean(detailSession() || detailBinding() || detailDelivery() || detailIncident()));
   return <div class="view operations-view">
     <header class="page-header"><div><span class="eyebrow">Control plane</span><h1>{title()}</h1><p class="dim">{scopedSnapshot()?.server.cwd || "Loading operational scope…"}</p></div><div class="operations-header-meta"><Show when={scopedSnapshot()}>{(data) => <><StatusMark value={data().server.posture} /><span class="mono dim">updated {time(data().generated_at)}</span></>}</Show><button class="ghost small" onClick={() => refetch()}>Refresh</button></div></header>
-    <Show when={!snapshot.loading} fallback={<div class="panel operations-loading"><div class="skel skel-line" /><div class="skel skel-block" /><p class="dim">Reading live ledgers and service probes…</p></div>}>
-      <Show when={!snapshot.error} fallback={<div class="panel error-state"><strong>Operations snapshot unavailable</strong><p>{String(snapshot.error)}</p><button onClick={() => refetch()}>Retry</button></div>}>
+    <Show when={scopedSnapshot() || snapshot.error} fallback={<div class="panel operations-loading"><div class="skel skel-line" /><div class="skel skel-block" /><p class="dim">Reading live ledgers and service probes…</p></div>}>
+      <Show when={scopedSnapshot()} fallback={<div class="panel error-state"><strong>Operations snapshot unavailable</strong><p>{String(snapshot.error)}</p><button onClick={() => refetch()}>Retry</button></div>}>
         <Show when={scopedSnapshot()}>{(data) => <>
           <OperationsContextBar data={data()} workspace={workspace()} timeWindow={timeWindow()} onAskDoctor={() => void askDoctor()} />
           <Show when={path() !== "#/operations" && !hasDetail()}><Breadcrumbs path={path()} /></Show>
