@@ -6005,7 +6005,7 @@ const OPERATIONS_TABS = [
 ] as const;
 
 const operationsTab = () => {
-  const current = route().split("?", 1)[0];
+  const current = route().split("?", 1)[0] || "#/overview";
   return OPERATIONS_TABS.find((tab) => current === tab.hash || current.startsWith(`${tab.hash}/`))?.hash ?? "#/operations";
 };
 
@@ -6709,19 +6709,23 @@ export default function App() {
   });
 
   const currentRoute = () => {
-    const r = route();
+    const r = route().split("?", 1)[0] || "#/overview";
     if (r.startsWith("#/sessions/")) return "transcript";
-    return NAV.find((n) => r.startsWith(n.hash))?.hash ?? "#/overview";
+    // Operations owns a real subtree. Resolve it before the generic
+    // top-level prefix matcher so nested routes never fall through to a
+    // different screen when the hash carries a query or detail segment.
+    if (r === "#/operations" || r.startsWith("#/operations/")) return "#/operations";
+    return NAV.find((n) => r === n.hash || r.startsWith(`${n.hash}/`))?.hash ?? "#/overview";
   };
 
   const operationsSection = () => {
     const r = route().split("?", 1)[0];
-    if (r === "#/operations/work") return "work" as const;
-    if (r === "#/operations/runtime") return "runtime" as const;
-    if (r === "#/operations/channels") return "channels" as const;
-    if (r === "#/operations/automations") return "automations" as const;
-    if (r === "#/operations/providers") return "providers" as const;
-    if (r === "#/operations/incidents") return "incidents" as const;
+    if (r === "#/operations/work" || r.startsWith("#/operations/work/")) return "work" as const;
+    if (r === "#/operations/runtime" || r.startsWith("#/operations/runtime/")) return "runtime" as const;
+    if (r === "#/operations/channels" || r.startsWith("#/operations/channels/")) return "channels" as const;
+    if (r === "#/operations/automations" || r.startsWith("#/operations/automations/")) return "automations" as const;
+    if (r === "#/operations/providers" || r.startsWith("#/operations/providers/")) return "providers" as const;
+    if (r === "#/operations/incidents" || r.startsWith("#/operations/incidents/")) return "incidents" as const;
     return "overview" as const;
   };
 
