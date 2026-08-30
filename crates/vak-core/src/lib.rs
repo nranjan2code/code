@@ -669,6 +669,35 @@ impl Core {
         self.mcp_manager();
     }
 
+    /// `warm_mcp()`'s bounded, awaitable sibling for one-shot CLI callers
+    /// (`vak exec`, `vak flow exec`, `vak plan`) that have no boot-to-
+    /// first-message idle window to spend: the process is built, a Core
+    /// is constructed, and the single turn runs immediately after. There
+    /// is no later turn to catch up on either, so the background warm-up
+    /// `system_prompt()` triggers on its own would in practice never pay
+    /// off for these — by the time it might land, the process has already
+    /// exited.
+    ///
+    /// Waits up to `timeout` for the same background discovery pass
+    /// `mcp_manager()` kicks off, then returns regardless — a deliberate,
+    /// explicit trade against "turn admission never blocks on an optional
+    /// integration", taken only by a caller that opts in, and only
+    /// because for this one shape of caller the alternative is "never
+    /// gets the rich catalog, ever", not "gets it one turn later". Polls
+    /// the cache rather than firing a second discovery call, so a slow
+    /// server just means this returns at `timeout` with the fallback
+    /// still in effect — never a duplicate connection race with the
+    /// in-flight background pass.
+    pub async fn warm_mcp_bounded(&self, timeout: std::time::Duration) {
+        if self.mcp_manager().is_none() {
+            return;
+        }
+        let deadline = tokio::time::Instant::now() + timeout;
+        while self.cached_mcp_inventory().is_none() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
     pub fn effective_mcp(&self) -> vak_config::McpConfig {
         let mut config = self
             .inner
