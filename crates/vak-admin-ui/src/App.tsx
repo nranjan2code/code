@@ -6143,11 +6143,11 @@ function FeedsSection() {
         }
       />
       <div class="tab-bar">
-        <a class={tab() === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Overview</a>
-        <a class={tab() === "sources" ? "active" : ""} onClick={() => setTab("sources")}>Sources</a>
-        <a class={tab() === "reader" ? "active" : ""} onClick={() => setTab("reader")}>Reader</a>
-        <a class={tab() === "alerts" ? "active" : ""} onClick={() => setTab("alerts")}>Alerts</a>
-        <a class={tab() === "workbench" ? "active" : ""} onClick={() => setTab("workbench")}>Workbench</a>
+        <button class="tab-btn" classList={{ active: tab() === "overview" }} onClick={() => setTab("overview")}>Overview</button>
+        <button class="tab-btn" classList={{ active: tab() === "sources" }} onClick={() => setTab("sources")}>Sources</button>
+        <button class="tab-btn" classList={{ active: tab() === "reader" }} onClick={() => setTab("reader")}>Reader</button>
+        <button class="tab-btn" classList={{ active: tab() === "alerts" }} onClick={() => setTab("alerts")}>Alerts</button>
+        <button class="tab-btn" classList={{ active: tab() === "workbench" }} onClick={() => setTab("workbench")}>Workbench</button>
       </div>
 
       <Show when={tab() === "overview"}>
