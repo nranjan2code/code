@@ -10,7 +10,7 @@
 //! (`status_tooltip`) instead of an icon-color swap: gateway/telegram
 //! status in words on hover, not a color the user has to remember the
 //! meaning of. The menu starts/stops/restarts, installs/uninstalls,
-//! opens logs, and toggles a watchdog that restarts a crashed service
+//! opens logs, and toggles a watchdog that reports a crashed service
 //! automatically and posts a system notification when it does. See
 //! docs/design/28-operations.md.
 //!
@@ -511,8 +511,9 @@ fn main() {
                 for (i, st) in states.iter_mut().enumerate() {
                     *st = vak_ops::status(service(i), &cfg);
                 }
-                // Watchdog: a service that was running and silently died
-                // gets restarted at most once per minute.
+                // launchd/systemd owns recovery. The tray only reports a
+                // transition so a transient probe can never kill a healthy
+                // process by issuing a competing restart.
                 for i in 0..SVC_COUNT {
                     let running = states[i] == vak_ops::State::Running;
                     if watchdog.load(Ordering::SeqCst)
@@ -520,13 +521,14 @@ fn main() {
                         && !running
                         && last_down_notify.elapsed() > Duration::from_secs(60)
                     {
-                        let _ = vak_ops::start(service(i), &cfg);
                         notify(
                             "vak watchdog",
-                            &format!("{} went down — restarting", service(i).label()),
+                            &format!(
+                                "{} is down — the service manager will recover it",
+                                service(i).label()
+                            ),
                         );
                         last_down_notify = std::time::Instant::now();
-                        states[i] = vak_ops::status(service(i), &cfg);
                     }
                     last_running[i] = running;
                 }
@@ -655,7 +657,7 @@ fn build_menu(states: &[vak_ops::State; 2], watchdog_on: bool) -> Menu {
 
     let wd = CheckMenuItem::with_id(
         ACT_WATCHDOG_TOGGLE.to_string(),
-        "Watchdog: auto-restart crashed services",
+        "Watchdog: alert on service failures",
         true,
         watchdog_on,
         None,

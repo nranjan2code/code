@@ -183,7 +183,7 @@ fn build_tray_menu(
     let watchdog = CheckMenuItem::with_id(
         app,
         TRAY_WATCHDOG_ID,
-        "Watchdog: auto-restart crashed services",
+        "Watchdog: alert on service failures",
         true,
         watchdog_on,
         None::<&str>,
@@ -334,25 +334,20 @@ fn handle_tray_menu(app: &AppHandle, id: &str) {
 fn start_tray_monitor(app: AppHandle) {
     std::thread::spawn(move || {
         let mut last_running = [false; 2];
-        let mut last_restart = std::time::Instant::now() - Duration::from_secs(60);
         loop {
-            let mut states = states_now();
+            let states = states_now();
             let tray = app.state::<TrayState>();
-            if tray.watchdog.load(Ordering::SeqCst)
-                && last_restart.elapsed() >= Duration::from_secs(60)
-            {
-                let config = vak_ops::OpsConfig::detect();
+            if tray.watchdog.load(Ordering::SeqCst) {
                 for index in 0..2 {
                     let running = states[index] == vak_ops::State::Running;
                     if last_running[index] && !running {
-                        if vak_ops::start(service(index), &config) {
-                            notify(
-                                "Vak watchdog",
-                                &format!("{} went down — restarting", service(index).label()),
-                            );
-                            states[index] = vak_ops::status(service(index), &config);
-                        }
-                        last_restart = std::time::Instant::now();
+                        notify(
+                            "Vak watchdog",
+                            &format!(
+                                "{} is down — launchd will recover it",
+                                service(index).label()
+                            ),
+                        );
                     }
                     last_running[index] = running;
                 }

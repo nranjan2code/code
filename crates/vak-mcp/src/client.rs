@@ -76,6 +76,7 @@ impl McpClient {
         };
         cmd.current_dir(cwd)
             .env_clear()
+            .kill_on_drop(true)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());

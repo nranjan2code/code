@@ -139,6 +139,15 @@
     other bot's identity. Any new code that builds or parses a delivery
     target or allowlist key must preserve this three-segment shape rather
     than assuming exactly `surface:address`.
+25. **Optional integrations never gate turn admission, and service managers
+    own recovery.** A configured MCP server is advertised by name during
+    prompt construction but is spawned and discovered only when the lazy
+    MCP meta-tool is invoked; a missing or wedged integration must not delay
+    recording the user message or dispatching the provider, and abandoned
+    MCP clients must terminate their child process. For durable services,
+    launchd/systemd PID state is process truth and `KeepAlive` is the sole
+    automatic restart owner. Health probes describe readiness; a transient
+    timeout may notify but must never authorize a competing restart.
 
 ## Code rules
 

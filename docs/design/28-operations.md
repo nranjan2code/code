@@ -22,8 +22,11 @@ Rules:
 1. **vak-ops owns no daemon.** It shells out to the platform manager —
    launchd/systemd are already doing KeepAlive, restart-on-crash and boot
    start. Duplicating that would create two opinions about reality.
-2. **HTTP health beats manager opinion for liveness** (`GET /health`,
-   2s timeout); the manager decides installed/stopped/not-installed.
+2. **The service manager owns process liveness.** A registered unit with a
+   live PID is running; HTTP health describes application readiness but may
+   not authorize a restart. A busy event loop or transient health timeout
+   must never make a tray watchdog send `SIGTERM` to a healthy process.
+   HTTP health is only the fallback for an unmanaged gateway.
 3. **Every command is idempotent**: starting a running service and
    stopping a stopped one are no-ops from the user's point of view.
 4. **Uninstall never touches data.** Only plists/units are removed;
@@ -40,6 +43,8 @@ launches all reveal and focus that same window.
 - Closing the main window hides it, preserving the local embedded backend and
   the tray until the user explicitly quits. Durable gateway and Telegram work
   remains independently supervised by the platform service manager.
+- The tray watchdog reports state transitions. It never restarts managed
+  services; launchd/systemd `KeepAlive` is the sole automatic recovery owner.
 
 ### `com.vak.desktop`: the tray is a durable service too
 

@@ -212,6 +212,14 @@ pub fn has_configured_bots(data_home: &Path, surface: &str) -> bool {
         .any(|b| b.surface == surface)
 }
 
+pub fn configured_bot_service_names(data_home: &Path, surface: &str) -> Vec<String> {
+    read_bots(data_home)
+        .into_iter()
+        .filter(|bot| bot.surface == surface && BRIDGE_SURFACES.contains(&bot.surface.as_str()))
+        .map(|bot| bot_service_name(&bot.surface, &bot.id))
+        .collect()
+}
+
 /// launchd/systemd labels only tolerate a narrow character set; a bot id is
 /// operator-chosen (the admin console enforces alphanumeric/hyphen today,
 /// but this is a second, independent line of defense against a stray id
@@ -1670,6 +1678,16 @@ mod tests {
         write_bots_json(data.path(), &[("VakBot", "telegram")]);
         assert!(has_configured_bots(data.path(), "telegram"));
         assert!(!has_configured_bots(data.path(), "discord"));
+    }
+
+    #[test]
+    fn configured_bot_service_names_follow_the_live_bot_store() {
+        let data = tempfile::tempdir().unwrap();
+        write_bots_json(data.path(), &[("VakBot", "telegram"), ("Other", "discord")]);
+        assert_eq!(
+            configured_bot_service_names(data.path(), "telegram"),
+            vec!["com.vak.telegram-VakBot"]
+        );
     }
 
     #[test]

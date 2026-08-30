@@ -23,9 +23,9 @@ pub mod services;
 pub use services::{
     CommandRunner, Paths, RETIRED_SERVICES, SERVICES, ServiceDef, ServiceRow, ServiceSpec,
     SyncAction, SyncOutcome, SystemRunner, bot_service_name, bot_service_specs,
-    default_service_names, render_launchd_plist, render_systemd_unit, resolve_specs,
-    restart_bot_unit, services_status, services_sync, services_uninstall, status_specs, sync_bots,
-    sync_specs,
+    configured_bot_service_names, default_service_names, render_launchd_plist, render_systemd_unit,
+    resolve_specs, restart_bot_unit, services_status, services_sync, services_uninstall,
+    status_specs, sync_bots, sync_specs,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,28 +179,33 @@ pub fn uninstall(service: Service, cfg: &OpsConfig) -> Result<(), String> {
 /// Platform state probe. Falls back to HTTP liveness when the manager has
 /// no opinion (service not installed as such).
 pub fn status(service: Service, cfg: &OpsConfig) -> State {
-    if health_ok(cfg) && !matches!(manager_state(service), State::NotInstalled) {
+    let managed = manager_state(service);
+    if managed == State::Running {
+        return managed;
+    }
+    if service == Service::Gateway && managed == State::NotInstalled && health_ok(cfg) {
         return State::Running;
     }
-    if health_ok(cfg) {
-        return State::Running;
-    }
-    manager_state(service)
+    managed
 }
 
 fn manager_state(service: Service) -> State {
     #[cfg(target_os = "macos")]
     {
-        let uid = uid();
-        let ok = Command::new("launchctl")
-            .args(["print", &format!("gui/{uid}/{}", service.launchd_label())])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok {
-            // Manager knows it; whether pid is live:
+        let labels = if service == Service::Telegram {
+            let names = configured_bot_service_names(&vak_config::paths::data_home(), "telegram");
+            if names.is_empty() {
+                vec![service.launchd_label().to_string()]
+            } else {
+                names
+            }
+        } else {
+            vec![service.launchd_label().to_string()]
+        };
+        let states: Vec<State> = labels.iter().map(|label| launchd_state(label)).collect();
+        if states.iter().all(|state| *state == State::Running) {
+            State::Running
+        } else if states.iter().any(|state| *state != State::NotInstalled) {
             State::Stopped
         } else {
             State::NotInstalled
@@ -229,6 +234,55 @@ fn manager_state(service: Service) -> State {
                 State::NotInstalled
             }
         }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn launchd_state(label: &str) -> State {
+    let output = Command::new("launchctl")
+        .args(["print", &format!("gui/{}/{}", uid(), label)])
+        .output();
+    let Ok(output) = output else {
+        return State::Unknown;
+    };
+    if !output.status.success() {
+        return State::NotInstalled;
+    }
+    parse_launchd_state(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(target_os = "macos")]
+fn parse_launchd_state(text: &str) -> State {
+    if text.lines().any(|line| {
+        line.trim()
+            .strip_prefix("pid = ")
+            .and_then(|pid| pid.parse::<u32>().ok())
+            .is_some_and(|pid| pid > 0)
+    }) {
+        State::Running
+    } else {
+        State::Stopped
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::{State, parse_launchd_state};
+
+    #[test]
+    fn launchd_registration_without_pid_is_stopped() {
+        assert_eq!(
+            parse_launchd_state("state = waiting\nruns = 3\n"),
+            State::Stopped
+        );
+    }
+
+    #[test]
+    fn launchd_live_pid_is_running() {
+        assert_eq!(
+            parse_launchd_state("state = running\npid = 123\n"),
+            State::Running
+        );
     }
 }
 

@@ -183,11 +183,15 @@ integration.
 
 When the integration changes, the running Core must:
 
-- invalidate the cached MCP inventory;
 - revoke the old Tavily capability set;
 - terminate or recycle the old Tavily worker;
-- start discovery with the new state on the next eligible turn;
+- advertise the configured server without starting it during turn admission;
+- start discovery only when the model invokes the lazy MCP meta-tool;
 - publish the new revision and provenance to health/admin views.
+
+Ordinary turns must reach their provider even when an MCP launcher is missing,
+slow, or wedged. Optional integration discovery is never on the pre-dispatch
+critical path, and abandoned MCP clients must terminate their child process.
 
 Service units must continue to use the captured workspace, canonical `HOME`,
 and the canonical `data_home()/.env`. A service restart after a change must

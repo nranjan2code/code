@@ -160,7 +160,6 @@ struct CoreInner {
     models_cache: std::sync::Mutex<HashMap<String, (std::time::Instant, Vec<String>)>>,
     /// Cached MCP capability section appended to the system prompt; None
     /// until a run with servers configured populates it.
-    mcp_inventory: std::sync::Mutex<Option<String>>,
     /// Runtime MCP table override (desktop/TUI management surface).
     mcp_override: std::sync::Mutex<Option<vak_config::McpConfig>>,
     mcp_runtime_pinned: std::sync::atomic::AtomicBool,
@@ -365,7 +364,6 @@ impl Core {
                         .unwrap_or_else(|_| PathBuf::from("__vak_tool_worker_unavailable__")),
                 ),
                 models_cache: std::sync::Mutex::new(HashMap::new()),
-                mcp_inventory: std::sync::Mutex::new(None),
                 mcp_override: std::sync::Mutex::new(None),
                 mcp_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 hooks_override: std::sync::Mutex::new(None),
@@ -638,9 +636,6 @@ impl Core {
         if let Ok(mut c) = self.inner.mcp_override.lock() {
             *c = Some(config);
         }
-        if let Ok(mut inv) = self.inner.mcp_inventory.lock() {
-            *inv = None;
-        }
     }
 
     pub fn effective_mcp(&self) -> vak_config::McpConfig {
@@ -744,9 +739,6 @@ impl Core {
     pub fn apply_channel_policy(&self, policy: vak_config::ChannelPolicy) {
         if let Ok(mut current) = self.inner.channel_policy.lock() {
             *current = Some(policy);
-        }
-        if let Ok(mut inventory) = self.inner.mcp_inventory.lock() {
-            *inventory = None;
         }
     }
 
@@ -2167,38 +2159,9 @@ impl Core {
                 self.inner.cwd.clone(),
                 self.build_sandbox(),
             ));
-            // Advertise MCP capabilities in the prompt so the model reaches
-            // for them unprompted (first-turn usability). Inventory is
-            // fetched once per process and cached; failures degrade to a
-            // bare server-name hint.
-            // A cold npx fetch can outlive the budget; an empty snapshot is
-            // NOT cached so the next run retries.
-            let fetched =
-                tokio::time::timeout(std::time::Duration::from_secs(20), manager.inventory())
-                    .await
-                    .unwrap_or_default();
-            let section = if fetched.is_empty() {
-                mcp_config_section(&mcp_cfg.servers.keys().cloned().collect::<Vec<_>>())
-            } else {
-                mcp_section(&fetched)
-            };
-            let mut cache = self
-                .inner
-                .mcp_inventory
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if cache.is_none() {
-                *cache = Some(section.clone());
-            }
-            let cached = self
-                .inner
-                .mcp_inventory
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone();
-            if let Some(sec) = cached {
-                cfg.system_prompt.push_str(&sec);
-            }
+            // Turn admission never starts an optional integration. The
+            // system prompt already advertises configured server names;
+            // this lazy meta-tool connects and discovers tools on use.
             let policy = self.channel_policy().unwrap_or_default();
             let context = self.plugin_mcp_invocation_context();
             let recorder = Arc::new(move |server: &str, tool: &str, success: bool| {
@@ -3037,6 +3000,7 @@ pub fn interpolate_env_var(value: &str) -> Option<String> {
 }
 
 /// Compact capability section from an MCP inventory snapshot.
+#[cfg(test)]
 fn mcp_section(inventory: &[(String, Vec<(String, String)>)]) -> String {
     if inventory.is_empty() {
         return String::new();
