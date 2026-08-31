@@ -113,6 +113,11 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: SkillsReviewAction,
     },
+    /// Validate Agent Skills files in a project or explicit path
+    Skills {
+        #[command(subcommand)]
+        action: SkillsAction,
+    },
     /// Inspect and manage immutable, disabled-by-default plugin packages
     Plugins {
         #[command(subcommand)]
@@ -199,6 +204,16 @@ pub(crate) enum PluginScopeArg {
     Workspace,
 }
 
+#[derive(Subcommand, Debug)]
+pub(crate) enum SkillsAction {
+    /// Validate one SKILL.md or every SKILL.md below a directory
+    Validate {
+        path: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub(crate) enum MarketplaceTrustArg {
     ManualReview,
@@ -228,6 +243,14 @@ pub(crate) enum PluginAction {
     },
     /// List registered catalog snapshots and their trust state
     CatalogSources {
+        #[arg(long, value_enum, default_value_t = PluginScopeArg::User)]
+        scope: PluginScopeArg,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Search entries in registered marketplace catalog snapshots
+    CatalogSearch {
+        query: String,
         #[arg(long, value_enum, default_value_t = PluginScopeArg::User)]
         scope: PluginScopeArg,
         #[arg(long)]

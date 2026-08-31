@@ -184,6 +184,11 @@ scope and provenance.
 
 ## Marketplace sources
 
+Registered catalog snapshots are searchable through `vak plugins catalog-search`
+and the secured `/plugins/catalog` API used by admin and desktop settings.
+Results retain source, scope, digest, license, and enabled state. Catalog drift
+is surfaced and never silently offered for installation.
+
 The first sources are local directories and pinned Git repositories. HTTPS
 catalogs and a Vak-curated catalog follow once signing and revocation are live.
 OpenAI’s universal Plugins Directory or another proprietary marketplace is not

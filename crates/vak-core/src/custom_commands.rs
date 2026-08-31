@@ -138,6 +138,24 @@ pub fn expand(template: &str, args: &str) -> String {
     format!("{template}\n\nArguments: {args}")
 }
 
+/// Expands a leading `/command` invocation. Unknown slash-prefixed text is
+/// left untouched so ordinary prompts and built-in client commands keep
+/// their existing behavior.
+pub fn expand_invocation(commands: &[CustomCommand], input: &str) -> String {
+    let trimmed = input.trim_start();
+    let Some(rest) = trimmed.strip_prefix('/') else {
+        return input.to_string();
+    };
+    let mut parts = rest.splitn(2, char::is_whitespace);
+    let Some(name) = parts.next().filter(|name| !name.is_empty()) else {
+        return input.to_string();
+    };
+    let Some(command) = commands.iter().find(|command| command.name == name) else {
+        return input.to_string();
+    };
+    expand(&command.template, parts.next().unwrap_or_default())
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -191,5 +209,23 @@ mod tests {
         assert_eq!(cmds[0].source, "plugin:acme");
         assert_eq!(cmds[0].name, "deploy");
         assert_eq!(cmds[0].description, "Ship it");
+    }
+
+    #[test]
+    fn invocation_expands_only_known_commands_and_preserves_unknown_text() {
+        let commands = vec![CustomCommand {
+            name: "review".into(),
+            description: "Review changes".into(),
+            template: "Review $ARGUMENTS".into(),
+            source: "user".into(),
+        }];
+        assert_eq!(
+            expand_invocation(&commands, "/review src/lib.rs"),
+            "Review src/lib.rs"
+        );
+        assert_eq!(
+            expand_invocation(&commands, "/unknown hello"),
+            "/unknown hello"
+        );
     }
 }

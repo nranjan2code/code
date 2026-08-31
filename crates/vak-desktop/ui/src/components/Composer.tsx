@@ -60,6 +60,8 @@ export default function Composer(props: { cwd: string }) {
   const [picked, setPicked] = createSignal(0);
   const [files, setFiles] = createSignal<string[]>([]);
   const [skills, setSkills] = createSignal<SkillInfo[]>([]);
+  const [commands, setCommands] = createSignal<api.CustomCommand[]>([]);
+  const [commandPicked, setCommandPicked] = createSignal(0);
   // Goal mode (docs/design/27 Phase H): armed objective consumed by the
   // next prompt; completion is audited against the criteria.
   const [goalFormOpen, setGoalFormOpen] = createSignal(false);
@@ -127,6 +129,10 @@ export default function Composer(props: { cwd: string }) {
       .listSkills()
       .then((r) => setSkills(r.skills))
       .catch(() => setSkills([]));
+    api
+      .listCommands()
+      .then((r) => setCommands(r.commands))
+      .catch(() => setCommands([]));
   });
 
   const skillMatches = () => {
@@ -134,6 +140,7 @@ export default function Composer(props: { cwd: string }) {
     // `ta` is assigned; without the guard that first pass throws and takes
     // down whatever triggered the render.
     if (!ta) return [];
+    if (commandMatches().length) return [];
     const q = detectSkillQuery(text(), ta.selectionStart);
     if (q === null) return [];
     const needle = q.toLowerCase();
@@ -144,6 +151,20 @@ export default function Composer(props: { cwd: string }) {
           s.description.toLowerCase().includes(needle),
       )
       .slice(0, 8);
+  };
+
+  const commandMatches = () => {
+    if (!ta || ta.selectionStart === 0 || !text().startsWith("/")) return [];
+    const m = /^\/([\w-]*)$/.exec(text().slice(0, ta.selectionStart));
+    if (!m) return [];
+    const needle = m[1].toLowerCase();
+    return commands().filter((c) => c.name.includes(needle) || c.description.toLowerCase().includes(needle)).slice(0, 8);
+  };
+
+  const applyCommand = (command: api.CustomCommand) => {
+    const next = `/${command.name} `;
+    setText(next);
+    queueMicrotask(() => { ta.focus(); ta.setSelectionRange(next.length, next.length); grow(); });
   };
 
   const matches = () => {
@@ -249,6 +270,29 @@ export default function Composer(props: { cwd: string }) {
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
+    const commandMenu = commandMatches();
+    if (commandMenu.length) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setCommandPicked((p) => Math.min(p + 1, commandMenu.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setCommandPicked((p) => Math.max(p - 1, 0));
+        return;
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+        e.preventDefault(); applyCommand(commandMenu[Math.min(commandPicked(), commandMenu.length - 1)]); return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setText("");
+        return;
+      }
+    } else {
+      setCommandPicked(0);
+    }
     const skillMenu = skillMatches();
     if (skillMenu.length) {
       if (e.key === "ArrowDown") {
@@ -306,6 +350,12 @@ export default function Composer(props: { cwd: string }) {
 
   return (
     <div class="composer-wrap">
+      <Show when={commandMatches().length}>
+        <div class="mention-menu skill-menu">
+          <For each={commandMatches()}>{(command, i) => <button class="mention-item" classList={{ on: commandPicked() === i() }} onMouseEnter={() => setCommandPicked(i())} onClick={() => applyCommand(command)}><span class="skill-name">/{command.name}</span><span class="skill-desc">{command.description}</span></button>}</For>
+          <div class="mention-hint">commands · Tab or Enter to insert</div>
+        </div>
+      </Show>
       <Show when={skillMatches().length}>
         <div class="mention-menu skill-menu">
           <For each={skillMatches()}>

@@ -62,7 +62,8 @@ The standard failure matrix and where each case is handled.
 ## Circuit breaker (cross-run QoS)
 
 Per-step retries protect one run; the **circuit breaker** protects every run
-from a dead provider. Shared via Core across all runs of a process:
+from a dead provider. Shared via Core across all runs of a process, with one
+state machine per provider endpoint and credential fingerprint:
 
 - Only **blind failures** count: network loss, watchdog deadlines, truncated
   or malformed streams. Informed transience — 429 with `Retry-After`,
@@ -75,9 +76,10 @@ from a dead provider. Shared via Core across all runs of a process:
   of burning their retry budget.
 - After `circuit_breaker_cooldown_secs` (default 60) the circuit half-closes:
   one probe gets through, and any success resets the counter.
-- Run-level endurance paces its waits to the breaker's remaining cooldown,
-  so a run caught on the wrong side of an open circuit waits for the probe
-  instead of exhausting its budget on instant no-op failures.
+- A frozen ladder checks each leg's circuit independently, so an open primary
+  fails fast while a healthy fallback can still serve. Run-level endurance
+  uses normal cancel-aware backoff; each leg check prevents no-op calls until
+  that leg's cooldown expires.
 
 Config keys: `circuit_breaker_threshold`,
 `circuit_breaker_cooldown_secs` (`0` cooldown disables opening).
@@ -128,7 +130,7 @@ serving leg per dispatch (`CostRow.provider`).
 |---|---|---|
 | DHCP change / network switch | local plane loopback-immune; outbound reconnectors own recovery | `telegram_bridge::bridge_survives_outage_window_and_resumes_cursor` |
 | Multi-minute outage on a channel | bridge never exits; capped backoff, cursor resumes gap-free via ownership probe | same regression |
-| Inference outage window | ladder legs + endurance ride it; breaker paces the half-close probe | fault_proxy scenario (`scripts/fault_proxy.py`) |
+| Inference outage window | keyed ladder circuits + endurance ride it; healthy fallback legs remain eligible while a dead leg cools down | fault_proxy scenario (`scripts/fault_proxy.py`) |
 | Hibernation / wake | tokio timers collapse across sleep; watchdog bounds dead sockets; scheduler per-tick evaluation fires each missed slot once | scheduler catch-up tests |
 | Full restart | sessions append-only + resume; gateway bindings + task store persisted; telegram cursor re-synced by probe | existing resume/bindings suites |
 | Delivery while channel down | inbox chokepoint stores durably; transports best-effort | P6 zero-transports test |

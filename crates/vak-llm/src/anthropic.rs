@@ -4,6 +4,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Provider;
 use crate::error::LlmError;
+use crate::gate::ProviderGate;
 use crate::sse::SseDecoder;
 use crate::stream::{EventSink, EventStream, StreamEvent, channel};
 use crate::types::{
@@ -24,6 +25,7 @@ pub struct AnthropicConfig {
 pub struct AnthropicProvider {
     http: reqwest::Client,
     config: AnthropicConfig,
+    gate: ProviderGate,
 }
 
 impl AnthropicProvider {
@@ -32,7 +34,11 @@ impl AnthropicProvider {
             .connect_timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| LlmError::Network(e.to_string()))?;
-        Ok(AnthropicProvider { http, config })
+        Ok(AnthropicProvider {
+            gate: ProviderGate::new(&config.base_url, &config.api_key),
+            http,
+            config,
+        })
     }
 }
 
@@ -357,11 +363,16 @@ impl Provider for AnthropicProvider {
         "anthropic"
     }
 
+    fn circuit_key(&self) -> String {
+        crate::gate::route_identity(self.name(), &self.config.base_url, &self.config.api_key)
+    }
+
     async fn stream(
         &self,
         request: ChatRequest,
         cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
+        let provider_permit = self.gate.acquire(&cancel).await?;
         let url = format!("{}/v1/messages", self.config.base_url.trim_end_matches('/'));
         let body = build_body(&request)?;
         let send_fut = self
@@ -400,7 +411,7 @@ impl Provider for AnthropicProvider {
             drive_stream(&mut byte_stream, &mut decoder, &mut acc, sink, cancel).await;
         });
 
-        Ok(stream_rx)
+        Ok(stream_rx.with_guard(provider_permit))
     }
 }
 

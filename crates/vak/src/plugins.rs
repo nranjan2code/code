@@ -61,6 +61,71 @@ pub(crate) fn run_plugins(cwd: PathBuf, action: PluginAction) -> i32 {
             }),
             Err(error) => fail(error),
         },
+        PluginAction::CatalogSearch { query, scope, json } => {
+            let needle = query.trim().to_lowercase();
+            if needle.is_empty() {
+                eprintln!("error: catalog search query must not be empty");
+                return 2;
+            }
+            let store = store(&cwd, scope);
+            let sources = match store.list_sources() {
+                Ok(sources) => sources,
+                Err(error) => return fail(error),
+            };
+            let mut matches = Vec::new();
+            for source in sources {
+                let inspection = match vak_plugin::inspect_catalog(&source.root) {
+                    Ok(inspection) => inspection,
+                    Err(error) => return fail(error),
+                };
+                if inspection.digest != source.catalog_digest {
+                    return fail(vak_plugin::PluginError::UnsafePackage(format!(
+                        "marketplace catalog changed since registration: {}",
+                        source.root.display()
+                    )));
+                }
+                for entry in inspection.entries {
+                    let haystack = format!(
+                        "{} {}",
+                        entry.name,
+                        entry.description.as_deref().unwrap_or_default()
+                    )
+                    .to_lowercase();
+                    if haystack.contains(&needle) {
+                        matches.push(serde_json::json!({
+                            "source_id": source.id,
+                            "source_label": source.label,
+                            "source_enabled": source.enabled,
+                            "name": entry.name,
+                            "version": entry.version,
+                            "description": entry.description,
+                            "license": entry.license,
+                            "catalog_digest": source.catalog_digest,
+                        }));
+                    }
+                }
+            }
+            if json {
+                println!("{}", serde_json::Value::Array(matches));
+            } else if matches.is_empty() {
+                println!("no marketplace entries matched '{query}'");
+            } else {
+                for entry in matches {
+                    println!(
+                        "{} — {} [{}; {}]",
+                        entry["name"].as_str().unwrap_or("unknown"),
+                        entry["description"].as_str().unwrap_or("no description"),
+                        entry["source_label"].as_str().unwrap_or("unknown source"),
+                        if entry["source_enabled"] == true {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    );
+                }
+            }
+            0
+        }
         PluginAction::CatalogInstall {
             catalog,
             name,

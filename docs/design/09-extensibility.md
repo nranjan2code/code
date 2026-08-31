@@ -6,19 +6,19 @@ Markdown packages: `.vak/skills/<name>/SKILL.md` (project) and
 `data_home()/skills/<name>/SKILL.md` (user; `~/Library/Application Support/
 vak/skills` on macOS, `~/.local/share/vak/skills` on Linux).
 Frontmatter `name:` +
-`description:` (name falls back to directory). Only the name/description/
+`description:`. Names must be lowercase kebab-case, 1–64 characters; descriptions
+are required and capped at 1024 characters. Only the name/description/
 path line enters the system prompt; the model reads the file with `read`
 when relevant — progressive disclosure, Claude Code-skill compatible.
 Discovered skills are recorded in the frozen contract.
 
-Same-name precedence: project shadows user (`vak_core::skills::discover`
-sorts by name then dedups consecutive same-named entries — project is
-scanned first, so it survives the dedup). Unlike custom commands below,
-this is not disclosed anywhere a caller can see it: `discover()` has
-already dropped the shadowed entry by the time `GET /skills` (or anything
-else) reads the result, so admin/desktop UIs cannot show "shadowed" even
-if they wanted to. A fix means `discover()` itself returning the losing
-entries too, tagged as shadowed, not a projection-layer workaround.
+`vak skills validate [PATH]` validates every `SKILL.md` below the supplied
+file or directory; without a path it validates both project and user roots.
+`allowed-tools` is advisory only and never grants authorization.
+
+Same-name precedence: project shadows user. Runtime discovery uses the winner,
+while inventory APIs retain losing entries with `shadowed` and provenance so
+the admin and desktop surfaces can explain why a skill is inactive.
 
 ## Subagents (shipped, blocking + parallel fan-out + attach/steer)
 
@@ -72,6 +72,7 @@ timeout_ms = 5000             # optional, default 10000
 enabled = true                # optional, default true (absent = enabled,
                                # for every [[hooks]] entry written before
                                # this field existed)
+failure_mode = "open"        # optional; "closed" blocks on spawn/timeout errors
 ```
 
 `enabled = false` keeps the entry in config rather than removing it —
@@ -95,6 +96,9 @@ Semantics:
 - `post-tool-use` block ⇒ annotates the tool result with the reason.
 - `stop` block ⇒ appends a logged `[stop-hook]` continuation message and the
   loop continues (bounded by max_turns).
+- `failure_mode = "open"` reports spawn, timeout, wait, and non-zero exit
+  failures without blocking; `failure_mode = "closed"` blocks the operation
+  on those failures. Explicit hook decisions retain precedence in either mode.
 - Hooks run in process groups, killed on timeout/cancel; hooks are live
   events, never persisted as session entries (their *effects* are visible in
   the transcript).

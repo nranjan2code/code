@@ -17,6 +17,8 @@ pub enum BlockReason {
     /// The prompt demanded running/testing something and the run never
     /// executed a single bash command.
     VerificationMissing,
+    /// A file-changing tool ran after the last verification command.
+    VerificationStale,
 }
 
 impl BlockReason {
@@ -29,6 +31,10 @@ impl BlockReason {
             BlockReason::VerificationMissing => String::from(
                 "the task asked you to run/verify something, but no commands were \
                  executed this run. Run the verification before finishing.",
+            ),
+            BlockReason::VerificationStale => String::from(
+                "the task changed files after its last verification command. \
+                 Inspect the final files and run the verification again before finishing.",
             ),
         }
     }
@@ -117,6 +123,10 @@ impl StopPolicy {
         ];
         let p = prompt.to_ascii_lowercase();
         DEMANDS.iter().any(|d| p.contains(d))
+            || (p.contains("run ")
+                && ["test", "tests", "command", "script", "check"]
+                    .iter()
+                    .any(|word| p.contains(word)))
     }
 
     /// Returns Some(reason) when completion should be blocked.
@@ -126,6 +136,19 @@ impl StopPolicy {
         final_text: &str,
         bash_calls_this_run: u32,
     ) -> Option<BlockReason> {
+        self.evaluate_with_state(prompt, final_text, bash_calls_this_run, false)
+    }
+
+    pub fn evaluate_with_state(
+        &self,
+        prompt: &str,
+        final_text: &str,
+        bash_calls_this_run: u32,
+        verification_stale: bool,
+    ) -> Option<BlockReason> {
+        if final_text.trim().is_empty() {
+            return None;
+        }
         if self.marker_gate
             && let Some(r) = Self::truncated_plan(final_text)
         {
@@ -133,6 +156,9 @@ impl StopPolicy {
         }
         if self.verify_gate && bash_calls_this_run == 0 && Self::demands_verification(prompt) {
             return Some(BlockReason::VerificationMissing);
+        }
+        if self.verify_gate && verification_stale && Self::demands_verification(prompt) {
+            return Some(BlockReason::VerificationStale);
         }
         None
     }
@@ -194,6 +220,32 @@ mod tests {
         assert_eq!(p.evaluate(prompt, "Created the file.", 2), None);
         // no demand -> never blocks
         assert_eq!(p.evaluate("Write a haiku about sand.", "Done.", 0), None);
+    }
+
+    #[test]
+    fn verify_gate_recognizes_explicit_run_commands() {
+        let p = StopPolicy::default();
+        assert!(matches!(
+            p.evaluate(
+                "Read README.md, implement the change, then run python3 test_app.py.",
+                "I need more details.",
+                0
+            ),
+            Some(BlockReason::VerificationMissing)
+        ));
+    }
+
+    #[test]
+    fn stale_verification_blocks_after_a_file_change() {
+        let p = StopPolicy::default();
+        assert_eq!(
+            p.evaluate_with_state("implement it and run the tests", "Done.", 1, true),
+            Some(BlockReason::VerificationStale)
+        );
+        assert_eq!(
+            p.evaluate_with_state("implement it and run the tests", "Done.", 1, false),
+            None
+        );
     }
 
     #[test]

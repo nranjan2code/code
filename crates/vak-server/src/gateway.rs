@@ -1807,6 +1807,8 @@ async fn gateway_inbound(
         .filter(|s| !s.is_empty())
         .unwrap_or("unknown");
     let preview: String = text.chars().take(80).collect();
+    let expanded_text =
+        vak_core::custom_commands::expand_invocation(&core.custom_commands(), &text);
     state.hub.emit_gateway_inbound(&body.surface, who, &preview);
     let busy = handle
         .session
@@ -1815,8 +1817,8 @@ async fn gateway_inbound(
         .is_none();
     if busy {
         let attributed = match body.sender.as_deref().map(str::trim) {
-            Some(who) if !who.is_empty() => format!("[from {who}] {text}"),
-            _ => text.clone(),
+            Some(who) if !who.is_empty() => format!("[from {who}] {expanded_text}"),
+            _ => expanded_text.clone(),
         };
         handle
             .steering
@@ -1843,8 +1845,8 @@ async fn gateway_inbound(
     let want_reply = body.wait;
     // 0c-02: attribute the sender identity to the prompt text.
     let attributed = match body.sender.as_deref().map(str::trim) {
-        Some(who) if !who.is_empty() => format!("[from {who}] {text}"),
-        _ => text.clone(),
+        Some(who) if !who.is_empty() => format!("[from {who}] {expanded_text}"),
+        _ => expanded_text,
     };
     let prompt = compose_prompt(&attributed, &body.attachments);
     // Bind this turn's `tasks` tool default (`Core::with_default_deliver_to`)

@@ -52,6 +52,31 @@ fn non_retryable_failures_do_not_trip_the_breaker() {
     assert!(br.check().is_ok());
 }
 
+#[test]
+fn provider_circuits_do_not_poison_healthy_fallbacks() {
+    let br = CircuitBreaker::new(CircuitBreakerConfig {
+        threshold: 2,
+        cooldown: std::time::Duration::from_secs(60),
+    });
+    br.record_failure_key("ollama");
+    br.record_failure_key("ollama");
+    assert!(br.check_key("ollama").is_err());
+    assert!(br.check_key("anthropic").is_ok());
+    br.record_success_key("anthropic");
+    assert!(br.check_key("anthropic").is_ok());
+}
+
+#[test]
+fn credential_circuits_are_independent_within_one_provider() {
+    let br = CircuitBreaker::new(CircuitBreakerConfig {
+        threshold: 1,
+        cooldown: std::time::Duration::from_secs(60),
+    });
+    br.record_failure_key("openai:key-a");
+    assert!(br.check_key("openai:key-a").is_err());
+    assert!(br.check_key("openai:key-b").is_ok());
+}
+
 struct Scripted {
     calls: Arc<Mutex<u32>>,
     fail_with: LlmError,

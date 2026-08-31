@@ -13,6 +13,12 @@ use std::time::Duration;
 use crate::error::LlmError;
 use crate::registry::ProviderAuth;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelContext {
+    pub input_tokens: u64,
+    pub output_tokens: Option<u64>,
+}
+
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(15);
 /// Hard stop on paging so a malformed cursor can never loop forever.
 const MAX_PAGES: usize = 20;
@@ -150,6 +156,67 @@ pub async fn list_models(provider: &str, auth: &ProviderAuth) -> Result<Vec<Stri
     Ok(ids)
 }
 
+fn context_from_json(provider: &str, json: &serde_json::Value) -> Option<ModelContext> {
+    let data = json.get("data").unwrap_or(json);
+    match provider {
+        "google" => Some(ModelContext {
+            input_tokens: data.get("inputTokenLimit")?.as_u64()?,
+            output_tokens: data.get("outputTokenLimit").and_then(|v| v.as_u64()),
+        }),
+        _ => {
+            let input_tokens = data
+                .get("top_provider")
+                .and_then(|v| v.get("context_length"))
+                .and_then(|v| v.as_u64())
+                .or_else(|| data.get("context_length").and_then(|v| v.as_u64()))?;
+            Some(ModelContext {
+                input_tokens,
+                output_tokens: data
+                    .get("top_provider")
+                    .and_then(|v| v.get("max_completion_tokens"))
+                    .and_then(|v| v.as_u64()),
+            })
+        }
+    }
+}
+
+/// Fetch the provider-reported context limits for one model. Providers that
+/// do not publish machine-readable limits return `None`; callers must retain
+/// their conservative configured limit in that case.
+pub async fn model_context(
+    provider: &str,
+    auth: &ProviderAuth,
+    model: &str,
+) -> Result<Option<ModelContext>, LlmError> {
+    let base = auth
+        .base_url
+        .as_deref()
+        .filter(|b| !b.trim().is_empty())
+        .or_else(|| default_base_url(provider))
+        .ok_or_else(|| LlmError::InvalidRequest(format!("no base url for '{provider}'")))?
+        .trim_end_matches('/');
+    let client = http()?;
+    let response = match provider {
+        "google" => {
+            client
+                .get(format!("{base}/models/{model}"))
+                .query(&[("key", auth.api_key.as_str())])
+                .send()
+                .await
+        }
+        "openrouter" => {
+            client
+                .get(format!("{base}/models/{model}"))
+                .bearer_auth(&auth.api_key)
+                .send()
+                .await
+        }
+        _ => return Ok(None),
+    }
+    .map_err(|e| LlmError::Network(e.to_string()))?;
+    Ok(context_from_json(provider, &read_json(response).await?))
+}
+
 /// The provider's documented API host, for callers that never set an
 /// override. These are endpoints, not a model catalogue — the model list
 /// itself always comes off the wire.
@@ -211,6 +278,20 @@ mod tests {
     fn google_names_are_stripped_of_the_models_prefix() {
         let json = serde_json::json!({ "models": [{ "name": "models/gemini-2.5-pro" }] });
         assert_eq!(collect_google_names(&json), vec!["gemini-2.5-pro"]);
+    }
+
+    #[test]
+    fn context_metadata_prefers_provider_specific_limit() {
+        let json = serde_json::json!({
+            "data": {"context_length": 131072, "top_provider": {"context_length": 65536, "max_completion_tokens": 8192}}
+        });
+        assert_eq!(
+            context_from_json("openrouter", &json),
+            Some(ModelContext {
+                input_tokens: 65536,
+                output_tokens: Some(8192)
+            })
+        );
     }
 
     #[test]

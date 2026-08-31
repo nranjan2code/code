@@ -14,6 +14,7 @@ fn hook(command: &str) -> Arc<Vec<HookDef>> {
         matcher: None,
         command: command.to_string(),
         timeout_ms: 5000,
+        failure_mode: vak_hooks::HookFailureMode::Open,
     }])
 }
 
@@ -99,6 +100,7 @@ async fn matcher_filters_by_tool_and_args() {
         matcher: Some(vak_permission::Rule::parse("Bash(git push *)").unwrap()),
         command: r#"echo '{"decision":"block","reason":"push blocked"}'"#.to_string(),
         timeout_ms: 5000,
+        failure_mode: vak_hooks::HookFailureMode::Open,
     }]);
 
     let hit = run_hooks(
@@ -134,6 +136,7 @@ async fn timeout_kills_hook_and_reports() {
         matcher: None,
         command: "sleep 30".to_string(),
         timeout_ms: 800,
+        failure_mode: vak_hooks::HookFailureMode::Open,
     }]);
     let start = std::time::Instant::now();
     let out = run_hooks(
@@ -148,6 +151,48 @@ async fn timeout_kills_hook_and_reports() {
     .await;
     assert!(!out.blocked);
     assert!(start.elapsed() < std::time::Duration::from_secs(10));
+}
+
+#[tokio::test]
+async fn closed_failure_mode_blocks_on_timeout_and_nonzero_exit() {
+    let dir = tempdir().unwrap();
+    let timeout = Arc::new(vec![HookDef {
+        event: HookEvent::PreToolUse,
+        matcher: None,
+        command: "sleep 30".to_string(),
+        timeout_ms: 50,
+        failure_mode: vak_hooks::HookFailureMode::Closed,
+    }]);
+    let timed_out = run_hooks(
+        timeout,
+        HookEvent::PreToolUse,
+        "s",
+        dir.path(),
+        Some(("bash", &json!({}))),
+        None,
+        &CancellationToken::new(),
+    )
+    .await;
+    assert!(timed_out.blocked);
+
+    let nonzero = Arc::new(vec![HookDef {
+        event: HookEvent::PreToolUse,
+        matcher: None,
+        command: "exit 1".to_string(),
+        timeout_ms: 5000,
+        failure_mode: vak_hooks::HookFailureMode::Closed,
+    }]);
+    let failed = run_hooks(
+        nonzero,
+        HookEvent::PreToolUse,
+        "s",
+        dir.path(),
+        Some(("bash", &json!({}))),
+        None,
+        &CancellationToken::new(),
+    )
+    .await;
+    assert!(failed.blocked);
 }
 
 #[tokio::test]

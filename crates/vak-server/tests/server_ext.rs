@@ -1380,11 +1380,14 @@ async fn skills_listing_and_pascalcase_mode() {
         .iter()
         .map(|s| s["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, vec!["tdd"]);
-    assert_eq!(
-        skills["skills"][0]["description"],
-        "red green refactor loop"
-    );
+    assert!(names.contains(&"tdd"));
+    let tdd = skills["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "tdd")
+        .unwrap();
+    assert_eq!(tdd["description"], "red green refactor loop");
 
     // The status bar sends the Debug spelling surfaced by /health.
     for mode in [

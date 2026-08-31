@@ -25,6 +25,10 @@ env = {
     "VAK_MODEL": "claude-sonnet-4-5",
     "VAK_ANTHROPIC_BASE_URL": f"http://127.0.0.1:{MOCK_PORT}",
     "VAK_HOME": "/tmp/vak-smoke/home",
+    # Non-interactive servers intentionally suppress generated bearer tokens
+    # in stderr. Pin a disposable test token so this driver can authenticate
+    # without weakening the production startup logging policy.
+    "VAK_GATEWAY_TOKEN": "vak-server-smoke-token",
 }
 
 mock = subprocess.Popen(
@@ -49,7 +53,7 @@ if not token:
     mock.terminate()
     sys.exit(1)
 
-HDR = {"Authorization": f"Bearer {token}"}
+HDR = {"Authorization": f"Bearer {env['VAK_GATEWAY_TOKEN']}"}
 time.sleep(0.5)
 
 events = []

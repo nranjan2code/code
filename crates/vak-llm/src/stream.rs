@@ -93,17 +93,27 @@ impl EventSink {
 pub struct EventStream {
     rx: mpsc::Receiver<Wire>,
     terminal: Option<Terminal>,
+    guard: Option<Box<dyn Send>>,
 }
 
 pub fn channel(buffer: usize) -> (EventSink, EventStream) {
     let (tx, rx) = mpsc::channel(buffer.max(1));
     (
         EventSink { tx, closed: false },
-        EventStream { rx, terminal: None },
+        EventStream {
+            rx,
+            terminal: None,
+            guard: None,
+        },
     )
 }
 
 impl EventStream {
+    pub(crate) fn with_guard<T: Send + 'static>(mut self, guard: T) -> Self {
+        self.guard = Some(Box::new(guard));
+        self
+    }
+
     pub async fn result(mut self) -> Result<AssistantMessage, LlmError> {
         use futures::StreamExt;
         while let Some(_event) = self.next().await {}

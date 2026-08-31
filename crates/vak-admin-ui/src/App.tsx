@@ -1955,7 +1955,9 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
   const [keyId, setKeyId] = createSignal("");
   const [publicKey, setPublicKey] = createSignal("");
   const [signature, setSignature] = createSignal("");
+  const [catalogQuery, setCatalogQuery] = createSignal("");
   const [sources, { refetch: refetchSources }] = createResource(() => api.pluginSources().catch(() => ({ sources: [] })));
+  const [catalog, { refetch: refetchCatalog }] = createResource(catalogQuery, (query) => api.pluginCatalog(query).catch(() => ({ entries: [], errors: [] })));
   const refresh = props.ctx.refetchPlugins;
   const install = async (update: boolean) => {
     const value = path().trim();
@@ -1968,6 +1970,7 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
       setPath("");
       refresh();
       void refetchSources();
+      void refetchCatalog();
     } catch (error) {
       pushToast("alert", `${error}`);
     } finally {
@@ -2000,6 +2003,10 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
       <details class="advanced"><summary>Detached Ed25519 evidence (optional)</summary><div class="form-row"><label>Key ID<input class="mono" value={keyId()} onInput={(e) => setKeyId(e.currentTarget.value)} /></label><label>Public key (base64)<input class="mono" value={publicKey()} onInput={(e) => setPublicKey(e.currentTarget.value)} /></label><label>Signature (base64)<input class="mono" value={signature()} onInput={(e) => setSignature(e.currentTarget.value)} /></label></div></details>
       <button disabled={busy() || !sourcePath().trim()} onClick={async () => { setBusy(true); try { const signed = keyId() && publicKey() && signature() ? { key_id: keyId(), public_key: publicKey(), signature: signature() } : undefined; await api.pluginRegisterSource(sourcePath(), sourceLabel() || "Local catalog", signed); setSourcePath(""); setSourceLabel(""); setKeyId(""); setPublicKey(""); setSignature(""); void refetchSources(); pushToast("info", "Catalog source registered disabled"); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>Register source</button>
       <Show when={(sources()?.sources ?? []).length > 0}><div class="capability-list" style={{ "margin-top": "12px" }}><For each={sources()?.sources ?? []}>{(source) => <div class="capability-item"><div class="panel-title-row"><span><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small></span><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 12)}</code></div><code>{source.trace_id}</code><div class="settings-actions"><button class="settings-button" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable"); void refetchSources(); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button class="settings-button danger" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke"); void refetchSources(); } finally { setBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
+      <div class="form-row"><label>Search catalog entries<input value={catalogQuery()} onInput={(e) => setCatalogQuery(e.currentTarget.value)} placeholder="frontend, testing, release…" /></label></div>
+      <Show when={(catalog()?.entries ?? []).length > 0} fallback={<p class="dim">No catalog entries match yet. Enable a verified source only after reviewing it.</p>}>
+        <div class="capability-list"><For each={catalog()?.entries ?? []}>{(entry) => <div class="capability-item"><div class="panel-title-row"><span><strong>{entry.name}</strong><small>{entry.source_label} · {entry.source_enabled ? "Source enabled" : "Source disabled"}{entry.version ? ` · v${entry.version}` : ""}</small></span><code title={entry.catalog_digest}>sha256:{entry.catalog_digest.slice(0, 12)}</code></div><p>{entry.description || "No description"}</p><small>{entry.license ? `License: ${entry.license}` : "License: not declared"}</small></div>}</For></div>
+      </Show>
     </div>
     <Show when={!props.ctx.pluginsLoading()} fallback={<div class="panel"><div class="spin" /></div>}>
       <For each={props.ctx.plugins()} fallback={<div class="panel empty"><h2>No installed plugins</h2><p>Install a local package after reviewing its publisher, license, capabilities, and digest.</p></div>}>
@@ -2018,6 +2025,11 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
 
 function SkillsView(props: { ctx: ExtensionsCtx }) {
   const [busyId, setBusyId] = createSignal("");
+  const [query, setQuery] = createSignal("");
+  const visibleSkills = createMemo(() => {
+    const needle = query().trim().toLowerCase();
+    return props.ctx.skills().filter((skill) => !needle || skill.name.toLowerCase().includes(needle) || (skill.description ?? "").toLowerCase().includes(needle));
+  });
 
   const act = async (id: string, promote: boolean) => {
     if (!promote && !confirmDestructive("Reject this skill proposal?")) return;
@@ -2038,6 +2050,7 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
   return (
     <>
       <div class="toolbar">
+        <input class="search-input" aria-label="Filter skills" placeholder="Filter skills…" value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />
         <span class="spacer" />
         <button class="ghost" onClick={() => props.ctx.refetchSkills()}>Refresh</button>
       </div>
@@ -2108,10 +2121,10 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
             <table class="table">
               <thead><tr><th>skill</th><th>available in</th><th>what it does</th><th>file</th></tr></thead>
               <tbody>
-                <For each={props.ctx.skills()}>
+              <For each={visibleSkills()}>
                   {(s) => (
                     <tr class="row-static">
-                      <td class="mono bold">{s.name}</td>
+                      <td class="mono bold">{s.name}{s.shadowed ? <span class="chip chip-tone-ask" style={{ "margin-left": "6px" }}>shadowed</span> : null}</td>
                       <td>
                         <span class={`chip ${s.scope === "workspace" ? "chip-tool" : "chip-mode"}`} title={s.scope ?? "user"}>
                           {s.scope === "workspace" ? "this project" : "every project"}
@@ -2167,6 +2180,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
   const [matcher, setMatcher] = createSignal("");
   const [command, setCommand] = createSignal("");
   const [timeout, setTimeoutMs] = createSignal("10000");
+  const [failureMode, setFailureMode] = createSignal<"open" | "closed">("open");
   const [busy, setBusy] = createSignal(false);
   const [busyIndex, setBusyIndex] = createSignal(-1);
   const [editingIndex, setEditingIndex] = createSignal(-1);
@@ -2174,6 +2188,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
   const [editMatcher, setEditMatcher] = createSignal("");
   const [editCommand, setEditCommand] = createSignal("");
   const [editTimeout, setEditTimeout] = createSignal("10000");
+  const [editFailureMode, setEditFailureMode] = createSignal<"open" | "closed">("open");
 
   const addHook = async () => {
     const cmd = command().trim();
@@ -2188,6 +2203,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
           command: cmd,
           timeout_ms: parseInt(timeout(), 10) || 10_000,
           enabled: true,
+          failure_mode: failureMode(),
         },
       ]);
       pushToast("info", `Added — runs ${(HOOK_EVENT_LABELS[event()] ?? event()).toLowerCase()}`);
@@ -2247,6 +2263,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
     setEditMatcher(hook.matcher ?? "");
     setEditCommand(hook.command);
     setEditTimeout(String(hook.timeout_ms));
+    setEditFailureMode(hook.failure_mode ?? "open");
     setEditingIndex(index);
   };
 
@@ -2261,6 +2278,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
         matcher: editMatcher().trim() || null,
         command: cmd,
         timeout_ms: parseInt(editTimeout(), 10) || 10_000,
+        failure_mode: editFailureMode(),
       },
       "Automation updated",
     );
@@ -2406,6 +2424,13 @@ Nothing runs alongside your turns. Add one to keep a record of what vak does, to
               <label>Give up after</label>
               <TimeoutPicker value={editTimeout()} onChange={setEditTimeout} />
             </div>
+            <div class="form-row">
+              <label>On hook failure</label>
+              <select value={editFailureMode()} onChange={(e) => setEditFailureMode(e.currentTarget.value as "open" | "closed")}>
+                <option value="open">Continue and report</option>
+                <option value="closed">Block the operation</option>
+              </select>
+            </div>
             <button disabled={busyIndex() === editingIndex() || !editCommand().trim()} onClick={() => void saveEdit()}>
               {busyIndex() === editingIndex() ? "Saving…" : "Save changes"}
             </button>
@@ -2432,6 +2457,13 @@ Nothing runs alongside your turns. Add one to keep a record of what vak does, to
           <div class="form-row">
             <label>Give up after</label>
             <TimeoutPicker value={timeout()} onChange={setTimeoutMs} />
+          </div>
+          <div class="form-row">
+            <label>On hook failure</label>
+            <select value={failureMode()} onChange={(e) => setFailureMode(e.currentTarget.value as "open" | "closed")}>
+              <option value="open">Continue and report</option>
+              <option value="closed">Block the operation</option>
+            </select>
           </div>
           <div class="row-gap" style="margin-top:12px">
             <button disabled={busy() || !command().trim()} onClick={() => void addHook()}>

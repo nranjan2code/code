@@ -30,6 +30,7 @@ import type {
   SkillProposal,
   PluginItem,
   MarketplaceSource,
+  MarketplaceEntry,
   TaskItem,
   TranscriptEntry,
   VoiceConfig,
@@ -472,6 +473,8 @@ export const api = {
     fetch("/plugins/audit").then((r) => handle(r)),
   pluginSources: (): Promise<{ sources: MarketplaceSource[] }> =>
     fetch("/plugins/sources").then((r) => handle(r)),
+  pluginCatalog: (query = ""): Promise<{ entries: MarketplaceEntry[]; errors: { source_id?: string; error: string }[] }> =>
+    fetch(`/plugins/catalog${query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ""}`).then((r) => handle(r)),
   pluginRegisterSource: (path: string, label: string, signature?: { key_id: string; public_key: string; signature: string }): Promise<MarketplaceSource> =>
     fetch("/plugins/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, label, trust: "manual-review", ...(signature ?? {}) }) }).then((r) => handle(r)),
   pluginKeyAction: (keyId: string, action: "revoke" | "restore"): Promise<unknown> =>

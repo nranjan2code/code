@@ -515,6 +515,8 @@ pub struct HookConfig {
     /// before it must keep firing.
     #[serde(default = "default_hook_config_enabled")]
     pub enabled: bool,
+    #[serde(default)]
+    pub failure_mode: Option<String>,
 }
 
 fn default_hook_config_enabled() -> bool {
@@ -2832,6 +2834,7 @@ mod tests {
             command: command.into(),
             timeout_ms: None,
             enabled,
+            failure_mode: None,
         }
     }
 

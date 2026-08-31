@@ -25,6 +25,7 @@
 //! - `DELETE /config/key` {provider}      → revoke a stored credential
 //! - `GET  /providers`                    → provider picker data (no secrets)
 //! - `GET  /providers/:name/models`   → models the stored key can reach
+//! - `GET  /providers/:name/status`   → provider-published account metadata
 //! - `PATCH/DELETE /memory/:note_id`  → amend / forget one memory note
 //! - `GET  /search?all=true`          → cross-project recall (23-memory)
 //! - `GET  /doctor?session=`          → HealthReport JSON (29-personal-os P3)
@@ -377,7 +378,9 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/archived", delete(delete_all_archived))
         .route("/sessions/{id}", delete(delete_session))
         .route("/skills", get(list_skills))
+        .route("/commands", get(list_commands))
         .route("/plugins", get(list_plugins))
+        .route("/plugins/catalog", get(plugin_catalog))
         .route("/plugins/audit", get(plugin_audit))
         .route("/plugins/invocations", get(plugin_invocations))
         .route(
@@ -478,6 +481,7 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/providers", get(list_providers))
         .route("/providers/{name}/models", get(discover_models))
+        .route("/providers/{name}/status", get(provider_status))
         .route("/search", get(search_sessions))
         .route("/ops/status", get(ops_status))
         .route("/ops/center", get(operations_center))
@@ -2639,10 +2643,12 @@ async fn run_prompt(
         .clone();
     let core = state.core.clone();
 
+    let expanded_prompt =
+        vak_core::custom_commands::expand_invocation(&core.custom_commands(), &body.prompt);
     let prompt_message = if body.attachments.is_empty() {
         None
     } else {
-        let mut blocks = vec![vak_llm::ContentBlock::text(body.prompt.clone())];
+        let mut blocks = vec![vak_llm::ContentBlock::text(expanded_prompt.clone())];
         for a in &body.attachments {
             if a.data.trim().is_empty() {
                 continue;
@@ -2679,7 +2685,7 @@ async fn run_prompt(
         let outcome = if let Some((objective, criteria)) = goal_pair {
             core.run_goal_turn_with(
                 taken,
-                &body.prompt,
+                &expanded_prompt,
                 &objective,
                 criteria,
                 cancel.clone(),
@@ -2703,7 +2709,7 @@ async fn run_prompt(
         } else {
             core.run_turn_with(
                 taken,
-                &body.prompt,
+                &expanded_prompt,
                 cancel,
                 Some(approver),
                 None,
@@ -3900,7 +3906,7 @@ async fn list_skills(State(state): State<AppState>) -> Json<serde_json::Value> {
     let workspace_root = state.core.cwd().join(".vak/skills");
     let skills: Vec<serde_json::Value> = state
         .core
-        .skills()
+        .skills_with_shadowed()
         .iter()
         .map(|s| {
             let scope = if s.path.starts_with(&workspace_root) {
@@ -3914,10 +3920,19 @@ async fn list_skills(State(state): State<AppState>) -> Json<serde_json::Value> {
                 "path": s.path.display().to_string(),
                 "scope": scope,
                 "provenance": s.provenance,
+                "shadowed": s.shadowed,
             })
         })
         .collect();
     Json(serde_json::json!({ "skills": skills }))
+}
+
+async fn list_commands(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(
+        serde_json::json!({ "commands": state.core.custom_commands().into_iter().map(|command| serde_json::json!({
+        "name": command.name, "description": command.description, "source": command.source,
+    })).collect::<Vec<_>>() }),
+    )
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -3956,6 +3971,12 @@ fn plugin_store(state: &AppState, scope: InstallScope) -> PluginStore {
 #[derive(Debug, serde::Deserialize)]
 struct PluginScopeQuery {
     scope: Option<InstallScope>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PluginCatalogQuery {
+    scope: Option<InstallScope>,
+    q: Option<String>,
 }
 
 fn requested_plugin_scopes(scope: Option<InstallScope>) -> Vec<InstallScope> {
@@ -4024,6 +4045,72 @@ async fn plugin_sources(
         }
     }
     Json(serde_json::json!({ "sources": sources }))
+}
+
+async fn plugin_catalog(
+    State(state): State<AppState>,
+    Query(query): Query<PluginCatalogQuery>,
+) -> Json<serde_json::Value> {
+    let needle = query.q.as_deref().unwrap_or_default().trim().to_lowercase();
+    let mut entries = Vec::new();
+    let mut errors = Vec::new();
+    for scope in requested_plugin_scopes(query.scope) {
+        let store = plugin_store(&state, scope);
+        let sources = match store.list_sources() {
+            Ok(sources) => sources,
+            Err(error) => {
+                errors.push(serde_json::json!({ "scope": scope, "error": error.to_string() }));
+                continue;
+            }
+        };
+        for source in sources {
+            let inspection = match vak_plugin::inspect_catalog(&source.root) {
+                Ok(inspection) => inspection,
+                Err(error) => {
+                    errors.push(
+                        serde_json::json!({ "source_id": source.id, "error": error.to_string() }),
+                    );
+                    continue;
+                }
+            };
+            if inspection.digest != source.catalog_digest {
+                errors.push(serde_json::json!({
+                    "source_id": source.id,
+                    "error": "catalog changed since registration",
+                }));
+                continue;
+            }
+            for entry in inspection.entries {
+                let haystack = format!(
+                    "{} {}",
+                    entry.name,
+                    entry.description.as_deref().unwrap_or_default()
+                )
+                .to_lowercase();
+                if !needle.is_empty() && !haystack.contains(&needle) {
+                    continue;
+                }
+                entries.push(serde_json::json!({
+                    "source_id": source.id,
+                    "source_label": source.label,
+                    "source_enabled": source.enabled,
+                    "source_scope": scope,
+                    "catalog_digest": source.catalog_digest,
+                    "name": entry.name,
+                    "version": entry.version,
+                    "description": entry.description,
+                    "license": entry.license,
+                }));
+            }
+        }
+    }
+    entries.sort_by(|a, b| {
+        a["name"]
+            .as_str()
+            .cmp(&b["name"].as_str())
+            .then_with(|| a["source_id"].as_str().cmp(&b["source_id"].as_str()))
+    });
+    Json(serde_json::json!({ "entries": entries, "errors": errors }))
 }
 
 async fn plugin_register_source(
@@ -4411,9 +4498,13 @@ async fn list_providers(State(state): State<AppState>) -> Json<serde_json::Value
     for name in state.core.provider_names() {
         let requires_key = name != "ollama";
         let configured = state.core.provider_configured(&name);
+        let credential_ids = state.core.provider_credential_ids(&name);
         providers.push(serde_json::json!({
             "name": name,
             "env_var": Core::provider_env_var(&name),
+            "pool_env_var": pool_env_var(&name),
+            "pool_size": credential_ids.len(),
+            "credential_ids": credential_ids,
             "requires_key": requires_key,
             "configured": configured,
         }));
@@ -4427,6 +4518,10 @@ async fn list_providers(State(state): State<AppState>) -> Json<serde_json::Value
         "current_configured": state.core.provider_configured(&state.core.effective_provider()),
         "providers": providers,
     }))
+}
+
+fn pool_env_var(provider: &str) -> Option<&'static str> {
+    Core::provider_pool_env_var(provider)
 }
 
 #[derive(serde::Deserialize)]
@@ -4490,6 +4585,28 @@ async fn discover_models(
         Ok(models) => {
             Json(serde_json::json!({ "provider": name, "models": models })).into_response()
         }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "provider": name, "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Read provider-published account metadata without returning credentials.
+async fn provider_status(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> axum::response::Response {
+    if !Core::provider_known(&name) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("unknown provider '{name}'") })),
+        )
+            .into_response();
+    }
+    match state.core.provider_status(&name).await {
+        Ok(status) => Json(status).into_response(),
         Err(e) => (
             StatusCode::BAD_GATEWAY,
             Json(serde_json::json!({ "provider": name, "error": e.to_string() })),
@@ -5456,6 +5573,8 @@ struct HookInput {
     timeout_ms: Option<u64>,
     #[serde(default = "default_hook_enabled")]
     enabled: bool,
+    #[serde(default)]
+    failure_mode: Option<String>,
 }
 
 fn default_hook_enabled() -> bool {
@@ -5500,6 +5619,7 @@ async fn get_hooks(State(state): State<AppState>) -> axum::response::Response {
                 "command": h.command,
                 "timeout_ms": h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS),
                 "enabled": h.enabled,
+                "failure_mode": h.failure_mode.as_deref().unwrap_or("open"),
             })
         })
         .collect::<Vec<_>>();
@@ -5522,7 +5642,7 @@ async fn get_global_hooks() -> axum::response::Response {
     } else {
         Vec::new()
     };
-    Json(serde_json::json!({ "scope": "user", "hooks": hooks.into_iter().map(|h| serde_json::json!({ "event": h.event, "matcher": h.matcher, "command": h.command, "timeout_ms": h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS), "enabled": h.enabled })).collect::<Vec<_>>() })).into_response()
+    Json(serde_json::json!({ "scope": "user", "hooks": hooks.into_iter().map(|h| serde_json::json!({ "event": h.event, "matcher": h.matcher, "command": h.command, "timeout_ms": h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS), "enabled": h.enabled, "failure_mode": h.failure_mode.as_deref().unwrap_or("open") })).collect::<Vec<_>>() })).into_response()
 }
 
 async fn put_global_hooks(
@@ -5584,6 +5704,10 @@ fn validated_hook_configs(hooks: &[HookInput]) -> Result<Vec<vak_config::HookCon
             if timeout_ms == 0 {
                 return Err("hook timeout must be greater than zero".into());
             }
+            let failure_mode = hook.failure_mode.as_deref().unwrap_or("open").trim();
+            if !matches!(failure_mode, "open" | "closed") {
+                return Err(format!("unknown hook failure mode '{failure_mode}'"));
+            }
             Ok(vak_config::HookConfig {
                 event: hook.event.clone(),
                 matcher: hook
@@ -5593,6 +5717,7 @@ fn validated_hook_configs(hooks: &[HookInput]) -> Result<Vec<vak_config::HookCon
                 command: hook.command.trim().to_string(),
                 timeout_ms: Some(timeout_ms),
                 enabled: hook.enabled,
+                failure_mode: Some(failure_mode.to_string()),
             })
         })
         .collect()
@@ -5630,6 +5755,10 @@ fn persist_hooks_to_config(
                         ),
                     );
                     value.insert("enabled".into(), toml::Value::Boolean(hook.enabled));
+                    value.insert(
+                        "failure_mode".into(),
+                        toml::Value::String(hook.failure_mode.as_deref().unwrap_or("open").into()),
+                    );
                     toml::Value::Table(value)
                 })
                 .collect(),
@@ -5681,6 +5810,18 @@ async fn put_hooks(
             )
                 .into_response();
         }
+        if !matches!(
+            hook.failure_mode.as_deref().unwrap_or("open").trim(),
+            "open" | "closed"
+        ) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(
+                    serde_json::json!({ "error": "hook failure_mode must be 'open' or 'closed'" }),
+                ),
+            )
+                .into_response();
+        }
     }
     let path = state.core.cwd().join(".vak/config.toml");
     let mut root: toml::Value = if path.exists() {
@@ -5721,6 +5862,10 @@ async fn put_hooks(
                 toml::Value::Integer(h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS) as i64),
             );
             t.insert("enabled".into(), toml::Value::Boolean(h.enabled));
+            t.insert(
+                "failure_mode".into(),
+                toml::Value::String(h.failure_mode.as_deref().unwrap_or("open").trim().into()),
+            );
             toml::Value::Table(t)
         })
         .collect::<Vec<_>>();
@@ -5764,6 +5909,7 @@ async fn put_hooks(
                 command: h.command.trim().to_string(),
                 timeout_ms: Some(h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS)),
                 enabled: h.enabled,
+                failure_mode: h.failure_mode.clone(),
             })
             .collect(),
     );

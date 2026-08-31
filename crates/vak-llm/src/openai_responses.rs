@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Provider;
 use crate::error::LlmError;
+use crate::gate::ProviderGate;
 use crate::sse::SseDecoder;
 use crate::stream::{EventStream, StreamEvent, channel};
 use crate::types::{
@@ -26,6 +27,7 @@ pub struct OpenAiResponsesConfig {
 pub struct OpenAiResponsesProvider {
     http: reqwest::Client,
     config: OpenAiResponsesConfig,
+    gate: ProviderGate,
 }
 
 impl OpenAiResponsesProvider {
@@ -34,7 +36,11 @@ impl OpenAiResponsesProvider {
             .connect_timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| LlmError::Network(e.to_string()))?;
-        Ok(OpenAiResponsesProvider { http, config })
+        Ok(OpenAiResponsesProvider {
+            gate: ProviderGate::new(&config.base_url, &config.api_key),
+            http,
+            config,
+        })
     }
 }
 
@@ -162,7 +168,7 @@ fn append_input_item(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> 
     Ok(())
 }
 
-fn map_status_error(status: u16, body: &str) -> LlmError {
+fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmError {
     let message = serde_json::from_str::<Value>(body)
         .ok()
         .and_then(|v| {
@@ -175,7 +181,7 @@ fn map_status_error(status: u16, body: &str) -> LlmError {
         400 | 404 | 413 | 422 => LlmError::InvalidRequest(message),
         429 => LlmError::RateLimit {
             message,
-            retry_after_secs: None,
+            retry_after_secs: retry_after,
         },
         503 | 529 => LlmError::Overloaded(message),
         _ => LlmError::Api { status, message },
@@ -334,11 +340,16 @@ impl Provider for OpenAiResponsesProvider {
         "openai-responses"
     }
 
+    fn circuit_key(&self) -> String {
+        crate::gate::route_identity(self.name(), &self.config.base_url, &self.config.api_key)
+    }
+
     async fn stream(
         &self,
         request: ChatRequest,
         cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
+        let provider_permit = self.gate.acquire(&cancel).await?;
         let url = format!("{}/responses", self.config.base_url.trim_end_matches('/'));
         let body = build_body(&request)?;
         let send_fut = self
@@ -357,8 +368,13 @@ impl Provider for OpenAiResponsesProvider {
 
         let status = response.status();
         if !status.is_success() {
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok());
             let text = response.text().await.unwrap_or_default();
-            return Err(map_status_error(status.as_u16(), &text));
+            return Err(map_status_error(status.as_u16(), &text, retry_after));
         }
 
         let model = request.model.clone();
@@ -410,6 +426,6 @@ impl Provider for OpenAiResponsesProvider {
             }
         });
 
-        Ok(stream_rx)
+        Ok(stream_rx.with_guard(provider_permit))
     }
 }

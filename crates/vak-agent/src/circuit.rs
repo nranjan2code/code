@@ -3,6 +3,7 @@
 //! While open, steps fail fast with the remaining cooldown instead of
 //! burning their retry budget against a dead provider.
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -32,7 +33,7 @@ struct State {
 #[derive(Debug)]
 pub struct CircuitBreaker {
     config: CircuitBreakerConfig,
-    state: Mutex<State>,
+    state: Mutex<HashMap<String, State>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -48,13 +49,21 @@ impl CircuitBreaker {
     pub fn new(config: CircuitBreakerConfig) -> Self {
         CircuitBreaker {
             config,
-            state: Mutex::new(State::default()),
+            state: Mutex::new(HashMap::new()),
         }
     }
 
     /// Err when the circuit is open and the cooldown has not elapsed.
     pub fn check(&self) -> Result<(), CircuitOpen> {
-        let mut st = self.lock();
+        self.check_key("")
+    }
+
+    /// Check one provider/key circuit. Provider names are used by the agent
+    /// as the stable health domain; an empty key retains the legacy global
+    /// helper semantics for callers that do not have a route identity.
+    pub fn check_key(&self, key: &str) -> Result<(), CircuitOpen> {
+        let mut states = self.lock();
+        let st = states.entry(key.to_string()).or_default();
         if let Some(opened_at) = st.opened_at {
             let elapsed = opened_at.elapsed();
             if elapsed < self.config.cooldown {
@@ -70,21 +79,31 @@ impl CircuitBreaker {
     }
 
     pub fn record_success(&self) {
-        let mut st = self.lock();
+        self.record_success_key("");
+    }
+
+    pub fn record_success_key(&self, key: &str) {
+        let mut states = self.lock();
+        let st = states.entry(key.to_string()).or_default();
         st.consecutive_failures = 0;
         st.opened_at = None;
     }
 
     /// Only retryable failures should call this.
     pub fn record_failure(&self) {
-        let mut st = self.lock();
+        self.record_failure_key("");
+    }
+
+    pub fn record_failure_key(&self, key: &str) {
+        let mut states = self.lock();
+        let st = states.entry(key.to_string()).or_default();
         st.consecutive_failures = st.consecutive_failures.saturating_add(1);
         if st.consecutive_failures >= self.config.threshold && st.opened_at.is_none() {
             st.opened_at = Some(Instant::now());
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, State>> {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

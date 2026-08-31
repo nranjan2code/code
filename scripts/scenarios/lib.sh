@@ -10,13 +10,23 @@ BIN="${BIN:-$ROOT/target/release/vak}"
 PORT="${SCENARIO_PORT:-8931}"
 MOCK_PID=""
 
+if [[ "$BIN" != /* ]]; then
+  BIN="$ROOT/$BIN"
+fi
+
 start_mock() {
   python3 "$ROOT/scripts/mock_anthropic.py" "$PORT" >/dev/null 2>&1 &
   MOCK_PID=$!
   sleep 0.7
 }
 
-stop_mock() { [[ -n "${MOCK_PID:-}" ]] && kill "$MOCK_PID" 2>/dev/null || true; }
+stop_mock() {
+  if [[ -n "${MOCK_PID:-}" ]]; then
+    kill "$MOCK_PID" 2>/dev/null || true
+    wait "$MOCK_PID" 2>/dev/null || true
+    MOCK_PID=""
+  fi
+}
 cleanup() { stop_mock; [[ -n "${WORK_DIR:-}" ]] && rm -rf "$WORK_DIR" 2>/dev/null || true; }
 trap cleanup EXIT
 

@@ -22,6 +22,13 @@ pub enum HookEvent {
     Stop,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HookFailureMode {
+    #[default]
+    Open,
+    Closed,
+}
+
 impl HookEvent {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -39,6 +46,7 @@ pub struct HookDef {
     pub matcher: Option<Rule>,
     pub command: String,
     pub timeout_ms: u64,
+    pub failure_mode: HookFailureMode,
 }
 
 pub const DEFAULT_TIMEOUT_MS: u64 = 10_000;
@@ -164,7 +172,7 @@ async fn run_one(
         Ok(c) => c,
         Err(e) => {
             return HookOutcome {
-                blocked: false,
+                blocked: hook.failure_mode == HookFailureMode::Closed,
                 reason: Some(format!("hook spawn failed: {e}")),
             };
         }
@@ -192,7 +200,7 @@ async fn run_one(
     tokio::select! {
         _ = timeout => {
             kill_tree(&pid);
-            HookOutcome { blocked: false, reason: Some("hook timed out".into()) }
+            HookOutcome { blocked: hook.failure_mode == HookFailureMode::Closed, reason: Some("hook timed out".into()) }
         }
         _ = cancel.cancelled() => {
             kill_tree(&pid);
@@ -201,7 +209,7 @@ async fn run_one(
         status = interact => {
             let status = match status {
                 Ok(s) => s,
-                Err(e) => return HookOutcome { blocked: false, reason: Some(format!("hook wait failed: {e}")) },
+                Err(e) => return HookOutcome { blocked: hook.failure_mode == HookFailureMode::Closed, reason: Some(format!("hook wait failed: {e}")) },
             };
             let out = out_fut.await.unwrap_or_default();
             let err = err_fut.await.unwrap_or_default();
@@ -211,6 +219,18 @@ async fn run_one(
                 return HookOutcome {
                     blocked: true,
                     reason: Some(if reason.is_empty() { "blocked by hook (exit 2)".into() } else { reason.to_string() }),
+                };
+            }
+
+            if !status.success() {
+                return HookOutcome {
+                    blocked: hook.failure_mode == HookFailureMode::Closed,
+                    reason: Some(format!(
+                        "hook exited with {}",
+                        status
+                            .code()
+                            .map_or_else(|| "signal".to_string(), |code| code.to_string())
+                    )),
                 };
             }
 

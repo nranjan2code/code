@@ -23,6 +23,7 @@ pub use workspace::WorkspaceDelta;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use futures::FutureExt;
 use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -231,13 +232,11 @@ pub trait Approver: Send + Sync {
 /// truncated streams. Permanent errors (auth, bad request, non-2xx api,
 /// aborts) are excluded — retrying them cannot help.
 fn is_transient_step_error(e: &LlmError) -> bool {
-    matches!(
-        e,
-        LlmError::RateLimit { .. }
-            | LlmError::Overloaded(_)
-            | LlmError::Network(_)
-            | LlmError::Parse(_)
-    )
+    match e {
+        LlmError::RateLimit { .. } => e.is_retryable(),
+        LlmError::Overloaded(_) | LlmError::Network(_) | LlmError::Parse(_) => true,
+        _ => false,
+    }
 }
 
 /// The breaker protects against a DEAD provider: blind failures with no
@@ -363,6 +362,7 @@ impl Agent {
     ) -> TurnOutcome {
         let prompt_owned = prompt.text_content();
         let mut bash_calls_this_run: u32 = 0;
+        let mut verification_stale = false;
         self.obligations.clear();
         self.handoff_used = false;
         self.run_call_counts
@@ -704,19 +704,6 @@ impl Agent {
                         {
                             run_attempt += 1;
                             let delay = backoff_ms.min(30_000);
-                            // An open breaker fails every attempt instantly
-                            // until its cooldown elapses; pacing the wait to
-                            // the remaining cooldown lets the half-close probe
-                            // through instead of burning the budget on no-op
-                            // failures.
-                            let cooldown_ms = self
-                                .config
-                                .circuit_breaker
-                                .as_ref()
-                                .and_then(|b| b.check().err())
-                                .map(|open| open.remaining_secs * 1000 + 250)
-                                .unwrap_or(0);
-                            let delay = delay.max(cooldown_ms);
                             let reason = format!(
                                 "step exhausted ({e}); run-level re-attempt {run_attempt}/{}",
                                 self.config.run_retry_attempts
@@ -838,6 +825,7 @@ impl Agent {
                         &prompt_owned,
                         &response,
                         bash_calls_this_run,
+                        verification_stale,
                         &mut stop_blocks_left,
                     )
                     .await
@@ -862,6 +850,7 @@ impl Agent {
                         &prompt_owned,
                         &response,
                         bash_calls_this_run,
+                        verification_stale,
                         &mut stop_blocks_left,
                     )
                     .await
@@ -892,7 +881,26 @@ impl Agent {
                         .map(|cmd| (c.id.clone(), cmd.to_string()))
                 })
                 .collect();
+            let mutation_ids: Vec<String> = calls
+                .iter()
+                .filter(|call| matches!(call.name.as_str(), "edit" | "write"))
+                .map(|call| call.id.clone())
+                .collect();
             let results = self.execute_batch(calls, &cancel, &events).await;
+            let successful_bash = results.iter().any(|(id, out)| {
+                matches!(out, ToolRunOutput::Ok(_))
+                    && bash_pairs.iter().any(|(bash_id, _)| bash_id == id)
+            });
+            let successful_mutation = results.iter().any(|(id, out)| {
+                matches!(out, ToolRunOutput::Ok(_))
+                    && mutation_ids.iter().any(|mutation_id| mutation_id == id)
+            });
+            if successful_bash {
+                verification_stale = false;
+            }
+            if successful_mutation {
+                verification_stale = true;
+            }
             for (id, out) in &results {
                 if matches!(out, ToolRunOutput::Ok(_))
                     && let Some((_, cmd)) = bash_pairs.iter().find(|(bid, _)| bid == id)
@@ -1217,13 +1225,19 @@ impl Agent {
         prompt: &str,
         response: &AssistantMessage,
         bash_calls_this_run: u32,
+        verification_stale: bool,
         blocks_left: &mut u32,
     ) -> Option<String> {
         let policy = self.config.stop_policy.as_ref()?;
         if *blocks_left == 0 {
             return None;
         }
-        let reason = policy.evaluate(prompt, &response.text_content(), bash_calls_this_run)?;
+        let reason = policy.evaluate_with_state(
+            prompt,
+            &response.text_content(),
+            bash_calls_this_run,
+            verification_stale,
+        )?;
         *blocks_left -= 1;
         Some(reason.message())
     }
@@ -1305,11 +1319,6 @@ impl Agent {
         forward: bool,
         ledger: &mut StepLedger,
     ) -> Result<AssistantMessage, LlmError> {
-        if let Some(breaker) = &self.config.circuit_breaker {
-            breaker
-                .check()
-                .map_err(|open| LlmError::Network(open.to_string()))?;
-        }
         // Frozen-ladder walk (Phase B): `ladder` holds FALLBACK legs;
         // the primary provider/model always walks first. Ceiling,
         // receipt, and endurance budget are shared across ALL legs --
@@ -1323,6 +1332,13 @@ impl Agent {
 
         'legs: for (li, (provider_arc, model)) in legs.iter().enumerate() {
             leg_req.model = model.clone();
+            let breaker_key = provider_arc.circuit_key();
+            if let Some(breaker) = &self.config.circuit_breaker
+                && let Err(open) = breaker.check_key(&breaker_key)
+            {
+                last_err = Some(LlmError::Network(open.to_string()));
+                continue 'legs;
+            }
             ledger.receipt.stamp_leg(provider_arc.name(), model);
             if li > 0 && forward {
                 self.record_activity(
@@ -1425,11 +1441,15 @@ impl Agent {
                     }
                     stream.result().await
                 };
+                let step = std::panic::AssertUnwindSafe(step).catch_unwind();
 
                 let mut domain_override: Option<FailureDomain> = None;
                 let outcome = match self.config.request_timeout {
                     Some(t) => match tokio::time::timeout(t, step).await {
-                        Ok(r) => r,
+                        Ok(Ok(r)) => r,
+                        Ok(Err(_)) => Err(LlmError::Network(
+                            "provider dispatch panicked and was contained".into(),
+                        )),
                         Err(_) => {
                             domain_override = Some(FailureDomain::Deadline);
                             Err(LlmError::Network(format!(
@@ -1438,14 +1458,19 @@ impl Agent {
                             )))
                         }
                     },
-                    None => step.await,
+                    None => match step.await {
+                        Ok(r) => r,
+                        Err(_) => Err(LlmError::Network(
+                            "provider dispatch panicked and was contained".into(),
+                        )),
+                    },
                 };
                 let elapsed_ms = started.elapsed().as_millis() as u64;
 
                 match outcome {
                     Ok(r) => {
                         if let Some(breaker) = &self.config.circuit_breaker {
-                            breaker.record_success();
+                            breaker.record_success_key(&breaker_key);
                         }
                         ledger.receipt.record(
                             reason,
@@ -1482,7 +1507,7 @@ impl Agent {
                             if trips_breaker(&e)
                                 && let Some(breaker) = &self.config.circuit_breaker
                             {
-                                breaker.record_failure();
+                                breaker.record_failure_key(&breaker_key);
                             }
                             attempt += 1;
                             let delay = backoff_delay(
@@ -1521,7 +1546,7 @@ impl Agent {
                             if trips_breaker(&e)
                                 && let Some(breaker) = &self.config.circuit_breaker
                             {
-                                breaker.record_failure();
+                                breaker.record_failure_key(&breaker_key);
                             }
                             last_err = Some(e);
                             continue 'legs;
@@ -1730,7 +1755,7 @@ async fn execute_one(
 
     let mut output = match tool {
         None => ToolRunOutput::Err(format!(
-            "unknown tool: {} (available: {})",
+            "unknown tool: {} (available: {}). This call was rejected. Skill names are documents, not executable tools: do not retry this name as a tool; use read on the advertised SKILL.md path and then use one of the advertised tools.",
             call.name,
             tools
                 .iter()

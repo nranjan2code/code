@@ -20,7 +20,7 @@ mod plugins;
 mod tasks;
 mod update_check;
 
-use cli::{CheckpointAction, Cli, Command, FlowAction, SkillsReviewAction};
+use cli::{CheckpointAction, Cli, Command, FlowAction, SkillsAction, SkillsReviewAction};
 
 /// How long a one-shot CLI turn (`vak exec`, `vak flow exec`, `vak plan`)
 /// waits for MCP tool discovery before giving up and running with the
@@ -73,6 +73,88 @@ fn run_skills_review(cwd: PathBuf, action: SkillsReviewAction) -> i32 {
                 }
             }
         }
+    }
+}
+
+fn run_skills(cwd: PathBuf, action: SkillsAction) -> i32 {
+    match action {
+        SkillsAction::Validate { path, json } => {
+            let mut files = Vec::new();
+            let roots = path.map_or_else(
+                || {
+                    vec![
+                        cwd.join(".vak/skills"),
+                        vak_config::paths::data_home().join("skills"),
+                    ]
+                },
+                |path| vec![path],
+            );
+            for root in &roots {
+                collect_skill_files(root, &mut files);
+            }
+            files.sort();
+            files.dedup();
+            if files.is_empty() {
+                let locations = roots
+                    .iter()
+                    .map(|root| root.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                eprintln!("no SKILL.md files found below {locations}");
+                return 1;
+            }
+            let mut failed = false;
+            let mut reports = Vec::new();
+            for file in files {
+                match vak_core::skills::validate(&file) {
+                    Ok((skill, warnings)) => reports.push(serde_json::json!({
+                        "path": file,
+                        "name": skill.name,
+                        "valid": true,
+                        "warnings": warnings,
+                    })),
+                    Err(error) => {
+                        failed = true;
+                        reports.push(serde_json::json!({
+                            "path": file,
+                            "valid": false,
+                            "error": error,
+                        }));
+                    }
+                }
+            }
+            if json {
+                println!("{}", serde_json::Value::Array(reports));
+            } else {
+                for report in &reports {
+                    let path = report["path"].as_str().unwrap_or("unknown");
+                    if report["valid"] == true {
+                        println!("ok {} ({})", report["name"], path);
+                        for warning in report["warnings"].as_array().into_iter().flatten() {
+                            println!("warning: {}", warning.as_str().unwrap_or("unknown"));
+                        }
+                    } else {
+                        println!("invalid {}: {}", path, report["error"]);
+                    }
+                }
+            }
+            i32::from(failed)
+        }
+    }
+}
+
+fn collect_skill_files(root: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    if root.is_file() {
+        if root.file_name().is_some_and(|name| name == "SKILL.md") {
+            files.push(root.to_path_buf());
+        }
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        collect_skill_files(&entry.path(), files);
     }
 }
 
@@ -280,6 +362,7 @@ async fn main() {
         },
         Some(Command::Memory { action }) => memory::run_memory(cwd, action),
         Some(Command::SkillsReview { action }) => run_skills_review(cwd, action),
+        Some(Command::Skills { action }) => run_skills(cwd, action),
         Some(Command::Plugins { action }) => plugins::run_plugins(cwd, action),
         Some(Command::Checkpoints { action }) => run_checkpoints(cwd, action).await,
         Some(Command::Telegram {

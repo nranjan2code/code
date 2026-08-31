@@ -778,10 +778,12 @@ mod tests {
                     vak_llm::RouteLeg {
                         provider: "anthropic".into(),
                         model: "claude-sonnet-4-5".into(),
+                        credential_id: None,
                     },
                     vak_llm::RouteLeg {
                         provider: "openai".into(),
                         model: "gpt-fallback".into(),
+                        credential_id: None,
                     },
                 ],
                 route_objective: "balanced".into(),

@@ -38,6 +38,46 @@ struct AlwaysNetwork {
     calls: AtomicU32,
 }
 
+struct PanickingProvider;
+
+struct TerminalQuota;
+
+#[async_trait::async_trait]
+impl Provider for TerminalQuota {
+    fn name(&self) -> &str {
+        "quota-limited"
+    }
+
+    async fn stream(
+        &self,
+        _request: ChatRequest,
+        _cancel: CancellationToken,
+    ) -> Result<EventStream, LlmError> {
+        let (mut sink, rx) = stream::channel(64);
+        sink.close_error(LlmError::RateLimit {
+            message: "free-models-per-day exhausted".into(),
+            retry_after_secs: None,
+        })
+        .await;
+        Ok(rx)
+    }
+}
+
+#[async_trait::async_trait]
+impl Provider for PanickingProvider {
+    fn name(&self) -> &str {
+        "primary-panics"
+    }
+
+    async fn stream(
+        &self,
+        _request: ChatRequest,
+        _cancel: CancellationToken,
+    ) -> Result<EventStream, LlmError> {
+        panic!("provider adapter panic");
+    }
+}
+
 #[async_trait::async_trait]
 impl Provider for AlwaysNetwork {
     fn name(&self) -> &str {
@@ -88,7 +128,10 @@ impl Provider for Scripted {
     }
 }
 
-fn setup(ladder: Vec<(Arc<dyn Provider>, String)>) -> (Agent, tempfile::TempDir) {
+fn setup_with_primary(
+    primary: Arc<dyn Provider>,
+    ladder: Vec<(Arc<dyn Provider>, String)>,
+) -> (Agent, tempfile::TempDir) {
     let dir = tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
     let header = SessionHeader {
@@ -124,15 +167,15 @@ fn setup(ladder: Vec<(Arc<dyn Provider>, String)>) -> (Agent, tempfile::TempDir)
     cfg.run_retry_attempts = 0;
     cfg.dispatch_ceiling = 3;
     cfg.ladder = ladder;
-    (
-        Agent::new(
-            Arc::new(AlwaysNetwork {
-                calls: AtomicU32::new(0),
-            }),
-            log,
-            cfg,
-        ),
-        dir,
+    (Agent::new(primary, log, cfg), dir)
+}
+
+fn setup(ladder: Vec<(Arc<dyn Provider>, String)>) -> (Agent, tempfile::TempDir) {
+    setup_with_primary(
+        Arc::new(AlwaysNetwork {
+            calls: AtomicU32::new(0),
+        }),
+        ladder,
     )
 }
 
@@ -179,6 +222,46 @@ async fn primary_failure_walks_to_fallback_and_receipt_records_it() {
     // (asserted indirectly: a third dispatch would have exceeded ceiling=3? no)
     // Projection stays clean.
     assert_eq!(session.derive_messages().len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn provider_panic_is_contained_and_fallback_completes() {
+    let fb = fallback_provider();
+    let (mut agent, _dir) = setup_with_primary(
+        Arc::new(PanickingProvider),
+        vec![(fb as Arc<dyn Provider>, "fallback-model".to_string())],
+    );
+
+    assert!(matches!(
+        run(&mut agent).await,
+        TurnOutcome::Completed { .. }
+    ));
+    let session = agent.into_session().await;
+    let receipt = &session.receipts()[0];
+    assert_eq!(receipt.attempts.len(), 2);
+    assert_eq!(receipt.attempts[0].domain, vak_llm::FailureDomain::Network);
+    assert_eq!(receipt.attempts[1].reason, AttemptReason::RouteFallback);
+    assert_eq!(receipt.winning_attempt, Some(1));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn terminal_quota_walks_to_fallback_without_retry_storm() {
+    let fb = fallback_provider();
+    let (mut agent, _dir) = setup_with_primary(
+        Arc::new(TerminalQuota),
+        vec![(fb as Arc<dyn Provider>, "fallback-model".to_string())],
+    );
+
+    assert!(matches!(
+        run(&mut agent).await,
+        TurnOutcome::Completed { .. }
+    ));
+    let session = agent.into_session().await;
+    let receipt = &session.receipts()[0];
+    assert_eq!(receipt.attempts.len(), 2);
+    assert_eq!(receipt.attempts[0].reason, AttemptReason::Initial);
+    assert_eq!(receipt.attempts[1].reason, AttemptReason::RouteFallback);
+    assert_eq!(receipt.winning_attempt, Some(1));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

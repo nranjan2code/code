@@ -164,6 +164,13 @@ export interface DiscoveredSkill {
   source?: string;
   scope?: string;
   provenance?: string | null;
+  shadowed?: boolean;
+}
+
+export interface CustomCommand { name: string; description: string; source?: string; }
+
+export function listCommands(): Promise<{ commands: CustomCommand[] }> {
+  return req("/commands");
 }
 
 export interface InstalledPlugin {
@@ -192,12 +199,25 @@ export interface MarketplaceSource {
   signature?: { algorithm: string; key_id: string; public_key: string; signature: string; verified: boolean; revoked: boolean } | null;
 }
 
+export interface MarketplaceEntry {
+  source_id: string;
+  source_label: string;
+  source_enabled: boolean;
+  source_scope: "user" | "workspace";
+  catalog_digest: string;
+  name: string;
+  version?: string | null;
+  description?: string | null;
+  license?: string | null;
+}
+
 export interface HookConfig {
   event: string;
   matcher?: string | null;
   command: string;
   timeout_ms?: number | null;
   enabled?: boolean;
+  failure_mode?: "open" | "closed";
 }
 
 export function getHooks(): Promise<{ hooks: HookConfig[] }> {
@@ -519,6 +539,14 @@ export function listPlugins(scope?: "user" | "workspace"): Promise<{ plugins: In
 
 export function listPluginSources(scope?: "user" | "workspace"): Promise<{ sources: MarketplaceSource[] }> {
   return req(`/plugins/sources${scope ? `?scope=${scope}` : ""}`);
+}
+
+export function listPluginCatalog(query = "", scope?: "user" | "workspace"): Promise<{ entries: MarketplaceEntry[]; errors: { source_id?: string; error: string }[] }> {
+  const params = new URLSearchParams();
+  if (query.trim()) params.set("q", query.trim());
+  if (scope) params.set("scope", scope);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return req(`/plugins/catalog${suffix}`);
 }
 
 export function registerPluginSource(path: string, label: string, signature?: { key_id: string; public_key: string; signature: string }): Promise<MarketplaceSource> {

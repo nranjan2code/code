@@ -115,6 +115,7 @@ async fn pre_tool_use_hook_blocks_execution() {
         matcher: Some(vak_permission::Rule::parse("Bash(touch *)").unwrap()),
         command: r#"echo '{"decision":"block","reason":"no touching"}'"#.to_string(),
         timeout_ms: 5000,
+        failure_mode: vak_hooks::HookFailureMode::Open,
     }];
     let marker_path = marker_path.display().to_string();
     let mut agent = build(
@@ -168,6 +169,7 @@ async fn stop_hook_forces_continuation_once() {
         matcher: None,
         command: cmd,
         timeout_ms: 5000,
+        failure_mode: vak_hooks::HookFailureMode::Open,
     }];
     let mut agent = build(
         vec![text_msg("first attempt"), text_msg("goodbye")],

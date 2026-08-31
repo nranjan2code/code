@@ -455,10 +455,12 @@ mod tests {
         let primary = RouteLeg {
             provider: "anthropic".into(),
             model: "claude-x".into(),
+            credential_id: None,
         };
         let mk = |m: &str| RouteLeg {
             provider: "openai".into(),
             model: m.into(),
+            credential_id: None,
         };
         let ranked = vec![
             mk("gpt-a"),
@@ -466,6 +468,7 @@ mod tests {
             RouteLeg {
                 provider: "google".into(),
                 model: "gemini-a".into(),
+                credential_id: None,
             },
         ];
         // max_total 4 → seats/provider = 2; openai can hold at most two
@@ -502,6 +505,7 @@ mod tests {
         let primary = RouteLeg {
             provider: "anthropic".into(),
             model: "claude-x".into(),
+            credential_id: None,
         };
         let (legs, annotations) = assemble_ladder(&primary, vec![], 4, false);
         assert_eq!(legs.len(), 1);
@@ -512,6 +516,7 @@ mod tests {
             vec![RouteLeg {
                 provider: "anthropic".into(),
                 model: "claude-y".into(),
+                credential_id: None,
             }],
             4,
             true,
@@ -532,12 +537,14 @@ mod tests {
         let primary = RouteLeg {
             provider: "anthropic".into(),
             model: "claude-x".into(),
+            credential_id: None,
         };
         let ranked = vec![
             primary.clone(),
             RouteLeg {
                 provider: "openai".into(),
                 model: "gpt".into(),
+                credential_id: None,
             },
         ];
         let (legs, _) = assemble_ladder(&primary, ranked, 4, false);

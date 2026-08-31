@@ -32,6 +32,11 @@ use tokio_util::sync::CancellationToken;
 use vak_agent::{Agent, AgentConfig, AgentEvent, TurnOutcome};
 use vak_llm::Provider;
 use vak_llm::registry::{ProviderAuth, ProviderRegistry, default_registry};
+
+type ModelContextCache = std::sync::Mutex<
+    HashMap<(String, String, String), (std::time::Instant, Option<vak_llm::models::ModelContext>)>,
+>;
+type ModelCache = std::sync::Mutex<HashMap<(String, String), (std::time::Instant, Vec<String>)>>;
 use vak_session::SessionLog;
 use vak_session::types::{FrozenContract, SessionHeader};
 use vak_tools::sandbox::SandboxMode;
@@ -157,7 +162,11 @@ struct CoreInner {
     tool_worker_exe: std::sync::Mutex<PathBuf>,
     /// provider -> (fetched_at, model ids). Discovery is a network call;
     /// pickers re-read it constantly, so results are memoised briefly.
-    models_cache: std::sync::Mutex<HashMap<String, (std::time::Instant, Vec<String>)>>,
+    models_cache: ModelCache,
+    /// Provider-reported per-model context limits. Unknown metadata is
+    /// cached briefly too, so an unavailable metadata endpoint cannot stall
+    /// every turn.
+    model_context_cache: ModelContextCache,
     /// Runtime MCP table override (desktop/TUI management surface).
     mcp_override: std::sync::Mutex<Option<vak_config::McpConfig>>,
     mcp_runtime_pinned: std::sync::atomic::AtomicBool,
@@ -373,6 +382,7 @@ impl Core {
                         .unwrap_or_else(|_| PathBuf::from("__vak_tool_worker_unavailable__")),
                 ),
                 models_cache: std::sync::Mutex::new(HashMap::new()),
+                model_context_cache: std::sync::Mutex::new(HashMap::new()),
                 mcp_override: std::sync::Mutex::new(None),
                 mcp_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 hooks_override: std::sync::Mutex::new(None),
@@ -1098,6 +1108,7 @@ impl Core {
                         command: hook.command,
                         timeout_ms: hook.timeout_ms,
                         enabled: true,
+                        failure_mode: Some("open".into()),
                     }
                 }));
             }
@@ -1530,6 +1541,37 @@ impl Core {
             .collect()
     }
 
+    pub fn skills_with_shadowed(&self) -> Vec<skills::Skill> {
+        let mut plugin_roots = Vec::new();
+        for (root, label) in [
+            (self.inner.cwd.join(".vak"), "workspace".to_string()),
+            (self.inner.sessions_home.clone(), "user".to_string()),
+        ] {
+            if let Ok(enabled) = vak_plugin::PluginStore::new(&root).enabled() {
+                plugin_roots.extend(enabled.into_iter().map(|plugin| {
+                    (
+                        plugin.package_path,
+                        format!("plugin:{}:{}:{}", label, plugin.name, plugin.trace_id),
+                    )
+                }));
+            }
+        }
+        let skills = skills::discover_all_with_plugins(
+            &self.inner.cwd,
+            &self.inner.sessions_home,
+            &plugin_roots,
+        );
+        let Some(policy) = self.channel_policy() else {
+            return skills;
+        };
+        skills
+            .into_iter()
+            .filter(|skill| {
+                Self::allowed_by(&policy.skills_allow, &policy.skills_deny, &skill.name)
+            })
+            .collect()
+    }
+
     /// Live subagents spawned by this Core's runs, for attach/steer UIs.
     pub fn subagents(&self) -> Arc<vak_agent::SubagentRegistry> {
         self.inner.subagents.clone()
@@ -1600,7 +1642,18 @@ impl Core {
     fn provider_auth_for(&self, provider: &str) -> Result<ProviderAuth, CoreError> {
         let provider = provider.to_string();
         let required_key = |env: &str, provider: &str| {
-            vak_config::get_var(env)
+            let primary = vak_config::get_var(env).or_else(|| {
+                Self::provider_pool_env_var(provider).and_then(|pool_env| {
+                    vak_config::get_var(pool_env).and_then(|value| {
+                        value
+                            .split([',', '\n'])
+                            .map(str::trim)
+                            .find(|key| !key.is_empty())
+                            .map(str::to_string)
+                    })
+                })
+            });
+            primary
                 .filter(|key| !key.trim().is_empty())
                 .map(|key| key.trim().to_string())
                 .ok_or_else(|| CoreError::MissingAuth {
@@ -1611,19 +1664,35 @@ impl Core {
         match provider.as_str() {
             "anthropic" => {
                 let api_key = required_key("ANTHROPIC_API_KEY", "anthropic")?;
+                let base_url = self
+                    .inner
+                    .config
+                    .anthropic_base_url
+                    .clone()
+                    .or_else(|| vak_config::get_var("VAK_ANTHROPIC_BASE_URL"));
                 Ok(ProviderAuth {
+                    credential_id: Some(vak_llm::credential_id(
+                        base_url
+                            .as_deref()
+                            .unwrap_or(vak_llm::anthropic::DEFAULT_BASE_URL),
+                        &api_key,
+                    )),
                     api_key,
-                    base_url: self
-                        .inner
-                        .config
-                        .anthropic_base_url
-                        .clone()
-                        .or_else(|| vak_config::get_var("VAK_ANTHROPIC_BASE_URL")),
+                    base_url,
                 })
             }
             "google" => {
                 let api_key = vak_config::get_var("GEMINI_API_KEY")
                     .or_else(|| vak_config::get_var("GOOGLE_API_KEY"))
+                    .or_else(|| {
+                        vak_config::get_var("GEMINI_API_KEYS").and_then(|value| {
+                            value
+                                .split([',', '\n'])
+                                .map(str::trim)
+                                .find(|key| !key.is_empty())
+                                .map(str::to_string)
+                        })
+                    })
                     .filter(|key| !key.trim().is_empty())
                     .map(|key| key.trim().to_string())
                     .ok_or_else(|| CoreError::MissingAuth {
@@ -1631,6 +1700,12 @@ impl Core {
                         provider: provider.clone(),
                     })?;
                 Ok(ProviderAuth {
+                    credential_id: Some(vak_llm::credential_id(
+                        &vak_config::get_var("VAK_GOOGLE_BASE_URL").unwrap_or_else(|| {
+                            "https://generativelanguage.googleapis.com/v1beta".into()
+                        }),
+                        &api_key,
+                    )),
                     api_key,
                     base_url: vak_config::get_var("VAK_GOOGLE_BASE_URL").or_else(|| {
                         Some("https://generativelanguage.googleapis.com/v1beta".into())
@@ -1640,6 +1715,11 @@ impl Core {
             "openai-responses" => {
                 let api_key = required_key("OPENAI_API_KEY", "openai-responses")?;
                 Ok(ProviderAuth {
+                    credential_id: Some(vak_llm::credential_id(
+                        &vak_config::get_var("VAK_OPENAI_BASE_URL")
+                            .unwrap_or_else(|| "https://api.openai.com/v1".into()),
+                        &api_key,
+                    )),
                     api_key,
                     base_url: vak_config::get_var("VAK_OPENAI_BASE_URL")
                         .or_else(|| Some("https://api.openai.com/v1".into())),
@@ -1663,6 +1743,10 @@ impl Core {
                 };
                 let api_key = required_key(env, &provider)?;
                 Ok(ProviderAuth {
+                    credential_id: Some(vak_llm::credential_id(
+                        &vak_config::get_var(override_env).unwrap_or_else(|| default_base.into()),
+                        &api_key,
+                    )),
                     api_key,
                     base_url: vak_config::get_var(override_env)
                         .or_else(|| Some(default_base.into())),
@@ -1671,6 +1755,11 @@ impl Core {
             "opencode-zen" => {
                 let api_key = required_key("OPENCODE_API_KEY", "opencode-zen")?;
                 Ok(ProviderAuth {
+                    credential_id: Some(vak_llm::credential_id(
+                        &vak_config::get_var("VAK_OPENCODE_ZEN_BASE_URL")
+                            .unwrap_or_else(|| "https://opencode.ai/zen/v1".into()),
+                        &api_key,
+                    )),
                     api_key,
                     base_url: vak_config::get_var("VAK_OPENCODE_ZEN_BASE_URL")
                         .or_else(|| Some("https://opencode.ai/zen/v1".into())),
@@ -1680,12 +1769,102 @@ impl Core {
                 api_key: "ollama".into(),
                 base_url: vak_config::get_var("VAK_OLLAMA_BASE_URL")
                     .or_else(|| Some("http://localhost:11434/v1".into())),
+                credential_id: Some(vak_llm::credential_id(
+                    &vak_config::get_var("VAK_OLLAMA_BASE_URL")
+                        .unwrap_or_else(|| "http://localhost:11434/v1".into()),
+                    "ollama",
+                )),
             }),
             other => Err(CoreError::MissingAuth {
                 env: format!("(no auth wiring for '{other}' yet)"),
                 provider: other.into(),
             }),
         }
+    }
+
+    pub fn provider_pool_env_var(provider: &str) -> Option<&'static str> {
+        match provider {
+            "anthropic" => Some("ANTHROPIC_API_KEYS"),
+            "google" => Some("GEMINI_API_KEYS"),
+            "openai" | "openai-responses" => Some("OPENAI_API_KEYS"),
+            "openrouter" => Some("OPENROUTER_API_KEYS"),
+            "opencode-zen" => Some("OPENCODE_API_KEYS"),
+            "ollama" => None,
+            _ => None,
+        }
+    }
+
+    /// Resolve all credentials configured for one provider. The singular
+    /// provider variable remains the primary; the plural companion is an
+    /// operator-managed secret value separated by commas or newlines.
+    /// Returned identities are stable fingerprints, never the credentials.
+    fn provider_auth_pool_for(&self, provider: &str) -> Result<Vec<ProviderAuth>, CoreError> {
+        let primary = self.provider_auth_for(provider)?;
+        let Some(pool_env) = Self::provider_pool_env_var(provider) else {
+            return Ok(vec![primary]);
+        };
+        let mut keys = vec![primary.api_key.clone()];
+        if let Some(value) = vak_config::get_var(pool_env) {
+            keys.extend(
+                value
+                    .split([',', '\n'])
+                    .map(str::trim)
+                    .filter(|key| !key.is_empty())
+                    .map(str::to_string),
+            );
+        }
+        let mut unique_keys = Vec::with_capacity(keys.len());
+        for key in keys {
+            if !unique_keys.iter().any(|existing| existing == &key) {
+                unique_keys.push(key);
+            }
+        }
+        let base_url = primary.base_url.clone();
+        Ok(unique_keys
+            .into_iter()
+            .map(|api_key| ProviderAuth {
+                credential_id: Some(vak_llm::credential_id(
+                    base_url.as_deref().unwrap_or_default(),
+                    &api_key,
+                )),
+                api_key,
+                base_url: base_url.clone(),
+            })
+            .collect())
+    }
+
+    fn provider_auth_for_leg(
+        &self,
+        provider: &str,
+        credential_id: Option<&str>,
+    ) -> Result<ProviderAuth, CoreError> {
+        let pool = self.provider_auth_pool_for(provider)?;
+        if let Some(id) = credential_id {
+            return pool
+                .into_iter()
+                .find(|auth| auth.credential_id.as_deref() == Some(id))
+                .ok_or_else(|| CoreError::MissingAuth {
+                    env: format!("credential pool for {provider}"),
+                    provider: provider.to_string(),
+                });
+        }
+        pool.into_iter()
+            .next()
+            .ok_or_else(|| CoreError::MissingAuth {
+                env: format!("credential pool for {provider}"),
+                provider: provider.to_string(),
+            })
+    }
+
+    /// Return only non-secret identities in the configured provider pool.
+    /// This is safe for picker/admin surfaces and lets operators verify that
+    /// a plural pool variable was actually discovered.
+    pub fn provider_credential_ids(&self, provider: &str) -> Vec<String> {
+        self.provider_auth_pool_for(provider)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|auth| auth.credential_id)
+            .collect()
     }
 
     pub fn provider(&self) -> Result<Arc<dyn Provider>, CoreError> {
@@ -1729,11 +1908,22 @@ impl Core {
     pub fn provider_configured(&self, provider: &str) -> bool {
         match provider {
             "ollama" => true,
-            "google" => ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
-                .iter()
-                .any(|env| vak_config::get_var(env).is_some_and(|key| !key.trim().is_empty())),
-            other => vak_config::get_var(Self::provider_env_var(other).unwrap_or(""))
-                .is_some_and(|key| !key.trim().is_empty()),
+            "google" => {
+                ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+                    .iter()
+                    .any(|env| vak_config::get_var(env).is_some_and(|key| !key.trim().is_empty()))
+                    || vak_config::get_var("GEMINI_API_KEYS").is_some_and(|keys| {
+                        keys.split([',', '\n']).any(|key| !key.trim().is_empty())
+                    })
+            }
+            other => {
+                let singular = vak_config::get_var(Self::provider_env_var(other).unwrap_or(""))
+                    .is_some_and(|key| !key.trim().is_empty());
+                let plural = Self::provider_pool_env_var(other)
+                    .and_then(vak_config::get_var)
+                    .is_some_and(|keys| keys.split([',', '\n']).any(|key| !key.trim().is_empty()));
+                singular || plural
+            }
         }
     }
 
@@ -1895,21 +2085,100 @@ impl Core {
     /// use. Results are cached briefly because pickers poll this.
     pub async fn discover_models(&self, provider: &str) -> Result<Vec<String>, CoreError> {
         const TTL: std::time::Duration = std::time::Duration::from_secs(300);
-        if let Ok(cache) = self.inner.models_cache.lock()
-            && let Some((at, models)) = cache.get(provider)
-            && at.elapsed() < TTL
-        {
-            return Ok(models.clone());
-        }
-        let auth = self.provider_auth_for(provider)?;
-        let models = vak_llm::models::list_models(provider, &auth).await?;
-        if let Ok(mut cache) = self.inner.models_cache.lock() {
-            cache.insert(
+        let pool = self.provider_auth_pool_for(provider)?;
+        let mut all = Vec::new();
+        let mut last_error = None;
+        for auth in pool {
+            let key = (
                 provider.to_string(),
-                (std::time::Instant::now(), models.clone()),
+                auth.credential_id.clone().unwrap_or_default(),
             );
+            if let Ok(cache) = self.inner.models_cache.lock()
+                && let Some((at, models)) = cache.get(&key)
+                && at.elapsed() < TTL
+            {
+                all.extend(models.iter().cloned());
+                continue;
+            }
+            match vak_llm::models::list_models(provider, &auth).await {
+                Ok(models) => {
+                    all.extend(models.iter().cloned());
+                    if let Ok(mut cache) = self.inner.models_cache.lock() {
+                        cache.insert(key, (std::time::Instant::now(), models));
+                    }
+                }
+                Err(error) => last_error = Some(error),
+            }
         }
-        Ok(models)
+        all.sort();
+        all.dedup();
+        if all.is_empty()
+            && let Some(error) = last_error
+        {
+            return Err(error.into());
+        }
+        Ok(all)
+    }
+
+    /// Read provider-published account metadata without exposing credentials.
+    pub async fn provider_status(
+        &self,
+        provider: &str,
+    ) -> Result<vak_llm::provider_status::ProviderStatus, CoreError> {
+        let auth = self.provider_auth_for(provider)?;
+        Ok(vak_llm::provider_status::inspect(provider, &auth).await?)
+    }
+
+    async fn route_context_limits(
+        &self,
+        primary: &vak_llm::RouteLeg,
+        fallback: &[vak_llm::RouteLeg],
+    ) -> (u64, u64) {
+        const TTL: std::time::Duration = std::time::Duration::from_secs(300);
+        let mut legs = Vec::with_capacity(1 + fallback.len());
+        legs.push(primary.clone());
+        legs.extend(fallback.iter().cloned());
+        let mut context_window = self.inner.config.context_window;
+        let mut max_output = u64::from(self.inner.config.max_tokens);
+        for leg in legs {
+            let provider = leg.provider;
+            let model = leg.model;
+            let credential_id = leg.credential_id.unwrap_or_default();
+            let cache_key = (provider.clone(), model.clone(), credential_id.clone());
+            let cached = self
+                .inner
+                .model_context_cache
+                .lock()
+                .ok()
+                .and_then(|cache| cache.get(&cache_key).cloned())
+                .filter(|(at, _)| at.elapsed() < TTL)
+                .map(|(_, value)| value);
+            let metadata = if let Some(value) = cached {
+                value
+            } else {
+                let value = match self.provider_auth_for_leg(
+                    &provider,
+                    (!credential_id.is_empty()).then_some(credential_id.as_str()),
+                ) {
+                    Ok(auth) => vak_llm::models::model_context(&provider, &auth, &model)
+                        .await
+                        .ok()
+                        .flatten(),
+                    Err(_) => None,
+                };
+                if let Ok(mut cache) = self.inner.model_context_cache.lock() {
+                    cache.insert(cache_key, (std::time::Instant::now(), value.clone()));
+                }
+                value
+            };
+            if let Some(metadata) = metadata {
+                context_window = context_window.min(metadata.input_tokens);
+                if let Some(output) = metadata.output_tokens {
+                    max_output = max_output.min(output);
+                }
+            }
+        }
+        (context_window, max_output.max(1_000.min(context_window)))
     }
 
     /// Drop memoised discovery for `provider` (or all of it) so the next
@@ -1917,9 +2186,13 @@ impl Core {
     pub fn invalidate_models_cache(&self, provider: Option<&str>) {
         if let Ok(mut cache) = self.inner.models_cache.lock() {
             match provider {
-                Some(p) => {
-                    cache.remove(p);
-                }
+                Some(p) => cache.retain(|(cached_provider, _), _| cached_provider != p),
+                None => cache.clear(),
+            }
+        }
+        if let Ok(mut cache) = self.inner.model_context_cache.lock() {
+            match provider {
+                Some(p) => cache.retain(|(provider, _, _), _| provider != p),
                 None => cache.clear(),
             }
         }
@@ -1936,15 +2209,17 @@ impl Core {
 
         // Same-model legs on other keyed providers (legacy Phase B set).
         if let Ok(cache) = self.inner.models_cache.lock() {
-            for (p, (_, models)) in cache.iter() {
-                if *p != primary.provider
-                    && models.contains(&primary.model)
-                    && self.provider_auth_for(p).is_ok()
-                    && !candidates.iter().any(|c| c.provider == *p)
+            for ((p, credential_id), (_, models)) in cache.iter() {
+                if models.contains(&primary.model)
+                    && !candidates.iter().any(|c| {
+                        c.provider == *p && c.credential_id.as_deref() == Some(credential_id)
+                    })
+                    && self.provider_auth_for_leg(p, Some(credential_id)).is_ok()
                 {
                     candidates.push(vak_llm::RouteLeg {
                         provider: p.clone(),
                         model: primary.model.clone(),
+                        credential_id: Some(credential_id.clone()),
                     });
                 }
             }
@@ -1957,18 +2232,23 @@ impl Core {
         if !route_cfg.fallback_models.is_empty()
             && let Ok(cache) = self.inner.models_cache.lock()
         {
-            for (p, (_, models)) in cache.iter() {
-                if self.provider_auth_for(p).is_err() {
+            for ((p, credential_id), (_, models)) in cache.iter() {
+                if self.provider_auth_for_leg(p, Some(credential_id)).is_err() {
                     continue;
                 }
                 for m in models {
                     if route_cfg.fallback_models.contains(m)
                         && m != &primary.model
-                        && !candidates.iter().any(|c| c.provider == *p && c.model == *m)
+                        && !candidates.iter().any(|c| {
+                            c.provider == *p
+                                && c.model == *m
+                                && c.credential_id.as_deref() == Some(credential_id)
+                        })
                     {
                         candidates.push(vak_llm::RouteLeg {
                             provider: p.clone(),
                             model: m.clone(),
+                            credential_id: Some(credential_id.clone()),
                         });
                     }
                 }
@@ -2043,9 +2323,14 @@ impl Core {
             &self.inner.cwd,
             &session_id,
         );
+        let primary_credential_id = self
+            .provider_auth_for_leg(&provider, None)
+            .ok()
+            .and_then(|auth| auth.credential_id);
         let plan = self.plan_route_ladder(vak_llm::RouteLeg {
             provider: provider.clone(),
             model: model.clone(),
+            credential_id: primary_credential_id,
         });
         let header = SessionHeader {
             session_id,
@@ -2183,7 +2468,13 @@ impl Core {
                 let provider = if let Some(provider) = injected {
                     provider
                 } else {
-                    let auth = self.provider_auth_for(&contract.provider)?;
+                    let auth = self.provider_auth_for_leg(
+                        &contract.provider,
+                        contract
+                            .route_ladder
+                            .first()
+                            .and_then(|leg| leg.credential_id.as_deref()),
+                    )?;
                     self.inner.registry.get(&contract.provider, &auth)?
                 };
                 (provider, contract.model.clone())
@@ -2206,8 +2497,22 @@ impl Core {
                 self.inner.config.request_timeout_secs,
             ))
         };
-        cfg.context_policy.context_window = self.inner.config.context_window;
-        cfg.context_policy.max_output = u64::from(self.inner.config.max_tokens);
+        let route_legs = session_contract
+            .as_ref()
+            .map(|contract| contract.route_ladder.as_slice())
+            .unwrap_or(&[]);
+        let primary_leg = session_contract
+            .as_ref()
+            .and_then(|contract| contract.route_ladder.first().cloned())
+            .unwrap_or_else(|| vak_llm::RouteLeg {
+                provider: provider.name().to_string(),
+                model: model.clone(),
+                credential_id: None,
+            });
+        let (context_window, max_output) =
+            self.route_context_limits(&primary_leg, route_legs).await;
+        cfg.context_policy.context_window = context_window;
+        cfg.context_policy.max_output = max_output;
         let sp = &self.inner.config.stop_policy;
         cfg.stop_policy = if sp.enabled {
             Some(vak_agent::StopPolicy {
@@ -2307,10 +2612,8 @@ impl Core {
             && contract.route_ladder.len() > 1
         {
             for leg in contract.route_ladder.iter().skip(1) {
-                if leg.provider == contract.provider {
-                    continue;
-                }
-                if let Ok(auth) = self.provider_auth_for(&leg.provider)
+                if let Ok(auth) =
+                    self.provider_auth_for_leg(&leg.provider, leg.credential_id.as_deref())
                     && let Ok(p) = self.inner.registry.get(&leg.provider, &auth)
                 {
                     cfg.ladder.push((p, leg.model.clone()));
@@ -2791,6 +3094,48 @@ mod channel_mcp_network_tests {
         );
     }
 
+    #[test]
+    fn provider_pool_reports_distinct_non_secret_identities() {
+        vak_config::set_override("OPENROUTER_API_KEY", "pool-primary");
+        vak_config::set_override("OPENROUTER_API_KEYS", "pool-secondary,pool-tertiary");
+        let directory = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(directory.path().to_path_buf(), true).unwrap();
+        let ids = core.provider_credential_ids("openrouter");
+        vak_config::clear_override("OPENROUTER_API_KEY");
+        vak_config::clear_override("OPENROUTER_API_KEYS");
+
+        assert_eq!(ids.len(), 3);
+        assert_eq!(
+            ids.iter().collect::<std::collections::HashSet<_>>().len(),
+            3
+        );
+        assert!(ids.iter().all(|id| !id.contains("pool-")));
+    }
+
+    #[test]
+    fn provider_identity_uses_effective_anthropic_endpoint() {
+        vak_config::set_override("ANTHROPIC_API_KEY", "anthropic-pool-key");
+        vak_config::set_override(
+            "VAK_ANTHROPIC_BASE_URL",
+            "https://anthropic-proxy.example.test/v1",
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(directory.path().to_path_buf(), true).unwrap();
+        let auth = core.provider_auth_for("anthropic").unwrap();
+        vak_config::clear_override("ANTHROPIC_API_KEY");
+        vak_config::clear_override("VAK_ANTHROPIC_BASE_URL");
+
+        assert_eq!(
+            auth.base_url.as_deref(),
+            Some("https://anthropic-proxy.example.test/v1")
+        );
+        let expected = vak_llm::credential_id(
+            "https://anthropic-proxy.example.test/v1",
+            "anthropic-pool-key",
+        );
+        assert_eq!(auth.credential_id.as_deref(), Some(expected.as_str()));
+    }
+
     /// An un-matched server keeps its own configured value; the deny list
     /// is per-server, not a channel-wide network kill switch.
     #[test]
@@ -2824,6 +3169,24 @@ mod channel_mcp_network_tests {
                 .any(|n| matches!(n.as_str(), "remember" | "propose_skill" | "session_search"))
         );
         assert!(!core.channel_tool_allowed("remember"));
+    }
+
+    #[test]
+    fn default_prompt_documents_dynamic_tool_boundaries() {
+        for phrase in [
+            "- task: delegate one self-contained subtask",
+            "- session_search: search prior session",
+            "- remember: save a durable fact",
+            "- mcp: call a configured MCP capability",
+            "Skill names are guidance documents, never executable tools: never emit a",
+            "When a task says requirements or tests are in workspace files",
+            "Do not claim a change is complete when verification failed",
+        ] {
+            assert!(
+                crate::DEFAULT_SYSTEM_PROMPT.contains(phrase),
+                "default prompt lost required contract phrase: {phrase}"
+            );
+        }
     }
 }
 
@@ -2959,11 +3322,22 @@ fn build_hooks_from(
             Some(m) if !m.trim().is_empty() => Some(vak_permission::Rule::parse(m)?),
             _ => None,
         };
+        let failure_mode = match h.failure_mode.as_deref().unwrap_or("open") {
+            "open" => vak_hooks::HookFailureMode::Open,
+            "closed" => vak_hooks::HookFailureMode::Closed,
+            other => {
+                return Err(CoreError::Config(vak_config::ConfigError::Read {
+                    path: self_path(),
+                    source: std::io::Error::other(format!("unknown hook failure mode '{other}'")),
+                }));
+            }
+        };
         out.push(vak_hooks::HookDef {
             event,
             matcher,
             command: h.command.clone(),
             timeout_ms: h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS),
+            failure_mode,
         });
     }
     Ok(out)

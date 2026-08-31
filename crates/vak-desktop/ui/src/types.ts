@@ -205,6 +205,9 @@ export interface SkillInfo {
 export interface ProviderInfo {
   name: string;
   env_var?: string | null;
+  pool_env_var?: string | null;
+  pool_size?: number;
+  credential_ids?: string[];
   requires_key: boolean;
   configured: boolean;
 }

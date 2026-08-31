@@ -43,9 +43,15 @@ backoff resets on success, nothing else changes.
 
 Provider dispatch already follows invariant 7: typed failure domains,
 retry within the committed ladder honoring Retry-After under watchdog
-deadlines, run-level endurance when nothing was committed, shared breaker
-whose open state fails fast but paces its half-close probe to the
-remaining cooldown.
+deadlines, run-level endurance when nothing was committed, and a breaker
+keyed by provider endpoint plus credential fingerprint. An open leg fails
+fast while other healthy legs remain eligible.
+
+Provider adapter futures are also panic-contained at the dispatch boundary:
+a provider or stream-consumption panic becomes a typed network failure,
+receives the normal receipt/circuit/fallback treatment, and cannot unwind the
+VAK process. Panics in isolated stream workers are converted to terminal
+stream errors by the worker boundary.
 
 Network events map onto it without new machinery:
 - unreachable/refused/DNS-failure ⇒ blind transience (retried; feeds

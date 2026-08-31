@@ -296,6 +296,9 @@ export interface RebuildStats {
 export interface ProviderSummary {
   name: string;
   env_var: string;
+  pool_env_var?: string | null;
+  pool_size?: number;
+  credential_ids?: string[];
   requires_key: boolean;
   configured: boolean;
 }
@@ -471,6 +474,7 @@ export interface HookConfig {
   command: string;
   timeout_ms: number;
   enabled: boolean;
+  failure_mode?: "open" | "closed";
 }
 
 export interface SkillItem {
@@ -480,6 +484,7 @@ export interface SkillItem {
   /** Discovery root the skill came from: `<cwd>/.vak/skills` or the user home. */
   scope?: "workspace" | "user";
   provenance?: string | null;
+  shadowed?: boolean;
 }
 
 export interface PluginItem {
@@ -506,6 +511,18 @@ export interface MarketplaceSource {
   enabled: boolean;
   registered_at_unix: number;
   signature?: { algorithm: string; key_id: string; public_key: string; signature: string; verified: boolean; revoked: boolean } | null;
+}
+
+export interface MarketplaceEntry {
+  source_id: string;
+  source_label: string;
+  source_enabled: boolean;
+  source_scope: "user" | "workspace";
+  catalog_digest: string;
+  name: string;
+  version?: string | null;
+  description?: string | null;
+  license?: string | null;
 }
 
 export interface SkillProposal {

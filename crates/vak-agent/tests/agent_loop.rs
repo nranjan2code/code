@@ -232,6 +232,8 @@ async fn unknown_tool_becomes_error_value_not_crash() {
         })
         .expect("a tool result must exist");
     assert!(results_block.contains("unknown tool"));
+    assert!(results_block.contains("Skill names are documents"));
+    assert!(results_block.contains("do not retry this name"));
 }
 
 #[tokio::test]

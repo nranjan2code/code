@@ -26,7 +26,7 @@ consumers.
 | GET/PATCH | `/config` | effective configuration; provider/model is resolved and persisted as one atomic route before hot-apply; responses include route source/revision; max turns, permission mode, theme, MCP, and hooks share the cross-process refresh contract |
 | PUT | `/config/key` `{provider,key}` | store a provider credential in the user `.env` (0600) |
 | DELETE | `/config/key` `{provider}` | revoke it; `shadowed_by_env` reports a key still exported in the real environment |
-| GET | `/providers` | provider list + which are configured (never key values) |
+| GET | `/providers` | provider list, configured pool size, and non-secret credential fingerprints (never key values) |
 | GET | `/providers/:name/models` | models that provider's stored key can reach, live (502 + reason on failure — never a static fallback) |
 | GET/PUT | `/fs/file` | read/write a file confined to the workspace root |
 | GET | `/fs/tree?limit=` | bounded recursive listing (@-mention autocomplete) |

@@ -83,6 +83,17 @@ when the variable is *also* exported in the real environment — that copy
 cannot be unset from inside the app, and the provider stays authenticated.
 Both paths drop the cached provider client and the discovered-model cache.
 
+Providers may also expose a pool through a plural environment variable:
+`ANTHROPIC_API_KEYS`, `GEMINI_API_KEYS`, `OPENAI_API_KEYS`,
+`OPENROUTER_API_KEYS`, or `OPENCODE_API_KEYS`. Values are comma- or
+newline-separated; the singular variable remains the primary credential.
+VAK fingerprints each credential without storing or returning the secret,
+discovers models separately per credential, and freezes the selected
+fingerprint into each session route leg. Pool identity is distinct from
+provider quota identity: provider-reported organization, project, workspace,
+model-class, and account limits remain separate observations and are never
+assumed to be per-key.
+
 Secrets live in `.env` (project) or `data_home()/.env` (user) — both are
 gitignored by convention and loaded at startup; real environment variables
 always take precedence. Never commit keys.

@@ -28,7 +28,29 @@ impl LlmError {
         matches!(
             self,
             LlmError::RateLimit { .. } | LlmError::Overloaded(_) | LlmError::Network(_)
-        )
+        ) && !self.is_terminal_quota()
+    }
+
+    /// Some gateways use HTTP 429 for a quota or billing ceiling that will
+    /// not recover during this run. Retrying those errors burns a dispatch
+    /// budget and delays a usable fallback without changing the outcome.
+    pub fn is_terminal_quota(&self) -> bool {
+        let LlmError::RateLimit { message, .. } = self else {
+            return false;
+        };
+        let message = message.to_ascii_lowercase();
+        [
+            "free-models-per-day",
+            "daily quota",
+            "monthly quota",
+            "quota exceeded",
+            "spend limit",
+            "credit limit",
+            "insufficient credits",
+            "billing limit",
+        ]
+        .iter()
+        .any(|marker| message.contains(marker))
     }
 
     /// Server-advised wait for RateLimit; None otherwise.
@@ -39,5 +61,30 @@ impl LlmError {
             } => *retry_after_secs,
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LlmError;
+
+    #[test]
+    fn terminal_quota_429_is_not_retried() {
+        let error = LlmError::RateLimit {
+            message: "Rate limit exceeded: free-models-per-day".into(),
+            retry_after_secs: None,
+        };
+        assert!(error.is_terminal_quota());
+        assert!(!error.is_retryable());
+    }
+
+    #[test]
+    fn ordinary_rate_limit_remains_retryable() {
+        let error = LlmError::RateLimit {
+            message: "too many requests".into(),
+            retry_after_secs: Some(2),
+        };
+        assert!(!error.is_terminal_quota());
+        assert!(error.is_retryable());
     }
 }

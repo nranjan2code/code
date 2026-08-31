@@ -26,6 +26,10 @@ use std::collections::HashMap;
 pub struct RouteLeg {
     pub provider: String,
     pub model: String,
+    /// Non-secret credential fingerprint selected at admission. `None` is
+    /// the legacy/default credential for callers that do not use a pool.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_id: Option<String>,
 }
 
 /// One provider/model observation aggregate.
@@ -357,6 +361,7 @@ mod tests {
         RouteLeg {
             provider: p.into(),
             model: m.into(),
+            credential_id: None,
         }
     }
 
@@ -471,6 +476,22 @@ mod tests {
 
     fn leg2(p: &str, m: &str) -> RouteLeg {
         leg(p, m)
+    }
+
+    #[test]
+    fn credential_identity_round_trips_and_legacy_route_defaults_empty() {
+        let scoped = RouteLeg {
+            provider: "openrouter".into(),
+            model: "model-a".into(),
+            credential_id: Some("deadbeef".into()),
+        };
+        let encoded = serde_json::to_string(&scoped).unwrap();
+        let decoded: RouteLeg = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, scoped);
+
+        let legacy: RouteLeg =
+            serde_json::from_str(r#"{"provider":"ollama","model":"local-model"}"#).unwrap();
+        assert_eq!(legacy.credential_id, None);
     }
 
     #[test]

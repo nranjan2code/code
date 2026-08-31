@@ -13,6 +13,10 @@ use crate::types::ChatRequest;
 pub struct ProviderAuth {
     pub api_key: String,
     pub base_url: Option<String>,
+    /// Non-secret identity used to freeze a credential choice in a route.
+    /// Providers continue to authenticate with `api_key`; this label is
+    /// never sent over the wire.
+    pub credential_id: Option<String>,
 }
 
 type Factory = Arc<dyn Fn(&ProviderAuth) -> Result<Arc<dyn Provider>, LlmError> + Send + Sync>;

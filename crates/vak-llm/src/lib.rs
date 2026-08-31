@@ -7,11 +7,13 @@
 
 pub mod anthropic;
 pub mod error;
+pub mod gate;
 pub mod google;
 pub mod google_live;
 pub mod models;
 pub mod openai;
 pub mod openai_responses;
+pub mod provider_status;
 pub mod registry;
 pub mod route;
 pub mod sse;
@@ -20,6 +22,7 @@ pub mod types;
 pub mod work;
 
 pub use error::LlmError;
+pub use gate::credential_id;
 pub use registry::{ProviderAuth, ProviderRegistry};
 pub use route::{
     BELIEF_FLOOR, BeliefMap, Demand, DemandBand, DemandInput, EvidenceSnapshot, ModelEvidence,
@@ -39,6 +42,13 @@ use tokio_util::sync::CancellationToken;
 #[async_trait::async_trait]
 pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
+
+    /// Stable in-process health identity. Implementations with independent
+    /// credentials must include that credential's fingerprint so one bad key
+    /// cannot open the circuit for another key.
+    fn circuit_key(&self) -> String {
+        self.name().to_string()
+    }
 
     async fn stream(
         &self,
