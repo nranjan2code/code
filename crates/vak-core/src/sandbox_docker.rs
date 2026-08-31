@@ -8,6 +8,7 @@
 //! their host-side confinement via the permission engine.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::OnceLock;
 
 use vak_tools::sandbox::SandboxMode;
@@ -79,6 +80,14 @@ impl vak_tools::sandbox::Sandbox for DockerSandbox {
 
     fn target(&self) -> vak_tools::sandbox::SandboxTarget {
         vak_tools::sandbox::SandboxTarget::ToolCommand
+    }
+
+    fn read_only_variant(&self) -> Option<Arc<dyn vak_tools::sandbox::Sandbox>> {
+        Some(Arc::new(DockerSandbox::new(
+            SandboxMode::ReadOnly,
+            Some(self.image.clone()),
+            &self.workspace,
+        )))
     }
 }
 

@@ -1,6 +1,6 @@
 # 42 — Managed work contracts
 
-Status: implementation hardening in progress; the contract and ledger model are implemented, with remaining verification and recovery work tracked below
+Status: implementation hardening complete for the shipped managed-work paths; optional flow execution accepts durable work linkage, while the checklist below records the broader roadmap and known limitations
 
 ## Mission
 
@@ -540,6 +540,11 @@ work contract complete AND goal audit passes = audited completion
 The verifier must not mutate the workspace it evaluates. The current goal-mode
 limitation—judging largely from transcript evidence—must be reduced by adding
 checkpoint/workspace-diff evidence before claiming production completeness.
+Shell criteria in managed verification therefore require a configured
+read-only sandbox and fail closed when one is unavailable. Flow execution can
+carry a contract/item context, records flow-node evidence, and maps its
+running item through interruption or verification readiness without allowing
+the flow to mark the item succeeded directly.
 
 ## Recovery and idempotency
 

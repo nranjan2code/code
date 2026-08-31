@@ -480,6 +480,11 @@ impl Agent {
         }
         if self.config.work_enabled && self.config.work_mode == WorkMode::Managed {
             let entry_id = prompt_entry.id.clone();
+            if let Err(error) = self.resolve_managed_input(&prompt_owned).await {
+                return TurnOutcome::Failed {
+                    error: LlmError::InvalidRequest(error),
+                };
+            }
             if let Err(error) = self
                 .start_managed_contract(&prompt_owned, entry_id, &cancel, &events)
                 .await
@@ -966,7 +971,7 @@ impl Agent {
                     turn += 1;
                     continue;
                 }
-                if let Some(rejection) = self.managed_work_gate(Some(&events)).await
+                if let Some(rejection) = self.managed_work_gate(&cancel, Some(&events)).await
                     && self.guard_continue(rejection, &events, turn).await
                 {
                     turn += 1;
@@ -997,7 +1002,7 @@ impl Agent {
                     turn += 1;
                     continue;
                 }
-                if let Some(rejection) = self.managed_work_gate(Some(&events)).await
+                if let Some(rejection) = self.managed_work_gate(&cancel, Some(&events)).await
                     && self.guard_continue(rejection, &events, turn).await
                 {
                     turn += 1;
@@ -1085,6 +1090,69 @@ impl Agent {
 
             turn += 1;
         }
+    }
+
+    async fn resolve_managed_input(&self, answer: &str) -> Result<(), String> {
+        let mut session = self.session.lock().await;
+        let Some(projection) = session
+            .work_projection()
+            .map_err(|error| format!("managed work projection is invalid: {error}"))?
+        else {
+            return Ok(());
+        };
+        if projection.status != vak_session::types::WorkContractStatus::AwaitingInput {
+            return Ok(());
+        }
+        let Some(assumption) =
+            projection.contract.assumptions.iter().find(|assumption| {
+                assumption.requires_confirmation && assumption.resolution.is_none()
+            })
+        else {
+            return Ok(());
+        };
+        if answer.trim().is_empty() {
+            return Err(format!(
+                "cannot resolve assumption '{}' with an empty answer",
+                assumption.assumption_id
+            ));
+        }
+        session
+            .append_work(vak_session::types::WorkEvent {
+                contract_id: projection.contract.contract_id.clone(),
+                revision: projection.contract.revision,
+                kind: vak_session::types::WorkEventKind::AssumptionResolved {
+                    assumption_id: assumption.assumption_id.clone(),
+                    resolution: answer.trim().into(),
+                },
+            })
+            .map_err(|error| format!("managed assumption resolution failed: {error}"))?;
+        let Some(updated) = session
+            .work_projection()
+            .map_err(|error| format!("managed work projection is invalid: {error}"))?
+        else {
+            return Ok(());
+        };
+        if updated.status == vak_session::types::WorkContractStatus::AwaitingInput
+            && updated
+                .contract
+                .assumptions
+                .iter()
+                .filter(|assumption| assumption.requires_confirmation)
+                .all(|assumption| assumption.resolution.is_some())
+        {
+            session
+                .append_work(vak_session::types::WorkEvent {
+                    contract_id: updated.contract.contract_id,
+                    revision: updated.contract.revision,
+                    kind: vak_session::types::WorkEventKind::ContractStatusChanged {
+                        from: vak_session::types::WorkContractStatus::AwaitingInput,
+                        to: vak_session::types::WorkContractStatus::Active,
+                        reason: "all required assumptions resolved from chat".into(),
+                    },
+                })
+                .map_err(|error| format!("managed work activation failed: {error}"))?;
+        }
+        Ok(())
     }
 
     async fn start_managed_contract(
@@ -1225,7 +1293,11 @@ impl Agent {
         }
     }
 
-    async fn managed_work_gate(&self, events: Option<&mpsc::Sender<AgentEvent>>) -> Option<String> {
+    async fn managed_work_gate(
+        &self,
+        cancel: &CancellationToken,
+        events: Option<&mpsc::Sender<AgentEvent>>,
+    ) -> Option<String> {
         if !self.config.work_enabled || self.config.work_mode != WorkMode::Managed {
             return None;
         }
@@ -1246,7 +1318,8 @@ impl Agent {
         }
         let criteria = projection.contract.criteria.clone();
         drop(session);
-        self.verify_managed_criteria(&criteria).await;
+        self.verify_managed_criteria(&criteria, &projection, cancel)
+            .await;
         let mut session = self.session.lock().await;
         let projection = match session.work_projection() {
             Ok(Some(projection)) => projection,
@@ -1348,7 +1421,12 @@ impl Agent {
         None
     }
 
-    async fn verify_managed_criteria(&self, criteria: &[vak_session::types::WorkCriterion]) {
+    async fn verify_managed_criteria(
+        &self,
+        criteria: &[vak_session::types::WorkCriterion],
+        projection: &vak_session::work::WorkProjection,
+        cancel: &CancellationToken,
+    ) {
         let cwd = self
             .session
             .lock()
@@ -1359,7 +1437,7 @@ impl Agent {
         for criterion in criteria {
             let result = match &criterion.kind {
                 vak_session::types::CriterionKind::Shell { command } => self
-                    .run_audit_command(command, &CancellationToken::new())
+                    .run_audit_command(command, cancel)
                     .await
                     .map(|_| vak_session::types::CriterionResult::Passed {
                         evidence: format!("shell:{command}"),
@@ -1418,7 +1496,17 @@ impl Agent {
                     reason: "criterion requires an independent semantic judge".into(),
                 },
                 vak_session::types::CriterionKind::ToolSucceeded { tool } => {
-                    if self.tool_succeeded_in_session(tool).await {
+                    let mut succeeded = false;
+                    for item_id in self.criterion_item_ids(projection, &criterion.criterion_id) {
+                        if self
+                            .tool_succeeded_for_item(projection, &item_id, tool)
+                            .await
+                        {
+                            succeeded = true;
+                            break;
+                        }
+                    }
+                    if succeeded {
                         vak_session::types::CriterionResult::Passed {
                             evidence: format!("tool_succeeded:{tool}"),
                         }
@@ -1429,9 +1517,15 @@ impl Agent {
                     }
                 }
                 vak_session::types::CriterionKind::FlowCompleted { flow } => {
-                    if self.work_evidence_matches(|evidence| {
-                        matches!(evidence, vak_session::types::EvidenceRef::FlowNode { flow: name, .. } if name == flow)
-                    }).await {
+                    if self.criterion_item_ids(projection, &criterion.criterion_id).into_iter().any(
+                        |item_id| {
+                            projection.items.get(&item_id).is_some_and(|item| {
+                                item.evidence.iter().any(|evidence| {
+                                    matches!(evidence, vak_session::types::EvidenceRef::FlowNode { flow: name, .. } if name == flow)
+                                })
+                            })
+                        },
+                    ) {
                         vak_session::types::CriterionResult::Passed {
                             evidence: format!("flow_completed:{flow}"),
                         }
@@ -1442,9 +1536,15 @@ impl Agent {
                     }
                 }
                 vak_session::types::CriterionKind::ExternalReceipt { integration } => {
-                    if self.work_evidence_matches(|evidence| {
-                        matches!(evidence, vak_session::types::EvidenceRef::ExternalOperation { integration: name, .. } if name == integration)
-                    }).await {
+                    if self.criterion_item_ids(projection, &criterion.criterion_id).into_iter().any(
+                        |item_id| {
+                            projection.items.get(&item_id).is_some_and(|item| {
+                                item.evidence.iter().any(|evidence| {
+                                    matches!(evidence, vak_session::types::EvidenceRef::ExternalOperation { integration: name, .. } if name == integration)
+                                })
+                            })
+                        },
+                    ) {
                         vak_session::types::CriterionResult::Passed {
                             evidence: format!("external_receipt:{integration}"),
                         }
@@ -1493,26 +1593,42 @@ impl Agent {
         }
     }
 
-    async fn work_evidence_matches(
+    fn criterion_item_ids(
         &self,
-        predicate: impl Fn(&vak_session::types::EvidenceRef) -> bool,
-    ) -> bool {
-        self.session
-            .lock()
-            .await
-            .work_projection()
-            .ok()
-            .flatten()
-            .is_some_and(|projection| {
-                projection
-                    .items
-                    .values()
-                    .flat_map(|item| item.evidence.iter())
-                    .any(predicate)
-            })
+        projection: &vak_session::work::WorkProjection,
+        criterion_id: &str,
+    ) -> Vec<String> {
+        projection
+            .contract
+            .items
+            .iter()
+            .filter(|item| item.criterion_ids.iter().any(|id| id == criterion_id))
+            .map(|item| item.item_id.clone())
+            .collect()
     }
 
-    async fn tool_succeeded_in_session(&self, tool: &str) -> bool {
+    async fn tool_succeeded_for_item(
+        &self,
+        projection: &vak_session::work::WorkProjection,
+        item_id: &str,
+        tool: &str,
+    ) -> bool {
+        let Some(item) = projection.items.get(item_id) else {
+            return false;
+        };
+        let tool_result_ids: std::collections::HashSet<&str> = item
+            .evidence
+            .iter()
+            .filter_map(|evidence| match evidence {
+                vak_session::types::EvidenceRef::ToolResult { tool_use_id, .. } => {
+                    Some(tool_use_id.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        if tool_result_ids.is_empty() {
+            return false;
+        }
         let session = self.session.lock().await;
         let mut tool_names = std::collections::HashMap::new();
         for entry in session.chain_to_root() {
@@ -1535,7 +1651,8 @@ impl Agent {
                         tool_use_id,
                         is_error: false,
                         ..
-                    } if tool_names.get(tool_use_id.as_str()).copied() == Some(tool)
+                    } if tool_result_ids.contains(tool_use_id.as_str())
+                        && tool_names.get(tool_use_id.as_str()).copied() == Some(tool)
                 )
             })
         })
@@ -1703,11 +1820,19 @@ impl Agent {
             &self.run_call_counts,
         )
         .await?;
+        let Some(sandbox) = self
+            .config
+            .sandbox
+            .as_ref()
+            .and_then(|sandbox| sandbox.read_only_variant())
+        else {
+            return Err("shell verification requires a read-only sandbox".into());
+        };
         let ctx = vak_tools::ToolContext {
             cwd,
             cancel: cancel.child_token(),
             limits: Default::default(),
-            sandbox: self.config.sandbox.clone(),
+            sandbox: Some(sandbox),
         };
         let input = serde_json::json!({ "command": cmd });
         let out = match tokio::time::timeout(

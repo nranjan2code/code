@@ -242,6 +242,17 @@ fn apply_event(
     {
         return Err(WorkError::InvalidEvent);
     }
+    if matches!(&event.kind, WorkEventKind::AssumptionResolved { .. })
+        && matches!(
+            current.status,
+            WorkContractStatus::Completed
+                | WorkContractStatus::Failed
+                | WorkContractStatus::Cancelled
+                | WorkContractStatus::Unverified
+        )
+    {
+        return Err(WorkError::InvalidEvent);
+    }
 
     match &event.kind {
         WorkEventKind::ContractCreated { .. } => unreachable!(),
@@ -710,6 +721,128 @@ mod tests {
             project_work(&refs).unwrap().unwrap().contract.assumptions[0].resolution,
             Some("confirmed".into())
         );
+    }
+
+    #[test]
+    fn terminal_contract_rejects_late_assumption_resolution() {
+        let mut c = contract(vec![item("implement", Vec::new())]);
+        c.assumptions.push(crate::types::WorkAssumption {
+            assumption_id: "scope".into(),
+            text: "use the current workspace".into(),
+            requires_confirmation: false,
+            resolution: None,
+        });
+        let entries = [
+            entry(WorkEvent {
+                contract_id: "work-1".into(),
+                revision: 0,
+                kind: WorkEventKind::ContractCreated { contract: c },
+            }),
+            entry(WorkEvent {
+                contract_id: "work-1".into(),
+                revision: 0,
+                kind: WorkEventKind::ContractStatusChanged {
+                    from: WorkContractStatus::Draft,
+                    to: WorkContractStatus::Active,
+                    reason: "confirmed".into(),
+                },
+            }),
+            entry(WorkEvent {
+                contract_id: "work-1".into(),
+                revision: 0,
+                kind: WorkEventKind::ItemStatusChanged {
+                    item_id: "implement".into(),
+                    from: WorkItemStatus::Proposed,
+                    to: WorkItemStatus::Ready,
+                    attempt: 0,
+                    reason: String::new(),
+                },
+            }),
+            entry(WorkEvent {
+                contract_id: "work-1".into(),
+                revision: 0,
+                kind: WorkEventKind::ItemStatusChanged {
+                    item_id: "implement".into(),
+                    from: WorkItemStatus::Ready,
+                    to: WorkItemStatus::Running,
+                    attempt: 1,
+                    reason: String::new(),
+                },
+            }),
+            entry(WorkEvent {
+                contract_id: "work-1".into(),
+                revision: 0,
+                kind: WorkEventKind::EvidenceAttached {
+                    item_id: "implement".into(),
+                    evidence: EvidenceRef::LedgerEntry {
+                        session_id: "s".into(),
+                        entry_id: "result".into(),
+                    },
+                },
+            }),
+            entry(WorkEvent {
+                contract_id: "work-1".into(),
+                revision: 0,
+                kind: WorkEventKind::ItemStatusChanged {
+                    item_id: "implement".into(),
+                    from: WorkItemStatus::Running,
+                    to: WorkItemStatus::ReadyForVerification,
+                    attempt: 1,
+                    reason: String::new(),
+                },
+            }),
+            entry(WorkEvent {
+                contract_id: "work-1".into(),
+                revision: 0,
+                kind: WorkEventKind::VerificationRecorded {
+                    criterion_id: "tests".into(),
+                    result: CriterionResult::Passed {
+                        evidence: "result".into(),
+                    },
+                },
+            }),
+            entry(WorkEvent {
+                contract_id: "work-1".into(),
+                revision: 0,
+                kind: WorkEventKind::ItemVerified {
+                    item_id: "implement".into(),
+                    attempt: 1,
+                },
+            }),
+            entry(WorkEvent {
+                contract_id: "work-1".into(),
+                revision: 0,
+                kind: WorkEventKind::ContractStatusChanged {
+                    from: WorkContractStatus::Active,
+                    to: WorkContractStatus::Verifying,
+                    reason: "verification started".into(),
+                },
+            }),
+            entry(WorkEvent {
+                contract_id: "work-1".into(),
+                revision: 0,
+                kind: WorkEventKind::ContractStatusChanged {
+                    from: WorkContractStatus::Verifying,
+                    to: WorkContractStatus::Completed,
+                    reason: "verified".into(),
+                },
+            }),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+        let projection = project_work(&refs).unwrap().unwrap();
+        assert_eq!(projection.status, WorkContractStatus::Completed);
+
+        let mut late = entries.to_vec();
+        late.push(entry(WorkEvent {
+            contract_id: "work-1".into(),
+            revision: 0,
+            kind: WorkEventKind::AssumptionResolved {
+                assumption_id: "scope".into(),
+                resolution: "changed".into(),
+            },
+        }));
+        let refs: Vec<&Entry> = late.iter().collect();
+        assert_eq!(project_work(&refs), Err(WorkError::InvalidEvent));
     }
 
     #[test]

@@ -2610,7 +2610,18 @@ impl Core {
         goal: Option<(String, Vec<String>)>,
         work_mode: Option<WorkMode>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
-        session.reconcile_running_work(&std::collections::HashSet::new())?;
+        let live_child_sessions = session
+            .header()
+            .map(|header| {
+                self.inner
+                    .subagents
+                    .active_for(&header.session_id)
+                    .into_iter()
+                    .map(|child| child.id)
+                    .collect::<std::collections::HashSet<_>>()
+            })
+            .unwrap_or_default();
+        session.reconcile_running_work(&live_child_sessions)?;
         let session_contract = session.header().map(|header| header.contract.clone());
         let (provider, model) = match session_contract.as_ref() {
             Some(contract) => {

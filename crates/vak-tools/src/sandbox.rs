@@ -21,6 +21,10 @@ pub trait Sandbox: Send + Sync {
     fn target(&self) -> SandboxTarget {
         SandboxTarget::WorkerProcess
     }
+
+    fn read_only_variant(&self) -> Option<Arc<dyn Sandbox>> {
+        None
+    }
 }
 
 pub fn no_sandbox() -> Option<Arc<dyn Sandbox>> {
@@ -50,6 +54,10 @@ impl Sandbox for DenySandbox {
             "echo {} >&2; exit 126",
             shell_quote(&format!("vak sandbox unavailable: {}", self.reason))
         )
+    }
+
+    fn read_only_variant(&self) -> Option<Arc<dyn Sandbox>> {
+        Some(Arc::new(self.clone()))
     }
 }
 
@@ -226,6 +234,14 @@ impl Sandbox for Seatbelt {
             shell_quote(&self.profile()),
             shell_quote(command)
         )
+    }
+
+    fn read_only_variant(&self) -> Option<Arc<dyn Sandbox>> {
+        Some(Arc::new(Seatbelt {
+            mode: SandboxMode::ReadOnly,
+            read_paths: self.read_paths.clone(),
+            write_paths: Vec::new(),
+        }))
     }
 }
 

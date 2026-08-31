@@ -132,6 +132,7 @@ fn make_deps(provider: Arc<ScriptedPlanner>) -> Arc<ExecutorDeps> {
         sessions_home: home.clone(),
         parent_session_id: "plan-parent".into(),
         state_path: home.join("flow-runs/plan"),
+        work: None,
     })
 }
 

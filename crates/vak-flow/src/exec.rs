@@ -68,6 +68,14 @@ pub struct ExecutorDeps {
     pub parent_session_id: String,
     /// Where the run-state ledger is persisted.
     pub state_path: PathBuf,
+    pub work: Option<FlowWorkContext>,
+}
+
+#[derive(Clone)]
+pub struct FlowWorkContext {
+    pub session: Arc<tokio::sync::Mutex<SessionLog>>,
+    pub contract_id: String,
+    pub work_item_id: String,
 }
 
 #[derive(Debug)]
@@ -121,6 +129,14 @@ impl Executor {
             .iter()
             .map(|n| (n.id.clone(), n.clone()))
             .collect();
+
+        if let Err(reason) = self.start_work_item().await {
+            return FlowOutcome::Failed {
+                node: "<work>".into(),
+                reason,
+                outputs: BTreeMap::new(),
+            };
+        }
 
         for layer in &layer_list {
             let mut runnable = Vec::new();
@@ -216,6 +232,21 @@ impl Executor {
                     .await;
                 self.persist(state);
 
+                if status == NodeStatus::Completed
+                    && let Err(reason) = self
+                        .record_work_evidence(&id, &state.run_id, &flow.name)
+                        .await
+                {
+                    let _ = self
+                        .finish_work_item(vak_session::types::WorkItemStatus::Failed)
+                        .await;
+                    return FlowOutcome::Failed {
+                        node: id,
+                        reason,
+                        outputs: collect_outputs(state),
+                    };
+                }
+
                 if failed && by_id.get(&id).is_some_and(|n| n.required) {
                     // Mark every transitive dependent skipped so the ledger
                     // reflects why they never ran.
@@ -240,6 +271,9 @@ impl Executor {
                         }
                     }
                     self.persist(state);
+                    let _ = self
+                        .finish_work_item(vak_session::types::WorkItemStatus::Failed)
+                        .await;
                     return FlowOutcome::Failed {
                         node: id,
                         reason: output,
@@ -249,10 +283,23 @@ impl Executor {
             }
 
             if cancel.is_cancelled() {
+                let _ = self
+                    .finish_work_item(vak_session::types::WorkItemStatus::Interrupted)
+                    .await;
                 return FlowOutcome::Aborted;
             }
         }
 
+        if let Err(reason) = self
+            .finish_work_item(vak_session::types::WorkItemStatus::ReadyForVerification)
+            .await
+        {
+            return FlowOutcome::Failed {
+                node: "<work>".into(),
+                reason,
+                outputs: collect_outputs(state),
+            };
+        }
         FlowOutcome::Completed {
             outputs: collect_outputs(state),
         }
@@ -265,6 +312,109 @@ impl Executor {
             }
             let _ = std::fs::write(&self.deps.state_path, json);
         }
+    }
+
+    async fn record_work_evidence(
+        &self,
+        node_id: &str,
+        run_id: &str,
+        flow_name: &str,
+    ) -> Result<(), String> {
+        let Some(work) = &self.deps.work else {
+            return Ok(());
+        };
+        let mut session = work.session.lock().await;
+        let Some(projection) = session
+            .work_projection()
+            .map_err(|error| format!("flow work projection is invalid: {error}"))?
+        else {
+            return Err("flow work context has no contract".into());
+        };
+        if projection.contract.contract_id != work.contract_id {
+            return Err("flow work context targets a different contract".into());
+        }
+        session
+            .append_work(vak_session::types::WorkEvent {
+                contract_id: work.contract_id.clone(),
+                revision: projection.contract.revision,
+                kind: vak_session::types::WorkEventKind::EvidenceAttached {
+                    item_id: work.work_item_id.clone(),
+                    evidence: vak_session::types::EvidenceRef::FlowNode {
+                        flow: flow_name.into(),
+                        run_id: run_id.into(),
+                        node_id: node_id.into(),
+                    },
+                },
+            })
+            .map_err(|error| format!("flow evidence write failed: {error}"))?;
+        Ok(())
+    }
+
+    async fn start_work_item(&self) -> Result<(), String> {
+        let Some(work) = &self.deps.work else {
+            return Ok(());
+        };
+        let mut session = work.session.lock().await;
+        let Some(projection) = session.work_projection().map_err(|e| e.to_string())? else {
+            return Err("flow work context has no contract".into());
+        };
+        let Some(state) = projection.items.get(&work.work_item_id) else {
+            return Err("flow work context has no work item".into());
+        };
+        if state.status == vak_session::types::WorkItemStatus::Ready {
+            session
+                .append_work(vak_session::types::WorkEvent {
+                    contract_id: work.contract_id.clone(),
+                    revision: projection.contract.revision,
+                    kind: vak_session::types::WorkEventKind::ItemStatusChanged {
+                        item_id: work.work_item_id.clone(),
+                        from: vak_session::types::WorkItemStatus::Ready,
+                        to: vak_session::types::WorkItemStatus::Running,
+                        attempt: state.attempt.saturating_add(1),
+                        reason: "flow execution started".into(),
+                    },
+                })
+                .map_err(|e| e.to_string())?;
+        } else if state.status != vak_session::types::WorkItemStatus::Running {
+            return Err(format!(
+                "flow work item is {:?}, not ready or running",
+                state.status
+            ));
+        }
+        Ok(())
+    }
+
+    async fn finish_work_item(
+        &self,
+        status: vak_session::types::WorkItemStatus,
+    ) -> Result<(), String> {
+        let Some(work) = &self.deps.work else {
+            return Ok(());
+        };
+        let mut session = work.session.lock().await;
+        let Some(projection) = session.work_projection().map_err(|e| e.to_string())? else {
+            return Err("flow work context has no contract".into());
+        };
+        let Some(state) = projection.items.get(&work.work_item_id) else {
+            return Err("flow work context has no work item".into());
+        };
+        if state.status != vak_session::types::WorkItemStatus::Running {
+            return Ok(());
+        }
+        session
+            .append_work(vak_session::types::WorkEvent {
+                contract_id: work.contract_id.clone(),
+                revision: projection.contract.revision,
+                kind: vak_session::types::WorkEventKind::ItemStatusChanged {
+                    item_id: work.work_item_id.clone(),
+                    from: vak_session::types::WorkItemStatus::Running,
+                    to: status,
+                    attempt: state.attempt,
+                    reason: "flow execution returned".into(),
+                },
+            })
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 }
 

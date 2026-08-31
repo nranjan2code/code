@@ -7,6 +7,7 @@
 //! running unrestricted.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::sandbox::{Sandbox, SandboxMode};
 
@@ -171,6 +172,14 @@ impl Sandbox for Landlock {
         parts.push("--".to_string());
         parts.push(shell_quote(command));
         parts.join(" ")
+    }
+
+    fn read_only_variant(&self) -> Option<Arc<dyn Sandbox>> {
+        Some(Arc::new(Landlock {
+            mode: SandboxMode::ReadOnly,
+            read_paths: self.read_paths.clone(),
+            write_paths: Vec::new(),
+        }))
     }
 }
 

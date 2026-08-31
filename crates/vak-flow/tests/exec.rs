@@ -108,6 +108,7 @@ fn make_executor_with_policy(
         sessions_home: home,
         parent_session_id: "flow-parent".into(),
         state_path,
+        work: None,
     })
 }
 
