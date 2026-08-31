@@ -506,8 +506,31 @@ impl Agent {
                 })
             {
                 let mut response = AssistantMessage::empty(self.config.model.clone());
+                let pending = self
+                    .session
+                    .lock()
+                    .await
+                    .work_projection()
+                    .ok()
+                    .flatten()
+                    .map(|work| {
+                        work.contract
+                            .assumptions
+                            .iter()
+                            .filter(|assumption| {
+                                assumption.requires_confirmation && assumption.resolution.is_none()
+                            })
+                            .map(|assumption| {
+                                format!("- {}: {}", assumption.assumption_id, assumption.text)
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .unwrap_or_default();
                 response.content.push(ContentBlock::text(
-                    "I created the managed work contract, but need the required assumptions confirmed before starting.",
+                    format!(
+                        "I created the managed work contract, but need these assumptions confirmed before starting:\n{pending}\nReply with: answer: <your answer>.",
+                    ),
                 ));
                 let _ = self.session.lock().await.append_message(MessageRecord {
                     message: response.clone().into_message(),
@@ -971,7 +994,7 @@ impl Agent {
                     turn += 1;
                     continue;
                 }
-                if let Some(rejection) = self.managed_work_gate(&cancel, Some(&events)).await
+                if let Some(rejection) = self.managed_work_gate(&cancel, &events).await
                     && self.guard_continue(rejection, &events, turn).await
                 {
                     turn += 1;
@@ -1002,7 +1025,7 @@ impl Agent {
                     turn += 1;
                     continue;
                 }
-                if let Some(rejection) = self.managed_work_gate(&cancel, Some(&events)).await
+                if let Some(rejection) = self.managed_work_gate(&cancel, &events).await
                     && self.guard_continue(rejection, &events, turn).await
                 {
                     turn += 1;
@@ -1103,6 +1126,9 @@ impl Agent {
         if projection.status != vak_session::types::WorkContractStatus::AwaitingInput {
             return Ok(());
         }
+        let Some(answer) = answer.trim().strip_prefix("answer:").map(str::trim) else {
+            return Ok(());
+        };
         let Some(assumption) =
             projection.contract.assumptions.iter().find(|assumption| {
                 assumption.requires_confirmation && assumption.resolution.is_none()
@@ -1110,7 +1136,7 @@ impl Agent {
         else {
             return Ok(());
         };
-        if answer.trim().is_empty() {
+        if answer.is_empty() {
             return Err(format!(
                 "cannot resolve assumption '{}' with an empty answer",
                 assumption.assumption_id
@@ -1122,7 +1148,7 @@ impl Agent {
                 revision: projection.contract.revision,
                 kind: vak_session::types::WorkEventKind::AssumptionResolved {
                     assumption_id: assumption.assumption_id.clone(),
-                    resolution: answer.trim().into(),
+                    resolution: answer.into(),
                 },
             })
             .map_err(|error| format!("managed assumption resolution failed: {error}"))?;
@@ -1244,7 +1270,7 @@ impl Agent {
             criteria: authored.criteria,
             items: authored.items,
         };
-        vak_session::validate_contract(&contract)
+        vak_session::validate_contract_for_admission(&contract)
             .map_err(|error| format!("managed contract validation failed: {error}"))?;
         validate_work_paths(&contract)?;
         let mut session = self.session.lock().await;
@@ -1294,9 +1320,9 @@ impl Agent {
     }
 
     async fn managed_work_gate(
-        &self,
+        &mut self,
         cancel: &CancellationToken,
-        events: Option<&mpsc::Sender<AgentEvent>>,
+        events: &mpsc::Sender<AgentEvent>,
     ) -> Option<String> {
         if !self.config.work_enabled || self.config.work_mode != WorkMode::Managed {
             return None;
@@ -1318,7 +1344,7 @@ impl Agent {
         }
         let criteria = projection.contract.criteria.clone();
         drop(session);
-        self.verify_managed_criteria(&criteria, &projection, cancel)
+        self.verify_managed_criteria(&criteria, &projection, cancel, events)
             .await;
         let mut session = self.session.lock().await;
         let projection = match session.work_projection() {
@@ -1414,18 +1440,17 @@ impl Agent {
                 return Some(format!("managed completion status failed: {error}"));
             }
         }
-        if let Some(events) = events {
-            drop(session);
-            self.emit_work_state(events).await;
-        }
+        drop(session);
+        self.emit_work_state(events).await;
         None
     }
 
     async fn verify_managed_criteria(
-        &self,
+        &mut self,
         criteria: &[vak_session::types::WorkCriterion],
         projection: &vak_session::work::WorkProjection,
         cancel: &CancellationToken,
+        events: &mpsc::Sender<AgentEvent>,
     ) {
         let cwd = self
             .session
@@ -1491,10 +1516,7 @@ impl Agent {
                         },
                     }
                 }
-                vak_session::types::CriterionKind::Semantic
-                => vak_session::types::CriterionResult::Unknown {
-                    reason: "criterion requires an independent semantic judge".into(),
-                },
+                vak_session::types::CriterionKind::Semantic => continue,
                 vak_session::types::CriterionKind::ToolSucceeded { tool } => {
                     let mut succeeded = false;
                     for item_id in self.criterion_item_ids(projection, &criterion.criterion_id) {
@@ -1521,7 +1543,7 @@ impl Agent {
                         |item_id| {
                             projection.items.get(&item_id).is_some_and(|item| {
                                 item.evidence.iter().any(|evidence| {
-                                    matches!(evidence, vak_session::types::EvidenceRef::FlowNode { flow: name, .. } if name == flow)
+                                    matches!(evidence, vak_session::types::EvidenceRef::FlowNode { flow: name, node_id, .. } if name == flow && node_id == "__flow_completed__")
                                 })
                             })
                         },
@@ -1556,6 +1578,55 @@ impl Agent {
                 }
             };
             self.record_managed_criterion(criterion, result).await;
+        }
+        let semantic: Vec<(vak_session::types::WorkCriterion, String)> = criteria
+            .iter()
+            .filter_map(|criterion| match &criterion.kind {
+                vak_session::types::CriterionKind::Semantic => Some((
+                    criterion.clone(),
+                    format!("[{}] {}", criterion.criterion_id, criterion.statement),
+                )),
+                _ => None,
+            })
+            .collect();
+        if semantic.is_empty() || cancel.is_cancelled() {
+            return;
+        }
+        let judge_criteria: Vec<String> = semantic.iter().map(|(_, text)| text.clone()).collect();
+        match self.run_judge(&judge_criteria, cancel, events).await {
+            Ok(verdicts) => {
+                for (criterion, expected) in semantic {
+                    let result = verdicts
+                        .iter()
+                        .find(|verdict| verdict.criterion == expected)
+                        .map(|verdict| match verdict.verdict.as_str() {
+                            "pass" => vak_session::types::CriterionResult::Passed {
+                                evidence: verdict.evidence.clone(),
+                            },
+                            "fail" => vak_session::types::CriterionResult::Failed {
+                                reason: verdict.evidence.clone(),
+                            },
+                            _ => vak_session::types::CriterionResult::Unknown {
+                                reason: verdict.evidence.clone(),
+                            },
+                        })
+                        .unwrap_or_else(|| vak_session::types::CriterionResult::Unknown {
+                            reason: "judge returned no verdict for this criterion".into(),
+                        });
+                    self.record_managed_criterion(&criterion, result).await;
+                }
+            }
+            Err(reason) => {
+                for (criterion, _) in semantic {
+                    self.record_managed_criterion(
+                        &criterion,
+                        vak_session::types::CriterionResult::Unknown {
+                            reason: reason.clone(),
+                        },
+                    )
+                    .await;
+                }
+            }
         }
     }
 
@@ -2397,6 +2468,7 @@ impl Agent {
                             self.emit_work_state(events).await;
                             (call.id.clone(), result)
                         } else {
+                            let is_task = call.name == "task";
                             let (returned_id, result) = execute_one(
                                 call,
                                 &self.config.tools,
@@ -2410,7 +2482,8 @@ impl Agent {
                                 events,
                             )
                             .await;
-                            if let Some((contract_id, item_id, attempt)) = managed_item {
+                            if !is_task && let Some((contract_id, item_id, attempt)) = managed_item
+                            {
                                 self.finish_managed_tool_item(
                                     &contract_id,
                                     &item_id,

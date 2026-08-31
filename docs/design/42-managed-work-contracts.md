@@ -1,6 +1,6 @@
 # 42 — Managed work contracts
 
-Status: implementation hardening complete for the shipped managed-work paths; optional flow execution accepts durable work linkage, while the checklist below records the broader roadmap and known limitations
+Status: implementation hardening complete for the shipped managed-work paths; managed flow ownership remains an explicit integration gap because no production flow dispatcher is currently exposed to the agent
 
 ## Mission
 
@@ -537,14 +537,18 @@ Goal mode composes with this flow:
 work contract complete AND goal audit passes = audited completion
 ```
 
-The verifier must not mutate the workspace it evaluates. The current goal-mode
-limitation—judging largely from transcript evidence—must be reduced by adding
-checkpoint/workspace-diff evidence before claiming production completeness.
+The verifier must not mutate the workspace it evaluates. Semantic managed
+criteria use the independent read-only judge; deterministic criteria are
+checked before that dispatch. The current goal-mode limitation—judging largely
+from transcript evidence—must be reduced by adding checkpoint/workspace-diff
+evidence before claiming production completeness.
 Shell criteria in managed verification therefore require a configured
 read-only sandbox and fail closed when one is unavailable. Flow execution can
 carry a contract/item context, records flow-node evidence, and maps its
 running item through interruption or verification readiness without allowing
 the flow to mark the item succeeded directly.
+The CLI flow entry points currently run without that context; managed contracts
+must not treat those standalone runs as linked work execution.
 
 ## Recovery and idempotency
 
@@ -712,7 +716,8 @@ verdict, including parallel execution.
 - Reconcile interrupted items after restart.
 - Classify retry-safe operations.
 - Add operation identities and idempotency checks.
-- Add durable approval/input resume behavior.
+- Add durable approval/input resume behavior; chat clarification requires the
+  explicit answer: prefix and the API cannot resume unresolved assumptions.
 - Never replay uncertain external mutations automatically.
 
 Exit: crash/restart tests demonstrate safe recovery without duplicate

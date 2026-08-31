@@ -291,6 +291,19 @@ impl Executor {
         }
 
         if let Err(reason) = self
+            .record_work_evidence("__flow_completed__", &state.run_id, &flow.name)
+            .await
+        {
+            let _ = self
+                .finish_work_item(vak_session::types::WorkItemStatus::Failed)
+                .await;
+            return FlowOutcome::Failed {
+                node: "<work>".into(),
+                reason,
+                outputs: collect_outputs(state),
+            };
+        }
+        if let Err(reason) = self
             .finish_work_item(vak_session::types::WorkItemStatus::ReadyForVerification)
             .await
         {

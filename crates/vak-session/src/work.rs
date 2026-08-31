@@ -110,6 +110,22 @@ pub fn validate_contract(contract: &WorkContract) -> Result<(), WorkError> {
     ensure_acyclic(&contract.items)
 }
 
+pub fn validate_contract_for_admission(contract: &WorkContract) -> Result<(), WorkError> {
+    validate_contract(contract)?;
+    if contract.items.iter().any(|item| {
+        item.required
+            && !item.criterion_ids.iter().any(|criterion_id| {
+                contract
+                    .criteria
+                    .iter()
+                    .any(|criterion| criterion.criterion_id == *criterion_id && criterion.required)
+            })
+    }) {
+        return Err(WorkError::InvalidEvent);
+    }
+    Ok(())
+}
+
 fn ensure_acyclic(items: &[WorkItemDefinition]) -> Result<(), WorkError> {
     let mut indegree: BTreeMap<&str, usize> = items
         .iter()
@@ -306,6 +322,23 @@ fn apply_event(
                     from: current.status.clone(),
                     to: to.clone(),
                 });
+            }
+            if *to == WorkContractStatus::Completed
+                && (current.contract.items.iter().any(|item| {
+                    item.required
+                        && !current
+                            .items
+                            .get(&item.item_id)
+                            .is_some_and(|state| state.status == WorkItemStatus::Succeeded)
+                }) || current.contract.criteria.iter().any(|criterion| {
+                    criterion.required
+                        && !matches!(
+                            current.criteria.get(&criterion.criterion_id),
+                            Some(CriterionResult::Passed { .. })
+                        )
+                }))
+            {
+                return Err(WorkError::InvalidEvent);
             }
             current.status = to.clone();
         }
@@ -558,6 +591,57 @@ mod tests {
     fn rejects_dependency_cycles() {
         let result = validate_contract(&contract(vec![item("a", vec!["b"]), item("b", vec!["a"])]));
         assert_eq!(result, Err(WorkError::DependencyCycle));
+    }
+
+    #[test]
+    fn required_items_need_required_criteria() {
+        let mut c = contract(vec![item("a", Vec::new())]);
+        c.items[0].criterion_ids.clear();
+        assert_eq!(
+            validate_contract_for_admission(&c),
+            Err(WorkError::InvalidEvent)
+        );
+    }
+
+    #[test]
+    fn projector_rejects_completion_with_unverified_work() {
+        let c = contract(vec![item("a", Vec::new())]);
+        let entries = [
+            entry(WorkEvent {
+                contract_id: "work-1".into(),
+                revision: 0,
+                kind: WorkEventKind::ContractCreated { contract: c },
+            }),
+            entry(WorkEvent {
+                contract_id: "work-1".into(),
+                revision: 0,
+                kind: WorkEventKind::ContractStatusChanged {
+                    from: WorkContractStatus::Draft,
+                    to: WorkContractStatus::Active,
+                    reason: String::new(),
+                },
+            }),
+            entry(WorkEvent {
+                contract_id: "work-1".into(),
+                revision: 0,
+                kind: WorkEventKind::ContractStatusChanged {
+                    from: WorkContractStatus::Active,
+                    to: WorkContractStatus::Verifying,
+                    reason: String::new(),
+                },
+            }),
+            entry(WorkEvent {
+                contract_id: "work-1".into(),
+                revision: 0,
+                kind: WorkEventKind::ContractStatusChanged {
+                    from: WorkContractStatus::Verifying,
+                    to: WorkContractStatus::Completed,
+                    reason: String::new(),
+                },
+            }),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+        assert_eq!(project_work(&refs), Err(WorkError::InvalidEvent));
     }
 
     #[test]

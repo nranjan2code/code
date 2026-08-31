@@ -174,7 +174,12 @@ async fn managed_turn_authors_and_persists_validated_contract() {
         "objective": "make the change",
         "constraints": [],
         "assumptions": [],
-        "criteria": [],
+        "criteria": [{
+            "criterion_id": "change",
+            "statement": "the change tool completed",
+            "kind": {"kind": "tool_succeeded", "tool": "bash"},
+            "required": true
+        }],
         "items": [{
             "item_id": "change",
             "title": "Make the change",
@@ -184,7 +189,7 @@ async fn managed_turn_authors_and_persists_validated_contract() {
             "required": true,
             "readonly": false,
             "path_claims": [],
-            "criterion_ids": []
+            "criterion_ids": ["change"]
         }]
     });
     let mut h = harness(
@@ -222,6 +227,75 @@ async fn managed_turn_authors_and_persists_validated_contract() {
         vak_session::types::WorkItemStatus::Succeeded
     );
     assert_eq!(session.receipts()[0].purpose, WorkPurpose::Plan);
+}
+
+#[tokio::test]
+async fn managed_semantic_criterion_uses_the_independent_judge() {
+    let authored = serde_json::json!({
+        "objective": "make the change",
+        "constraints": [],
+        "assumptions": [],
+        "criteria": [{
+            "criterion_id": "review",
+            "statement": "the requested change is complete",
+            "kind": {"kind": "semantic"},
+            "required": true
+        }],
+        "items": [{
+            "item_id": "change",
+            "title": "Make the change",
+            "instructions": "make it",
+            "dependencies": [],
+            "owner": "parent_agent",
+            "required": true,
+            "readonly": false,
+            "path_claims": [],
+            "criterion_ids": ["review"]
+        }]
+    });
+    let judge = serde_json::json!({
+        "results": [{
+            "criterion": "[review] the requested change is complete",
+            "verdict": "pass",
+            "evidence": "the tool result and final response agree"
+        }]
+    });
+    let mut h = harness(
+        vec![
+            ScriptedResponse::Message(assistant_text(&authored.to_string())),
+            ScriptedResponse::Message(tool_call_msg(
+                "b1",
+                "bash",
+                serde_json::json!({"command": "true"}),
+            )),
+            ScriptedResponse::Message(assistant_text("done")),
+            ScriptedResponse::Message(assistant_text(&judge.to_string())),
+        ],
+        vec![Arc::new(BashTool)],
+    );
+    h.agent.config.work_mode = WorkMode::Managed;
+    let outcome = h
+        .agent
+        .run(
+            "please make the change",
+            &SteeringQueues::new(),
+            CancellationToken::new(),
+            h.events_tx,
+        )
+        .await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    let session = h.agent.into_session().await;
+    let projection = session.work_projection().unwrap().unwrap();
+    assert_eq!(
+        projection.criteria["review"],
+        vak_session::types::CriterionResult::Passed {
+            evidence: "the tool result and final response agree".into()
+        }
+    );
+    assert_eq!(
+        projection.status,
+        vak_session::types::WorkContractStatus::Completed
+    );
 }
 
 #[tokio::test]

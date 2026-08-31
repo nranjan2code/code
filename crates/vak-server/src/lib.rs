@@ -3290,6 +3290,19 @@ async fn session_work_command(
             }
         }
         WorkCommand::Resume { reason } => {
+            if projection.status == vak_session::types::WorkContractStatus::AwaitingInput
+                && projection.contract.assumptions.iter().any(|assumption| {
+                    assumption.requires_confirmation && assumption.resolution.is_none()
+                })
+            {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "required assumptions must be resolved before resuming"
+                    })),
+                )
+                    .into_response();
+            }
             vak_session::types::WorkEventKind::ContractStatusChanged {
                 from: projection.status,
                 to: vak_session::types::WorkContractStatus::Active,
@@ -3342,6 +3355,20 @@ async fn session_work_command(
                 )
                     .into_response();
             }
+            if matches!(
+                &evidence,
+                vak_session::types::EvidenceRef::FlowNode { .. }
+                    | vak_session::types::EvidenceRef::ChildSession { .. }
+                    | vak_session::types::EvidenceRef::ExternalOperation { .. }
+            ) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "runtime-owned evidence must be produced by its integration"
+                    })),
+                )
+                    .into_response();
+            }
             vak_session::types::WorkEventKind::EvidenceAttached { item_id, evidence }
         }
         WorkCommand::Assign {
@@ -3379,7 +3406,7 @@ async fn session_work_command(
                 )
                     .into_response();
             }
-            if let Err(error) = vak_session::validate_contract(&contract) {
+            if let Err(error) = vak_session::validate_contract_for_admission(&contract) {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(serde_json::json!({ "error": error.to_string() })),

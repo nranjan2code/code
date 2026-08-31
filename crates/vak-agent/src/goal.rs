@@ -67,6 +67,7 @@ pub fn audit_prompt(
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CriterionVerdict {
+    pub criterion: String,
     pub verdict: String,
     pub evidence: String,
 }
@@ -88,6 +89,11 @@ pub fn parse_verdicts(text: &str) -> Result<Vec<CriterionVerdict>, String> {
     let mut out = Vec::new();
     for r in results {
         out.push(CriterionVerdict {
+            criterion: r
+                .get("criterion")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             verdict: r
                 .get("verdict")
                 .and_then(|v| v.as_str())
@@ -197,6 +203,7 @@ mod tests {
         let clean = r#"{"results":[{"criterion":"tests","verdict":"pass","evidence":"green"},{"criterion":"lint","verdict":"fail","evidence":"3 warnings"}]}"#;
         let v = parse_verdicts(clean).unwrap();
         assert_eq!(v.len(), 2);
+        assert_eq!(v[0].criterion, "tests");
         assert_eq!(v[1].verdict, "fail");
 
         let fenced = format!("```json\n{clean}\n```");

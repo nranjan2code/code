@@ -21,4 +21,6 @@ pub use types::{
     CapabilityKind, CompactionEntry, Entry, EntryPayload, FrozenContract, MessageMeta,
     MessageRecord, SessionError, SessionHeader,
 };
-pub use work::{WorkError, WorkProjection, project_work, validate_contract};
+pub use work::{
+    WorkError, WorkProjection, project_work, validate_contract, validate_contract_for_admission,
+};
