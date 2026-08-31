@@ -15,6 +15,7 @@ import json
 import os
 import pathlib
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -51,6 +52,26 @@ class Outcome:
     profile: str
 
 
+def captured(command: tuple[str, ...] | list[str], timeout: int) -> tuple[int, str, bool]:
+    process = subprocess.Popen(command, cwd=ROOT, text=True, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        output, _ = process.communicate(timeout=timeout)
+        return process.returncode, output, False
+    except subprocess.TimeoutExpired as error:
+        partial = error.stdout or ""
+        if isinstance(partial, bytes):
+            partial = partial.decode(errors="replace")
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        remainder, _ = process.communicate()
+        if isinstance(remainder, bytes):
+            remainder = remainder.decode(errors="replace")
+        return 124, partial + remainder + "\nTIMEOUT\n", True
+
+
 def rust_targets() -> list[tuple[str, str, str]]:
     targets: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str, str]] = set()
@@ -68,10 +89,10 @@ def rust_targets() -> list[tuple[str, str, str]]:
     return sorted(seen)
 
 
-def capability(package: str, target: str) -> str:
-    text = f"{package}/{target}".lower()
+def capability(package: str, target: str, test: str = "") -> str:
+    text = f"{package}/{target}/{test}".lower()
     groups = {
-        "agent-orchestration": ("vak-agent", "adoption", "fanout", "subagent", "goal", "reliability", "run_endurance", "stop_guard"),
+        "agent-orchestration": ("adoption", "fanout", "subagent", "goal", "reliability", "run_endurance", "stop_guard", "steering", "task::"),
         "memory-knowledge": ("memory", "learning", "reflection", "session_search", "search_endpoint", "personal_os"),
         "mcp": ("mcp",),
         "hooks": ("hook",),
@@ -81,7 +102,7 @@ def capability(package: str, target: str) -> str:
         "permissions-security": ("permission", "security", "sandbox", "claims"),
         "tools": ("tool",),
         "flows-planning": ("flow", "planner", "validation"),
-        "llm-providers": ("stream", "vision"),
+        "llm-providers": ("vak-llm", "stream", "vision", "provider", "route", "model", "context"),
         "persistence-recovery": ("checkpoint", "session_log", "backup", "store"),
     }
     for name, needles in groups.items():
@@ -95,14 +116,12 @@ def discover(timeout: int) -> list[Scenario]:
     for package, target, target_kind in rust_targets():
         target_args = ["--lib"] if target_kind == "lib" else ["--bin", target] if target_kind == "bin" else ["--test", target]
         command = ["cargo", "test", "-q", "-p", package, *target_args, "--", "--list"]
-        try:
-            result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, timeout=timeout)
-        except subprocess.TimeoutExpired:
+        returncode, output, timed_out = captured(command, timeout)
+        if timed_out:
             raise RuntimeError(f"test discovery timed out for {package}/{target}")
-        if result.returncode:
-            raise RuntimeError(f"test discovery failed for {package}/{target}:\n{result.stdout[-2000:]}")
-        for line in result.stdout.splitlines():
+        if returncode:
+            raise RuntimeError(f"test discovery failed for {package}/{target}:\n{output[-2000:]}")
+        for line in output.splitlines():
             match = TEST_LINE.match(line.strip())
             if not match:
                 continue
@@ -114,38 +133,26 @@ def discover(timeout: int) -> list[Scenario]:
                 package=package,
                 target=target,
                 test=test,
-                capability=capability(package, target),
+                capability=capability(package, target, test),
                 command=tuple(run_command),
             ))
     return sorted({scenario.scenario_id: scenario for scenario in scenarios}.values(), key=lambda item: item.scenario_id)
 
 
-def expand_profiles(scenarios: list[Scenario], limit: int) -> list[Scenario]:
-    """Add explicitly labeled execution profiles when unique tests are < limit."""
-    if len(scenarios) >= limit:
-        return scenarios
-    profiles = ("parallel-2", "parallel-8", "replay")
-    expanded = list(scenarios)
-    index = 0
-    while len(expanded) < limit:
-        base = scenarios[index % len(scenarios)]
-        profile = profiles[index % len(profiles)]
-        command = tuple(
-            "--test-threads=2" if profile == "parallel-2" and part == "--test-threads=1" else
-            "--test-threads=8" if profile == "parallel-8" and part == "--test-threads=1" else part
-            for part in base.command
-        )
-        expanded.append(Scenario(
-            scenario_id=f"{base.scenario_id}#profile={profile}-{index}",
-            package=base.package,
-            target=base.target,
-            test=base.test,
-            capability=base.capability,
-            command=command,
-            profile=profile,
-        ))
-        index += 1
-    return expanded
+def repeat_scenarios(scenarios: list[Scenario], repetitions: int) -> list[Scenario]:
+    executions: list[Scenario] = []
+    for repetition in range(repetitions):
+        for scenario in scenarios:
+            executions.append(Scenario(
+                scenario_id=f"{scenario.scenario_id}#repetition={repetition}",
+                package=scenario.package,
+                target=scenario.target,
+                test=scenario.test,
+                capability=scenario.capability,
+                command=scenario.command,
+                profile=f"repetition-{repetition}",
+            ))
+    return executions
 
 
 def select_scenarios(scenarios: list[Scenario], limit: int) -> list[Scenario]:
@@ -172,17 +179,8 @@ def select_scenarios(scenarios: list[Scenario], limit: int) -> list[Scenario]:
 
 def execute(scenario: Scenario, timeout: int) -> Outcome:
     started = time.monotonic()
-    try:
-        result = subprocess.run(scenario.command, cwd=ROOT, text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                timeout=timeout)
-        status = "passed" if result.returncode == 0 else "failed"
-        output = result.stdout
-        code = result.returncode
-    except subprocess.TimeoutExpired as error:
-        status = "timeout"
-        output = (error.stdout or "") + "\nTIMEOUT\n"
-        code = 124
+    code, output, timed_out = captured(scenario.command, timeout)
+    status = "timeout" if timed_out else "passed" if code == 0 else "failed"
     return Outcome(scenario.scenario_id, scenario.package, scenario.target, scenario.test,
                    scenario.capability, status, code, time.monotonic() - started, output[-3000:], scenario.profile)
 
@@ -224,7 +222,8 @@ def markdown(report: dict) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--limit", type=int, default=500, help="number of distinct scenarios to execute")
+    parser.add_argument("--limit", type=int, default=500, help="maximum unique scenarios to select")
+    parser.add_argument("--repeat", type=int, default=1, help="honest repetitions of the selected unique set")
     parser.add_argument("--workers", type=int, default=min(8, os.cpu_count() or 1))
     parser.add_argument("--discovery-timeout", type=int, default=120)
     parser.add_argument("--case-timeout", type=int, default=120)
@@ -234,26 +233,26 @@ def main() -> int:
     args = parser.parse_args()
     scenarios = discover(args.discovery_timeout)
     unique_count = len(scenarios)
-    scenarios = expand_profiles(scenarios, args.limit)
-    print(f"DISCOVERED {unique_count} distinct Rust test scenarios; EXECUTION_MATRIX {len(scenarios)}")
+    if args.limit > unique_count:
+        raise SystemExit(f"requested {args.limit} unique scenarios but only {unique_count} were discovered")
+    selected = select_scenarios(scenarios, args.limit)
+    executions = repeat_scenarios(selected, max(1, args.repeat))
+    print(f"DISCOVERED {unique_count} distinct Rust test scenarios; SELECTED {len(selected)}; EXECUTIONS {len(executions)}")
     if args.discover_only:
-        for scenario in scenarios:
+        for scenario in selected:
             print(f"{scenario.capability}\t{scenario.scenario_id}")
         return 0
-    if len(scenarios) < args.limit:
-        raise SystemExit(f"only {len(scenarios)} distinct scenarios discovered; refusing to fake {args.limit}")
-    selected = select_scenarios(scenarios, args.limit)
-    unique_selected = len({scenario.scenario_id.split("#profile=", 1)[0] for scenario in selected})
     started = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
-        outcomes = list(pool.map(lambda scenario: execute(scenario, args.case_timeout), selected))
+        outcomes = list(pool.map(lambda scenario: execute(scenario, args.case_timeout), executions))
     outcomes.sort(key=lambda item: item.scenario_id)
     report = {
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "runner": str(pathlib.Path(__file__).resolve()),
-        "configuration": {"limit": args.limit, "workers": args.workers, "case_timeout": args.case_timeout,
-                          "unique_discovered": unique_count, "unique_selected": unique_selected,
-                          "profile_executions": len(outcomes) - unique_selected},
+        "configuration": {"unique_limit": args.limit, "repetitions": max(1, args.repeat),
+                          "workers": args.workers, "case_timeout": args.case_timeout,
+                          "unique_discovered": unique_count, "unique_selected": len(selected),
+                          "total_executions": len(outcomes)},
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "summary": {
             "total": len(outcomes),

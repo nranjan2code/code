@@ -27,23 +27,27 @@ def snapshot(root_pid: int) -> dict:
     while frontier:
         selected.extend(rows[pid] for pid in frontier if pid in rows)
         frontier = {row["pid"] for row in rows.values() if row["ppid"] in frontier}
-    selected_ids = {row["pid"] for row in selected}
     def is_ollama_process(row: dict) -> bool:
         executable = row["command"].split(None, 1)[0].lower()
         return executable.rsplit("/", 1)[-1] in {"ollama", "ollama.exe"} or \
             "/ollama.app/" in executable
 
-    selected.extend(row for row in rows.values()
-                    if is_ollama_process(row) and row["pid"] not in selected_ids)
+    ollama = [row for row in rows.values() if is_ollama_process(row)]
     load = os.getloadavg()
-    therm = subprocess.run(["pmset", "-g", "therm"], text=True, capture_output=True).stdout[-2000:]
+    try:
+        therm = subprocess.run(["pmset", "-g", "therm"], text=True,
+                               capture_output=True, timeout=5).stdout[-2000:]
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        therm = "thermal telemetry unavailable"
     return {"timestamp": dt.datetime.now(dt.timezone.utc).isoformat(), "root_pid": root_pid,
             "load_1m": load[0], "load_5m": load[1], "load_15m": load[2],
             "process_cpu_percent_sum": round(sum(row["cpu"] for row in selected), 2),
             "process_rss_mb_sum": round(sum(row["rss_kb"] for row in selected) / 1024, 2),
+            "ollama_cpu_percent_sum": round(sum(row["cpu"] for row in ollama), 2),
+            "ollama_rss_mb_sum": round(sum(row["rss_kb"] for row in ollama) / 1024, 2),
             "system_cpu_percent_sum": round(sum(row["cpu"] for row in rows.values()), 2),
             "system_rss_mb_sum": round(sum(row["rss_kb"] for row in rows.values()) / 1024, 2),
-            "ollama_processes": [row for row in rows.values() if "ollama" in row["command"].lower()],
+            "ollama_processes": ollama,
             "processes": selected, "thermal_raw": therm}
 
 

@@ -15,6 +15,7 @@ import json
 import os
 import pathlib
 import re
+import signal
 import site
 import subprocess
 import sys
@@ -22,10 +23,20 @@ import tempfile
 import time
 from dataclasses import dataclass
 
+from prompt_scenarios import ledger_tool_calls, provider_is_local
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BIN = ROOT / "target" / "debug" / "vak"
-GLOBAL_SKILLS = pathlib.Path.home() / "Library" / "Application Support" / "vak" / "skills"
+
+
+def global_skills() -> pathlib.Path:
+    if configured := os.environ.get("VAK_HOME"):
+        return pathlib.Path(configured) / "skills"
+    if sys.platform == "darwin":
+        return pathlib.Path.home() / "Library" / "Application Support" / "vak" / "skills"
+    data = pathlib.Path(os.environ.get("XDG_DATA_HOME", pathlib.Path.home() / ".local" / "share"))
+    return data / "vak" / "skills"
 
 
 def python_dependency_paths(explicit: str | None) -> str:
@@ -64,21 +75,25 @@ def run(name: str, command: list[str], *, cwd: pathlib.Path = ROOT,
         env: dict[str, str] | None = None, timeout: int = 180,
         input_text: str | None = None) -> Result:
     started = time.monotonic()
+    process = subprocess.Popen(command, cwd=cwd, env=env, text=True,
+                               stdin=subprocess.PIPE if input_text is not None else None,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               start_new_session=True)
     try:
-        completed = subprocess.run(
-            command,
-            cwd=cwd,
-            env=env,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            input=input_text,
-            timeout=timeout,
-        )
-        output = completed.stdout
-        returncode = completed.returncode
+        output, _ = process.communicate(input=input_text, timeout=timeout)
+        returncode = process.returncode
     except subprocess.TimeoutExpired as error:
-        output = (error.stdout or "") + "\nTIMEOUT\n"
+        partial = error.stdout or ""
+        if isinstance(partial, bytes):
+            partial = partial.decode(errors="replace")
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        remainder, _ = process.communicate()
+        if isinstance(remainder, bytes):
+            remainder = remainder.decode(errors="replace")
+        output = partial + remainder + "\nTIMEOUT\n"
         returncode = 124
     return Result(name, command, time.monotonic() - started, returncode, output[-2000:])
 
@@ -92,7 +107,7 @@ def assert_result(result: Result, needle: str | None = None) -> Result:
 
 
 def run_offline_matrix(results: list[Result], repeat: int, feed_site: str | None) -> None:
-    global_validation = [str(BIN), "skills", "validate", str(GLOBAL_SKILLS), "--json"]
+    global_validation = [str(BIN), "skills", "validate", str(global_skills()), "--json"]
     for index in range(repeat):
         results.append(assert_result(run(f"skills-validate-{index}", global_validation)))
 
@@ -203,10 +218,10 @@ def live_code_case(provider: str, model: str) -> Result:
         env = {**os.environ, "VAK_HOME": str(root / "home"), "VAK_PROVIDER": provider, "VAK_MODEL": model}
         result = run(
             "live-code-skill-tools-child",
-            [str(BIN), "exec", "Use the code-task skill. Read .vak/skills/code-task/SKILL.md, README.md, and test_app.py. Edit only app.py, run python3 test_app.py, and report the exact result. Do not edit tests or README.", "--trust", "--yes", "--max-turns", "24"],
+            [str(BIN), "exec", "Use the code-task skill. Read .vak/skills/code-task/SKILL.md, README.md, and test_app.py. Edit only app.py and run python3 test_app.py. Then use the advertised task tool to ask a readonly child agent to review app.py and the test result. After the child returns, run python3 test_app.py again as the final action. Do not edit tests or README, and do not edit app.py after the final passing test.", "--trust", "--yes", "--max-turns", "24"],
             cwd=root,
             env=env,
-            timeout=360,
+            timeout=900 if provider_is_local(provider) else 360,
         )
         if result.returncode != 0:
             raise RuntimeError(result.output)
@@ -214,11 +229,16 @@ def live_code_case(provider: str, model: str) -> Result:
         if tests.returncode != 0:
             raise RuntimeError(f"live code invariant failed: {tests.stdout}\n{(root / 'app.py').read_text()}")
         ledgers = list((root / "home" / "sessions").glob("*/*.jsonl"))
-        raw = "\n".join(path.read_text() for path in ledgers)
-        if ".vak/skills/code-task/SKILL.md" not in raw and "SKILL.md" not in raw:
-            raise RuntimeError("live run did not leave skill-read evidence in its ledger")
-        if '"task"' not in raw and "task" not in raw.lower():
-            raise RuntimeError("live run did not leave child-agent evidence in its ledger")
+        calls = ledger_tool_calls(ledgers)
+        if not any(name == "read" and str(inputs.get("path", "")).endswith("SKILL.md")
+                   for name, inputs in calls):
+            raise RuntimeError("live run did not execute a skill read")
+        if not any(name == "task" for name, _ in calls):
+            raise RuntimeError("live run did not execute a child-agent task call")
+        verification_calls = [inputs for name, inputs in calls
+                              if name == "bash" and "python3 test_app.py" in str(inputs.get("command", ""))]
+        if len(verification_calls) < 2:
+            raise RuntimeError("live run did not verify both before and after child review")
         return result
 
 

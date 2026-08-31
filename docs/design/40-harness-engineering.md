@@ -13,11 +13,21 @@ VAK has two complementary regression lanes:
   final output. Model mistakes are retained as failures rather than hidden by
   retries.
 
-The current repository exposes 889 distinct Rust test scenarios. A balanced
-500-case run is the default acceptance gate; it is a selected unique subset,
-not 500 claims of end-to-end model quality. Prompt-driven cases are the quality
-lane, and live Ollama runs are bounded because model inference is substantially
-slower and less deterministic than Rust tests.
+The deterministic runner discovers individual Rust tests at execution time. A
+balanced 500-case run is the default acceptance gate; it is a selected unique
+subset, not 500 claims of end-to-end model quality. Repetition is reported as
+execution volume and never added to the unique-scenario count. Prompt-driven
+cases are the quality lane, and live Ollama runs are bounded because model
+inference is substantially slower and less deterministic than Rust tests.
+
+Prompt scenario identity is a hash of the task, fixture, postcondition, output
+contract, scope contract, and allowed changes. Renaming an identical fixture
+does not create a new semantic scenario. Evidence comes from parsed JSONL
+`tool_use` records, not substring matches against user or system prompt text.
+The runner snapshots the complete workspace around each case, rejects
+unexpected changes, verifies that child process groups are gone, writes atomic
+partial reports plus a heartbeat, supports resume, and holds an exclusive
+stale-PID-aware report lock so two processes cannot corrupt one run.
 
 Live results are reported on three separate axes: correctness (postconditions
 and scope), control-plane integrity (ledger, timeout, cancellation, and child
@@ -141,7 +151,7 @@ under a duration and load budget, not as proof of indefinite availability.
 Example commands:
 
 ```text
-python3 scripts/harness_500.py --limit 500 --workers 8
+python3 scripts/harness_500.py --limit 500 --repeat 1 --workers 8
 python3 scripts/compound_regression.py --repeat 2 --live --provider ollama --model gemma4:e2b-mlx
 python3 scripts/prompt_scenarios.py --provider openrouter --model <free-model> --workers 2
 ```
