@@ -325,6 +325,15 @@ pub async fn list_feed_items(
     });
 
     let result = run_feed_mcp_request(cwd, &request).await?;
+    let result = match result {
+        Value::Object(mut payload) => {
+            if let Some(items) = payload.remove("results") {
+                payload.insert("items".into(), items);
+            }
+            Value::Object(payload)
+        }
+        value => value,
+    };
     Ok(Json(result))
 }
 

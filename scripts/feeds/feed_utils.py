@@ -583,8 +583,12 @@ def get_stats() -> dict:
     con = get_db(read_only=True)
     try:
         total_items = con.execute("SELECT COUNT(*) FROM items").fetchone()[0]
-        total_feeds = con.execute("SELECT COUNT(*) FROM feeds").fetchone()[0]
-        active_feeds = con.execute("SELECT COUNT(*) FROM feeds WHERE enabled = true").fetchone()[0]
+        total_feeds = con.execute(
+            "SELECT COUNT(*) FROM feeds WHERE removed_at IS NULL"
+        ).fetchone()[0]
+        active_feeds = con.execute(
+            "SELECT COUNT(*) FROM feeds WHERE enabled = true AND removed_at IS NULL"
+        ).fetchone()[0]
         total_alerts = con.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
         last_ingest = con.execute("SELECT MAX(ingested_at) FROM items").fetchone()[0]
         items_today = con.execute(
@@ -596,6 +600,7 @@ def get_stats() -> dict:
                    MAX(i.ingested_at) as last_item
             FROM feeds f
             LEFT JOIN items i ON f.id = i.feed_id
+            WHERE f.removed_at IS NULL
             GROUP BY f.id, f.name, f.source_type
             ORDER BY item_count DESC
         """).fetchall()
