@@ -106,7 +106,7 @@ fn harness(responses: Vec<ScriptedResponse>, tools: Vec<Arc<dyn Tool>>) -> Harne
             system_prompt: "sys".into(),
             tools: tools.iter().map(|t| t.name().to_string()).collect(),
             permission_mode: "full-access".into(),
-            skills: Vec::new(),
+            skills: vec!["code-task".into()],
         },
     };
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();
@@ -234,6 +234,38 @@ async fn unknown_tool_becomes_error_value_not_crash() {
     assert!(results_block.contains("unknown tool"));
     assert!(results_block.contains("Skill names are documents"));
     assert!(results_block.contains("do not retry this name"));
+}
+
+#[tokio::test]
+async fn known_skill_name_is_rejected_as_a_non_executable_tool() {
+    let mut h = harness(
+        vec![
+            ScriptedResponse::Message(tool_call_msg("t1", "code-task", serde_json::json!({}))),
+            ScriptedResponse::Message(assistant_text("recovered")),
+        ],
+        vec![Arc::new(BashTool)],
+    );
+    let outcome = h
+        .agent
+        .run(
+            "go",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    let session = h.agent.session.lock().await;
+    let result = session
+        .derive_messages()
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .find_map(|b| match b {
+            ContentBlock::ToolResult { content, .. } => Some(content.clone()),
+            _ => None,
+        })
+        .expect("a tool result must exist");
+    assert!(result.contains("guidance, not an executable tool"));
 }
 
 #[tokio::test]

@@ -1582,6 +1582,13 @@ impl Agent {
             .header()
             .map(|h| h.session_id.clone())
             .unwrap_or_default();
+        let skill_names = self
+            .session
+            .lock()
+            .await
+            .header()
+            .map(|h| h.contract.skills.clone())
+            .unwrap_or_default();
 
         let mut authz: Vec<Result<(), String>> = Vec::with_capacity(n);
         for call in &calls {
@@ -1605,6 +1612,7 @@ impl Agent {
                                 &self.config.tools,
                                 &cwd,
                                 &session_id,
+                                &skill_names,
                                 hooks.as_ref(),
                                 hook_recorder.as_ref(),
                                 sandbox.as_ref(),
@@ -1670,6 +1678,7 @@ impl Agent {
                 let cwd = cwd.clone();
                 let sandbox = sandbox.clone();
                 let session_id = session_id.clone();
+                let skill_names = skill_names.clone();
                 let hooks = hooks.clone();
                 let hook_recorder = hook_recorder.clone();
                 join.spawn(async move {
@@ -1678,6 +1687,7 @@ impl Agent {
                         &tools,
                         &cwd,
                         &session_id,
+                        &skill_names,
                         hooks.as_ref(),
                         hook_recorder.as_ref(),
                         sandbox.as_ref(),
@@ -1708,6 +1718,7 @@ async fn execute_one(
     tools: &[Arc<dyn Tool>],
     cwd: &std::path::Path,
     session_id: &str,
+    skill_names: &[String],
     hooks: Option<&Arc<Vec<vak_hooks::HookDef>>>,
     hook_recorder: Option<&HookRecorder>,
     sandbox: Option<&Arc<dyn vak_tools::sandbox::Sandbox>>,
@@ -1754,6 +1765,10 @@ async fn execute_one(
     let hook_input = call.input.clone();
 
     let mut output = match tool {
+        None if skill_names.iter().any(|name| name == &call.name) => ToolRunOutput::Err(format!(
+            "skill '{}' is guidance, not an executable tool; call read on its advertised SKILL.md path, then use ordinary tools",
+            call.name
+        )),
         None => ToolRunOutput::Err(format!(
             "unknown tool: {} (available: {}). This call was rejected. Skill names are documents, not executable tools: do not retry this name as a tool; use read on the advertised SKILL.md path and then use one of the advertised tools.",
             call.name,
