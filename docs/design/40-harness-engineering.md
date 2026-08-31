@@ -29,6 +29,16 @@ unexpected changes, verifies that child process groups are gone, writes atomic
 partial reports plus a heartbeat, supports resume, and holds an exclusive
 stale-PID-aware report lock so two processes cannot corrupt one run.
 
+Live result status is multidimensional. Provider admission failures are
+`blocked` and do not run fixture postconditions; functional completion and
+skill/tool/orchestration contract compliance are recorded independently. A
+successful implementation with a hallucinated capability call is therefore
+visible as functional success plus contract recovery/failure, rather than being
+collapsed into either a false pass or a generic agent failure. Reports retain
+redacted tool traces, selected skill paths, verification counts, process-group
+cleanup, Git revision, and binary digest so a failure remains diagnosable after
+the temporary workspace is removed.
+
 Live results are reported on three separate axes: correctness (postconditions
 and scope), control-plane integrity (ledger, timeout, cancellation, and child
 cleanup), and performance (latency, queueing, concurrency, CPU/RSS, and

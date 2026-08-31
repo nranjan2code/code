@@ -130,6 +130,22 @@ def failure_class(returncode: int, failures: list[str], output: str) -> str | No
     return None
 
 
+def provider_failure(output: str) -> bool:
+    text = output.lower()
+    return any(term in text for term in (
+        "provider auth missing", "missing credential", "unauthorised", "unauthorized",
+        "rate limit", "quota exceeded", "insufficient credit", "provider unavailable",
+    ))
+
+
+def redact_text(value: str) -> str:
+    return re.sub(
+        r"(?i)(bearer\s+|api[_-]?key\s*[:=]\s*|sk-[a-z0-9_-]+|sk-or-v1-[a-z0-9]+)[^\s,;)}]+",
+        r"\1<redacted>",
+        value,
+    )
+
+
 def ledger_tool_calls(ledgers: list[pathlib.Path]) -> list[tuple[str, dict]]:
     """Return actual tool-use blocks from the append-only session records."""
     calls: list[tuple[str, dict]] = []
@@ -146,6 +162,27 @@ def ledger_tool_calls(ledgers: list[pathlib.Path]) -> list[tuple[str, dict]]:
                 if block.get("type") == "tool_use":
                     calls.append((block.get("name", ""), block.get("input", {})))
     return calls
+
+
+def tool_trace(calls: list[tuple[str, dict]]) -> list[dict[str, object]]:
+    trace = []
+    for index, (name, inputs) in enumerate(calls):
+        item: dict[str, object] = {"index": index, "name": name}
+        for key in ("path", "command", "server", "tool", "label"):
+            value = inputs.get(key)
+            if value is not None:
+                item[key] = redact_text(str(value))
+        trace.append(item)
+    return trace
+
+
+def fixture_skill_names(case: Case) -> set[str]:
+    return {
+        pathlib.PurePosixPath(relative).parts[-2]
+        for relative in case.files
+        if pathlib.PurePosixPath(relative).name == "SKILL.md"
+        and len(pathlib.PurePosixPath(relative).parts) >= 2
+    }
 
 
 def provider_is_local(provider: str) -> bool:
@@ -271,6 +308,7 @@ def run_case(case: Case, provider: str, model: str, timeout: int) -> dict:
             with ACTIVE_PROCESSES_LOCK:
                 ACTIVE_PROCESSES.discard(process)
         failures: list[str] = []
+        provider_blocked = provider_failure(output)
         orphaned_process_group = process_group_alive(process.pid)
         if orphaned_process_group:
             failures.append("agent process group remained alive after parent completion")
@@ -278,9 +316,12 @@ def run_case(case: Case, provider: str, model: str, timeout: int) -> dict:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-        test = subprocess.run(case.check.split(), cwd=root, text=True, capture_output=True)
-        if test.returncode:
-            failures.append(f"postcondition test failed: {test.stdout}{test.stderr}")
+        test_returncode = None
+        if not provider_blocked:
+            test = subprocess.run(case.check.split(), cwd=root, text=True, capture_output=True)
+            test_returncode = test.returncode
+            if test.returncode:
+                failures.append(f"postcondition test failed: {test.stdout}{test.stderr}")
         for relative in case.forbidden_files:
             original = case.files[relative]
             if (root / relative).read_text() != original:
@@ -294,28 +335,54 @@ def run_case(case: Case, provider: str, model: str, timeout: int) -> dict:
             failures.append(f"unexpected workspace changes: {', '.join(unexpected)}")
         ledgers = list((root / "home" / "sessions").glob("*/*.jsonl"))
         ledger = "\n".join(path.read_text() for path in ledgers)
-        if not ledgers:
+        if not ledgers and not provider_blocked:
             failures.append("no session ledger was written")
         tool_calls = ledger_tool_calls(ledgers)
         skill_reads = [inputs for name, inputs in tool_calls
                        if name == "read" and str(inputs.get("path", "")).endswith("SKILL.md")]
-        if not skill_reads:
-            failures.append("skill-read tool evidence missing from ledger")
-        if not any(name == "bash" and case.check in str(inputs.get("command", ""))
-                   for name, inputs in tool_calls):
-            failures.append("verification bash tool evidence missing from ledger")
-        if "child-review" in case.name and not any(name == "task" for name, _ in tool_calls):
-            failures.append("child task tool evidence missing from ledger")
-        for phrase in case.required_output:
-            if phrase.lower() not in output.lower():
-                failures.append(f"required final-output evidence missing: {phrase}")
+        verification_calls = [inputs for name, inputs in tool_calls
+                              if name == "bash" and case.check in str(inputs.get("command", ""))]
+        child_calls = [inputs for name, inputs in tool_calls if name == "task"]
+        if not provider_blocked:
+            if not skill_reads:
+                failures.append("skill-read evidence missing from ledger")
+            if not verification_calls:
+                failures.append("verification bash evidence missing from ledger")
+            if "child-review" in case.name and not child_calls:
+                failures.append("child task evidence missing from ledger")
+        invalid_skill_calls = [name for name, _ in tool_calls
+                               if name in fixture_skill_names(case)]
+        functional_status = "blocked" if provider_blocked else (
+            "passed" if returncode == 0 and test_returncode == 0 and not unexpected else "failed"
+        )
+        contract_status = "not_evaluated" if provider_blocked else (
+            "passed" if not invalid_skill_calls and not any(
+                "evidence" in failure or "child task" in failure for failure in failures
+            )
+            else "failed"
+        )
+        overall_status = "blocked" if provider_blocked else (
+            "passed" if functional_status == "passed" and contract_status == "passed" and not failures
+            else "failed"
+        )
         return {"name": case.name, "fingerprint": case_fingerprint(case), "command": command, "returncode": returncode,
                 "elapsed_seconds": round(time.monotonic() - started, 3),
-                "status": "passed" if returncode == 0 and not failures else "failed",
+                "status": overall_status,
+                "functional_status": functional_status,
+                "contract_status": contract_status,
+                "provider_blocked": provider_blocked,
                 "failure_class": failure_class(returncode, failures, output),
                 "failures": failures, "workspace_changes": changed,
                 "orphaned_process_group": orphaned_process_group,
-                "tool_calls": [name for name, _ in tool_calls], "output_tail": output[-5000:]}
+                "tool_calls": [name for name, _ in tool_calls],
+                "tool_trace": tool_trace(tool_calls),
+                "skill_paths_read": [str(inputs.get("path", "")) for inputs in skill_reads],
+                "verification_call_count": len(verification_calls),
+                "child_call_count": len(child_calls),
+                "invalid_skill_calls": invalid_skill_calls,
+                "recovered_invalid_calls": invalid_skill_calls if returncode == 0 else [],
+                "test_returncode": test_returncode,
+                "output_tail": redact_text(output[-5000:])}
 
 
 def write_report(path: pathlib.Path, results: list[dict], provider: str, model: str,
@@ -330,11 +397,18 @@ def write_report(path: pathlib.Path, results: list[dict], provider: str, model: 
                "unique_scenarios": len({r.get("fingerprint", r["name"]) for r in results}),
                "passed": sum(r["status"] == "passed" for r in results),
                "failed": sum(r["status"] == "failed" for r in results),
+               "blocked": sum(r["status"] == "blocked" for r in results),
+               "functional_passed": sum(r.get("functional_status") == "passed" for r in results),
+               "contract_passed": sum(r.get("contract_status") == "passed" for r in results),
                "provider": provider, "model": model, "by_failure_class": classes}
+    revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
+                              capture_output=True, check=False).stdout.strip()
+    binary_sha256 = hashlib.sha256(BIN.read_bytes()).hexdigest() if BIN.is_file() else None
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps({"run_id": run_id, "run_status": run_status,
                                      "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                                     "provenance": {"git_revision": revision, "binary_sha256": binary_sha256},
                                      "summary": summary, "results": results}, indent=2) + "\n")
     temporary.replace(path)
 

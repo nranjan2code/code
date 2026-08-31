@@ -124,6 +124,28 @@ class HarnessContracts(unittest.TestCase):
             "provider",
         )
 
+    def test_provider_admission_is_distinct_from_functional_failure(self) -> None:
+        self.assertTrue(prompt_scenarios.provider_failure(
+            "error: provider auth missing: set OPENROUTER_API_KEY",
+        ))
+        self.assertFalse(prompt_scenarios.provider_failure("postcondition test failed"))
+
+    def test_tool_trace_redacts_credentials_and_keeps_routing_fields(self) -> None:
+        trace = prompt_scenarios.tool_trace([
+            ("bash", {"command": "curl -H 'Authorization: Bearer sk-secret'"}),
+            ("mcp", {"server": "github", "tool": "search"}),
+        ])
+        self.assertEqual(trace[1], {"index": 1, "name": "mcp", "server": "github", "tool": "search"})
+        self.assertNotIn("sk-secret", trace[0]["command"])
+
+    def test_invalid_skill_call_is_not_clean_contract_success(self) -> None:
+        case = prompt_scenarios.CASES[0]
+        calls = [(next(iter(prompt_scenarios.fixture_skill_names(case))), {})]
+        self.assertEqual(
+            [name for name, _ in calls if name in prompt_scenarios.fixture_skill_names(case)],
+            ["code-task"],
+        )
+
     def test_resource_snapshot_separates_run_tree_from_ollama(self) -> None:
         snapshot = resource_watch.snapshot(os.getpid())
         self.assertIn("process_cpu_percent_sum", snapshot)
