@@ -47,7 +47,9 @@ execution path.
 5. Unknown names and kind mismatches are structured error values. They never
    panic the loop and never trigger an effect before authorization.
 6. Capability changes apply to new sessions. Existing sessions do not mix an
-   old prompt with a new registry.
+   old prompt with a new registry. Gateway bindings compare the frozen packet
+   with the current Core admission contract and rotate stale sessions while
+   retaining their append-only ledgers.
 7. A host may add run-scoped direct-write paths. They are evaluated before a
    `write` or `edit` tool is dispatched and never depend on model compliance
    with a natural-language scope instruction.

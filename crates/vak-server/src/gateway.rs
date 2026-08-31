@@ -1995,12 +1995,15 @@ fn busy_binding_matches_revision(state: &AppState, core: &Core, key: &str, revis
 
 fn session_matches_route(
     session: &vak_session::SessionLog,
-    cwd: &std::path::Path,
+    core: &Core,
     provider: &str,
     model: &str,
 ) -> bool {
     session.header().is_some_and(|header| {
-        header.cwd == cwd && header.contract.provider == provider && header.contract.model == model
+        header.cwd.as_path() == core.cwd().as_path()
+            && header.contract.provider == provider
+            && header.contract.model == model
+            && header.contract.capabilities == core.capability_descriptors()
     })
 }
 
@@ -2020,7 +2023,7 @@ async fn resolve_session(
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 match session.as_ref() {
-                    Some(session) => session_matches_route(session, core.cwd(), &provider, &model),
+                    Some(session) => session_matches_route(session, core, &provider, &model),
                     None => busy_binding_matches_revision(state, core, key, &revision),
                 }
             };
@@ -2031,7 +2034,7 @@ async fn resolve_session(
         } else {
             match core.open_session(&sid).await {
                 Ok(session) => {
-                    if session_matches_route(&session, core.cwd(), &provider, &model) {
+                    if session_matches_route(&session, core, &provider, &model) {
                         let id = session
                             .header()
                             .map(|h| h.session_id.clone())
@@ -2610,6 +2613,46 @@ mod tests {
         let old_path =
             vak_session::SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &old_id);
         assert!(old_path.is_file(), "old append-only ledger remains intact");
+    }
+
+    #[tokio::test]
+    async fn capability_contract_change_rotates_legacy_binding() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let current = core
+            .start_session_with_route("provider-a".into(), "model-a".into())
+            .await
+            .unwrap();
+        let mut legacy_header = current.header().unwrap().clone();
+        legacy_header.session_id = "legacy-session".into();
+        legacy_header.contract.app_version = "0.11.35".into();
+        legacy_header.contract.capabilities.clear();
+        let legacy_path = vak_session::SessionPath::new_session_file(
+            &core.sessions_home(),
+            core.cwd(),
+            &legacy_header.session_id,
+        );
+        let legacy = vak_session::SessionLog::create(legacy_path.clone(), legacy_header).unwrap();
+        let state = AppState::new(core.clone());
+        crate::register_handle(&state, "legacy-session".into(), legacy, core.cwd().clone());
+        state.gateway.bind(
+            &core,
+            "telegram:42".into(),
+            "legacy-session".into(),
+            "route-revision".into(),
+        );
+
+        let fresh = resolve_session(&state, &core, "telegram:42").await.unwrap();
+
+        assert_ne!(fresh.id, "legacy-session");
+        let lock = fresh
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let contract = &lock.as_ref().unwrap().header().unwrap().contract;
+        assert_eq!(contract.capabilities, core.capability_descriptors());
+        assert!(legacy_path.is_file(), "legacy ledger remains append-only");
     }
 
     // ---- Allowlist store (docs/design/34-channel-onboarding.md) -----------

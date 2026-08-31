@@ -95,8 +95,9 @@ inherits the workspace route revision. First message from an unknown key
 creates a fresh session; later messages resume it across gateway restarts.
 
 Session contracts never mutate. Before every inbound dispatch, the gateway
-compares the bound session's workspace/provider/model contract with the
-binding's effective route. Missing ledgers and mismatches are stale bindings:
+compares the bound session's workspace/provider/model contract and its frozen
+capability packet with the effective Core admission contract. Missing ledgers,
+route mismatches, and capability-contract mismatches are stale bindings:
 the old JSONL remains intact, the binding rotates, and the inbound message
 starts a fresh session under the new contract. This is how an administrative
 default propagates without corrupting history.
