@@ -155,16 +155,7 @@ impl McpTool {
             ));
         }
 
-        let client = match self.manager.get(server).await {
-            Ok(c) => c,
-            Err(e) => {
-                if let Some(record) = &self.invocation_recorder {
-                    record(server, tool, false);
-                }
-                return ToolOutput::error(format!("cannot connect to '{server}': {e}"));
-            }
-        };
-        match client.call_tool(tool, arguments).await {
+        match self.manager.call_tool(server, tool, arguments).await {
             Ok(text) => {
                 if let Some(record) = &self.invocation_recorder {
                     record(server, tool, true);

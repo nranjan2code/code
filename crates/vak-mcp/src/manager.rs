@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
+use serde_json::Value;
+
 use crate::client::{McpClient, McpError, ServerConfig};
 
 /// Lazily spawns and caches one client per configured server.
@@ -54,6 +56,35 @@ impl McpManager {
             .await
             .insert(server.to_string(), client.clone());
         Ok(client)
+    }
+
+    /// Discover a server's current tool catalog immediately before dispatch.
+    /// MCP tool names are server-defined; validating them here keeps every
+    /// caller behind the same protocol boundary and turns model-invented
+    /// names into actionable errors before `tools/call` is sent.
+    pub async fn call_tool(
+        &self,
+        server: &str,
+        tool: &str,
+        arguments: Value,
+    ) -> Result<String, McpError> {
+        let client = self.get(server).await?;
+        let tools = client.list_tools().await?;
+        if !tools.iter().any(|candidate| candidate.name == tool) {
+            let available = tools
+                .iter()
+                .map(|candidate| candidate.name.as_str())
+                .collect::<Vec<_>>();
+            return Err(McpError::Protocol(format!(
+                "unknown tool '{tool}' on server '{server}'; discovered tools: {}. Use action \\\"list\\\" and call one of those exact names",
+                if available.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    available.join(", ")
+                }
+            )));
+        }
+        client.call_tool(tool, arguments).await
     }
 
     /// Relative commands resolve against the workspace cwd.

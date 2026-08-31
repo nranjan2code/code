@@ -82,6 +82,28 @@ async fn server_side_tool_errors_become_error_values() {
 }
 
 #[tokio::test]
+async fn unknown_tool_is_rejected_from_discovered_catalog() {
+    let tool = McpTool::new(manager());
+    let out = tool
+        .execute(
+            &json!({
+                "action": "call",
+                "server": "fake",
+                "tool": "search"
+            }),
+            &ctx(),
+        )
+        .await;
+    assert!(out.is_error);
+    assert!(
+        out.content.contains("unknown tool 'search'"),
+        "got: {}",
+        out.content
+    );
+    assert!(out.content.contains("echo, boom"), "got: {}", out.content);
+}
+
+#[tokio::test]
 async fn unknown_server_is_an_error_value() {
     let tool = McpTool::new(manager());
     let out = tool
