@@ -78,6 +78,17 @@ pub fn validate_contract(contract: &WorkContract) -> Result<(), WorkError> {
         .iter()
         .map(|criterion| criterion.criterion_id.as_str())
         .collect();
+    if criterion_ids.len() != contract.criteria.len() {
+        return Err(WorkError::InvalidEvent);
+    }
+    let assumption_ids: BTreeSet<&str> = contract
+        .assumptions
+        .iter()
+        .map(|assumption| assumption.assumption_id.as_str())
+        .collect();
+    if assumption_ids.len() != contract.assumptions.len() {
+        return Err(WorkError::InvalidEvent);
+    }
     for item in &contract.items {
         for dep in &item.dependencies {
             if !item_ids.contains(dep.as_str()) {
@@ -154,7 +165,15 @@ fn apply_event(
     event: &WorkEvent,
 ) -> Result<(), WorkError> {
     if let WorkEventKind::ContractCreated { contract } = &event.kind {
-        if projection.is_some() {
+        if projection.as_ref().is_some_and(|current| {
+            !matches!(
+                current.status,
+                WorkContractStatus::Completed
+                    | WorkContractStatus::Failed
+                    | WorkContractStatus::Cancelled
+                    | WorkContractStatus::Unverified
+            )
+        }) {
             return Err(WorkError::InvalidEvent);
         }
         validate_contract(contract)?;
@@ -212,6 +231,17 @@ fn apply_event(
             expected: expected_revision,
         });
     }
+    if matches!(
+        &event.kind,
+        WorkEventKind::ItemStatusChanged { .. }
+            | WorkEventKind::ItemVerified { .. }
+            | WorkEventKind::ItemAssigned { .. }
+            | WorkEventKind::EvidenceAttached { .. }
+            | WorkEventKind::VerificationRecorded { .. }
+    ) && current.status != WorkContractStatus::Active
+    {
+        return Err(WorkError::InvalidEvent);
+    }
 
     match &event.kind {
         WorkEventKind::ContractCreated { .. } => unreachable!(),
@@ -230,6 +260,16 @@ fn apply_event(
             }
             validate_contract(contract)?;
             current.contract = contract.clone();
+            if matches!(
+                current.status,
+                WorkContractStatus::Completed
+                    | WorkContractStatus::Failed
+                    | WorkContractStatus::Cancelled
+                    | WorkContractStatus::Unverified
+            ) {
+                current.status = WorkContractStatus::Draft;
+            }
+            current.criteria.clear();
             current.items = contract
                 .items
                 .iter()
@@ -568,6 +608,15 @@ mod tests {
             revision: 0,
             kind: WorkEventKind::ContractCreated { contract: c },
         })];
+        entries.push(entry(WorkEvent {
+            contract_id: "work-1".into(),
+            revision: 0,
+            kind: WorkEventKind::ContractStatusChanged {
+                from: WorkContractStatus::Draft,
+                to: WorkContractStatus::Active,
+                reason: "confirmed".into(),
+            },
+        }));
         for (from, to) in [
             (WorkItemStatus::Proposed, WorkItemStatus::Ready),
             (WorkItemStatus::Ready, WorkItemStatus::Running),

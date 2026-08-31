@@ -1100,7 +1100,15 @@ impl Agent {
             .await
             .work_projection()
             .map_err(|error| format!("managed work projection is invalid: {error}"))?
-            .is_some()
+            .is_some_and(|work| {
+                !matches!(
+                    work.status,
+                    vak_session::types::WorkContractStatus::Completed
+                        | vak_session::types::WorkContractStatus::Failed
+                        | vak_session::types::WorkContractStatus::Cancelled
+                        | vak_session::types::WorkContractStatus::Unverified
+                )
+            })
         {
             return Ok(());
         }
@@ -2230,9 +2238,35 @@ impl Agent {
                             && call.name != "work")
                             .then(|| call.name.clone());
                         let managed_item = match managed_item {
-                            Some(tool) => self.begin_managed_tool_item(&tool).await,
+                            Some(tool) => {
+                                self.begin_managed_tool_item(
+                                    &tool,
+                                    (call.name == "task")
+                                        .then(|| {
+                                            Some((
+                                                call.input.get("contract_id")?.as_str()?,
+                                                call.input.get("work_item_id")?.as_str()?,
+                                            ))
+                                        })
+                                        .flatten(),
+                                )
+                                .await
+                            }
                             None => None,
                         };
+                        if self.config.work_mode == WorkMode::Managed
+                            && call.name != "work"
+                            && managed_item.is_none()
+                        {
+                            out.push((
+                                call.id,
+                                ToolRunOutput::Err(
+                                    "managed execution requires a compatible Ready or Running work item"
+                                        .into(),
+                                ),
+                            ));
+                            continue;
+                        }
                         out.push(if call.name == "work" {
                             let result = self.execute_work_call(&call.input).await;
                             self.emit_work_state(events).await;
@@ -2414,11 +2448,16 @@ impl Agent {
         }
     }
 
-    async fn begin_managed_tool_item(&self, tool: &str) -> Option<(String, String, u32)> {
+    async fn begin_managed_tool_item(
+        &self,
+        tool: &str,
+        requested: Option<(&str, &str)>,
+    ) -> Option<(String, String, u32)> {
         let mut session = self.session.lock().await;
         let projection = session.work_projection().ok().flatten()?;
         let item = projection.items.values().find(|state| {
-            state.status == vak_session::types::WorkItemStatus::Ready
+            (state.status == vak_session::types::WorkItemStatus::Ready
+                || state.status == vak_session::types::WorkItemStatus::Running)
                 && projection
                     .contract
                     .items
@@ -2433,27 +2472,50 @@ impl Agent {
                             )
                         });
                         dependencies_ready
-                            && (matches!(definition.owner, vak_session::types::WorkOwner::ParentAgent)
-                            || matches!(&definition.owner, vak_session::types::WorkOwner::Tool { name } if name == tool)
-                            )
+                            && match requested {
+                                Some((contract_id, item_id)) => {
+                                    projection.contract.contract_id == contract_id
+                                        && state.item_id == item_id
+                                        && matches!(definition.owner, vak_session::types::WorkOwner::Subagent)
+                                }
+                                None => {
+                                    matches!(definition.owner, vak_session::types::WorkOwner::ParentAgent)
+                                        || matches!(&definition.owner, vak_session::types::WorkOwner::Tool { name } if name == tool)
+                                }
+                            }
                     })
         })?;
         let contract_id = projection.contract.contract_id.clone();
         let item_id = item.item_id.clone();
         let attempt = item.attempt.saturating_add(1);
-        session
-            .append_work(vak_session::types::WorkEvent {
-                contract_id: contract_id.clone(),
-                revision: projection.contract.revision,
-                kind: vak_session::types::WorkEventKind::ItemStatusChanged {
-                    item_id: item_id.clone(),
-                    from: vak_session::types::WorkItemStatus::Ready,
-                    to: vak_session::types::WorkItemStatus::Running,
-                    attempt,
-                    reason: format!("parent agent executing {tool}"),
-                },
-            })
-            .ok()?;
+        if item.status == vak_session::types::WorkItemStatus::Ready {
+            if requested.is_some() {
+                session
+                    .append_work(vak_session::types::WorkEvent {
+                        contract_id: contract_id.clone(),
+                        revision: projection.contract.revision,
+                        kind: vak_session::types::WorkEventKind::ItemAssigned {
+                            item_id: item_id.clone(),
+                            owner: vak_session::types::WorkOwner::Subagent,
+                            child_session_id: None,
+                        },
+                    })
+                    .ok()?;
+            }
+            session
+                .append_work(vak_session::types::WorkEvent {
+                    contract_id: contract_id.clone(),
+                    revision: projection.contract.revision,
+                    kind: vak_session::types::WorkEventKind::ItemStatusChanged {
+                        item_id: item_id.clone(),
+                        from: vak_session::types::WorkItemStatus::Ready,
+                        to: vak_session::types::WorkItemStatus::Running,
+                        attempt,
+                        reason: format!("executing {tool}"),
+                    },
+                })
+                .ok()?;
+        }
         Some((contract_id, item_id, attempt))
     }
 
@@ -2534,7 +2596,7 @@ impl Agent {
             let Some(state) = projection.items.get(item_id) else {
                 continue;
             };
-            if state.status != vak_session::types::WorkItemStatus::Ready {
+            if state.status != vak_session::types::WorkItemStatus::Running {
                 continue;
             }
             let Some((_, output)) = results.iter().find(|(id, _)| id == call_id) else {
@@ -2554,20 +2616,6 @@ impl Agent {
                 },
             };
             if session.append_work(assigned).is_err() {
-                continue;
-            }
-            let running = vak_session::types::WorkEvent {
-                contract_id: contract_id.clone(),
-                revision,
-                kind: vak_session::types::WorkEventKind::ItemStatusChanged {
-                    item_id: item_id.clone(),
-                    from: vak_session::types::WorkItemStatus::Ready,
-                    to: vak_session::types::WorkItemStatus::Running,
-                    attempt: state.attempt.saturating_add(1),
-                    reason: "assigned to subagent".into(),
-                },
-            };
-            if session.append_work(running).is_err() {
                 continue;
             }
             let outcome = if matches!(output, ToolRunOutput::Ok(_)) {
