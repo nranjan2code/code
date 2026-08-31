@@ -92,9 +92,8 @@ fn build_fixture_log(
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: vec![],
             permission_mode: "workspace-write".into(),
-            skills: vec![],
+            capabilities: Vec::new(),
         },
     };
     let home = cwd.join(".vak-home");

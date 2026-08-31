@@ -6,6 +6,44 @@ use std::collections::BTreeMap;
 
 use vak_llm::{Message, Usage};
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CapabilityKind {
+    Tool,
+    Skill,
+    McpServer,
+    Hook,
+    Command,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CapabilityInvocation {
+    ModelTool,
+    SkillLoader,
+    Automatic,
+    UserCommand,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityDescriptor {
+    pub name: String,
+    pub kind: CapabilityKind,
+    pub invocation: CapabilityInvocation,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<String>,
+    /// Kind-specific, non-secret frozen configuration. Tool schemas,
+    /// command templates, and hook lifecycle options live here so runtime
+    /// dispatch never has to rediscover a second definition.
+    #[serde(default)]
+    pub configuration: serde_json::Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrozenContract {
     pub app_version: String,
@@ -27,10 +65,12 @@ pub struct FrozenContract {
     #[serde(default)]
     pub route_annotations: Vec<String>,
     pub system_prompt: String,
-    pub tools: Vec<String>,
     pub permission_mode: String,
+    /// Authoritative capability packet admitted for this session. Prompt
+    /// advertisement, model tool schemas, dispatch, and audit projections
+    /// must all derive from this exact list.
     #[serde(default)]
-    pub skills: Vec<String>,
+    pub capabilities: Vec<CapabilityDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

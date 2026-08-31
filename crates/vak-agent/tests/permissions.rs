@@ -88,9 +88,8 @@ fn multi_setup(
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: vec!["bash".into()],
             permission_mode: "workspace-write".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     };
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();

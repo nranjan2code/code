@@ -38,7 +38,9 @@ type ModelContextCache = std::sync::Mutex<
 >;
 type ModelCache = std::sync::Mutex<HashMap<(String, String), (std::time::Instant, Vec<String>)>>;
 use vak_session::SessionLog;
-use vak_session::types::{FrozenContract, SessionHeader};
+use vak_session::types::{
+    CapabilityDescriptor, CapabilityInvocation, CapabilityKind, FrozenContract, SessionHeader,
+};
 use vak_tools::sandbox::SandboxMode;
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -1479,6 +1481,10 @@ impl Core {
     }
 
     pub fn system_prompt(&self) -> String {
+        self.system_prompt_for_capabilities(&self.capability_descriptors())
+    }
+
+    fn system_prompt_for_capabilities(&self, capabilities: &[CapabilityDescriptor]) -> String {
         let project_prompt = self.inner.cwd.join(".vak/SYSTEM.md");
         let base = if project_prompt.is_file()
             && let Ok(custom) = std::fs::read_to_string(&project_prompt)
@@ -1487,26 +1493,16 @@ impl Core {
         } else {
             DEFAULT_SYSTEM_PROMPT.replace("{{version}}", APP_VERSION)
         };
-        let discovered = self.skills();
-        // Ensure a manager exists and a background discovery pass is (or
-        // becomes) in flight for the current server set, then use whatever
-        // it has produced so far. A cold session or a slow/failing server
-        // means `cached_mcp_inventory()` is still `None` here — that's the
-        // expected steady state for the very first turn, and this call
-        // never blocks waiting for it to fill in.
-        self.mcp_manager();
-        let mcp_section_text = match self.cached_mcp_inventory() {
-            Some(inventory) if !inventory.is_empty() => mcp_section(&inventory),
-            _ => {
-                let servers = self.effective_mcp().servers.into_keys().collect::<Vec<_>>();
-                mcp_config_section(&servers)
-            }
-        };
+        let servers = capabilities
+            .iter()
+            .filter(|capability| capability.kind == CapabilityKind::McpServer)
+            .map(|capability| capability.name.clone())
+            .collect::<Vec<_>>();
         format!(
             "{}{}{}",
             base,
-            skills::prompt_section(&discovered),
-            mcp_section_text
+            skills::prompt_section_from_capabilities(capabilities),
+            mcp_config_section(&servers)
         )
     }
 
@@ -1607,6 +1603,10 @@ impl Core {
         if self.effective_subagents() {
             names.push("task".into());
         }
+        names.push("tasks".into());
+        if !self.skills().is_empty() {
+            names.push("skill".into());
+        }
         if !self.effective_mcp().servers.is_empty() {
             names.push("mcp".into());
         }
@@ -1630,6 +1630,92 @@ impl Core {
             .into_iter()
             .filter(|name| self.channel_tool_allowed(name))
             .collect()
+    }
+
+    pub fn capability_descriptors(&self) -> Vec<CapabilityDescriptor> {
+        let mut out = Vec::new();
+        for name in self.tool_names() {
+            out.push(CapabilityDescriptor {
+                name,
+                kind: CapabilityKind::Tool,
+                invocation: CapabilityInvocation::ModelTool,
+                description: String::new(),
+                source: None,
+                digest: None,
+                provenance: Some("vak-core".into()),
+                configuration: serde_json::Value::Null,
+            });
+        }
+        for skill in self.skills() {
+            let Ok(digest) = skill.digest() else {
+                continue;
+            };
+            out.push(CapabilityDescriptor {
+                name: skill.name,
+                kind: CapabilityKind::Skill,
+                invocation: CapabilityInvocation::SkillLoader,
+                description: skill.description,
+                source: Some(skill.path),
+                digest: Some(digest),
+                provenance: skill.provenance,
+                configuration: serde_json::Value::Null,
+            });
+        }
+        for server in self.effective_mcp().servers.into_keys() {
+            let provenance = if server.starts_with("plugin.") {
+                "plugin"
+            } else {
+                "workspace-config"
+            };
+            out.push(CapabilityDescriptor {
+                name: server,
+                kind: CapabilityKind::McpServer,
+                invocation: CapabilityInvocation::ModelTool,
+                description: "MCP server discovered through the brokered mcp tool".into(),
+                source: None,
+                digest: None,
+                provenance: Some(provenance.into()),
+                configuration: serde_json::Value::Null,
+            });
+        }
+        for hook in self
+            .effective_hooks()
+            .into_iter()
+            .filter(|hook| hook.enabled)
+        {
+            out.push(CapabilityDescriptor {
+                name: format!("{}/{}", hook.event, hook.command),
+                kind: CapabilityKind::Hook,
+                invocation: CapabilityInvocation::Automatic,
+                description: hook.matcher.clone().unwrap_or_default(),
+                source: None,
+                digest: None,
+                provenance: Some("workspace-or-plugin".into()),
+                configuration: serde_json::json!({
+                    "event": hook.event,
+                    "matcher": hook.matcher,
+                    "command": hook.command,
+                    "timeout_ms": hook.timeout_ms,
+                    "failure_mode": hook.failure_mode,
+                }),
+            });
+        }
+        for command in self.custom_commands() {
+            out.push(CapabilityDescriptor {
+                name: command.name,
+                kind: CapabilityKind::Command,
+                invocation: CapabilityInvocation::UserCommand,
+                description: command.description,
+                source: None,
+                digest: None,
+                provenance: Some(command.source),
+                configuration: serde_json::json!({"template": command.template}),
+            });
+        }
+        out.sort_by(|a, b| {
+            format!("{:?}:{}", a.kind, a.name).cmp(&format!("{:?}:{}", b.kind, b.name))
+        });
+        out
     }
 
     fn provider_auth(&self) -> Result<ProviderAuth, CoreError> {
@@ -2332,6 +2418,8 @@ impl Core {
             model: model.clone(),
             credential_id: primary_credential_id,
         });
+        let capabilities = self.capability_descriptors();
+        let system_prompt = self.system_prompt_for_capabilities(&capabilities);
         let header = SessionHeader {
             session_id,
             created_at: chrono::Utc::now(),
@@ -2352,11 +2440,10 @@ impl Core {
                 route_ladder: plan.ladder,
                 route_objective: plan.objective,
                 route_annotations: plan.annotations,
-                system_prompt: self.system_prompt(),
-                tools: self.tool_names(),
+                system_prompt,
                 permission_mode: format!("{:?}", self.effective_permission_mode())
                     .to_kebab_lowercase(),
-                skills: self.skills().iter().map(|s| s.name.clone()).collect(),
+                capabilities,
             },
         };
         Ok(SessionLog::create(path, header)?)
@@ -2481,7 +2568,17 @@ impl Core {
             }
             None => (self.provider()?, self.effective_model()),
         };
-        let mut cfg = AgentConfig::new(self.system_prompt());
+        let frozen_system_prompt = session_contract
+            .as_ref()
+            .map(|contract| contract.system_prompt.clone())
+            .unwrap_or_else(|| self.system_prompt());
+        let mut cfg = AgentConfig::new(frozen_system_prompt.clone());
+        if let Some(contract) = &session_contract {
+            let capabilities = contract.capabilities.clone();
+            cfg.input_normalizer = Some(Arc::new(move |message| {
+                normalize_capability_message(message, &capabilities)
+            }));
+        }
         cfg.model = model.clone();
         cfg.tools = self.agent_tools();
         cfg.max_turns = self.effective_max_turns();
@@ -2622,26 +2719,14 @@ impl Core {
         }
 
         let mut tools = self.agent_tools();
-        if self.effective_subagents()
-            && let Some(parent_id) = session.header().map(|h| h.session_id.clone())
-        {
-            tools.push(Arc::new(vak_agent::TaskTool::new(vak_agent::TaskDeps {
-                provider: provider.clone(),
-                system_prompt: self.system_prompt(),
-                model: model.clone(),
-                tools: self.agent_tools(),
-                read_only_tools: self.agent_read_only_tools(),
-                max_turns: self.effective_max_turns(),
-                permission: Some(engine.clone()),
-                mode: cfg.mode,
-                approver: approver.clone(),
-                sandbox: self.build_sandbox(),
-                cwd: self.inner.cwd.clone(),
-                sessions_home: self.inner.sessions_home.clone(),
-                parent_session_id: parent_id,
-                events: Some(events.clone()),
-                registry: Some(self.inner.subagents.clone()),
-            })));
+        let frozen_skills = session_contract
+            .as_ref()
+            .map(|contract| skills::frozen_from_capabilities(&contract.capabilities))
+            .unwrap_or_default();
+        let skill_tool = (!frozen_skills.is_empty())
+            .then(|| Arc::new(skills::SkillTool::new(frozen_skills)) as Arc<dyn vak_tools::Tool>);
+        if let Some(skill_tool) = &skill_tool {
+            tools.push(skill_tool.clone());
         }
         if let Some(manager) = self.mcp_manager() {
             // Turn admission never blocks on an optional integration: the
@@ -2652,6 +2737,14 @@ impl Core {
             // once `spawn_mcp_inventory_warm` has a result, or by name
             // only until then.
             let policy = self.channel_policy().unwrap_or_default();
+            let admitted_mcp = session_contract.as_ref().map(|contract| {
+                contract
+                    .capabilities
+                    .iter()
+                    .filter(|capability| capability.kind == CapabilityKind::McpServer)
+                    .map(|capability| format!("{}/*", capability.name))
+                    .collect::<Vec<_>>()
+            });
             let context = self.plugin_mcp_invocation_context();
             let recorder = Arc::new(move |server: &str, tool: &str, success: bool| {
                 for (store, plugin, trace_id) in &context {
@@ -2668,7 +2761,7 @@ impl Core {
             });
             tools.push(Arc::new(vak_mcp::McpTool::with_policy_and_recorder(
                 manager,
-                policy.mcp_allow,
+                admitted_mcp.or(policy.mcp_allow),
                 policy.mcp_deny,
                 recorder,
             )));
@@ -2731,15 +2824,56 @@ impl Core {
         if self.inner.config.tools.browse {
             tools.push(Arc::new(vak_tools::WebBrowseTool));
         }
+        if self.effective_subagents()
+            && let Some(parent_id) = session.header().map(|h| h.session_id.clone())
+        {
+            let mut read_only_tools = self.agent_read_only_tools();
+            if let Some(skill_tool) = &skill_tool {
+                read_only_tools.push(skill_tool.clone());
+            }
+            tools.push(Arc::new(vak_agent::TaskTool::new(vak_agent::TaskDeps {
+                provider: provider.clone(),
+                system_prompt: frozen_system_prompt,
+                model: model.clone(),
+                tools: tools.clone(),
+                capabilities: session_contract
+                    .as_ref()
+                    .map(|contract| contract.capabilities.clone())
+                    .unwrap_or_default(),
+                input_normalizer: cfg.input_normalizer.clone(),
+                read_only_tools,
+                max_turns: self.effective_max_turns(),
+                permission: Some(engine.clone()),
+                mode: cfg.mode,
+                approver: approver.clone(),
+                sandbox: self.build_sandbox(),
+                cwd: self.inner.cwd.clone(),
+                sessions_home: self.inner.sessions_home.clone(),
+                parent_session_id: parent_id,
+                events: Some(events.clone()),
+                registry: Some(self.inner.subagents.clone()),
+            })));
+        }
         // Apply channel visibility after every tool has been assembled. Memory
         // and optional tools are added below the base registry, so filtering
         // only the initial built-in vector would leak capabilities through an
         // explicit channel allowlist.
         tools.retain(|tool| self.channel_tool_allowed(tool.name()));
+        if let Some(contract) = &session_contract {
+            tools.retain(|tool| {
+                contract.capabilities.iter().any(|capability| {
+                    capability.kind == CapabilityKind::Tool && capability.name == tool.name()
+                })
+            });
+        }
+        cfg.tool_definitions = Some(vak_tools::definitions(&tools));
         cfg.tools = tools;
-        let hooks: Option<std::sync::Arc<Vec<vak_hooks::HookDef>>> = Some(std::sync::Arc::new(
-            build_hooks_from(&self.effective_hooks())?,
-        ));
+        let hook_configs = session_contract
+            .as_ref()
+            .map(|contract| hooks_from_capabilities(&contract.capabilities))
+            .unwrap_or_else(|| self.effective_hooks());
+        let hooks: Option<std::sync::Arc<Vec<vak_hooks::HookDef>>> =
+            Some(std::sync::Arc::new(build_hooks_from(&hook_configs)?));
         cfg.hooks = hooks.clone();
         let plugin_hooks: Vec<_> = [self.sessions_home(), self.inner.cwd.join(".vak")]
             .into_iter()
@@ -3044,6 +3178,57 @@ impl Core {
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
+mod capability_contract_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn admission_freezes_one_typed_capability_packet() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = dir.path().join(".vak/skills/review");
+        let command_dir = dir.path().join(".vak/commands");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&command_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: review\ndescription: review a change\n---\nInspect the diff.",
+        )
+        .unwrap();
+        std::fs::write(
+            command_dir.join("review.md"),
+            "---\ndescription: review command\n---\nReview $ARGUMENTS",
+        )
+        .unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let session = core
+            .start_session_with_route("ollama".into(), "test-model".into())
+            .await
+            .unwrap();
+        let contract = &session.header().unwrap().contract;
+        assert!(contract.capabilities.iter().any(|capability| {
+            capability.kind == CapabilityKind::Tool && capability.name == "skill"
+        }));
+        assert!(contract.capabilities.iter().any(|capability| {
+            capability.kind == CapabilityKind::Skill
+                && capability.name == "review"
+                && capability.invocation == CapabilityInvocation::SkillLoader
+                && capability.digest.is_some()
+        }));
+        assert!(contract.capabilities.iter().any(|capability| {
+            capability.kind == CapabilityKind::Command
+                && capability.name == "review"
+                && capability
+                    .configuration
+                    .get("template")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("Review $ARGUMENTS")
+        }));
+        assert!(!contract.system_prompt.contains("SKILL.md"));
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod channel_mcp_network_tests {
     use super::Core;
     use std::collections::BTreeMap;
@@ -3174,11 +3359,10 @@ mod channel_mcp_network_tests {
     #[test]
     fn default_prompt_documents_dynamic_tool_boundaries() {
         for phrase in [
-            "- task: delegate one self-contained subtask",
-            "- session_search: search prior session",
-            "- remember: save a durable fact",
-            "- mcp: call a configured MCP capability",
-            "Skill names are guidance documents, never executable tools: never emit a",
+            "attached tool schemas are the complete callable interface",
+            "skill({\"name\":\"...\"})",
+            "MCP capabilities are reached only through the advertised `mcp` broker",
+            "Hooks run automatically and slash commands are expanded before dispatch",
             "When a task says requirements or tests are in workspace files",
             "Do not claim a change is complete when verification failed",
         ] {
@@ -3294,8 +3478,54 @@ fn uuid_like() -> String {
     uuid::Uuid::now_v7().to_string()
 }
 
+fn hooks_from_capabilities(capabilities: &[CapabilityDescriptor]) -> Vec<vak_config::HookConfig> {
+    capabilities
+        .iter()
+        .filter(|capability| capability.kind == CapabilityKind::Hook)
+        .filter_map(|capability| {
+            let configuration = capability.configuration.as_object()?;
+            Some(vak_config::HookConfig {
+                event: configuration.get("event")?.as_str()?.to_string(),
+                matcher: configuration
+                    .get("matcher")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+                command: configuration.get("command")?.as_str()?.to_string(),
+                timeout_ms: configuration
+                    .get("timeout_ms")
+                    .and_then(serde_json::Value::as_u64),
+                enabled: true,
+                failure_mode: configuration
+                    .get("failure_mode")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+            })
+        })
+        .collect()
+}
+
 pub fn build_hooks(config: &vak_config::Config) -> Result<Vec<vak_hooks::HookDef>, CoreError> {
     build_hooks_from(&config.hooks)
+}
+
+fn normalize_capability_message(
+    mut message: vak_llm::Message,
+    capabilities: &[CapabilityDescriptor],
+) -> Result<vak_llm::Message, String> {
+    let Some(vak_llm::ContentBlock::Text { text }) = message
+        .content
+        .iter_mut()
+        .find(|block| matches!(block, vak_llm::ContentBlock::Text { .. }))
+    else {
+        return Ok(message);
+    };
+    let frozen_skills = skills::frozen_from_capabilities(capabilities);
+    let expanded = skills::expand_invocation(text, &frozen_skills)?
+        .or_else(|| custom_commands::expand_capability_invocation(capabilities, text));
+    if let Some(expanded) = expanded {
+        *text = expanded;
+    }
+    Ok(message)
 }
 
 fn build_hooks_from(
@@ -3600,44 +3830,6 @@ fn mcp_fingerprint(servers: &[(String, vak_mcp::ServerConfig)]) -> u64 {
     hasher.finish()
 }
 
-/// Compact capability section from an MCP inventory snapshot
-/// (`McpManager::inventory`). Used by `system_prompt()` once the
-/// background warm-up in `Core::spawn_mcp_inventory_warm` has a result;
-/// `mcp_config_section` below is the name-only fallback for before that
-/// (or when discovery failed for every server).
-fn mcp_section(inventory: &[(String, Vec<(String, String)>)]) -> String {
-    if inventory.is_empty() {
-        return String::new();
-    }
-    let mut out = String::from(
-        "\nMCP tool servers available now — use the `mcp` \
-tool (action \"call\", server, tool, arguments). Prefer these over guessing \
-when the task matches:\n",
-    );
-    for (server, tools) in inventory {
-        // `McpManager::inventory` degrades a connect/list failure to a
-        // single ("error", <message>) pseudo-tool per server; render it as
-        // an error, not as a callable tool named "error".
-        if let [(name, msg)] = tools.as_slice()
-            && name.as_str() == "error"
-        {
-            out.push_str(&format!("- {server}: unavailable ({msg})\n"));
-            continue;
-        }
-        if tools.is_empty() {
-            out.push_str(&format!("- {server}: (no tools)\n"));
-            continue;
-        }
-        for (name, desc) in tools.iter().take(12) {
-            out.push_str(&format!(
-                "- mcp call server=\"{server}\" tool=\"{name}\" — {}\n",
-                desc.trim_end()
-            ));
-        }
-    }
-    out
-}
-
 /// Model-visible fallback for configured MCP servers when live discovery is
 /// unavailable. This belongs in the frozen session contract as well as the
 /// live prompt so a transient launcher failure cannot hide a capability.
@@ -3674,26 +3866,7 @@ impl vak_agent::WorkspaceDelta for CheckpointDelta {
 
 #[cfg(test)]
 mod mcp_section_tests {
-    use super::{mcp_config_section, mcp_section};
-
-    #[test]
-    fn section_lists_server_tools_with_call_hint() {
-        let inv = vec![(
-            "tavily".to_string(),
-            vec![
-                ("tavily-search".to_string(), "Web search".to_string()),
-                (
-                    "tavily-extract".to_string(),
-                    "Extract page content".to_string(),
-                ),
-            ],
-        )];
-        let s = mcp_section(&inv);
-        assert!(s.contains("tavily-search"));
-        assert!(s.contains("Web search"));
-        assert!(s.contains("action \"call\""));
-        assert!(s.contains("server=\"tavily\""));
-    }
+    use super::mcp_config_section;
 
     #[test]
     fn configured_servers_remain_visible_without_inventory() {
@@ -3701,13 +3874,6 @@ mod mcp_section_tests {
         assert!(section.contains("tavily"));
         assert!(section.contains("`mcp`"));
         assert!(section.contains("action \"list\""));
-    }
-
-    #[test]
-    fn empty_inventory_is_silent_but_named_servers_listed() {
-        assert_eq!(mcp_section(&[]), "");
-        let s = mcp_section(&[("x".into(), vec![])]);
-        assert!(s.contains("- x: (no tools)"));
     }
 }
 

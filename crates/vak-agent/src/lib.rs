@@ -40,6 +40,12 @@ pub use steering::{DrainMode, SteeringQueues};
 
 pub use async_trait;
 
+/// Host-owned transformation applied to every user message admitted to a
+/// running agent, including messages queued as steering while a turn is busy.
+/// It is intentionally outside model control and receives the frozen session
+/// capability packet through its closure.
+pub type InputNormalizer = Arc<dyn Fn(Message) -> Result<Message, String> + Send + Sync>;
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub enum AgentEvent {
     TurnStart {
@@ -138,6 +144,12 @@ pub struct AgentConfig {
     pub system_prompt: String,
     pub model: String,
     pub tools: Vec<Arc<dyn Tool>>,
+    /// Exact tool schemas admitted with the session. When absent, standalone
+    /// agent users derive schemas from their runtime tools.
+    pub tool_definitions: Option<Vec<vak_llm::ToolDefinition>>,
+    /// Applies host commands and capability-bound prompt expansion before a
+    /// message reaches the ledger or provider.
+    pub input_normalizer: Option<InputNormalizer>,
     pub max_turns: usize,
     pub parallel_tools: bool,
     pub permission: Option<Arc<PermissionEngine>>,
@@ -197,6 +209,8 @@ impl AgentConfig {
             system_prompt: system_prompt.into(),
             model: String::new(),
             tools: Vec::new(),
+            tool_definitions: None,
+            input_normalizer: None,
             max_turns: 40,
             parallel_tools: true,
             permission: None,
@@ -340,6 +354,20 @@ impl Agent {
         });
     }
 
+    fn normalize_input(&self, message: Message) -> Result<Message, String> {
+        match &self.config.input_normalizer {
+            Some(normalizer) => normalizer(message),
+            None => Ok(message),
+        }
+    }
+
+    fn tool_definitions(&self) -> Vec<vak_llm::ToolDefinition> {
+        self.config
+            .tool_definitions
+            .clone()
+            .unwrap_or_else(|| vak_tools::definitions(&self.config.tools))
+    }
+
     pub async fn run(
         &mut self,
         prompt: &str,
@@ -360,6 +388,14 @@ impl Agent {
         cancel: CancellationToken,
         events: mpsc::Sender<AgentEvent>,
     ) -> TurnOutcome {
+        let prompt = match self.normalize_input(prompt) {
+            Ok(prompt) => prompt,
+            Err(error) => {
+                return TurnOutcome::Failed {
+                    error: LlmError::InvalidRequest(error),
+                };
+            }
+        };
         let prompt_owned = prompt.text_content();
         let mut bash_calls_this_run: u32 = 0;
         let mut verification_stale = false;
@@ -416,6 +452,14 @@ impl Agent {
             {
                 let mut session = self.session.lock().await;
                 for message in steering.drain(DrainMode::OneAtATime) {
+                    let message = match self.normalize_input(message) {
+                        Ok(message) => message,
+                        Err(error) => {
+                            return TurnOutcome::Failed {
+                                error: LlmError::InvalidRequest(error),
+                            };
+                        }
+                    };
                     let _ = session.append_message(MessageRecord {
                         message,
                         meta: None,
@@ -452,7 +496,7 @@ impl Agent {
                 let session = self.session.lock().await;
                 let policy = &self.config.context_policy;
                 let system = self.config.system_prompt.as_str();
-                let tool_defs = vak_tools::definitions(&self.config.tools);
+                let tool_defs = self.tool_definitions();
                 let est =
                     context::estimate_tokens(&session.derive_messages(), Some(system), &tool_defs);
                 if est <= policy.trigger_at() {
@@ -574,7 +618,7 @@ impl Agent {
                     let est = {
                         let session = self.session.lock().await;
                         let system = self.config.system_prompt.as_str();
-                        let tool_defs = vak_tools::definitions(&self.config.tools);
+                        let tool_defs = self.tool_definitions();
                         context::estimate_tokens(
                             &session.derive_messages(),
                             Some(system),
@@ -653,7 +697,7 @@ impl Agent {
                     model,
                     system: Some(self.config.system_prompt.clone()),
                     messages: session.derive_messages(),
-                    tools: vak_tools::definitions(&self.config.tools),
+                    tools: self.tool_definitions(),
                     max_tokens: self.config.context_policy.max_output as u32,
                     temperature: None,
                 }
@@ -1587,7 +1631,16 @@ impl Agent {
             .lock()
             .await
             .header()
-            .map(|h| h.contract.skills.clone())
+            .map(|h| {
+                h.contract
+                    .capabilities
+                    .iter()
+                    .filter(|capability| {
+                        capability.kind == vak_session::types::CapabilityKind::Skill
+                    })
+                    .map(|capability| capability.name.clone())
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
 
         let mut authz: Vec<Result<(), String>> = Vec::with_capacity(n);
@@ -1766,17 +1819,15 @@ async fn execute_one(
 
     let mut output = match tool {
         None if skill_names.iter().any(|name| name == &call.name) => ToolRunOutput::Err(format!(
-            "skill '{}' is guidance, not an executable tool; call read on its advertised SKILL.md path, then use ordinary tools",
-            call.name
+            r#"{{"type":"capability_kind_mismatch","name":{},"actual_kind":"skill","invocation":{{"tool":"skill","arguments":{{"name":{}}}}}}}"#,
+            serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into()),
+            serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into())
         )),
         None => ToolRunOutput::Err(format!(
-            "unknown tool: {} (available: {}). This call was rejected. Skill names are documents, not executable tools: do not retry this name as a tool; use read on the advertised SKILL.md path and then use one of the advertised tools.",
-            call.name,
-            tools
-                .iter()
-                .map(|t| t.name())
-                .collect::<Vec<_>>()
-                .join(", ")
+            r#"{{"type":"unknown_capability","requested_kind":"tool","name":{},"available_tools":{}}}"#,
+            serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into()),
+            serde_json::to_string(&tools.iter().map(|t| t.name()).collect::<Vec<_>>())
+                .unwrap_or_else(|_| "[]".into())
         )),
         Some(tool) => {
             let ctx = vak_tools::ToolContext {

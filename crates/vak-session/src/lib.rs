@@ -16,6 +16,7 @@ pub use search::{
     search_all, search_all_extended, search_extended,
 };
 pub use types::{
-    ActivityKind, ActivityRecord, ActivityStatus, CompactionEntry, Entry, EntryPayload,
-    FrozenContract, MessageMeta, MessageRecord, SessionError, SessionHeader,
+    ActivityKind, ActivityRecord, ActivityStatus, CapabilityDescriptor, CapabilityInvocation,
+    CapabilityKind, CompactionEntry, Entry, EntryPayload, FrozenContract, MessageMeta,
+    MessageRecord, SessionError, SessionHeader,
 };

@@ -1807,8 +1807,7 @@ async fn gateway_inbound(
         .filter(|s| !s.is_empty())
         .unwrap_or("unknown");
     let preview: String = text.chars().take(80).collect();
-    let expanded_text =
-        vak_core::custom_commands::expand_invocation(&core.custom_commands(), &text);
+    let expanded_text = text.clone();
     state.hub.emit_gateway_inbound(&body.surface, who, &preview);
     let busy = handle
         .session

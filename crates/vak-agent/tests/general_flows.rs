@@ -106,9 +106,8 @@ fn setup(
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: vec!["bash".into(), "write".into(), "read".into()],
             permission_mode: "full-access".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     };
     let home = cwd.join(".vak-home");

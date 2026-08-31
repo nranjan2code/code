@@ -78,9 +78,8 @@ fn build(
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: vec![],
             permission_mode: "full-access".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     };
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();
@@ -234,9 +233,8 @@ async fn watchdog_deadline_converts_hung_step_into_retryable_failure() {
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: vec![],
             permission_mode: "full-access".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     };
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();

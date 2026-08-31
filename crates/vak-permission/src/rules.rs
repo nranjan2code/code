@@ -121,6 +121,11 @@ pub fn arg_candidates(tool: &str, args: &Value) -> Vec<String> {
             .and_then(|p| p.as_str())
             .map(|p| vec![p.to_string()])
             .unwrap_or_default(),
+        "skill" => args
+            .get("name")
+            .and_then(|name| name.as_str())
+            .map(|name| vec![name.to_string()])
+            .unwrap_or_default(),
         "mcp" => match (
             args.get("action").and_then(|a| a.as_str()),
             args.get("server").and_then(|s| s.as_str()),

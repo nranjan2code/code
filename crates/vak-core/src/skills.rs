@@ -1,8 +1,12 @@
 //! Skills: markdown packages with frontmatter, discovered from
 //! `.vak/skills/<name>/SKILL.md` (project) and
-//! `<home>/skills/<name>/SKILL.md` (user). Only names + descriptions enter
-//! the system prompt; the model reads the file when it needs the content.
+//! `<home>/skills/<name>/SKILL.md` (user). Discovery metadata enters the
+//! capability packet; the brokered `skill` loader returns full content.
 
+use async_trait::async_trait;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -12,6 +16,187 @@ pub struct Skill {
     pub path: PathBuf,
     pub provenance: Option<String>,
     pub shadowed: bool,
+}
+
+impl Skill {
+    pub fn digest(&self) -> Result<String, std::io::Error> {
+        let bytes = std::fs::read(&self.path)?;
+        Ok(format!("{:x}", Sha256::digest(bytes)))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FrozenSkill {
+    pub name: String,
+    pub description: String,
+    pub path: PathBuf,
+    pub digest: String,
+    pub provenance: Option<String>,
+}
+
+impl FrozenSkill {
+    fn load(&self) -> Result<String, String> {
+        let bytes = std::fs::read(&self.path).map_err(|error| {
+            format!(
+                r#"{{"type":"capability_unavailable","kind":"skill","name":{},"message":{}}}"#,
+                json_string(&self.name),
+                json_string(&error.to_string())
+            )
+        })?;
+        let actual = format!("{:x}", Sha256::digest(&bytes));
+        if actual != self.digest {
+            return Err(format!(
+                r#"{{"type":"capability_stale","kind":"skill","name":{},"message":"skill changed after session admission; start a new session"}}"#,
+                json_string(&self.name)
+            ));
+        }
+        let content = String::from_utf8(bytes).map_err(|error| {
+            format!(
+                r#"{{"type":"capability_invalid","kind":"skill","name":{},"message":{}}}"#,
+                json_string(&self.name),
+                json_string(&error.to_string())
+            )
+        })?;
+        let body = strip_frontmatter(&content).trim();
+        let base = self.path.parent().unwrap_or(Path::new("."));
+        let provenance = self.provenance.as_deref().unwrap_or("workspace-or-user");
+        Ok(format!(
+            "<skill name=\"{}\" location=\"{}\" provenance=\"{}\">\nReferences are relative to {}.\n\n{}\n</skill>",
+            self.name,
+            self.path.display(),
+            provenance,
+            base.display(),
+            body
+        ))
+    }
+}
+
+pub fn frozen_from_capabilities(
+    capabilities: &[vak_session::types::CapabilityDescriptor],
+) -> Vec<FrozenSkill> {
+    capabilities
+        .iter()
+        .filter(|capability| capability.kind == vak_session::types::CapabilityKind::Skill)
+        .filter_map(|capability| {
+            Some(FrozenSkill {
+                name: capability.name.clone(),
+                description: capability.description.clone(),
+                path: capability.source.clone()?,
+                digest: capability.digest.clone()?,
+                provenance: capability.provenance.clone(),
+            })
+        })
+        .collect()
+}
+
+pub fn expand_invocation(input: &str, skills: &[FrozenSkill]) -> Result<Option<String>, String> {
+    let trimmed = input.trim_start();
+    let Some(rest) = trimmed.strip_prefix("/skill:") else {
+        return Ok(None);
+    };
+    let mut parts = rest.splitn(2, char::is_whitespace);
+    let name = parts.next().unwrap_or_default();
+    let Some(skill) = skills.iter().find(|skill| skill.name == name) else {
+        return Err(format!(
+            r#"{{"type":"capability_not_admitted","kind":"skill","name":{}}}"#,
+            json_string(name)
+        ));
+    };
+    let block = skill.load()?;
+    let args = parts.next().unwrap_or_default().trim();
+    Ok(Some(if args.is_empty() {
+        block
+    } else {
+        format!("{block}\n\n{args}")
+    }))
+}
+
+#[derive(Debug, Clone)]
+pub struct SkillTool {
+    skills: BTreeMap<String, FrozenSkill>,
+    description: String,
+}
+
+impl SkillTool {
+    pub fn new(skills: impl IntoIterator<Item = FrozenSkill>) -> Self {
+        let skills = skills
+            .into_iter()
+            .map(|skill| (skill.name.clone(), skill))
+            .collect::<BTreeMap<_, _>>();
+        let mut description = String::from(
+            "Load one admitted skill document by name. Skills are instructions, not executable functions. Available skills:\n",
+        );
+        for skill in skills.values() {
+            description.push_str(&format!("- {}: {}\n", skill.name, skill.description));
+        }
+        Self {
+            skills,
+            description,
+        }
+    }
+}
+
+#[async_trait]
+impl vak_tools::Tool for SkillTool {
+    fn name(&self) -> &str {
+        "skill"
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "enum": self.skills.keys().collect::<Vec<_>>(),
+                    "description": "Exact admitted skill name"
+                }
+            },
+            "required": ["name"],
+            "additionalProperties": false
+        })
+    }
+
+    async fn execute(&self, args: &Value, ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
+        let Some(name) = args.get("name").and_then(Value::as_str) else {
+            return vak_tools::ToolOutput::error(
+                r#"{"type":"invalid_arguments","capability":"skill","message":"missing required string 'name'"}"#,
+            );
+        };
+        let Some(skill) = self.skills.get(name) else {
+            return vak_tools::ToolOutput::error(format!(
+                r#"{{"type":"capability_not_admitted","kind":"skill","name":{}}}"#,
+                json_string(name)
+            ));
+        };
+        match skill.load() {
+            Ok(content) => vak_tools::ToolOutput::ok(ctx.truncate_output(content)),
+            Err(error) => vak_tools::ToolOutput::error(error),
+        }
+    }
+
+    fn claims(&self, _args: &Value) -> vak_tools::ResourceClaims {
+        vak_tools::ResourceClaims {
+            read_only: true,
+            ..Default::default()
+        }
+    }
+}
+
+fn json_string(value: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "\"invalid\"".into())
+}
+
+fn strip_frontmatter(content: &str) -> &str {
+    let Some(rest) = content.strip_prefix("---") else {
+        return content;
+    };
+    rest.split_once("\n---")
+        .map_or(content, |(_, body)| body.trim_start_matches(['\r', '\n']))
 }
 
 pub fn discover(cwd: &Path, home: &Path) -> Vec<Skill> {
@@ -135,21 +320,39 @@ pub fn prompt_section(skills: &[Skill]) -> String {
         return String::new();
     }
     let mut s = String::from(
-        "\nSkills available (these are documents only, never callable tools; if the task says `use <skill>`, first call `read` on that skill's exact absolute SKILL.md path, then apply it with ordinary tools):\n",
+        "\nSkills available. Load instructions with the `skill` tool using the exact name; then use ordinary tools to perform the work:\n",
     );
     for sk in skills {
         s.push_str(&format!(
-            "- SKILL `{}` (not a tool): {} — read {}\n",
+            "- `{}`: {}\n",
             sk.name,
             if sk.description.is_empty() {
                 "(no description)"
             } else {
                 &sk.description
-            },
-            sk.path.display()
+            }
         ));
     }
     s
+}
+
+pub fn prompt_section_from_capabilities(
+    capabilities: &[vak_session::types::CapabilityDescriptor],
+) -> String {
+    let skills = capabilities
+        .iter()
+        .filter(|capability| capability.kind == vak_session::types::CapabilityKind::Skill)
+        .collect::<Vec<_>>();
+    if skills.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "\nSkills available. Load instructions with the `skill` tool using the exact name; then use ordinary tools to perform the work:\n",
+    );
+    for skill in skills {
+        out.push_str(&format!("- `{}`: {}\n", skill.name, skill.description));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -217,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    fn prompt_identifies_skill_as_guidance_and_includes_exact_path() {
+    fn prompt_advertises_the_typed_skill_loader_without_leaking_paths() {
         let skill = Skill {
             name: "code-task".into(),
             description: "focused implementation".into(),
@@ -226,8 +429,75 @@ mod tests {
             shadowed: false,
         };
         let prompt = prompt_section(&[skill]);
-        assert!(prompt.contains("if the task says `use <skill>`, first call `read`"));
-        assert!(prompt.contains("SKILL `code-task` (not a tool)"));
-        assert!(prompt.contains("/workspace/.vak/skills/code-task/SKILL.md"));
+        assert!(prompt.contains("`skill` tool using the exact name"));
+        assert!(prompt.contains("`code-task`: focused implementation"));
+        assert!(!prompt.contains("/workspace/.vak/skills"));
+    }
+
+    #[tokio::test]
+    async fn skill_tool_loads_only_the_frozen_digest() -> Result<(), Box<dyn std::error::Error>> {
+        use vak_tools::Tool;
+
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("SKILL.md");
+        std::fs::write(
+            &path,
+            "---\nname: code-task\ndescription: focused implementation\n---\nUse table-driven tests.",
+        )?;
+        let skill = parse(&path).ok_or("skill should parse")?;
+        let digest = skill.digest()?;
+        let tool = SkillTool::new([FrozenSkill {
+            name: skill.name,
+            description: skill.description,
+            path: path.clone(),
+            digest,
+            provenance: None,
+        }]);
+        let ctx = vak_tools::ToolContext {
+            cwd: dir.path().to_path_buf(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            limits: Default::default(),
+            sandbox: None,
+        };
+        let loaded = tool
+            .execute(&serde_json::json!({"name": "code-task"}), &ctx)
+            .await;
+        assert!(!loaded.is_error);
+        assert!(loaded.content.contains("Use table-driven tests."));
+        assert!(loaded.content.contains("References are relative to"));
+
+        std::fs::write(&path, "changed after admission")?;
+        let stale = tool
+            .execute(&serde_json::json!({"name": "code-task"}), &ctx)
+            .await;
+        assert!(stale.is_error);
+        assert!(stale.content.contains("capability_stale"));
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_skill_command_expands_before_model_dispatch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("SKILL.md");
+        std::fs::write(
+            &path,
+            "---\nname: code-task\ndescription: focused implementation\n---\nFollow the workflow.",
+        )?;
+        let skill = parse(&path).ok_or("skill should parse")?;
+        let digest = skill.digest()?;
+        let frozen = FrozenSkill {
+            name: skill.name,
+            description: skill.description,
+            path,
+            digest,
+            provenance: None,
+        };
+        let expanded = expand_invocation("/skill:code-task fix parser", &[frozen])?
+            .ok_or("command should expand")?;
+        assert!(expanded.contains("<skill name=\"code-task\""));
+        assert!(expanded.contains("Follow the workflow."));
+        assert!(expanded.ends_with("fix parser"));
+        Ok(())
     }
 }

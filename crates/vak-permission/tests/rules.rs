@@ -331,3 +331,26 @@ fn mcp_calls_match_server_tool_candidates() {
     );
     assert!(matches!(d, Decision::Deny { .. }));
 }
+
+#[test]
+fn declared_write_scope_denies_other_direct_file_mutations_before_rules() {
+    let cwd = std::env::temp_dir().join("vak-permission-write-scope-test");
+    let engine = PermissionEngine::default()
+        .restrict_write_paths(&cwd, &[std::path::PathBuf::from("app.py")]);
+
+    let allowed = engine.evaluate(
+        "write",
+        &json!({"path": "app.py", "content": "ok"}),
+        Mode::FullAccess,
+        &cwd,
+    );
+    assert_eq!(allowed, Decision::Allow);
+
+    let denied = engine.evaluate(
+        "edit",
+        &json!({"path": "test_app.py", "old_text": "x", "new_text": "y"}),
+        Mode::FullAccess,
+        &cwd,
+    );
+    assert!(matches!(denied, Decision::Deny { .. }));
+}

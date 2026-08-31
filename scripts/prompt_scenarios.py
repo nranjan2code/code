@@ -59,25 +59,25 @@ def case_fingerprint(case: Case) -> str:
 BASE_CASES = (
     Case(
         "skill-code-positive-total",
-        "Use the code-task skill. Read the skill, README.md, and tests before editing. Implement the requested function, edit only app.py, run python3 test_app.py, and if it fails diagnose and repair app.py until it passes. Use only tools advertised by VAK; do not ask me for requirements because they are in README.md. Report the exact final test result.",
+        "Load the code-task skill with VAK's skill tool. Read README.md and tests before editing. Implement the requested function, edit only app.py, run python3 test_app.py, and if it fails diagnose and repair app.py until it passes. Use only tools advertised by VAK; do not ask me for requirements because they are in README.md. Report the exact final test result.",
         {".vak/skills/code-task/SKILL.md": "---\nname: code-task\ndescription: inspect, edit, and verify a small code task\n---\nRead requirements and tests, edit only the implementation, run the specified test command.\n", "README.md": "Implement total_positive: sum only values greater than zero.\n", "app.py": "def total_positive(values):\n    return sum(values)\n", "test_app.py": "from app import total_positive\nassert total_positive([3,-2,5]) == 8\nassert total_positive([-4]) == 0\n"},
         "python3 test_app.py", ("code-task",), ("README.md", "test_app.py"),
     ),
     Case(
         "skill-code-json-normalizer",
-        "Use the code-task skill. Inspect README.md and test_app.py. Implement the requirement in app.py only, run python3 test_app.py, and if it fails diagnose and repair app.py until it passes. Use only tools advertised by VAK and summarize the final verification.",
+        "Load the code-task skill with VAK's skill tool. Inspect README.md and test_app.py. Implement the requirement in app.py only, run python3 test_app.py, and if it fails diagnose and repair app.py until it passes. Use only tools advertised by VAK and summarize the final verification.",
         {".vak/skills/code-task/SKILL.md": "---\nname: code-task\ndescription: implement and test a focused code change\n---\nRead the repository instructions and tests. Keep the change minimal and run the requested test command.\n", "README.md": "Implement normalize_user: accept a mapping and return a new mapping with lowercase email and a stripped name.\n", "app.py": "def normalize_user(user):\n    return user\n", "test_app.py": "from app import normalize_user\nu = normalize_user({'email':' A@EXAMPLE.COM ', 'name':' Ada '})\nassert u == {'email':'a@example.com', 'name':'Ada'}\nassert normalize_user({'email':'B@X.IO','name':'Bob'}) == {'email':'b@x.io','name':'Bob'}\n"},
         "python3 test_app.py", ("code-task",), ("README.md", "test_app.py"),
     ),
     Case(
         "skill-code-csv-summary",
-        "Use the code-task skill. Read all instructions and tests. Implement summarize_csv in app.py only, run python3 test_app.py, and if it fails diagnose and repair app.py until it passes. Report the passing result.",
+        "Load the code-task skill with VAK's skill tool. Read all instructions and tests. Implement summarize_csv in app.py only, run python3 test_app.py, and if it fails diagnose and repair app.py until it passes. Report the passing result.",
         {".vak/skills/code-task/SKILL.md": "---\nname: code-task\ndescription: solve code tasks with tests and minimal scoped edits\n---\nInspect first. Edit only the implementation file. Run the exact test command.\n", "README.md": "Implement summarize_csv(text): return {'rows': count of data rows, 'total': sum of integer amount column}.\n", "app.py": "def summarize_csv(text):\n    return {'rows': 0, 'total': 0}\n", "test_app.py": "from app import summarize_csv\nassert summarize_csv('name,amount\\na,2\\nb,5\\n') == {'rows':2,'total':7}\nassert summarize_csv('name,amount\\n') == {'rows':0,'total':0}\n"},
         "python3 test_app.py", ("code-task",), ("README.md", "test_app.py"),
     ),
     Case(
         "skill-code-child-review",
-        "Use the code-task skill by first reading .vak/skills/code-task/SKILL.md, README.md, and test_app.py. README.md is the complete requirement: implement clamp(value, low, high) in app.py so values below low return low, values above high return high, and values inside the range return unchanged. Edit only app.py, run python3 test_app.py, and repair app.py until it passes. Then use the advertised task tool (not an invented tool name) to ask a readonly child agent to independently review the implementation, test result, and scope constraint. After the child returns, inspect app.py again and run python3 test_app.py as the final action. If that final test fails, repair app.py and rerun it. Do not edit app.py after the final passing test. Include both verification results.",
+        "Load the code-task skill with VAK's skill tool, then read README.md and test_app.py. README.md is the complete requirement: implement clamp(value, low, high) in app.py so values below low return low, values above high return high, and values inside the range return unchanged. Edit only app.py, run python3 test_app.py, and repair app.py until it passes. Then use the advertised task tool (not an invented tool name) to ask a readonly child agent to independently review the implementation, test result, and scope constraint. After the child returns, inspect app.py again and run python3 test_app.py as the final action. If that final test fails, repair app.py and rerun it. Do not edit app.py after the final passing test. Include both verification results.",
         {".vak/skills/code-task/SKILL.md": "---\nname: code-task\ndescription: implement, test, and ask a child agent for review\n---\nRead first, edit only the implementation, run tests, and delegate an independent review when requested.\n", ".vak/skills/code-task/README.md": "Implement clamp(value, low, high), returning low or high at the boundaries.\n", "README.md": "Implement clamp(value, low, high), returning low or high at the boundaries.\n", "app.py": "def clamp(value, low, high):\n    return value\n", "test_app.py": "from app import clamp\nassert clamp(5, 0, 3) == 3\nassert clamp(-1, 0, 3) == 0\nassert clamp(2, 0, 3) == 2\n"},
         "python3 test_app.py", ("code-task", "review"), ("README.md", "test_app.py"),
     ),
@@ -103,7 +103,7 @@ def generated_cases() -> tuple[Case, ...]:
         tests = f"from app import transform\n{assertion}\nassert transform([]) == {'' if name in ('longest','join-nonempty') else '[]' if name in ('even-values','squares','unique-sorted','rotate-left','chunks-two') else '0'}\n"
         cases.append(Case(
             f"generated-{name}",
-            f"Use the code-task skill. Read README.md and test_app.py. Implement the requirement in app.py only. Run python3 test_app.py; if it fails, repair the implementation until it passes. Do not edit README.md or test_app.py and use only advertised tools. Report the exact final result.",
+            f"Load the code-task skill with VAK's skill tool. Read README.md and test_app.py. Implement the requirement in app.py only. Run python3 test_app.py; if it fails, repair the implementation until it passes. Do not edit README.md or test_app.py and use only advertised tools. Report the exact final result.",
             {".vak/skills/code-task/SKILL.md": "---\nname: code-task\ndescription: implement a focused change and verify it with tests\n---\nRead requirements and tests, edit only app.py, run the requested command, and repair failures.\n", "README.md": f"Implement transform(values): {requirement}.\n", "app.py": "def transform(values):\n    return None\n", "test_app.py": tests},
             "python3 test_app.py", ("code-task",), ("README.md", "test_app.py"),
         ))
@@ -123,7 +123,7 @@ def failure_class(returncode: int, failures: list[str], output: str) -> str | No
         return "provider"
     if any(term in text for term in ("postcondition test failed", "out-of-scope file changed")):
         return "postcondition"
-    if any(term in text for term in ("skill-read evidence", "required evidence missing")):
+    if any(term in text for term in ("skill-loader evidence", "required evidence missing")):
         return "contract"
     if returncode != 0 or failures:
         return "agent-run"
@@ -283,6 +283,8 @@ def run_case(case: Case, provider: str, model: str, timeout: int) -> dict:
         workspace_before = snapshot_workspace(root)
         env = {**os.environ, "VAK_HOME": str(root / "home"), "VAK_PROVIDER": provider, "VAK_MODEL": model}
         command = [str(BIN), "exec", case.task, "--trust", "--yes", "--max-turns", "24"]
+        for path in case.allowed_changes:
+            command.extend(["--write-path", path])
         process = subprocess.Popen(command, cwd=root, env=env, text=True,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    start_new_session=True)
@@ -338,14 +340,15 @@ def run_case(case: Case, provider: str, model: str, timeout: int) -> dict:
         if not ledgers and not provider_blocked:
             failures.append("no session ledger was written")
         tool_calls = ledger_tool_calls(ledgers)
-        skill_reads = [inputs for name, inputs in tool_calls
-                       if name == "read" and str(inputs.get("path", "")).endswith("SKILL.md")]
+        admitted_skills = fixture_skill_names(case)
+        skill_loads = [inputs for name, inputs in tool_calls
+                       if name == "skill" and inputs.get("name") in admitted_skills]
         verification_calls = [inputs for name, inputs in tool_calls
                               if name == "bash" and case.check in str(inputs.get("command", ""))]
         child_calls = [inputs for name, inputs in tool_calls if name == "task"]
         if not provider_blocked:
-            if not skill_reads:
-                failures.append("skill-read evidence missing from ledger")
+            if not skill_loads:
+                failures.append("skill-loader evidence missing from ledger")
             if not verification_calls:
                 failures.append("verification bash evidence missing from ledger")
             if "child-review" in case.name and not child_calls:
@@ -376,7 +379,7 @@ def run_case(case: Case, provider: str, model: str, timeout: int) -> dict:
                 "orphaned_process_group": orphaned_process_group,
                 "tool_calls": [name for name, _ in tool_calls],
                 "tool_trace": tool_trace(tool_calls),
-                "skill_paths_read": [str(inputs.get("path", "")) for inputs in skill_reads],
+                "skills_loaded": [str(inputs.get("name", "")) for inputs in skill_loads],
                 "verification_call_count": len(verification_calls),
                 "child_call_count": len(child_calls),
                 "invalid_skill_calls": invalid_skill_calls,

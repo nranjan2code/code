@@ -117,9 +117,8 @@ fn setup_with_delta(
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: tools.iter().map(|t| t.name().to_string()).collect(),
             permission_mode: "full-access".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     };
     let home = cwd.join(".vak-home");

@@ -349,14 +349,13 @@ async fn execute_node(
                     route_objective: String::new(),
                     route_annotations: Vec::new(),
                     system_prompt: deps.system_prompt.clone(),
-                    tools: tools.iter().map(|t| t.name().to_string()).collect(),
                     permission_mode: match mode {
                         Mode::ReadOnly => "read-only",
                         Mode::WorkspaceWrite => "workspace-write",
                         Mode::FullAccess => "full-access",
                     }
                     .into(),
-                    skills: Vec::new(),
+                    capabilities: Vec::new(),
                 },
             };
             let path = SessionPath::new_session_file(&deps.sessions_home, &deps.cwd, &session_id);

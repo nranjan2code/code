@@ -138,22 +138,24 @@ pub fn expand(template: &str, args: &str) -> String {
     format!("{template}\n\nArguments: {args}")
 }
 
-/// Expands a leading `/command` invocation. Unknown slash-prefixed text is
-/// left untouched so ordinary prompts and built-in client commands keep
-/// their existing behavior.
-pub fn expand_invocation(commands: &[CustomCommand], input: &str) -> String {
+/// Expands a leading admitted `/command` invocation from the frozen
+/// capability packet. Unknown slash-prefixed text is left untouched.
+pub fn expand_capability_invocation(
+    capabilities: &[vak_session::CapabilityDescriptor],
+    input: &str,
+) -> Option<String> {
     let trimmed = input.trim_start();
-    let Some(rest) = trimmed.strip_prefix('/') else {
-        return input.to_string();
-    };
+    let rest = trimmed.strip_prefix('/')?;
     let mut parts = rest.splitn(2, char::is_whitespace);
-    let Some(name) = parts.next().filter(|name| !name.is_empty()) else {
-        return input.to_string();
-    };
-    let Some(command) = commands.iter().find(|command| command.name == name) else {
-        return input.to_string();
-    };
-    expand(&command.template, parts.next().unwrap_or_default())
+    let name = parts.next().filter(|name| !name.is_empty())?;
+    let command = capabilities.iter().find(|capability| {
+        capability.kind == vak_session::CapabilityKind::Command && capability.name == name
+    })?;
+    let template = command
+        .configuration
+        .get("template")
+        .and_then(serde_json::Value::as_str)?;
+    Some(expand(template, parts.next().unwrap_or_default()))
 }
 
 #[cfg(test)]
@@ -212,20 +214,24 @@ mod tests {
     }
 
     #[test]
-    fn invocation_expands_only_known_commands_and_preserves_unknown_text() {
-        let commands = vec![CustomCommand {
+    fn invocation_expands_only_admitted_commands() {
+        let commands = vec![vak_session::CapabilityDescriptor {
             name: "review".into(),
+            kind: vak_session::CapabilityKind::Command,
+            invocation: vak_session::CapabilityInvocation::UserCommand,
             description: "Review changes".into(),
-            template: "Review $ARGUMENTS".into(),
-            source: "user".into(),
+            source: None,
+            digest: None,
+            provenance: Some("user".into()),
+            configuration: serde_json::json!({"template": "Review $ARGUMENTS"}),
         }];
         assert_eq!(
-            expand_invocation(&commands, "/review src/lib.rs"),
-            "Review src/lib.rs"
+            expand_capability_invocation(&commands, "/review src/lib.rs"),
+            Some("Review src/lib.rs".into())
         );
         assert_eq!(
-            expand_invocation(&commands, "/unknown hello"),
-            "/unknown hello"
+            expand_capability_invocation(&commands, "/unknown hello"),
+            None
         );
     }
 }

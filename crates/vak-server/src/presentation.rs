@@ -789,9 +789,8 @@ mod tests {
                     route_objective: String::new(),
                     route_annotations: Vec::new(),
                     system_prompt: String::new(),
-                    tools: Vec::new(),
                     permission_mode: "read-only".into(),
-                    skills: Vec::new(),
+                    capabilities: Vec::new(),
                 },
             },
         )

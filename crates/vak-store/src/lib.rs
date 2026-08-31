@@ -468,9 +468,8 @@ mod tests {
                 route_objective: String::new(),
                 route_annotations: vec![],
                 system_prompt: String::new(),
-                tools: vec![],
                 permission_mode: "workspace-write".into(),
-                skills: vec![],
+                capabilities: Vec::new(),
             },
         }
     }

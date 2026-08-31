@@ -13,6 +13,15 @@ The agent loop gates every tool call before dispatch. `Ask` is resolved by an
 (AutoApprove) or defaults to AutoDeny with the reason fed back to the model as
 an error tool result — the model can adapt instead of crashing.
 
+An invoking surface may also supply a run-scoped direct-write allowlist. For
+CLI this is repeatable `vak exec --write-path <path>`. It is not a model
+instruction or a global setting: `write` and `edit` calls outside the declared
+paths are denied before ordinary rules or permission mode are considered. This
+is deliberately narrow: shell commands keep their normal sandbox and approval
+semantics, so a caller needing filesystem confinement for arbitrary shell code
+must use a restricted sandbox/worktree rather than infer shell effects from
+text.
+
 ## Rules
 
 Config layers merge three lists (`deny`, `ask`, `allow`; deny wins by order):

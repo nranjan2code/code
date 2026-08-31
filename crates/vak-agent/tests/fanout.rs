@@ -157,9 +157,8 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: vec!["task".into()],
             permission_mode: "full-access".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     };
     let log = SessionLog::create(
@@ -195,6 +194,8 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
         system_prompt: "child-sys".into(),
         model: "test-model".into(),
         tools: vec![Arc::new(BashTool)],
+        capabilities: Vec::new(),
+        input_normalizer: None,
         read_only_tools: vec![],
         max_turns: 4,
         permission: Some(Arc::new(PermissionEngine::default())),

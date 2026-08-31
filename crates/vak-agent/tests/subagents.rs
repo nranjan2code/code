@@ -97,9 +97,8 @@ async fn subagent_roundtrip_with_shared_scripted_provider() {
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: vec!["task".into()],
             permission_mode: "workspace-write".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     };
     let log = SessionLog::create(
@@ -125,6 +124,8 @@ async fn subagent_roundtrip_with_shared_scripted_provider() {
         system_prompt: "child-sys".into(),
         model: "test-model".into(),
         tools: vec![Arc::new(ReadTool)],
+        capabilities: Vec::new(),
+        input_normalizer: None,
         read_only_tools: vec![Arc::new(ReadTool)],
         max_turns: 5,
         permission: Some(Arc::new(PermissionEngine::default())),

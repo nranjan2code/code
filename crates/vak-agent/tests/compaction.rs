@@ -90,9 +90,8 @@ async fn overflow_triggers_compaction_then_run_completes() {
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: vec!["bash".into()],
             permission_mode: "full-access".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     };
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();
@@ -202,9 +201,8 @@ async fn still_over_after_compaction_fails_closed() {
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: vec![],
             permission_mode: "full-access".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     };
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();
@@ -348,9 +346,8 @@ mod pair_boundary_and_reuse {
                 route_objective: String::new(),
                 route_annotations: Vec::new(),
                 system_prompt: "sys".into(),
-                tools: vec![],
                 permission_mode: "full-access".into(),
-                skills: Vec::new(),
+                capabilities: Vec::new(),
             },
         };
         let mut log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();

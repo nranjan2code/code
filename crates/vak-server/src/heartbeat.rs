@@ -251,9 +251,8 @@ fn create_persistent_session(core: &Core) -> Result<SessionLog, String> {
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: core.system_prompt(),
-            tools: core.tool_names(),
             permission_mode: permission_mode_tag(core.effective_permission_mode()).to_string(),
-            skills: core.skills().iter().map(|s| s.name.clone()).collect(),
+            capabilities: core.capability_descriptors(),
         },
     };
     SessionLog::create(path, header).map_err(|e| format!("heartbeat session create: {e}"))

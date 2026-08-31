@@ -81,9 +81,8 @@ fn header_for(id: &str, cwd: &Path) -> SessionHeader {
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: String::new(),
-            tools: vec![],
             permission_mode: "workspace-write".into(),
-            skills: vec![],
+            capabilities: Vec::new(),
         },
     }
 }
@@ -191,9 +190,12 @@ async fn session_search_tool_is_available_and_logged() {
     assert!(answered, "final answer on the chain");
 
     // The tool appears in the frozen contract.
-    let tools = &log.header().unwrap().contract.tools;
+    let capabilities = &log.header().unwrap().contract.capabilities;
     assert!(
-        tools.iter().any(|t| t == "session_search"),
-        "session_search in frozen contract: {tools:?}"
+        capabilities.iter().any(|capability| {
+            capability.kind == vak_session::CapabilityKind::Tool
+                && capability.name == "session_search"
+        }),
+        "session_search in frozen contract: {capabilities:?}"
     );
 }

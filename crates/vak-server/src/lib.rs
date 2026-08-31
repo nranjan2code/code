@@ -2643,8 +2643,7 @@ async fn run_prompt(
         .clone();
     let core = state.core.clone();
 
-    let expanded_prompt =
-        vak_core::custom_commands::expand_invocation(&core.custom_commands(), &body.prompt);
+    let expanded_prompt = body.prompt.clone();
     let prompt_message = if body.attachments.is_empty() {
         None
     } else {

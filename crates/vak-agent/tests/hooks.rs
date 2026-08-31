@@ -86,9 +86,8 @@ fn build(responses: Vec<AssistantMessage>, hooks: Option<Vec<HookDef>>) -> Agent
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: vec!["bash".into()],
             permission_mode: "full-access".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     };
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();

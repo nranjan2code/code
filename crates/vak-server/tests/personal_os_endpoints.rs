@@ -113,9 +113,8 @@ fn header_for(id: &str, cwd: &Path) -> SessionHeader {
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: String::new(),
-            tools: vec![],
             permission_mode: "workspace-write".into(),
-            skills: vec![],
+            capabilities: Vec::new(),
         },
     }
 }

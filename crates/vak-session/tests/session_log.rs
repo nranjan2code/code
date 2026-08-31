@@ -22,9 +22,8 @@ fn header() -> SessionHeader {
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "system prompt v1".into(),
-            tools: vec!["read".into(), "bash".into()],
             permission_mode: "workspace-write".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     }
 }

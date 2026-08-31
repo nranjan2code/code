@@ -90,9 +90,8 @@ fn harness(policy: Option<StopPolicy>, responses: Vec<ScriptedResponse>) -> Harn
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: vec![],
             permission_mode: "full-access".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     };
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).expect("ledger");

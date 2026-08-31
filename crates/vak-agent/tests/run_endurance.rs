@@ -71,9 +71,8 @@ fn build_agent(provider: Arc<dyn Provider>, session_id: &str, attempts: u32) -> 
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: vec![],
             permission_mode: "full-access".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     };
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();

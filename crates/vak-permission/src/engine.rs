@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use serde_json::Value;
 
 use crate::Mode;
@@ -13,9 +15,18 @@ pub enum Decision {
 #[derive(Debug, Clone, Default)]
 pub struct PermissionEngine {
     rules: Vec<Rule>,
+    write_scope: Option<Vec<PathBuf>>,
 }
 
-const READ_TOOLS: [&str; 6] = ["read", "glob", "grep", "ls", "search", "session_search"];
+const READ_TOOLS: [&str; 7] = [
+    "read",
+    "glob",
+    "grep",
+    "ls",
+    "search",
+    "session_search",
+    "skill",
+];
 const PATH_SCOPED_READ_TOOLS: [&str; 4] = ["read", "glob", "grep", "ls"];
 const WRITE_TOOLS: [&str; 2] = ["write", "edit"];
 /// Learning-loop journaling into vak's own per-workspace store
@@ -25,7 +36,10 @@ const LEARNING_TOOLS: [&str; 2] = ["remember", "propose_skill"];
 
 impl PermissionEngine {
     pub fn new(rules: Vec<Rule>) -> Self {
-        PermissionEngine { rules }
+        PermissionEngine {
+            rules,
+            write_scope: None,
+        }
     }
 
     pub fn from_rule_strings(specs: &[String]) -> Result<Self, crate::rules::RuleError> {
@@ -33,11 +47,27 @@ impl PermissionEngine {
         for s in specs {
             rules.push(Rule::parse(s)?);
         }
-        Ok(PermissionEngine { rules })
+        Ok(PermissionEngine {
+            rules,
+            write_scope: None,
+        })
     }
 
     pub fn rules(&self) -> &[Rule] {
         &self.rules
+    }
+
+    /// Restrict direct file mutations to paths explicitly supplied by the
+    /// hosting surface. This is an execution contract, not a model prompt;
+    /// it is evaluated before rules and permission mode.
+    pub fn restrict_write_paths(mut self, cwd: &Path, paths: &[PathBuf]) -> Self {
+        self.write_scope = Some(
+            paths
+                .iter()
+                .map(|path| normalize_scope_path(path, cwd))
+                .collect(),
+        );
+        self
     }
 
     /// Severity aggregation over matching rules — Deny > Ask > Allow no
@@ -51,6 +81,21 @@ impl PermissionEngine {
         mode: Mode,
         cwd: &std::path::Path,
     ) -> Decision {
+        if WRITE_TOOLS.contains(&tool)
+            && let Some(scope) = &self.write_scope
+        {
+            let Some(path) = args.get("path").and_then(|value| value.as_str()) else {
+                return Decision::Deny {
+                    reason: "write scope requires a path argument".into(),
+                };
+            };
+            let candidate = normalize_scope_path(Path::new(path), cwd);
+            if !scope.contains(&candidate) {
+                return Decision::Deny {
+                    reason: format!("'{path}' is outside this run's declared write scope"),
+                };
+            }
+        }
         let mut best: Option<(u8, Decision)> = None;
         for rule in &self.rules {
             if !rule.matches(tool, args) {
@@ -232,4 +277,14 @@ fn path_in_workspace(path: &std::path::Path, cwd: &std::path::Path) -> bool {
             acc.starts_with(&cwd_abs)
         }
     }
+}
+
+fn normalize_scope_path(path: &Path, cwd: &Path) -> PathBuf {
+    let base = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    };
+    candidate.canonicalize().unwrap_or(candidate)
 }

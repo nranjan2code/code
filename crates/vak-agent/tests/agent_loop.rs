@@ -13,7 +13,9 @@ use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
 use vak_session::SessionLog;
-use vak_session::types::{FrozenContract, SessionHeader};
+use vak_session::types::{
+    CapabilityDescriptor, CapabilityInvocation, CapabilityKind, FrozenContract, SessionHeader,
+};
 use vak_tools::Tool;
 use vak_tools::bash::BashTool;
 use vak_tools::write::WriteTool;
@@ -104,9 +106,17 @@ fn harness(responses: Vec<ScriptedResponse>, tools: Vec<Arc<dyn Tool>>) -> Harne
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: tools.iter().map(|t| t.name().to_string()).collect(),
             permission_mode: "full-access".into(),
-            skills: vec!["code-task".into()],
+            capabilities: vec![CapabilityDescriptor {
+                name: "code-task".into(),
+                kind: CapabilityKind::Skill,
+                invocation: CapabilityInvocation::SkillLoader,
+                description: "test skill".into(),
+                source: None,
+                digest: None,
+                provenance: None,
+                configuration: serde_json::Value::Null,
+            }],
         },
     };
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();
@@ -154,6 +164,50 @@ async fn single_turn_no_tools_completes() {
     }
     let session = h.agent.session.lock().await;
     assert_eq!(session.derive_messages().len(), 2);
+}
+
+#[tokio::test]
+async fn normalizes_steering_before_it_reaches_the_ledger_or_provider() {
+    let mut h = harness(
+        vec![ScriptedResponse::Message(assistant_text("done"))],
+        vec![],
+    );
+    h.agent.config.input_normalizer = Some(Arc::new(|mut message| {
+        if let Some(ContentBlock::Text { text }) = message
+            .content
+            .iter_mut()
+            .find(|block| matches!(block, ContentBlock::Text { .. }))
+        {
+            *text = format!("normalized: {text}");
+        }
+        Ok(message)
+    }));
+    let steering = vak_agent::SteeringQueues::new();
+    steering.push_steering("queued command");
+    let outcome = h
+        .agent
+        .run(
+            "initial",
+            &steering,
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    let request = h.requests.lock().unwrap().first().cloned().unwrap();
+    assert!(
+        request
+            .messages
+            .iter()
+            .any(|message| message.text_content() == "normalized: queued command")
+    );
+    let session = h.agent.session.lock().await;
+    assert!(
+        session
+            .derive_messages()
+            .iter()
+            .any(|message| message.text_content() == "normalized: queued command")
+    );
 }
 
 #[tokio::test]
@@ -231,13 +285,12 @@ async fn unknown_tool_becomes_error_value_not_crash() {
             _ => None,
         })
         .expect("a tool result must exist");
-    assert!(results_block.contains("unknown tool"));
-    assert!(results_block.contains("Skill names are documents"));
-    assert!(results_block.contains("do not retry this name"));
+    assert!(results_block.contains("unknown_capability"));
+    assert!(results_block.contains("available_tools"));
 }
 
 #[tokio::test]
-async fn known_skill_name_is_rejected_as_a_non_executable_tool() {
+async fn skill_name_tool_call_returns_typed_loader_recovery() {
     let mut h = harness(
         vec![
             ScriptedResponse::Message(tool_call_msg("t1", "code-task", serde_json::json!({}))),
@@ -265,7 +318,9 @@ async fn known_skill_name_is_rejected_as_a_non_executable_tool() {
             _ => None,
         })
         .expect("a tool result must exist");
-    assert!(result.contains("guidance, not an executable tool"));
+    assert!(result.contains("capability_kind_mismatch"));
+    assert!(result.contains("\"tool\":\"skill\""));
+    assert!(result.contains("\"name\":\"code-task\""));
 }
 
 #[tokio::test]

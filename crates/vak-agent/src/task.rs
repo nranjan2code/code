@@ -13,18 +13,20 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use vak_llm::Provider;
 use vak_permission::{Mode, PermissionEngine};
-use vak_session::types::{FrozenContract, SessionHeader};
+use vak_session::types::{CapabilityDescriptor, CapabilityKind, FrozenContract, SessionHeader};
 use vak_session::{SessionLog, SessionPath};
 use vak_tools::sandbox::Sandbox;
 use vak_tools::{Tool, ToolContext, ToolOutput};
 
-use crate::{Agent, AgentConfig, Approver, SteeringQueues};
+use crate::{Agent, AgentConfig, Approver, InputNormalizer, SteeringQueues};
 
 pub struct TaskDeps {
     pub provider: Arc<dyn Provider>,
     pub system_prompt: String,
     pub model: String,
     pub tools: Vec<Arc<dyn Tool>>,
+    pub capabilities: Vec<CapabilityDescriptor>,
+    pub input_normalizer: Option<InputNormalizer>,
     /// Read-only subset (read/glob/grep) used when a task declares
     /// `readonly: true`; children get these plus ReadOnly permission mode.
     pub read_only_tools: Vec<Arc<dyn Tool>>,
@@ -275,6 +277,21 @@ impl TaskTool {
         } else {
             self.deps.mode
         };
+        let child_tool_names = child_tools
+            .iter()
+            .map(|tool| tool.name())
+            .collect::<Vec<_>>();
+        let child_capabilities = self
+            .deps
+            .capabilities
+            .iter()
+            .filter(|capability| match capability.kind {
+                CapabilityKind::Tool => child_tool_names.contains(&capability.name.as_str()),
+                CapabilityKind::Skill | CapabilityKind::McpServer => true,
+                CapabilityKind::Hook | CapabilityKind::Command => false,
+            })
+            .cloned()
+            .collect();
         let path =
             SessionPath::new_session_file(&self.deps.sessions_home, &self.deps.cwd, &session_id);
         let header = SessionHeader {
@@ -290,14 +307,13 @@ impl TaskTool {
                 route_objective: String::new(),
                 route_annotations: Vec::new(),
                 system_prompt: self.deps.system_prompt.clone(),
-                tools: child_tools.iter().map(|t| t.name().to_string()).collect(),
                 permission_mode: match child_mode {
                     Mode::ReadOnly => "read-only",
                     Mode::WorkspaceWrite => "workspace-write",
                     Mode::FullAccess => "full-access",
                 }
                 .into(),
-                skills: Vec::new(),
+                capabilities: child_capabilities,
             },
         };
         let log = match SessionLog::create(path, header) {
@@ -307,7 +323,9 @@ impl TaskTool {
 
         let mut cfg = AgentConfig::new(self.deps.system_prompt.clone());
         cfg.model = self.deps.model.clone();
+        cfg.tool_definitions = Some(vak_tools::definitions(&child_tools));
         cfg.tools = child_tools;
+        cfg.input_normalizer = self.deps.input_normalizer.clone();
         cfg.max_turns = self.deps.max_turns;
         cfg.parallel_tools = true;
         cfg.permission = self.deps.permission.clone();

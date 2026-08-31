@@ -789,9 +789,8 @@ mod tests {
                 route_objective: "balanced".into(),
                 route_annotations: vec!["thin primary evidence".into()],
                 system_prompt: String::new(),
-                tools: Vec::new(),
                 permission_mode: "workspace-write".into(),
-                skills: Vec::new(),
+                capabilities: Vec::new(),
             },
         };
         let log = vak_session::SessionLog::create(

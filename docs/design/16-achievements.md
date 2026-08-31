@@ -38,8 +38,8 @@ Architecture ladder — chained single-session builds, independently verified:
 
 | Probe | Result |
 |---|---|
-| Skill discovery + progressive injection | ✓ `contract.skills` records it; prompt lists name/description/path only |
-| Model follows injected skill | ✓ read SKILL.md unprompted; produced `it_*` table-driven tests w/ exact messages, no unwrap |
+| Skill discovery + progressive injection | Superseded by docs/design/41: typed capability descriptors plus the brokered `skill` loader |
+| Model follows injected skill | ✓ deterministic `/skill:name` expansion and `skill({name})` loading; paths are not prompt-advertised |
 | Pre-tool-use hook veto | ✓ matcher-scoped (`write(*.key)` blocked exit-2); denial fed back as tool error; model adapted without blind retries |
 | Learned rules honored headless | ✓ A/B: identical `echo` command — allowed via permissions.local.toml vs engine-denied without it (no approver in either) |
 | MCP meta-tool roundtrip | ✓ listed fake server + tools over stdio, called echo, verbatim result |

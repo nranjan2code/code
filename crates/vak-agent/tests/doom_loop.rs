@@ -90,9 +90,8 @@ async fn third_identical_call_is_blocked_with_reason() {
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: vec!["bash".into()],
             permission_mode: "full-access".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     };
     let home = dir.path().join("home");
@@ -178,9 +177,8 @@ async fn different_args_are_not_counted_together() {
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: vec!["bash".into()],
             permission_mode: "full-access".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     };
     let home = dir.path().join("home");

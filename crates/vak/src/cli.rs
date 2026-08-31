@@ -31,6 +31,10 @@ pub(crate) enum Command {
         yes: bool,
         #[arg(long)]
         permission_mode: Option<String>,
+        /// Permit direct `write` and `edit` calls only for these workspace
+        /// paths during this run. Repeat the flag for more than one path.
+        #[arg(long = "write-path")]
+        write_paths: Vec<PathBuf>,
         /// Run in an isolated git worktree off HEAD
         #[arg(long)]
         worktree: bool,
@@ -917,5 +921,25 @@ mod tests {
                 }
             }
         ));
+    }
+
+    #[test]
+    fn exec_accepts_repeatable_write_scope_paths() {
+        match parse(&[
+            "exec",
+            "update files",
+            "--write-path",
+            "src/lib.rs",
+            "--write-path",
+            "Cargo.toml",
+        ]) {
+            Command::Exec { write_paths, .. } => {
+                assert_eq!(
+                    write_paths,
+                    vec![PathBuf::from("src/lib.rs"), PathBuf::from("Cargo.toml")]
+                );
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
     }
 }

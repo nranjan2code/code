@@ -137,9 +137,8 @@ fn setup(provider: Arc<MatrixProvider>, cfg_tweaks: impl FnOnce(&mut AgentConfig
             route_objective: String::new(),
             route_annotations: Vec::new(),
             system_prompt: "sys".into(),
-            tools: vec![],
             permission_mode: "workspace-write".into(),
-            skills: Vec::new(),
+            capabilities: Vec::new(),
         },
     };
     let home = cwd.join(".vak-home");

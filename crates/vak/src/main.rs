@@ -299,6 +299,7 @@ async fn main() {
             json,
             yes,
             permission_mode,
+            write_paths,
             worktree,
             session,
             goal,
@@ -318,6 +319,7 @@ async fn main() {
                 json,
                 yes,
                 permission_mode,
+                write_paths,
                 worktree,
                 session,
                 goal,
@@ -950,6 +952,7 @@ async fn run_exec(
     _json: bool,
     yes: bool,
     permission_mode: Option<String>,
+    write_paths: Vec<PathBuf>,
     worktree: bool,
     resume_session: Option<String>,
     goal: Option<String>,
@@ -1041,6 +1044,19 @@ async fn run_exec(
     } else {
         std::sync::Arc::new(vak_agent::AutoDeny)
     });
+    let permission = if write_paths.is_empty() {
+        None
+    } else {
+        match vak_core::build_engine_with(core.config(), &core.extra_allow_snapshot()) {
+            Ok(engine) => Some(std::sync::Arc::new(
+                engine.restrict_write_paths(core.cwd(), &write_paths),
+            )),
+            Err(error) => {
+                eprintln!("error: {error}");
+                return 2;
+            }
+        }
+    };
 
     // The runner consumes `core`; keep a handle for the post-turn
     // reflection seam.
@@ -1055,13 +1071,13 @@ async fn run_exec(
                     criteria.clone(),
                     cancel,
                     approver,
-                    None,
+                    permission,
                     None,
                     tx,
                 )
                 .await
             } else {
-                core.run_turn_with(session, &prompt, cancel, approver, None, None, tx)
+                core.run_turn_with(session, &prompt, cancel, approver, permission, None, tx)
                     .await
             }
         };
