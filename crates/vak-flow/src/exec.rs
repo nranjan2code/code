@@ -341,6 +341,8 @@ async fn execute_node(
                 created_at: chrono::Utc::now(),
                 cwd: deps.cwd.clone(),
                 parent_session_id: Some(deps.parent_session_id.clone()),
+                contract_id: None,
+                work_item_id: None,
                 contract: vak_session::types::FrozenContract {
                     app_version: env!("CARGO_PKG_VERSION").into(),
                     provider: deps.provider.name().into(),

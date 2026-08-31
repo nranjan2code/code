@@ -133,6 +133,8 @@ fn setup_with(
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),
         parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
         contract: FrozenContract {
             app_version: "0".into(),
             provider: provider.name().to_string(),
@@ -277,6 +279,7 @@ async fn receipts_round_trip_through_disk() {
             EntryPayload::Receipt(_) => "receipt",
             EntryPayload::Goal(_) => "goal",
             EntryPayload::Activity(_) => "activity",
+            EntryPayload::Work(_) => "work",
         })
         .collect();
     assert_eq!(

@@ -118,6 +118,8 @@ fn setup(provider: Arc<MatrixProvider>, cfg_tweaks: impl FnOnce(&mut AgentConfig
         created_at: chrono::Utc::now(),
         cwd: cwd.clone(),
         parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
         contract: FrozenContract {
             app_version: "0".into(),
             provider: "matrix".into(),

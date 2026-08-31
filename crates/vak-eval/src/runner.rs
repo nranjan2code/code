@@ -223,6 +223,8 @@ async fn run_case_with_tools(
         created_at: chrono::Utc::now(),
         cwd: cwd.clone(),
         parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
         contract: FrozenContract {
             app_version: env!("CARGO_PKG_VERSION").into(),
             provider: "eval-scripted".into(),

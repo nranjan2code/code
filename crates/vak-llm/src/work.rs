@@ -10,6 +10,8 @@ use std::time::Instant;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkPurpose {
+    /// Structured managed-work contract authoring.
+    Plan,
     /// A main agent-loop model step.
     Execute,
     /// The compaction summarizer call.

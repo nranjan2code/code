@@ -280,6 +280,8 @@ mod tests {
             created_at: chrono::Utc::now(),
             cwd: std::env::current_dir().unwrap(),
             parent_session_id: None,
+            contract_id: None,
+            work_item_id: None,
             contract: FrozenContract {
                 app_version: "test".into(),
                 provider: "openai".into(),

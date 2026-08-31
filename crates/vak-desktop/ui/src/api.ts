@@ -339,6 +339,20 @@ export function receipts(id: string): Promise<WorkReceipt[]> {
   return req(`/sessions/${id}/receipts`);
 }
 
+export function work(id: string): Promise<import("./types").WorkProjection | null> {
+  return req(`/sessions/${encodeURIComponent(id)}/work`);
+}
+
+export function workCommand(
+  id: string,
+  command: Record<string, unknown>,
+): Promise<import("./types").WorkProjection> {
+  return req(`/sessions/${encodeURIComponent(id)}/work`, {
+    method: "POST",
+    body: JSON.stringify(command),
+  });
+}
+
 export function steer(id: string, text: string, attachments?: { mime: string; data: string }[]): Promise<void> {
   return req(`/sessions/${id}/steering`, {
     method: "POST",

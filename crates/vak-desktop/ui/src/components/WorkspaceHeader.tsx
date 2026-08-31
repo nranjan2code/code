@@ -16,6 +16,7 @@ import {
   setInboxUnread,
   setNotice,
   setReceiptsOpen,
+  setWorkOpen,
   setSearchOpen,
   setSettingsOpen,
   setSettingsScope,
@@ -176,6 +177,15 @@ export default function WorkspaceHeader() {
           onClick={() => setReceiptsOpen(true)}
         >
           <Icon name="receipt" />
+        </button>
+        <button
+          class="icon-button has-tooltip"
+          data-tooltip="Managed work"
+          aria-label="Managed work"
+          disabled={!activeId()}
+          onClick={() => setWorkOpen(true)}
+        >
+          <span aria-hidden="true">W</span>
         </button>
         <button
           class="icon-button has-tooltip"

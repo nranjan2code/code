@@ -35,6 +35,7 @@ import type {
   TranscriptEntry,
   VoiceConfig,
   WorkReceipt,
+  WorkProjection,
   ActiveSubagent,
 } from "./types";
 
@@ -385,6 +386,16 @@ export const api = {
     if (res.status === 404) return [];
     return handle(res);
   },
+
+  work: (sessionId: string): Promise<WorkProjection | null> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/work`).then((r) => handle(r)),
+
+  workCommand: (sessionId: string, command: Record<string, unknown>): Promise<WorkProjection> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/work`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(command),
+    }).then((r) => handle(r)),
 
   checkpoints: (sessionId: string): Promise<{ checkpoints: SessionCheckpoint[] }> =>
     fetch(`/sessions/${encodeURIComponent(sessionId)}/checkpoints`).then((r) => handle(r)),

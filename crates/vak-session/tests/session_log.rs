@@ -1,11 +1,15 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use tempfile::tempdir;
 
 use vak_llm::{ContentBlock, Message, Role, Usage};
-use vak_session::types::{EntryPayload, FrozenContract, MessageMeta, MessageRecord, SessionHeader};
+use vak_session::types::{
+    EntryPayload, FrozenContract, MessageMeta, MessageRecord, SessionHeader, WorkContract,
+    WorkEvent, WorkEventKind, WorkItemDefinition, WorkOwner,
+};
 use vak_session::{ActivityKind, ActivityRecord, ActivityStatus, SessionLog};
 
 fn header() -> SessionHeader {
@@ -14,6 +18,8 @@ fn header() -> SessionHeader {
         created_at: chrono::Utc::now(),
         cwd: PathBuf::from("/tmp/proj"),
         parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
         contract: FrozenContract {
             app_version: "0.1.0".into(),
             provider: "anthropic".into(),
@@ -96,6 +102,157 @@ fn activity_roundtrips_without_entering_model_context() {
     let activities = reopened.activities();
     assert_eq!(activities.len(), 1);
     assert_eq!(activities[0].2.activity_id, "retry-1");
+}
+
+#[test]
+fn active_work_is_reconstructed_into_model_context() {
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("work.jsonl"), header()).unwrap();
+    let contract = WorkContract {
+        contract_id: "work-ctx".into(),
+        revision: 0,
+        source_entry_id: "user".into(),
+        objective: "preserve active work".into(),
+        constraints: Vec::new(),
+        assumptions: Vec::new(),
+        criteria: Vec::new(),
+        items: vec![WorkItemDefinition {
+            item_id: "inspect".into(),
+            title: "Inspect".into(),
+            instructions: "inspect".into(),
+            dependencies: Vec::new(),
+            owner: WorkOwner::ParentAgent,
+            required: true,
+            readonly: true,
+            path_claims: Vec::new(),
+            criterion_ids: Vec::new(),
+        }],
+    };
+    log.append_work(WorkEvent {
+        contract_id: "work-ctx".into(),
+        revision: 0,
+        kind: WorkEventKind::ContractCreated { contract },
+    })
+    .unwrap();
+    let messages = log.derive_messages();
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].text_content().contains("preserve active work"));
+    assert!(messages[0].text_content().contains("inspect"));
+}
+
+#[test]
+fn active_work_survives_compaction() {
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("work-compaction.jsonl"), header()).unwrap();
+    log.append_message(user_msg("old context")).unwrap();
+    let contract = WorkContract {
+        contract_id: "work-compaction".into(),
+        revision: 0,
+        source_entry_id: "user".into(),
+        objective: "survive compaction".into(),
+        constraints: Vec::new(),
+        assumptions: Vec::new(),
+        criteria: Vec::new(),
+        items: vec![WorkItemDefinition {
+            item_id: "verify".into(),
+            title: "Verify evidence".into(),
+            instructions: "verify".into(),
+            dependencies: Vec::new(),
+            owner: WorkOwner::ParentAgent,
+            required: true,
+            readonly: true,
+            path_claims: Vec::new(),
+            criterion_ids: Vec::new(),
+        }],
+    };
+    log.append_work(WorkEvent {
+        contract_id: "work-compaction".into(),
+        revision: 0,
+        kind: WorkEventKind::ContractCreated { contract },
+    })
+    .unwrap();
+    let boundary = log.append_message(user_msg("keep this")).unwrap();
+    log.compact("old summary".into(), boundary.id, 9000)
+        .unwrap();
+    assert!(
+        log.derive_messages()
+            .iter()
+            .any(|message| message.text_content().contains("survive compaction"))
+    );
+}
+
+#[test]
+fn restart_reconciles_orphaned_running_work_without_replaying_it() {
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("work-recovery.jsonl"), header()).unwrap();
+    let contract = WorkContract {
+        contract_id: "work-recovery".into(),
+        revision: 0,
+        source_entry_id: "user".into(),
+        objective: "recover safely".into(),
+        constraints: Vec::new(),
+        assumptions: Vec::new(),
+        criteria: Vec::new(),
+        items: vec![WorkItemDefinition {
+            item_id: "mutate".into(),
+            title: "Mutate safely".into(),
+            instructions: "perform one operation".into(),
+            dependencies: Vec::new(),
+            owner: WorkOwner::ParentAgent,
+            required: true,
+            readonly: false,
+            path_claims: Vec::new(),
+            criterion_ids: Vec::new(),
+        }],
+    };
+    log.append_work(WorkEvent {
+        contract_id: "work-recovery".into(),
+        revision: 0,
+        kind: WorkEventKind::ContractCreated { contract },
+    })
+    .unwrap();
+    log.append_work(WorkEvent {
+        contract_id: "work-recovery".into(),
+        revision: 0,
+        kind: WorkEventKind::ContractStatusChanged {
+            from: vak_session::types::WorkContractStatus::Draft,
+            to: vak_session::types::WorkContractStatus::Active,
+            reason: "test".into(),
+        },
+    })
+    .unwrap();
+    log.append_work(WorkEvent {
+        contract_id: "work-recovery".into(),
+        revision: 0,
+        kind: WorkEventKind::ItemStatusChanged {
+            item_id: "mutate".into(),
+            from: vak_session::types::WorkItemStatus::Proposed,
+            to: vak_session::types::WorkItemStatus::Ready,
+            attempt: 0,
+            reason: "test".into(),
+        },
+    })
+    .unwrap();
+    log.append_work(WorkEvent {
+        contract_id: "work-recovery".into(),
+        revision: 0,
+        kind: WorkEventKind::ItemStatusChanged {
+            item_id: "mutate".into(),
+            from: vak_session::types::WorkItemStatus::Ready,
+            to: vak_session::types::WorkItemStatus::Running,
+            attempt: 1,
+            reason: "test".into(),
+        },
+    })
+    .unwrap();
+
+    assert_eq!(log.reconcile_running_work(&HashSet::new()).unwrap(), 1);
+    let projection = log.work_projection().unwrap().unwrap();
+    assert_eq!(
+        projection.items["mutate"].status,
+        vak_session::types::WorkItemStatus::Interrupted
+    );
+    assert!(projection.items["mutate"].blocker.is_some());
 }
 
 #[test]

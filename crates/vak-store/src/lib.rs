@@ -33,6 +33,7 @@ pub enum EntryKind {
     Receipt,
     Goal,
     Activity,
+    Work,
 }
 
 impl EntryKind {
@@ -44,6 +45,7 @@ impl EntryKind {
             Self::Receipt => "receipt",
             Self::Goal => "goal",
             Self::Activity => "activity",
+            Self::Work => "work",
         }
     }
 
@@ -55,6 +57,7 @@ impl EntryKind {
             "receipt" => Some(Self::Receipt),
             "goal" => Some(Self::Goal),
             "activity" => Some(Self::Activity),
+            "work" => Some(Self::Work),
             _ => None,
         }
     }
@@ -251,6 +254,7 @@ impl Store {
             EntryPayload::Receipt(_) => EntryKind::Receipt,
             EntryPayload::Goal(_) => EntryKind::Goal,
             EntryPayload::Activity(_) => EntryKind::Activity,
+            EntryPayload::Work(_) => EntryKind::Work,
         };
 
         match &entry.payload {
@@ -352,6 +356,20 @@ impl Store {
                     activity.status,
                     vak_session::ActivityStatus::Failed | vak_session::ActivityStatus::Denied
                 ),
+            }),
+            EntryPayload::Work(work) => Some(IndexedEntry {
+                entry_id: entry.id.clone(),
+                session_id: session_id.to_string(),
+                project_hash: String::new(),
+                parent_id: entry.parent_id.clone(),
+                ts: entry.ts.to_rfc3339(),
+                kind,
+                role: Some("system".into()),
+                provider: None,
+                model: None,
+                tool_name: None,
+                content_text: serde_json::to_string(&work.kind).unwrap_or_default(),
+                is_error: false,
             }),
         }
     }
@@ -460,6 +478,8 @@ mod tests {
             created_at: chrono::Utc::now(),
             cwd: std::env::current_dir().unwrap(),
             parent_session_id: None,
+            contract_id: None,
+            work_item_id: None,
             contract: FrozenContract {
                 app_version: "test".into(),
                 provider: "openai".into(),

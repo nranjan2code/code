@@ -202,6 +202,7 @@ export const [transcriptViewId, setTranscriptViewId] = createSignal<string | nul
 export const [historyOpen, setHistoryOpen] = createSignal(false);
 // Dispatch-forensics (receipts) modal.
 export const [receiptsOpen, setReceiptsOpen] = createSignal(false);
+export const [workOpen, setWorkOpen] = createSignal(false);
 // Diff pane binding: which session's changes are shown (best-of-N override).
 export const [diffTarget, setDiffTarget] = createSignal<string | null>(null);
 

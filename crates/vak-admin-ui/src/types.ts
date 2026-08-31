@@ -567,6 +567,17 @@ export interface WorkReceipt {
   ts?: string;
 }
 
+export interface WorkProjection {
+  contract: {
+    contract_id: string;
+    objective: string;
+    assumptions: Array<{ assumption_id: string; text: string; requires_confirmation: boolean; resolution?: string }>;
+  };
+  status: string;
+  items: Record<string, { status: string; attempt: number; blocker?: string; evidence: unknown[] }>;
+  criteria: Record<string, unknown>;
+}
+
 export interface SessionDiff {
   diff: string;
 }

@@ -38,6 +38,9 @@ pub struct TaskDeps {
     pub cwd: PathBuf,
     pub sessions_home: PathBuf,
     pub parent_session_id: String,
+    pub contract_id: Option<String>,
+    pub work_item_id: Option<String>,
+    pub work_item_ids: Vec<String>,
     /// Parent-loop event channel so subagent lifecycles surface in the UI.
     pub events: Option<tokio::sync::mpsc::Sender<crate::AgentEvent>>,
     /// Shared registry of live children. None disables attach/steer (the
@@ -211,7 +214,9 @@ impl Tool for TaskTool {
                 "prompt": {"type": "string", "description": "Complete, self-contained instructions for the subagent"},
                 "label": {"type": "string", "description": "Short label shown in the UI"},
                 "readonly": {"type": "boolean", "description": "If true, the subagent gets only read/glob/grep and may run concurrently with other tasks", "default": false},
-                "paths": {"type": "array", "items": {"type": "string"}, "description": "Path scopes (globs) this task will write to; tasks with disjoint scopes run in parallel, overlapping scopes are serialized"}
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Path scopes (globs) this task will write to; tasks with disjoint scopes run in parallel, overlapping scopes are serialized"},
+                "contract_id": {"type": "string", "description": "Managed contract this child is executing"},
+                "work_item_id": {"type": "string", "description": "Managed work item assigned to this child"}
             },
             "required": ["prompt"]
         })
@@ -255,6 +260,25 @@ impl TaskTool {
         let Some(prompt) = args.get("prompt").and_then(|p| p.as_str()) else {
             return ToolOutput::error("missing required parameter: prompt");
         };
+        let requested_contract = args.get("contract_id").and_then(|value| value.as_str());
+        let requested_item = args.get("work_item_id").and_then(|value| value.as_str());
+        if requested_contract.is_some() != requested_item.is_some() {
+            return ToolOutput::error("contract_id and work_item_id must be supplied together");
+        }
+        if let Some(contract_id) = requested_contract
+            && self.deps.contract_id.as_deref() != Some(contract_id)
+        {
+            return ToolOutput::error(
+                "child contract does not match the parent's managed contract",
+            );
+        }
+        if let Some(item_id) = requested_item
+            && !self.deps.work_item_ids.iter().any(|known| known == item_id)
+        {
+            return ToolOutput::error(
+                "child work item does not exist in the parent's managed contract",
+            );
+        }
 
         let session_id = format!(
             "child-{}",
@@ -299,6 +323,16 @@ impl TaskTool {
             created_at: chrono::Utc::now(),
             cwd: self.deps.cwd.clone(),
             parent_session_id: Some(self.deps.parent_session_id.clone()),
+            contract_id: args
+                .get("contract_id")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+                .or_else(|| self.deps.contract_id.clone()),
+            work_item_id: args
+                .get("work_item_id")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+                .or_else(|| self.deps.work_item_id.clone()),
             contract: FrozenContract {
                 app_version: env!("CARGO_PKG_VERSION").into(),
                 provider: self.deps.provider.name().into(),

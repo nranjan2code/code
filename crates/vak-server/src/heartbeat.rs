@@ -241,6 +241,8 @@ fn create_persistent_session(core: &Core) -> Result<SessionLog, String> {
         created_at: chrono::Utc::now(),
         cwd: core.cwd().clone(),
         parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
         contract: vak_session::FrozenContract {
             app_version: vak_core::APP_VERSION.to_string(),
             provider: core.effective_provider(),

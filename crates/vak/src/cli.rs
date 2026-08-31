@@ -41,6 +41,9 @@ pub(crate) enum Command {
         /// Resume an existing session instead of starting a new one
         #[arg(long)]
         session: Option<String>,
+        /// Track this run as a durable managed work contract
+        #[arg(long)]
+        managed: bool,
         /// Durable objective for goal mode (docs/design/27 Phase H):
         /// completion is audited against --criteria, never self-reported.
         #[arg(long)]

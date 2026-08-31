@@ -628,6 +628,35 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                 format!("{label} finished in {elapsed_ms} ms"),
             ),
         }),
+        AgentEvent::WorkState { projection } => {
+            let status = match projection.status {
+                vak_session::types::WorkContractStatus::Completed => OutputStatus::Succeeded,
+                vak_session::types::WorkContractStatus::Failed
+                | vak_session::types::WorkContractStatus::Cancelled
+                | vak_session::types::WorkContractStatus::Unverified => OutputStatus::Failed,
+                vak_session::types::WorkContractStatus::Draft
+                | vak_session::types::WorkContractStatus::AwaitingInput
+                | vak_session::types::WorkContractStatus::Active
+                | vak_session::types::WorkContractStatus::Blocked
+                | vak_session::types::WorkContractStatus::Verifying => OutputStatus::Running,
+            };
+            let detail = serde_json::to_string(&projection).unwrap_or_else(|_| "{}".into());
+            Some(OutputStreamEvent::ItemReplaced {
+                item: live_item(
+                    session_id,
+                    format!("work-{}", projection.contract.contract_id),
+                    now,
+                    OutputRole::System,
+                    OutputKind::Progress,
+                    status,
+                    OutputContent::Information {
+                        label: "Managed work state".into(),
+                        detail: Some(detail.clone()),
+                    },
+                    detail,
+                ),
+            })
+        }
         AgentEvent::ApprovalRequested {
             id,
             tool,
@@ -798,6 +827,8 @@ mod tests {
                 created_at: chrono::Utc::now(),
                 cwd: PathBuf::from("/tmp/project"),
                 parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
                 contract: FrozenContract {
                     app_version: "test".into(),
                     provider: "test".into(),
@@ -907,6 +938,8 @@ mod tests {
                 created_at: chrono::Utc::now(),
                 cwd: PathBuf::from("/tmp/project"),
                 parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
                 contract: FrozenContract {
                     app_version: "test".into(),
                     provider: "test".into(),

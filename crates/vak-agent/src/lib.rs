@@ -20,6 +20,14 @@ pub use stop_policy::{BlockReason, StopPolicy};
 pub use task::{ActiveSubagent, SubagentHandle, SubagentRegistry, TaskDeps, TaskTool};
 pub use workspace::WorkspaceDelta;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WorkMode {
+    #[default]
+    Direct,
+    Managed,
+    Auto,
+}
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -123,6 +131,11 @@ pub enum AgentEvent {
         is_error: bool,
         elapsed_ms: u64,
     },
+    /// Latest durable managed-work projection. This is a live projection only;
+    /// the session ledger remains the source of truth and can rebuild it.
+    WorkState {
+        projection: vak_session::work::WorkProjection,
+    },
     RunFinished {
         summary: String,
         /// Whether the run ended badly. Consumers must not have to sniff
@@ -141,6 +154,10 @@ pub enum TurnOutcome {
 }
 
 pub struct AgentConfig {
+    pub work_mode: WorkMode,
+    pub work_enabled: bool,
+    pub max_work_items: usize,
+    pub max_work_revisions: u32,
     pub system_prompt: String,
     pub model: String,
     pub tools: Vec<Arc<dyn Tool>>,
@@ -206,6 +223,10 @@ pub type HookRecorder = Arc<dyn Fn(&vak_hooks::HookDef, bool) + Send + Sync>;
 impl AgentConfig {
     pub fn new(system_prompt: impl Into<String>) -> Self {
         AgentConfig {
+            work_mode: WorkMode::Direct,
+            work_enabled: true,
+            max_work_items: 20,
+            max_work_revisions: 8,
             system_prompt: system_prompt.into(),
             model: String::new(),
             tools: Vec::new(),
@@ -362,10 +383,33 @@ impl Agent {
     }
 
     fn tool_definitions(&self) -> Vec<vak_llm::ToolDefinition> {
-        self.config
+        let mut definitions = self
+            .config
             .tool_definitions
             .clone()
-            .unwrap_or_else(|| vak_tools::definitions(&self.config.tools))
+            .unwrap_or_else(|| vak_tools::definitions(&self.config.tools));
+        if self.config.work_mode == WorkMode::Managed
+            && !definitions
+                .iter()
+                .any(|definition| definition.name == "work")
+        {
+            definitions.push(vak_llm::ToolDefinition::new(
+                "work",
+                "Inspect and update the durable managed work contract. Model transitions may only move ready to running, running to blocked, or running to ready_for_verification.",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "operation": {"type": "string", "enum": ["get", "transition", "attach_evidence"]},
+                        "item_id": {"type": "string"},
+                        "to": {"type": "string", "enum": ["running", "blocked", "ready_for_verification"]},
+                        "reason": {"type": "string"},
+                        "evidence": {"type": "object"}
+                    },
+                    "required": ["operation"]
+                }),
+            ));
+        }
+        definitions
     }
 
     pub async fn run(
@@ -417,17 +461,55 @@ impl Agent {
                 });
             }
         }
-        if let Err(e) = self
-            .session
-            .lock()
-            .await
-            .append_message(MessageRecord {
-                message: prompt,
-                meta: None,
-            })
-            .map_err(|e| LlmError::Network(format!("session write failed: {e}")))
-        {
-            return TurnOutcome::Failed { error: e };
+        let prompt_entry = self.session.lock().await.append_message(MessageRecord {
+            message: prompt,
+            meta: None,
+        });
+        let prompt_entry = match prompt_entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                return TurnOutcome::Failed {
+                    error: LlmError::Network(format!("session write failed: {error}")),
+                };
+            }
+        };
+        if self.config.work_mode == WorkMode::Managed && !self.config.work_enabled {
+            return TurnOutcome::Failed {
+                error: LlmError::InvalidRequest("managed work is disabled by configuration".into()),
+            };
+        }
+        if self.config.work_enabled && self.config.work_mode == WorkMode::Managed {
+            let entry_id = prompt_entry.id.clone();
+            if let Err(error) = self
+                .start_managed_contract(&prompt_owned, entry_id, &cancel, &events)
+                .await
+            {
+                return TurnOutcome::Failed {
+                    error: LlmError::InvalidRequest(error),
+                };
+            }
+            self.emit_work_state(&events).await;
+            if self
+                .session
+                .lock()
+                .await
+                .work_projection()
+                .ok()
+                .flatten()
+                .is_some_and(|work| {
+                    work.status == vak_session::types::WorkContractStatus::AwaitingInput
+                })
+            {
+                let mut response = AssistantMessage::empty(self.config.model.clone());
+                response.content.push(ContentBlock::text(
+                    "I created the managed work contract, but need the required assumptions confirmed before starting.",
+                ));
+                let _ = self.session.lock().await.append_message(MessageRecord {
+                    message: response.clone().into_message(),
+                    meta: None,
+                });
+                return TurnOutcome::Completed { response };
+            }
         }
 
         let mut turn = 0usize;
@@ -884,6 +966,12 @@ impl Agent {
                     turn += 1;
                     continue;
                 }
+                if let Some(rejection) = self.managed_work_gate(Some(&events)).await
+                    && self.guard_continue(rejection, &events, turn).await
+                {
+                    turn += 1;
+                    continue;
+                }
                 return TurnOutcome::Completed { response };
             }
 
@@ -904,6 +992,12 @@ impl Agent {
                     continue;
                 }
                 if let Some(rejection) = self.goal_gate(&response, &cancel, &events).await
+                    && self.guard_continue(rejection, &events, turn).await
+                {
+                    turn += 1;
+                    continue;
+                }
+                if let Some(rejection) = self.managed_work_gate(Some(&events)).await
                     && self.guard_continue(rejection, &events, turn).await
                 {
                     turn += 1;
@@ -930,7 +1024,19 @@ impl Agent {
                 .filter(|call| matches!(call.name.as_str(), "edit" | "write"))
                 .map(|call| call.id.clone())
                 .collect();
+            let task_assignments: Vec<(String, String, String)> = calls
+                .iter()
+                .filter(|call| call.name == "task")
+                .filter_map(|call| {
+                    Some((
+                        call.id.clone(),
+                        call.input.get("contract_id")?.as_str()?.to_string(),
+                        call.input.get("work_item_id")?.as_str()?.to_string(),
+                    ))
+                })
+                .collect();
             let results = self.execute_batch(calls, &cancel, &events).await;
+            self.record_subagent_work(&task_assignments, &results).await;
             let successful_bash = results.iter().any(|(id, out)| {
                 matches!(out, ToolRunOutput::Ok(_))
                     && bash_pairs.iter().any(|(bash_id, _)| bash_id == id)
@@ -978,6 +1084,364 @@ impl Agent {
             }
 
             turn += 1;
+        }
+    }
+
+    async fn start_managed_contract(
+        &self,
+        prompt: &str,
+        source_entry_id: String,
+        cancel: &CancellationToken,
+        events: &mpsc::Sender<AgentEvent>,
+    ) -> Result<(), String> {
+        let session_id = self
+            .session
+            .lock()
+            .await
+            .header()
+            .map(|header| header.session_id.clone())
+            .ok_or_else(|| "managed work requires a session header".to_string())?;
+        let model = self
+            .session
+            .lock()
+            .await
+            .header()
+            .map(|header| header.contract.model.clone())
+            .unwrap_or_else(|| self.config.model.clone());
+        let authoring_request = ChatRequest {
+            model: model.clone(),
+            system: Some("You author durable work contracts. Return only one strict JSON object with keys objective, constraints, assumptions, criteria, and items. Each item must have item_id, title, instructions, dependencies, owner, required, readonly, path_claims, and criterion_ids. Owner must be one of parent_agent, subagent, flow, tool, or human. Criterion kind must be one of shell, file_exists, file_contains, tool_succeeded, flow_completed, external_receipt, or semantic. Do not include markdown or commentary.".into()),
+            messages: vec![Message::user_text(prompt)],
+            tools: Vec::new(),
+            max_tokens: self.config.context_policy.max_output.min(8_000) as u32,
+            temperature: None,
+        };
+        let mut ledger = StepLedger::new(
+            WorkPurpose::Plan,
+            self.provider.name(),
+            &model,
+            self.config.dispatch_ceiling.min(4),
+        );
+        let response = self
+            .complete_with_reliability(&authoring_request, cancel, events, false, &mut ledger)
+            .await
+            .map_err(|error| format!("managed contract authoring failed: {error}"))?;
+        self.session
+            .lock()
+            .await
+            .append_receipt(ledger.take_receipt())
+            .map_err(|error| format!("managed contract receipt failed: {error}"))?;
+        let authored: AuthoredContract =
+            serde_json::from_str(&response.text_content()).map_err(|error| {
+                format!("managed contract authoring returned invalid JSON: {error}")
+            })?;
+        if authored.items.is_empty() || authored.items.len() > self.config.max_work_items {
+            return Err(format!(
+                "managed contract must contain between one and {} items",
+                self.config.max_work_items
+            ));
+        }
+        if authored.objective.trim().is_empty() || authored.objective.chars().count() > 16_000 {
+            return Err("managed contract objective is empty or too long".into());
+        }
+        let contract_id = format!(
+            "work-{session_id}-{}",
+            chrono::Utc::now().timestamp_millis()
+        );
+        let contract = vak_session::types::WorkContract {
+            contract_id: contract_id.clone(),
+            revision: 0,
+            source_entry_id,
+            objective: authored.objective,
+            constraints: authored.constraints,
+            assumptions: authored.assumptions,
+            criteria: authored.criteria,
+            items: authored.items,
+        };
+        vak_session::validate_contract(&contract)
+            .map_err(|error| format!("managed contract validation failed: {error}"))?;
+        validate_work_paths(&contract)?;
+        let first_item_id = contract
+            .items
+            .first()
+            .map(|item| item.item_id.clone())
+            .ok_or_else(|| "managed contract has no executable item".to_string())?;
+        let mut session = self.session.lock().await;
+        session
+            .append_work(vak_session::types::WorkEvent {
+                contract_id: contract_id.clone(),
+                revision: 0,
+                kind: vak_session::types::WorkEventKind::ContractCreated { contract },
+            })
+            .map_err(|error| format!("managed contract write failed: {error}"))?;
+        let awaiting_input = session
+            .work_projection()
+            .ok()
+            .flatten()
+            .is_some_and(|work| {
+                work.contract.assumptions.iter().any(|assumption| {
+                    assumption.requires_confirmation && assumption.resolution.is_none()
+                })
+            });
+        session
+            .append_work(vak_session::types::WorkEvent {
+                contract_id: contract_id.clone(),
+                revision: 0,
+                kind: vak_session::types::WorkEventKind::ContractStatusChanged {
+                    from: vak_session::types::WorkContractStatus::Draft,
+                    to: if awaiting_input {
+                        vak_session::types::WorkContractStatus::AwaitingInput
+                    } else {
+                        vak_session::types::WorkContractStatus::Active
+                    },
+                    reason: if awaiting_input {
+                        "required assumptions need confirmation".into()
+                    } else {
+                        "managed execution admitted".into()
+                    },
+                },
+            })
+            .map_err(|error| format!("managed contract activation failed: {error}"))?;
+        if !awaiting_input {
+            session
+                .append_work(vak_session::types::WorkEvent {
+                    contract_id,
+                    revision: 0,
+                    kind: vak_session::types::WorkEventKind::ItemStatusChanged {
+                        item_id: first_item_id,
+                        from: vak_session::types::WorkItemStatus::Proposed,
+                        to: vak_session::types::WorkItemStatus::Ready,
+                        attempt: 0,
+                        reason: "ready for parent agent".into(),
+                    },
+                })
+                .map_err(|error| format!("managed item admission failed: {error}"))?;
+        }
+        Ok(())
+    }
+
+    async fn emit_work_state(&self, events: &mpsc::Sender<AgentEvent>) {
+        let projection = self.session.lock().await.work_projection().ok().flatten();
+        if let Some(projection) = projection {
+            let _ = events.send(AgentEvent::WorkState { projection }).await;
+        }
+    }
+
+    async fn managed_work_gate(&self, events: Option<&mpsc::Sender<AgentEvent>>) -> Option<String> {
+        if !self.config.work_enabled || self.config.work_mode != WorkMode::Managed {
+            return None;
+        }
+        let session = self.session.lock().await;
+        let projection = match session.work_projection() {
+            Ok(Some(projection)) => projection,
+            Ok(None) => return Some("managed run has no durable work contract".into()),
+            Err(error) => return Some(format!("managed work projection is invalid: {error}")),
+        };
+        if matches!(
+            projection.status,
+            vak_session::types::WorkContractStatus::Completed
+                | vak_session::types::WorkContractStatus::Failed
+                | vak_session::types::WorkContractStatus::Cancelled
+                | vak_session::types::WorkContractStatus::Unverified
+        ) {
+            return None;
+        }
+        let criteria = projection.contract.criteria.clone();
+        drop(session);
+        self.verify_managed_criteria(&criteria).await;
+        let mut session = self.session.lock().await;
+        let projection = match session.work_projection() {
+            Ok(Some(projection)) => projection,
+            Ok(None) => return Some("managed run lost its work contract".into()),
+            Err(error) => return Some(format!("managed work projection is invalid: {error}")),
+        };
+        for item in &projection.contract.items {
+            let Some(state) = projection.items.get(&item.item_id) else {
+                return Some(format!("managed work item '{}' has no state", item.item_id));
+            };
+            if state.status == vak_session::types::WorkItemStatus::ReadyForVerification {
+                let event = vak_session::types::WorkEvent {
+                    contract_id: projection.contract.contract_id.clone(),
+                    revision: projection.contract.revision,
+                    kind: vak_session::types::WorkEventKind::ItemVerified {
+                        item_id: item.item_id.clone(),
+                        attempt: state.attempt,
+                    },
+                };
+                if let Err(error) = session.append_work(event) {
+                    return Some(format!(
+                        "managed verification pending for '{}': {error}",
+                        item.item_id
+                    ));
+                }
+            }
+        }
+        let projection = match session.work_projection() {
+            Ok(Some(projection)) => projection,
+            Ok(None) => return Some("managed run lost its work contract".into()),
+            Err(error) => return Some(format!("managed work projection is invalid: {error}")),
+        };
+        let incomplete: Vec<&str> = projection
+            .contract
+            .items
+            .iter()
+            .filter(|item| item.required)
+            .filter_map(|item| {
+                let state = projection.items.get(&item.item_id)?;
+                (!matches!(state.status, vak_session::types::WorkItemStatus::Succeeded))
+                    .then_some(item.item_id.as_str())
+            })
+            .collect();
+        if !incomplete.is_empty() {
+            return Some(format!(
+                "managed work is not complete; required items pending: {}. Use the work tool and do not claim completion.",
+                incomplete.join(", ")
+            ));
+        }
+        let missing_criteria: Vec<&str> = projection
+            .contract
+            .criteria
+            .iter()
+            .filter(|criterion| criterion.required)
+            .filter_map(|criterion| {
+                (!matches!(
+                    projection.criteria.get(&criterion.criterion_id),
+                    Some(vak_session::types::CriterionResult::Passed { .. })
+                ))
+                .then_some(criterion.criterion_id.as_str())
+            })
+            .collect();
+        if !missing_criteria.is_empty() {
+            return Some(format!(
+                "managed work cannot complete; required criteria are not proven: {}",
+                missing_criteria.join(", ")
+            ));
+        }
+        if projection.status == vak_session::types::WorkContractStatus::Active {
+            let contract_id = projection.contract.contract_id.clone();
+            let revision = projection.contract.revision;
+            if let Err(error) = session.append_work(vak_session::types::WorkEvent {
+                contract_id: contract_id.clone(),
+                revision,
+                kind: vak_session::types::WorkEventKind::ContractStatusChanged {
+                    from: vak_session::types::WorkContractStatus::Active,
+                    to: vak_session::types::WorkContractStatus::Verifying,
+                    reason: "required work items verified".into(),
+                },
+            }) {
+                return Some(format!("managed verification status failed: {error}"));
+            }
+            if let Err(error) = session.append_work(vak_session::types::WorkEvent {
+                contract_id,
+                revision,
+                kind: vak_session::types::WorkEventKind::ContractStatusChanged {
+                    from: vak_session::types::WorkContractStatus::Verifying,
+                    to: vak_session::types::WorkContractStatus::Completed,
+                    reason: "all required work items verified".into(),
+                },
+            }) {
+                return Some(format!("managed completion status failed: {error}"));
+            }
+        }
+        if let Some(events) = events {
+            drop(session);
+            self.emit_work_state(events).await;
+        }
+        None
+    }
+
+    async fn verify_managed_criteria(&self, criteria: &[vak_session::types::WorkCriterion]) {
+        let cwd = self
+            .session
+            .lock()
+            .await
+            .header()
+            .map(|header| header.contract_cwd())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+        for criterion in criteria {
+            let result = match &criterion.kind {
+                vak_session::types::CriterionKind::Shell { command } => self
+                    .run_audit_command(command, &CancellationToken::new())
+                    .await
+                    .map(|_| vak_session::types::CriterionResult::Passed {
+                        evidence: format!("shell:{command}"),
+                    })
+                    .unwrap_or_else(|reason| vak_session::types::CriterionResult::Failed {
+                        reason,
+                    }),
+                vak_session::types::CriterionKind::FileExists { path } => {
+                    let resolved = if path.is_absolute() {
+                        path.clone()
+                    } else {
+                        cwd.join(path)
+                    };
+                    if resolved.exists() {
+                        vak_session::types::CriterionResult::Passed {
+                            evidence: format!("file_exists:{}", path.display()),
+                        }
+                    } else {
+                        vak_session::types::CriterionResult::Failed {
+                            reason: format!("file does not exist: {}", path.display()),
+                        }
+                    }
+                }
+                vak_session::types::CriterionKind::FileContains { path, pattern } => {
+                    let resolved = if path.is_absolute() {
+                        path.clone()
+                    } else {
+                        cwd.join(path)
+                    };
+                    match std::fs::read_to_string(&resolved) {
+                        Ok(content) if content.contains(pattern) => {
+                            vak_session::types::CriterionResult::Passed {
+                                evidence: format!("file_contains:{}", path.display()),
+                            }
+                        }
+                        Ok(_) => vak_session::types::CriterionResult::Failed {
+                            reason: format!("pattern not found in {}", path.display()),
+                        },
+                        Err(error) => vak_session::types::CriterionResult::Failed {
+                            reason: format!("cannot read {}: {error}", path.display()),
+                        },
+                    }
+                }
+                vak_session::types::CriterionKind::Semantic
+                | vak_session::types::CriterionKind::ToolSucceeded { .. }
+                | vak_session::types::CriterionKind::FlowCompleted { .. }
+                | vak_session::types::CriterionKind::ExternalReceipt { .. } => {
+                    vak_session::types::CriterionResult::Unknown {
+                        reason: "criterion requires runtime evidence or an independent judge"
+                            .into(),
+                    }
+                }
+            };
+            let contract_id = self
+                .session
+                .lock()
+                .await
+                .work_projection()
+                .ok()
+                .flatten()
+                .map(|projection| {
+                    (
+                        projection.contract.contract_id,
+                        projection.contract.revision,
+                    )
+                });
+            if let Some((contract_id, revision)) = contract_id {
+                let _ = self
+                    .session
+                    .lock()
+                    .await
+                    .append_work(vak_session::types::WorkEvent {
+                        contract_id,
+                        revision,
+                        kind: vak_session::types::WorkEventKind::VerificationRecorded {
+                            criterion_id: criterion.criterion_id.clone(),
+                            result,
+                        },
+                    });
+            }
         }
     }
 
@@ -1132,6 +1596,17 @@ impl Agent {
             .header()
             .map(|h| h.contract_cwd())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+        authorize(
+            &self.config,
+            &PendingToolCall {
+                id: "managed-verification".into(),
+                name: "bash".into(),
+                input: serde_json::json!({"command": cmd}),
+            },
+            &cwd,
+            &self.run_call_counts,
+        )
+        .await?;
         let ctx = vak_tools::ToolContext {
             cwd,
             cancel: cancel.child_token(),
@@ -1649,7 +2124,11 @@ impl Agent {
         }
         let ids: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
 
-        if !self.config.parallel_tools || n == 1 {
+        if !self.config.parallel_tools
+            || n == 1
+            || self.config.work_mode == WorkMode::Managed
+            || calls.iter().any(|call| call.name == "work")
+        {
             let mut out = Vec::with_capacity(n);
             for (call, verdict) in calls.into_iter().zip(authz) {
                 match verdict {
@@ -1659,8 +2138,19 @@ impl Agent {
                             out.push((call.id, ToolRunOutput::Err("cancelled".into())));
                             continue;
                         }
-                        out.push(
-                            execute_one(
+                        let managed_item = (self.config.work_mode == WorkMode::Managed
+                            && call.name != "work")
+                            .then(|| call.name.clone());
+                        let managed_item = match managed_item {
+                            Some(tool) => self.begin_managed_tool_item(&tool).await,
+                            None => None,
+                        };
+                        out.push(if call.name == "work" {
+                            let result = self.execute_work_call(&call.input).await;
+                            self.emit_work_state(events).await;
+                            (call.id.clone(), result)
+                        } else {
+                            let (returned_id, result) = execute_one(
                                 call,
                                 &self.config.tools,
                                 &cwd,
@@ -1672,8 +2162,20 @@ impl Agent {
                                 cancel,
                                 events,
                             )
-                            .await,
-                        );
+                            .await;
+                            if let Some((contract_id, item_id, attempt)) = managed_item {
+                                self.finish_managed_tool_item(
+                                    &contract_id,
+                                    &item_id,
+                                    attempt,
+                                    &returned_id,
+                                    &result,
+                                )
+                                .await;
+                                self.emit_work_state(events).await;
+                            }
+                            (returned_id, result)
+                        });
                     }
                 }
             }
@@ -1763,6 +2265,338 @@ impl Agent {
             }
         }
         ordered.into_iter().flatten().collect()
+    }
+
+    async fn execute_work_call(&self, args: &serde_json::Value) -> ToolRunOutput {
+        let operation = args.get("operation").and_then(|value| value.as_str());
+        let mut session = self.session.lock().await;
+        let projection = match session.work_projection() {
+            Ok(Some(projection)) => projection,
+            Ok(None) => return ToolRunOutput::Err("no active managed work contract".into()),
+            Err(error) => return ToolRunOutput::Err(format!("invalid work ledger: {error}")),
+        };
+        match operation {
+            Some("get") => ToolRunOutput::Ok(
+                serde_json::to_string(&projection).unwrap_or_else(|_| "{}".into()),
+            ),
+            Some("transition") => {
+                let Some(item_id) = args.get("item_id").and_then(|value| value.as_str()) else {
+                    return ToolRunOutput::Err("work transition requires item_id".into());
+                };
+                let Some(to) = args.get("to").and_then(|value| value.as_str()) else {
+                    return ToolRunOutput::Err("work transition requires to".into());
+                };
+                let Some(state) = projection.items.get(item_id) else {
+                    return ToolRunOutput::Err(format!("unknown work item '{item_id}'"));
+                };
+                let Some(target) = parse_model_item_status(to) else {
+                    return ToolRunOutput::Err(format!("unsupported model transition '{to}'"));
+                };
+                let event = vak_session::types::WorkEvent {
+                    contract_id: projection.contract.contract_id.clone(),
+                    revision: projection.contract.revision,
+                    kind: vak_session::types::WorkEventKind::ItemStatusChanged {
+                        item_id: item_id.into(),
+                        from: state.status.clone(),
+                        to: target,
+                        attempt: state.attempt,
+                        reason: args
+                            .get("reason")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or_default()
+                            .into(),
+                    },
+                };
+                match session.append_work(event) {
+                    Ok(_) => {
+                        ToolRunOutput::Ok(format!("work item '{item_id}' transitioned to {to}"))
+                    }
+                    Err(error) => ToolRunOutput::Err(error.to_string()),
+                }
+            }
+            Some("attach_evidence") => {
+                let Some(item_id) = args.get("item_id").and_then(|value| value.as_str()) else {
+                    return ToolRunOutput::Err("attach_evidence requires item_id".into());
+                };
+                let Some(evidence) = args.get("evidence") else {
+                    return ToolRunOutput::Err("attach_evidence requires evidence".into());
+                };
+                let Ok(evidence) =
+                    serde_json::from_value::<vak_session::types::EvidenceRef>(evidence.clone())
+                else {
+                    return ToolRunOutput::Err("invalid typed evidence reference".into());
+                };
+                match session.append_work(vak_session::types::WorkEvent {
+                    contract_id: projection.contract.contract_id,
+                    revision: projection.contract.revision,
+                    kind: vak_session::types::WorkEventKind::EvidenceAttached {
+                        item_id: item_id.into(),
+                        evidence,
+                    },
+                }) {
+                    Ok(_) => ToolRunOutput::Ok(format!("evidence attached to '{item_id}'")),
+                    Err(error) => ToolRunOutput::Err(error.to_string()),
+                }
+            }
+            _ => ToolRunOutput::Err(
+                "work operation must be get, transition, or attach_evidence".into(),
+            ),
+        }
+    }
+
+    async fn begin_managed_tool_item(&self, tool: &str) -> Option<(String, String, u32)> {
+        let mut session = self.session.lock().await;
+        let projection = session.work_projection().ok().flatten()?;
+        let item = projection.items.values().find(|state| {
+            state.status == vak_session::types::WorkItemStatus::Ready
+                && projection
+                    .contract
+                    .items
+                    .iter()
+                    .find(|definition| definition.item_id == state.item_id)
+                    .is_some_and(|definition| {
+                        let dependencies_ready = definition.dependencies.iter().all(|dependency| {
+                            matches!(
+                                projection.items.get(dependency).map(|item| &item.status),
+                                Some(vak_session::types::WorkItemStatus::Succeeded)
+                                    | Some(vak_session::types::WorkItemStatus::Skipped)
+                            )
+                        });
+                        dependencies_ready
+                            && (matches!(definition.owner, vak_session::types::WorkOwner::ParentAgent)
+                            || matches!(&definition.owner, vak_session::types::WorkOwner::Tool { name } if name == tool)
+                            )
+                    })
+        })?;
+        let contract_id = projection.contract.contract_id.clone();
+        let item_id = item.item_id.clone();
+        let attempt = item.attempt.saturating_add(1);
+        session
+            .append_work(vak_session::types::WorkEvent {
+                contract_id: contract_id.clone(),
+                revision: projection.contract.revision,
+                kind: vak_session::types::WorkEventKind::ItemStatusChanged {
+                    item_id: item_id.clone(),
+                    from: vak_session::types::WorkItemStatus::Ready,
+                    to: vak_session::types::WorkItemStatus::Running,
+                    attempt,
+                    reason: format!("parent agent executing {tool}"),
+                },
+            })
+            .ok()?;
+        Some((contract_id, item_id, attempt))
+    }
+
+    async fn finish_managed_tool_item(
+        &self,
+        contract_id: &str,
+        item_id: &str,
+        attempt: u32,
+        tool_use_id: &str,
+        result: &ToolRunOutput,
+    ) {
+        let mut session = self.session.lock().await;
+        let Ok(Some(projection)) = session.work_projection() else {
+            return;
+        };
+        if projection.contract.contract_id != contract_id
+            || projection
+                .items
+                .get(item_id)
+                .is_none_or(|state| state.status != vak_session::types::WorkItemStatus::Running)
+        {
+            return;
+        }
+        let next = match result {
+            ToolRunOutput::Ok(_) => vak_session::types::WorkItemStatus::ReadyForVerification,
+            ToolRunOutput::Err(_) => vak_session::types::WorkItemStatus::Failed,
+        };
+        let session_id = session
+            .header()
+            .map(|header| header.session_id.clone())
+            .unwrap_or_default();
+        if session
+            .append_work(vak_session::types::WorkEvent {
+                contract_id: contract_id.into(),
+                revision: projection.contract.revision,
+                kind: vak_session::types::WorkEventKind::ItemStatusChanged {
+                    item_id: item_id.into(),
+                    from: vak_session::types::WorkItemStatus::Running,
+                    to: next,
+                    attempt,
+                    reason: "parent tool execution returned".into(),
+                },
+            })
+            .is_ok()
+            && matches!(result, ToolRunOutput::Ok(_))
+        {
+            let _ = session.append_work(vak_session::types::WorkEvent {
+                contract_id: contract_id.into(),
+                revision: projection.contract.revision,
+                kind: vak_session::types::WorkEventKind::EvidenceAttached {
+                    item_id: item_id.into(),
+                    evidence: vak_session::types::EvidenceRef::ToolResult {
+                        session_id,
+                        tool_use_id: tool_use_id.into(),
+                    },
+                },
+            });
+        }
+    }
+
+    async fn record_subagent_work(
+        &self,
+        assignments: &[(String, String, String)],
+        results: &[(String, ToolRunOutput)],
+    ) {
+        if self.config.work_mode != WorkMode::Managed {
+            return;
+        }
+        let mut session = self.session.lock().await;
+        for (call_id, contract_id, item_id) in assignments {
+            let Ok(Some(projection)) = session.work_projection() else {
+                continue;
+            };
+            if projection.contract.contract_id != *contract_id {
+                continue;
+            }
+            let Some(state) = projection.items.get(item_id) else {
+                continue;
+            };
+            if state.status != vak_session::types::WorkItemStatus::Ready {
+                continue;
+            }
+            let Some((_, output)) = results.iter().find(|(id, _)| id == call_id) else {
+                continue;
+            };
+            let child_id = match output {
+                ToolRunOutput::Ok(text) | ToolRunOutput::Err(text) => extract_subagent_id(text),
+            };
+            let revision = projection.contract.revision;
+            let assigned = vak_session::types::WorkEvent {
+                contract_id: contract_id.clone(),
+                revision,
+                kind: vak_session::types::WorkEventKind::ItemAssigned {
+                    item_id: item_id.clone(),
+                    owner: vak_session::types::WorkOwner::Subagent,
+                    child_session_id: child_id.clone(),
+                },
+            };
+            if session.append_work(assigned).is_err() {
+                continue;
+            }
+            let running = vak_session::types::WorkEvent {
+                contract_id: contract_id.clone(),
+                revision,
+                kind: vak_session::types::WorkEventKind::ItemStatusChanged {
+                    item_id: item_id.clone(),
+                    from: vak_session::types::WorkItemStatus::Ready,
+                    to: vak_session::types::WorkItemStatus::Running,
+                    attempt: state.attempt.saturating_add(1),
+                    reason: "assigned to subagent".into(),
+                },
+            };
+            if session.append_work(running).is_err() {
+                continue;
+            }
+            let outcome = if matches!(output, ToolRunOutput::Ok(_)) {
+                vak_session::types::WorkItemStatus::ReadyForVerification
+            } else {
+                vak_session::types::WorkItemStatus::Failed
+            };
+            if let Ok(Some(after_running)) = session.work_projection() {
+                let _ = session.append_work(vak_session::types::WorkEvent {
+                    contract_id: contract_id.clone(),
+                    revision,
+                    kind: vak_session::types::WorkEventKind::ItemStatusChanged {
+                        item_id: item_id.clone(),
+                        from: vak_session::types::WorkItemStatus::Running,
+                        to: outcome,
+                        attempt: after_running.items[item_id].attempt,
+                        reason: "subagent returned".into(),
+                    },
+                });
+            }
+            if let Some(child_id) = child_id
+                && matches!(output, ToolRunOutput::Ok(_))
+            {
+                let _ = session.append_work(vak_session::types::WorkEvent {
+                    contract_id: contract_id.clone(),
+                    revision,
+                    kind: vak_session::types::WorkEventKind::EvidenceAttached {
+                        item_id: item_id.clone(),
+                        evidence: vak_session::types::EvidenceRef::ChildSession {
+                            session_id: child_id,
+                        },
+                    },
+                });
+            }
+        }
+    }
+}
+
+fn extract_subagent_id(text: &str) -> Option<String> {
+    let prefix = "subagent '";
+    let start = text.find(prefix)? + prefix.len();
+    let rest = &text[start..];
+    Some(rest.split('\'').next()?.to_string())
+}
+
+#[derive(serde::Deserialize)]
+struct AuthoredContract {
+    objective: String,
+    #[serde(default)]
+    constraints: Vec<vak_session::types::WorkConstraint>,
+    #[serde(default)]
+    assumptions: Vec<vak_session::types::WorkAssumption>,
+    #[serde(default)]
+    criteria: Vec<vak_session::types::WorkCriterion>,
+    items: Vec<vak_session::types::WorkItemDefinition>,
+}
+
+fn validate_work_paths(contract: &vak_session::types::WorkContract) -> Result<(), String> {
+    for item in &contract.items {
+        for claim in &item.path_claims {
+            let path = std::path::Path::new(claim);
+            if path.is_absolute()
+                || path
+                    .components()
+                    .any(|component| component == std::path::Component::ParentDir)
+            {
+                return Err(format!(
+                    "work item '{}' claims a path outside the workspace",
+                    item.item_id
+                ));
+            }
+        }
+    }
+    for criterion in &contract.criteria {
+        let path = match &criterion.kind {
+            vak_session::types::CriterionKind::FileExists { path }
+            | vak_session::types::CriterionKind::FileContains { path, .. } => Some(path),
+            _ => None,
+        };
+        if let Some(path) = path
+            && (path.is_absolute()
+                || path
+                    .components()
+                    .any(|component| component == std::path::Component::ParentDir))
+        {
+            return Err(format!(
+                "criterion '{}' claims a path outside the workspace",
+                criterion.criterion_id
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn parse_model_item_status(value: &str) -> Option<vak_session::types::WorkItemStatus> {
+    match value {
+        "running" => Some(vak_session::types::WorkItemStatus::Running),
+        "blocked" => Some(vak_session::types::WorkItemStatus::Blocked),
+        "ready_for_verification" => Some(vak_session::types::WorkItemStatus::ReadyForVerification),
+        _ => None,
     }
 }
 #[allow(clippy::too_many_arguments)]

@@ -118,6 +118,8 @@ pub struct FileConfig {
     #[serde(default)]
     pub goal: GoalSettings,
     #[serde(default)]
+    pub work: WorkSettings,
+    #[serde(default)]
     pub route: RouteSettings,
     #[serde(default)]
     pub automation: AutomationSettings,
@@ -278,6 +280,17 @@ pub struct StopPolicySettings {
 pub struct GoalSettings {
     pub handoff_reset: Option<bool>,
     pub max_audit_blocks: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct WorkSettings {
+    pub enabled: Option<bool>,
+    pub default_mode: Option<String>,
+    pub max_items: Option<usize>,
+    pub max_revisions: Option<u32>,
+    pub max_parallel: Option<usize>,
+    pub confirmation: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -552,6 +565,7 @@ pub struct Config {
     pub sandbox: SandboxResolved,
     pub finops: FinopsResolved,
     pub goal: GoalResolved,
+    pub work: WorkResolved,
     pub route: RouteResolved,
     pub automation: AutomationResolved,
     pub update: UpdateResolved,
@@ -623,6 +637,16 @@ pub struct GoalResolved {
     pub handoff_reset: bool,
     /// Audit blocks per goal before degrading to Unverified.
     pub max_audit_blocks: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkResolved {
+    pub enabled: bool,
+    pub default_mode: String,
+    pub max_items: usize,
+    pub max_revisions: u32,
+    pub max_parallel: usize,
+    pub confirmation: String,
 }
 
 /// Resolved spend-admission policy (docs/design/27 Phase D).
@@ -788,6 +812,14 @@ impl Default for Config {
             goal: GoalResolved {
                 handoff_reset: true,
                 max_audit_blocks: 2,
+            },
+            work: WorkResolved {
+                enabled: true,
+                default_mode: "direct".into(),
+                max_items: 20,
+                max_revisions: 8,
+                max_parallel: 4,
+                confirmation: "risk-based".into(),
             },
             route: RouteResolved {
                 objective: "auto".into(),
@@ -1227,6 +1259,98 @@ pub fn persist_global_subagents(enabled: bool) -> Result<(), ConfigError> {
     persist_subagents_at(path, enabled)
 }
 
+/// Persist the optional `[work]` policy fields without disturbing unrelated
+/// config keys. The whole document is rewritten through the same atomic
+/// rename boundary as the other authenticated preference endpoints.
+pub fn persist_work_preferences(
+    path: PathBuf,
+    enabled: Option<bool>,
+    default_mode: Option<&str>,
+    max_items: Option<usize>,
+    max_revisions: Option<u32>,
+    max_parallel: Option<usize>,
+    confirmation: Option<&str>,
+) -> Result<(), ConfigError> {
+    if [default_mode, confirmation]
+        .into_iter()
+        .flatten()
+        .any(|value| value.trim().is_empty())
+    {
+        return Err(ConfigError::Write {
+            path,
+            source: std::io::Error::other("work policy values cannot be empty"),
+        });
+    }
+    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = WRITE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut root = if path.is_file() {
+        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
+            path: path.clone(),
+            source,
+        })?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let Some(table) = root.as_table_mut() else {
+        return Err(ConfigError::Write {
+            path,
+            source: std::io::Error::other("top-level config must be a TOML table"),
+        });
+    };
+    let work = table
+        .entry("work")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    let Some(work) = work.as_table_mut() else {
+        return Err(ConfigError::Write {
+            path,
+            source: std::io::Error::other("work config must be a TOML table"),
+        });
+    };
+    if let Some(value) = enabled {
+        work.insert("enabled".into(), toml::Value::Boolean(value));
+    }
+    if let Some(value) = default_mode {
+        work.insert("default_mode".into(), toml::Value::String(value.into()));
+    }
+    if let Some(value) = max_items {
+        work.insert("max_items".into(), toml::Value::Integer(value as i64));
+    }
+    if let Some(value) = max_revisions {
+        work.insert("max_revisions".into(), toml::Value::Integer(value as i64));
+    }
+    if let Some(value) = max_parallel {
+        work.insert("max_parallel".into(), toml::Value::Integer(value as i64));
+    }
+    if let Some(value) = confirmation {
+        work.insert("confirmation".into(), toml::Value::String(value.into()));
+    }
+    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other(error.to_string()),
+    })?;
+    let parent = path.parent().ok_or_else(|| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other("config has no parent directory"),
+    })?;
+    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
+    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
+}
+
 fn persist_subagents_at(path: PathBuf, enabled: bool) -> Result<(), ConfigError> {
     static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     let _guard = WRITE_LOCK
@@ -1575,6 +1699,35 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         max_audit_blocks: merged.goal.max_audit_blocks.unwrap_or(2),
     };
 
+    cfg.work = WorkResolved {
+        enabled: merged.work.enabled.unwrap_or(true),
+        default_mode: match merged.work.default_mode.as_deref() {
+            None | Some("direct") => "direct".into(),
+            Some("managed") => "managed".into(),
+            Some("auto") => "auto".into(),
+            Some(other) => {
+                cfg.warnings.push(format!(
+                    "unknown work.default_mode '{other}'; using 'direct'"
+                ));
+                "direct".into()
+            }
+        },
+        max_items: merged.work.max_items.unwrap_or(20).clamp(1, 128),
+        max_revisions: merged.work.max_revisions.unwrap_or(8).clamp(1, 64),
+        max_parallel: merged.work.max_parallel.unwrap_or(4).clamp(1, 32),
+        confirmation: match merged.work.confirmation.as_deref() {
+            None | Some("risk-based") => "risk-based".into(),
+            Some("always") => "always".into(),
+            Some("never") => "never".into(),
+            Some(other) => {
+                cfg.warnings.push(format!(
+                    "unknown work.confirmation '{other}'; using 'risk-based'"
+                ));
+                "risk-based".into()
+            }
+        },
+    };
+
     cfg.route.objective = match merged.route.objective.as_deref() {
         None | Some("auto") => "auto".into(),
         Some("utility") => "utility".into(),
@@ -1796,6 +1949,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "mcp",
     "ui",
     "stop_policy",
+    "work",
     "gateway",
     "memory",
     "sandbox",
@@ -1807,6 +1961,14 @@ const KNOWN_TOP_KEYS: &[&str] = &[
 ];
 const KNOWN_FINOPS_KEYS: &[&str] = &["max_run_usd", "max_day_usd", "price_overrides"];
 const KNOWN_GOAL_KEYS: &[&str] = &["handoff_reset", "max_audit_blocks"];
+const KNOWN_WORK_KEYS: &[&str] = &[
+    "enabled",
+    "default_mode",
+    "max_items",
+    "max_revisions",
+    "max_parallel",
+    "confirmation",
+];
 const KNOWN_PROFILE_KEYS: &[&str] = &["model", "provider", "permission_mode", "max_turns"];
 const KNOWN_HOOK_KEYS: &[&str] = &["event", "match", "command", "timeout_ms"];
 const KNOWN_MCP_SERVER_KEYS: &[&str] = &["command", "args", "env", "network"];
@@ -1990,6 +2152,16 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
             if !KNOWN_FINOPS_KEYS.contains(&key.as_str()) {
                 out.push(format!(
                     "{}: unknown finops key 'finops.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+    }
+    if let Some(work) = top.get("work").and_then(toml::Value::as_table) {
+        for key in work.keys() {
+            if !KNOWN_WORK_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown work key 'work.{key}' (ignored)",
                     path.display()
                 ));
             }
@@ -2274,6 +2446,24 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.goal.max_audit_blocks.is_some() {
         base.goal.max_audit_blocks = over.goal.max_audit_blocks;
+    }
+    if over.work.enabled.is_some() {
+        base.work.enabled = over.work.enabled;
+    }
+    if over.work.default_mode.is_some() {
+        base.work.default_mode = over.work.default_mode;
+    }
+    if over.work.max_items.is_some() {
+        base.work.max_items = over.work.max_items;
+    }
+    if over.work.max_revisions.is_some() {
+        base.work.max_revisions = over.work.max_revisions;
+    }
+    if over.work.max_parallel.is_some() {
+        base.work.max_parallel = over.work.max_parallel;
+    }
+    if over.work.confirmation.is_some() {
+        base.work.confirmation = over.work.confirmation;
     }
     if over.route.objective.is_some() {
         base.route.objective = over.route.objective;
@@ -2616,6 +2806,27 @@ mod tests {
             !cfg.warnings.iter().any(|w| w.contains("automation")),
             "absent sections must not warn: {:?}",
             cfg.warnings
+        );
+    }
+
+    #[test]
+    fn work_settings_parse_and_unknown_keys_warn() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "[work]\nenabled = true\ndefault_mode = \"managed\"\nmax_items = 12\nmax_revisions = 5\nmax_parallel = 3\nconfirmation = \"always\"\nunknown = true\n",
+        );
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert!(cfg.work.enabled);
+        assert_eq!(cfg.work.default_mode, "managed");
+        assert_eq!(cfg.work.max_items, 12);
+        assert_eq!(cfg.work.max_revisions, 5);
+        assert_eq!(cfg.work.max_parallel, 3);
+        assert_eq!(cfg.work.confirmation, "always");
+        assert!(
+            cfg.warnings
+                .iter()
+                .any(|warning| warning.contains("work.unknown"))
         );
     }
 

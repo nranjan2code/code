@@ -366,6 +366,24 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/attach", post(attach_session))
         .route("/sessions/{id}/diff", get(session_diff))
         .route("/sessions/{id}/receipts", get(session_receipts))
+        .route(
+            "/sessions/{id}/work",
+            get(session_work).post(session_work_command),
+        )
+        .route("/sessions/{id}/work/confirm", post(session_work_confirm))
+        .route("/sessions/{id}/work/revise", post(session_work_revise))
+        .route(
+            "/sessions/{id}/work/items/{item_id}/retry",
+            post(session_work_retry),
+        )
+        .route(
+            "/sessions/{id}/work/items/{item_id}/cancel",
+            post(session_work_cancel_item),
+        )
+        .route(
+            "/sessions/{id}/work/items/{item_id}/reassign",
+            post(session_work_reassign),
+        )
         .route("/flows", get(flows_list))
         .route("/flows/{name}/runs", get(flow_runs_list))
         .route("/flows/{name}/runs/{run}/graph", get(flow_run_graph))
@@ -2456,6 +2474,7 @@ fn summarize_jsonl(
                         vak_session::EntryPayload::Receipt(_) => {}
                         vak_session::EntryPayload::Goal(_) => {}
                         vak_session::EntryPayload::Activity(_) => {}
+                        vak_session::EntryPayload::Work(_) => {}
                     }
                 }
                 if title.is_some() && entries > 400 {
@@ -2471,6 +2490,10 @@ fn summarize_jsonl(
 #[derive(serde::Deserialize)]
 struct RunBody {
     prompt: String,
+    /// Optional run-scoped work profile. `managed` creates and persists a
+    /// work contract before the agent can execute tools.
+    #[serde(default)]
+    work_mode: Option<String>,
     /// Optional base64 images appended to the prompt as vision content
     /// (docs/design/22-gateway.md media passthrough).
     #[serde(default)]
@@ -2673,8 +2696,22 @@ async fn run_prompt(
         });
         return StatusCode::BAD_REQUEST.into_response();
     }
+    if let Some(mode) = body.work_mode.as_deref()
+        && !matches!(mode, "direct" | "managed" | "auto")
+    {
+        *handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
+        let _ = handle.events_tx.send(AgentEvent::RunFinished {
+            summary: format!("failed: unknown work_mode '{mode}'"),
+            is_error: true,
+        });
+        return StatusCode::BAD_REQUEST.into_response();
+    }
     // Goal mode (Phase H): captured before the spawn consumes `body`.
     let goal_pair = body.goal.clone().map(|g| (g, body.criteria.clone()));
+    let managed = matches!(body.work_mode.as_deref(), Some("managed"));
     let run_id = id.clone();
     let hub = state.hub.clone();
     let admin_store = state.store.clone();
@@ -2689,6 +2726,17 @@ async fn run_prompt(
                 criteria,
                 cancel.clone(),
                 Some(approver.clone()),
+                None,
+                Some(steering.clone()),
+                events,
+            )
+            .await
+        } else if managed {
+            core.run_managed_turn_with(
+                taken,
+                &expanded_prompt,
+                cancel,
+                Some(approver),
                 None,
                 Some(steering.clone()),
                 events,
@@ -2987,6 +3035,377 @@ async fn session_receipts(
     match session.as_ref() {
         Some(log) => Ok(Json(log.receipts().into_iter().cloned().collect())),
         None => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+async fn session_work(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Option<vak_session::work::WorkProjection>>, StatusCode> {
+    if let Some(handle) = state.get(&id) {
+        let guard = handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(session) = guard.as_ref() else {
+            return Err(StatusCode::NOT_FOUND);
+        };
+        return session
+            .work_projection()
+            .map(Json)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    let Some(session) = open_historical_session(&state, &id) else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    session
+        .work_projection()
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case")]
+enum WorkCommand {
+    Transition {
+        item_id: String,
+        to: vak_session::types::WorkItemStatus,
+        #[serde(default)]
+        reason: String,
+    },
+    Cancel {
+        #[serde(default)]
+        reason: String,
+    },
+    Resume {
+        #[serde(default)]
+        reason: String,
+    },
+    Retry {
+        item_id: String,
+        #[serde(default)]
+        reason: String,
+    },
+    ResolveAssumption {
+        assumption_id: String,
+        resolution: String,
+    },
+    AttachEvidence {
+        item_id: String,
+        evidence: vak_session::types::EvidenceRef,
+    },
+    Assign {
+        item_id: String,
+        owner: vak_session::types::WorkOwner,
+        child_session_id: Option<String>,
+    },
+    Revise {
+        contract: vak_session::types::WorkContract,
+        #[serde(default)]
+        reason: String,
+    },
+}
+
+#[derive(serde::Deserialize)]
+struct WorkReason {
+    #[serde(default)]
+    reason: String,
+}
+
+#[derive(serde::Deserialize)]
+struct WorkReassign {
+    owner: vak_session::types::WorkOwner,
+    #[serde(default)]
+    child_session_id: Option<String>,
+}
+
+async fn session_work_confirm(
+    state: State<AppState>,
+    path: Path<String>,
+    body: Option<Json<WorkReason>>,
+) -> axum::response::Response {
+    session_work_command(
+        state,
+        path,
+        Json(WorkCommand::Resume {
+            reason: body
+                .map(|body| body.0.reason)
+                .unwrap_or_else(|| "confirmed by operator".into()),
+        }),
+    )
+    .await
+}
+
+async fn session_work_revise(
+    state: State<AppState>,
+    path: Path<String>,
+    Json(body): Json<WorkCommand>,
+) -> axum::response::Response {
+    session_work_command(state, path, Json(body)).await
+}
+
+async fn session_work_retry(
+    state: State<AppState>,
+    Path((id, item_id)): Path<(String, String)>,
+    body: Option<Json<WorkReason>>,
+) -> axum::response::Response {
+    session_work_command(
+        state,
+        Path(id),
+        Json(WorkCommand::Retry {
+            item_id,
+            reason: body
+                .map(|body| body.0.reason)
+                .unwrap_or_else(|| "retry requested by operator".into()),
+        }),
+    )
+    .await
+}
+
+async fn session_work_cancel_item(
+    state: State<AppState>,
+    Path((id, item_id)): Path<(String, String)>,
+    body: Option<Json<WorkReason>>,
+) -> axum::response::Response {
+    session_work_command(
+        state,
+        Path(id),
+        Json(WorkCommand::Transition {
+            item_id,
+            to: vak_session::types::WorkItemStatus::Cancelled,
+            reason: body
+                .map(|body| body.0.reason)
+                .unwrap_or_else(|| "cancelled by operator".into()),
+        }),
+    )
+    .await
+}
+
+async fn session_work_reassign(
+    state: State<AppState>,
+    Path((id, item_id)): Path<(String, String)>,
+    Json(body): Json<WorkReassign>,
+) -> axum::response::Response {
+    session_work_command(
+        state,
+        Path(id),
+        Json(WorkCommand::Assign {
+            item_id,
+            owner: body.owner,
+            child_session_id: body.child_session_id,
+        }),
+    )
+    .await
+}
+
+/// Apply an operator/user work action to the same append-only ledger used by
+/// the agent. The current projection supplies both the expected state and
+/// revision, so stale clients receive a conflict instead of silently
+/// overwriting a newer action.
+async fn session_work_command(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(command): Json<WorkCommand>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(handle) = state.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mut guard = handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(session) = guard.as_mut() else {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "session is still running" })),
+        )
+            .into_response();
+    };
+    let Ok(Some(projection)) = session.work_projection() else {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "session has no valid work contract" })),
+        )
+            .into_response();
+    };
+    let contract_id = projection.contract.contract_id.clone();
+    let revision = projection.contract.revision;
+    let event_kind = match command {
+        WorkCommand::Transition {
+            item_id,
+            to,
+            reason,
+        } => {
+            let Some(item) = projection.items.get(&item_id) else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": format!("unknown work item '{item_id}'") })),
+                )
+                    .into_response();
+            };
+            if matches!(to, vak_session::types::WorkItemStatus::Succeeded) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": "succeeded requires independent verification" })),
+                )
+                    .into_response();
+            }
+            vak_session::types::WorkEventKind::ItemStatusChanged {
+                item_id,
+                from: item.status.clone(),
+                to,
+                attempt: item.attempt,
+                reason,
+            }
+        }
+        WorkCommand::Cancel { reason } => {
+            vak_session::types::WorkEventKind::ContractStatusChanged {
+                from: projection.status,
+                to: vak_session::types::WorkContractStatus::Cancelled,
+                reason,
+            }
+        }
+        WorkCommand::Resume { reason } => {
+            vak_session::types::WorkEventKind::ContractStatusChanged {
+                from: projection.status,
+                to: vak_session::types::WorkContractStatus::Active,
+                reason,
+            }
+        }
+        WorkCommand::Retry { item_id, reason } => {
+            let Some(item) = projection.items.get(&item_id) else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": format!("unknown work item '{item_id}'") })),
+                )
+                    .into_response();
+            };
+            vak_session::types::WorkEventKind::ItemStatusChanged {
+                item_id,
+                from: item.status.clone(),
+                to: vak_session::types::WorkItemStatus::Ready,
+                attempt: item.attempt.saturating_add(1),
+                reason,
+            }
+        }
+        WorkCommand::ResolveAssumption {
+            assumption_id,
+            resolution,
+        } => {
+            if resolution.trim().is_empty()
+                || !projection
+                    .contract
+                    .assumptions
+                    .iter()
+                    .any(|assumption| assumption.assumption_id == assumption_id)
+            {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": "unknown assumption or empty resolution" })),
+                )
+                    .into_response();
+            }
+            vak_session::types::WorkEventKind::AssumptionResolved {
+                assumption_id,
+                resolution,
+            }
+        }
+        WorkCommand::AttachEvidence { item_id, evidence } => {
+            if !projection.items.contains_key(&item_id) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": format!("unknown work item '{item_id}'") })),
+                )
+                    .into_response();
+            }
+            vak_session::types::WorkEventKind::EvidenceAttached { item_id, evidence }
+        }
+        WorkCommand::Assign {
+            item_id,
+            owner,
+            child_session_id,
+        } => {
+            if !projection.items.contains_key(&item_id) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": format!("unknown work item '{item_id}'") })),
+                )
+                    .into_response();
+            }
+            vak_session::types::WorkEventKind::ItemAssigned {
+                item_id,
+                owner,
+                child_session_id,
+            }
+        }
+        WorkCommand::Revise { contract, reason } => {
+            if contract.contract_id != projection.contract.contract_id
+                || contract.revision != revision.saturating_add(1)
+            {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": "revision must target the active contract and be exactly one greater" })),
+                )
+                    .into_response();
+            }
+            if revision >= state.core.effective_work().max_revisions {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({ "error": "maximum work revisions reached" })),
+                )
+                    .into_response();
+            }
+            if let Err(error) = vak_session::validate_contract(&contract) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": error.to_string() })),
+                )
+                    .into_response();
+            }
+            vak_session::types::WorkEventKind::ContractRevised {
+                previous_revision: revision,
+                contract,
+                reason,
+            }
+        }
+    };
+    let event = vak_session::types::WorkEvent {
+        contract_id,
+        revision,
+        kind: event_kind,
+    };
+    match session.append_work(event) {
+        Ok(_) => {
+            if let Ok(Some(updated)) = session.work_projection()
+                && updated.status == vak_session::types::WorkContractStatus::AwaitingInput
+                && updated
+                    .contract
+                    .assumptions
+                    .iter()
+                    .filter(|assumption| assumption.requires_confirmation)
+                    .all(|assumption| assumption.resolution.is_some())
+            {
+                let _ = session.append_work(vak_session::types::WorkEvent {
+                    contract_id: updated.contract.contract_id.clone(),
+                    revision: updated.contract.revision,
+                    kind: vak_session::types::WorkEventKind::ContractStatusChanged {
+                        from: vak_session::types::WorkContractStatus::AwaitingInput,
+                        to: vak_session::types::WorkContractStatus::Active,
+                        reason: "all required assumptions resolved".into(),
+                    },
+                });
+            }
+            match session.work_projection() {
+                Ok(Some(updated)) => Json(updated).into_response(),
+                _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
     }
 }
 
@@ -5120,6 +5539,7 @@ fn chat_surface_status() -> Vec<serde_json::Value> {
 async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
     refresh_control_plane(&state);
     let cfg = state.core.config();
+    let work = state.core.effective_work();
     let route = state.core.effective_route();
     let project_path = vak_config::project_path(state.core.cwd());
     Json(serde_json::json!({
@@ -5153,6 +5573,14 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
             "marker_gate": cfg.stop_policy.marker_gate,
             "verify_gate": cfg.stop_policy.verify_gate,
             "max_blocks": cfg.stop_policy.max_blocks,
+        },
+        "work": {
+            "enabled": work.enabled,
+            "default_mode": work.default_mode,
+            "max_items": work.max_items,
+            "max_revisions": work.max_revisions,
+            "max_parallel": work.max_parallel,
+            "confirmation": work.confirmation,
         },
         "route": {
             "objective": cfg.route.objective,
@@ -5203,6 +5631,18 @@ struct ConfigPatch {
     memory_reflection: Option<bool>,
     #[serde(default)]
     memory_skill_proposals: Option<bool>,
+    #[serde(default)]
+    work_enabled: Option<bool>,
+    #[serde(default)]
+    work_default_mode: Option<String>,
+    #[serde(default)]
+    work_max_items: Option<usize>,
+    #[serde(default)]
+    work_max_revisions: Option<u32>,
+    #[serde(default)]
+    work_max_parallel: Option<usize>,
+    #[serde(default)]
+    work_confirmation: Option<String>,
 }
 
 async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatch>) -> StatusCode {
@@ -5236,6 +5676,23 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
             .permission_mode
             .as_deref()
             .is_some_and(|value| parse_mode(value).is_none())
+        || body
+            .work_default_mode
+            .as_deref()
+            .is_some_and(|value| !matches!(value, "direct" | "managed" | "auto"))
+        || body
+            .work_confirmation
+            .as_deref()
+            .is_some_and(|value| !matches!(value, "risk-based" | "always" | "never"))
+        || body
+            .work_max_items
+            .is_some_and(|value| !(1..=128).contains(&value))
+        || body
+            .work_max_revisions
+            .is_some_and(|value| !(1..=64).contains(&value))
+        || body
+            .work_max_parallel
+            .is_some_and(|value| !(1..=32).contains(&value))
     {
         return StatusCode::BAD_REQUEST;
     }
@@ -5371,6 +5828,46 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
             state.core.effective_memory_write_enabled(),
             state.core.effective_memory_reflection(),
             state.core.effective_memory_skill_proposals(),
+        ));
+    }
+    if body.work_enabled.is_some()
+        || body.work_default_mode.is_some()
+        || body.work_max_items.is_some()
+        || body.work_max_revisions.is_some()
+        || body.work_max_parallel.is_some()
+        || body.work_confirmation.is_some()
+    {
+        let path = if global {
+            vak_config::global_path().ok_or(StatusCode::INTERNAL_SERVER_ERROR)
+        } else {
+            Ok(vak_config::project_path(state.core.cwd()))
+        };
+        let Ok(path) = path else {
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        };
+        if vak_config::persist_work_preferences(
+            path,
+            body.work_enabled,
+            body.work_default_mode.as_deref(),
+            body.work_max_items,
+            body.work_max_revisions,
+            body.work_max_parallel,
+            body.work_confirmation.as_deref(),
+        )
+        .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+        let resolved =
+            vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted());
+        let Ok(resolved) = resolved else {
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        };
+        state.core.apply_persisted_work(resolved.work);
+        changes.push(format!(
+            "work(mode={}, enabled={})",
+            state.core.effective_work().default_mode,
+            state.core.effective_work().enabled
         ));
     }
     if !changes.is_empty() {

@@ -8,10 +8,10 @@ use tokio_util::sync::CancellationToken;
 
 use tempfile::tempdir;
 
-use vak_agent::{Agent, AgentConfig, TurnOutcome};
+use vak_agent::{Agent, AgentConfig, SteeringQueues, TurnOutcome, WorkMode};
 use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
-use vak_llm::{EventStream, LlmError, Provider};
+use vak_llm::{EventStream, LlmError, Provider, WorkPurpose};
 use vak_session::SessionLog;
 use vak_session::types::{
     CapabilityDescriptor, CapabilityInvocation, CapabilityKind, FrozenContract, SessionHeader,
@@ -98,6 +98,8 @@ fn harness(responses: Vec<ScriptedResponse>, tools: Vec<Arc<dyn Tool>>) -> Harne
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),
         parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
         contract: FrozenContract {
             app_version: "0.1.0".into(),
             provider: "scripted".into(),
@@ -164,6 +166,76 @@ async fn single_turn_no_tools_completes() {
     }
     let session = h.agent.session.lock().await;
     assert_eq!(session.derive_messages().len(), 2);
+}
+
+#[tokio::test]
+async fn managed_turn_authors_and_persists_validated_contract() {
+    let authored = serde_json::json!({
+        "objective": "make the change",
+        "constraints": [],
+        "assumptions": [],
+        "criteria": [],
+        "items": [{
+            "item_id": "change",
+            "title": "Make the change",
+            "instructions": "make it",
+            "dependencies": [],
+            "owner": "parent_agent",
+            "required": true,
+            "readonly": false,
+            "path_claims": [],
+            "criterion_ids": []
+        }]
+    });
+    let mut h = harness(
+        vec![
+            ScriptedResponse::Message(assistant_text(&authored.to_string())),
+            ScriptedResponse::Message(tool_call_msg(
+                "w1",
+                "work",
+                serde_json::json!({"operation": "transition", "item_id": "change", "to": "running"}),
+            )),
+            ScriptedResponse::Message(tool_call_msg(
+                "w2",
+                "work",
+                serde_json::json!({"operation": "transition", "item_id": "change", "to": "ready_for_verification"}),
+            )),
+            ScriptedResponse::Message(tool_call_msg(
+                "w3",
+                "work",
+                serde_json::json!({
+                    "operation": "attach_evidence",
+                    "item_id": "change",
+                    "evidence": {"kind": "ledger_entry", "session_id": "s-test", "entry_id": "result"}
+                }),
+            )),
+            ScriptedResponse::Message(assistant_text("completed")),
+        ],
+        vec![],
+    );
+    h.agent.config.work_mode = WorkMode::Managed;
+    let outcome = h
+        .agent
+        .run(
+            "please make the change",
+            &SteeringQueues::new(),
+            CancellationToken::new(),
+            h.events_tx,
+        )
+        .await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    let session = h.agent.into_session().await;
+    let projection = session.work_projection().unwrap().unwrap();
+    assert_eq!(projection.contract.objective, "make the change");
+    assert_eq!(
+        projection.status,
+        vak_session::types::WorkContractStatus::Completed
+    );
+    assert_eq!(
+        projection.items["change"].status,
+        vak_session::types::WorkItemStatus::Succeeded
+    );
+    assert_eq!(session.receipts()[0].purpose, WorkPurpose::Plan);
 }
 
 #[tokio::test]

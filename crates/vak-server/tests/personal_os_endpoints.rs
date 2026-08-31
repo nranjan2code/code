@@ -105,6 +105,8 @@ fn header_for(id: &str, cwd: &Path) -> SessionHeader {
         created_at: chrono::Utc::now(),
         cwd: cwd.to_path_buf(),
         parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
         contract: FrozenContract {
             app_version: "test".into(),
             provider: "counting".into(),

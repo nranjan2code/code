@@ -370,6 +370,13 @@ export interface WorkReceipt {
   attempts: DispatchAttempt[];
 }
 
+export interface WorkProjection {
+  contract: { contract_id: string; objective: string };
+  status: string;
+  items: Record<string, { status: string; attempt: number; blocker?: string; evidence: unknown[] }>;
+  criteria: Record<string, unknown>;
+}
+
 export interface ChatSurfaceStatus {
   surface: "telegram" | "discord" | "slack";
   env_var: string;

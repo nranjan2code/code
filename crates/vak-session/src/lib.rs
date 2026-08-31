@@ -9,6 +9,7 @@ mod index;
 pub mod log;
 pub mod search;
 pub mod types;
+pub mod work;
 
 pub use log::{SessionLog, SessionPath};
 pub use search::{
@@ -20,3 +21,4 @@ pub use types::{
     CapabilityKind, CompactionEntry, Entry, EntryPayload, FrozenContract, MessageMeta,
     MessageRecord, SessionError, SessionHeader,
 };
+pub use work::{WorkError, WorkProjection, project_work, validate_contract};

@@ -499,6 +499,7 @@ pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serd
     crate::refresh_control_plane(&state);
     let route = state.core.effective_route();
     let cfg = state.core.config();
+    let work = state.core.effective_work();
     Json(serde_json::json!({
         "provider": route.provider,
         "model": route.model,
@@ -508,6 +509,14 @@ pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serd
         "max_turns": state.core.effective_max_turns(),
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
         "theme": state.core.effective_theme(),
+        "work": {
+            "enabled": work.enabled,
+            "default_mode": work.default_mode,
+            "max_items": work.max_items,
+            "max_revisions": work.max_revisions,
+            "max_parallel": work.max_parallel,
+            "confirmation": work.confirmation,
+        },
         "memory": {
             "search_enabled": cfg.memory.search_enabled,
             "write_enabled": cfg.memory.write_enabled,

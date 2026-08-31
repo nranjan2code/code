@@ -149,6 +149,8 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),
         parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
         contract: FrozenContract {
             app_version: "0".into(),
             provider: "scripted".into(),
@@ -205,6 +207,9 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
         cwd: dir.path().to_path_buf(),
         sessions_home: home.clone(),
         parent_session_id: "fanout-parent".into(),
+        contract_id: None,
+        work_item_id: None,
+        work_item_ids: vec![],
         events: None,
         registry: Some(Arc::new(SubagentRegistry::new())),
     }))];

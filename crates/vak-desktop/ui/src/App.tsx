@@ -47,6 +47,7 @@ import {
   setHistoryOpen,
    receiptsOpen,
   setReceiptsOpen,
+  setWorkOpen,
   searchOpen,
   setSearchOpen,
   settingsOpen,
@@ -86,6 +87,7 @@ import PrPanel from "./components/PrPanel";
 import TasksModal from "./components/TasksModal";
 import CheckpointsModal from "./components/CheckpointsModal";
 import ReceiptsModal from "./components/ReceiptsModal";
+import WorkModal from "./components/WorkModal";
 import PreviewPane from "./components/PreviewPane";
 import SubagentsPanel from "./components/SubagentsPanel";
 import ProjectGate from "./components/ProjectGate";
@@ -890,6 +892,7 @@ export default function App() {
           <Show when={receiptsOpen()}>
             <ReceiptsModal />
           </Show>
+          <WorkModal />
           <Show when={transcriptViewId()}>
             <TranscriptModal />
           </Show>

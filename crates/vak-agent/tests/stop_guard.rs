@@ -82,6 +82,8 @@ fn harness(policy: Option<StopPolicy>, responses: Vec<ScriptedResponse>) -> Harn
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),
         parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
         contract: FrozenContract {
             app_version: "0.1.0".into(),
             provider: "scripted".into(),

@@ -302,6 +302,7 @@ async fn main() {
             write_paths,
             worktree,
             session,
+            managed,
             goal,
             criteria,
             trust,
@@ -322,6 +323,7 @@ async fn main() {
                 write_paths,
                 worktree,
                 session,
+                managed,
                 goal,
                 criteria,
                 trusted,
@@ -955,6 +957,7 @@ async fn run_exec(
     write_paths: Vec<PathBuf>,
     worktree: bool,
     resume_session: Option<String>,
+    managed: bool,
     goal: Option<String>,
     criteria: Vec<String>,
     trusted: bool,
@@ -1076,6 +1079,9 @@ async fn run_exec(
                     tx,
                 )
                 .await
+            } else if managed {
+                core.run_managed_turn_with(session, &prompt, cancel, approver, permission, None, tx)
+                    .await
             } else {
                 core.run_turn_with(session, &prompt, cancel, approver, permission, None, tx)
                     .await

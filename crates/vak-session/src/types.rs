@@ -80,6 +80,10 @@ pub struct SessionHeader {
     pub cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_item_id: Option<String>,
     pub contract: FrozenContract,
 }
 
@@ -177,6 +181,228 @@ pub struct ActivityRecord {
     pub data: BTreeMap<String, String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkContract {
+    pub contract_id: String,
+    pub revision: u32,
+    pub source_entry_id: String,
+    pub objective: String,
+    #[serde(default)]
+    pub constraints: Vec<WorkConstraint>,
+    #[serde(default)]
+    pub assumptions: Vec<WorkAssumption>,
+    #[serde(default)]
+    pub criteria: Vec<WorkCriterion>,
+    pub items: Vec<WorkItemDefinition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkConstraint {
+    pub constraint_id: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkAssumption {
+    pub assumption_id: String,
+    pub text: String,
+    #[serde(default)]
+    pub requires_confirmation: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkCriterion {
+    pub criterion_id: String,
+    pub statement: String,
+    pub kind: CriterionKind,
+    #[serde(default = "default_true")]
+    pub required: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CriterionKind {
+    Shell { command: String },
+    FileExists { path: PathBuf },
+    FileContains { path: PathBuf, pattern: String },
+    ToolSucceeded { tool: String },
+    FlowCompleted { flow: String },
+    ExternalReceipt { integration: String },
+    Semantic,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkItemDefinition {
+    pub item_id: String,
+    pub title: String,
+    pub instructions: String,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+    pub owner: WorkOwner,
+    #[serde(default = "default_true")]
+    pub required: bool,
+    #[serde(default)]
+    pub readonly: bool,
+    #[serde(default)]
+    pub path_claims: Vec<String>,
+    #[serde(default)]
+    pub criterion_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkOwner {
+    ParentAgent,
+    Subagent,
+    Flow { name: String },
+    Tool { name: String },
+    Human,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkContractStatus {
+    Draft,
+    AwaitingInput,
+    Active,
+    Blocked,
+    Verifying,
+    Completed,
+    Failed,
+    Cancelled,
+    Unverified,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkItemStatus {
+    Proposed,
+    Ready,
+    Running,
+    WaitingApproval,
+    Blocked,
+    ReadyForVerification,
+    Succeeded,
+    Failed,
+    Skipped,
+    Cancelled,
+    Interrupted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkItemState {
+    pub item_id: String,
+    pub status: WorkItemStatus,
+    pub attempt: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
+    #[serde(default)]
+    pub evidence: Vec<EvidenceRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EvidenceRef {
+    LedgerEntry {
+        session_id: String,
+        entry_id: String,
+    },
+    ToolResult {
+        session_id: String,
+        tool_use_id: String,
+    },
+    Receipt {
+        session_id: String,
+        entry_id: String,
+    },
+    CheckpointDiff {
+        session_id: String,
+        from_seq: u32,
+        to_seq: u32,
+    },
+    FlowNode {
+        flow: String,
+        run_id: String,
+        node_id: String,
+    },
+    ChildSession {
+        session_id: String,
+    },
+    ExternalOperation {
+        integration: String,
+        operation_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CriterionResult {
+    Passed { evidence: String },
+    Failed { reason: String },
+    Unknown { reason: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkEvent {
+    pub contract_id: String,
+    pub revision: u32,
+    pub kind: WorkEventKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkEventKind {
+    ContractCreated {
+        contract: WorkContract,
+    },
+    ContractRevised {
+        previous_revision: u32,
+        contract: WorkContract,
+        reason: String,
+    },
+    ContractStatusChanged {
+        from: WorkContractStatus,
+        to: WorkContractStatus,
+        reason: String,
+    },
+    ItemStatusChanged {
+        item_id: String,
+        from: WorkItemStatus,
+        to: WorkItemStatus,
+        attempt: u32,
+        reason: String,
+    },
+    ItemVerified {
+        item_id: String,
+        attempt: u32,
+    },
+    ItemAssigned {
+        item_id: String,
+        owner: WorkOwner,
+        child_session_id: Option<String>,
+    },
+    EvidenceAttached {
+        item_id: String,
+        evidence: EvidenceRef,
+    },
+    AssumptionResolved {
+        assumption_id: String,
+        resolution: String,
+    },
+    VerificationRecorded {
+        criterion_id: String,
+        result: CriterionResult,
+    },
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityKind {
@@ -213,6 +439,9 @@ pub enum EntryPayload {
     Goal(GoalEntry),
     /// UI/audit lifecycle facts; never model-visible.
     Activity(ActivityRecord),
+    /// Durable managed-work lifecycle event. The projector is the source of
+    /// current work state; events are never rewritten.
+    Work(WorkEvent),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

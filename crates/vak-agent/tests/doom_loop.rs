@@ -82,6 +82,8 @@ async fn third_identical_call_is_blocked_with_reason() {
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),
         parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
         contract: FrozenContract {
             app_version: "0".into(),
             provider: "scripted".into(),
@@ -169,6 +171,8 @@ async fn different_args_are_not_counted_together() {
         created_at: chrono::Utc::now(),
         cwd: dir.path().to_path_buf(),
         parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
         contract: FrozenContract {
             app_version: "0".into(),
             provider: "scripted".into(),

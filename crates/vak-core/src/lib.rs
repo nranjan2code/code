@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
-use vak_agent::{Agent, AgentConfig, AgentEvent, TurnOutcome};
+use vak_agent::{Agent, AgentConfig, AgentEvent, TurnOutcome, WorkMode};
 use vak_llm::Provider;
 use vak_llm::registry::{ProviderAuth, ProviderRegistry, default_registry};
 
@@ -145,6 +145,7 @@ struct CoreInner {
     memory_skill_proposals_override: std::sync::Mutex<Option<bool>>,
     /// Same no-pin, always-take-latest shape as the memory overrides above.
     subagents_override: std::sync::Mutex<Option<bool>>,
+    work_override: std::sync::Mutex<Option<vak_config::WorkResolved>>,
     /// Live overrides for `[finops]` budget caps (docs/design/27 Phase D).
     /// `None` = follow the persisted value; `Some(None)` = explicitly
     /// cleared (no cap); `Some(Some(v))` = pinned to `v`. Distinct from
@@ -370,6 +371,7 @@ impl Core {
                 memory_reflection_override: std::sync::Mutex::new(None),
                 memory_skill_proposals_override: std::sync::Mutex::new(None),
                 subagents_override: std::sync::Mutex::new(None),
+                work_override: std::sync::Mutex::new(None),
                 finops_max_run_usd_override: std::sync::Mutex::new(None),
                 finops_max_day_usd_override: std::sync::Mutex::new(None),
                 provider_instance: std::sync::Mutex::new(None),
@@ -400,6 +402,15 @@ impl Core {
 
     pub fn config(&self) -> &vak_config::Config {
         &self.inner.config
+    }
+
+    pub fn effective_work(&self) -> vak_config::WorkResolved {
+        Self::read_override(&self.inner.work_override)
+            .unwrap_or_else(|| self.inner.config.work.clone())
+    }
+
+    pub fn apply_persisted_work(&self, work: vak_config::WorkResolved) {
+        Self::write_override(&self.inner.work_override, Some(work));
     }
 
     /// Session-scoped routing beliefs (Phase R): domain-weighted doubt
@@ -1343,6 +1354,7 @@ impl Core {
             Some(config.finops.max_run_usd),
             Some(config.finops.max_day_usd),
         );
+        self.apply_persisted_work(config.work.clone());
         Ok(config.permission_mode)
     }
 
@@ -2425,6 +2437,8 @@ impl Core {
             created_at: chrono::Utc::now(),
             cwd: self.inner.cwd.clone(),
             parent_session_id: None,
+            contract_id: None,
+            work_item_id: None,
             contract: FrozenContract {
                 app_version: APP_VERSION.into(),
                 provider,
@@ -2474,7 +2488,7 @@ impl Core {
         events: tokio::sync::mpsc::Sender<AgentEvent>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
         self.run_turn_inner(
-            session, prompt, cancel, approver, permission, steering, events, None,
+            session, prompt, cancel, approver, permission, steering, events, None, None,
         )
         .await
     }
@@ -2499,6 +2513,32 @@ impl Core {
             steering,
             events,
             None,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_managed_turn_with(
+        &self,
+        session: SessionLog,
+        prompt: &str,
+        cancel: CancellationToken,
+        approver: Option<std::sync::Arc<dyn vak_agent::Approver>>,
+        permission: Option<std::sync::Arc<vak_permission::PermissionEngine>>,
+        steering: Option<std::sync::Arc<vak_agent::SteeringQueues>>,
+        events: tokio::sync::mpsc::Sender<AgentEvent>,
+    ) -> Result<(TurnOutcome, SessionLog), CoreError> {
+        self.run_turn_inner(
+            session,
+            vak_llm::Message::user_text(prompt),
+            cancel,
+            approver,
+            permission,
+            steering,
+            events,
+            None,
+            Some(WorkMode::Managed),
         )
         .await
     }
@@ -2527,6 +2567,7 @@ impl Core {
             steering,
             events,
             Some((objective.to_string(), criteria)),
+            None,
         )
         .await
     }
@@ -2534,7 +2575,7 @@ impl Core {
     #[allow(clippy::too_many_arguments)]
     async fn run_turn_inner(
         &self,
-        session: SessionLog,
+        mut session: SessionLog,
         prompt: vak_llm::Message,
         cancel: CancellationToken,
         approver: Option<std::sync::Arc<dyn vak_agent::Approver>>,
@@ -2542,7 +2583,9 @@ impl Core {
         steering: Option<std::sync::Arc<vak_agent::SteeringQueues>>,
         events: tokio::sync::mpsc::Sender<AgentEvent>,
         goal: Option<(String, Vec<String>)>,
+        work_mode: Option<WorkMode>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
+        session.reconcile_running_work(&std::collections::HashSet::new())?;
         let session_contract = session.header().map(|header| header.contract.clone());
         let (provider, model) = match session_contract.as_ref() {
             Some(contract) => {
@@ -2573,6 +2616,15 @@ impl Core {
             .map(|contract| contract.system_prompt.clone())
             .unwrap_or_else(|| self.system_prompt());
         let mut cfg = AgentConfig::new(frozen_system_prompt.clone());
+        let work_config = self.effective_work();
+        cfg.work_mode = work_mode.unwrap_or_else(|| match work_config.default_mode.as_str() {
+            "managed" => WorkMode::Managed,
+            "auto" if is_managed_work_request(&prompt.text_content()) => WorkMode::Managed,
+            _ => WorkMode::Direct,
+        });
+        cfg.work_enabled = work_config.enabled;
+        cfg.max_work_items = work_config.max_items;
+        cfg.max_work_revisions = work_config.max_revisions;
         if let Some(contract) = &session_contract {
             let capabilities = contract.capabilities.clone();
             cfg.input_normalizer = Some(Arc::new(move |message| {
@@ -2827,6 +2879,13 @@ impl Core {
         if self.effective_subagents()
             && let Some(parent_id) = session.header().map(|h| h.session_id.clone())
         {
+            let managed_projection = session.work_projection().ok().flatten();
+            let managed_contract_id = managed_projection
+                .as_ref()
+                .map(|projection| projection.contract.contract_id.clone());
+            let managed_work_item_ids = managed_projection
+                .map(|projection| projection.items.into_keys().collect())
+                .unwrap_or_default();
             let mut read_only_tools = self.agent_read_only_tools();
             if let Some(skill_tool) = &skill_tool {
                 read_only_tools.push(skill_tool.clone());
@@ -2850,6 +2909,9 @@ impl Core {
                 cwd: self.inner.cwd.clone(),
                 sessions_home: self.inner.sessions_home.clone(),
                 parent_session_id: parent_id,
+                contract_id: managed_contract_id,
+                work_item_id: None,
+                work_item_ids: managed_work_item_ids,
                 events: Some(events.clone()),
                 registry: Some(self.inner.subagents.clone()),
             })));
@@ -3174,6 +3236,42 @@ impl Core {
             None => "off".to_string(),
         }
     }
+}
+
+/// Select managed admission for requests whose wording indicates durable,
+/// multi-step work. This is intentionally deterministic and explainable: an
+/// operator can reproduce the decision from the prompt without an extra model
+/// call, and an explicit run-scoped mode still overrides it.
+fn is_managed_work_request(prompt: &str) -> bool {
+    let normalized = prompt.to_ascii_lowercase();
+    let action = [
+        "build",
+        "implement",
+        "fix",
+        "refactor",
+        "migrate",
+        "deploy",
+        "research",
+        "analyze",
+        "investigate",
+        "create",
+        "update",
+        "integrate",
+        "test",
+    ]
+    .iter()
+    .any(|word| {
+        normalized
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|part| part == *word)
+    });
+    let multi_step = normalized.len() >= 400
+        || [" and ", " then ", "first", "second", "finally", "step "]
+            .iter()
+            .filter(|marker| normalized.contains(**marker))
+            .count()
+            >= 2;
+    action && multi_step
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@ use vak_llm::Message;
 
 use crate::types::{
     CompactionPlan, Entry, EntryPayload, MessageMeta, MessageRecord, SessionError, SessionHeader,
+    WorkEvent,
 };
 
 pub struct SessionLog {
@@ -140,6 +141,73 @@ impl SessionLog {
     ) -> Result<Entry, SessionError> {
         let parent = self.tail_id.clone();
         self.append(Entry::new(parent, EntryPayload::Activity(activity)))
+    }
+
+    pub fn append_work(&mut self, event: WorkEvent) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(parent, EntryPayload::Work(event)))
+    }
+
+    pub fn work_projection(
+        &self,
+    ) -> Result<Option<crate::work::WorkProjection>, crate::work::WorkError> {
+        crate::work::project_work(&self.chain_to_root())
+    }
+
+    /// Reconcile managed items left running by a process restart. Only child
+    /// sessions explicitly reported as live may remain running; every other
+    /// running item is conservatively interrupted and made retry-eligible.
+    /// Possible side effects are never replayed automatically.
+    pub fn reconcile_running_work(
+        &mut self,
+        live_child_sessions: &std::collections::HashSet<String>,
+    ) -> Result<usize, SessionError> {
+        let Some(projection) = self
+            .work_projection()
+            .map_err(|error| SessionError::Corrupt {
+                line: 0,
+                message: error.to_string(),
+            })?
+        else {
+            return Ok(0);
+        };
+        let stale: Vec<(String, u32)> = projection
+            .items
+            .values()
+            .filter(|item| {
+                item.status == crate::types::WorkItemStatus::Running
+                    && !item
+                        .child_session_id
+                        .as_ref()
+                        .is_some_and(|id| live_child_sessions.contains(id))
+            })
+            .map(|item| (item.item_id.clone(), item.attempt))
+            .collect();
+        let mut reconciled = 0;
+        for (item_id, attempt) in stale {
+            let Some(current) = self
+                .work_projection()
+                .map_err(|error| SessionError::Corrupt {
+                    line: 0,
+                    message: error.to_string(),
+                })?
+            else {
+                break;
+            };
+            self.append_work(WorkEvent {
+                contract_id: current.contract.contract_id.clone(),
+                revision: current.contract.revision,
+                kind: crate::types::WorkEventKind::ItemStatusChanged {
+                    item_id,
+                    from: crate::types::WorkItemStatus::Running,
+                    to: crate::types::WorkItemStatus::Interrupted,
+                    attempt,
+                    reason: "recovered after process restart; review before retry".into(),
+                },
+            })?;
+            reconciled += 1;
+        }
+        Ok(reconciled)
     }
 
     pub fn activities(
@@ -320,19 +388,19 @@ impl SessionLog {
     fn derive_keyed(&self) -> Vec<(String, Message)> {
         self.derive_keyed_tagged()
             .into_iter()
-            .map(|(id, m, _)| (id, m))
+            .map(|(id, m, _, _)| (id, m))
             .collect()
     }
 
     /// Like `derive_keyed`, additionally flagging compaction-summary
     /// pseudo-entries so packet accounting can exclude them from both
     /// sides of a partition (they were settled by earlier compactions).
-    fn derive_keyed_tagged(&self) -> Vec<(String, Message, bool)> {
-        let mut out: Vec<(String, Message, bool)> = Vec::new();
+    fn derive_keyed_tagged(&self) -> Vec<(String, Message, bool, bool)> {
+        let mut out: Vec<(String, Message, bool, bool)> = Vec::new();
         for entry in self.chain_to_root() {
             match &entry.payload {
                 EntryPayload::Message(record) => {
-                    out.push((entry.id.clone(), record.message.clone(), false));
+                    out.push((entry.id.clone(), record.message.clone(), false, false));
                 }
                 EntryPayload::Compaction(c) => {
                     if c.reset_all {
@@ -341,7 +409,7 @@ impl SessionLog {
                     } else {
                         let keep_from = out
                             .iter()
-                            .position(|(id, _, _)| id == &c.first_kept_entry_id)
+                            .position(|(id, _, _, _)| id == &c.first_kept_entry_id)
                             .unwrap_or(out.len());
                         out.drain(..keep_from);
                     }
@@ -349,14 +417,52 @@ impl SessionLog {
                         "<context_summary>\n{}\n</context_summary>",
                         c.summary
                     ));
-                    out.insert(0, (entry.id.clone(), summary_msg, true));
+                    out.insert(0, (entry.id.clone(), summary_msg, true, false));
                 }
                 // Receipts and goal entries are audit, not model-visible input.
                 EntryPayload::Header(_)
                 | EntryPayload::Receipt(_)
                 | EntryPayload::Goal(_)
-                | EntryPayload::Activity(_) => {}
+                | EntryPayload::Activity(_)
+                | EntryPayload::Work(_) => {}
             }
+        }
+        if let Ok(Some(work)) = self.work_projection()
+            && !matches!(
+                work.status,
+                crate::types::WorkContractStatus::Completed
+                    | crate::types::WorkContractStatus::Failed
+                    | crate::types::WorkContractStatus::Cancelled
+                    | crate::types::WorkContractStatus::Unverified
+            )
+        {
+            let mut context = format!(
+                "<work_contract id=\"{}\" revision=\"{}\">\nObjective: {}\nStatus: {:?}\nItems:\n",
+                work.contract.contract_id,
+                work.contract.revision,
+                work.contract.objective,
+                work.status,
+            );
+            for item in &work.contract.items {
+                if let Some(state) = work.items.get(&item.item_id) {
+                    context.push_str(&format!(
+                        "- {}: {:?} (owner: {:?})\n",
+                        item.item_id, state.status, item.owner
+                    ));
+                }
+            }
+            context.push_str(
+                "Rules: use this state for progress; do not claim completion before verification.\n</work_contract>",
+            );
+            context.truncate(4_000);
+            let work_entry_id = self
+                .chain_to_root()
+                .iter()
+                .rev()
+                .find(|entry| matches!(entry.payload, EntryPayload::Work(_)))
+                .map(|entry| entry.id.clone())
+                .unwrap_or_else(|| work.contract.contract_id.clone());
+            out.insert(0, (work_entry_id, Message::user_text(context), false, true));
         }
         out
     }
@@ -365,13 +471,13 @@ impl SessionLog {
     /// `first_kept_entry_id` in the current projection become `dropped`,
     /// the rest stay `selected`.
     fn partition_at_boundary(
-        tagged: &[(String, Message, bool)],
+        tagged: &[(String, Message, bool, bool)],
         boundary: usize,
     ) -> crate::types::ContextPartition {
         let mut selected = Vec::new();
         let mut dropped = Vec::new();
-        for (i, (id, _, is_summary)) in tagged.iter().enumerate() {
-            if *is_summary {
+        for (i, (id, _, is_summary, is_control)) in tagged.iter().enumerate() {
+            if *is_summary || *is_control {
                 continue;
             }
             if i < boundary {
@@ -416,7 +522,8 @@ impl SessionLog {
         Some(CompactionPlan {
             older: tagged[..boundary]
                 .iter()
-                .map(|(_, m, _)| m.clone())
+                .filter(|(_, _, _, is_control)| !*is_control)
+                .map(|(_, m, _, _)| m.clone())
                 .collect(),
             // Anchor = FIRST KEPT entry: the walker drains everything
             // strictly before this id and inserts the summary at index 0.
