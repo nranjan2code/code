@@ -43,6 +43,167 @@ use vak_session::types::{
 };
 use vak_tools::sandbox::SandboxMode;
 
+struct CoreFlowDispatcher {
+    core: Core,
+}
+
+#[async_trait::async_trait]
+impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
+    async fn dispatch(
+        &self,
+        args: &serde_json::Value,
+        session: Arc<tokio::sync::Mutex<SessionLog>>,
+        ctx: &vak_tools::ToolContext,
+        approver: Option<Arc<dyn vak_agent::Approver>>,
+    ) -> vak_tools::ToolOutput {
+        let Some(name) = args.get("flow").and_then(|value| value.as_str()) else {
+            return vak_tools::ToolOutput::error("flow requires flow");
+        };
+        let Some(contract_id) = args.get("contract_id").and_then(|value| value.as_str()) else {
+            return vak_tools::ToolOutput::error("flow requires contract_id");
+        };
+        let Some(work_item_id) = args.get("work_item_id").and_then(|value| value.as_str()) else {
+            return vak_tools::ToolOutput::error("flow requires work_item_id");
+        };
+        if !valid_managed_flow_name(name) {
+            return vak_tools::ToolOutput::error("invalid managed flow name");
+        }
+        let flow_path = self
+            .core
+            .cwd()
+            .join(".vak/flows")
+            .join(format!("{name}.toml"));
+        let definition_toml = match std::fs::read_to_string(&flow_path) {
+            Ok(body) => body,
+            Err(_) => {
+                return vak_tools::ToolOutput::error(format!("managed flow '{name}' not found"));
+            }
+        };
+        let flow = match vak_flow::parse_flow(&definition_toml) {
+            Ok(flow) if flow.name == name => flow,
+            Ok(_) => {
+                return vak_tools::ToolOutput::error(
+                    "managed flow name does not match its definition",
+                );
+            }
+            Err(error) => {
+                return vak_tools::ToolOutput::error(format!("invalid managed flow: {error}"));
+            }
+        };
+        let (parent_session_id, attempt) = {
+            let log = session.lock().await;
+            let Some(header) = log.header() else {
+                return vak_tools::ToolOutput::error("managed flow session has no header");
+            };
+            let Ok(Some(work)) = log.work_projection() else {
+                return vak_tools::ToolOutput::error("managed flow has no active contract");
+            };
+            let Some(item) = work.items.get(work_item_id) else {
+                return vak_tools::ToolOutput::error("managed flow work item does not exist");
+            };
+            if work.contract.contract_id != contract_id
+                || !matches!(
+                    item.status,
+                    vak_session::types::WorkItemStatus::Ready
+                        | vak_session::types::WorkItemStatus::Running
+                )
+            {
+                return vak_tools::ToolOutput::error("managed flow work item is not runnable");
+            }
+            (header.session_id.clone(), item.attempt.saturating_add(1))
+        };
+        let state_path = self
+            .core
+            .sessions_home()
+            .join("flow-runs/managed")
+            .join(format!(
+                "{}-{}-{attempt}.json",
+                managed_run_component(contract_id),
+                managed_run_component(work_item_id),
+            ));
+        let mut state = vak_flow::FlowState {
+            run_id: format!("{contract_id}-{work_item_id}-{attempt}"),
+            flow_name: name.into(),
+            definition_toml: definition_toml.clone(),
+            started_at: chrono::Utc::now(),
+            nodes: Default::default(),
+        };
+        let permission =
+            match build_engine_with(self.core.config(), &self.core.extra_allow_snapshot()) {
+                Ok(engine) => Arc::new(engine),
+                Err(error) => {
+                    return vak_tools::ToolOutput::error(format!(
+                        "managed flow permission setup failed: {error}"
+                    ));
+                }
+            };
+        let deps = vak_flow::ExecutorDeps {
+            provider: match self.core.provider() {
+                Ok(provider) => provider,
+                Err(error) => return vak_tools::ToolOutput::error(error.to_string()),
+            },
+            system_prompt: self.core.system_prompt(),
+            model: self.core.effective_model(),
+            tools: self.core.agent_tools(),
+            read_only_tools: self.core.agent_read_only_tools(),
+            max_turns: self.core.effective_max_turns(),
+            permission: Some(permission),
+            mode: match self.core.effective_permission_mode() {
+                vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
+                vak_config::PermissionMode::WorkspaceWrite => vak_permission::Mode::WorkspaceWrite,
+                vak_config::PermissionMode::FullAccess => vak_permission::Mode::FullAccess,
+            },
+            approver,
+            sandbox: self.core.agent_sandbox(),
+            cwd: self.core.cwd().clone(),
+            sessions_home: self.core.sessions_home().clone(),
+            parent_session_id,
+            state_path,
+            work: Some(vak_flow::FlowWorkContext {
+                session,
+                contract_id: contract_id.into(),
+                work_item_id: work_item_id.into(),
+            }),
+        };
+        let (events, _receiver) = tokio::sync::mpsc::channel(32);
+        match vak_flow::Executor::new(deps)
+            .run(&flow, &mut state, ctx.cancel.child_token(), events)
+            .await
+        {
+            vak_flow::FlowOutcome::Completed { outputs } => vak_tools::ToolOutput::ok(
+                serde_json::to_string(&outputs).unwrap_or_else(|_| "managed flow completed".into()),
+            ),
+            vak_flow::FlowOutcome::Failed { node, reason, .. } => {
+                vak_tools::ToolOutput::error(format!("managed flow failed at {node}: {reason}"))
+            }
+            vak_flow::FlowOutcome::Aborted => {
+                vak_tools::ToolOutput::error("managed flow cancelled")
+            }
+        }
+    }
+}
+
+fn valid_managed_flow_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn managed_run_component(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
+                char::from(byte)
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("system-prompt.md");
 
@@ -1658,6 +1819,18 @@ impl Core {
                 configuration: serde_json::Value::Null,
             });
         }
+        if self.channel_tool_allowed("flow") {
+            out.push(CapabilityDescriptor {
+                name: "flow".into(),
+                kind: CapabilityKind::Tool,
+                invocation: CapabilityInvocation::ModelTool,
+                description: "Managed static-flow dispatcher".into(),
+                source: None,
+                digest: None,
+                provenance: Some("vak-core".into()),
+                configuration: serde_json::Value::Null,
+            });
+        }
         for skill in self.skills() {
             let Ok(digest) = skill.digest() else {
                 continue;
@@ -2668,6 +2841,16 @@ impl Core {
         cfg.work_enabled = work_config.enabled;
         cfg.max_work_items = work_config.max_items;
         cfg.max_work_revisions = work_config.max_revisions;
+        if cfg.work_mode == WorkMode::Managed
+            && self.channel_tool_allowed("flow")
+            && session_contract.as_ref().is_none_or(|contract| {
+                contract.capabilities.iter().any(|capability| {
+                    capability.kind == CapabilityKind::Tool && capability.name == "flow"
+                })
+            })
+        {
+            cfg.flow_dispatcher = Some(Arc::new(CoreFlowDispatcher { core: self.clone() }));
+        }
         if let Some(contract) = &session_contract {
             let capabilities = contract.capabilities.clone();
             cfg.input_normalizer = Some(Arc::new(move |message| {

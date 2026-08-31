@@ -5877,6 +5877,7 @@ dependencies = [
  "uuid",
  "vak-agent",
  "vak-config",
+ "vak-flow",
  "vak-hooks",
  "vak-llm",
  "vak-mcp",

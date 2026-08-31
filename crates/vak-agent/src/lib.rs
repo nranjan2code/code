@@ -42,7 +42,7 @@ use vak_llm::{
 };
 use vak_permission::{Decision, Mode, PermissionEngine};
 use vak_session::{MessageMeta, MessageRecord, SessionLog};
-use vak_tools::Tool;
+use vak_tools::{Tool, ToolContext, ToolOutput};
 
 pub use steering::{DrainMode, SteeringQueues};
 
@@ -53,6 +53,62 @@ pub use async_trait;
 /// It is intentionally outside model control and receives the frozen session
 /// capability packet through its closure.
 pub type InputNormalizer = Arc<dyn Fn(Message) -> Result<Message, String> + Send + Sync>;
+
+/// Host-owned executor for a managed static flow. The agent owns admission
+/// and the live ledger; the host owns the flow engine to avoid a crate cycle.
+#[async_trait::async_trait]
+pub trait FlowDispatcher: Send + Sync {
+    async fn dispatch(
+        &self,
+        args: &Value,
+        session: Arc<Mutex<SessionLog>>,
+        ctx: &ToolContext,
+        approver: Option<Arc<dyn Approver>>,
+    ) -> ToolOutput;
+}
+
+struct ManagedFlowTool {
+    dispatcher: Arc<dyn FlowDispatcher>,
+    session: Arc<Mutex<SessionLog>>,
+    approver: Option<Arc<dyn Approver>>,
+}
+
+#[async_trait::async_trait]
+impl Tool for ManagedFlowTool {
+    fn name(&self) -> &str {
+        "flow"
+    }
+
+    fn description(&self) -> &str {
+        "Run a named static flow assigned by the active managed-work contract."
+    }
+
+    fn schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "flow": {"type": "string", "description": "Managed flow name"},
+                "contract_id": {"type": "string", "description": "Active managed contract"},
+                "work_item_id": {"type": "string", "description": "Flow-owned work item"}
+            },
+            "required": ["flow", "contract_id", "work_item_id"]
+        })
+    }
+
+    fn claims(&self, _args: &Value) -> vak_tools::ResourceClaims {
+        vak_tools::ResourceClaims {
+            exclusive: true,
+            read_only: false,
+            paths: Vec::new(),
+        }
+    }
+
+    async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
+        self.dispatcher
+            .dispatch(args, self.session.clone(), ctx, self.approver.clone())
+            .await
+    }
+}
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub enum AgentEvent {
@@ -161,6 +217,8 @@ pub struct AgentConfig {
     pub system_prompt: String,
     pub model: String,
     pub tools: Vec<Arc<dyn Tool>>,
+    /// Optional host dispatcher exposed only as the managed `flow` tool.
+    pub flow_dispatcher: Option<Arc<dyn FlowDispatcher>>,
     /// Exact tool schemas admitted with the session. When absent, standalone
     /// agent users derive schemas from their runtime tools.
     pub tool_definitions: Option<Vec<vak_llm::ToolDefinition>>,
@@ -230,6 +288,7 @@ impl AgentConfig {
             system_prompt: system_prompt.into(),
             model: String::new(),
             tools: Vec::new(),
+            flow_dispatcher: None,
             tool_definitions: None,
             input_normalizer: None,
             max_turns: 40,
@@ -339,7 +398,7 @@ struct PendingToolCall {
 
 pub struct Agent {
     provider: Arc<dyn Provider>,
-    pub session: Mutex<SessionLog>,
+    pub session: Arc<Mutex<SessionLog>>,
     pub config: AgentConfig,
     /// Identical-call detector for the doom-loop guard, reset per run.
     run_call_counts: std::sync::Mutex<HashMap<String, u32>>,
@@ -353,10 +412,19 @@ pub struct Agent {
 }
 
 impl Agent {
-    pub fn new(provider: Arc<dyn Provider>, session: SessionLog, config: AgentConfig) -> Self {
+    pub fn new(provider: Arc<dyn Provider>, session: SessionLog, mut config: AgentConfig) -> Self {
+        let session = Arc::new(Mutex::new(session));
+        if let Some(dispatcher) = config.flow_dispatcher.clone() {
+            config.tools.push(Arc::new(ManagedFlowTool {
+                dispatcher,
+                session: session.clone(),
+                approver: config.approver.clone(),
+            }));
+            config.tool_definitions = Some(vak_tools::definitions(&config.tools));
+        }
         Agent {
             provider,
-            session: Mutex::new(session),
+            session,
             config,
             run_call_counts: std::sync::Mutex::new(HashMap::new()),
             active_goal: None,
@@ -2077,8 +2145,18 @@ impl Agent {
     }
 
     /// Recovers the session ledger after a run (server/API consumers).
+    #[allow(clippy::panic)]
     pub async fn into_session(self) -> SessionLog {
-        self.session.into_inner()
+        let mut config = self.config;
+        config.tools.clear();
+        config.flow_dispatcher = None;
+        drop(config);
+        match Arc::try_unwrap(self.session) {
+            Ok(session) => session.into_inner(),
+            Err(_) => {
+                panic!("managed flow dispatcher retained the session after the agent stopped")
+            }
+        }
     }
 
     async fn append_assistant(&self, response: &AssistantMessage) {
@@ -2437,7 +2515,7 @@ impl Agent {
                             Some(tool) => {
                                 self.begin_managed_tool_item(
                                     &tool,
-                                    (call.name == "task")
+                                    (call.name == "task" || call.name == "flow")
                                         .then(|| {
                                             Some((
                                                 call.input.get("contract_id")?.as_str()?,
@@ -2445,6 +2523,7 @@ impl Agent {
                                             ))
                                         })
                                         .flatten(),
+                                    call.input.get("flow").and_then(|value| value.as_str()),
                                 )
                                 .await
                             }
@@ -2468,7 +2547,7 @@ impl Agent {
                             self.emit_work_state(events).await;
                             (call.id.clone(), result)
                         } else {
-                            let is_task = call.name == "task";
+                            let owns_lifecycle = call.name == "task" || call.name == "flow";
                             let (returned_id, result) = execute_one(
                                 call,
                                 &self.config.tools,
@@ -2482,7 +2561,8 @@ impl Agent {
                                 events,
                             )
                             .await;
-                            if !is_task && let Some((contract_id, item_id, attempt)) = managed_item
+                            if !owns_lifecycle
+                                && let Some((contract_id, item_id, attempt)) = managed_item
                             {
                                 self.finish_managed_tool_item(
                                     &contract_id,
@@ -2650,6 +2730,7 @@ impl Agent {
         &self,
         tool: &str,
         requested: Option<(&str, &str)>,
+        flow_name: Option<&str>,
     ) -> Option<(String, String, u32)> {
         let mut session = self.session.lock().await;
         let projection = session.work_projection().ok().flatten()?;
@@ -2674,7 +2755,15 @@ impl Agent {
                                 Some((contract_id, item_id)) => {
                                     projection.contract.contract_id == contract_id
                                         && state.item_id == item_id
-                                        && matches!(definition.owner, vak_session::types::WorkOwner::Subagent)
+                                        && match (&definition.owner, tool, flow_name) {
+                                            (vak_session::types::WorkOwner::Subagent, "task", _) => true,
+                                            (
+                                                vak_session::types::WorkOwner::Flow { name },
+                                                "flow",
+                                                Some(requested_flow),
+                                            ) => name == requested_flow,
+                                            _ => false,
+                                        }
                                 }
                                 None => {
                                     matches!(definition.owner, vak_session::types::WorkOwner::ParentAgent)
@@ -2688,13 +2777,20 @@ impl Agent {
         let attempt = item.attempt.saturating_add(1);
         if item.status == vak_session::types::WorkItemStatus::Ready {
             if requested.is_some() {
+                let owner = if tool == "flow" {
+                    vak_session::types::WorkOwner::Flow {
+                        name: flow_name.unwrap_or_default().into(),
+                    }
+                } else {
+                    vak_session::types::WorkOwner::Subagent
+                };
                 session
                     .append_work(vak_session::types::WorkEvent {
                         contract_id: contract_id.clone(),
                         revision: projection.contract.revision,
                         kind: vak_session::types::WorkEventKind::ItemAssigned {
                             item_id: item_id.clone(),
-                            owner: vak_session::types::WorkOwner::Subagent,
+                            owner,
                             child_session_id: None,
                         },
                     })

@@ -19,6 +19,7 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 vak-agent = { workspace = true }
 vak-config = { workspace = true }
+vak-flow = { workspace = true }
 vak-hooks = { workspace = true }
 vak-llm = { workspace = true }
 vak-mcp = { workspace = true }

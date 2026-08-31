@@ -1,6 +1,6 @@
 # 42 — Managed work contracts
 
-Status: implementation hardening complete for the shipped managed-work paths; managed flow ownership remains an explicit integration gap because no production flow dispatcher is currently exposed to the agent
+Status: implementation complete for shipped managed-work paths. Managed agent turns dispatch contract-owned static flows through the production flow executor; standalone CLI flows remain deliberately unlinked unless a future explicit linkage option is added.
 
 ## Mission
 
@@ -706,6 +706,9 @@ can complete; failed verification re-enters execution with findings.
 - Link task tool calls to work items.
 - Attach child ledger evidence.
 - Link flow nodes to work items.
+- Expose a managed-only `flow` tool through the core dispatcher. It validates
+  the contract/item/flow owner tuple before execution, then the executor owns
+  running, node evidence, completion-marker evidence, and final work state.
 - Add work-aware subagent events and UI.
 
 Exit: every delegated item can be traced parent → child/flow → evidence →

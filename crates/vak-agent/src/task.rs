@@ -296,11 +296,14 @@ impl TaskTool {
             .get("readonly")
             .and_then(|r| r.as_bool())
             .unwrap_or(false);
-        let child_tools = if readonly {
+        let child_tools: Vec<Arc<dyn Tool>> = if readonly {
             self.deps.read_only_tools.clone()
         } else {
             self.deps.tools.clone()
-        };
+        }
+        .into_iter()
+        .filter(|tool| tool.name() != "flow")
+        .collect();
         let child_mode = if readonly {
             Mode::ReadOnly
         } else {
