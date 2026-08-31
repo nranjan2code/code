@@ -150,6 +150,9 @@ outcome, artifact shelf, optional activity/audit, and persistent recovery for
 failed work. Outcome, Balanced, and Audit modes are different projections of
 the same timeline. Prose is continuous; only code, tables, diffs, callouts,
 artifacts, approvals, and recovery states get purpose-built containment.
+An intermediate tool error in a run that later records successful completion
+remains in Activity as a failed, recoverable step; only an unresolved tool
+error or terminal run failure enters the persistent recovery banner.
 
 Active assistant text is appended without reparsing or mounting HTML. When a
 turn settles, hydration replaces it with the ledger-derived AST. Unknown nodes

@@ -12,18 +12,30 @@ use vak_session::{ActivityKind, ActivityStatus, EntryPayload, SessionLog};
 pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline {
     let chain = session.chain_to_root();
     let mut tool_results: HashMap<String, (String, bool)> = HashMap::new();
+    let mut successful_runs = std::collections::HashSet::new();
     for entry in &chain {
-        if let EntryPayload::Message(record) = &entry.payload {
-            for block in &record.message.content {
-                if let ContentBlock::ToolResult {
-                    tool_use_id,
-                    content,
-                    is_error,
-                } = block
-                {
-                    tool_results.insert(tool_use_id.clone(), (content.clone(), *is_error));
+        match &entry.payload {
+            EntryPayload::Message(record) => {
+                for block in &record.message.content {
+                    if let ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        is_error,
+                    } = block
+                    {
+                        tool_results.insert(tool_use_id.clone(), (content.clone(), *is_error));
+                    }
                 }
             }
+            EntryPayload::Activity(activity)
+                if activity.kind == ActivityKind::Run
+                    && activity.status == ActivityStatus::Succeeded =>
+            {
+                if let Some(turn) = activity.turn {
+                    successful_runs.insert(turn);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -140,13 +152,14 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                         ContentBlock::ToolUse { id, name, input } => {
                             let result = tool_results.get(id);
                             let failed = result.is_some_and(|(_, failed)| *failed);
+                            let recovered = failed && successful_runs.contains(&turn);
                             let detail = result.map(|(content, _)| content.clone());
                             timeline.items.push(OutputItem {
                                 id: id.clone(),
                                 timestamp: entry.ts.to_rfc3339(),
                                 turn_id: turn_id.clone(),
                                 role: OutputRole::Tool,
-                                kind: if failed {
+                                kind: if failed && !recovered {
                                     OutputKind::Error
                                 } else {
                                     OutputKind::Progress
@@ -156,7 +169,7 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                                 } else {
                                     OutputStatus::Succeeded
                                 },
-                                content: if failed {
+                                content: if failed && !recovered {
                                     OutputContent::Error {
                                         message: detail
                                             .clone()
@@ -166,7 +179,11 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                                     }
                                 } else {
                                     OutputContent::Progress {
-                                        label: name.clone(),
+                                        label: if recovered {
+                                            format!("Recovered {name}")
+                                        } else {
+                                            name.clone()
+                                        },
                                         detail: detail.clone(),
                                         percent: None,
                                     }
@@ -749,7 +766,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use vak_delivery::{OutputContent, OutputKind, OutputStatus};
-    use vak_llm::{ContentBlock, Message};
+    use vak_llm::{ContentBlock, Message, Role};
     use vak_session::{
         ActivityKind, ActivityRecord, ActivityStatus, FrozenContract, MessageRecord, SessionHeader,
         SessionLog,
@@ -878,5 +895,90 @@ mod tests {
             item.content,
             OutputContent::Structured { ref output } if output.semantic_type == "link.preview"
         )));
+    }
+
+    #[test]
+    fn recovered_tool_failure_stays_in_activity_without_attention_banner() {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let mut log = SessionLog::create(
+            dir.path().join("presentation.jsonl"),
+            SessionHeader {
+                session_id: "session-2".into(),
+                created_at: chrono::Utc::now(),
+                cwd: PathBuf::from("/tmp/project"),
+                parent_session_id: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                },
+            },
+        )
+        .expect("create session");
+        log.append_message(MessageRecord {
+            message: Message::user_text("Search the web"),
+            meta: None,
+        })
+        .expect("append user");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::ToolUse {
+                id: "tool-failed".into(),
+                name: "mcp".into(),
+                input: serde_json::json!({"tool": "search"}),
+            }]),
+            meta: None,
+        })
+        .expect("append failed call");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "tool-failed".into(),
+                    content: "Unknown tool: search".into(),
+                    is_error: true,
+                }],
+            },
+            meta: None,
+        })
+        .expect("append failed result");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text(
+                "Search completed after recovery",
+            )]),
+            meta: None,
+        })
+        .expect("append outcome");
+        log.append_activity(ActivityRecord {
+            activity_id: "run-2".into(),
+            turn: Some(1),
+            kind: ActivityKind::Run,
+            status: ActivityStatus::Succeeded,
+            label: "Run finished".into(),
+            detail: Some("completed".into()),
+            data: BTreeMap::new(),
+        })
+        .expect("append run status");
+
+        let timeline = snapshot("session-2", &log);
+        assert!(
+            !timeline
+                .items
+                .iter()
+                .any(|item| item.kind == OutputKind::Error)
+        );
+        let recovered = timeline
+            .items
+            .iter()
+            .find(|item| item.id == "tool-failed")
+            .expect("recovered tool item");
+        assert_eq!(recovered.kind, OutputKind::Progress);
+        assert_eq!(recovered.status, OutputStatus::Failed);
+        assert!(recovered.fallback_text.contains("Unknown tool"));
     }
 }
