@@ -1,6 +1,6 @@
 # 42 — Managed work contracts
 
-Status: implemented specification (phases 0–6 complete; see verification and boundaries below)
+Status: implementation hardening in progress; the contract and ledger model are implemented, with remaining verification and recovery work tracked below
 
 ## Mission
 

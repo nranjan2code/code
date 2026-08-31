@@ -266,13 +266,18 @@ impl TaskTool {
             return ToolOutput::error("contract_id and work_item_id must be supplied together");
         }
         if let Some(contract_id) = requested_contract
-            && self.deps.contract_id.as_deref() != Some(contract_id)
+            && self
+                .deps
+                .contract_id
+                .as_deref()
+                .is_some_and(|known| known != contract_id)
         {
             return ToolOutput::error(
                 "child contract does not match the parent's managed contract",
             );
         }
         if let Some(item_id) = requested_item
+            && !self.deps.work_item_ids.is_empty()
             && !self.deps.work_item_ids.iter().any(|known| known == item_id)
         {
             return ToolOutput::error(
@@ -453,7 +458,11 @@ impl TaskTool {
                 if text.is_empty() {
                     ToolOutput::ok(format!("subagent '{session_id}' completed without output"))
                 } else {
-                    ToolOutput::ok(text)
+                    if requested_contract.is_some() {
+                        ToolOutput::ok(format!("subagent '{session_id}' completed:\n{text}"))
+                    } else {
+                        ToolOutput::ok(text)
+                    }
                 }
             }
             crate::TurnOutcome::Aborted { partial } => {

@@ -2543,6 +2543,31 @@ impl Core {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_auto_turn_with(
+        &self,
+        session: SessionLog,
+        prompt: &str,
+        cancel: CancellationToken,
+        approver: Option<std::sync::Arc<dyn vak_agent::Approver>>,
+        permission: Option<std::sync::Arc<vak_permission::PermissionEngine>>,
+        steering: Option<std::sync::Arc<vak_agent::SteeringQueues>>,
+        events: tokio::sync::mpsc::Sender<AgentEvent>,
+    ) -> Result<(TurnOutcome, SessionLog), CoreError> {
+        self.run_turn_inner(
+            session,
+            vak_llm::Message::user_text(prompt),
+            cancel,
+            approver,
+            permission,
+            steering,
+            events,
+            None,
+            Some(WorkMode::Auto),
+        )
+        .await
+    }
+
     /// Goal-mode turn (docs/design/27 Phase H): the run may only end when
     /// the objective's acceptance criteria pass an independent audit.
     #[allow(clippy::too_many_arguments)]
@@ -2622,6 +2647,13 @@ impl Core {
             "auto" if is_managed_work_request(&prompt.text_content()) => WorkMode::Managed,
             _ => WorkMode::Direct,
         });
+        if cfg.work_mode == WorkMode::Auto {
+            cfg.work_mode = if is_managed_work_request(&prompt.text_content()) {
+                WorkMode::Managed
+            } else {
+                WorkMode::Direct
+            };
+        }
         cfg.work_enabled = work_config.enabled;
         cfg.max_work_items = work_config.max_items;
         cfg.max_work_revisions = work_config.max_revisions;

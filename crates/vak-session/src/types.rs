@@ -298,6 +298,7 @@ pub enum WorkItemStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkItemState {
     pub item_id: String,
+    pub owner: WorkOwner,
     pub status: WorkItemStatus,
     pub attempt: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -191,27 +191,13 @@ async fn managed_turn_authors_and_persists_validated_contract() {
         vec![
             ScriptedResponse::Message(assistant_text(&authored.to_string())),
             ScriptedResponse::Message(tool_call_msg(
-                "w1",
-                "work",
-                serde_json::json!({"operation": "transition", "item_id": "change", "to": "running"}),
-            )),
-            ScriptedResponse::Message(tool_call_msg(
-                "w2",
-                "work",
-                serde_json::json!({"operation": "transition", "item_id": "change", "to": "ready_for_verification"}),
-            )),
-            ScriptedResponse::Message(tool_call_msg(
-                "w3",
-                "work",
-                serde_json::json!({
-                    "operation": "attach_evidence",
-                    "item_id": "change",
-                    "evidence": {"kind": "ledger_entry", "session_id": "s-test", "entry_id": "result"}
-                }),
+                "b1",
+                "bash",
+                serde_json::json!({"command": "true"}),
             )),
             ScriptedResponse::Message(assistant_text("completed")),
         ],
-        vec![],
+        vec![Arc::new(BashTool)],
     );
     h.agent.config.work_mode = WorkMode::Managed;
     let outcome = h

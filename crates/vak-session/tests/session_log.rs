@@ -41,6 +41,70 @@ fn user_msg(text: &str) -> MessageRecord {
     }
 }
 
+fn work_contract(id: &str) -> WorkContract {
+    WorkContract {
+        contract_id: id.into(),
+        revision: 0,
+        source_entry_id: "prompt".into(),
+        objective: "test work".into(),
+        constraints: Vec::new(),
+        assumptions: Vec::new(),
+        criteria: Vec::new(),
+        items: vec![WorkItemDefinition {
+            item_id: "one".into(),
+            title: "one".into(),
+            instructions: "one".into(),
+            dependencies: Vec::new(),
+            owner: WorkOwner::ParentAgent,
+            required: true,
+            readonly: false,
+            path_claims: Vec::new(),
+            criterion_ids: Vec::new(),
+        }],
+    }
+}
+
+#[test]
+fn invalid_work_event_is_rejected_without_poisoning_the_ledger() {
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("work.jsonl"), header()).unwrap();
+    log.append_work(WorkEvent {
+        contract_id: "work-atomic".into(),
+        revision: 0,
+        kind: WorkEventKind::ContractCreated {
+            contract: work_contract("work-atomic"),
+        },
+    })
+    .unwrap();
+    log.append_work(WorkEvent {
+        contract_id: "work-atomic".into(),
+        revision: 0,
+        kind: WorkEventKind::ContractStatusChanged {
+            from: vak_session::types::WorkContractStatus::Draft,
+            to: vak_session::types::WorkContractStatus::Active,
+            reason: "test".into(),
+        },
+    })
+    .unwrap();
+    let before = log.len();
+    assert!(
+        log.append_work(WorkEvent {
+            contract_id: "work-atomic".into(),
+            revision: 0,
+            kind: WorkEventKind::ItemStatusChanged {
+                item_id: "one".into(),
+                from: vak_session::types::WorkItemStatus::Proposed,
+                to: vak_session::types::WorkItemStatus::Ready,
+                attempt: 0,
+                reason: "duplicate".into(),
+            },
+        })
+        .is_err()
+    );
+    assert_eq!(log.len(), before);
+    assert!(log.work_projection().unwrap().is_some());
+}
+
 #[test]
 fn append_and_derive_roundtrip() {
     let dir = tempdir().unwrap();
@@ -217,18 +281,6 @@ fn restart_reconciles_orphaned_running_work_without_replaying_it() {
         kind: WorkEventKind::ContractStatusChanged {
             from: vak_session::types::WorkContractStatus::Draft,
             to: vak_session::types::WorkContractStatus::Active,
-            reason: "test".into(),
-        },
-    })
-    .unwrap();
-    log.append_work(WorkEvent {
-        contract_id: "work-recovery".into(),
-        revision: 0,
-        kind: WorkEventKind::ItemStatusChanged {
-            item_id: "mutate".into(),
-            from: vak_session::types::WorkItemStatus::Proposed,
-            to: vak_session::types::WorkItemStatus::Ready,
-            attempt: 0,
             reason: "test".into(),
         },
     })

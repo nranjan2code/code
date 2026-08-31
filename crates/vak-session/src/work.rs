@@ -172,6 +172,7 @@ fn apply_event(
                     item.item_id.clone(),
                     WorkItemState {
                         item_id: item.item_id.clone(),
+                        owner: item.owner.clone(),
                         status: WorkItemStatus::Proposed,
                         attempt: 0,
                         child_session_id: None,
@@ -229,22 +230,24 @@ fn apply_event(
             }
             validate_contract(contract)?;
             current.contract = contract.clone();
-            current
+            current.items = contract
                 .items
-                .retain(|id, _| contract.items.iter().any(|item| item.item_id == *id));
-            for item in &contract.items {
-                current
-                    .items
-                    .entry(item.item_id.clone())
-                    .or_insert_with(|| WorkItemState {
-                        item_id: item.item_id.clone(),
-                        status: WorkItemStatus::Proposed,
-                        attempt: 0,
-                        child_session_id: None,
-                        blocker: None,
-                        evidence: Vec::new(),
-                    });
-            }
+                .iter()
+                .map(|item| {
+                    (
+                        item.item_id.clone(),
+                        WorkItemState {
+                            item_id: item.item_id.clone(),
+                            owner: item.owner.clone(),
+                            status: WorkItemStatus::Proposed,
+                            attempt: 0,
+                            child_session_id: None,
+                            blocker: None,
+                            evidence: Vec::new(),
+                        },
+                    )
+                })
+                .collect();
         }
         WorkEventKind::ContractStatusChanged { from, to, .. } => {
             if current.status != *from || !valid_contract_transition(from, to) {
@@ -262,14 +265,16 @@ fn apply_event(
             attempt,
             reason,
         } => {
-            let state = current
+            let current_status = current
                 .items
-                .get_mut(item_id)
-                .ok_or_else(|| WorkError::UnknownItem(item_id.clone()))?;
-            if state.status != *from {
+                .get(item_id)
+                .ok_or_else(|| WorkError::UnknownItem(item_id.clone()))?
+                .status
+                .clone();
+            if current_status != *from {
                 return Err(WorkError::InvalidItemTransition {
                     item: item_id.clone(),
-                    from: state.status.clone(),
+                    from: current_status,
                     to: to.clone(),
                 });
             }
@@ -283,6 +288,36 @@ fn apply_event(
                     to: to.clone(),
                 });
             }
+            if *to == WorkItemStatus::Running {
+                let definition = current
+                    .contract
+                    .items
+                    .iter()
+                    .find(|item| item.item_id == *item_id)
+                    .ok_or_else(|| WorkError::UnknownItem(item_id.clone()))?;
+                if definition.dependencies.iter().any(|dependency| {
+                    !current
+                        .items
+                        .get(dependency)
+                        .is_some_and(|dependency_state| {
+                            matches!(
+                                dependency_state.status,
+                                WorkItemStatus::Succeeded | WorkItemStatus::Skipped
+                            )
+                        })
+                }) {
+                    return Err(WorkError::InvalidEvent);
+                }
+            }
+            if *to == WorkItemStatus::ReadyForVerification
+                && current.items[item_id].evidence.is_empty()
+            {
+                return Err(WorkError::InvalidEvent);
+            }
+            let state = current
+                .items
+                .get_mut(item_id)
+                .ok_or_else(|| WorkError::UnknownItem(item_id.clone()))?;
             state.status = to.clone();
             state.attempt = *attempt;
             state.blocker = matches!(to, WorkItemStatus::Blocked | WorkItemStatus::Interrupted)
@@ -308,7 +343,13 @@ fn apply_event(
                 .find(|item| item.item_id == *item_id)
                 .ok_or_else(|| WorkError::UnknownItem(item_id.clone()))?;
             if definition.criterion_ids.iter().any(|criterion_id| {
-                definition.required
+                let required = current
+                    .contract
+                    .criteria
+                    .iter()
+                    .find(|criterion| criterion.criterion_id == *criterion_id)
+                    .is_some_and(|criterion| criterion.required);
+                required
                     && !matches!(
                         current.criteria.get(criterion_id),
                         Some(CriterionResult::Passed { .. })
@@ -323,6 +364,7 @@ fn apply_event(
         }
         WorkEventKind::ItemAssigned {
             item_id,
+            owner,
             child_session_id,
             ..
         } => {
@@ -331,6 +373,7 @@ fn apply_event(
                 .get_mut(item_id)
                 .ok_or_else(|| WorkError::UnknownItem(item_id.clone()))?;
             state.child_session_id = child_session_id.clone();
+            state.owner = owner.clone();
         }
         WorkEventKind::EvidenceAttached { item_id, evidence } => {
             let state = current
@@ -528,10 +571,6 @@ mod tests {
         for (from, to) in [
             (WorkItemStatus::Proposed, WorkItemStatus::Ready),
             (WorkItemStatus::Ready, WorkItemStatus::Running),
-            (
-                WorkItemStatus::Running,
-                WorkItemStatus::ReadyForVerification,
-            ),
         ] {
             entries.push(entry(WorkEvent {
                 contract_id: "work-1".into(),
@@ -554,6 +593,17 @@ mod tests {
                     session_id: "s".into(),
                     entry_id: "result".into(),
                 },
+            },
+        }));
+        entries.push(entry(WorkEvent {
+            contract_id: "work-1".into(),
+            revision: 0,
+            kind: WorkEventKind::ItemStatusChanged {
+                item_id: "implement".into(),
+                from: WorkItemStatus::Running,
+                to: WorkItemStatus::ReadyForVerification,
+                attempt: 1,
+                reason: String::new(),
             },
         }));
         entries.push(entry(WorkEvent {

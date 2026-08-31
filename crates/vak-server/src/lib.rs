@@ -2712,6 +2712,18 @@ async fn run_prompt(
     // Goal mode (Phase H): captured before the spawn consumes `body`.
     let goal_pair = body.goal.clone().map(|g| (g, body.criteria.clone()));
     let managed = matches!(body.work_mode.as_deref(), Some("managed"));
+    let automatic = matches!(body.work_mode.as_deref(), Some("auto"));
+    if (managed || automatic) && !body.attachments.is_empty() {
+        *handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
+        let _ = handle.events_tx.send(AgentEvent::RunFinished {
+            summary: "failed: managed work currently requires text-only input".into(),
+            is_error: true,
+        });
+        return StatusCode::BAD_REQUEST.into_response();
+    }
     let run_id = id.clone();
     let hub = state.hub.clone();
     let admin_store = state.store.clone();
@@ -2733,6 +2745,17 @@ async fn run_prompt(
             .await
         } else if managed {
             core.run_managed_turn_with(
+                taken,
+                &expanded_prompt,
+                cancel,
+                Some(approver),
+                None,
+                Some(steering.clone()),
+                events,
+            )
+            .await
+        } else if automatic {
+            core.run_auto_turn_with(
                 taken,
                 &expanded_prompt,
                 cancel,
@@ -3363,6 +3386,13 @@ async fn session_work_command(
                 )
                     .into_response();
             }
+            if let Err(error) = vak_agent::validate_work_paths(&contract) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": error })),
+                )
+                    .into_response();
+            }
             vak_session::types::WorkEventKind::ContractRevised {
                 previous_revision: revision,
                 contract,
@@ -3372,7 +3402,14 @@ async fn session_work_command(
     };
     let event = vak_session::types::WorkEvent {
         contract_id,
-        revision,
+        revision: if matches!(
+            &event_kind,
+            vak_session::types::WorkEventKind::ContractRevised { .. }
+        ) {
+            revision.saturating_add(1)
+        } else {
+            revision
+        },
         kind: event_kind,
     };
     match session.append_work(event) {

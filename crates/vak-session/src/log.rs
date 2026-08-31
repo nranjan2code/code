@@ -145,13 +145,112 @@ impl SessionLog {
 
     pub fn append_work(&mut self, event: WorkEvent) -> Result<Entry, SessionError> {
         let parent = self.tail_id.clone();
-        self.append(Entry::new(parent, EntryPayload::Work(event)))
+        let candidate = Entry::new(parent, EntryPayload::Work(event));
+        let mut chain = self.chain_to_root();
+        chain.push(&candidate);
+        crate::work::project_work(&chain).map_err(|error| SessionError::Corrupt {
+            line: 0,
+            message: format!("invalid work event: {error}"),
+        })?;
+        let appended = self.append(candidate)?;
+        self.promote_ready_work_items()?;
+        Ok(appended)
+    }
+
+    fn promote_ready_work_items(&mut self) -> Result<(), SessionError> {
+        let Some(projection) = self
+            .work_projection()
+            .map_err(|error| SessionError::Corrupt {
+                line: 0,
+                message: error.to_string(),
+            })?
+        else {
+            return Ok(());
+        };
+        if projection.status != crate::types::WorkContractStatus::Active {
+            return Ok(());
+        }
+        let ready: Vec<String> = projection
+            .contract
+            .items
+            .iter()
+            .filter(|definition| {
+                projection
+                    .items
+                    .get(&definition.item_id)
+                    .is_some_and(|state| state.status == crate::types::WorkItemStatus::Proposed)
+                    && definition.dependencies.iter().all(|dependency| {
+                        projection.items.get(dependency).is_some_and(|state| {
+                            matches!(
+                                state.status,
+                                crate::types::WorkItemStatus::Succeeded
+                                    | crate::types::WorkItemStatus::Skipped
+                            )
+                        })
+                    })
+            })
+            .map(|definition| definition.item_id.clone())
+            .collect();
+        for item_id in ready {
+            let current = self
+                .work_projection()
+                .map_err(|error| SessionError::Corrupt {
+                    line: 0,
+                    message: error.to_string(),
+                })?;
+            let Some(current) = current else { break };
+            self.append_work(crate::types::WorkEvent {
+                contract_id: current.contract.contract_id,
+                revision: current.contract.revision,
+                kind: crate::types::WorkEventKind::ItemStatusChanged {
+                    item_id,
+                    from: crate::types::WorkItemStatus::Proposed,
+                    to: crate::types::WorkItemStatus::Ready,
+                    attempt: 0,
+                    reason: "dependencies satisfied".into(),
+                },
+            })?;
+        }
+        Ok(())
     }
 
     pub fn work_projection(
         &self,
     ) -> Result<Option<crate::work::WorkProjection>, crate::work::WorkError> {
         crate::work::project_work(&self.chain_to_root())
+    }
+
+    pub fn evidence_exists(&self, evidence: &crate::types::EvidenceRef) -> bool {
+        let session_id = self.header().map(|header| header.session_id.as_str());
+        self.chain_to_root().iter().any(|entry| match evidence {
+            crate::types::EvidenceRef::LedgerEntry {
+                session_id: evidence_session,
+                entry_id,
+            }
+            | crate::types::EvidenceRef::Receipt {
+                session_id: evidence_session,
+                entry_id,
+            } => session_id == Some(evidence_session.as_str()) && entry.id == *entry_id,
+            crate::types::EvidenceRef::ToolResult {
+                session_id: evidence_session,
+                tool_use_id,
+            } => {
+                session_id == Some(evidence_session.as_str())
+                    && matches!(
+                        &entry.payload,
+                        crate::types::EntryPayload::Message(record)
+                            if record.message.content.iter().any(|block| matches!(
+                                block,
+                                vak_llm::ContentBlock::ToolResult { tool_use_id: id, .. }
+                                    if id == tool_use_id
+                            ))
+                    )
+            }
+            crate::types::EvidenceRef::CheckpointDiff { .. }
+            | crate::types::EvidenceRef::FlowNode { .. }
+            | crate::types::EvidenceRef::ChildSession { .. }
+            | crate::types::EvidenceRef::ExternalOperation { .. } => false,
+        })
     }
 
     /// Reconcile managed items left running by a process restart. Only child

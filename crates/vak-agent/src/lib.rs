@@ -1094,6 +1094,16 @@ impl Agent {
         cancel: &CancellationToken,
         events: &mpsc::Sender<AgentEvent>,
     ) -> Result<(), String> {
+        if self
+            .session
+            .lock()
+            .await
+            .work_projection()
+            .map_err(|error| format!("managed work projection is invalid: {error}"))?
+            .is_some()
+        {
+            return Ok(());
+        }
         let session_id = self
             .session
             .lock()
@@ -1161,11 +1171,6 @@ impl Agent {
         vak_session::validate_contract(&contract)
             .map_err(|error| format!("managed contract validation failed: {error}"))?;
         validate_work_paths(&contract)?;
-        let first_item_id = contract
-            .items
-            .first()
-            .map(|item| item.item_id.clone())
-            .ok_or_else(|| "managed contract has no executable item".to_string())?;
         let mut session = self.session.lock().await;
         session
             .append_work(vak_session::types::WorkEvent {
@@ -1202,21 +1207,6 @@ impl Agent {
                 },
             })
             .map_err(|error| format!("managed contract activation failed: {error}"))?;
-        if !awaiting_input {
-            session
-                .append_work(vak_session::types::WorkEvent {
-                    contract_id,
-                    revision: 0,
-                    kind: vak_session::types::WorkEventKind::ItemStatusChanged {
-                        item_id: first_item_id,
-                        from: vak_session::types::WorkItemStatus::Proposed,
-                        to: vak_session::types::WorkItemStatus::Ready,
-                        attempt: 0,
-                        reason: "ready for parent agent".into(),
-                    },
-                })
-                .map_err(|error| format!("managed item admission failed: {error}"))?;
-        }
         Ok(())
     }
 
@@ -1370,10 +1360,15 @@ impl Agent {
                         reason,
                     }),
                 vak_session::types::CriterionKind::FileExists { path } => {
-                    let resolved = if path.is_absolute() {
-                        path.clone()
-                    } else {
-                        cwd.join(path)
+                    let Some(resolved) = workspace_criterion_path(&cwd, path) else {
+                        self.record_managed_criterion(
+                            criterion,
+                            vak_session::types::CriterionResult::Failed {
+                                reason: format!("path is outside the workspace: {}", path.display()),
+                            },
+                        )
+                        .await;
+                        continue;
                     };
                     if resolved.exists() {
                         vak_session::types::CriterionResult::Passed {
@@ -1386,10 +1381,15 @@ impl Agent {
                     }
                 }
                 vak_session::types::CriterionKind::FileContains { path, pattern } => {
-                    let resolved = if path.is_absolute() {
-                        path.clone()
-                    } else {
-                        cwd.join(path)
+                    let Some(resolved) = workspace_criterion_path(&cwd, path) else {
+                        self.record_managed_criterion(
+                            criterion,
+                            vak_session::types::CriterionResult::Failed {
+                                reason: format!("path is outside the workspace: {}", path.display()),
+                            },
+                        )
+                        .await;
+                        continue;
                     };
                     match std::fs::read_to_string(&resolved) {
                         Ok(content) if content.contains(pattern) => {
@@ -1406,43 +1406,131 @@ impl Agent {
                     }
                 }
                 vak_session::types::CriterionKind::Semantic
-                | vak_session::types::CriterionKind::ToolSucceeded { .. }
-                | vak_session::types::CriterionKind::FlowCompleted { .. }
-                | vak_session::types::CriterionKind::ExternalReceipt { .. } => {
-                    vak_session::types::CriterionResult::Unknown {
-                        reason: "criterion requires runtime evidence or an independent judge"
-                            .into(),
+                => vak_session::types::CriterionResult::Unknown {
+                    reason: "criterion requires an independent semantic judge".into(),
+                },
+                vak_session::types::CriterionKind::ToolSucceeded { tool } => {
+                    if self.tool_succeeded_in_session(tool).await {
+                        vak_session::types::CriterionResult::Passed {
+                            evidence: format!("tool_succeeded:{tool}"),
+                        }
+                    } else {
+                        vak_session::types::CriterionResult::Unknown {
+                            reason: format!("no successful '{tool}' tool result exists yet"),
+                        }
+                    }
+                }
+                vak_session::types::CriterionKind::FlowCompleted { flow } => {
+                    if self.work_evidence_matches(|evidence| {
+                        matches!(evidence, vak_session::types::EvidenceRef::FlowNode { flow: name, .. } if name == flow)
+                    }).await {
+                        vak_session::types::CriterionResult::Passed {
+                            evidence: format!("flow_completed:{flow}"),
+                        }
+                    } else {
+                        vak_session::types::CriterionResult::Unknown {
+                            reason: format!("flow '{flow}' has no linked completion evidence"),
+                        }
+                    }
+                }
+                vak_session::types::CriterionKind::ExternalReceipt { integration } => {
+                    if self.work_evidence_matches(|evidence| {
+                        matches!(evidence, vak_session::types::EvidenceRef::ExternalOperation { integration: name, .. } if name == integration)
+                    }).await {
+                        vak_session::types::CriterionResult::Passed {
+                            evidence: format!("external_receipt:{integration}"),
+                        }
+                    } else {
+                        vak_session::types::CriterionResult::Unknown {
+                            reason: format!("integration '{integration}' has no receipt evidence"),
+                        }
                     }
                 }
             };
-            let contract_id = self
+            self.record_managed_criterion(criterion, result).await;
+        }
+    }
+
+    async fn record_managed_criterion(
+        &self,
+        criterion: &vak_session::types::WorkCriterion,
+        result: vak_session::types::CriterionResult,
+    ) {
+        let contract_id = self
+            .session
+            .lock()
+            .await
+            .work_projection()
+            .ok()
+            .flatten()
+            .map(|projection| {
+                (
+                    projection.contract.contract_id,
+                    projection.contract.revision,
+                )
+            });
+        if let Some((contract_id, revision)) = contract_id {
+            let _ = self
                 .session
                 .lock()
                 .await
-                .work_projection()
-                .ok()
-                .flatten()
-                .map(|projection| {
-                    (
-                        projection.contract.contract_id,
-                        projection.contract.revision,
-                    )
+                .append_work(vak_session::types::WorkEvent {
+                    contract_id,
+                    revision,
+                    kind: vak_session::types::WorkEventKind::VerificationRecorded {
+                        criterion_id: criterion.criterion_id.clone(),
+                        result,
+                    },
                 });
-            if let Some((contract_id, revision)) = contract_id {
-                let _ = self
-                    .session
-                    .lock()
-                    .await
-                    .append_work(vak_session::types::WorkEvent {
-                        contract_id,
-                        revision,
-                        kind: vak_session::types::WorkEventKind::VerificationRecorded {
-                            criterion_id: criterion.criterion_id.clone(),
-                            result,
-                        },
-                    });
+        }
+    }
+
+    async fn work_evidence_matches(
+        &self,
+        predicate: impl Fn(&vak_session::types::EvidenceRef) -> bool,
+    ) -> bool {
+        self.session
+            .lock()
+            .await
+            .work_projection()
+            .ok()
+            .flatten()
+            .is_some_and(|projection| {
+                projection
+                    .items
+                    .values()
+                    .flat_map(|item| item.evidence.iter())
+                    .any(predicate)
+            })
+    }
+
+    async fn tool_succeeded_in_session(&self, tool: &str) -> bool {
+        let session = self.session.lock().await;
+        let mut tool_names = std::collections::HashMap::new();
+        for entry in session.chain_to_root() {
+            if let vak_session::types::EntryPayload::Message(record) = &entry.payload {
+                for block in &record.message.content {
+                    if let vak_llm::ContentBlock::ToolUse { id, name, .. } = block {
+                        tool_names.insert(id.as_str(), name.as_str());
+                    }
+                }
             }
         }
+        session.chain_to_root().iter().any(|entry| {
+            let vak_session::types::EntryPayload::Message(record) = &entry.payload else {
+                return false;
+            };
+            record.message.content.iter().any(|block| {
+                matches!(
+                    block,
+                    vak_llm::ContentBlock::ToolResult {
+                        tool_use_id,
+                        is_error: false,
+                        ..
+                    } if tool_names.get(tool_use_id.as_str()).copied() == Some(tool)
+                )
+            })
+        })
     }
 
     /// Goal audit gate (Phase H): runs when the model claims completion.
@@ -2315,28 +2403,10 @@ impl Agent {
                 }
             }
             Some("attach_evidence") => {
-                let Some(item_id) = args.get("item_id").and_then(|value| value.as_str()) else {
-                    return ToolRunOutput::Err("attach_evidence requires item_id".into());
-                };
-                let Some(evidence) = args.get("evidence") else {
-                    return ToolRunOutput::Err("attach_evidence requires evidence".into());
-                };
-                let Ok(evidence) =
-                    serde_json::from_value::<vak_session::types::EvidenceRef>(evidence.clone())
-                else {
-                    return ToolRunOutput::Err("invalid typed evidence reference".into());
-                };
-                match session.append_work(vak_session::types::WorkEvent {
-                    contract_id: projection.contract.contract_id,
-                    revision: projection.contract.revision,
-                    kind: vak_session::types::WorkEventKind::EvidenceAttached {
-                        item_id: item_id.into(),
-                        evidence,
-                    },
-                }) {
-                    Ok(_) => ToolRunOutput::Ok(format!("evidence attached to '{item_id}'")),
-                    Err(error) => ToolRunOutput::Err(error.to_string()),
-                }
+                ToolRunOutput::Err(
+                    "model evidence attachment is disabled; successful tool results are attached automatically"
+                        .into(),
+                )
             }
             _ => ToolRunOutput::Err(
                 "work operation must be get, transition, or attach_evidence".into(),
@@ -2415,33 +2485,34 @@ impl Agent {
             .header()
             .map(|header| header.session_id.clone())
             .unwrap_or_default();
-        if session
-            .append_work(vak_session::types::WorkEvent {
-                contract_id: contract_id.into(),
-                revision: projection.contract.revision,
-                kind: vak_session::types::WorkEventKind::ItemStatusChanged {
-                    item_id: item_id.into(),
-                    from: vak_session::types::WorkItemStatus::Running,
-                    to: next,
-                    attempt,
-                    reason: "parent tool execution returned".into(),
-                },
-            })
-            .is_ok()
-            && matches!(result, ToolRunOutput::Ok(_))
-        {
-            let _ = session.append_work(vak_session::types::WorkEvent {
-                contract_id: contract_id.into(),
-                revision: projection.contract.revision,
-                kind: vak_session::types::WorkEventKind::EvidenceAttached {
-                    item_id: item_id.into(),
-                    evidence: vak_session::types::EvidenceRef::ToolResult {
-                        session_id,
-                        tool_use_id: tool_use_id.into(),
+        if matches!(result, ToolRunOutput::Ok(_))
+            && session
+                .append_work(vak_session::types::WorkEvent {
+                    contract_id: contract_id.into(),
+                    revision: projection.contract.revision,
+                    kind: vak_session::types::WorkEventKind::EvidenceAttached {
+                        item_id: item_id.into(),
+                        evidence: vak_session::types::EvidenceRef::ToolResult {
+                            session_id,
+                            tool_use_id: tool_use_id.into(),
+                        },
                     },
-                },
-            });
+                })
+                .is_err()
+        {
+            return;
         }
+        let _ = session.append_work(vak_session::types::WorkEvent {
+            contract_id: contract_id.into(),
+            revision: projection.contract.revision,
+            kind: vak_session::types::WorkEventKind::ItemStatusChanged {
+                item_id: item_id.into(),
+                from: vak_session::types::WorkItemStatus::Running,
+                to: next,
+                attempt,
+                reason: "parent tool execution returned".into(),
+            },
+        });
     }
 
     async fn record_subagent_work(
@@ -2504,6 +2575,23 @@ impl Agent {
             } else {
                 vak_session::types::WorkItemStatus::Failed
             };
+            if let Some(child_id) = child_id
+                && matches!(output, ToolRunOutput::Ok(_))
+                && session
+                    .append_work(vak_session::types::WorkEvent {
+                        contract_id: contract_id.clone(),
+                        revision,
+                        kind: vak_session::types::WorkEventKind::EvidenceAttached {
+                            item_id: item_id.clone(),
+                            evidence: vak_session::types::EvidenceRef::ChildSession {
+                                session_id: child_id,
+                            },
+                        },
+                    })
+                    .is_err()
+            {
+                continue;
+            }
             if let Ok(Some(after_running)) = session.work_projection() {
                 let _ = session.append_work(vak_session::types::WorkEvent {
                     contract_id: contract_id.clone(),
@@ -2514,20 +2602,6 @@ impl Agent {
                         to: outcome,
                         attempt: after_running.items[item_id].attempt,
                         reason: "subagent returned".into(),
-                    },
-                });
-            }
-            if let Some(child_id) = child_id
-                && matches!(output, ToolRunOutput::Ok(_))
-            {
-                let _ = session.append_work(vak_session::types::WorkEvent {
-                    contract_id: contract_id.clone(),
-                    revision,
-                    kind: vak_session::types::WorkEventKind::EvidenceAttached {
-                        item_id: item_id.clone(),
-                        evidence: vak_session::types::EvidenceRef::ChildSession {
-                            session_id: child_id,
-                        },
                     },
                 });
             }
@@ -2554,7 +2628,7 @@ struct AuthoredContract {
     items: Vec<vak_session::types::WorkItemDefinition>,
 }
 
-fn validate_work_paths(contract: &vak_session::types::WorkContract) -> Result<(), String> {
+pub fn validate_work_paths(contract: &vak_session::types::WorkContract) -> Result<(), String> {
     for item in &contract.items {
         for claim in &item.path_claims {
             let path = std::path::Path::new(claim);
@@ -2598,6 +2672,20 @@ fn parse_model_item_status(value: &str) -> Option<vak_session::types::WorkItemSt
         "ready_for_verification" => Some(vak_session::types::WorkItemStatus::ReadyForVerification),
         _ => None,
     }
+}
+
+fn workspace_criterion_path(
+    cwd: &std::path::Path,
+    path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let workspace = std::fs::canonicalize(cwd).ok()?;
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    let resolved = std::fs::canonicalize(candidate).ok()?;
+    resolved.starts_with(workspace).then_some(resolved)
 }
 #[allow(clippy::too_many_arguments)]
 async fn execute_one(
