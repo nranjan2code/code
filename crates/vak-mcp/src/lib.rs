@@ -6,6 +6,6 @@ pub mod client;
 pub mod manager;
 pub mod tool;
 
-pub use client::{McpClient, McpError, ServerConfig};
+pub use client::{McpClient, McpError, McpToolInfo, ServerConfig};
 pub use manager::McpManager;
 pub use tool::McpTool;

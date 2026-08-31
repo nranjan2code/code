@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 
 use serde_json::Value;
 
-use crate::client::{McpClient, McpError, ServerConfig};
+use crate::client::{McpClient, McpError, McpToolInfo, ServerConfig};
 
 /// Lazily spawns and caches one client per configured server.
 pub struct McpManager {
@@ -87,6 +87,32 @@ impl McpManager {
         client.call_tool(tool, arguments).await
     }
 
+    /// Remove all resolved MCP environment values from text that can cross
+    /// the MCP process boundary. MCP servers frequently include upstream
+    /// request details in errors, so this applies equally to results and
+    /// failures before either can enter a model transcript or UI timeline.
+    pub fn redact(&self, text: impl AsRef<str>) -> String {
+        let mut values = self
+            .servers
+            .values()
+            .flat_map(|config| config.env.iter().map(|(_, value)| value))
+            .filter(|value| value.len() >= 4)
+            .collect::<Vec<_>>();
+        values.sort_unstable_by_key(|value| std::cmp::Reverse(value.len()));
+        values.dedup();
+        let mut redacted = text.as_ref().to_string();
+        for value in values {
+            redacted = redacted.replace(value, "[REDACTED]");
+        }
+        redacted
+    }
+
+    /// The catalog is also model-visible, so schemas supplied by an MCP
+    /// server must cross the same secret boundary as its text output.
+    pub fn redact_json(&self, value: &Value) -> Value {
+        serde_json::from_str(&self.redact(value.to_string())).unwrap_or(Value::Null)
+    }
+
     /// Relative commands resolve against the workspace cwd.
     fn resolve(config: &ServerConfig, cwd: &std::path::Path) -> ServerConfig {
         let mut c = config.clone();
@@ -115,7 +141,7 @@ impl McpManager {
     /// prompt visibility, not perfection. Used by Core to advertise
     /// capabilities in the system prompt (docs/design/26-learning.md-style
     /// progressive disclosure, but for tools).
-    pub async fn inventory(&self) -> Vec<(String, Vec<(String, String)>)> {
+    pub async fn inventory(&self) -> Vec<(String, Vec<McpToolInfo>)> {
         let mut out = Vec::new();
         for name in self.server_names() {
             match self.get(&name).await {
@@ -124,12 +150,31 @@ impl McpManager {
                         name,
                         tools
                             .iter()
-                            .map(|t| (t.name.clone(), t.description.chars().take(90).collect()))
+                            .map(|t| McpToolInfo {
+                                name: t.name.clone(),
+                                description: self
+                                    .redact(t.description.chars().take(90).collect::<String>()),
+                                input_schema: self.redact_json(&t.input_schema),
+                            })
                             .collect(),
                     )),
-                    Err(e) => out.push((name, vec![("error".into(), e.to_string())])),
+                    Err(e) => out.push((
+                        name,
+                        vec![McpToolInfo {
+                            name: "error".into(),
+                            description: self.redact(e.to_string()),
+                            input_schema: Value::Null,
+                        }],
+                    )),
                 },
-                Err(e) => out.push((name, vec![("error".into(), e.to_string())])),
+                Err(e) => out.push((
+                    name,
+                    vec![McpToolInfo {
+                        name: "error".into(),
+                        description: self.redact(e.to_string()),
+                        input_schema: Value::Null,
+                    }],
+                )),
             }
         }
         out

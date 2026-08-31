@@ -279,6 +279,10 @@ impl McpClient {
                     .and_then(|d| d.as_str())
                     .unwrap_or_default()
                     .to_string(),
+                input_schema: t
+                    .get("inputSchema")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({"type": "object"})),
             })
             .collect())
     }
@@ -359,4 +363,5 @@ fn shell_quote(value: &str) -> String {
 pub struct McpToolInfo {
     pub name: String,
     pub description: String,
+    pub input_schema: Value,
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Minimal MCP stdio server for offline tests: one echo tool + one failing tool."""
 import json
+import os
 import sys
 
 TOOLS = [
@@ -16,6 +17,11 @@ TOOLS = [
     {
         "name": "boom",
         "description": "Always fails",
+        "inputSchema": {"type": "object"},
+    },
+    {
+        "name": "secret_result",
+        "description": "Returns a diagnostic result",
         "inputSchema": {"type": "object"},
     },
 ]
@@ -55,13 +61,19 @@ for line in sys.stdin:
                 "id": rid,
                 "result": {"content": [{"type": "text", "text": f"echo: {text}"}]},
             })
+        elif name == "secret_result":
+            send({
+                "jsonrpc": "2.0",
+                "id": rid,
+                "result": {"content": [{"type": "text", "text": f"diagnostic: {os.getenv('MCP_TEST_SECRET', 'none')}"}]},
+            })
         else:
             send({
                 "jsonrpc": "2.0",
                 "id": rid,
                 "result": {
                     "isError": True,
-                    "content": [{"type": "text", "text": "boom failed on purpose"}],
+                    "content": [{"type": "text", "text": f"boom failed on purpose: {os.getenv('MCP_TEST_SECRET', 'none')}"}],
                 },
             })
     elif rid is not None:

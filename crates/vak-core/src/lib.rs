@@ -1671,11 +1671,12 @@ impl Core {
             .filter(|capability| capability.kind == CapabilityKind::McpServer)
             .map(|capability| capability.name.clone())
             .collect::<Vec<_>>();
+        let inventory = self.cached_mcp_inventory();
         format!(
             "{}{}{}",
             base,
             skills::prompt_section_from_capabilities(capabilities),
-            mcp_config_section(&servers)
+            mcp_config_section(&servers, inventory.as_ref())
         )
     }
 
@@ -4118,7 +4119,7 @@ pub fn interpolate_env_var(value: &str) -> Option<String> {
 /// warm-up has produced for it so far.
 /// server name -> (tool name, description) pairs, as returned by
 /// `McpManager::inventory()`.
-type McpInventory = Vec<(String, Vec<(String, String)>)>;
+type McpInventory = Vec<(String, Vec<vak_mcp::McpToolInfo>)>;
 
 struct McpCache {
     fingerprint: u64,
@@ -4157,14 +4158,27 @@ fn mcp_fingerprint(servers: &[(String, vak_mcp::ServerConfig)]) -> u64 {
 /// Model-visible fallback for configured MCP servers when live discovery is
 /// unavailable. This belongs in the frozen session contract as well as the
 /// live prompt so a transient launcher failure cannot hide a capability.
-fn mcp_config_section(servers: &[String]) -> String {
+fn mcp_config_section(servers: &[String], inventory: Option<&McpInventory>) -> String {
     if servers.is_empty() {
         return String::new();
     }
-    format!(
-        "\nConfigured MCP servers: {}. Use the `mcp` tool with action \"list\" to inspect their tools, then action \"call\" with server, tool, and arguments.\n",
+    let mut section = format!(
+        "\nConfigured MCP servers: {}. Use the `mcp` tool with action \"list\" first; it returns exact tool names and input schemas. Then use action \"call\" with the exact name and schema-valid arguments.\n",
         servers.join(", ")
-    )
+    );
+    if let Some(inventory) = inventory {
+        section.push_str("Discovered MCP catalog (do not invent tool names or argument fields):\n");
+        for (server, tools) in inventory {
+            section.push_str(&format!("- {server}:\n"));
+            for tool in tools {
+                section.push_str(&format!(
+                    "  - {} — {}; inputSchema: {}\n",
+                    tool.name, tool.description, tool.input_schema
+                ));
+            }
+        }
+    }
+    section
 }
 
 /// Phase H MEA provider: diff the run-start checkpoint against disk.
@@ -4190,14 +4204,34 @@ impl vak_agent::WorkspaceDelta for CheckpointDelta {
 
 #[cfg(test)]
 mod mcp_section_tests {
-    use super::mcp_config_section;
+    use super::{McpInventory, mcp_config_section};
 
     #[test]
     fn configured_servers_remain_visible_without_inventory() {
-        let section = mcp_config_section(&["tavily".to_string()]);
+        let section = mcp_config_section(&["tavily".to_string()], None);
         assert!(section.contains("tavily"));
         assert!(section.contains("`mcp`"));
         assert!(section.contains("action \"list\""));
+    }
+
+    #[test]
+    fn discovered_catalog_exposes_exact_names_and_input_schemas() {
+        let inventory: McpInventory = vec![(
+            "tavily".into(),
+            vec![vak_mcp::McpToolInfo {
+                name: "tavily_search".into(),
+                description: "Search the web".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"]
+                }),
+            }],
+        )];
+        let section = mcp_config_section(&["tavily".to_string()], Some(&inventory));
+        assert!(section.contains("tavily_search"));
+        assert!(section.contains("inputSchema"));
+        assert!(section.contains("query"));
     }
 }
 

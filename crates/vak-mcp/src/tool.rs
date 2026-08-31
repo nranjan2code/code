@@ -80,7 +80,7 @@ impl Tool for McpTool {
     }
 
     fn description(&self) -> &str {
-        "Call tools exposed by configured MCP servers. Use action \"list\" to discover servers and their tools (compact), then action \"call\" with server, tool, and arguments."
+        "Call tools exposed by configured MCP servers. First use action \"list\"; it returns each exact tool name and inputSchema. Then use action \"call\" with the exact server/tool names and arguments that satisfy that inputSchema."
     }
 
     fn schema(&self) -> Value {
@@ -119,13 +119,25 @@ impl McpTool {
                             if !self.allowed(&server, &t.name) {
                                 continue;
                             }
-                            let desc: String = t.description.chars().take(100).collect();
-                            out.push_str(&format!("  {} — {desc}\n", t.name));
+                            let schema = self.manager.redact(
+                                serde_json::to_string(&t.input_schema)
+                                    .unwrap_or_else(|_| "{}".to_string()),
+                            );
+                            out.push_str(&format!(
+                                "  {} — {}\n    inputSchema: {schema}\n",
+                                t.name, t.description
+                            ));
                         }
                     }
-                    Err(e) => out.push_str(&format!("  error: {e}\n")),
+                    Err(e) => out.push_str(&format!(
+                        "  error: {}\n",
+                        self.manager.redact(e.to_string())
+                    )),
                 },
-                Err(e) => out.push_str(&format!("  connect failed: {e}\n")),
+                Err(e) => out.push_str(&format!(
+                    "  connect failed: {}\n",
+                    self.manager.redact(e.to_string())
+                )),
             }
         }
         if out.is_empty() {
@@ -163,14 +175,17 @@ impl McpTool {
                 if text.is_empty() {
                     ToolOutput::ok("(empty result)")
                 } else {
-                    ToolOutput::ok(text)
+                    ToolOutput::ok(self.manager.redact(text))
                 }
             }
             Err(e) => {
                 if let Some(record) = &self.invocation_recorder {
                     record(server, tool, false);
                 }
-                ToolOutput::error(format!("mcp call failed: {e}"))
+                ToolOutput::error(format!(
+                    "mcp call failed: {}",
+                    self.manager.redact(e.to_string())
+                ))
             }
         }
     }

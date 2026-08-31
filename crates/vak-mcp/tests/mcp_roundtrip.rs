@@ -20,13 +20,17 @@ fn server_script() -> PathBuf {
 }
 
 fn manager() -> Arc<McpManager> {
+    manager_with_env(Vec::new())
+}
+
+fn manager_with_env(env: Vec<(String, String)>) -> Arc<McpManager> {
     let mut servers = HashMap::new();
     servers.insert(
         "fake".to_string(),
         vak_mcp::ServerConfig {
             command: "python3".into(),
             args: vec![server_script().display().to_string()],
-            env: Vec::new(),
+            env,
             network: false,
         },
     );
@@ -79,6 +83,35 @@ async fn server_side_tool_errors_become_error_values() {
         .await;
     assert!(out.is_error);
     assert!(out.content.contains("boom failed on purpose"));
+}
+
+#[tokio::test]
+async fn configured_secrets_are_redacted_from_mcp_results_and_errors() {
+    let secret = "tavily-test-secret-value";
+    let tool = McpTool::new(manager_with_env(vec![(
+        "MCP_TEST_SECRET".into(),
+        secret.into(),
+    )]));
+
+    let result = tool
+        .execute(
+            &json!({"action": "call", "server": "fake", "tool": "secret_result"}),
+            &ctx(),
+        )
+        .await;
+    assert!(!result.is_error);
+    assert!(!result.content.contains(secret), "got: {}", result.content);
+    assert!(result.content.contains("[REDACTED]"));
+
+    let error = tool
+        .execute(
+            &json!({"action": "call", "server": "fake", "tool": "boom"}),
+            &ctx(),
+        )
+        .await;
+    assert!(error.is_error);
+    assert!(!error.content.contains(secret), "got: {}", error.content);
+    assert!(error.content.contains("[REDACTED]"));
 }
 
 #[tokio::test]
