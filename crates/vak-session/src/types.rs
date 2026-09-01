@@ -451,6 +451,18 @@ pub struct Entry {
     #[serde(default)]
     pub parent_id: Option<String>,
     pub ts: DateTime<Utc>,
+    /// SHA-256 of the previous entry's serialized line, hex-encoded.
+    ///
+    /// `parent_id` links entries but binds nothing: an interior entry could be
+    /// rewritten and re-linked, and reconstruction would accept the result.
+    /// This makes any such edit detectable — changing an entry changes its
+    /// line digest, which no longer matches its successor's `prev_hash`.
+    ///
+    /// `None` on the first entry, and on every entry written before the chain
+    /// existed. Ledgers are a frozen, append-only contract, so an unchained
+    /// entry is reported as a warning and never a read failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prev_hash: Option<String>,
     #[serde(flatten)]
     pub payload: EntryPayload,
 }
@@ -461,9 +473,28 @@ impl Entry {
             id: uuid::Uuid::now_v7().to_string(),
             parent_id,
             ts: Utc::now(),
+            prev_hash: None,
             payload,
         }
     }
+}
+
+/// Chain digest of one serialized ledger line.
+///
+/// Taken over the exact bytes written rather than a re-serialization, so
+/// verification cannot drift with serde field ordering or formatting.
+pub fn line_digest(line: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(line.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .fold(String::with_capacity(64), |mut acc, byte| {
+            use std::fmt::Write;
+            let _ = write!(acc, "{byte:02x}");
+            acc
+        })
 }
 
 #[derive(Debug, thiserror::Error)]

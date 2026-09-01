@@ -525,6 +525,7 @@ mod tests {
         let mut parent = Some(header.id.clone());
         for m in msgs {
             let entry = Entry {
+                prev_hash: None,
                 id: uuid::Uuid::now_v7().to_string(),
                 parent_id: parent.clone(),
                 ts: chrono::Utc::now(),

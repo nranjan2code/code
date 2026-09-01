@@ -16,6 +16,7 @@ pub struct SessionLog {
     entries: Vec<Entry>,
     by_id: HashMap<String, usize>,
     tail_id: Option<String>,
+    tail_hash: Option<String>,
     warnings: Vec<String>,
 }
 
@@ -42,6 +43,7 @@ impl SessionLog {
             entries: Vec::new(),
             by_id: HashMap::new(),
             tail_id: None,
+            tail_hash: None,
             warnings: Vec::new(),
         };
         log.append(Entry::new(None, EntryPayload::Header(header)))?;
@@ -56,6 +58,10 @@ impl SessionLog {
         let mut entries = Vec::new();
         let mut by_id = HashMap::new();
         let mut warnings = Vec::new();
+        let mut expected_prev: Option<String> = None;
+        let mut tail_hash: Option<String> = None;
+        let mut unchained = 0usize;
+        let mut broken = Vec::new();
         for (i, line) in reader.lines().enumerate() {
             let line = line.map_err(|e| SessionError::Corrupt {
                 line: i + 1,
@@ -74,10 +80,44 @@ impl SessionLog {
                     i + 1,
                     path.display()
                 ));
+                expected_prev = None;
                 continue;
             };
+            match (&entry.prev_hash, &expected_prev) {
+                // An entry that carries a link must match it. A mismatch means
+                // the ledger was edited after the fact, and that is reported
+                // rather than raised: the record is evidence, and refusing to
+                // open it would destroy the only copy of what happened.
+                (Some(found), Some(want)) if found != want => broken.push(i + 1),
+                // Absent where a predecessor exists: written before chaining.
+                // The very first entry legitimately has no link.
+                (None, Some(_)) => unchained += 1,
+                _ => {}
+            }
+            let digest = crate::types::line_digest(&line);
+            expected_prev = Some(digest.clone());
+            tail_hash = Some(digest);
             by_id.insert(entry.id.clone(), entries.len());
             entries.push(entry);
+        }
+        if !broken.is_empty() {
+            warnings.push(format!(
+                "ledger {} has a broken hash chain at line(s) {}: \
+                 entries before that point were modified after they were written",
+                path.display(),
+                broken
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if unchained > 0 {
+            warnings.push(format!(
+                "ledger {} has {unchained} entry/entries written before hash chaining; \
+                 those cannot be verified",
+                path.display()
+            ));
         }
         let tail_id = entries.last().map(|e| e.id.clone());
         Ok(SessionLog {
@@ -86,6 +126,7 @@ impl SessionLog {
             entries,
             by_id,
             tail_id,
+            tail_hash,
             warnings,
         })
     }
@@ -104,12 +145,21 @@ impl SessionLog {
                 message: format!("parent entry {pid} not found"),
             });
         }
+        let mut entry = entry;
+        entry.prev_hash = self.tail_hash.clone();
         let line = serde_json::to_string(&entry).map_err(|e| SessionError::Corrupt {
             line: 0,
             message: e.to_string(),
         })?;
         writeln!(self.file, "{line}")?;
-        self.file.flush()?;
+        // `File::flush` is a no-op — `std::fs::File` has no userspace buffer,
+        // so its `Write::flush` returns Ok without a syscall. That is what
+        // this used to call, which meant the "durable, reconstructable"
+        // ledger had no write barrier at all and lost its tail on power loss.
+        // `sync_data` skips the metadata flush `sync_all` forces; the file
+        // length is data for an append-only log.
+        self.file.sync_data()?;
+        self.tail_hash = Some(crate::types::line_digest(&line));
         self.by_id.insert(entry.id.clone(), self.entries.len());
         self.tail_id = Some(entry.id.clone());
         self.entries.push(entry.clone());

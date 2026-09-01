@@ -82,6 +82,11 @@ use vak_llm::Provider;
 use vak_plugin::{InstallOptions, InstallScope, MarketplaceTrust, PluginStore, SignatureEvidence};
 use vak_session::SessionLog;
 
+/// Ceiling on simultaneously-cached session handles. Generous on purpose:
+/// eviction should be invisible to interactive use and only bound a
+/// long-running gateway process.
+const MAX_LIVE_SESSIONS: usize = 128;
+
 pub(crate) struct SessionHandle {
     pub(crate) id: String,
     /// Workspace this session's tools/diffs operate in (main cwd, or a
@@ -107,6 +112,8 @@ pub(crate) struct SessionHandle {
     /// Side-chat stream + cancel: branched turns that read the session
     /// context but never land on the main chain.
     pub(crate) side_events_tx: broadcast::Sender<AgentEvent>,
+    /// Last time a request resolved this handle, for idle eviction.
+    pub(crate) last_touched: Mutex<std::time::Instant>,
     pub(crate) side_cancel: Arc<std::sync::Mutex<CancellationToken>>,
 }
 
@@ -201,11 +208,65 @@ impl AppState {
     }
 
     fn get(&self, id: &str) -> Option<Arc<SessionHandle>> {
-        self.sessions
+        let handle = self
+            .sessions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(id)
-            .cloned()
+            .cloned();
+        if let Some(handle) = &handle
+            && let Ok(mut touched) = handle.last_touched.lock()
+        {
+            *touched = std::time::Instant::now();
+        }
+        handle
+    }
+
+    /// Drop the least-recently-touched idle sessions once the live set exceeds
+    /// [`MAX_LIVE_SESSIONS`].
+    ///
+    /// The map was insert-only. Each handle pins the whole ledger in memory
+    /// (`Vec<Entry>` of every message, tool result, and receipt) plus a
+    /// presentation snapshot and two broadcast channels, so a long-lived
+    /// gateway process grew without bound — and because `SessionLog::open`
+    /// holds an exclusive file lock for the handle's lifetime, every session
+    /// the daemon ever touched stayed locked against the CLI.
+    ///
+    /// Eviction is deliberately conservative: a session is only a candidate
+    /// when nothing else holds a reference, no SSE client is subscribed, and
+    /// the runner is not holding the ledger. `/sessions/{id}/attach` re-opens
+    /// an evicted session from disk, so this is a cache bound, not a
+    /// lifecycle.
+    fn evict_idle_sessions(&self) {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if sessions.len() <= MAX_LIVE_SESSIONS {
+            return;
+        }
+        let mut idle: Vec<(std::time::Instant, String)> = sessions
+            .iter()
+            .filter(|(_, handle)| {
+                Arc::strong_count(handle) == 1
+                    && handle.events_tx.receiver_count() == 0
+                    && handle.side_events_tx.receiver_count() == 0
+                    && handle.session.lock().is_ok_and(|guard| guard.is_some())
+            })
+            .filter_map(|(id, handle)| {
+                let touched = *handle.last_touched.lock().ok()?;
+                Some((touched, id.clone()))
+            })
+            .collect();
+        idle.sort_by_key(|(touched, _)| *touched);
+        let mut over = sessions.len().saturating_sub(MAX_LIVE_SESSIONS);
+        for (_, id) in idle {
+            if over == 0 {
+                break;
+            }
+            sessions.remove(&id);
+            over -= 1;
+        }
     }
 
     /// Snapshot of every live session handle (admin surfaces aggregate
@@ -2033,7 +2094,42 @@ fn auth_exempt_path(path: &str) -> bool {
 
 #[cfg(test)]
 mod auth_exempt_path_tests {
-    use super::auth_exempt_path;
+    use super::{auth_exempt_path, host_is_loopback};
+
+    /// A page that resolves its own domain to 127.0.0.1 becomes same-origin
+    /// with this server, and `SameSite=Strict` does not help — after
+    /// rebinding the request is not cross-site. The Host name it carries is
+    /// still the attacker's, which is what this rejects.
+    #[test]
+    fn only_loopback_hostnames_are_answered() {
+        for host in [
+            "localhost",
+            "localhost:8901",
+            "127.0.0.1",
+            "127.0.0.1:8901",
+            "[::1]:8901",
+            "::1",
+        ] {
+            assert!(host_is_loopback(Some(host)), "{host} is loopback");
+        }
+        for host in [
+            "rebind.attacker.example",
+            "rebind.attacker.example:8901",
+            "vak.internal",
+            "127.0.0.1.attacker.example",
+            "evil.com:80",
+        ] {
+            assert!(!host_is_loopback(Some(host)), "{host} must be rejected");
+        }
+    }
+
+    /// Rebinding is a browser attack and browsers always send Host, so an
+    /// absent value is a non-browser client rather than something to defend
+    /// against.
+    #[test]
+    fn an_absent_host_is_not_treated_as_an_attack() {
+        assert!(host_is_loopback(None));
+    }
 
     /// The login screen's own logo must be reachable before a cookie
     /// exists to authenticate the request that would fetch it — the same
@@ -2053,11 +2149,53 @@ mod auth_exempt_path_tests {
     }
 }
 
+/// Reject requests whose `Host` is not loopback.
+///
+/// The listener binds 127.0.0.1, but that does not stop a page the user
+/// visits from resolving its own domain to 127.0.0.1 and becoming
+/// same-origin with this server. `SameSite=Strict` does not defend against
+/// that — after rebinding, the request is not cross-site. Pinning `Host` to
+/// loopback names is the check that does.
+fn host_is_loopback(host: Option<&str>) -> bool {
+    let Some(host) = host else {
+        // Absent entirely: not a browser. Rebinding is a browser attack and
+        // every browser sends Host (or HTTP/2 `:authority`, which axum
+        // surfaces as the URI authority), so an absent value carries no
+        // attacker-chosen name to defend against. Rejecting here would only
+        // break well-behaved non-browser clients that omit it.
+        return true;
+    };
+    // Strip the port without mangling a bare IPv6 literal, which is all
+    // colons: `"::1".rsplit_once(':')` yields `"::"`.
+    let host = if let Some(rest) = host.strip_prefix('[') {
+        rest.split_once(']').map_or(rest, |(name, _)| name)
+    } else if host.matches(':').count() > 1 {
+        host
+    } else {
+        host.split_once(':').map_or(host, |(name, _)| name)
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "::1" | "0:0:0:0:0:0:0:1")
+}
+
 pub(crate) async fn require_bearer(
     State((token, home)): State<(String, std::path::PathBuf)>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
+    let host = req
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .or_else(|| req.uri().host());
+    if !host_is_loopback(host) {
+        return (
+            StatusCode::MISDIRECTED_REQUEST,
+            Json(serde_json::json!({
+                "error": "this server only answers to loopback hostnames",
+            })),
+        )
+            .into_response();
+    }
     if auth_exempt_path(req.uri().path()) {
         return next.run(req).await;
     }
@@ -2229,6 +2367,7 @@ pub(crate) fn register_handle(
         presentation,
         subscribed: Arc::new(tokio::sync::Notify::new()),
         side_events_tx,
+        last_touched: Mutex::new(std::time::Instant::now()),
         side_cancel: Arc::new(std::sync::Mutex::new(CancellationToken::new())),
     });
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
@@ -2296,6 +2435,7 @@ pub(crate) fn register_handle(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(id, handle.clone());
+    state.evict_idle_sessions();
     handle
 }
 
