@@ -234,7 +234,20 @@ crates/vak-tools     read/write/edit/bash/glob/grep/webfetch/browse
                      behind Tool trait, versioned broker-worker protocol,
                      bounded subprocess environment, resource claims,
                      sandbox backends (Seatbelt/Landlock)
-crates/vak-permission rule engine: modes × rules -> Allow/Ask/Deny
+crates/vak-permission rule engine: modes × rules -> Allow/Ask/Deny. Deny/Ask
+                     match existentially (one bad effect gates the call);
+                     Allow is UNIVERSAL — every segment of a compound shell
+                     command must be covered, or the call falls through to
+                     the mode default. Quote-aware splitting; redirection to
+                     a path and command substitution make coverage
+                     unprovable. tests/escapes.rs is the standing
+                     adversarial corpus and every fix lands a case there.
+crates/vak-plugin    plugin packages: manifest parsing, capability
+                     declaration (skills/commands/hooks/MCP manifests),
+                     workspace- and user-scoped stores, enable/disable/
+                     rollback, invocation records, Ed25519 catalog-signature
+                     verification with key revocation
+                     (docs/design/39-plugin-ecosystem.md)
 crates/vak-hooks     lifecycle hooks: pre/post-tool-use, stop, session-start
 crates/vak-mcp       MCP stdio client behind a lazy meta-tool
 crates/vak-agent     loop, steering queues (full user messages: text +
@@ -325,15 +338,19 @@ crates/vak-desktop   Tauri 2 desktop app over an embedded secured_router —
                      picker (docs/design/38-voice-personality.md)
 crates/vak-ops       service-control layer over launchd/systemd — status,
                      start/stop/restart, install/uninstall shared by tray,
-                     TUI and desktop (docs/design/28-operations.md)
+                     CLI and desktop (docs/design/28-operations.md)
 crates/vak-tray      menu-bar controller: colour-coded service dot,
                      start/stop/restart/install/uninstall, logs, watchdog
                      with auto-restart + notifications
-crates/vak      binary: tui / exec / plan / flow / serve [--gateway] /
+crates/vak           binary: exec / plan / flow / serve [--gateway] /
                      telegram|discord|slack [--bot-id <id>] / eval /
-                     checkpoints / config dump / sessions / doctor / backup
-                     / digest / tasks / memory / inbox (+ first-run wizard,
-                     opt-in update check)
+                     checkpoints / config dump / sessions / skills /
+                     skills-review / plugins / doctor / backup / digest /
+                     tasks / memory / inbox / user / workspace / self
+                     (install, update, services-sync) (+ first-run wizard,
+                     opt-in update check). There is no `tui` subcommand: the
+                     inline TUI shipped in v0.1.x and was withdrawn in favour
+                     of the desktop and server surfaces.
 docs/design/         architecture decisions — update with behavior changes;
                      security boundaries and roadmap in 24-agent-security.md
 scripts/             dev utilities (mock servers, PTY/HTTP smoke drivers)
@@ -343,7 +360,17 @@ scripts/             dev utilities (mock servers, PTY/HTTP smoke drivers)
 
 ```
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
+scripts/check-version.sh && python3 scripts/check_doc_paths.py
 ```
+
+`check-version.sh` covers the stamps a user reads (README badge, CHANGELOG,
+git tags), not just the ones the build system reads, and fails on a version
+that moves BACKWARDS unless the abandoned line is declared in
+`scripts/.version-reset` — a decreasing version makes every install on the
+higher line permanently un-updatable. `check_doc_paths.py` fails on a design
+doc citing a path that no longer exists; docs whose `Status:` line says
+"proposal" are skipped, because their paths are targets rather than
+citations.
 
 Live checks (needs API key in `.env`):
 

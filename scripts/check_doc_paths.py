@@ -17,7 +17,13 @@ for name in sorted(os.listdir(DOCS)):
     if not name.endswith(".md"):
         continue
     path = os.path.join(DOCS, name)
-    for line_no, line in enumerate(open(path, encoding="utf-8"), 1):
+    body = open(path, encoding="utf-8").read()
+    # A proposal names the layout it INTENDS to create. Those paths are
+    # targets, not citations, and holding them to "must exist" would either
+    # fail forever or push authors to stop writing plans down.
+    if re.search(r"^Status:.*\bproposal\b", body, re.MULTILINE | re.IGNORECASE):
+        continue
+    for line_no, line in enumerate(body.splitlines(), 1):
         for cite in PAT.findall(line):
             if "://" in cite or cite.startswith("http"):
                 continue

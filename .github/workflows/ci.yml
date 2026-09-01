@@ -19,6 +19,12 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      # The stamps a person reads (README badge, CHANGELOG, git tags), and a
+      # version that moves backwards — which silently strands every install
+      # on the higher line, because update checks compare by semver
+      # precedence. The workspace went 0.11.51 -> 0.2.0 with nothing to say so.
+      - name: version singularity
+        run: scripts/check-version.sh
 
   admin-ui:
     runs-on: ubuntu-latest

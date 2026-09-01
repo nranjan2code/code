@@ -1,0 +1,12 @@
+# Deliberate backwards version moves, one "<from> -> <to>" per line.
+#
+# A version that decreases makes every install on the higher line
+# permanently un-updatable, because update checks compare by semver
+# precedence. That is a release decision; recording it here is how the
+# decision is distinguished from an accident, and check-version.sh fails
+# on any backwards move that is not listed.
+#
+# 0.11.51 -> 0.2.0 (fc9c78f, 2026-09-01): version line reset. Installs on
+# any 0.11.x build must be reinstalled by hand; `vak self update` cannot
+# cross backwards. See the CHANGELOG's "version line reset" entry.
+0.11.51 -> 0.2.0

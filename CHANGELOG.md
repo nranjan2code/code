@@ -1,5 +1,138 @@
 # Changelog
 
+## Unreleased — version line reset
+
+The workspace version was deliberately reset from `0.11.51` to `0.2.0` in
+`fc9c78f` and has continued from there. This is a real discontinuity, not a
+typo, and it has one consequence worth stating plainly:
+
+**An existing install on any 0.11.x build will never be offered an update.**
+Update checks compare by semver precedence, and `0.2.x < 0.11.x`. Moving from
+a 0.11.x install onto the current line requires a manual reinstall; `vak self
+update` cannot cross backwards and will report no update available.
+
+Entries below `0.11.23` were written by hand. The `0.11.24`–`0.11.51` block is
+**reconstructed from commit subjects** — those releases shipped without
+changelog entries, and this records what went into them rather than leaving
+28 releases invisible. Treat it as an index into `git log`, not as prose
+written at the time.
+
+<!-- reconstructed:begin 0.11.24..0.11.51 -->
+
+## 0.11.51 — 2026-09-01
+
+- fix(desktop): show inherited global MCP servers, hooks, and plugins in settings
+
+## 0.11.50 — 2026-09-01
+
+- Harden agent sandbox and workspace networking
+- feat: consolidate pending platform and security updates
+
+## 0.11.49 — 2026-09-01
+
+- fix(desktop): stabilize transcript rendering modes
+
+## 0.11.48 — 2026-09-01
+
+- Fix desktop project bootstrap
+
+## 0.11.47 — 2026-09-01
+
+- Fix direct MCP tool dispatch
+- Add VAK architecture documentation and story videos
+
+## 0.11.46 — 2026-09-01
+
+- Prevent premature agent completion
+- Harden MCP discovery and secret redaction
+
+## 0.11.44 — 2026-08-31
+
+- Validate MCP tools against server discovery
+- Add session ledger diagram
+- Add runtime architecture diagrams
+
+## 0.11.43 — 2026-08-31
+
+- Add architecture diagrams
+- Add managed flow dispatcher
+- Close managed work verification gaps
+- Harden managed work execution and recovery
+- Harden managed work execution lifecycle
+- Fix managed work review findings
+- Implement managed work contracts
+- Fix historical feed reader data
+- Classify recovered tool errors correctly
+- Rotate gateway sessions on capability changes
+
+## 0.11.39 — 2026-08-31
+
+- Unify capability dispatch and enforce write scopes
+- Make capability evidence provider-neutral
+- Make skill tool boundary explicit
+- Harden regression harness accuracy and recovery
+- Harden provider routing and agent reliability
+- Fix operations active tab and refresh flicker
+- Fix operations navigation and scrolling
+
+## 0.11.36 — 2026-08-30
+
+- Ship evidence-backed operations center
+
+## 0.11.35 — 2026-08-30
+
+- fix(feeds): Add/Edit/Remove on the Sources tab operated on the wrong store
+
+## 0.11.34 — 2026-08-30
+
+- fix(feeds): prune_seen's parameterized INTERVAL was a parser error
+- fix(feeds): stop concurrent reads from racing DuckDB's exclusive lock
+
+## 0.11.33 — 2026-08-30
+
+- fix(feeds): style the Feeds tab bar like every other tab bar in the app
+
+## 0.11.32 — 2026-08-30
+
+- feat(feeds): expose full source/alert CRUD in admin UI, surface load errors
+- fix(doctor): detect and repair the legacy/canonical home split
+- chore(admin-ui): rebuild dist to match src
+
+## 0.11.31 — 2026-08-30
+
+- fix(mcp): bounded MCP warm-up for one-shot CLI turns (exec/flow exec/plan)
+- fmt: apply cargo fmt to feeds.rs
+- fix(feeds): unwrap MCP envelope, fix source/alert config edits, add manage UI
+
+## 0.11.30 — 2026-08-30
+
+- fix(mcp): start tool-inventory warm-up at boot, not at first turn
+
+## 0.11.29 — 2026-08-30
+
+- fix(mcp): reuse McpManager across turns and advertise live tool catalog
+- fix(scheduler): close tasks.json reload race that could drop new tasks
+
+## 0.11.28 — 2026-08-30
+
+- fix(mcp,desktop): resolve toolchain PATH, non-mutating discovery, and env diagnostics
+- fix: restore reliable turn and service lifecycles
+- fix: report managed services accurately
+- release: v0.11.25
+- fix workspace defaults and scoped settings
+- feat: complete secure plugin ecosystem
+- feat: vak plugins CLI subcommand (inspect/install) over vak-plugin
+- feat: vak-plugin — recognize agent-plugin/claude/copilot/cursor/gemini manifests
+- chore: cargo fmt vak-plugin
+- chore: fix clippy lints ahead of release (unwrap_used, field-reassign, panic)
+- chore: cargo fmt
+
+## 0.11.24 — 2026-08-30
+
+_Version bump only; no other commits in this release._
+
+<!-- reconstructed:end -->
+
 ## 0.11.23 — 2026-08-30
 
 ### Telegram, Slack, and Discord get dedicated output formatting

@@ -49,6 +49,18 @@ if [[ "$VERSION_CHANGED" == true && -d "$ROOT_DIR/target" ]]; then
     cargo clean --target-dir "$ROOT_DIR/target"
 fi
 
+# The README badge is the version a person reads first, and it is the one
+# stamp check-version.sh cannot let drift silently. It is derived here rather
+# than hand-edited, so "one place to change" stays true.
+if [[ -n "$(sed -n 's|.*/badge/version-\([0-9][0-9.]*\)-.*|\1|p' README.md | head -1)" ]]; then
+    tmp="$(mktemp)"
+    sed "s|badge/version-[0-9][0-9.]*-|badge/version-${target}-|" README.md > "$tmp"
+    mv "$tmp" README.md
+    printf '  ✓ README badge\n'
+else
+    printf '  ! README has no version badge to update\n' >&2
+fi
+
 # Resolving metadata refreshes path-package versions in Cargo.lock without
 # compiling a complete new workspace generation merely to update the lockfile.
 printf 'refreshing Cargo.lock metadata…\n'

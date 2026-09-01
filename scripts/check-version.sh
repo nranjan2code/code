@@ -51,6 +51,69 @@ for f in "${UNSTAMPED_JSON[@]}"; do
     fi
 done
 
+# ── the stamps a USER actually sees ─────────────────────────────────────
+#
+# Everything above proves the build system agrees with itself. It passed
+# while the README badge said 0.8.0, the CHANGELOG head said 0.11.23, and
+# the newest shipped build was 0.11.51 — a gate that certifies a mess is
+# worse than no gate.
+
+readme_badge="$(sed -n 's|.*/badge/version-\([0-9][0-9.]*\)-.*|\1|p' "$ROOT_DIR/README.md" | head -1)"
+if [[ "$readme_badge" == "$version" ]]; then
+    printf '  ✓ %-40s %s\n' "README badge" "$readme_badge"
+else
+    printf '  ✗ %-40s %s (expected %s)\n' \
+        "README badge" "${readme_badge:-none}" "$version"
+    status=1
+fi
+
+changelog_head="$(sed -n 's/^## \([0-9][0-9.]*\) .*/\1/p' "$ROOT_DIR/CHANGELOG.md" | head -1)"
+if [[ "$changelog_head" == "$version" ]] \
+    || grep -qE '^## (Unreleased|\[Unreleased\])' "$ROOT_DIR/CHANGELOG.md"; then
+    printf '  ✓ %-40s %s\n' "CHANGELOG" "${changelog_head:-unreleased}"
+else
+    printf '  ✗ %-40s newest entry is %s (expected %s or an Unreleased section)\n' \
+        "CHANGELOG" "${changelog_head:-none}" "$version"
+    status=1
+fi
+
+# ── monotonicity ────────────────────────────────────────────────────────
+#
+# The workspace version reached 0.11.51 and was then reset to 0.2.0. Update
+# checks compare by semver precedence, so every install on the old line went
+# permanently un-updatable and nothing said a word. A version that moves
+# BACKWARDS is a release decision, never an accident to discover later.
+
+highest_shipped="$(
+    {
+        git -C "$ROOT_DIR" tag 2>/dev/null | sed 's/^v//'
+        ls "$ROOT_DIR/dist" 2>/dev/null | sed 's/^v//'
+    } | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
+)"
+reset_marker="$ROOT_DIR/scripts/.version-reset"
+if [[ -n "$highest_shipped" ]] \
+    && [[ "$(printf '%s\n%s\n' "$version" "$highest_shipped" | sort -V | head -1)" == "$version" ]] \
+    && [[ "$version" != "$highest_shipped" ]]; then
+    # Matched on the line being left BEHIND, not the exact pair: the
+    # declaration is "we abandoned 0.11.x", and it must not need re-editing
+    # on every patch bump or it rots into a rubber stamp.
+    if [[ -f "$reset_marker" ]] && grep -qE "^${highest_shipped//./\\.} -> " "$reset_marker"; then
+        printf '  ✓ %-40s %s (reset away from %s, declared)\n' \
+            "release line" "$version" "$highest_shipped"
+    else
+        printf '  ✗ %-40s %s is BELOW the shipped %s\n' \
+            "release line" "$version" "$highest_shipped"
+        printf '      installs on %s can never update to %s (semver precedence).\n' \
+            "$highest_shipped" "$version"
+        printf '      If this is deliberate, record it:\n'
+        printf '        echo "%s -> %s  # why" >> scripts/.version-reset\n' \
+            "$highest_shipped" "$version"
+        status=1
+    fi
+else
+    printf '  ✓ %-40s %s\n' "release line" "$version"
+fi
+
 if ((status != 0)); then
     printf '\nversion singularity is broken — see docs/design/32-release-engineering.md\n' >&2
 fi

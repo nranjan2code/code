@@ -3,6 +3,13 @@
 What has been built, verified, and survived contact with a real model.
 Companion to `00-roadmap.md` (plan) and `15-reliability.md` (failure matrix).
 
+This is a historical record: entries stay as they were verified at the time.
+Where a surface has since been removed, the row is annotated rather than
+deleted. The inline TUI is the one such case — it shipped, was verified, and
+was later withdrawn in favour of the desktop and server surfaces; its design
+docs (18/19/21) and PTY smoke drivers no longer exist, so the paths those
+rows cite are deliberately unlinked.
+
 ## v0.2.0 verification battery (Ox Alpha Free via OpenCode Zen)
 
 Re-run of the live surface after the steering-through-Core change and new
@@ -69,7 +76,7 @@ Harness findings (all actioned or noted):
 | Milestone | Evidence |
 |---|---|
 | Walking skeleton: loop + tools + JSONL sessions + `exec` | offline mock e2e, phase 1 |
-| Inline TUI with live steering + approvals | PTY smoke 8/8 (`scripts/tui_smoke.py`) |
+| Inline TUI with live steering + approvals *(surface since removed)* | PTY smoke 8/8 (scripts/tui_smoke.py) |
 | Permission engine (rules × modes) wired end-to-end | allowed vs denied calls audited in session JSONL |
 | Seatbelt OS sandbox | explicit OS/workspace/toolchain/temp read roots, workspace-scoped writes, and denied sandboxed network; file-tool reads are separately permission-confined |
 | Brokered tool boundary | built-in production tools cross a bounded worker protocol; MCP servers are isolated workers; flows, plans, subagents, and CLI evals share the same path |
@@ -82,7 +89,7 @@ Harness findings (all actioned or noted):
 | HTTP+SSE server | lifecycle/approvals/transcript e2e over real HTTP |
 | Checkpoints/rewind + worktree isolation | capture/restore incl. deletions; worktree lifecycle tests |
 | Reliability pass | retry+backoff, watchdog, session resume, server cancel, graceful shutdown, cross-run circuit breaker |
-| TUI/UX pass (docs/design/18-tui.md) | markdown+syntax rendering, tool cards w/ edit diffs, status row, approval queue w/ diff previews + always-allow, multiline/paste input, Tab completion, Ctrl-R search, /resume+/rewind, themes, cost estimates, live subagent streams | PTY smoke 10/10 (`scripts/tui_smoke.py`); steering wired through Core (was a UI-side dead end) |
+| TUI/UX pass *(surface since removed; design doc 18-tui.md deleted)* | markdown+syntax rendering, tool cards w/ edit diffs, status row, approval queue w/ diff previews + always-allow, multiline/paste input, Tab completion, Ctrl-R search, /resume+/rewind, themes, cost estimates, live subagent streams | PTY smoke 10/10 (scripts/tui_smoke.py); steering wired through Core (was a UI-side dead end) |
 
 ## Live dogfood campaign (Ox Alpha Free via OpenCode Zen)
 

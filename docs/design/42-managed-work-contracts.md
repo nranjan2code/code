@@ -642,10 +642,8 @@ Expected implementation locations:
 | `crates/vak-session/src/types.rs` | durable work types and ledger payload |
 | `crates/vak-session/src/work.rs` | pure projector and transition rules |
 | `crates/vak-session/src/log.rs` | append/query/project control state |
-| `crates/vak-agent/src/work_contract.rs` | structured authoring and validation |
-| `crates/vak-agent/src/lib.rs` | work projection, event commit, completion gate |
+| `crates/vak-agent/src/lib.rs` | contract authoring/validation, work projection, event commit, completion gate |
 | `crates/vak-agent/src/task.rs` | contract/item lineage and child evidence |
-| `crates/vak-core/src/tools_work.rs` | model-visible work tool |
 | `crates/vak-core/src/lib.rs` | work mode and contract admission |
 | `crates/vak-server/src/lib.rs` | work APIs, auth, SSE, reconciliation |
 | `crates/vak-admin-ui` | admin work inspection and operations |
