@@ -90,7 +90,11 @@ export default function ProjectGate() {
           <button class="btn primary lg" onClick={() => void pick()} disabled={busy()}>
             <Icon name="folder" /> {busy() ? "Opening workspace…" : "Open a project"}
           </button>
-          <p class="gate-note">Configuration and secrets remain on this device.</p>
+          <p class="gate-note">
+            Vak prepares this project’s <code>.vak</code> settings layer. Shared
+            defaults stay global and are inherited here; project settings only
+            override this folder. Configuration and secrets remain on this device.
+          </p>
         </Show>
       </div>
     </div>

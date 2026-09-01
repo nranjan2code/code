@@ -908,6 +908,46 @@ pub fn project_path(cwd: &Path) -> PathBuf {
     cwd.join(".vak/config.toml")
 }
 
+/// Initialize the project layer used by interactive clients.
+///
+/// The file intentionally contains no copied global values. An empty project
+/// layer inherits the user's global configuration through [`load_with_trust`],
+/// so later changes to shared defaults reach projects that have not opted into
+/// a local override. `create_new` also keeps two desktop launches from
+/// overwriting a project config created by the other launch.
+pub fn ensure_project_config(cwd: &Path) -> Result<PathBuf, ConfigError> {
+    let dir = cwd.join(".vak");
+    std::fs::create_dir_all(&dir).map_err(|source| ConfigError::Write {
+        path: dir.clone(),
+        source,
+    })?;
+    let path = project_path(cwd);
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut file) => {
+            use std::io::Write;
+            file.write_all(
+                b"# Project-local overrides. Unset values inherit from the user config.\n",
+            )
+            .map_err(|source| ConfigError::Write {
+                path: path.clone(),
+                source,
+            })?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(source) => {
+            return Err(ConfigError::Write {
+                path: path.clone(),
+                source,
+            });
+        }
+    }
+    Ok(path)
+}
+
 /// Atomically replace the MCP table at one explicit configuration scope.
 /// The caller selects either [`global_path`] or [`project_path`]; no values
 /// are inferred from the process directory. Other TOML keys are preserved.
@@ -2712,6 +2752,24 @@ pub fn upsert_env_file(path: &std::path::Path, key: &str, value: &str) -> std::i
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ensure_project_config_creates_inheriting_layer_without_overwriting_it() {
+        let project = tempfile::tempdir().unwrap();
+        let path = ensure_project_config(project.path()).unwrap();
+        assert_eq!(path, project.path().join(".vak/config.toml"));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "# Project-local overrides. Unset values inherit from the user config.\n"
+        );
+
+        std::fs::write(&path, "provider = \"ollama\"\n").unwrap();
+        ensure_project_config(project.path()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "provider = \"ollama\"\n"
+        );
+    }
 
     /// `capped_by` is the single arithmetic the gateway's per-channel
     /// permission override rests on: it must be a true `min` over the
