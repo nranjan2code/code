@@ -15,3 +15,5 @@ __pycache__/
 
 # Claude Code session/worktree artifacts — never project content.
 .claude/
+# Poolside agent harness scratch (runtime settings, scratch, etc.) — never project content.
+.poolside/
