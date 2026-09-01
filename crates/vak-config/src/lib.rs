@@ -134,6 +134,8 @@ pub struct FileConfig {
     pub context_window: Option<u64>,
     #[serde(default)]
     pub mcp: McpConfig,
+    #[serde(default)]
+    pub capabilities: CapabilityInheritanceSettings,
     pub ui: UiSettings,
     pub stop_policy: Option<StopPolicySettings>,
     #[serde(default)]
@@ -462,6 +464,26 @@ pub struct McpServerConfig {
     pub network: bool,
 }
 
+/// Project-layer switches for severing one inherited capability category.
+/// Missing means inherit. User-layer values are accepted but only become
+/// meaningful when a narrower layer is merged over them.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct CapabilityInheritanceSettings {
+    pub inherit_mcp: Option<bool>,
+    pub inherit_hooks: Option<bool>,
+    pub inherit_skills: Option<bool>,
+    pub inherit_plugins: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CapabilityInheritanceResolved {
+    pub inherit_mcp: bool,
+    pub inherit_hooks: bool,
+    pub inherit_skills: bool,
+    pub inherit_plugins: bool,
+}
+
 /// Restrictive capability overlay for a gateway channel. `None` means inherit
 /// the workspace policy; `Some([])` means deny everything in that category.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -588,6 +610,7 @@ pub struct Config {
     pub circuit_breaker_cooldown_secs: u64,
     pub context_window: u64,
     pub mcp: McpConfig,
+    pub capabilities: CapabilityInheritanceResolved,
     pub ui: UiResolved,
     pub stop_policy: StopPolicyResolved,
     pub gateway: GatewayResolved,
@@ -820,6 +843,12 @@ impl Default for Config {
             circuit_breaker_cooldown_secs: 60,
             context_window: 128_000,
             mcp: McpConfig::default(),
+            capabilities: CapabilityInheritanceResolved {
+                inherit_mcp: true,
+                inherit_hooks: true,
+                inherit_skills: true,
+                inherit_plugins: true,
+            },
             ui: UiResolved {
                 theme: "dark".into(),
                 bell: true,
@@ -931,8 +960,11 @@ pub enum ConfigError {
     },
 }
 
+/// The topmost editable configuration layer. `vak-home` is deliberately a
+/// normal workspace people can inspect, and every other workspace inherits
+/// this file without copying it.
 pub fn global_path() -> Option<PathBuf> {
-    dirs_home().map(|h| h.join(".config/vak/config.toml"))
+    Some(crate::paths::default_workspace().join(".vak/config.toml"))
 }
 
 pub fn project_path(cwd: &Path) -> PathBuf {
@@ -1052,6 +1084,72 @@ pub fn persist_mcp_servers(
             std::iter::once(("servers".into(), toml::Value::Table(entries))).collect(),
         ),
     );
+    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other(error.to_string()),
+    })?;
+    let parent = path.parent().ok_or_else(|| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other("config has no parent directory"),
+    })?;
+    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
+    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, path).map_err(|source| ConfigError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Persist project capability inheritance switches without materializing any
+/// inherited definitions into the project file.
+pub fn persist_capability_inheritance(
+    path: &Path,
+    inherit_mcp: Option<bool>,
+    inherit_hooks: Option<bool>,
+    inherit_skills: Option<bool>,
+    inherit_plugins: Option<bool>,
+) -> Result<(), ConfigError> {
+    let mut root = if path.is_file() {
+        let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let table = root.as_table_mut().ok_or_else(|| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other("top-level config must be a TOML table"),
+    })?;
+    let capabilities = table
+        .entry("capabilities")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| ConfigError::Write {
+            path: path.to_path_buf(),
+            source: std::io::Error::other("capabilities config must be a TOML table"),
+        })?;
+    for (name, value) in [
+        ("inherit_mcp", inherit_mcp),
+        ("inherit_hooks", inherit_hooks),
+        ("inherit_skills", inherit_skills),
+        ("inherit_plugins", inherit_plugins),
+    ] {
+        if let Some(value) = value {
+            capabilities.insert(name.into(), toml::Value::Boolean(value));
+        }
+    }
     let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
         path: path.to_path_buf(),
         source: std::io::Error::other(error.to_string()),
@@ -1589,10 +1687,6 @@ fn persist_finops_caps_at(
     std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
 }
 
-fn dirs_home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
-}
-
 pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
     load_with_trust(cwd, true)
 }
@@ -1611,7 +1705,8 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         layers.push(fc);
     }
     let pp = project_path(cwd);
-    if pp.is_file() {
+    let is_global_workspace = global_path().is_some_and(|global| global == pp);
+    if pp.is_file() && !is_global_workspace {
         let (mut fc, w) = parse_file(&pp)?;
         warnings.extend(w);
         if !trust_project {
@@ -1724,6 +1819,12 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     for (name, srv) in merged.mcp.servers {
         cfg.mcp.servers.insert(name, srv);
     }
+    cfg.capabilities = CapabilityInheritanceResolved {
+        inherit_mcp: merged.capabilities.inherit_mcp.unwrap_or(true),
+        inherit_hooks: merged.capabilities.inherit_hooks.unwrap_or(true),
+        inherit_skills: merged.capabilities.inherit_skills.unwrap_or(true),
+        inherit_plugins: merged.capabilities.inherit_plugins.unwrap_or(true),
+    };
     cfg.ui.theme = merged.ui.theme.clone().unwrap_or_else(|| "dark".into());
     let builtin = matches!(
         cfg.ui.theme.as_str(),
@@ -2042,6 +2143,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "circuit_breaker_cooldown_secs",
     "context_window",
     "mcp",
+    "capabilities",
     "ui",
     "stop_policy",
     "work",
@@ -2065,8 +2167,21 @@ const KNOWN_WORK_KEYS: &[&str] = &[
     "confirmation",
 ];
 const KNOWN_PROFILE_KEYS: &[&str] = &["model", "provider", "permission_mode", "max_turns"];
-const KNOWN_HOOK_KEYS: &[&str] = &["event", "match", "command", "timeout_ms"];
+const KNOWN_HOOK_KEYS: &[&str] = &[
+    "event",
+    "match",
+    "command",
+    "timeout_ms",
+    "enabled",
+    "failure_mode",
+];
 const KNOWN_MCP_SERVER_KEYS: &[&str] = &["command", "args", "env", "network"];
+const KNOWN_CAPABILITY_KEYS: &[&str] = &[
+    "inherit_mcp",
+    "inherit_hooks",
+    "inherit_skills",
+    "inherit_plugins",
+];
 const KNOWN_UI_KEYS: &[&str] = &[
     "theme",
     "bell",
@@ -2185,6 +2300,16 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
                         ));
                     }
                 }
+            }
+        }
+    }
+    if let Some(t) = top.get("capabilities").and_then(toml::Value::as_table) {
+        for key in t.keys() {
+            if !KNOWN_CAPABILITY_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown capabilities key 'capabilities.{key}' (ignored)",
+                    path.display()
+                ));
             }
         }
     }
@@ -2425,6 +2550,24 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.context_window.is_some() {
         base.context_window = over.context_window;
+    }
+    if over.capabilities.inherit_hooks == Some(false) {
+        base.hooks.clear();
+    }
+    if over.capabilities.inherit_mcp == Some(false) {
+        base.mcp.servers.clear();
+    }
+    if over.capabilities.inherit_mcp.is_some() {
+        base.capabilities.inherit_mcp = over.capabilities.inherit_mcp;
+    }
+    if over.capabilities.inherit_hooks.is_some() {
+        base.capabilities.inherit_hooks = over.capabilities.inherit_hooks;
+    }
+    if over.capabilities.inherit_skills.is_some() {
+        base.capabilities.inherit_skills = over.capabilities.inherit_skills;
+    }
+    if over.capabilities.inherit_plugins.is_some() {
+        base.capabilities.inherit_plugins = over.capabilities.inherit_plugins;
     }
     // Unlike allow/ask/deny just above, this used to be a plain `.extend`
     // with no dedup. `PUT /config/hooks` (vak-server) always resubmitted the
@@ -2727,9 +2870,30 @@ pub fn forget_dotenv_var(key: &str) {
     dotenv_extra().remove(key);
 }
 
-/// `data_home()/.env` — the user-level secret store shared by every surface.
+/// `~/vak-home/.env` — the shared secret store inherited by every workspace.
 pub fn user_env_path() -> Option<std::path::PathBuf> {
-    Some(crate::paths::data_home().join(".env"))
+    Some(crate::paths::default_workspace().join(".env"))
+}
+
+/// Reads one value from a specific dotenv file without merging it into the
+/// process-wide environment cache. Scoped MCP credentials use this so two
+/// pooled workspaces can resolve different values for the same variable.
+pub fn read_env_file_var(path: &std::path::Path, key: &str) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    text.lines().find_map(|line| {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            return None;
+        }
+        let (candidate, value) = line.split_once('=')?;
+        (candidate.trim() == key).then(|| {
+            value
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_string()
+        })
+    })
 }
 
 /// Removes every definition of `key` from `path`, preserving the rest of

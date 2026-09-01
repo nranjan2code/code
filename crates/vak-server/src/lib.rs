@@ -457,7 +457,11 @@ fn router_with_state(state: AppState) -> Router {
         .route("/fs/file", get(read_file).put(write_file))
         .route("/fs/tree", get(fs_tree))
         .route("/config", get(get_config).patch(patch_config))
-        .route("/config/global", axum::routing::patch(patch_global_config))
+        .route(
+            "/config/global",
+            get(get_global_config_layer).patch(patch_global_config),
+        )
+        .route("/config/project", get(get_project_config_layer))
         .route("/config/mode", post(set_permission_mode))
         .route(
             "/agent-network/capabilities",
@@ -472,11 +476,13 @@ fn router_with_state(state: AppState) -> Router {
             "/config/mcp/global",
             get(get_global_mcp_servers).put(put_global_mcp_servers),
         )
+        .route("/config/integrations", get(get_integration_catalog))
         .route(
-            "/config/integrations/tavily",
-            get(get_tavily).put(put_tavily),
+            "/config/integrations/{id}",
+            get(get_scoped_integration)
+                .put(put_scoped_integration)
+                .delete(delete_scoped_integration),
         )
-        .route("/config/integrations/tavily/disable", post(disable_tavily))
         .route("/config/hooks", get(get_hooks).put(put_hooks))
         .route(
             "/config/hooks/global",
@@ -4412,8 +4418,9 @@ async fn delete_all_archived(State(state): State<AppState>) -> axum::response::R
 
 async fn list_skills(State(state): State<AppState>) -> Json<serde_json::Value> {
     // `path` and `scope` tell the reader WHERE a skill came from. Discovery
-    // reads two roots (`<cwd>/.vak/skills` then `<sessions_home>/skills`), and
-    // a workspace skill is a very different trust proposition from a user-wide
+    // reads two roots (`<cwd>/.vak/skills` then the Shared
+    // `~/vak-home/.vak/skills` root), and a workspace skill is a very different
+    // trust proposition from a Shared skill
     // one -- the admin console groups by this.
     let workspace_root = state.core.cwd().join(".vak/skills");
     let skills: Vec<serde_json::Value> = state
@@ -4460,6 +4467,8 @@ struct PluginMutation {
 struct PluginSourceMutation {
     path: PathBuf,
     #[serde(default)]
+    scope: Option<InstallScope>,
+    #[serde(default)]
     label: String,
     #[serde(default = "default_marketplace_trust")]
     trust: MarketplaceTrust,
@@ -4474,7 +4483,7 @@ fn default_marketplace_trust() -> MarketplaceTrust {
 
 fn plugin_store(state: &AppState, scope: InstallScope) -> PluginStore {
     let root = match scope {
-        InstallScope::User => state.core.sessions_home(),
+        InstallScope::User => vak_config::paths::default_workspace().join(".vak"),
         InstallScope::Workspace => state.core.cwd().join(".vak"),
     };
     PluginStore::new(root)
@@ -4647,8 +4656,9 @@ async fn plugin_register_source(
                 .into_response();
         }
     };
+    let scope = request.scope.unwrap_or(InstallScope::Workspace);
     plugin_result(
-        plugin_store(&state, InstallScope::Workspace).register_catalog_source_with_signature(
+        plugin_store(&state, scope).register_catalog_source_with_signature(
             &request.path,
             &request.label,
             request.trust,
@@ -5049,6 +5059,8 @@ fn pool_env_var(provider: &str) -> Option<&'static str> {
 #[derive(serde::Deserialize)]
 struct ProviderRef {
     provider: String,
+    #[serde(default)]
+    scope: Option<ConfigScope>,
 }
 
 /// Revoke a provider key. Reports when the variable is still set in the
@@ -5058,15 +5070,21 @@ async fn delete_provider_key(
     State(state): State<AppState>,
     Json(body): Json<ProviderRef>,
 ) -> axum::response::Response {
-    match state.core.remove_provider_key(&body.provider) {
+    let scope = body.scope.unwrap_or(ConfigScope::User);
+    match state
+        .core
+        .remove_provider_key_scoped(&body.provider, scope.is_project())
+    {
         Ok(removed) => {
             vak_core::security_events::record(
                 &state.core.sessions_home(),
                 vak_core::security_events::EventKind::ProviderKeyChange,
                 "provider_key_removed",
                 &format!(
-                    "provider={} shadowed={}",
-                    body.provider, removed.shadowed_by_env
+                    "provider={} scope={} shadowed={}",
+                    body.provider,
+                    scope.label(),
+                    removed.shadowed_by_env
                 ),
                 None,
             );
@@ -5141,21 +5159,27 @@ async fn provider_status(
 struct ProviderKeyBody {
     provider: String,
     key: String,
+    #[serde(default)]
+    scope: Option<ConfigScope>,
 }
 
-/// Persists a credential to the user-level secret store and makes it
+/// Persists a credential to the Shared `~/vak-home/.env` secret store and makes it
 /// effective immediately. The key is accepted once and never echoed back.
 async fn put_provider_key(
     State(state): State<AppState>,
     Json(body): Json<ProviderKeyBody>,
 ) -> axum::response::Response {
-    match state.core.set_provider_key(&body.provider, &body.key) {
+    let scope = body.scope.unwrap_or(ConfigScope::User);
+    match state
+        .core
+        .set_provider_key_scoped(&body.provider, &body.key, scope.is_project())
+    {
         Ok(env_var) => {
             vak_core::security_events::record(
                 &state.core.sessions_home(),
                 vak_core::security_events::EventKind::ProviderKeyChange,
                 "provider_key_set",
-                &format!("provider={}", body.provider),
+                &format!("provider={} scope={}", body.provider, scope.label()),
                 None,
             );
             state
@@ -5181,7 +5205,7 @@ struct TelegramTokenBody {
     token: String,
 }
 
-/// Persists the Telegram bot token to the same user-level `.env` the
+/// Persists the Telegram bot token to the same Shared `~/vak-home/.env` the
 /// provider keys use, then kicks the bridge service so the new token takes
 /// effect right away — it self-sources `.env` at launch, it doesn't
 /// inherit this process's environment or the runtime override. The token
@@ -5261,7 +5285,7 @@ async fn delete_telegram_token(State(state): State<AppState>) -> axum::response:
     }
 }
 
-/// Per-surface bot token, stored exactly like the Telegram one: user-level
+/// Per-surface bot token, stored exactly like the Telegram one: Shared-level
 /// `.env`, owner-only, accepted once and never echoed back
 /// (docs/design/34 Phase 3 "a bot-token field per surface").
 ///
@@ -5697,6 +5721,12 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
             "hooks": cfg.hooks.len(),
             "skills": state.core.skills().iter().map(|skill| skill.name.clone()).collect::<Vec<_>>(),
         },
+        "capability_inheritance": {
+            "mcp": state.core.effective_capability_inheritance().inherit_mcp,
+            "hooks": state.core.effective_capability_inheritance().inherit_hooks,
+            "skills": state.core.effective_capability_inheritance().inherit_skills,
+            "plugins": state.core.effective_capability_inheritance().inherit_plugins,
+        },
         "telegram": {
             "env_var": Core::TELEGRAM_TOKEN_ENV,
             "configured": state.core.telegram_configured(),
@@ -5712,6 +5742,88 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
         },
         "warnings": cfg.warnings,
     }))
+}
+
+fn read_config_layer(path: &std::path::Path) -> Result<vak_config::FileConfig, String> {
+    if !path.is_file() {
+        return Ok(vak_config::FileConfig::default());
+    }
+    let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    toml::from_str(&raw).map_err(|error| error.to_string())
+}
+
+fn config_layer_response(
+    state: &AppState,
+    scope: ConfigScope,
+) -> Result<serde_json::Value, String> {
+    let path = scope.config_path(&state.core)?;
+    let layer = read_config_layer(&path)?;
+    Ok(serde_json::json!({
+        "scope": scope.label(),
+        "path": path,
+        "provider": layer.provider,
+        "model": layer.model,
+        "max_tokens": layer.max_tokens,
+        "max_turns": layer.max_turns,
+        "permission_mode": layer.permission_mode.map(|mode| format!("{mode:?}")),
+        "approval_mode": layer.approval_mode.map(|mode| mode.as_str()),
+        "profile": layer.profile,
+        "subagents": layer.subagents,
+        "theme": layer.ui.theme,
+        "permissions": {
+            "allow": layer.allow,
+            "ask": layer.ask,
+            "deny": layer.deny,
+        },
+        "memory": {
+            "search_enabled": layer.memory.search_enabled,
+            "write_enabled": layer.memory.write_enabled,
+            "reflection": layer.memory.reflection,
+            "skill_proposals": layer.memory.skill_proposals,
+        },
+        "work": {
+            "enabled": layer.work.enabled,
+            "default_mode": layer.work.default_mode,
+            "max_items": layer.work.max_items,
+            "max_revisions": layer.work.max_revisions,
+            "max_parallel": layer.work.max_parallel,
+            "confirmation": layer.work.confirmation,
+        },
+        "counts": {
+            "mcp": layer.mcp.servers.len(),
+            "hooks": layer.hooks.len(),
+        },
+        "capabilities": {
+            "inherit_mcp": layer.capabilities.inherit_mcp,
+            "inherit_hooks": layer.capabilities.inherit_hooks,
+            "inherit_skills": layer.capabilities.inherit_skills,
+            "inherit_plugins": layer.capabilities.inherit_plugins,
+        },
+    }))
+}
+
+async fn get_global_config_layer(State(state): State<AppState>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match config_layer_response(&state, ConfigScope::User) {
+        Ok(layer) => Json(layer).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+async fn get_project_config_layer(State(state): State<AppState>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match config_layer_response(&state, ConfigScope::Project) {
+        Ok(layer) => Json(layer).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -5896,6 +6008,14 @@ struct ConfigPatch {
     work_max_parallel: Option<usize>,
     #[serde(default)]
     work_confirmation: Option<String>,
+    #[serde(default)]
+    inherit_mcp: Option<bool>,
+    #[serde(default)]
+    inherit_hooks: Option<bool>,
+    #[serde(default)]
+    inherit_skills: Option<bool>,
+    #[serde(default)]
+    inherit_plugins: Option<bool>,
 }
 
 async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatch>) -> StatusCode {
@@ -5910,6 +6030,14 @@ async fn patch_global_config(
 }
 
 async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) -> StatusCode {
+    if global
+        && (body.inherit_mcp.is_some()
+            || body.inherit_hooks.is_some()
+            || body.inherit_skills.is_some()
+            || body.inherit_plugins.is_some())
+    {
+        return StatusCode::BAD_REQUEST;
+    }
     if body
         .provider
         .as_deref()
@@ -6138,6 +6266,35 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
             state.core.effective_work().enabled
         ));
     }
+    if body.inherit_mcp.is_some()
+        || body.inherit_hooks.is_some()
+        || body.inherit_skills.is_some()
+        || body.inherit_plugins.is_some()
+    {
+        let path = vak_config::project_path(state.core.cwd());
+        if vak_config::persist_capability_inheritance(
+            &path,
+            body.inherit_mcp,
+            body.inherit_hooks,
+            body.inherit_skills,
+            body.inherit_plugins,
+        )
+        .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+        let Ok(resolved) =
+            vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted())
+        else {
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        };
+        state
+            .core
+            .apply_persisted_capability_inheritance(resolved.capabilities);
+        state.core.apply_persisted_mcp_servers(resolved.mcp);
+        state.core.apply_persisted_hooks(resolved.hooks);
+        changes.push("capability_inheritance".into());
+    }
     if !changes.is_empty() {
         vak_core::security_events::record(
             &state.core.sessions_home(),
@@ -6185,146 +6342,6 @@ async fn get_mcp_servers(State(state): State<AppState>) -> axum::response::Respo
         )
             .into_response(),
     }
-}
-
-async fn get_tavily(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mcp = state.core.effective_mcp();
-    let configured = vak_config::get_var("TAVILY_API_KEY").is_some_and(|v| !v.trim().is_empty());
-    let enabled = mcp.servers.get("tavily").is_some_and(|server| {
-        server.command == "npx"
-            && server.args == ["-y", "tavily-mcp"]
-            && server.network
-            && server.env.get("TAVILY_API_KEY") == Some(&"${TAVILY_API_KEY}".to_string())
-    });
-    Json(serde_json::json!({
-        "enabled": enabled,
-        "key_present": configured,
-        "network": enabled,
-        "env_var": "TAVILY_API_KEY"
-    }))
-}
-
-#[derive(serde::Deserialize)]
-struct TavilyPutBody {
-    key: String,
-}
-
-async fn put_tavily(
-    State(state): State<AppState>,
-    Json(body): Json<TavilyPutBody>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    if let Err(e) = state.core.set_mcp_secret("TAVILY_API_KEY", &body.key) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response();
-    }
-    let mut servers = state
-        .core
-        .effective_mcp()
-        .servers
-        .into_iter()
-        .map(|(name, server)| {
-            (
-                name,
-                McpServerInput {
-                    command: server.command,
-                    args: server.args,
-                    env: server.env,
-                    network: server.network,
-                },
-            )
-        })
-        .collect::<std::collections::BTreeMap<_, _>>();
-    servers.insert(
-        "tavily".into(),
-        McpServerInput {
-            command: "npx".into(),
-            args: vec!["-y".into(), "tavily-mcp".into()],
-            env: [("TAVILY_API_KEY".into(), "${TAVILY_API_KEY}".into())]
-                .into_iter()
-                .collect(),
-            network: true,
-        },
-    );
-    if let Err(e) = persist_mcp_to_project_config(state.core.cwd(), &servers) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e })),
-        )
-            .into_response();
-    }
-    state
-        .core
-        .apply_persisted_mcp_servers(vak_config::McpConfig {
-            servers: servers
-                .into_iter()
-                .map(|(name, server)| {
-                    (
-                        name,
-                        vak_config::McpServerConfig {
-                            command: server.command,
-                            args: server.args,
-                            env: server.env,
-                            network: server.network,
-                        },
-                    )
-                })
-                .collect(),
-        });
-    state.hub.emit_config_changed("tavily_updated", "tavily");
-    Json(serde_json::json!({ "enabled": true, "key_present": true })).into_response()
-}
-
-async fn disable_tavily(State(state): State<AppState>) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let mut servers = state
-        .core
-        .effective_mcp()
-        .servers
-        .into_iter()
-        .map(|(name, server)| {
-            (
-                name,
-                McpServerInput {
-                    command: server.command,
-                    args: server.args,
-                    env: server.env,
-                    network: server.network,
-                },
-            )
-        })
-        .collect::<std::collections::BTreeMap<_, _>>();
-    servers.remove("tavily");
-    if let Err(e) = persist_mcp_to_project_config(state.core.cwd(), &servers) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e })),
-        )
-            .into_response();
-    }
-    state
-        .core
-        .apply_persisted_mcp_servers(vak_config::McpConfig {
-            servers: servers
-                .into_iter()
-                .map(|(name, server)| {
-                    (
-                        name,
-                        vak_config::McpServerConfig {
-                            command: server.command,
-                            args: server.args,
-                            env: server.env,
-                            network: server.network,
-                        },
-                    )
-                })
-                .collect(),
-        });
-    state.hub.emit_config_changed("tavily_disabled", "tavily");
-    Json(serde_json::json!({ "enabled": false })).into_response()
 }
 
 #[derive(serde::Deserialize, Clone)]
@@ -6759,6 +6776,328 @@ fn read_mcp_config(path: &std::path::Path) -> Result<vak_config::McpConfig, Stri
     toml::from_str::<vak_config::FileConfig>(&raw)
         .map(|config| config.mcp)
         .map_err(|error| error.to_string())
+}
+
+#[derive(Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ConfigScope {
+    User,
+    Project,
+}
+
+impl ConfigScope {
+    fn is_project(self) -> bool {
+        matches!(self, Self::Project)
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Project => "project",
+        }
+    }
+
+    fn config_path(self, core: &vak_core::Core) -> Result<std::path::PathBuf, String> {
+        match self {
+            Self::User => vak_config::global_path().ok_or_else(|| "user home unavailable".into()),
+            Self::Project => Ok(vak_config::project_path(core.cwd())),
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ScopeQuery {
+    scope: ConfigScope,
+}
+
+#[derive(Clone, Copy)]
+struct IntegrationCatalogEntry {
+    id: &'static str,
+    label: &'static str,
+    description: &'static str,
+    command: &'static str,
+    args: &'static [&'static str],
+    env_var: Option<&'static str>,
+    key_required: bool,
+    documentation_url: &'static str,
+}
+
+const INTEGRATION_CATALOG: &[IntegrationCatalogEntry] = &[
+    IntegrationCatalogEntry {
+        id: "tavily",
+        label: "Tavily",
+        description: "Real-time web search, extraction, site maps, and crawling.",
+        command: "npx",
+        args: &["-y", "tavily-mcp@latest"],
+        env_var: Some("TAVILY_API_KEY"),
+        key_required: true,
+        documentation_url: "https://github.com/tavily-ai/tavily-mcp",
+    },
+    IntegrationCatalogEntry {
+        id: "exa",
+        label: "Exa",
+        description: "Web, code, company, and research search with page retrieval.",
+        command: "npx",
+        args: &["-y", "exa-mcp-server"],
+        env_var: Some("EXA_API_KEY"),
+        key_required: true,
+        documentation_url: "https://github.com/exa-labs/exa-mcp-server",
+    },
+    IntegrationCatalogEntry {
+        id: "context7",
+        label: "Context7",
+        description: "Current library documentation and version-specific code examples.",
+        command: "npx",
+        args: &["-y", "@upstash/context7-mcp@latest"],
+        env_var: Some("CONTEXT7_API_KEY"),
+        key_required: false,
+        documentation_url: "https://github.com/upstash/context7",
+    },
+    IntegrationCatalogEntry {
+        id: "firecrawl",
+        label: "Firecrawl",
+        description: "Search, scrape, crawl, extract, and operate cloud browser sessions.",
+        command: "npx",
+        args: &["-y", "firecrawl-mcp"],
+        env_var: Some("FIRECRAWL_API_KEY"),
+        key_required: true,
+        documentation_url: "https://github.com/firecrawl/firecrawl-mcp-server",
+    },
+];
+
+fn catalog_entry(id: &str) -> Option<IntegrationCatalogEntry> {
+    INTEGRATION_CATALOG
+        .iter()
+        .copied()
+        .find(|entry| entry.id == id)
+}
+
+fn catalog_server(entry: IntegrationCatalogEntry) -> vak_config::McpServerConfig {
+    vak_config::McpServerConfig {
+        command: entry.command.into(),
+        args: entry.args.iter().map(|arg| (*arg).to_string()).collect(),
+        env: entry
+            .env_var
+            .map(|name| {
+                [(name.to_string(), format!("${{{name}}}"))]
+                    .into_iter()
+                    .collect()
+            })
+            .unwrap_or_default(),
+        network: true,
+    }
+}
+
+fn integration_status(
+    core: &vak_core::Core,
+    scope: ConfigScope,
+    entry: IntegrationCatalogEntry,
+) -> Result<serde_json::Value, String> {
+    let selected = read_mcp_config(&scope.config_path(core)?)?;
+    let user = match vak_config::global_path() {
+        Some(path) => read_mcp_config(&path)?,
+        None => vak_config::McpConfig::default(),
+    };
+    let configured_here = selected.servers.contains_key(entry.id);
+    let inherited = scope.is_project() && !configured_here && user.servers.contains_key(entry.id);
+    let effective = core.effective_mcp().servers.contains_key(entry.id);
+    let key_here = entry
+        .env_var
+        .is_some_and(|name| core.mcp_secret_at_scope(name, scope.is_project()));
+    let key_inherited = scope.is_project()
+        && !key_here
+        && entry
+            .env_var
+            .is_some_and(|name| core.mcp_secret(name).is_some());
+    Ok(serde_json::json!({
+        "id": entry.id,
+        "label": entry.label,
+        "description": entry.description,
+        "command": entry.command,
+        "args": entry.args,
+        "network": true,
+        "env_var": entry.env_var,
+        "key_required": entry.key_required,
+        "documentation_url": entry.documentation_url,
+        "scope": scope.label(),
+        "configured_here": configured_here,
+        "inherited": inherited,
+        "effective": effective,
+        "key_here": key_here,
+        "key_inherited": key_inherited,
+        "key_effective": entry.env_var.is_none_or(|name| core.mcp_secret(name).is_some()),
+    }))
+}
+
+async fn get_integration_catalog(
+    State(state): State<AppState>,
+    Query(query): Query<ScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match INTEGRATION_CATALOG
+        .iter()
+        .copied()
+        .map(|entry| integration_status(&state.core, query.scope, entry))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(integrations) => Json(serde_json::json!({
+            "scope": query.scope.label(),
+            "integrations": integrations,
+        }))
+        .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+async fn get_scoped_integration(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<ScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(entry) = catalog_entry(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match integration_status(&state.core, query.scope, entry) {
+        Ok(status) => Json(status).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct IntegrationPutBody {
+    scope: ConfigScope,
+    key: Option<String>,
+}
+
+fn apply_scoped_mcp_change(
+    state: &AppState,
+    scope: ConfigScope,
+    id: &str,
+    server: Option<vak_config::McpServerConfig>,
+) -> Result<(), String> {
+    let path = scope.config_path(&state.core)?;
+    let mut config = read_mcp_config(&path)?;
+    match server {
+        Some(server) => {
+            config.servers.insert(id.to_string(), server);
+        }
+        None => {
+            config.servers.remove(id);
+        }
+    }
+    vak_config::persist_mcp_servers(&path, &config.servers).map_err(|error| error.to_string())?;
+    let effective =
+        vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted())
+            .map_err(|error| error.to_string())?;
+    state.core.apply_persisted_mcp_servers(effective.mcp);
+    Ok(())
+}
+
+async fn put_scoped_integration(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<IntegrationPutBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(entry) = catalog_entry(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if let Some(key) = body.key.as_deref()
+        && let Err(error) = state.core.set_mcp_secret_scoped(
+            entry.env_var.unwrap_or_default(),
+            key,
+            body.scope.is_project(),
+        )
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response();
+    }
+    let key_available = entry
+        .env_var
+        .is_none_or(|name| state.core.mcp_secret(name).is_some());
+    if entry.key_required && !key_available {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("{} requires {} at this scope or an inherited scope", entry.label, entry.env_var.unwrap_or("a key"))
+            })),
+        )
+            .into_response();
+    }
+    if let Err(error) =
+        apply_scoped_mcp_change(&state, body.scope, entry.id, Some(catalog_server(entry)))
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response();
+    }
+    state.hub.emit_config_changed(
+        "integration_enabled",
+        &format!("scope={} integration={}", body.scope.label(), entry.id),
+    );
+    match integration_status(&state.core, body.scope, entry) {
+        Ok(status) => Json(status).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_scoped_integration(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<ScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(entry) = catalog_entry(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if let Some(env_var) = entry.env_var
+        && let Err(error) = state
+            .core
+            .remove_mcp_secret_scoped(env_var, query.scope.is_project())
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response();
+    }
+    if let Err(error) = apply_scoped_mcp_change(&state, query.scope, entry.id, None) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response();
+    }
+    state.hub.emit_config_changed(
+        "integration_removed",
+        &format!("scope={} integration={}", query.scope.label(), entry.id),
+    );
+    match integration_status(&state.core, query.scope, entry) {
+        Ok(status) => Json(status).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
 }
 
 async fn get_global_mcp_servers() -> axum::response::Response {

@@ -13,7 +13,7 @@ import {
 } from "./store";
 import type {
   AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ChatSurfaceStatus, ConfigInfo, CorePoolEntry, DiscoveredModelsResponse,
-  FinOpsStatus, FinOpsDailyPoint, FinOpsRollupEntry, HookConfig,
+  ConfigScope, FinOpsStatus, FinOpsDailyPoint, FinOpsRollupEntry, HookConfig, IntegrationStatus,
   GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval,
   PermissionMode, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
@@ -39,6 +39,7 @@ createEffect(() => {
 
 // Unread inbox badge: polled lightly while signed in.
 const [unread, setUnread] = createSignal(0);
+const [configScope, setConfigScope] = createSignal<ConfigScope>("user");
 
 // ---- icons (inline, stroke style) ------------------------------------------
 
@@ -87,6 +88,24 @@ function PageHeader(props: { title: string; description: string; actions?: impor
         <div class="page-actions">{props.actions}</div>
       </Show>
     </header>
+  );
+}
+
+function ScopeControl() {
+  return (
+    <div class="scope-control" role="group" aria-label="Configuration scope">
+      <button classList={{ active: configScope() === "user" }} onClick={() => setConfigScope("user")}>
+        Shared
+      </button>
+      <button classList={{ active: configScope() === "project" }} onClick={() => setConfigScope("project")}>
+        This project
+      </button>
+      <span>
+        {configScope() === "user"
+          ? "Baseline inherited by every project"
+          : "Overrides for this workspace only"}
+      </span>
+    </div>
   );
 }
 
@@ -1368,6 +1387,7 @@ function extensionsTab(): string {
 }
 
 interface ExtensionsCtx {
+  scope: () => ConfigScope;
   plugins: () => import("./types").PluginItem[];
   pluginsLoading: () => boolean;
   refetchPlugins: () => void;
@@ -1448,72 +1468,6 @@ function envToLines(env: Record<string, string> | undefined): string {
     .join("\n");
 }
 
-/// A short, opinionated list of servers most operators actually want, so the
-/// common case is a click rather than a remembered `npx` invocation. Picking
-/// one only fills the form in — nothing is written until Connect is pressed,
-/// and every field stays editable. "Something else" clears it back to blank.
-const MCP_CATALOG: {
-  id: string;
-  label: string;
-  blurb: string;
-  name: string;
-  command: string;
-  args: string;
-  network: boolean;
-  env: string;
-}[] = [
-  {
-    id: "github",
-    label: "GitHub",
-    blurb: "Issues, pull requests, code search",
-    name: "github",
-    command: "npx",
-    args: "-y @modelcontextprotocol/server-github",
-    network: true,
-    env: "GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PERSONAL_ACCESS_TOKEN}",
-  },
-  {
-    id: "filesystem",
-    label: "Files",
-    blurb: "Read and write a folder outside the project",
-    name: "filesystem",
-    command: "npx",
-    args: "-y @modelcontextprotocol/server-filesystem .",
-    network: false,
-    env: "",
-  },
-  {
-    id: "postgres",
-    label: "Postgres",
-    blurb: "Query a database read-only",
-    name: "postgres",
-    command: "npx",
-    args: "-y @modelcontextprotocol/server-postgres",
-    network: true,
-    env: "DATABASE_URL=${DATABASE_URL}",
-  },
-  {
-    id: "fetch",
-    label: "Fetch a page",
-    blurb: "Pull a URL down as readable text",
-    name: "fetch",
-    command: "uvx",
-    args: "mcp-server-fetch",
-    network: true,
-    env: "",
-  },
-  {
-    id: "custom",
-    label: "Something else",
-    blurb: "Fill the details in yourself",
-    name: "",
-    command: "",
-    args: "",
-    network: false,
-    env: "",
-  },
-];
-
 function McpServersView(props: { ctx: ExtensionsCtx }) {
   const [expanded, setExpanded] = createSignal("");
   const [editing, setEditing] = createSignal("");
@@ -1527,31 +1481,12 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
   const [newNetwork, setNewNetwork] = createSignal(false);
   const [newEnv, setNewEnv] = createSignal("");
   const [busy, setBusy] = createSignal(false);
-  const [tavilyKey, setTavilyKey] = createSignal("");
-  const [tavilyBusy, setTavilyBusy] = createSignal(false);
-  const [tavily, { refetch: refetchTavily }] = createResource(() => api.tavily().catch(() => null));
-
-  const [catalogPick, setCatalogPick] = createSignal("");
-
-  /// Prefill the form from a catalog entry rather than send it: the operator
-  /// still sees, and can change, exactly what will be written.
-  const applyCatalog = (id: string) => {
-    const entry = MCP_CATALOG.find((e) => e.id === id);
-    setCatalogPick(id);
-    if (!entry || !entry.command) {
-      setNewName("");
-      setNewCmd("");
-      setNewArgs("");
-      setNewNetwork(false);
-      setNewEnv("");
-      return;
-    }
-    setNewName(entry.name);
-    setNewCmd(entry.command);
-    setNewArgs(entry.args);
-    setNewNetwork(entry.network);
-    setNewEnv(entry.env);
-  };
+  const [integrationKeys, setIntegrationKeys] = createSignal<Record<string, string>>({});
+  const [integrationBusy, setIntegrationBusy] = createSignal("");
+  const [catalog, catalogActions] = createResource(
+    () => props.ctx.scope(),
+    (scope) => api.integrationCatalog(scope),
+  );
 
   const servers = createMemo(() => Object.entries(props.ctx.mcp()) as [string, McpServerConfig][]);
 
@@ -1570,7 +1505,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
           network: newNetwork(),
           ...(Object.keys(env).length > 0 ? { env } : {}),
         },
-      });
+      }, props.ctx.scope());
       pushToast("info", `Connected ‘${name}’`);
       setNewName("");
       setNewCmd("");
@@ -1591,7 +1526,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     const next = { ...props.ctx.mcp() };
     delete next[name];
     try {
-      await api.putMcpServers(next);
+      await api.putMcpServers(next, props.ctx.scope());
       pushToast("info", `Disconnected ‘${name}’`);
       props.ctx.refetchMcp();
     } catch (err) {
@@ -1621,7 +1556,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
           network: editNetwork(),
           ...(Object.keys(env).length > 0 ? { env } : {}),
         },
-      });
+      }, props.ctx.scope());
       pushToast("info", `Updated ‘${name}’`);
       setEditing("");
       props.ctx.refetchMcp();
@@ -1633,37 +1568,40 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     }
   };
 
-  const saveTavily = async () => {
-    if (!tavilyKey().trim() || tavilyBusy()) return;
-    setTavilyBusy(true);
+  const enableCatalogEntry = async (entry: IntegrationStatus) => {
+    if (integrationBusy()) return;
+    const key = integrationKeys()[entry.id]?.trim();
+    if (entry.key_required && !key && !entry.key_effective) return;
+    setIntegrationBusy(entry.id);
     try {
-      await api.enableTavily(tavilyKey());
-      setTavilyKey("");
-      pushToast("info", "Tavily enabled — the key is stored securely and never displayed");
-      refetchTavily();
+      await api.enableIntegration(entry.id, props.ctx.scope(), key);
+      setIntegrationKeys((current) => ({ ...current, [entry.id]: "" }));
+      pushToast("info", `${entry.label} enabled in ${props.ctx.scope() === "user" ? "Shared" : "this project"}`);
+      await catalogActions.refetch();
       props.ctx.refetchMcp();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
     } finally {
-      setTavilyBusy(false);
+      setIntegrationBusy("");
     }
   };
 
-  const disableTavily = async () => {
-    if (tavilyBusy()) return;
-    if (!confirmDestructive("Disable Tavily web search?")) return;
-    setTavilyBusy(true);
+  const removeCatalogEntry = async (entry: IntegrationStatus) => {
+    if (integrationBusy()) return;
+    setIntegrationBusy(entry.id);
     try {
-      await api.disableTavily();
-      pushToast("info", "Tavily disabled; its stored key was retained");
-      refetchTavily();
+      await api.removeIntegration(entry.id, props.ctx.scope());
+      pushToast("info", props.ctx.scope() === "project" && entry.inherited
+        ? `${entry.label} project override cleared`
+        : `${entry.label} removed from ${props.ctx.scope() === "user" ? "Shared" : "this project"}`);
+      await catalogActions.refetch();
       props.ctx.refetchMcp();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
     } finally {
-      setTavilyBusy(false);
+      setIntegrationBusy("");
     }
   };
 
@@ -1677,40 +1615,58 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
       <section class="panel" style="margin-bottom:14px">
         <div class="panel-title-row">
           <div>
-            <h2>Tavily web search</h2>
+            <h2>Curated MCP integrations</h2>
             <p class="dim">
-              Add your Tavily key here. Vak stores it in the protected user secret store, passes it
-              only to <code>tavily-mcp</code>, and enables outbound network access automatically.
+              These definitions run real upstream MCP packages. Keys are stored in the selected
+              scope’s private secret file and are never returned to the browser.
             </p>
           </div>
-          <Show when={tavily()?.enabled}>
-            <span class="chip chip-tone-success">enabled</span>
-          </Show>
         </div>
-        <Show when={tavily()?.enabled} fallback={
-          <div class="form-row">
-            <label for="tavily-key">API key</label>
-            <input
-              id="tavily-key"
-              type="password"
-              autocomplete="off"
-              placeholder="tvly-…"
-              value={tavilyKey()}
-              onInput={(e) => setTavilyKey(e.currentTarget.value)}
-              onKeyDown={(e) => e.key === "Enter" && void saveTavily()}
-            />
-            <button disabled={tavilyBusy() || !tavilyKey().trim()} onClick={() => void saveTavily()}>
-              {tavilyBusy() ? "Saving…" : "Save & enable"}
-            </button>
-          </div>
-        }>
-          <div class="binding-meta">
-            Key present · network enabled · configured as <code>tavily-mcp</code>
-          </div>
-          <div class="row-gap" style="margin-top:10px">
-            <button class="danger small" disabled={tavilyBusy()} onClick={() => void disableTavily()}>
-              {tavilyBusy() ? "Disabling…" : "Disable Tavily"}
-            </button>
+        <Show when={!catalog.loading} fallback={<div class="cred-list"><span class="skel skel-block" /><span class="skel skel-block" /></div>}>
+          <div class="integration-catalog">
+            <For each={catalog()?.integrations ?? []}>
+              {(entry) => (
+                <article class="integration-row">
+                  <div class="integration-summary">
+                    <div>
+                      <strong>{entry.label}</strong>
+                      <p>{entry.description}</p>
+                      <code>{entry.command} {entry.args.join(" ")}</code>
+                    </div>
+                    <span class={`chip chip-tone-${entry.effective ? "success" : "ask"}`}>
+                      {entry.configured_here ? "set here" : entry.inherited ? "inherited" : "off"}
+                    </span>
+                  </div>
+                  <Show when={entry.env_var}>
+                    <div class="form-row integration-key-row">
+                      <label for={`${entry.id}-key`}>{entry.env_var}</label>
+                      <input
+                        id={`${entry.id}-key`}
+                        type="password"
+                        autocomplete="off"
+                        placeholder={entry.key_here ? "Key saved in this scope" : entry.key_inherited ? "Using inherited key — enter to override" : "Enter API key"}
+                        value={integrationKeys()[entry.id] ?? ""}
+                        onInput={(event) => setIntegrationKeys((current) => ({ ...current, [entry.id]: event.currentTarget.value }))}
+                      />
+                    </div>
+                  </Show>
+                  <div class="row-gap">
+                    <button
+                      disabled={integrationBusy() === entry.id || (entry.key_required && !(integrationKeys()[entry.id]?.trim()) && !entry.key_effective)}
+                      onClick={() => void enableCatalogEntry(entry)}
+                    >
+                      {integrationBusy() === entry.id ? "Saving…" : entry.configured_here ? "Update key" : entry.inherited ? "Override here" : "Enable"}
+                    </button>
+                    <Show when={entry.configured_here}>
+                      <button class="danger small" disabled={!!integrationBusy()} onClick={() => void removeCatalogEntry(entry)}>
+                        {props.ctx.scope() === "project" ? "Reset to Shared" : "Remove"}
+                      </button>
+                    </Show>
+                    <a class="ghost small button-link" href={entry.documentation_url} target="_blank" rel="noreferrer">Upstream docs</a>
+                  </div>
+                </article>
+              )}
+            </For>
           </div>
         </Show>
       </section>
@@ -1725,11 +1681,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
               <a href="#/settings">Settings</a>, and where no rule reaches it, from the setting that
               decides everything else.
             </p>
-            <p class="dim">
-              This lists only the apps connected for this project. One connected for your whole
-              account is still available here, but isn’t shown, so connecting or editing an app here
-              can never quietly pin this project to an old copy of it.
-            </p>
+            <p class="dim">This list is the selected layer only. Switch scope above to inspect or edit the other layer.</p>
           </div>
         </div>
 
@@ -1893,25 +1845,8 @@ When several rules match the same call, the strictest one wins — blocked beats
         </Switch>
 
         <details class="advanced">
-          <summary>Connect an app</summary>
-          <p class="dim">
-            Pick one of the common ones to fill the details in for you, or set one up by hand.
-          </p>
-          <div class="pick-grid catalog-grid">
-            <For each={MCP_CATALOG}>
-              {(entry) => (
-                <button
-                  type="button"
-                  class="catalog-card"
-                  classList={{ active: catalogPick() === entry.id }}
-                  onClick={() => applyCatalog(entry.id)}
-                >
-                  <strong>{entry.label}</strong>
-                  <em>{entry.blurb}</em>
-                </button>
-              )}
-            </For>
-          </div>
+          <summary>Connect a custom MCP server</summary>
+          <p class="dim">Use an exact local command you have reviewed. Nothing starts until a turn invokes one of its tools.</p>
           <div class="form-row">
             <label>Name</label>
             <input placeholder="github, filesystem, postgres…" value={newName()} onInput={(e) => setNewName(e.currentTarget.value)} />
@@ -1956,16 +1891,23 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
   const [publicKey, setPublicKey] = createSignal("");
   const [signature, setSignature] = createSignal("");
   const [catalogQuery, setCatalogQuery] = createSignal("");
-  const [sources, { refetch: refetchSources }] = createResource(() => api.pluginSources().catch(() => ({ sources: [] })));
-  const [catalog, { refetch: refetchCatalog }] = createResource(catalogQuery, (query) => api.pluginCatalog(query).catch(() => ({ entries: [], errors: [] })));
+  const pluginScope = () => props.ctx.scope() === "user" ? "user" as const : "workspace" as const;
+  const [sources, { refetch: refetchSources }] = createResource(
+    pluginScope,
+    (scope) => api.pluginSources(scope).catch(() => ({ sources: [] })),
+  );
+  const [catalog, { refetch: refetchCatalog }] = createResource(
+    () => [catalogQuery(), pluginScope()] as const,
+    ([query, scope]) => api.pluginCatalog(query, scope).catch(() => ({ entries: [], errors: [] })),
+  );
   const refresh = props.ctx.refetchPlugins;
   const install = async (update: boolean) => {
     const value = path().trim();
     if (!value || busy()) return;
     setBusy(true);
     try {
-      if (update) await api.pluginUpdate(value);
-      else await api.pluginInstall(value);
+      if (update) await api.pluginUpdate(value, pluginScope());
+      else await api.pluginInstall(value, pluginScope());
       pushToast("info", update ? "Plugin generation staged" : "Plugin installed disabled");
       setPath("");
       refresh();
@@ -1981,7 +1923,7 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
     if (busy()) return;
     setBusy(true);
     try {
-      await api.pluginAction(name, operation);
+      await api.pluginAction(name, operation, pluginScope());
       pushToast("info", `${name} ${operation}d`);
       refresh();
     } catch (error) {
@@ -1992,7 +1934,7 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
   };
   return <section class="stack">
     <div class="panel">
-      <div class="panel-title-row"><div><h2>Install a reviewed package</h2><p>Packages are inspected, content-addressed, and installed disabled until you enable them.</p></div></div>
+      <div class="panel-title-row"><div><h2>Install a reviewed package</h2><p>Packages are inspected, content-addressed, and installed disabled in {props.ctx.scope() === "user" ? "Shared" : "this project"} until you enable them.</p></div></div>
       <div class="form-row"><label>Local package directory</label><input class="mono" placeholder="/path/to/plugin" value={path()} onInput={(e) => setPath(e.currentTarget.value)} /></div>
       <div class="row-gap"><button disabled={busy() || !path().trim()} onClick={() => void install(false)}>Install disabled</button><button class="ghost" disabled={busy() || !path().trim()} onClick={() => void install(true)}>Stage update</button></div>
     </div>
@@ -2001,8 +1943,8 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
       <div class="form-row"><label>Catalog directory<input class="mono" value={sourcePath()} onInput={(e) => setSourcePath(e.currentTarget.value)} placeholder="/path/to/catalog" /></label></div>
       <div class="form-row"><label>Label<input value={sourceLabel()} onInput={(e) => setSourceLabel(e.currentTarget.value)} placeholder="Team catalog" /></label></div>
       <details class="advanced"><summary>Detached Ed25519 evidence (optional)</summary><div class="form-row"><label>Key ID<input class="mono" value={keyId()} onInput={(e) => setKeyId(e.currentTarget.value)} /></label><label>Public key (base64)<input class="mono" value={publicKey()} onInput={(e) => setPublicKey(e.currentTarget.value)} /></label><label>Signature (base64)<input class="mono" value={signature()} onInput={(e) => setSignature(e.currentTarget.value)} /></label></div></details>
-      <button disabled={busy() || !sourcePath().trim()} onClick={async () => { setBusy(true); try { const signed = keyId() && publicKey() && signature() ? { key_id: keyId(), public_key: publicKey(), signature: signature() } : undefined; await api.pluginRegisterSource(sourcePath(), sourceLabel() || "Local catalog", signed); setSourcePath(""); setSourceLabel(""); setKeyId(""); setPublicKey(""); setSignature(""); void refetchSources(); pushToast("info", "Catalog source registered disabled"); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>Register source</button>
-      <Show when={(sources()?.sources ?? []).length > 0}><div class="capability-list" style={{ "margin-top": "12px" }}><For each={sources()?.sources ?? []}>{(source) => <div class="capability-item"><div class="panel-title-row"><span><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small></span><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 12)}</code></div><code>{source.trace_id}</code><div class="settings-actions"><button class="settings-button" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable"); void refetchSources(); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button class="settings-button danger" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke"); void refetchSources(); } finally { setBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
+      <button disabled={busy() || !sourcePath().trim()} onClick={async () => { setBusy(true); try { const signed = keyId() && publicKey() && signature() ? { key_id: keyId(), public_key: publicKey(), signature: signature() } : undefined; await api.pluginRegisterSource(sourcePath(), sourceLabel() || "Local catalog", pluginScope(), signed); setSourcePath(""); setSourceLabel(""); setKeyId(""); setPublicKey(""); setSignature(""); void refetchSources(); pushToast("info", "Catalog source registered disabled"); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>Register source</button>
+      <Show when={(sources()?.sources ?? []).length > 0}><div class="capability-list" style={{ "margin-top": "12px" }}><For each={sources()?.sources ?? []}>{(source) => <div class="capability-item"><div class="panel-title-row"><span><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small></span><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 12)}</code></div><code>{source.trace_id}</code><div class="settings-actions"><button class="settings-button" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable", pluginScope()); void refetchSources(); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button class="settings-button danger" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke", pluginScope()); void refetchSources(); } finally { setBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
       <div class="form-row"><label>Search catalog entries<input value={catalogQuery()} onInput={(e) => setCatalogQuery(e.currentTarget.value)} placeholder="frontend, testing, release…" /></label></div>
       <Show when={(catalog()?.entries ?? []).length > 0} fallback={<p class="dim">No catalog entries match yet. Enable a verified source only after reviewing it.</p>}>
         <div class="capability-list"><For each={catalog()?.entries ?? []}>{(entry) => <div class="capability-item"><div class="panel-title-row"><span><strong>{entry.name}</strong><small>{entry.source_label} · {entry.source_enabled ? "Source enabled" : "Source disabled"}{entry.version ? ` · v${entry.version}` : ""}</small></span><code title={entry.catalog_digest}>sha256:{entry.catalog_digest.slice(0, 12)}</code></div><p>{entry.description || "No description"}</p><small>{entry.license ? `License: ${entry.license}` : "License: not declared"}</small></div>}</For></div>
@@ -2028,7 +1970,10 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
   const [query, setQuery] = createSignal("");
   const visibleSkills = createMemo(() => {
     const needle = query().trim().toLowerCase();
-    return props.ctx.skills().filter((skill) => !needle || skill.name.toLowerCase().includes(needle) || (skill.description ?? "").toLowerCase().includes(needle));
+    return props.ctx.skills().filter((skill) => {
+      const inScope = props.ctx.scope() === "user" ? skill.scope === "user" : skill.scope === "workspace";
+      return inScope && (!needle || skill.name.toLowerCase().includes(needle) || (skill.description ?? "").toLowerCase().includes(needle));
+    });
   });
 
   const act = async (id: string, promote: boolean) => {
@@ -2091,7 +2036,7 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
           <div>
             <h2>Loaded skills</h2>
             <p class="dim">
-              A skill is instructions, not capability: it tells the agent how to approach a job, and
+              This is the {props.ctx.scope() === "user" ? "Shared" : "project"} skill layer. A skill is instructions, not capability: it tells the agent how to approach a job, and
               every tool it then reaches for is gated the same as any other call. What it changes is
               which files the agent is told to read — so where a skill comes from is the thing worth
               watching.
@@ -2112,7 +2057,7 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
               <strong>No skills are loaded.</strong>
               <p>
                 Skills are discovered from <code>.vak/skills/</code> in this workspace and from the
-                user-wide skills directory. Each is a folder with a <code>SKILL.md</code> inside.
+                Shared skills directory (<code>~/vak-home/.vak/skills</code>). Each is a folder with a <code>SKILL.md</code> inside.
               </p>
             </div>
           </Match>
@@ -2205,7 +2150,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
           enabled: true,
           failure_mode: failureMode(),
         },
-      ]);
+      ], props.ctx.scope());
       pushToast("info", `Added — runs ${(HOOK_EVENT_LABELS[event()] ?? event()).toLowerCase()}`);
       setCommand("");
       setMatcher("");
@@ -2223,7 +2168,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
     const next = [...props.ctx.hooks()];
     next.splice(index, 1);
     try {
-      await api.putHooks(next);
+      await api.putHooks(next, props.ctx.scope());
       pushToast("info", "Automation removed");
       props.ctx.refetchHooks();
     } catch (err) {
@@ -2245,7 +2190,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
     }
     next[index] = { ...current, ...patch };
     try {
-      await api.putHooks(next);
+      await api.putHooks(next, props.ctx.scope());
       pushToast("info", ok);
       props.ctx.refetchHooks();
     } catch (err) {
@@ -2720,14 +2665,15 @@ A scheduled task is something you ask vak to do on a repeating schedule — a ni
 
 function ExtensionsSection() {
   const [config] = createResource(() => api.config());
-  const [mcp, mcpActions] = createResource(() => api.mcpServers());
-  const [hooks, hooksActions] = createResource(() => api.hooks());
+  const [mcp, mcpActions] = createResource(configScope, (scope) => api.mcpServers(scope));
+  const [hooks, hooksActions] = createResource(configScope, (scope) => api.hooks(scope));
   const [skills, skillsActions] = createResource(() => api.skills());
-  const [plugins, pluginsActions] = createResource(() => api.plugins());
+  const [plugins, pluginsActions] = createResource(configScope, (scope) => api.plugins(scope === "user" ? "user" : "workspace"));
   const [proposals, proposalsActions] = createResource(() => api.skillProposals());
   const [tasks, tasksActions] = createResource(() => api.tasks());
 
   const ctx: ExtensionsCtx = {
+    scope: configScope,
     plugins: () => plugins()?.plugins ?? [],
     pluginsLoading: () => plugins.loading,
     refetchPlugins: () => void pluginsActions.refetch(),
@@ -2781,7 +2727,11 @@ function ExtensionsSection() {
 
   return (
     <div class="view">
-      <PageHeader title="Extensions" description="Configure the external processes, instructions, hooks, and unattended tasks available to vak." />
+      <PageHeader
+        title="Extensions"
+        description="Configure the external processes, instructions, hooks, and unattended tasks available to vak."
+        actions={<ScopeControl />}
+      />
       <Show when={failure()}>
         <section class="panel panel-alert callout" style="margin-bottom:14px">
           <div>
@@ -5498,6 +5448,23 @@ function GatewaySection() {
 
   return (
     <div class="view">
+      <PageHeader
+        title="Channels"
+        description="Manage the shared/workspace baseline, then narrow it per bot and per chat. A chat can never escalate beyond its workspace permission ceiling."
+        actions={<a class="ghost small button-link" href="#/settings">Edit workspace baseline</a>}
+      />
+      <section class="panel channel-inheritance-note" style="margin-bottom:14px">
+        <div class="panel-title-row">
+          <div>
+            <h2>Inheritance chain</h2>
+            <p class="dim">Shared defaults are edited under Settings and inherited by each project. Inside this page, bot settings inherit the project; an individual chat inherits its bot unless you explicitly pin or break that link.</p>
+          </div>
+          <span class="chip chip-tone-success">restrictive only</span>
+        </div>
+        <div class="inheritance-chain" aria-label="Shared to project to bot to chat">
+          <span>Shared</span><span aria-hidden="true">→</span><span>This project</span><span aria-hidden="true">→</span><span>Bot</span><span aria-hidden="true">→</span><span>Chat</span>
+        </div>
+      </section>
       <div class="tab-bar">
         <For each={GATEWAY_TABS}>
           {(t) => (
@@ -5587,6 +5554,7 @@ const APPROVAL_MODES: { value: "ask" | "approve-safe" | "auto-approve"; label: s
 /// that already exists elsewhere.
 function Settings() {
   const [config, { refetch: refetchConfig }] = createResource(() => api.config());
+  const [layer, { refetch: refetchLayer }] = createResource(configScope, (scope) => api.configLayer(scope));
   const [providersData, { refetch: refetchProviders }] = createResource(() => api.providers());
   const [rebuilding, setRebuilding] = createSignal(false);
   const [doctorReport, setDoctorReport] = createSignal<string | null>(null);
@@ -5603,14 +5571,16 @@ function Settings() {
   const [savingMaxTurns, setSavingMaxTurns] = createSignal(false);
   const [togglingSubagents, setTogglingSubagents] = createSignal(false);
 
-  let initialized = false;
+  let initializedScope = "";
   createEffect(() => {
     const c = config();
-    if (c && !initialized) {
-      initialized = true;
-      setSelectedProvider(c.provider || "anthropic");
-      setSelectedModel(c.model || "");
-      setMaxTurnsInput(String(c.max_turns ?? ""));
+    const selectedLayer = layer();
+    const scope = configScope();
+    if (c && selectedLayer && initializedScope !== scope) {
+      initializedScope = scope;
+      setSelectedProvider(selectedLayer.provider || (scope === "project" ? c.provider : "anthropic"));
+      setSelectedModel(selectedLayer.model || (scope === "project" ? c.model : ""));
+      setMaxTurnsInput(String(selectedLayer.max_turns ?? (scope === "project" ? c.max_turns : "")));
     }
   });
 
@@ -5646,6 +5616,7 @@ function Settings() {
       await work();
       pushToast("info", ok);
       refetchConfig();
+      refetchLayer();
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -5656,8 +5627,8 @@ function Settings() {
     if (!providerKeyInput().trim() || savingKey()) return;
     setSavingKey(true);
     try {
-      await api.setProviderKey(selectedProvider(), providerKeyInput().trim());
-      pushToast("info", `Key saved for ${providerLabel(selectedProvider())}`);
+      await api.setProviderKey(selectedProvider(), providerKeyInput().trim(), configScope());
+      pushToast("info", `Key saved for ${providerLabel(selectedProvider())} in ${configScope() === "user" ? "Shared" : "this project"}`);
       setProviderKeyInput("");
       refetchProviders();
       await discover(selectedProvider());
@@ -5702,10 +5673,16 @@ function Settings() {
 
   const rules = createMemo(() => parseRuleLists(config()?.permissions));
   const rulesFor = (decision: RuleDecision) => rules().filter((r) => r.decision === decision);
+  const selectedPermissionMode = () => layer()?.permission_mode ?? (configScope() === "project" ? config()?.permission_mode : undefined);
+  const selectedApprovalMode = () => layer()?.approval_mode ?? (configScope() === "project" ? config()?.approval_mode : undefined);
 
   return (
     <div class="view">
-      <PageHeader title="Settings" description="Choose the model, decide how much the agent may do on its own, store provider keys, and keep the console tidy." />
+      <PageHeader
+        title="Settings"
+        description="Choose the model, permissions, defaults, and inheritance boundary for vak."
+        actions={<ScopeControl />}
+      />
       <div class="two-col">
         <div class="stack">
           <section class="panel">
@@ -5762,7 +5739,7 @@ function Settings() {
                   disabled={!selectedModel().trim()}
                   onClick={() =>
                     void guard(
-                      () => api.patchConfig({ provider: selectedProvider(), model: selectedModel() }),
+                      () => api.patchConfigScope(configScope(), { provider: selectedProvider(), model: selectedModel() }),
                       `Now using ${providerLabel(selectedProvider())} — ${selectedModel()}`,
                     )
                   }
@@ -5776,13 +5753,49 @@ function Settings() {
             </Show>
           </section>
 
+          <Show when={configScope() === "project"}>
+            <section class="panel">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Inherited capabilities</h2>
+                  <p class="dim">This project starts with Shared capabilities. Turn a category off to break that inheritance; add project entries under Extensions.</p>
+                </div>
+              </div>
+              <div class="capability-inheritance-list">
+                <For each={[
+                  ["inherit_mcp", "Connected apps (MCP)"],
+                  ["inherit_hooks", "Automations (hooks)"],
+                  ["inherit_skills", "Skills"],
+                  ["inherit_plugins", "Plugins"],
+                ] as const}>
+                  {([key, label]) => {
+                    const inherited = () => layer()?.capabilities?.[key] !== false;
+                    return (
+                      <label class="inherit-toggle capability-inheritance-row">
+                        <input
+                          type="checkbox"
+                          checked={inherited()}
+                          onChange={(event) => void guard(
+                            () => api.patchConfigScope("project", { [key]: event.currentTarget.checked }),
+                            event.currentTarget.checked ? `${label} now inherit Shared` : `${label} inheritance disabled`,
+                          )}
+                        />
+                        <span><strong>{label}</strong><small>{inherited() ? "Inherited from Shared" : "Project-only"}</small></span>
+                      </label>
+                    );
+                  }}
+                </For>
+              </div>
+            </section>
+          </Show>
+
           <section class="panel">
             <div class="panel-title-row">
               <div>
                 <h2>Provider key</h2>
                 <p class="dim">
-                  The key for {providerLabel(selectedProvider())}. It is written to your private
-                  <code>.env</code> and never shown again, here or anywhere else.
+                  The key for {providerLabel(selectedProvider())}. It is written to the selected
+                  scope’s private <code>.env</code> and never shown again, here or anywhere else.
                 </p>
               </div>
               <span class={`chip chip-tone-${keyConfigured() ? "success" : "warning"}`}>
@@ -5809,7 +5822,7 @@ function Settings() {
                   onClick={() =>
                     void guard(async () => {
                       if (!confirmDestructive(`Delete the stored ${providerLabel(selectedProvider())} key?`)) return;
-                      await api.deleteProviderKey(selectedProvider());
+                      await api.deleteProviderKey(selectedProvider(), configScope());
                       refetchProviders();
                       setDiscoveredModels([]);
                     }, `Key deleted for ${providerLabel(selectedProvider())}`)
@@ -5875,7 +5888,7 @@ function Settings() {
                   onClick={() => {
                     setSavingMaxTurns(true);
                     void guard(
-                      () => api.patchConfig({ max_turns: Number(maxTurnsInput()) }),
+                      () => api.patchConfigScope(configScope(), { max_turns: Number(maxTurnsInput()) }),
                       `Max turns set to ${maxTurnsInput()}`,
                     ).finally(() => setSavingMaxTurns(false));
                   }}
@@ -5892,7 +5905,7 @@ function Settings() {
                     const next = e.currentTarget.checked;
                     setTogglingSubagents(true);
                     void guard(
-                      () => api.patchConfig({ subagents: next }),
+                      () => api.patchConfigScope(configScope(), { subagents: next }),
                       next ? "Sub-agents enabled" : "Sub-agents disabled",
                     ).finally(() => setTogglingSubagents(false));
                   }}
@@ -5918,13 +5931,13 @@ function Settings() {
                 {(m) => (
                   <button
                     class="mode-btn"
-                    classList={{ active: config()?.permission_mode === m.value }}
-                    onClick={() => void guard(() => api.setMode(m.value), `Now set to \u201C${m.label}\u201D`)}
-                    disabled={config()?.permission_mode === m.value}
+                    classList={{ active: selectedPermissionMode() === m.value }}
+                    onClick={() => void guard(() => api.patchConfigScope(configScope(), { permission_mode: m.value === "ReadOnly" ? "read-only" : m.value === "WorkspaceWrite" ? "workspace-write" : "full-access" }), `Now set to \u201C${m.label}\u201D`)}
+                    disabled={selectedPermissionMode() === m.value}
                   >
                     <span class="mode-name">
                       {m.label}
-                      <Show when={config()?.permission_mode === m.value}>
+                      <Show when={selectedPermissionMode() === m.value}>
                         <span class="chip chip-tone-success">current</span>
                       </Show>
                     </span>
@@ -5983,11 +5996,11 @@ function Settings() {
                 {(m) => (
                   <button
                     class="mode-btn"
-                    classList={{ active: config()?.approval_mode === m.value }}
-                    onClick={() => void guard(() => api.patchConfig({ approval_mode: m.value }), `Approval mode set to “${m.label}”`)}
-                    disabled={config()?.approval_mode === m.value}
+                    classList={{ active: selectedApprovalMode() === m.value }}
+                    onClick={() => void guard(() => api.patchConfigScope(configScope(), { approval_mode: m.value }), `Approval mode set to “${m.label}”`)}
+                    disabled={selectedApprovalMode() === m.value}
                   >
-                    <span class="mode-name">{m.label}<Show when={config()?.approval_mode === m.value}><span class="chip chip-tone-success">current</span></Show></span>
+                    <span class="mode-name">{m.label}<Show when={selectedApprovalMode() === m.value}><span class="chip chip-tone-success">set here</span></Show></span>
                     <span class="mode-desc">{m.desc}</span>
                   </button>
                 )}

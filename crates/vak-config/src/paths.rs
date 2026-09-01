@@ -57,7 +57,14 @@ pub fn logs_dir() -> PathBuf {
 /// fresh install (no prior units), so there is always a sane, isolated
 /// default — never the workspace a person happened to be standing in.
 pub fn default_workspace() -> PathBuf {
-    base_home().join("vak-home")
+    // An explicit VAK_HOME is a self-contained installation root. Keeping
+    // Shared config beside that root prevents test/portable installs from
+    // accidentally inheriting the operator's real ~/vak-home state.
+    if get_var("VAK_HOME").is_some() {
+        data_home().join("vak-home")
+    } else {
+        base_home().join("vak-home")
+    }
 }
 
 /// The gateway's persisted workspace selection. An absent or malformed
@@ -332,12 +339,16 @@ mod tests {
     #[test]
     fn default_workspace_is_a_plain_dir_under_the_account_home_not_data_home() {
         let ws = default_workspace();
-        assert_eq!(ws, base_home().join("vak-home"));
-        assert_ne!(
-            ws,
-            resolve(None).data,
-            "the default workspace must never collide with the app's own data home"
-        );
+        if get_var("VAK_HOME").is_some() {
+            assert_eq!(ws, data_home().join("vak-home"));
+        } else {
+            assert_eq!(ws, base_home().join("vak-home"));
+            assert_ne!(
+                ws,
+                resolve(None).data,
+                "the default workspace must never collide with the app's own data home"
+            );
+        }
     }
 
     #[test]

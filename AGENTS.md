@@ -164,6 +164,22 @@
     as `reqwest::blocking` must run on a blocking worker, never inside an async
     request handler. Desktop and tray Operations Center links use the same
     bound listener port and bearer/cookie authentication as the admin console.
+27. **User configuration is the base layer; narrower scopes store only
+    intent.** The Shared layer (`~/vak-home/.vak/config.toml` plus
+    `~/vak-home/.env` and its capability stores) is inherited by every
+    workspace. A project layer
+    may inherit, replace a same-named item, add an item, or explicitly disable
+    inheritance; it must never receive a copied snapshot of effective user
+    values. Session, task, bot, chat, and subagent pins resolve after the
+    workspace and remain scoped. Admin, Desktop, CLI, and server APIs use the
+    same explicit `user`/`project` vocabulary and expose provenance. A GET used
+    to seed a write returns that exact layer, never the merged projection.
+    Secrets follow the same lookup chain but stay outside TOML: project secret
+    → Shared secret → process environment. A project secret must never enter a
+    process-global override map where another pooled workspace could observe
+    it. Curated integrations are executable definitions backed by real
+    packages; the product must not advertise mock, placeholder, or TODO
+    capabilities.
 
 ## Code rules
 

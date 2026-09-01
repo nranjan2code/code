@@ -1775,3 +1775,23 @@ a.tab-btn {
 .ops-timeline { display: grid; gap: 0; }.ops-timeline article { position: relative; display: grid; grid-template-columns: 14px 1fr; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border-soft); }.ops-timeline article:last-child { border-bottom: 0; }.ops-timeline article::before { content: ""; position: absolute; left: 6px; top: 24px; bottom: -13px; width: 1px; background: var(--border-strong); }.ops-timeline article:last-child::before { display: none; }.ops-timeline-dot { position: relative; z-index: 1; width: 9px; height: 9px; margin-top: 5px; border-radius: 50%; background: var(--accent); }.ops-timeline-error .ops-timeline-dot { background: var(--red); }.ops-timeline p { margin: 3px 0; font-size: 11.5px; }.ops-evidence-pre, .ops-receipt { max-height: 260px; overflow: auto; margin: 7px 0 0; padding: 9px 10px; background: var(--surface-raised); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); color: var(--text-soft); white-space: pre-wrap; overflow-wrap: anywhere; }.ops-receipt-list { display: grid; gap: 8px; }.ops-related-list { display: grid; gap: 0; margin-bottom: 12px; }.ops-related-row { display: grid; grid-template-columns: minmax(90px, .4fr) auto minmax(100px, .4fr) minmax(160px, 1fr); align-items: center; gap: 10px; width: 100%; padding: 10px 0; color: var(--text-soft); background: transparent; border: 0; border-bottom: 1px solid var(--border-soft); text-align: left; font: inherit; cursor: pointer; }.ops-related-row:hover { color: var(--text); }.ops-dialog-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: color-mix(in srgb, var(--bg) 86%, transparent); }.ops-dialog { width: min(720px, 100%); max-height: min(760px, 90vh); overflow: auto; padding: 22px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }.ops-dialog .report-pre { max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 780px) { .ops-context-bar { align-items: stretch; flex-direction: column; }.ops-context-status { align-items: center; }.ops-context-field { flex: 1; }.ops-context-field select { width: 100%; }.ops-related-row { grid-template-columns: 1fr auto; }.ops-related-row span:nth-child(n + 3) { grid-column: 1 / -1; } }
 @media (prefers-reduced-motion: reduce) { .ops-connection-live .ops-connection-dot { box-shadow: 0 0 0 3px var(--green-soft); } }
+
+/* ---- layered configuration and channel inheritance ------------------- */
+.scope-control { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.scope-control button { min-height: 30px; padding: 5px 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text-soft); border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
+.scope-control button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.scope-control span { color: var(--muted); font-size: 11.5px; margin-left: 6px; }
+.integration-catalog { display: grid; gap: 9px; margin-top: 12px; }
+.integration-row { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--surface-raised); }
+.integration-summary { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.integration-summary p { margin: 4px 0 6px; color: var(--text-soft); font-size: 12.5px; }
+.integration-summary code { color: var(--muted); font-size: 10.5px; overflow-wrap: anywhere; }
+.integration-key-row { max-width: 520px; }
+.button-link { display: inline-flex; align-items: center; text-decoration: none; }
+.channel-inheritance-note { background: var(--surface-raised); }
+.inheritance-chain { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; color: var(--text-soft); font-size: 12.5px; }
+.inheritance-chain span:nth-child(even) { color: var(--muted); }
+.capability-inheritance-list { display: grid; gap: 4px; }
+.capability-inheritance-row { justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--border-soft); }
+.capability-inheritance-row span { display: grid; gap: 2px; }
+.capability-inheritance-row small { color: var(--muted); font-size: 11.5px; }

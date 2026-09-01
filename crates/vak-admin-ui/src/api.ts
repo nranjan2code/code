@@ -13,6 +13,9 @@ import type {
   InboxEntry,
   McpListResponse,
   McpServerConfig,
+  ConfigLayer,
+  ConfigScope,
+  IntegrationStatus,
   MemoryItem,
   OpsDiagnostics,
   OpsStatus,
@@ -412,18 +415,18 @@ export const api = {
   models: (providerName: string): Promise<DiscoveredModelsResponse> =>
     fetch(`/providers/${encodeURIComponent(providerName)}/models`).then((r) => handle(r)),
 
-  setProviderKey: (provider: string, key: string): Promise<void> =>
+  setProviderKey: (provider: string, key: string, scope: ConfigScope): Promise<void> =>
     fetch("/config/key", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider, key }),
+      body: JSON.stringify({ provider, key, scope }),
     }).then((r) => void handle(r)),
 
-  deleteProviderKey: (provider: string): Promise<void> =>
+  deleteProviderKey: (provider: string, scope: ConfigScope): Promise<void> =>
     fetch("/config/key", {
       method: "DELETE",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider }),
+      body: JSON.stringify({ provider, scope }),
     }).then((r) => void handle(r)),
 
   finops: (): Promise<FinOpsStatus> =>
@@ -443,34 +446,44 @@ export const api = {
   opsDiagnostics: (): Promise<OpsDiagnostics> =>
     fetch("/ops/diagnostics").then((r) => handle(r)),
 
-  mcpServers: (): Promise<McpListResponse> =>
-    fetch("/config/mcp").then((r) => handle(r)),
+  configLayer: (scope: ConfigScope): Promise<ConfigLayer> =>
+    fetch(scope === "user" ? "/config/global" : "/config/project").then((r) => handle(r)),
 
-  tavily: (): Promise<{ enabled: boolean; key_present: boolean; network: boolean; env_var: string }> =>
-    fetch("/config/integrations/tavily").then((r) => handle(r)),
-
-  enableTavily: (key: string): Promise<void> =>
-    fetch("/config/integrations/tavily", {
-      method: "PUT",
+  patchConfigScope: (scope: ConfigScope, patch: Record<string, unknown>): Promise<void> =>
+    fetch(scope === "user" ? "/config/global" : "/config", {
+      method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ key }),
+      body: JSON.stringify(patch),
     }).then((r) => void handle(r)),
 
-  disableTavily: (): Promise<void> =>
-    fetch("/config/integrations/tavily/disable", { method: "POST" }).then((r) => void handle(r)),
+  mcpServers: (scope: ConfigScope = "project"): Promise<McpListResponse> =>
+    fetch(scope === "user" ? "/config/mcp/global" : "/config/mcp").then((r) => handle(r)),
 
-  putMcpServers: (servers: Record<string, McpServerConfig>): Promise<void> =>
-    fetch("/config/mcp", {
+  integrationCatalog: (scope: ConfigScope): Promise<{ scope: ConfigScope; integrations: IntegrationStatus[] }> =>
+    fetch(`/config/integrations?scope=${scope}`).then((r) => handle(r)),
+
+  enableIntegration: (id: string, scope: ConfigScope, key?: string): Promise<IntegrationStatus> =>
+    fetch(`/config/integrations/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope, ...(key?.trim() ? { key: key.trim() } : {}) }),
+    }).then((r) => handle(r)),
+
+  removeIntegration: (id: string, scope: ConfigScope): Promise<IntegrationStatus> =>
+    fetch(`/config/integrations/${encodeURIComponent(id)}?scope=${scope}`, { method: "DELETE" }).then((r) => handle(r)),
+
+  putMcpServers: (servers: Record<string, McpServerConfig>, scope: ConfigScope = "project"): Promise<void> =>
+    fetch(scope === "user" ? "/config/mcp/global" : "/config/mcp", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ servers }),
     }).then((r) => void handle(r)),
 
-  hooks: (): Promise<{ hooks: HookConfig[] }> =>
-    fetch("/config/hooks").then((r) => handle(r)),
+  hooks: (scope: ConfigScope = "project"): Promise<{ hooks: HookConfig[] }> =>
+    fetch(scope === "user" ? "/config/hooks/global" : "/config/hooks").then((r) => handle(r)),
 
-  putHooks: (hooks: HookConfig[]): Promise<void> =>
-    fetch("/config/hooks", {
+  putHooks: (hooks: HookConfig[], scope: ConfigScope = "project"): Promise<void> =>
+    fetch(scope === "user" ? "/config/hooks/global" : "/config/hooks", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ hooks }),
@@ -479,26 +492,26 @@ export const api = {
   skills: (): Promise<{ skills: SkillItem[] }> =>
     fetch("/skills").then((r) => handle(r)),
 
-  plugins: (): Promise<{ plugins: PluginItem[] }> =>
-    fetch("/plugins").then((r) => handle(r)),
+  plugins: (scope?: "workspace" | "user"): Promise<{ plugins: PluginItem[] }> =>
+    fetch(`/plugins${scope ? `?scope=${scope}` : ""}`).then((r) => handle(r)),
   pluginAudit: (): Promise<{ audit: unknown[] }> =>
     fetch("/plugins/audit").then((r) => handle(r)),
-  pluginSources: (): Promise<{ sources: MarketplaceSource[] }> =>
-    fetch("/plugins/sources").then((r) => handle(r)),
-  pluginCatalog: (query = ""): Promise<{ entries: MarketplaceEntry[]; errors: { source_id?: string; error: string }[] }> =>
-    fetch(`/plugins/catalog${query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ""}`).then((r) => handle(r)),
-  pluginRegisterSource: (path: string, label: string, signature?: { key_id: string; public_key: string; signature: string }): Promise<MarketplaceSource> =>
-    fetch("/plugins/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, label, trust: "manual-review", ...(signature ?? {}) }) }).then((r) => handle(r)),
-  pluginKeyAction: (keyId: string, action: "revoke" | "restore"): Promise<unknown> =>
-    fetch(`/plugins/keys/${encodeURIComponent(keyId)}/${action}`, { method: "POST" }).then((r) => handle(r)),
-  pluginSourceAction: (id: string, action: "enable" | "disable"): Promise<MarketplaceSource> =>
-    fetch(`/plugins/sources/${encodeURIComponent(id)}/${action}`, { method: "POST" }).then((r) => handle(r)),
+  pluginSources: (scope: "workspace" | "user"): Promise<{ sources: MarketplaceSource[] }> =>
+    fetch(`/plugins/sources?scope=${scope}`).then((r) => handle(r)),
+  pluginCatalog: (query = "", scope: "workspace" | "user" = "workspace"): Promise<{ entries: MarketplaceEntry[]; errors: { source_id?: string; error: string }[] }> =>
+    fetch(`/plugins/catalog?scope=${scope}${query.trim() ? `&q=${encodeURIComponent(query.trim())}` : ""}`).then((r) => handle(r)),
+  pluginRegisterSource: (path: string, label: string, scope: "workspace" | "user", signature?: { key_id: string; public_key: string; signature: string }): Promise<MarketplaceSource> =>
+    fetch("/plugins/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, label, scope, trust: "manual-review", ...(signature ?? {}) }) }).then((r) => handle(r)),
+  pluginKeyAction: (keyId: string, action: "revoke" | "restore", scope: "workspace" | "user"): Promise<unknown> =>
+    fetch(`/plugins/keys/${encodeURIComponent(keyId)}/${action}?scope=${scope}`, { method: "POST" }).then((r) => handle(r)),
+  pluginSourceAction: (id: string, action: "enable" | "disable", scope: "workspace" | "user"): Promise<MarketplaceSource> =>
+    fetch(`/plugins/sources/${encodeURIComponent(id)}/${action}?scope=${scope}`, { method: "POST" }).then((r) => handle(r)),
   pluginInstall: (path: string, scope: "workspace" | "user" = "workspace"): Promise<PluginItem> =>
     fetch("/plugins/install", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, scope }) }).then((r) => handle(r)),
   pluginUpdate: (path: string, scope: "workspace" | "user" = "workspace"): Promise<PluginItem> =>
     fetch("/plugins/update", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, scope }) }).then((r) => handle(r)),
-  pluginAction: (name: string, action: "enable" | "disable" | "rollback" | "remove"): Promise<PluginItem> =>
-    fetch(action === "remove" ? `/plugins/${encodeURIComponent(name)}` : `/plugins/${encodeURIComponent(name)}/${action}`, { method: action === "remove" ? "DELETE" : "POST" }).then((r) => handle(r)),
+  pluginAction: (name: string, action: "enable" | "disable" | "rollback" | "remove", scope: "workspace" | "user"): Promise<PluginItem> =>
+    fetch(`${action === "remove" ? `/plugins/${encodeURIComponent(name)}` : `/plugins/${encodeURIComponent(name)}/${action}`}?scope=${scope}`, { method: action === "remove" ? "DELETE" : "POST" }).then((r) => handle(r)),
 
   skillProposals: (): Promise<{ proposals: SkillProposal[] }> =>
     fetch("/skills/proposals").then((r) => handle(r)),

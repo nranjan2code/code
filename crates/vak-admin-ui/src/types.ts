@@ -464,6 +464,63 @@ export interface McpListResponse {
   servers: Record<string, McpServerConfig>;
 }
 
+export type ConfigScope = "user" | "project";
+
+export interface ConfigLayer {
+  scope: ConfigScope;
+  path: string;
+  provider?: string | null;
+  model?: string | null;
+  max_tokens?: number | null;
+  max_turns?: number | null;
+  permission_mode?: string | null;
+  approval_mode?: string | null;
+  profile?: string | null;
+  subagents?: boolean | null;
+  theme?: string | null;
+  permissions: { allow: string[]; ask: string[]; deny: string[] };
+  memory: {
+    search_enabled?: boolean | null;
+    write_enabled?: boolean | null;
+    reflection?: boolean | null;
+    skill_proposals?: boolean | null;
+  };
+  work: {
+    enabled?: boolean | null;
+    default_mode?: string | null;
+    max_items?: number | null;
+    max_revisions?: number | null;
+    max_parallel?: number | null;
+    confirmation?: string | null;
+  };
+  counts: { mcp: number; hooks: number };
+  capabilities: {
+    inherit_mcp?: boolean | null;
+    inherit_hooks?: boolean | null;
+    inherit_skills?: boolean | null;
+    inherit_plugins?: boolean | null;
+  };
+}
+
+export interface IntegrationStatus {
+  id: string;
+  label: string;
+  description: string;
+  command: string;
+  args: string[];
+  network: boolean;
+  env_var?: string | null;
+  key_required: boolean;
+  documentation_url: string;
+  scope: ConfigScope;
+  configured_here: boolean;
+  inherited: boolean;
+  effective: boolean;
+  key_here: boolean;
+  key_inherited: boolean;
+  key_effective: boolean;
+}
+
 export interface TavilyStatus {
   enabled: boolean;
   key_present: boolean;

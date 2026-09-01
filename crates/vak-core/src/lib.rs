@@ -359,6 +359,7 @@ struct CoreInner {
     /// Runtime hook override (desktop/TUI management surface).
     hooks_override: std::sync::Mutex<Option<Vec<vak_config::HookConfig>>>,
     hooks_runtime_pinned: std::sync::atomic::AtomicBool,
+    capabilities_override: std::sync::Mutex<Option<vak_config::CapabilityInheritanceResolved>>,
     /// Restrictive overlay applied only to a gateway channel Core.
     channel_policy: std::sync::Mutex<Option<vak_config::ChannelPolicy>>,
     /// Session-scoped domain-weighted doubt per (provider, model) leg
@@ -568,6 +569,7 @@ impl Core {
                 mcp_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 hooks_override: std::sync::Mutex::new(None),
                 hooks_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
+                capabilities_override: std::sync::Mutex::new(None),
                 channel_policy: std::sync::Mutex::new(None),
                 beliefs: Arc::new(routing::BeliefState::new()),
                 spend_gates: std::sync::Mutex::new(HashMap::new()),
@@ -945,11 +947,42 @@ impl Core {
         self.filter_mcp(config)
     }
 
+    pub fn effective_capability_inheritance(&self) -> vak_config::CapabilityInheritanceResolved {
+        self.inner
+            .capabilities_override
+            .lock()
+            .ok()
+            .and_then(|value| value.clone())
+            .unwrap_or_else(|| self.inner.config.capabilities.clone())
+    }
+
+    pub fn apply_persisted_capability_inheritance(
+        &self,
+        capabilities: vak_config::CapabilityInheritanceResolved,
+    ) {
+        if let Ok(mut current) = self.inner.capabilities_override.lock() {
+            *current = Some(capabilities);
+        }
+        if let Ok(mut cache) = self.inner.mcp_cache.lock() {
+            *cache = None;
+        }
+    }
+
+    fn shared_capability_root(&self) -> std::path::PathBuf {
+        vak_config::paths::default_workspace().join(".vak")
+    }
+
     fn extend_enabled_plugin_mcp(&self, config: &mut vak_config::McpConfig) {
-        for root in [
-            self.inner.cwd.join(".vak"),
-            self.inner.sessions_home.clone(),
-        ] {
+        let shared_root = self.shared_capability_root();
+        let local_root = self.inner.cwd.join(".vak");
+        let mut roots = vec![local_root.clone()];
+        if local_root != shared_root {
+            roots.push(shared_root.clone());
+        }
+        for root in roots {
+            if root == shared_root && !self.effective_capability_inheritance().inherit_plugins {
+                continue;
+            }
             let Ok(plugins) = vak_plugin::PluginStore::new(root).enabled() else {
                 continue;
             };
@@ -1014,10 +1047,16 @@ impl Core {
 
     fn plugin_mcp_invocation_context(&self) -> Vec<(vak_plugin::PluginStore, String, String)> {
         let mut context = Vec::new();
-        for root in [
-            self.inner.cwd.join(".vak"),
-            self.inner.sessions_home.clone(),
-        ] {
+        let shared_root = self.shared_capability_root();
+        let local_root = self.inner.cwd.join(".vak");
+        let mut roots = vec![local_root.clone()];
+        if local_root != shared_root {
+            roots.push(shared_root.clone());
+        }
+        for root in roots {
+            if root == shared_root && !self.effective_capability_inheritance().inherit_plugins {
+                continue;
+            }
             let store = vak_plugin::PluginStore::new(root);
             let Ok(plugins) = store.enabled() else {
                 continue;
@@ -1160,7 +1199,7 @@ impl Core {
             .filter_map(|(name, s)| {
                 let mut env = Vec::with_capacity(s.env.len());
                 for (k, v) in &s.env {
-                    match interpolate_env_var(v) {
+                    match interpolate_env_var_with(v, |key| self.mcp_secret(key)) {
                         Some(resolved) => env.push((k.clone(), resolved)),
                         None => {
                             eprintln!("[mcp] server '{name}' skipped: unresolved environment variable in '{v}' (define it in .env)");
@@ -1323,7 +1362,17 @@ impl Core {
             self.inner.config.hooks.clone()
         };
         let mut hooks = hooks;
-        for store_home in [self.sessions_home(), self.inner.cwd.join(".vak")] {
+        let shared_root = self.shared_capability_root();
+        let local_root = self.inner.cwd.join(".vak");
+        let mut roots = vec![local_root.clone()];
+        if local_root != shared_root {
+            roots.push(shared_root.clone());
+        }
+        for store_home in roots {
+            if store_home == shared_root && !self.effective_capability_inheritance().inherit_plugins
+            {
+                continue;
+            }
             let store = vak_plugin::PluginStore::new(store_home);
             if let Ok(plugin_hooks) = store.enabled_hooks() {
                 hooks.extend(plugin_hooks.into_iter().map(|(_plugin, hook)| {
@@ -1555,6 +1604,7 @@ impl Core {
         {
             self.apply_persisted_hooks(config.hooks.clone());
         }
+        self.apply_persisted_capability_inheritance(config.capabilities.clone());
         self.apply_persisted_memory(
             config.memory.search_enabled,
             config.memory.write_enabled,
@@ -1734,10 +1784,16 @@ impl Core {
 
     pub fn skills(&self) -> Vec<skills::Skill> {
         let mut plugin_roots = Vec::new();
-        for (root, label) in [
-            (self.inner.cwd.join(".vak"), "workspace".to_string()),
-            (self.inner.sessions_home.clone(), "user".to_string()),
-        ] {
+        let shared_root = self.shared_capability_root();
+        let local_root = self.inner.cwd.join(".vak");
+        let mut roots = vec![(local_root.clone(), "workspace".to_string())];
+        if local_root != shared_root {
+            roots.push((shared_root.clone(), "shared".to_string()));
+        }
+        for (root, label) in roots {
+            if label == "shared" && !self.effective_capability_inheritance().inherit_plugins {
+                continue;
+            }
             if let Ok(enabled) = vak_plugin::PluginStore::new(&root).enabled() {
                 plugin_roots.extend(enabled.into_iter().map(|plugin| {
                     (
@@ -1747,11 +1803,12 @@ impl Core {
                 }));
             }
         }
-        let skills = skills::discover_with_plugins(
-            &self.inner.cwd,
-            &self.inner.sessions_home,
-            &plugin_roots,
-        );
+        let mut skills =
+            skills::discover_with_plugins(&self.inner.cwd, &shared_root, &plugin_roots);
+        if !self.effective_capability_inheritance().inherit_skills {
+            let shared_skills = shared_root.join("skills");
+            skills.retain(|skill| !skill.path.starts_with(&shared_skills));
+        }
         let Some(policy) = self.channel_policy() else {
             return skills;
         };
@@ -1765,10 +1822,16 @@ impl Core {
 
     pub fn skills_with_shadowed(&self) -> Vec<skills::Skill> {
         let mut plugin_roots = Vec::new();
-        for (root, label) in [
-            (self.inner.cwd.join(".vak"), "workspace".to_string()),
-            (self.inner.sessions_home.clone(), "user".to_string()),
-        ] {
+        let shared_root = self.shared_capability_root();
+        let local_root = self.inner.cwd.join(".vak");
+        let mut roots = vec![(local_root.clone(), "workspace".to_string())];
+        if local_root != shared_root {
+            roots.push((shared_root.clone(), "shared".to_string()));
+        }
+        for (root, label) in roots {
+            if label == "shared" && !self.effective_capability_inheritance().inherit_plugins {
+                continue;
+            }
             if let Ok(enabled) = vak_plugin::PluginStore::new(&root).enabled() {
                 plugin_roots.extend(enabled.into_iter().map(|plugin| {
                     (
@@ -1778,11 +1841,12 @@ impl Core {
                 }));
             }
         }
-        let skills = skills::discover_all_with_plugins(
-            &self.inner.cwd,
-            &self.inner.sessions_home,
-            &plugin_roots,
-        );
+        let mut skills =
+            skills::discover_all_with_plugins(&self.inner.cwd, &shared_root, &plugin_roots);
+        if !self.effective_capability_inheritance().inherit_skills {
+            let shared_skills = shared_root.join("skills");
+            skills.retain(|skill| !skill.path.starts_with(&shared_skills));
+        }
         let Some(policy) = self.channel_policy() else {
             return skills;
         };
@@ -1801,10 +1865,16 @@ impl Core {
 
     pub fn custom_commands(&self) -> Vec<custom_commands::CustomCommand> {
         let mut plugin_roots = Vec::new();
-        for (root, label) in [
-            (self.inner.cwd.join(".vak"), "workspace".to_string()),
-            (self.inner.sessions_home.clone(), "user".to_string()),
-        ] {
+        let shared_root = self.shared_capability_root();
+        let local_root = self.inner.cwd.join(".vak");
+        let mut roots = vec![(local_root.clone(), "workspace".to_string())];
+        if local_root != shared_root {
+            roots.push((shared_root.clone(), "shared".to_string()));
+        }
+        for (root, label) in roots {
+            if label == "shared" && !self.effective_capability_inheritance().inherit_plugins {
+                continue;
+            }
             if let Ok(enabled) = vak_plugin::PluginStore::new(&root).enabled() {
                 plugin_roots.extend(enabled.into_iter().map(|plugin| {
                     (
@@ -1814,11 +1884,7 @@ impl Core {
                 }));
             }
         }
-        custom_commands::discover_with_plugins(
-            &self.inner.cwd,
-            &self.inner.sessions_home,
-            &plugin_roots,
-        )
+        custom_commands::discover_with_plugins(&self.inner.cwd, &shared_root, &plugin_roots)
     }
 
     pub fn tool_names(&self) -> Vec<String> {
@@ -1966,9 +2032,9 @@ impl Core {
     fn provider_auth_for(&self, provider: &str) -> Result<ProviderAuth, CoreError> {
         let provider = provider.to_string();
         let required_key = |env: &str, provider: &str| {
-            let primary = vak_config::get_var(env).or_else(|| {
+            let primary = self.provider_secret(env).or_else(|| {
                 Self::provider_pool_env_var(provider).and_then(|pool_env| {
-                    vak_config::get_var(pool_env).and_then(|value| {
+                    self.provider_secret(pool_env).and_then(|value| {
                         value
                             .split([',', '\n'])
                             .map(str::trim)
@@ -2006,10 +2072,11 @@ impl Core {
                 })
             }
             "google" => {
-                let api_key = vak_config::get_var("GEMINI_API_KEY")
-                    .or_else(|| vak_config::get_var("GOOGLE_API_KEY"))
+                let api_key = self
+                    .provider_secret("GEMINI_API_KEY")
+                    .or_else(|| self.provider_secret("GOOGLE_API_KEY"))
                     .or_else(|| {
-                        vak_config::get_var("GEMINI_API_KEYS").and_then(|value| {
+                        self.provider_secret("GEMINI_API_KEYS").and_then(|value| {
                             value
                                 .split([',', '\n'])
                                 .map(str::trim)
@@ -2233,30 +2300,39 @@ impl Core {
         match provider {
             "ollama" => true,
             "google" => {
-                ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
-                    .iter()
-                    .any(|env| vak_config::get_var(env).is_some_and(|key| !key.trim().is_empty()))
-                    || vak_config::get_var("GEMINI_API_KEYS").is_some_and(|keys| {
-                        keys.split([',', '\n']).any(|key| !key.trim().is_empty())
-                    })
+                ["GEMINI_API_KEY", "GOOGLE_API_KEY"].iter().any(|env| {
+                    self.provider_secret(env)
+                        .is_some_and(|key| !key.trim().is_empty())
+                }) || self
+                    .provider_secret("GEMINI_API_KEYS")
+                    .is_some_and(|keys| keys.split([',', '\n']).any(|key| !key.trim().is_empty()))
             }
             other => {
-                let singular = vak_config::get_var(Self::provider_env_var(other).unwrap_or(""))
+                let singular = self
+                    .provider_secret(Self::provider_env_var(other).unwrap_or(""))
                     .is_some_and(|key| !key.trim().is_empty());
                 let plural = Self::provider_pool_env_var(other)
-                    .and_then(vak_config::get_var)
+                    .and_then(|env| self.provider_secret(env))
                     .is_some_and(|keys| keys.split([',', '\n']).any(|key| !key.trim().is_empty()));
                 singular || plural
             }
         }
     }
 
-    /// Persists the key for `provider` into the user-level
-    /// `.env` at `data_home()/.env` (0600, shared by every surface) and registers it
-    /// as a runtime override so the next request uses it immediately —
-    /// no restart. Returns the env var that was written. The key itself
-    /// never re-enters any response.
+    /// Persists the Shared provider key. Prefer [`Self::set_provider_key_scoped`]
+    /// when the caller needs a project-local override.
     pub fn set_provider_key(&self, provider: &str, key: &str) -> Result<String, CoreError> {
+        self.set_provider_key_scoped(provider, key, false)
+    }
+
+    /// Persists a provider credential at Shared or project scope without
+    /// placing project credentials in the process-global environment.
+    pub fn set_provider_key_scoped(
+        &self,
+        provider: &str,
+        key: &str,
+        project: bool,
+    ) -> Result<String, CoreError> {
         let key = key.trim();
         if key.is_empty() {
             return Err(CoreError::InvalidConfig("empty api key".into()));
@@ -2266,10 +2342,13 @@ impl Core {
                 "unknown provider '{provider}' (or it needs no key)"
             ))
         })?;
-        let path = self.user_env_file();
+        let path = if project {
+            self.inner.cwd.join(".env")
+        } else {
+            self.user_env_file()
+        };
         vak_config::upsert_env_file(&path, env, key)
             .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))?;
-        vak_config::set_override(env, key);
         // A different key reaches a different set of models, and any cached
         // client still holds the old credential.
         self.invalidate_models_cache(Some(provider));
@@ -2279,21 +2358,31 @@ impl Core {
         Ok(env.to_string())
     }
 
-    /// Revoke `provider`'s key: strip it from the user `.env`, drop the
-    /// runtime override and the loaded-dotenv copy, and forget any
-    /// discovered models. A key exported in the real environment cannot be
-    /// unset from here — the caller is told so it can say as much.
+    /// Removes the Shared provider key. Prefer
+    /// [`Self::remove_provider_key_scoped`] for a project-local override.
     pub fn remove_provider_key(&self, provider: &str) -> Result<RemovedKey, CoreError> {
+        self.remove_provider_key_scoped(provider, false)
+    }
+
+    /// Remove one provider-key layer. A removed project value resumes Shared
+    /// inheritance; process environment values remain outside Admin control.
+    pub fn remove_provider_key_scoped(
+        &self,
+        provider: &str,
+        project: bool,
+    ) -> Result<RemovedKey, CoreError> {
         let env = Self::provider_env_var(provider).ok_or_else(|| {
             CoreError::InvalidConfig(format!(
                 "unknown provider '{provider}' (or it needs no key)"
             ))
         })?;
-        let path = self.user_env_file();
+        let path = if project {
+            self.inner.cwd.join(".env")
+        } else {
+            self.user_env_file()
+        };
         vak_config::remove_env_file_key(&path, env)
             .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))?;
-        vak_config::clear_override(env);
-        vak_config::forget_dotenv_var(env);
         self.invalidate_models_cache(Some(provider));
         // Any cached client was built with the old key.
         if let Ok(mut p) = self.inner.provider_instance.lock() {
@@ -2302,14 +2391,26 @@ impl Core {
         Ok(RemovedKey {
             env_var: env.to_string(),
             // If it still resolves, it comes from the process environment.
-            shadowed_by_env: vak_config::get_var(env).is_some(),
+            shadowed_by_env: self.provider_secret(env).is_some(),
         })
     }
 
-    /// Store an MCP credential in the shared user secret file and register it
-    /// as a runtime override. The MCP config should contain a `${VAR}`
-    /// reference, never the credential itself.
+    /// Store an MCP credential in the shared user secret file. The MCP config
+    /// should contain a `${VAR}` reference, never the credential itself.
     pub fn set_mcp_secret(&self, env_var: &str, key: &str) -> Result<(), CoreError> {
+        self.set_mcp_secret_scoped(env_var, key, false)
+    }
+
+    /// Persist an MCP credential at user or project scope. Project values are
+    /// deliberately not registered as process-global overrides: a gateway may
+    /// host several workspaces that use the same variable name with different
+    /// credentials.
+    pub fn set_mcp_secret_scoped(
+        &self,
+        env_var: &str,
+        key: &str,
+        project: bool,
+    ) -> Result<(), CoreError> {
         let env_var = env_var.trim();
         let key = key.trim();
         if env_var.is_empty()
@@ -2320,11 +2421,50 @@ impl Core {
         {
             return Err(CoreError::InvalidConfig("invalid MCP secret".into()));
         }
-        let path = self.user_env_file();
+        let path = if project {
+            self.inner.cwd.join(".env")
+        } else {
+            self.user_env_file()
+        };
         vak_config::upsert_env_file(&path, env_var, key)
             .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))?;
-        vak_config::set_override(env_var, key);
         Ok(())
+    }
+
+    /// Remove only the selected MCP secret layer. Removing a project value
+    /// resumes user/process inheritance; it never revokes the inherited key.
+    pub fn remove_mcp_secret_scoped(&self, env_var: &str, project: bool) -> Result<(), CoreError> {
+        let path = if project {
+            self.inner.cwd.join(".env")
+        } else {
+            self.user_env_file()
+        };
+        vak_config::remove_env_file_key(&path, env_var)
+            .map_err(|e| CoreError::InvalidConfig(format!("writing {path:?}: {e}")))
+    }
+
+    pub fn mcp_secret_at_scope(&self, env_var: &str, project: bool) -> bool {
+        let path = if project {
+            self.inner.cwd.join(".env")
+        } else {
+            self.user_env_file()
+        };
+        vak_config::read_env_file_var(&path, env_var).is_some()
+    }
+
+    pub fn mcp_secret(&self, env_var: &str) -> Option<String> {
+        self.scoped_secret(env_var)
+    }
+
+    fn provider_secret(&self, env_var: &str) -> Option<String> {
+        self.scoped_secret(env_var)
+            .or_else(|| vak_config::get_var(env_var))
+    }
+
+    fn scoped_secret(&self, env_var: &str) -> Option<String> {
+        vak_config::read_env_file_var(&self.inner.cwd.join(".env"), env_var)
+            .or_else(|| vak_config::read_env_file_var(&self.user_env_file(), env_var))
+            .or_else(|| std::env::var(env_var).ok())
     }
 
     /// The env var that authenticates the Telegram bridge. Not a "provider"
@@ -2337,7 +2477,7 @@ impl Core {
         vak_config::get_var(Self::TELEGRAM_TOKEN_ENV).is_some()
     }
 
-    /// Persists the Telegram bot token into the user-level `.env`
+    /// Persists the Telegram bot token into the Shared `~/vak-home/.env`
     /// (0600, shared by every surface) and registers it as a runtime
     /// override so it's visible immediately. The launchd/systemd unit for
     /// the bridge still reads `.env` itself on (re)start — this only makes
@@ -3227,7 +3367,18 @@ impl Core {
         let hooks: Option<std::sync::Arc<Vec<vak_hooks::HookDef>>> =
             Some(std::sync::Arc::new(build_hooks_from(&hook_configs)?));
         cfg.hooks = hooks.clone();
-        let plugin_hooks: Vec<_> = [self.sessions_home(), self.inner.cwd.join(".vak")]
+        let shared_root = self.shared_capability_root();
+        let plugin_homes = if self.effective_capability_inheritance().inherit_plugins {
+            let local_root = self.inner.cwd.join(".vak");
+            if local_root == shared_root {
+                vec![local_root]
+            } else {
+                vec![shared_root.clone(), local_root]
+            }
+        } else {
+            vec![self.inner.cwd.join(".vak")]
+        };
+        let plugin_hooks: Vec<_> = plugin_homes
             .into_iter()
             .flat_map(|home| {
                 vak_plugin::PluginStore::new(home)
@@ -3235,7 +3386,7 @@ impl Core {
                     .unwrap_or_default()
             })
             .collect();
-        let user_home = self.sessions_home();
+        let shared_home = shared_root;
         let workspace_home = self.inner.cwd.join(".vak");
         cfg.hook_recorder = Some(Arc::new(move |hook: &vak_hooks::HookDef, success: bool| {
             if let Some((plugin, _)) = plugin_hooks
@@ -3243,7 +3394,7 @@ impl Core {
                 .find(|(_, candidate)| candidate.command == hook.command)
             {
                 let store = vak_plugin::PluginStore::new(match plugin.scope {
-                    vak_plugin::InstallScope::User => &user_home,
+                    vak_plugin::InstallScope::User => &shared_home,
                     vak_plugin::InstallScope::Workspace => &workspace_home,
                 });
                 let _ = store.record_invocation(
@@ -4211,6 +4362,13 @@ fn self_path() -> std::path::PathBuf {
 /// when any reference is unresolved so callers can drop the pair instead of
 /// leaking a literal placeholder into a child environment.
 pub fn interpolate_env_var(value: &str) -> Option<String> {
+    interpolate_env_var_with(value, vak_config::get_var)
+}
+
+fn interpolate_env_var_with(
+    value: &str,
+    mut lookup: impl FnMut(&str) -> Option<String>,
+) -> Option<String> {
     if !value.contains("${") {
         return Some(value.to_string());
     }
@@ -4224,7 +4382,7 @@ pub fn interpolate_env_var(value: &str) -> Option<String> {
         if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return None;
         }
-        out.push_str(&vak_config::get_var(name)?);
+        out.push_str(&lookup(name)?);
         rest = &after[end + 1..];
     }
     out.push_str(rest);
@@ -4435,7 +4593,12 @@ mod plugin_runtime_tests {
         store
             .install_local(package.as_path(), vak_plugin::InstallOptions::default())
             .unwrap();
-        assert!(core.effective_mcp().servers.is_empty());
+        assert!(
+            !core
+                .effective_mcp()
+                .servers
+                .contains_key("plugin.tools-pack.lookup")
+        );
         store.enable("tools-pack").unwrap();
         let servers = core.effective_mcp().servers;
         let server = servers.get("plugin.tools-pack.lookup").unwrap();
