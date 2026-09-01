@@ -4423,12 +4423,15 @@ async fn list_skills(State(state): State<AppState>) -> Json<serde_json::Value> {
     // trust proposition from a Shared skill
     // one -- the admin console groups by this.
     let workspace_root = state.core.cwd().join(".vak/skills");
+    let shared_root = vak_config::paths::default_workspace().join(".vak/skills");
     let skills: Vec<serde_json::Value> = state
         .core
         .skills_with_shadowed()
         .iter()
         .map(|s| {
-            let scope = if s.path.starts_with(&workspace_root) {
+            let scope = if s.path.starts_with(&shared_root) {
+                "user"
+            } else if s.path.starts_with(&workspace_root) {
                 "workspace"
             } else {
                 "user"
