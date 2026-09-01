@@ -267,6 +267,31 @@ async fn max_blocks_cap_lets_second_bad_response_through() {
 }
 
 #[tokio::test]
+async fn guard_at_turn_limit_is_not_reported_as_completed() {
+    let mut h = harness(
+        Some(StopPolicy {
+            marker_gate: true,
+            verify_gate: false,
+            max_blocks: 1,
+        }),
+        vec![ScriptedResponse::Message(text_msg("Fixing both:"))],
+    );
+    h.agent.as_mut().expect("agent").config.max_turns = 1;
+    let outcome = h
+        .agent
+        .as_mut()
+        .expect("agent")
+        .run(
+            "fix the two bugs",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+    assert!(matches!(outcome, TurnOutcome::MaxTurnsReached));
+}
+
+#[tokio::test]
 async fn disabled_policy_never_blocks() {
     let mut h = harness(
         None,

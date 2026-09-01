@@ -511,6 +511,7 @@ impl Agent {
         let prompt_owned = prompt.text_content();
         let mut bash_calls_this_run: u32 = 0;
         let mut verification_stale = false;
+        let mut user_completion_released = false;
         self.obligations.clear();
         self.handoff_used = false;
         self.run_call_counts
@@ -638,6 +639,9 @@ impl Agent {
                             };
                         }
                     };
+                    if StopPolicy::is_done_message(&message.text_content()) {
+                        user_completion_released = true;
+                    }
                     let _ = session.append_message(MessageRecord {
                         message,
                         meta: None,
@@ -1023,7 +1027,10 @@ impl Agent {
                         self.config.hook_recorder.as_deref(),
                     )
                     .await;
-                    if stop.blocked && turn + 1 < self.config.max_turns {
+                    if stop.blocked {
+                        if turn + 1 >= self.config.max_turns {
+                            return TurnOutcome::MaxTurnsReached;
+                        }
                         let reason = stop
                             .reason
                             .unwrap_or_else(|| "continue required by hook".into());
@@ -1049,24 +1056,29 @@ impl Agent {
                         bash_calls_this_run,
                         verification_stale,
                         &mut stop_blocks_left,
+                        user_completion_released,
                     )
                     .await
-                    && self.guard_continue(reason, &events, turn).await
                 {
-                    turn += 1;
-                    continue;
+                    if self.guard_continue(reason, &events, turn).await {
+                        turn += 1;
+                        continue;
+                    }
+                    return TurnOutcome::MaxTurnsReached;
                 }
-                if let Some(rejection) = self.goal_gate(&response, &cancel, &events).await
-                    && self.guard_continue(rejection, &events, turn).await
-                {
-                    turn += 1;
-                    continue;
+                if let Some(rejection) = self.goal_gate(&response, &cancel, &events).await {
+                    if self.guard_continue(rejection, &events, turn).await {
+                        turn += 1;
+                        continue;
+                    }
+                    return TurnOutcome::MaxTurnsReached;
                 }
-                if let Some(rejection) = self.managed_work_gate(&cancel, &events).await
-                    && self.guard_continue(rejection, &events, turn).await
-                {
-                    turn += 1;
-                    continue;
+                if let Some(rejection) = self.managed_work_gate(&cancel, &events).await {
+                    if self.guard_continue(rejection, &events, turn).await {
+                        turn += 1;
+                        continue;
+                    }
+                    return TurnOutcome::MaxTurnsReached;
                 }
                 return TurnOutcome::Completed { response };
             }
@@ -1080,24 +1092,29 @@ impl Agent {
                         bash_calls_this_run,
                         verification_stale,
                         &mut stop_blocks_left,
+                        user_completion_released,
                     )
                     .await
-                    && self.guard_continue(reason, &events, turn).await
                 {
-                    turn += 1;
-                    continue;
+                    if self.guard_continue(reason, &events, turn).await {
+                        turn += 1;
+                        continue;
+                    }
+                    return TurnOutcome::MaxTurnsReached;
                 }
-                if let Some(rejection) = self.goal_gate(&response, &cancel, &events).await
-                    && self.guard_continue(rejection, &events, turn).await
-                {
-                    turn += 1;
-                    continue;
+                if let Some(rejection) = self.goal_gate(&response, &cancel, &events).await {
+                    if self.guard_continue(rejection, &events, turn).await {
+                        turn += 1;
+                        continue;
+                    }
+                    return TurnOutcome::MaxTurnsReached;
                 }
-                if let Some(rejection) = self.managed_work_gate(&cancel, &events).await
-                    && self.guard_continue(rejection, &events, turn).await
-                {
-                    turn += 1;
-                    continue;
+                if let Some(rejection) = self.managed_work_gate(&cancel, &events).await {
+                    if self.guard_continue(rejection, &events, turn).await {
+                        turn += 1;
+                        continue;
+                    }
+                    return TurnOutcome::MaxTurnsReached;
                 }
                 return TurnOutcome::Completed { response };
             }
@@ -2106,9 +2123,10 @@ impl Agent {
         bash_calls_this_run: u32,
         verification_stale: bool,
         blocks_left: &mut u32,
+        user_completion_released: bool,
     ) -> Option<String> {
         let policy = self.config.stop_policy.as_ref()?;
-        if *blocks_left == 0 {
+        if user_completion_released {
             return None;
         }
         let reason = policy.evaluate_with_state(
@@ -2117,6 +2135,12 @@ impl Agent {
             bash_calls_this_run,
             verification_stale,
         )?;
+        if !matches!(reason, BlockReason::UserCompletionRequired) && *blocks_left == 0 {
+            return None;
+        }
+        if matches!(reason, BlockReason::UserCompletionRequired) {
+            return Some(reason.message());
+        }
         *blocks_left -= 1;
         Some(reason.message())
     }

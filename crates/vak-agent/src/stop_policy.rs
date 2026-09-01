@@ -19,6 +19,9 @@ pub enum BlockReason {
     VerificationMissing,
     /// A file-changing tool ran after the last verification command.
     VerificationStale,
+    /// The user explicitly asked the agent to continue until a later user
+    /// message authorizes completion.
+    UserCompletionRequired,
 }
 
 impl BlockReason {
@@ -35,6 +38,10 @@ impl BlockReason {
             BlockReason::VerificationStale => String::from(
                 "the task changed files after its last verification command. \
                  Inspect the final files and run the verification again before finishing.",
+            ),
+            BlockReason::UserCompletionRequired => String::from(
+                "the user asked you to keep working until they say done. Continue making \
+                 useful progress; do not declare completion yet.",
             ),
         }
     }
@@ -61,6 +68,34 @@ impl Default for StopPolicy {
 }
 
 impl StopPolicy {
+    pub fn requires_user_completion(prompt: &str) -> bool {
+        let p = prompt.to_ascii_lowercase();
+        [
+            "until i say done",
+            "until i tell you to stop",
+            "until i tell you you're done",
+            "keep working until",
+            "keep improving until",
+            "don't stop until",
+            "do not stop until",
+        ]
+        .iter()
+        .any(|marker| p.contains(marker))
+    }
+
+    pub fn is_done_message(message: &str) -> bool {
+        let normalized = message.trim().to_ascii_lowercase();
+        [
+            "done",
+            "stop",
+            "you can stop",
+            "that's enough",
+            "that’s enough",
+        ]
+        .iter()
+        .any(|marker| normalized == *marker)
+    }
+
     /// Conservative trailing-intent patterns: only fire on line-final
     /// markers so normal prose summaries never match.
     fn truncated_plan(final_text: &str) -> Option<BlockReason> {
@@ -149,6 +184,9 @@ impl StopPolicy {
         if final_text.trim().is_empty() {
             return None;
         }
+        if Self::requires_user_completion(prompt) {
+            return Some(BlockReason::UserCompletionRequired);
+        }
         if self.marker_gate
             && let Some(r) = Self::truncated_plan(final_text)
         {
@@ -232,6 +270,23 @@ mod tests {
                 0
             ),
             Some(BlockReason::VerificationMissing)
+        ));
+    }
+
+    #[test]
+    fn explicit_until_done_request_requires_user_release() {
+        let p = StopPolicy::default();
+        assert!(matches!(
+            p.evaluate(
+                "Keep improving the project until I say done.",
+                "Improved it.",
+                1
+            ),
+            Some(BlockReason::UserCompletionRequired)
+        ));
+        assert!(StopPolicy::is_done_message("done"));
+        assert!(!StopPolicy::is_done_message(
+            "done, and here is the summary"
         ));
     }
 

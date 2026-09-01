@@ -52,6 +52,13 @@ max_blocks`; unknown keys warn, `enabled = false` restores old behavior.
 External Stop hooks still run first and keep their own `[stop-hook]`
 prefix, so operator logs can tell them apart.
 
+An explicit continuation request such as “keep improving until I say done”
+uses a separate user-completion gate. It continues across ordinary model
+completion claims without consuming the diagnostic `max_blocks` budget, until
+an exact user steering message such as `done` or `stop` releases it. The
+configured `max_turns` remains a hard safety ceiling; reaching it returns
+`MaxTurnsReached`, never `Completed`.
+
 ## Later phases
 
 All three former items shipped (permission gate, `task` subagents, resource-
