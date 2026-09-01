@@ -18,6 +18,8 @@ use vak_tools::sandbox::SandboxMode;
 pub const DEFAULT_IMAGE: &str = "alpine:3.20";
 const MEMORY_CAP: &str = "2g";
 const CPUS_CAP: &str = "2";
+const PIDS_CAP: &str = "256";
+const STORAGE_CAP: &str = "4g";
 static TASK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// A task-scoped Docker environment. Its writable container layer survives
@@ -66,7 +68,7 @@ impl DockerTaskEnvironment {
             "--cpus".to_string(),
             CPUS_CAP.to_string(),
             "--pids-limit".to_string(),
-            "256".to_string(),
+            PIDS_CAP.to_string(),
             "--cap-drop".to_string(),
             "ALL".to_string(),
             "--security-opt".to_string(),
@@ -74,6 +76,15 @@ impl DockerTaskEnvironment {
             "-v".to_string(),
             mount,
         ];
+        args.extend([
+            "--storage-opt".to_string(),
+            format!("size={STORAGE_CAP}"),
+            "--tmpfs".to_string(),
+            "/tmp:rw,nosuid,nodev,noexec,size=512m".to_string(),
+        ]);
+        if mode == SandboxMode::ReadOnly {
+            args.push("--read-only".to_string());
+        }
         if let Some(socket) = broker_socket
             && socket.exists()
         {
@@ -148,6 +159,8 @@ pub struct DockerTaskSandbox {
     environment: Arc<DockerTaskEnvironment>,
     mode: SandboxMode,
     workspace: PathBuf,
+    image: Option<String>,
+    broker_socket: Option<PathBuf>,
 }
 
 impl DockerTaskSandbox {
@@ -163,12 +176,14 @@ impl DockerTaskSandbox {
         Ok(Self {
             environment: Arc::new(DockerTaskEnvironment::create(
                 mode,
-                image,
+                image.clone(),
                 &workspace,
                 broker_socket,
             )?),
             mode,
             workspace,
+            image,
+            broker_socket: broker_socket.map(Path::to_path_buf),
         })
     }
 }
@@ -195,7 +210,23 @@ impl vak_tools::sandbox::Sandbox for DockerTaskSandbox {
     }
 
     fn read_only_variant(&self) -> Option<Arc<dyn vak_tools::sandbox::Sandbox>> {
-        None
+        if self.mode == SandboxMode::ReadOnly {
+            return Some(Arc::new(Self {
+                environment: self.environment.clone(),
+                mode: SandboxMode::ReadOnly,
+                workspace: self.workspace.clone(),
+                image: self.image.clone(),
+                broker_socket: self.broker_socket.clone(),
+            }));
+        }
+        Self::create(
+            SandboxMode::ReadOnly,
+            self.image.clone(),
+            &self.workspace,
+            self.broker_socket.as_deref(),
+        )
+        .ok()
+        .map(|sandbox| Arc::new(sandbox) as Arc<dyn vak_tools::sandbox::Sandbox>)
     }
 }
 

@@ -202,6 +202,7 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
         max_turns: 4,
         permission: Some(Arc::new(PermissionEngine::default())),
         mode: vak_permission::Mode::FullAccess,
+        approval_mode: vak_agent::ApprovalMode::Ask,
         approver: Some(Arc::new(vak_agent::AutoApprove)),
         sandbox: None,
         cwd: dir.path().to_path_buf(),

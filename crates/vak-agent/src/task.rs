@@ -18,7 +18,7 @@ use vak_session::{SessionLog, SessionPath};
 use vak_tools::sandbox::Sandbox;
 use vak_tools::{Tool, ToolContext, ToolOutput};
 
-use crate::{Agent, AgentConfig, Approver, InputNormalizer, SteeringQueues};
+use crate::{Agent, AgentConfig, ApprovalMode, Approver, InputNormalizer, SteeringQueues};
 
 pub struct TaskDeps {
     pub provider: Arc<dyn Provider>,
@@ -33,6 +33,7 @@ pub struct TaskDeps {
     pub max_turns: usize,
     pub permission: Option<Arc<PermissionEngine>>,
     pub mode: Mode,
+    pub approval_mode: ApprovalMode,
     pub approver: Option<Arc<dyn Approver>>,
     pub sandbox: Option<Arc<dyn Sandbox>>,
     pub cwd: PathBuf,
@@ -372,6 +373,7 @@ impl TaskTool {
         cfg.parallel_tools = true;
         cfg.permission = self.deps.permission.clone();
         cfg.mode = child_mode;
+        cfg.approval_mode = self.deps.approval_mode;
         cfg.approver = self.deps.approver.clone();
         cfg.sandbox = self.deps.sandbox.clone();
 

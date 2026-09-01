@@ -37,6 +37,8 @@ use vak_llm::registry::{ProviderAuth, ProviderRegistry, default_registry};
 type ModelContextCache = std::sync::Mutex<
     HashMap<(String, String, String), (std::time::Instant, Option<vak_llm::models::ModelContext>)>,
 >;
+type TaskSandboxMap =
+    std::sync::Mutex<HashMap<String, (String, Arc<dyn vak_tools::sandbox::Sandbox>)>>;
 type ModelCache = std::sync::Mutex<HashMap<(String, String), (std::time::Instant, Vec<String>)>>;
 use vak_session::SessionLog;
 use vak_session::types::{
@@ -153,6 +155,11 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
                 vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
                 vak_config::PermissionMode::WorkspaceWrite => vak_permission::Mode::WorkspaceWrite,
                 vak_config::PermissionMode::FullAccess => vak_permission::Mode::FullAccess,
+            },
+            approval_mode: match self.core.effective_approval_mode() {
+                vak_config::ApprovalMode::Ask => vak_agent::ApprovalMode::Ask,
+                vak_config::ApprovalMode::ApproveSafe => vak_agent::ApprovalMode::ApproveSafe,
+                vak_config::ApprovalMode::AutoApprove => vak_agent::ApprovalMode::AutoApprove,
             },
             approver,
             sandbox: self.core.agent_sandbox(),
@@ -318,7 +325,8 @@ struct CoreInner {
     finops_max_run_usd_override: std::sync::Mutex<Option<Option<f64>>>,
     finops_max_day_usd_override: std::sync::Mutex<Option<Option<f64>>>,
     sandbox_backend_override: std::sync::Mutex<Option<String>>,
-    agent_network: agent_network::AgentNetworkBroker,
+    agent_network: Arc<std::sync::Mutex<agent_network::AgentNetworkBroker>>,
+    task_sandboxes: TaskSandboxMap,
     provider_instance: std::sync::Mutex<Option<Arc<dyn Provider>>>,
     sessions_home_override: std::sync::Mutex<Option<PathBuf>>,
     breaker: Arc<vak_agent::CircuitBreaker>,
@@ -529,7 +537,10 @@ impl Core {
                 mode_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 approval_mode_override: std::sync::Mutex::new(None),
                 sandbox_backend_override: std::sync::Mutex::new(None),
-                agent_network: agent_network::AgentNetworkBroker::default(),
+                agent_network: Arc::new(std::sync::Mutex::new(
+                    agent_network::AgentNetworkBroker::default(),
+                )),
+                task_sandboxes: std::sync::Mutex::new(HashMap::new()),
                 theme_override: std::sync::Mutex::new(None),
                 theme_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 memory_search_enabled_override: std::sync::Mutex::new(None),
@@ -742,7 +753,11 @@ impl Core {
             .ok()
             .map(|worker| worker.clone())
             .unwrap_or_else(|| PathBuf::from("__vak_tool_worker_unavailable__"));
-        let tools = vak_tools::brokered_default_tools(worker);
+        let mut tools = vak_tools::brokered_default_tools(worker);
+        tools.push(Arc::new(agent_network::AgentNetworkTool::new(
+            self.agent_network_broker(),
+            self.inner.cwd.display().to_string(),
+        )));
         self.filter_builtin_tools(tools)
     }
 
@@ -778,7 +793,19 @@ impl Core {
     /// Returns the broker for this Core's isolated agent environment. The
     /// broker is capability-based and does not grant network access by itself.
     pub fn agent_network_broker(&self) -> agent_network::AgentNetworkBroker {
-        self.inner.agent_network.clone()
+        self.inner
+            .agent_network
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    pub fn set_agent_network_broker(&self, broker: agent_network::AgentNetworkBroker) {
+        *self
+            .inner
+            .agent_network
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = broker;
     }
 
     pub fn effective_max_turns(&self) -> usize {
@@ -3009,7 +3036,11 @@ impl Core {
         let Some(engine) = cfg.permission.clone() else {
             return Err(CoreError::MissingEngine);
         };
-        cfg.sandbox = self.agent_sandbox();
+        let session_id = session
+            .header()
+            .map(|header| header.session_id.clone())
+            .unwrap_or_default();
+        cfg.sandbox = self.session_sandbox(&session_id);
 
         // Phase B: materialize fallback legs beyond the primary provider.
         // Unresolvable legs (missing key/registry) skip silently --
@@ -3162,8 +3193,9 @@ impl Core {
                 max_turns: self.effective_max_turns(),
                 permission: Some(engine.clone()),
                 mode: cfg.mode,
+                approval_mode: cfg.approval_mode,
                 approver: approver.clone(),
-                sandbox: self.build_sandbox(),
+                sandbox: cfg.sandbox.clone(),
                 cwd: self.inner.cwd.clone(),
                 sessions_home: self.inner.sessions_home.clone(),
                 parent_session_id: parent_id,
@@ -3500,9 +3532,7 @@ impl Core {
                     mode,
                     self.inner.config.sandbox.image.clone(),
                     self.inner.cwd.as_path(),
-                    Some(&agent_network::AgentNetworkBroker::socket_path(
-                        &self.inner.sessions_home,
-                    )),
+                    None,
                 ) {
                     Ok(sandbox) => std::sync::Arc::new(sandbox),
                     Err(error) => std::sync::Arc::new(vak_tools::sandbox::DenySandbox::new(error)),
@@ -3510,6 +3540,38 @@ impl Core {
             );
         }
         self.build_sandbox()
+    }
+
+    fn session_sandbox(&self, session_id: &str) -> Option<Arc<dyn vak_tools::sandbox::Sandbox>> {
+        let identity = format!(
+            "{}:{}",
+            self.effective_permission_mode().as_str(),
+            self.effective_sandbox_backend()
+        );
+        if let Some((existing_identity, sandbox)) = self
+            .inner
+            .task_sandboxes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(session_id)
+            && existing_identity == &identity
+        {
+            return Some(sandbox.clone());
+        }
+        self.inner
+            .task_sandboxes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session_id);
+        let sandbox = self.build_execution_sandbox();
+        if let Some(sandbox) = sandbox.clone() {
+            self.inner
+                .task_sandboxes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(session_id.to_string(), (identity, sandbox));
+        }
+        sandbox
     }
 
     pub fn effective_sandbox_name(&self) -> String {

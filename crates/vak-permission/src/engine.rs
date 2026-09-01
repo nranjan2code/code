@@ -8,8 +8,16 @@ use crate::rules::{Rule, RuleDecision};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Decision {
     Allow,
-    Ask { reason: String },
+    Ask { reason: String, source: AskSource },
     Deny { reason: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AskSource {
+    Rule,
+    Scope,
+    ModeDefault,
+    CircuitBreaker,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -115,6 +123,7 @@ impl PermissionEngine {
                     RuleDecision::Allow => Decision::Allow,
                     RuleDecision::Ask => Decision::Ask {
                         reason: format!("rule requires approval: {}", describe(tool, args)),
+                        source: AskSource::Rule,
                     },
                     RuleDecision::Deny => Decision::Deny {
                         reason: format!("denied by rule: {}", describe(tool, args)),
@@ -159,11 +168,13 @@ impl PermissionEngine {
                             } else {
                                 Decision::Ask {
                                     reason: format!("'{path}' is outside the workspace"),
+                                    source: AskSource::Scope,
                                 }
                             }
                         }
                         None => Decision::Ask {
                             reason: "missing path argument".into(),
+                            source: AskSource::ModeDefault,
                         },
                     };
                 }
@@ -173,10 +184,12 @@ impl PermissionEngine {
                 if tool == "bash" {
                     return Decision::Ask {
                         reason: format!("shell command needs approval: {}", describe(tool, args)),
+                        source: AskSource::ModeDefault,
                     };
                 }
                 Decision::Ask {
                     reason: format!("'{}' needs approval: {}", tool, describe(tool, args)),
+                    source: AskSource::ModeDefault,
                 }
             }
         }
@@ -245,7 +258,7 @@ fn describe(tool: &str, args: &Value) -> String {
     }
 }
 
-fn path_in_workspace(path: &std::path::Path, cwd: &std::path::Path) -> bool {
+pub fn path_in_workspace(path: &std::path::Path, cwd: &std::path::Path) -> bool {
     let Ok(cwd_abs) = cwd.canonicalize() else {
         return false;
     };

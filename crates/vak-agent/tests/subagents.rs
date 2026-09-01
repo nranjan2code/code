@@ -132,6 +132,7 @@ async fn subagent_roundtrip_with_shared_scripted_provider() {
         max_turns: 5,
         permission: Some(Arc::new(PermissionEngine::default())),
         mode: vak_permission::Mode::WorkspaceWrite,
+        approval_mode: vak_agent::ApprovalMode::Ask,
         approver: None,
         sandbox: None,
         cwd: dir.path().to_path_buf(),

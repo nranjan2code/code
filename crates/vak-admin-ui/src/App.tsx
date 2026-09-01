@@ -5579,7 +5579,7 @@ const MODE_COPY: Record<string, string> = {
 const APPROVAL_MODES: { value: "ask" | "approve-safe" | "auto-approve"; label: string; desc: string }[] = [
   { value: "ask", label: "Ask for approval", desc: "Pause before actions that need approval." },
   { value: "approve-safe", label: "Approve safe actions", desc: "Automatically approve reads and actions inside the restricted sandbox; still ask for network and external access." },
-  { value: "auto-approve", label: "Auto-approve", desc: "Automatically resolve Ask decisions. Permission denies and the sandbox still apply." },
+  { value: "auto-approve", label: "Auto-approve", desc: "Automatically resolve ordinary Ask decisions. Explicit rules and circuit-breaker stops still require approval; permission denies and the sandbox still apply." },
 ];
 
 /// One page, six self-contained panels. Each answers a single question about

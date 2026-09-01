@@ -10,6 +10,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use uuid::Uuid;
 
 const DEFAULT_MESSAGE_LIMIT: usize = 256 * 1024;
+const MAX_QUEUE_MESSAGES: usize = 256;
+const MAX_QUEUE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_FRAME_BYTES: usize = 1024 * 1024;
 const CAPABILITY_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -60,6 +63,97 @@ pub struct AgentNetworkBroker {
     inner: Arc<Mutex<BrokerState>>,
 }
 
+pub struct AgentNetworkTool {
+    broker: AgentNetworkBroker,
+    workspace: String,
+}
+
+impl AgentNetworkTool {
+    pub fn new(broker: AgentNetworkBroker, workspace: impl Into<String>) -> Self {
+        Self {
+            broker,
+            workspace: workspace.into(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl vak_tools::Tool for AgentNetworkTool {
+    fn name(&self) -> &str {
+        "agent_network"
+    }
+
+    fn description(&self) -> &str {
+        "Send a bounded message to, or receive a message from, an explicitly authorized agent workspace."
+    }
+
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["send", "receive"]},
+                "destination_workspace": {"type": "string"},
+                "message": {"type": "string", "maxLength": MAX_MESSAGE_SCHEMA_CHARS}
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        })
+    }
+
+    async fn execute(
+        &self,
+        args: &serde_json::Value,
+        _ctx: &vak_tools::ToolContext,
+    ) -> vak_tools::ToolOutput {
+        let Some(capability) = self.broker.capability_for(&self.workspace) else {
+            return vak_tools::ToolOutput::error("agent network is not enabled for this workspace");
+        };
+        match args.get("action").and_then(serde_json::Value::as_str) {
+            Some("send") => {
+                let Some(destination) = args
+                    .get("destination_workspace")
+                    .and_then(serde_json::Value::as_str)
+                else {
+                    return vak_tools::ToolOutput::error(
+                        "agent_network send requires destination_workspace",
+                    );
+                };
+                let Some(message) = args.get("message").and_then(serde_json::Value::as_str) else {
+                    return vak_tools::ToolOutput::error("agent_network send requires message");
+                };
+                match self
+                    .broker
+                    .send_to(&capability, destination, message.as_bytes().to_vec())
+                {
+                    Ok(()) => vak_tools::ToolOutput::ok("message queued"),
+                    Err(error) => vak_tools::ToolOutput::error(error),
+                }
+            }
+            Some("receive") => match self.broker.receive(&capability) {
+                Ok(Some(message)) => vak_tools::ToolOutput::ok(
+                    serde_json::json!({
+                        "from_workspace": message.from_workspace,
+                        "message": String::from_utf8_lossy(&message.body)
+                    })
+                    .to_string(),
+                ),
+                Ok(None) => vak_tools::ToolOutput::ok("no messages available"),
+                Err(error) => vak_tools::ToolOutput::error(error),
+            },
+            _ => vak_tools::ToolOutput::error("agent_network action must be send or receive"),
+        }
+    }
+
+    fn claims(&self, _args: &serde_json::Value) -> vak_tools::ResourceClaims {
+        vak_tools::ResourceClaims {
+            exclusive: true,
+            ..Default::default()
+        }
+    }
+}
+
+const MAX_MESSAGE_SCHEMA_CHARS: usize = 262_144;
+
 impl Default for AgentNetworkBroker {
     fn default() -> Self {
         static BROKER: std::sync::OnceLock<Arc<Mutex<BrokerState>>> = std::sync::OnceLock::new();
@@ -84,6 +178,16 @@ struct CapabilityRecord {
 }
 
 impl AgentNetworkBroker {
+    fn capability_for(&self, workspace: &str) -> Option<BrokerCapability> {
+        let state = self.lock();
+        state
+            .capabilities
+            .get(workspace)
+            .map(|record| BrokerCapability {
+                workspace: workspace.to_string(),
+                token: record.token.clone(),
+            })
+    }
     fn lock(&self) -> MutexGuard<'_, BrokerState> {
         self.inner
             .lock()
@@ -106,7 +210,7 @@ impl AgentNetworkBroker {
                 expires_at: std::time::Instant::now() + CAPABILITY_TTL,
             },
         );
-        state.queues.entry(workspace.clone()).or_default();
+        state.queues.insert(workspace.clone(), VecDeque::new());
         BrokerCapability { workspace, token }
     }
 
@@ -160,15 +264,21 @@ impl AgentNetworkBroker {
         if body.len() > limit {
             return Err(format!("agent message exceeds {limit} byte limit"));
         }
-        state
+        let queue = state
             .queues
             .entry(destination.workspace.clone())
-            .or_default()
-            .push_back(AgentMessage {
-                from_workspace: sender.workspace.clone(),
-                to_workspace: destination.workspace.clone(),
-                body,
-            });
+            .or_default();
+        let queued_bytes: usize = queue.iter().map(|message| message.body.len()).sum();
+        if queue.len() >= MAX_QUEUE_MESSAGES
+            || queued_bytes.saturating_add(body.len()) > MAX_QUEUE_BYTES
+        {
+            return Err("destination agent queue is full".into());
+        }
+        queue.push_back(AgentMessage {
+            from_workspace: sender.workspace.clone(),
+            to_workspace: destination.workspace.clone(),
+            body,
+        });
         Ok(())
     }
 
@@ -289,13 +399,38 @@ impl AgentNetworkBroker {
             let broker = self.clone();
             tokio::spawn(async move {
                 let (read, mut write) = stream.into_split();
-                let mut lines = BufReader::new(read).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    let response = if line.len() > 1024 * 1024 {
-                        serde_json::json!({"ok": false, "error": "request too large"})
-                    } else {
-                        broker.handle_wire(&line)
+                let mut reader = BufReader::new(read);
+                let mut line = Vec::with_capacity(8192);
+                loop {
+                    line.clear();
+                    let mut complete = false;
+                    loop {
+                        let available = match reader.fill_buf().await {
+                            Ok(available) if !available.is_empty() => available,
+                            _ => break,
+                        };
+                        let take = available
+                            .iter()
+                            .position(|byte| *byte == b'\n')
+                            .map_or(available.len(), |position| position + 1);
+                        if line.len().saturating_add(take) > MAX_FRAME_BYTES {
+                            return;
+                        }
+                        line.extend_from_slice(&available[..take]);
+                        reader.consume(take);
+                        if line.last() == Some(&b'\n') {
+                            line.pop();
+                            complete = true;
+                            break;
+                        }
+                    }
+                    if !complete {
+                        break;
+                    }
+                    let Ok(line) = std::str::from_utf8(&line) else {
+                        break;
                     };
+                    let response = broker.handle_wire(line);
                     let mut encoded = match serde_json::to_vec(&response) {
                         Ok(value) => value,
                         Err(_) => break,

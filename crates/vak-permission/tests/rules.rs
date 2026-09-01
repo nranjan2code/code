@@ -218,7 +218,7 @@ fn bash_asks_in_workspace_write_by_default() {
         std::path::Path::new("/tmp"),
     );
     match d {
-        Decision::Ask { reason } => assert!(reason.contains("cargo test")),
+        Decision::Ask { reason, .. } => assert!(reason.contains("cargo test")),
         other => panic!("expected ask, got {other:?}"),
     }
 }

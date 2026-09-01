@@ -102,6 +102,7 @@ fn make_executor_with_policy(
         max_turns: 4,
         permission: Some(Arc::new(PermissionEngine::default())),
         mode,
+        approval_mode: vak_agent::ApprovalMode::Ask,
         approver,
         sandbox: None,
         cwd,

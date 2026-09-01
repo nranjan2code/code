@@ -842,6 +842,11 @@ async fn run_flow_exec(
             vak_config::PermissionMode::WorkspaceWrite => vak_permission::Mode::WorkspaceWrite,
             vak_config::PermissionMode::FullAccess => vak_permission::Mode::FullAccess,
         },
+        approval_mode: match core.effective_approval_mode() {
+            vak_config::ApprovalMode::Ask => vak_agent::ApprovalMode::Ask,
+            vak_config::ApprovalMode::ApproveSafe => vak_agent::ApprovalMode::ApproveSafe,
+            vak_config::ApprovalMode::AutoApprove => vak_agent::ApprovalMode::AutoApprove,
+        },
         approver,
         sandbox: core.agent_sandbox(),
         cwd: core.cwd().clone(),
@@ -1417,6 +1422,11 @@ async fn run_plan(cwd: PathBuf, task: String, yes: bool, worktree: bool, trusted
             vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
             vak_config::PermissionMode::WorkspaceWrite => vak_permission::Mode::WorkspaceWrite,
             vak_config::PermissionMode::FullAccess => vak_permission::Mode::FullAccess,
+        },
+        approval_mode: match core.effective_approval_mode() {
+            vak_config::ApprovalMode::Ask => vak_agent::ApprovalMode::Ask,
+            vak_config::ApprovalMode::ApproveSafe => vak_agent::ApprovalMode::ApproveSafe,
+            vak_config::ApprovalMode::AutoApprove => vak_agent::ApprovalMode::AutoApprove,
         },
         approver,
         sandbox: core.agent_sandbox(),

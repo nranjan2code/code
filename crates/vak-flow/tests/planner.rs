@@ -126,6 +126,7 @@ fn make_deps(provider: Arc<ScriptedPlanner>) -> Arc<ExecutorDeps> {
         max_turns: 4,
         permission: Some(Arc::new(PermissionEngine::default())),
         mode: Mode::FullAccess,
+        approval_mode: vak_agent::ApprovalMode::Ask,
         approver: Some(Arc::new(AutoApprove)),
         sandbox: None,
         cwd: std::env::temp_dir(),

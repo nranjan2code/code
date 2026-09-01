@@ -45,9 +45,9 @@ Key choices:
 
 ## Task environments
 
-The command-scoped wrapper is not the final environment experience: a fresh
-container per Bash call does not preserve an installation between calls. The
-general-purpose environment API must own a task-scoped container lifecycle:
+The agent environment owns a session-scoped container lifecycle. A fresh
+container is created for the first turn of a session, reused by later turns,
+and destroyed when the session's sandbox handle is released:
 
 ```text
 create(task, workspace, base-image-digest, limits, network-policy)
@@ -62,14 +62,17 @@ socket, Vak control files, and unrelated workspaces are never mounted. A
 snapshot is content-addressed by base image, environment manifest, and policy
 generation; changing any of those creates a new environment.
 
-Until that lifecycle exists, installation and execution must be combined in one
-command or use a workspace-local environment. The system must not claim that a
-package installed in one command will survive the next command.
+The host file tools remain permission-checked against the canonical workspace;
+the container is the isolation boundary for arbitrary shell installation and
+execution. A package installed in the container is therefore available to
+later turns in that session but is not installed on the host.
 
 ## Brokered workspace network
 
-Network remains `none` by default. A future task environment may request a
-named brokered network, but a Docker bridge alone is not an authorization
+Network remains `none` by default. Agents use the host-side typed
+`agent_network` tool; the model never receives a bearer token and Docker task
+containers do not receive the broker socket. A future task environment may
+request a named brokered network, but a Docker bridge alone is not an authorization
 boundary. The broker must create a per-workspace identity and enforce explicit
 workspace-to-workspace edges approved by both workspace policies,
 authenticated short-lived task identities, destination validation, quotas,
@@ -118,10 +121,10 @@ image   = "alpine:3.20"   # default alpine:3.20
 - Task-scoped lifecycle is implemented by `DockerTaskEnvironment` and is used
   for agent execution; its private writable layer is retained until the task
   ends or the owner is dropped.
-- The workspace authorization broker and authenticated server endpoints are
-  implemented, but the container-to-broker transport adapter is still pending.
-  Keep task containers on `--network none` until that adapter mounts only a
-  broker-controlled socket and carries a short-lived capability.
+- The workspace authorization broker, authenticated server endpoints, and
+  model-facing `agent_network` tool are implemented. The Docker task still
+  stays on `--network none`; cross-workspace communication is host-mediated,
+  capability-checked, mutually authorized, bounded, and queued.
 - No `--user` mapping yet: on Linux hosts with plain dockerd, container
   writes are root-owned. macOS/Windows Desktop handle this transparently;
   rootless/docker-userns-remap setups are unaffected.

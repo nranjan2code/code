@@ -5,7 +5,7 @@
 pub mod engine;
 pub mod rules;
 
-pub use engine::{Decision, PermissionEngine};
+pub use engine::{AskSource, Decision, PermissionEngine, path_in_workspace};
 pub use rules::{Rule, RuleDecision, RuleError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

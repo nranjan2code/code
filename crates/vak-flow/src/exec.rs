@@ -41,7 +41,7 @@ use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
-use vak_agent::{Agent, AgentConfig, Approver};
+use vak_agent::{Agent, AgentConfig, ApprovalMode, Approver};
 use vak_llm::Provider;
 use vak_permission::{Decision, Mode, PermissionEngine};
 use vak_session::{SessionLog, SessionPath};
@@ -61,6 +61,7 @@ pub struct ExecutorDeps {
     pub max_turns: usize,
     pub permission: Option<Arc<PermissionEngine>>,
     pub mode: Mode,
+    pub approval_mode: ApprovalMode,
     pub approver: Option<Arc<dyn Approver>>,
     pub sandbox: Option<Arc<dyn Sandbox>>,
     pub cwd: PathBuf,
@@ -533,6 +534,7 @@ async fn execute_node(
             cfg.max_turns = deps.max_turns;
             cfg.permission = deps.permission.clone();
             cfg.mode = mode;
+            cfg.approval_mode = deps.approval_mode;
             cfg.approver = deps.approver.clone();
             cfg.sandbox = deps.sandbox.clone();
 
@@ -606,10 +608,25 @@ async fn authorize_flow_tool(
     match engine.evaluate(tool, args, deps.mode, &deps.cwd) {
         Decision::Allow => Ok(()),
         Decision::Deny { reason } => Err(reason),
-        Decision::Ask { reason } => match &deps.approver {
-            Some(approver) if approver.approve(tool, &args.to_string(), &reason).await => Ok(()),
-            Some(_) => Err(format!("denied by user: {reason}")),
-            None => Err(format!("{reason} (no approver available)")),
-        },
+        Decision::Ask { reason, source } => {
+            if vak_agent::auto_approve(
+                deps.approval_mode,
+                source,
+                tool,
+                args,
+                deps.mode,
+                deps.sandbox.is_some(),
+                &deps.cwd,
+            ) {
+                return Ok(());
+            }
+            match &deps.approver {
+                Some(approver) if approver.approve(tool, &args.to_string(), &reason).await => {
+                    Ok(())
+                }
+                Some(_) => Err(format!("denied by user: {reason}")),
+                None => Err(format!("{reason} (no approver available)")),
+            }
+        }
     }
 }

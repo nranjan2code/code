@@ -36,6 +36,40 @@ pub enum ApprovalMode {
     AutoApprove,
 }
 
+pub fn auto_approve(
+    approval_mode: ApprovalMode,
+    source: AskSource,
+    tool: &str,
+    input: &Value,
+    mode: Mode,
+    sandboxed: bool,
+    cwd: &std::path::Path,
+) -> bool {
+    if matches!(source, AskSource::Rule | AskSource::CircuitBreaker) {
+        return false;
+    }
+    if matches!(approval_mode, ApprovalMode::AutoApprove) {
+        return true;
+    }
+    if !matches!(approval_mode, ApprovalMode::ApproveSafe)
+        || !matches!(source, AskSource::ModeDefault | AskSource::Scope)
+    {
+        return false;
+    }
+    if matches!(tool, "read" | "glob" | "grep" | "ls" | "search") {
+        return true;
+    }
+    if matches!(tool, "write" | "edit") {
+        return input
+            .get("path")
+            .and_then(Value::as_str)
+            .is_some_and(|path| {
+                vak_permission::path_in_workspace(std::path::Path::new(path), cwd)
+            });
+    }
+    tool == "bash" && sandboxed && !matches!(mode, Mode::FullAccess)
+}
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -48,7 +82,7 @@ use vak_llm::{
     StreamEvent, Usage,
     work::{AttemptReason, FailureDomain, Settlement, StepLedger, WorkPurpose},
 };
-use vak_permission::{Decision, Mode, PermissionEngine};
+use vak_permission::{AskSource, Decision, Mode, PermissionEngine};
 use vak_session::{MessageMeta, MessageRecord, SessionLog};
 use vak_tools::{Tool, ToolContext, ToolOutput};
 
@@ -3259,17 +3293,23 @@ async fn authorize(
         if n.is_multiple_of(DOOM_LOOP_THRESHOLD) {
             decision = Decision::Ask {
                 reason: format!("identical {} call repeated ×{n} this run", call.name),
+                source: AskSource::CircuitBreaker,
             };
         }
     }
     match decision {
         Decision::Allow => Ok(()),
         Decision::Deny { reason } => Err(reason),
-        Decision::Ask { reason } => {
-            if matches!(config.approval_mode, ApprovalMode::AutoApprove)
-                || (matches!(config.approval_mode, ApprovalMode::ApproveSafe)
-                    && is_safe_approval(config, call, cwd))
-            {
+        Decision::Ask { reason, source } => {
+            if auto_approve(
+                config.approval_mode,
+                source,
+                &call.name,
+                &call.input,
+                config.mode,
+                config.sandbox.is_some(),
+                cwd,
+            ) {
                 return Ok(());
             }
             match &config.approver {
@@ -3284,31 +3324,6 @@ async fn authorize(
             }
         }
     }
-}
-
-fn is_safe_approval(config: &AgentConfig, call: &PendingToolCall, cwd: &std::path::Path) -> bool {
-    if matches!(
-        call.name.as_str(),
-        "read" | "glob" | "grep" | "ls" | "search"
-    ) {
-        return true;
-    }
-    if matches!(call.name.as_str(), "write" | "edit") {
-        return call
-            .input
-            .get("path")
-            .and_then(|path| path.as_str())
-            .is_some_and(|path| {
-                let path = std::path::Path::new(path);
-                let resolved = if path.is_absolute() {
-                    path.to_path_buf()
-                } else {
-                    cwd.join(path)
-                };
-                resolved.starts_with(cwd)
-            });
-    }
-    call.name == "bash" && config.sandbox.is_some() && !matches!(config.mode, Mode::FullAccess)
 }
 
 enum ToolRunOutput {
