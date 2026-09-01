@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use tempfile::tempdir;
 
-use vak_agent::{Agent, AgentConfig, AgentEvent, SteeringQueues, TurnOutcome};
+use vak_agent::{Agent, AgentConfig, AgentEvent, McpToolAlias, SteeringQueues, TurnOutcome};
 use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
@@ -469,16 +469,7 @@ async fn mcp_notes_lookup_informs_planning_answer() {
     let (mut agent, _provider, dir) = setup(
         vec![
             tool_call("m1", "mcp", serde_json::json!({"action": "list"})),
-            tool_call(
-                "m2",
-                "mcp",
-                serde_json::json!({
-                    "action": "call",
-                    "server": "notes",
-                    "tool": "echo",
-                    "arguments": {"text": "flights booked"}
-                }),
-            ),
+            tool_call("m2", "echo", serde_json::json!({"text": "flights booked"})),
             tool_call(
                 "w1",
                 "write",
@@ -490,7 +481,21 @@ async fn mcp_notes_lookup_informs_planning_answer() {
             text_msg("answered via mcp"),
         ],
         vec![mcp_tool, Arc::new(WriteTool)],
-        |_| {},
+        |config| {
+            config.mcp_aliases.insert(
+                "echo".into(),
+                McpToolAlias {
+                    server: "notes".into(),
+                    tool: "echo".into(),
+                    description: "Echo text".into(),
+                    schema: serde_json::json!({
+                        "type": "object",
+                        "properties": {"text": {"type": "string"}},
+                        "required": ["text"]
+                    }),
+                },
+            );
+        },
     );
 
     let outcome = agent

@@ -217,6 +217,9 @@ pub struct AgentConfig {
     pub system_prompt: String,
     pub model: String,
     pub tools: Vec<Arc<dyn Tool>>,
+    /// Discovered MCP tool names accepted as compatibility aliases. Calls
+    /// are rewritten to the `mcp` broker before authorization and dispatch.
+    pub mcp_aliases: std::collections::HashMap<String, McpToolAlias>,
     /// Optional host dispatcher exposed only as the managed `flow` tool.
     pub flow_dispatcher: Option<Arc<dyn FlowDispatcher>>,
     /// Exact tool schemas admitted with the session. When absent, standalone
@@ -288,6 +291,7 @@ impl AgentConfig {
             system_prompt: system_prompt.into(),
             model: String::new(),
             tools: Vec::new(),
+            mcp_aliases: std::collections::HashMap::new(),
             flow_dispatcher: None,
             tool_definitions: None,
             input_normalizer: None,
@@ -315,6 +319,14 @@ impl AgentConfig {
             max_audit_blocks: 2,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct McpToolAlias {
+    pub server: String,
+    pub tool: String,
+    pub description: String,
+    pub schema: serde_json::Value,
 }
 
 #[async_trait::async_trait]
@@ -476,6 +488,21 @@ impl Agent {
                     "required": ["operation"]
                 }),
             ));
+        }
+        for (name, alias) in &self.config.mcp_aliases {
+            if !definitions
+                .iter()
+                .any(|definition| definition.name == *name)
+            {
+                definitions.push(vak_llm::ToolDefinition::new(
+                    name,
+                    format!(
+                        "{} (MCP compatibility alias; routed through mcp/{}/{})",
+                        alias.description, alias.server, alias.tool
+                    ),
+                    alias.schema.clone(),
+                ));
+            }
         }
         definitions
     }
@@ -2477,6 +2504,10 @@ impl Agent {
         cancel: &CancellationToken,
         events: &mpsc::Sender<AgentEvent>,
     ) -> Vec<(String, ToolRunOutput)> {
+        let calls = calls
+            .into_iter()
+            .map(|call| normalize_mcp_alias(call, &self.config.mcp_aliases))
+            .collect::<Vec<_>>();
         let n = calls.len();
         let cwd = self
             .session
@@ -2973,6 +3004,22 @@ impl Agent {
             }
         }
     }
+}
+
+fn normalize_mcp_alias(
+    mut call: PendingToolCall,
+    aliases: &std::collections::HashMap<String, McpToolAlias>,
+) -> PendingToolCall {
+    if let Some(alias) = aliases.get(&call.name) {
+        call.name = "mcp".into();
+        call.input = serde_json::json!({
+            "action": "call",
+            "server": alias.server,
+            "tool": alias.tool,
+            "arguments": call.input,
+        });
+    }
+    call
 }
 
 fn extract_subagent_id(text: &str) -> Option<String> {
