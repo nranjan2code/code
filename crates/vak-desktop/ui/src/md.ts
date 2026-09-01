@@ -45,7 +45,7 @@ function inline(s: string): string {
   // (server-compiled) renderer, so behavior doesn't change once a turn settles
   out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label: string, url: string) => {
     if (!safeUrl(url)) return m;
-    return `<a class="lnk" href="${url}" target="_blank" rel="noreferrer">${label}</a>`;
+    return `<a class="lnk" href="${url}" target="_blank" rel="noreferrer noopener">${label}</a>`;
   });
   return out;
 }

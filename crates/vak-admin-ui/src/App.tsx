@@ -923,7 +923,7 @@ Showing the {sessions()!.sessions.length} most recent of {sessions()!.total} ses
                             <button class="ghost small" disabled={busy()} onClick={() => void toggleArchive(s)}>
                               {busy() ? "…" : s.archived ? "Unarchive" : "Archive"}
                             </button>
-                            <a class="ghost small" href={`/sessions/${encodeURIComponent(s.session_id)}/transcript.md`} target="_blank" rel="noreferrer">
+                            <a class="ghost small" href={`/sessions/${encodeURIComponent(s.session_id)}/transcript.md`} target="_blank" rel="noreferrer noopener">
                               Export .md
                             </a>
                             <Show when={s.archived}>
@@ -1662,7 +1662,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
                         {props.ctx.scope() === "project" ? "Reset to Shared" : "Remove"}
                       </button>
                     </Show>
-                    <a class="ghost small button-link" href={entry.documentation_url} target="_blank" rel="noreferrer">Upstream docs</a>
+                    <a class="ghost small button-link" href={entry.documentation_url} target="_blank" rel="noreferrer noopener">Upstream docs</a>
                   </div>
                 </article>
               )}
@@ -6367,7 +6367,7 @@ function FeedsSection() {
                           {FEED_TYPE_LABELS[src.source_type] ?? src.source_type}
                           <Show when={src.check_interval}> · every {src.check_interval}</Show>
                           <Show when={src.trust}> · {src.trust} trust</Show>
-                          <Show when={src.url}> · <a href={src.url} target="_blank" rel="noreferrer">{src.url}</a></Show>
+                          <Show when={src.url}> · <a href={src.url} target="_blank" rel="noreferrer noopener">{src.url}</a></Show>
                         </div>
                       }
                     >

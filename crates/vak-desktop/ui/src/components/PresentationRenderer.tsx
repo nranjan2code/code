@@ -50,7 +50,7 @@ function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
           }
           case "link":
             return node.safe && safeUrl(node.url) ? (
-              <a class="semantic-link" href={node.url} target="_blank" rel="noreferrer" title={node.title ?? node.url}>
+              <a class="semantic-link" href={node.url} target="_blank" rel="noreferrer noopener" title={node.title ?? node.url}>
                 <InlineSequence nodes={node.label} />
               </a>
             ) : (
@@ -150,9 +150,9 @@ function Blocks(props: { blocks: DocumentBlock[] }): JSX.Element {
           case "callout":
             return <section class={`semantic-callout ${block.tone}`}><Show when={block.title}><strong>{block.title}</strong></Show><Blocks blocks={block.blocks} /></section>;
           case "citations":
-            return <ol class="semantic-citations"><For each={block.items}>{(citation) => <li><Show when={safeUrl(citation.url)} fallback={<span>{citation.label}</span>}><a href={citation.url} target="_blank" rel="noreferrer">{citation.label}</a></Show></li>}</For></ol>;
+            return <ol class="semantic-citations"><For each={block.items}>{(citation) => <li><Show when={safeUrl(citation.url)} fallback={<span>{citation.label}</span>}><a href={citation.url} target="_blank" rel="noreferrer noopener">{citation.label}</a></Show></li>}</For></ol>;
           case "media":
-            return safeUrl(block.source, true) ? (block.media_type?.startsWith("image/") ? <img class="semantic-media" src={block.source} alt={block.alt} /> : <a class="semantic-media-link" href={block.source} target="_blank" rel="noreferrer">{block.alt || "Open media"}</a>) : <span class="semantic-unsafe-link">{block.alt || "Unsafe media omitted"}</span>;
+            return safeUrl(block.source, true) ? (block.media_type?.startsWith("image/") ? <img class="semantic-media" src={block.source} alt={block.alt} /> : <a class="semantic-media-link" href={block.source} target="_blank" rel="noreferrer noopener">{block.alt || "Open media"}</a>) : <span class="semantic-unsafe-link">{block.alt || "Unsafe media omitted"}</span>;
           case "artifact_ref":
             return <Artifact item={{ id: block.id, turn_id: "", timestamp: "", role: "assistant", kind: "artifact", status: "succeeded", content: { type: "artifact", artifact: block.artifact }, actions: [], fallback_text: block.artifact.path ?? block.artifact.name }} />;
           case "rule":
@@ -249,7 +249,7 @@ function StructuredView(props: { output: import("../types").StructuredOutput }) 
   }
   const payload = props.output.payload;
   if (props.output.semantic_type === "link.preview" && typeof payload.url === "string") {
-    return <a class="rich-link-card" href={safeUrl(payload.url) ? payload.url : undefined} target="_blank" rel="noreferrer">
+    return <a class="rich-link-card" href={safeUrl(payload.url) ? payload.url : undefined} target="_blank" rel="noreferrer noopener">
       <Show when={typeof payload.image_url === "string" && safeUrl(payload.image_url, true)}><img src={payload.image_url as string} alt="" /></Show>
       <span><strong>{String(payload.title ?? payload.url)}</strong><small>{String(payload.description ?? payload.site_name ?? payload.url)}</small></span>
     </a>;
@@ -281,7 +281,7 @@ function StructuredView(props: { output: import("../types").StructuredOutput }) 
     return payload.media_type === "image" || String(payload.media_type).startsWith("image/")
       ? <figure class="rich-media"><img src={payload.source} alt={String(payload.alt ?? "")} /><Show when={payload.alt}><figcaption>{String(payload.alt)}</figcaption></Show></figure>
       : String(payload.media_type).startsWith("video/") ? <video class="rich-video" src={payload.source} controls preload="metadata" autoplay={uiPreferences.autoplayMedia} aria-label={String(payload.alt ?? "Video")} />
-      : <a class="rich-media-link" href={payload.source} target="_blank" rel="noreferrer">Open {String(payload.media_type ?? "media")}</a>;
+      : <a class="rich-media-link" href={payload.source} target="_blank" rel="noreferrer noopener">Open {String(payload.media_type ?? "media")}</a>;
   }
   return <div class="rich-unsupported"><strong>{props.output.semantic_type}</strong><span>{JSON.stringify(payload)}</span></div>;
 }
