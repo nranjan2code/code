@@ -1,0 +1,19 @@
+VAK is a personal AI operating system built around one idea: every useful action should be understandable, governed, and recoverable.
+
+A request can arrive from the desktop, the command line, the web, Telegram, Discord, or Slack. VAK normalizes that message, identifies the real chat, sender, and bot, and resolves the workspace policy before work begins.
+
+At the center is vak-core: a workspace-scoped runtime facade. Core freezes the provider, model, permissions, sandbox, tools, and session contract so the run can be explained later.
+
+The normal path is a direct agent loop. The agent projects model-visible context from the append-only session ledger, streams a response from the provider, and checks the stop gate before completing.
+
+When the model asks to use a tool, the model is not executing that tool directly. PermissionEngine decides whether the call is allowed, needs approval, or must be denied. The broker validates the operation and resource claims, then a bounded worker runs inside the configured sandbox.
+
+Simple work stays conversational. Complex work can enter Managed Flow: a durable contract, explicit work items, owners, dependencies, evidence, checkpoints, and verified acceptance criteria. The system can continue, ask, block, or complete—but it cannot claim success without proof.
+
+Every important event is appended to the session ledger: the frozen header, messages, provider receipts, work updates, goals, activities, and compaction facts. Projections turn that ledger into model context, transcripts, search, and operational views without rewriting history.
+
+Finally, vak-delivery turns the result into a channel-neutral semantic document. The same meaning can become a desktop timeline, Markdown, Telegram HTML, SSE events, or a retryable outbox job.
+
+Around the runtime, the Operations Center observes real service-manager state, live sessions, gateway bindings, delivery jobs, Doctor checks, security events, and incidents. It records before-and-after receipts for actions, while the service manager—not a competing watchdog—owns process recovery.
+
+That is VAK: many entry points, one governed runtime, an append-only memory, and a result that stays observable from request to delivery.

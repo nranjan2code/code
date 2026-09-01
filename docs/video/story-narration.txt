@@ -1,0 +1,35 @@
+The dangerous part is not the answer. It is everything that happens before the answer can be trusted.
+
+Behind one command is an operating system. Fifteen crates. One governed path. A record you can inspect after the work is done.
+
+Follow the request, not the crate names. A message enters, earns an identity, crosses trust, runs through policy, and returns as meaning.
+
+The entry point can be the CLI, desktop, HTTP, Telegram, Discord, or Slack. The surface changes. The contract does not.
+
+Configuration decides what this run is. Global defaults, project truth, scoped pins, secrets, and route provenance resolve into one frozen provider and model route.
+
+Then the request enters vak-core: the boundary between intent and effect. Core assembles the workspace, freezes the session, and coordinates the same runtime everywhere.
+
+Before action, VAK asks: should this happen? Identity, workspace, policy, capability, and permission meet at the gate. The model never skips it.
+
+Now the agent can work. Context comes from the ledger. Tools cross the broker. Effects run inside explicit boundaries, with results and receipts returning to the loop.
+
+Some work is a quick turn. Some work is a managed mission. Normal flow stays fast. Managed Flow adds contracts, work items, checkpoints, evidence, and verification.
+
+Plans are candidates until they survive the rules. Static flows stay deterministic. Dynamic plans validate, repair, replan within bounds, and fail closed.
+
+Nothing important disappears into a chat bubble. The append-only ledger makes the turn reconstructable: what was asked, what ran, what changed, and why.
+
+Memory can grow without becoming authority. Search and reflection propose context. User-approved memory persists. Policy still governs every write.
+
+One semantic result reaches every surface through its safe view: timeline, Markdown, channel message, SSE, or retryable delivery.
+
+The UI is a window, not the authority. Desktop, admin, tray, CLI, and extensions expose the runtime without bypassing its boundaries.
+
+When reality breaks, Doctor diagnoses. Repair only does what is known. Facts stay visible, mechanical fixes are explicit, and unresolved problems remain with the operator.
+
+Operations is not a dashboard of guesses. Live state, receipts, incidents, delivery, and service-manager truth form the operational picture.
+
+The answer is only the last frame. The real product is a system that can explain its work, constrain its power, and recover from failure.
+
+VAK. Power with a paper trail. A coding agent you can inspect, constrain, and extend.

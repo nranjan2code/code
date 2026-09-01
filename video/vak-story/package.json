@@ -1,0 +1,23 @@
+{
+  "name": "vak-story-film",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "remotion studio src/index.tsx",
+    "typecheck": "tsc --noEmit",
+    "render": "node ../../scripts/video/render-vak-story.mjs",
+    "render:still": "remotion still src/index.tsx VakStory out/vak-story.png --frame=40"
+  },
+  "dependencies": {
+    "@remotion/media": "4.0.519",
+    "remotion": "4.0.519",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@remotion/cli": "4.0.519",
+    "@types/react": "19.1.10",
+    "@types/react-dom": "19.1.7",
+    "typescript": "5.8.3"
+  }
+}

@@ -1,5 +1,7 @@
 # Architecture diagrams
 
+For the complete visual learning path, see the [VAK Architecture Tutor](../tutor/README.md), which includes the layered crate map and the detailed request, agent, ledger, security, delivery, configuration, flow, memory, desktop, Doctor, and Operations diagrams.
+
 Self-contained, interactive HTML documents describing how vak is put together.
 Open any file in a browser — no build step, no external assets.
 
