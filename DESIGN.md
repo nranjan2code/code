@@ -13,7 +13,7 @@ colors:
   text: "#eeeae2"
   text-soft: "#c4c0b8"
   muted: "#918e86"
-  faint: "#68665f"
+  faint: "#8b8880"
   burnt-terracotta: "#df795f"
   burnt-terracotta-bright: "#ee9278"
   burnt-terracotta-wash: "rgba(223, 121, 95, 0.13)"
@@ -135,7 +135,7 @@ The palette is a warm, near-monochrome dark scale (off-black through warm off-wh
 - **Warm Paper** (`#eeeae2`, `--text`): primary text, warm off-white rather than pure white.
 - **Text Soft** (`#c4c0b8`): secondary text.
 - **Muted** (`#918e86`): tertiary/label text, icon default color.
-- **Faint** (`#68665f`): placeholders, timestamps, the quietest text on the page.
+- **Faint** (`#8b8880`): placeholders, timestamps, the quietest text on the page. It is the quietest token that still clears WCAG AA (4.50:1 on `--surface-raised`); the previous `#68665f` sat at 2.78:1 while this system mandated it for *all* placeholder text, so the failure was systematic rather than incidental. Do not darken it.
 
 ### Status (fixed roles, used only for state — never decorative)
 - **Green** (`#73a982`): success, running/active indicators.
@@ -199,7 +199,7 @@ Buttons, chips, and inputs are quiet and confident: restrained color (the accent
 - **State:** `.on` (selected/active) fills with `surface-active` and switches text to `--text` with a stronger border; hover on unselected chips lightens text and adds `surface-hover`.
 
 ### Cards / Containers
-- **Corner Style:** 10px radius (`--radius`) for standard cards/panels; 14–15px for modals and larger feature cards (e.g. chat-empty-mark, gate-card).
+- **Corner Style:** 10px radius (`--radius`) for standard cards/panels; `--radius-lg` (14px) for modals and larger feature cards (e.g. chat-empty-mark, gate-card). Use the token — the desktop modal hardcoded 15px, which is why the token read as unused.
 - **Background:** `surface` for resting cards, `surface-raised` for anything meant to sit "on top" (composer, modal, popovers).
 - **Shadow Strategy:** none at rest; see Elevation & Depth for floating elements.
 - **Border:** 1px, `border` or `border-soft`.
@@ -215,7 +215,9 @@ Buttons, chips, and inputs are quiet and confident: restrained color (the accent
 - **Mobile/compact treatment:** a `data-compact-sidebar` mode reduces item height and hides secondary metadata rather than reflowing to a different pattern.
 
 ### Status Signals (signature component)
-A recurring 6px `.dot` communicates run state across both surfaces: neutral `--faint` at rest, `--green` with a soft pulsing glow (`box-shadow` + `pulse` keyframe) when a session is actively running. The same status-color vocabulary (green/yellow/red/blue, each with a matching low-opacity "soft" wash in the admin UI) extends to badges and approval/tool-call blocks, so state is always legible by color alone before the label is read.
+A recurring 6px `.dot` communicates run state across both surfaces: neutral `--faint` at rest, `--green` with a soft pulsing glow (`box-shadow` + `pulse` keyframe) when a session is actively running. The same status-color vocabulary (green/yellow/red/blue, each with a matching low-opacity "soft" wash) extends to badges and approval/tool-call blocks.
+
+**Color is never the only carrier.** The states being encoded — running, awaiting approval, denied — are the ones this product exists to make visible, and for roughly 8% of men a green dot and a red dot are the same dot. Every status signal pairs its hue with a second channel: a fill difference on the dot (hollow at rest, solid when running, ringed when it needs a person), and an `aria-label` or visually-hidden label so the state is announced, not just shown. An earlier version of this document praised these signals as "legible by color alone", which is precisely the WCAG 1.4.1 failure to avoid.
 
 ## Do's and Don'ts
 

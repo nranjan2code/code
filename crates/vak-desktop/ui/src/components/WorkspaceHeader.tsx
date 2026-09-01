@@ -113,7 +113,8 @@ export default function WorkspaceHeader() {
           <h1>{title()}</h1>
           <Show when={activeId()}>
             <span class="run-state" classList={{ active: isRunning(activeId()) }}>
-              <span class="dot" classList={{ run: isRunning(activeId()) }} />
+              <span class="dot" classList={{ run: isRunning(activeId()) }} role="img"
+                aria-label={isRunning(activeId()) ? "Running" : "Idle"} />
               {retryOf(activeId())
                 ? `Retrying · attempt ${retryOf(activeId())!.attempt}`
                 : isRunning(activeId())

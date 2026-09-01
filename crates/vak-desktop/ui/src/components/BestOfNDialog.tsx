@@ -61,7 +61,8 @@ function RunCard(props: { run: { session_id: string; branch: string } }) {
   return (
     <div class="bo-card" classList={{ done: !running() }}>
       <div class="bo-head">
-        <span class="dot" classList={{ run: running() }} />
+        <span class="dot" classList={{ run: running() }} role="img"
+              aria-label={running() ? "Running" : "Idle"} />
         <span class="bo-branch">{props.run.branch}</span>
         <Show when={verdict()}>
           <span class={`badge bo-${verdict()}`}>{verdict()}</span>

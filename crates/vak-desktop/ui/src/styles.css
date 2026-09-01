@@ -8,10 +8,11 @@
   --sidebar: #1f1f1c;
   --border: #34342f;
   --border-soft: #2a2a26;
+  --border-strong: #41413b;
   --text: #eeeae2;
   --text-soft: #c4c0b8;
   --muted: #918e86;
-  --faint: #85827b;
+  --faint: #8b8880;
   --accent: #df795f;
   --accent-bright: #ee9278;
   --accent-wash: rgba(223, 121, 95, 0.13);
@@ -126,8 +127,10 @@ code, pre, kbd { font-family: var(--mono); }
 .shortcut-glyph { font-family: var(--mono); font-size: 12px; }
 .hint { color: var(--faint); font-size: 11.5px; }
 .badge { display: inline-flex; color: var(--muted); font-size: 10.5px; border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; }
-.dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--faint); }
-.dot.run { background: var(--green); box-shadow: 0 0 0 3px rgba(115, 169, 130, 0.12); animation: pulse 1.8s ease-in-out infinite; }
+/* State is never carried by hue alone (WCAG 1.4.1): at rest the dot is
+   hollow, running fills it and adds a ring. Pair with an aria-label. */
+.dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: transparent; border: 1.5px solid var(--faint); box-sizing: border-box; }
+.dot.run { background: var(--green); border-color: var(--green); box-shadow: 0 0 0 3px rgba(115, 169, 130, 0.12); animation: pulse 1.8s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .55; } }
 
 /* Sidebar */
@@ -578,7 +581,7 @@ body.is-resizing iframe { pointer-events: none; }
 
 /* Modals */
 .modal-back { position: fixed; z-index: 50; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(10,10,8,.72); backdrop-filter: blur(5px); }
-.modal { min-width: 360px; max-width: calc(100vw - 40px); padding: 21px 22px; border: 1px solid #41413b; border-radius: 15px; background: var(--surface-raised); box-shadow: var(--shadow-lg); }
+.modal { min-width: 360px; max-width: calc(100vw - 40px); padding: 21px 22px; border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--surface-raised); box-shadow: var(--shadow-lg); }
 .modal h3 { margin: 0 0 14px; font-size: 15px; font-weight: 620; }
 .modal table { width: 100%; margin-bottom: 16px; border-collapse: collapse; }
 .modal td { padding: 5px 12px 5px 0; color: var(--muted); }

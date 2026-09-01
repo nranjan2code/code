@@ -174,7 +174,9 @@ export default function Sidebar() {
                         <span class="sb-title">{session.title || "Untitled task"}</span>
                         <span class="sb-item-meta">
                           <Show when={!session.archived} fallback={<span>archived</span>}>
-                            <span class="dot" classList={{ run: session.running || isRunning(session.session_id) }} />
+                            <span class="dot" classList={{ run: session.running || isRunning(session.session_id) }}
+                              role="img"
+                              aria-label={session.running || isRunning(session.session_id) ? "Running" : "Idle"} />
                             {session.running || isRunning(session.session_id) ? "Working" : `${session.entries ?? 0} events`}
                           </Show>
                         </span>
