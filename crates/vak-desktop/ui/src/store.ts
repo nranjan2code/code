@@ -11,6 +11,7 @@ import type {
   SessionSummary,
   Usage,
   OutputTimeline,
+  PresentationStreamEvent,
 } from "./types";
 
 export type Density = "outcome" | "balanced" | "audit";
@@ -48,7 +49,13 @@ export const [health, setHealth] = createSignal<Health | null>(null);
 // usable credential exists for the current provider.
 export const [providers, setProviders] = createSignal<import("./types").ProvidersResponse | null>(null);
 export const [setupNeeded, setSetupNeeded] = createSignal(false);
-export const [density, setDensity] = createSignal<Density>("outcome");
+const storedDensity = localStorage.getItem("vak.density");
+const initialDensity: Density = storedDensity === "balanced" || storedDensity === "audit" ? storedDensity : "outcome";
+export const [density, setDensitySignal] = createSignal<Density>(initialDensity);
+export function setDensity(value: Density) {
+  setDensitySignal(value);
+  localStorage.setItem("vak.density", value);
+}
 export const [dockTab, setDockTab] = createSignal<"preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | "feeds" | null>(null);
 export const [showShortcuts, setShowShortcuts] = createSignal(false);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
@@ -310,9 +317,10 @@ export function openInEditor(path: string) {
 }
 
 const [itemsBySession, setItemsBySession] = createStore<Record<string, Item[]>>({});
+const [expandedItems, setExpandedItems] = createStore<Record<string, boolean>>({});
 const [runningMap, setRunningMap] = createStore<Record<string, boolean>>({});
 const [usageBySession, setUsageBySession] = createStore<Record<string, Usage>>({});
-const [presentationBySession, setPresentationBySession] = createStore<Record<string, OutputTimeline>>({});
+const [presentationBySession, setPresentationBySession] = createStore<Record<string, OutputTimeline | null>>({});
 
 // ---- selectors -------------------------------------------------------------
 
@@ -333,8 +341,48 @@ export function presentationOf(id: string | null): OutputTimeline | null {
   return id ? (presentationBySession[id] ?? null) : null;
 }
 
+export function itemExpanded(id: string): boolean {
+  return !!expandedItems[id];
+}
+
+export function toggleItemExpanded(id: string) {
+  setExpandedItems(id, !expandedItems[id]);
+}
+
 export function hydrateFromPresentation(id: string, timeline: OutputTimeline) {
   setPresentationBySession(id, timeline);
+}
+
+export function clearPresentation(id: string) {
+  setPresentationBySession(id, null);
+}
+
+export function applyPresentationEvent(id: string, event: PresentationStreamEvent) {
+  if (event.type === "snapshot") {
+    setPresentationBySession(id, event.timeline);
+    return;
+  }
+  const current = presentationOf(id) ?? { schema_version: 2, session_id: id, items: [], diagnostics: [] };
+  const items = [...current.items];
+  if (event.type === "text_delta") {
+    const index = items.findIndex((item) => item.id === event.item_id);
+    if (index >= 0) items[index] = { ...items[index], fallback_text: `${items[index].fallback_text}${event.delta}` };
+  } else if (event.type === "item_completed") {
+    const index = items.findIndex((item) => item.id === event.item_id);
+    if (index >= 0) {
+      const item = items[index];
+      const content = item.content.type === "document"
+        ? { ...item.content, document: { ...item.content.document, source_markdown: item.fallback_text, blocks: [] } }
+        : item.content;
+      items[index] = { ...item, status: event.status, content };
+    }
+  } else {
+    const item = event.item;
+    const index = items.findIndex((candidate) => candidate.id === item.id);
+    if (index >= 0) items[index] = item;
+    else items.push(item);
+  }
+  setPresentationBySession(id, { ...current, items });
 }
 
 // ---- buckets: "main" transcript vs "side" (/btw) branch --------------------
@@ -479,11 +527,8 @@ let assistantSeq = 0;
 
 function ensureStreamingAssistant(bucket: Bucket, id: string): void {
   updateList(bucket, id, (list) => {
-    for (let i = list.length - 1; i >= 0; i--) {
-      const it = list[i];
-      if (it.kind === "assistant") return list;
-      if (it.kind === "user") break;
-    }
+    const last = list[list.length - 1];
+    if (last?.kind === "assistant" && last.streaming) return list;
     assistantSeq += 1;
     return [
       ...list,
@@ -494,18 +539,14 @@ function ensureStreamingAssistant(bucket: Bucket, id: string): void {
 
 function appendToLast(bucket: Bucket, id: string, kind: "assistant" | "thinking", delta: string) {
   updateList(bucket, id, (list) => {
-    for (let i = list.length - 1; i >= 0; i--) {
-      const it = list[i];
-      if (it.kind === kind) {
-        const next = [...list];
-        next[i] =
-          kind === "assistant"
-            ? { ...it, kind, key: it.key, text: it.text + delta, streaming: true }
-            : { ...it, kind, key: it.key, text: it.text + delta, done: false };
-        return next;
-      }
-      // stop scanning at the last hard boundary
-      if (it.kind === "user" || it.kind === "system") break;
+    const last = list[list.length - 1];
+    if (last?.kind === kind) {
+      const next = [...list];
+      next[next.length - 1] =
+        kind === "assistant"
+          ? { ...last, kind, key: last.key, text: last.text + delta, streaming: true }
+          : { ...last, kind, key: last.key, text: last.text + delta, done: false };
+      return next;
     }
     const fresh: Item =
       kind === "assistant"

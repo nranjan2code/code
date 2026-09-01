@@ -534,6 +534,7 @@ export default function Composer(props: { cwd: string }) {
               class="composer-density"
               value={density()}
               onChange={(e) => setDensity(e.currentTarget.value as Density)}
+              aria-label="Transcript detail"
               title="Transcript detail"
             >
               <option value="outcome">outcome</option>

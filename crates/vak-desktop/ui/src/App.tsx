@@ -8,6 +8,7 @@ import {
   sessions,
   appendUser,
   applyEvent,
+  applyPresentationEvent,
   backend,
   isRunning,
   markRunning,
@@ -24,6 +25,7 @@ import {
   setUsageFor,
   hydrateFromTranscript,
   hydrateFromPresentation,
+  clearPresentation,
   dockTab,
   diffTarget,
   showShortcuts,
@@ -105,6 +107,7 @@ import TranscriptModal from "./components/TranscriptModal";
 import InboxPage from "./components/InboxPage";
 
 const streams = new Map<string, EventSource>();
+const presentationStreams = new Map<string, EventSource>();
 const sideStreams = new Map<string, EventSource>();
 
 export async function refreshSessions() {
@@ -165,10 +168,12 @@ async function hydrate(id: string) {
     if (!isRunning(id)) {
       hydrateFromTranscript(id, t.messages);
       if (presentation) hydrateFromPresentation(id, presentation);
+      else clearPresentation(id);
       setUsageFor(id, t.usage);
     }
   } catch (error) {
     if (!isRunning(id)) {
+      clearPresentation(id);
       appendSystem(id, `Could not load this task: ${error instanceof Error ? error.message : String(error)}`);
     }
   } finally {
@@ -208,6 +213,18 @@ function openStream(id: string) {
     },
   );
   streams.set(id, es);
+  if (!presentationStreams.has(id)) {
+    const presentation = api.openPresentationStream(
+      id,
+      (event) => applyPresentationEvent(id, event),
+      () => {
+        if (presentation.readyState === EventSource.CLOSED && presentationStreams.get(id) === presentation) {
+          presentationStreams.delete(id);
+        }
+      },
+    );
+    presentationStreams.set(id, presentation);
+  }
 }
 
 const NOTIFY_DEDUPE_MS = 5 * 60 * 1000;
@@ -238,6 +255,9 @@ function onFinished(id: string, summary: string) {
   // arrived. Clearing the presentation here created a blank/legacy flash
   // between RunFinished and hydrate(), which was especially noticeable on
   // the first turn of a task.
+  // Enter the hydration state before flipping the run flag so an older
+  // settled snapshot cannot flash over the just-finished live transcript.
+  setHydratingId(id);
   markRunning(id, false);
   void Promise.all([refreshSessions(), hydrate(id)]);
   if (document.hidden && id === activeId()) {
@@ -561,6 +581,8 @@ export async function switchProject(cwd?: string) {
 function closeAllStreams() {
   streams.forEach((es) => es.close());
   streams.clear();
+  presentationStreams.forEach((es) => es.close());
+  presentationStreams.clear();
 }
 
 /** Focus/follow header strip above each half of a split workspace. */

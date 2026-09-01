@@ -121,6 +121,13 @@ export interface OutputAction {
   data: Record<string, string>;
 }
 
+export interface OutputProvenance {
+  session_id?: string | null;
+  entry_id?: string | null;
+  tool_call_id?: string | null;
+  source?: string | null;
+}
+
 export interface OutputItem {
   id: string;
   timestamp: string;
@@ -129,6 +136,7 @@ export interface OutputItem {
   kind: OutputKind;
   status: OutputStatus;
   content: OutputContent;
+  provenance?: OutputProvenance | null;
   actions: OutputAction[];
   fallback_text: string;
 }
@@ -140,6 +148,13 @@ export interface OutputTimeline {
   items: OutputItem[];
   diagnostics: string[];
 }
+
+export type PresentationStreamEvent =
+  | { type: "snapshot"; timeline: OutputTimeline }
+  | { type: "item_started"; item: OutputItem }
+  | { type: "text_delta"; item_id: string; delta: string }
+  | { type: "item_replaced"; item: OutputItem }
+  | { type: "item_completed"; item_id: string; status: OutputStatus };
 
 type StreamEvent =
   | { Start: { partial: AssistantMessage } }

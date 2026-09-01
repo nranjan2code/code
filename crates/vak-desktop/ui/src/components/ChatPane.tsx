@@ -1,6 +1,6 @@
-import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
-import { activeId, density, itemsOf, hydratingId, isRunning, openInEditor, presentationOf, speak, type Item } from "../store";
+import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, openInEditor, presentationOf, speak, toggleItemExpanded, type Item } from "../store";
 import { approve, openFileSmart } from "../App";
 import Icon from "./Icon";
 import PresentationTimelineView from "./PresentationRenderer";
@@ -64,7 +64,7 @@ function hasSettledOutcome(id: string | null): boolean {
 }
 
 export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
-  const [open, setOpen] = createSignal(false);
+  const open = () => itemExpanded(props.item.id);
   const args = createMemo<Record<string, unknown> | null>(() => {
     try {
       const v = JSON.parse(props.item.argsJson);
@@ -120,8 +120,8 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
   };
 
   return (
-    <div class="tool" classList={{ err: props.item.isError, open: open(), running: !props.item.done, done: props.item.done }}>
-      <button class="tool-h" aria-expanded={open()} onClick={() => setOpen((v) => !v)}>
+      <div class="tool" classList={{ err: props.item.isError, open: open(), running: !props.item.done, done: props.item.done }}>
+      <button class="tool-h" aria-expanded={open()} onClick={() => toggleItemExpanded(props.item.id)}>
         <span class="tool-dot" />
         <span class="tool-name">{toolLabel()}</span>
         <Show when={summary()}>{(value) => <span class="tool-summary">{value()}</span>}</Show>
@@ -292,6 +292,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   const sid = () => props.sessionId ?? activeId();
   let scroller!: HTMLDivElement;
   let pinned = true;
+  let scrollFrame: number | null = null;
   const [atBottom, setAtBottom] = createSignal(true);
 
   const onScroll = () => {
@@ -305,18 +306,31 @@ export default function ChatPane(props: { sessionId?: string | null }) {
       setAtBottom(true);
     }
   };
+  const scheduleScroll = (force = false) => {
+    if (force) {
+      if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
+      scrollFrame = null;
+      scrollToBottom(true);
+      return;
+    }
+    if (scrollFrame !== null) return;
+    scrollFrame = requestAnimationFrame(() => {
+      scrollFrame = null;
+      scrollToBottom();
+    });
+  };
 
   createEffect(() => {
     const id = sid();
     void id;
     pinned = true;
     setAtBottom(true);
-    queueMicrotask(() => scrollToBottom(true));
+    queueMicrotask(() => scheduleScroll(true));
   });
 
   createEffect(() => {
     itemsOf(sid()).length;
-    queueMicrotask(scrollToBottom);
+    scheduleScroll();
   });
 
   // follow streaming text growth too
@@ -324,7 +338,18 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     const list = itemsOf(sid());
     const last = list[list.length - 1];
     if (last?.kind === "assistant") void last.text;
-    queueMicrotask(scrollToBottom);
+    scheduleScroll();
+  });
+
+  createEffect(() => {
+    // Projection changes alter transcript height even when item data does
+    // not. Reconcile the pinned state on the next paint.
+    void density();
+    void presentationOf(sid());
+    scheduleScroll();
+  });
+  onCleanup(() => {
+    if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
   });
 
   return (

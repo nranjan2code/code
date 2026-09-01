@@ -9,6 +9,7 @@ import type {
   ConfigSnapshot,
   WorkReceipt,
   OutputTimeline,
+  PresentationStreamEvent,
 } from "./types";
 
 let base = "";
@@ -278,6 +279,23 @@ export function transcript(id: string): Promise<{
 
 export function presentation(id: string): Promise<OutputTimeline> {
   return req(`/sessions/${encodeURIComponent(id)}/presentation`);
+}
+
+export function openPresentationStream(
+  id: string,
+  onEvent: (event: PresentationStreamEvent) => void,
+  onError?: () => void,
+): EventSource {
+  const es = new EventSource(`${base}/sessions/${encodeURIComponent(id)}/presentation/events?token=${encodeURIComponent(token)}`);
+  es.onmessage = (message) => {
+    try {
+      onEvent(JSON.parse(message.data) as PresentationStreamEvent);
+    } catch {
+      // Ignore keep-alive and malformed frames; the legacy stream remains the fallback.
+    }
+  };
+  es.onerror = () => onError?.();
+  return es;
 }
 
 /** Markdown export (shared renderer with the TUI); text, not JSON. */

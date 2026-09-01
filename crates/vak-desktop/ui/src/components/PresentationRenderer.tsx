@@ -1,4 +1,4 @@
-import { createMemo, For, Show } from "solid-js";
+import { createEffect, createMemo, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type {
   DocumentBlock,
@@ -12,6 +12,7 @@ import { approve, openFileSmart } from "../App";
 import Icon from "./Icon";
 import MarkdownView from "./MarkdownView";
 import { safeUrl } from "../safeUrl";
+import { highlight, languageForFence } from "../highlight";
 
 function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
   return (
@@ -32,7 +33,16 @@ function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
               <code
                 class="ic"
                 classList={{ "semantic-path": pathLike }}
+                tabIndex={pathLike ? 0 : undefined}
+                role={pathLike ? "button" : undefined}
+                aria-label={pathLike ? `Open ${node.code} in editor` : undefined}
                 onClick={() => pathLike && openInEditor(node.code)}
+                onKeyDown={(event) => {
+                  if (pathLike && (event.key === "Enter" || event.key === " ")) {
+                    event.preventDefault();
+                    openInEditor(node.code);
+                  }
+                }}
               >
                 {node.code}
               </code>
@@ -73,6 +83,26 @@ function Heading(props: { block: Extract<DocumentBlock, { type: "heading" }> }) 
 }
 
 function CodeBlock(props: { language?: string | null; filename?: string | null; content: string; diff?: boolean }) {
+  let pre!: HTMLPreElement;
+  let renderSeq = 0;
+  createEffect(() => {
+    const content = props.content;
+    const language = props.language;
+    const seq = ++renderSeq;
+    pre.textContent = content;
+    pre.classList.remove("shiki");
+    if (!language || props.diff) return;
+    void highlight(content, languageForFence(language)).then((html) => {
+      if (!html || seq !== renderSeq || !pre.isConnected) return;
+      const template = document.createElement("template");
+      template.innerHTML = html;
+      const highlighted = template.content.querySelector("pre");
+      if (highlighted) {
+        pre.innerHTML = highlighted.innerHTML;
+        pre.classList.add("shiki");
+      }
+    });
+  });
   const copy = (button: HTMLButtonElement) => {
     void navigator.clipboard.writeText(props.content);
     button.textContent = "Copied";
@@ -84,7 +114,7 @@ function CodeBlock(props: { language?: string | null; filename?: string | null; 
         <span>{props.filename ?? props.language ?? (props.diff ? "diff" : "text")}</span>
         <button onClick={(event) => copy(event.currentTarget)}>Copy</button>
       </div>
-      <pre><code>{props.content}</code></pre>
+      <pre ref={pre}><code>{props.content}</code></pre>
     </div>
   );
 }
@@ -208,7 +238,9 @@ function ActivityRow(props: { item: OutputItem }) {
       default: return props.item.kind;
     }
   };
-  return <div class={`semantic-activity ${props.item.status}`}><span class="semantic-status-dot" /><strong>{label()}</strong><span>{props.item.fallback_text}</span><small>{props.item.status}</small></div>;
+  const provenance = props.item.provenance;
+  const evidence = [provenance?.source, provenance?.entry_id, provenance?.tool_call_id].filter(Boolean).join(" · ");
+  return <div class={`semantic-activity ${props.item.status}`} title={evidence || undefined}><span class="semantic-status-dot" /><strong>{label()}</strong><span>{props.item.fallback_text}</span><small>{props.item.status} · {new Date(props.item.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</small></div>;
 }
 
 function StructuredView(props: { output: import("../types").StructuredOutput }) {
@@ -260,21 +292,33 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string }) {
   const errors = () => props.items.filter((item) => item.kind === "error");
   const approvals = () => props.items.filter((item) => item.kind === "approval");
   const artifacts = () => props.items.filter((item) => item.kind === "artifact");
-  const activity = () => props.items.filter((item) => ["progress", "retry", "information"].includes(item.kind));
   const structured = () => props.items.filter((item) => item.content.type === "structured");
+  const ordered = () => props.items;
+  const OrderedItem = (item: OutputItem): JSX.Element | null => {
+    if (item.role === "user" && item.content.type === "document") {
+      return <div class="semantic-user"><PresentationDocumentView document={item.content.document} /></div>;
+    }
+    if (item.kind === "approval") return <SemanticApproval item={item} sessionId={props.sessionId} />;
+    if (item.kind === "outcome" && item.content.type === "document") return <article class="semantic-outcome"><PresentationDocumentView document={item.content.document} /></article>;
+    if (item.content.type === "structured") return <StructuredView output={item.content.output} />;
+    if (item.kind === "error") return <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{item.fallback_text}</p></div></section>;
+    if (item.kind === "artifact") return <section class="artifact-shelf" aria-label="Artifact"><Artifact item={item} /></section>;
+    if (["progress", "retry", "information"].includes(item.kind)) return <ActivityRow item={item} />;
+    return null;
+  };
   return (
     <section class="semantic-turn" data-turn={props.id}>
-      <For each={users()}>{(item) => item.content.type === "document" && <div class="semantic-user"><PresentationDocumentView document={item.content.document} /></div>}</For>
-      <For each={approvals()}>{(item) => <SemanticApproval item={item} sessionId={props.sessionId} />}</For>
-      <For each={outcomes()}>{(item) => item.content.type === "document" && <article class="semantic-outcome"><PresentationDocumentView document={item.content.document} /></article>}</For>
-      <For each={structured()}>{(item) => item.content.type === "structured" && <StructuredView output={item.content.output} />}</For>
-      <For each={errors()}>{(item) => <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{item.fallback_text}</p></div></section>}</For>
-      <Show when={artifacts().length > 0}><section class="artifact-shelf" aria-label="Artifacts"><div class="artifact-shelf-head">Artifacts <span>{artifacts().length}</span></div><For each={artifacts()}>{(item) => <Artifact item={item} />}</For></section></Show>
-      <Show when={activity().length > 0 && density() !== "outcome"}>
-        <details class="semantic-audit" open={density() === "audit"}>
-          <summary>Activity <span>{activity().length}</span></summary>
-          <For each={activity()}>{(item) => <ActivityRow item={item} />}</For>
-        </details>
+      <Show when={density() !== "outcome"} fallback={
+        <>
+          <For each={users()}>{(item) => item.content.type === "document" && <div class="semantic-user"><PresentationDocumentView document={item.content.document} /></div>}</For>
+          <For each={approvals()}>{(item) => <SemanticApproval item={item} sessionId={props.sessionId} />}</For>
+          <For each={outcomes()}>{(item) => item.content.type === "document" && <article class="semantic-outcome"><PresentationDocumentView document={item.content.document} /></article>}</For>
+          <For each={structured()}>{(item) => item.content.type === "structured" && <StructuredView output={item.content.output} />}</For>
+          <For each={errors()}>{(item) => <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{item.fallback_text}</p></div></section>}</For>
+          <Show when={artifacts().length > 0}><section class="artifact-shelf" aria-label="Artifacts"><div class="artifact-shelf-head">Artifacts <span>{artifacts().length}</span></div><For each={artifacts()}>{(item) => <Artifact item={item} />}</For></section></Show>
+        </>
+      }>
+        <For each={ordered()}>{(item) => OrderedItem(item)}</For>
       </Show>
     </section>
   );
