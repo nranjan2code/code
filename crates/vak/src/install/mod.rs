@@ -20,6 +20,7 @@ pub mod digest;
 pub mod feed;
 pub mod layout;
 pub mod manifest;
+pub mod seed;
 pub mod transaction;
 
 use std::io::{IsTerminal as _, Write as _};
@@ -81,6 +82,9 @@ pub fn run_install(prefix: Option<PathBuf>, force: bool) -> i32 {
             );
             for c in &m.components {
                 println!("  {:<22} {}", c.name, c.path.display());
+            }
+            if root.prefix() == crate::install::layout::platform_default_prefix() {
+                seed::seed_shared_capabilities();
             }
             bootstrap_default_workspace_if_fresh();
             report_next_steps(&root);

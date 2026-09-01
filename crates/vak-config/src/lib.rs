@@ -567,7 +567,7 @@ pub struct VoiceConfig {
 // and `PermissionMode::capped_by` from here for its slot in the bot → chat →
 // workspace resolution chain.
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HookConfig {
     pub event: String,
     #[serde(rename = "match")]
@@ -581,6 +581,67 @@ pub struct HookConfig {
     pub enabled: bool,
     #[serde(default)]
     pub failure_mode: Option<String>,
+}
+
+/// Add the built-in disabled automation templates to the Shared layer once.
+/// Existing operator hooks are preserved byte-for-byte in the same atomic
+/// rewrite used by every other persisted configuration mutation.
+pub fn seed_global_hooks_if_empty(hooks: &[HookConfig]) -> Result<bool, ConfigError> {
+    let path = global_path().ok_or_else(|| ConfigError::Write {
+        path: PathBuf::from("<shared>"),
+        source: std::io::Error::other("shared workspace unavailable"),
+    })?;
+    let mut root = if path.is_file() {
+        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
+            path: path.clone(),
+            source,
+        })?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let table = root.as_table_mut().ok_or_else(|| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other("top-level config must be a TOML table"),
+    })?;
+    if table
+        .get("hooks")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|existing| !existing.is_empty())
+    {
+        return Ok(false);
+    }
+    let encoded = hooks
+        .iter()
+        .map(toml::Value::try_from)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| ConfigError::Write {
+            path: path.clone(),
+            source: std::io::Error::other(error.to_string()),
+        })?;
+    table.insert("hooks".into(), toml::Value::Array(encoded));
+    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other(error.to_string()),
+    })?;
+    let parent = path.parent().ok_or_else(|| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other("shared config has no parent"),
+    })?;
+    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
+    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })?;
+    Ok(true)
 }
 
 fn default_hook_config_enabled() -> bool {

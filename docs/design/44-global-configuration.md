@@ -71,6 +71,25 @@ Initial catalog:
   `CONTEXT7_API_KEY`)
 - Firecrawl (`npx -y firecrawl-mcp`, `FIRECRAWL_API_KEY`)
 
+## Fresh-install capability seed
+
+An install into the platform default prefix seeds the Shared capability stores
+idempotently. The seed never overwrites an existing skill, plugin, or hook.
+It provides six instruction-only skills for both developers and general users
+(`getting-started`, `research-and-sources`, `planning-and-organizing`,
+`debugging`, `code-review`, and `data-and-spreadsheets`), plus two native
+starter plugins (`developer-starter` and `everyday-starter`) containing the
+additional `software-development` and `writing-and-editing` skills. The
+plugins are enabled because they contain instructions only; they do not add
+tools, commands, credentials, or network access. A single `session_start`
+automation template is also stored disabled, so installing Vak cannot execute
+an operator command without an explicit enable action in the admin UI.
+
+The seed runs against the canonical `~/vak-home` Shared root (or the explicit
+`VAK_HOME` root used for an isolated installation), never the current project.
+Projects and agents discover these entries through the normal inheritance
+chain and can shadow, add, or disable categories at their own scope.
+
 ## Verification obligations
 
 - A new and an existing empty project both observe a changed Shared value.
