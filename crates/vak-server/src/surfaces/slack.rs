@@ -225,7 +225,7 @@ impl SlackBridge {
     }
 
     async fn send_message(&self, channel_id: &str, text: &str) -> Result<(), String> {
-        for chunk in crate::discord::chunk_text(text, 3900) {
+        for chunk in crate::surfaces::discord::chunk_text(text, 3900) {
             let resp = http()
                 .post(format!("{}/chat.postMessage", self.api_base))
                 .bearer_auth(&self.bot_token)
@@ -272,7 +272,7 @@ impl SlackBridge {
                         eprintln!("[slack] poll failed ({failures} consecutive): {e}");
                     }
                     tokio::time::sleep(std::time::Duration::from_secs(
-                        crate::discord::backoff_secs(failures),
+                        crate::surfaces::discord::backoff_secs(failures),
                     ))
                     .await;
                 }

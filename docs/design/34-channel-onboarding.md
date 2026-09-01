@@ -520,7 +520,7 @@ The routing model is already surface-agnostic by construction
 (`key = "{surface}:{chat}"`, `InboundChannel` trait per docs/design/22's
 "Inbound channel identity" section) — Phase 3 is adding the actual bridge
 clients and their onboarding UI, following the Telegram bridge
-(`crates/vak-server/src/telegram.rs` server-side adapter,
+(`crates/vak-server/src/surfaces/telegram.rs` server-side adapter,
 `vak telegram` CLI bridge process) as the template for both.
 
 **Discord bridge**: a `vak discord --server <url> --token <bot-token>`
@@ -553,8 +553,8 @@ in rendering, since they key everything off `surface:chat`) with:
   designed; Phase 3 only adds the bridges that can actually deliver a
   `surface:chat` key from Discord/Slack in the first place.
 
-**Implemented.** `crates/vak-server/src/discord.rs` and
-`crates/vak-server/src/slack.rs` implement `InboundChannel`, driven by
+**Implemented.** `crates/vak-server/src/surfaces/discord.rs` and
+`crates/vak-server/src/surfaces/slack.rs` implement `InboundChannel`, driven by
 `vak discord` / `vak slack` (same flags and env-first credential handling
 as `vak telegram`); `DiscordAdapter` and `SlackAdapter` are registered in
 `delivery.rs` when their bot tokens are set. Phase 1's UI was confirmed

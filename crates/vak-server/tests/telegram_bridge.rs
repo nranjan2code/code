@@ -10,7 +10,7 @@ use vak_core::Core;
 use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
-use vak_server::telegram::TelegramBridge;
+use vak_server::surfaces::telegram::TelegramBridge;
 
 struct Scripted {
     responses: Mutex<VecDeque<AssistantMessage>>,

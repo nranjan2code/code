@@ -47,16 +47,14 @@ mod admin_ui;
 mod channels;
 mod core_pool;
 mod delivery;
-pub mod discord;
 mod events;
 mod feeds;
 pub mod gateway;
 mod heartbeat;
 mod operations;
-mod presentation;
+mod projection;
 mod rate_limit;
-pub mod slack;
-pub mod telegram;
+pub mod surfaces;
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -2351,7 +2349,7 @@ pub(crate) fn register_handle(
 ) -> Arc<SessionHandle> {
     let (events_tx, _) = broadcast::channel(1024);
     let (side_events_tx, _) = broadcast::channel(1024);
-    let presentation = Arc::new(Mutex::new(crate::presentation::snapshot(&id, &session)));
+    let presentation = Arc::new(Mutex::new(crate::projection::snapshot(&id, &session)));
     let mut presentation_rx = events_tx.subscribe();
     let presentation_state = presentation.clone();
     let presentation_activities = Arc::new(Mutex::new(Vec::new()));
@@ -2377,9 +2375,9 @@ pub(crate) fn register_handle(
                 match presentation_rx.recv().await {
                     Ok(event) => {
                         if let Some(projected) =
-                            crate::presentation::live_event(&observer_id, event.clone())
+                            crate::projection::live_event(&observer_id, event.clone())
                         {
-                            crate::presentation::apply_stream_event(
+                            crate::projection::apply_stream_event(
                                 &mut presentation_state
                                     .lock()
                                     .unwrap_or_else(std::sync::PoisonError::into_inner),
@@ -3012,7 +3010,7 @@ async fn run_prompt(
                     .presentation
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                    crate::presentation::snapshot(&run_id, &session_log);
+                    crate::projection::snapshot(&run_id, &session_log);
                 hub.emit_agent_summary(&summary, Some(run_id.clone()));
                 let _ = handle.events_tx.send(AgentEvent::RunFinished {
                     summary: summary.clone(),
@@ -3053,7 +3051,7 @@ async fn run_prompt(
                         .presentation
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                        crate::presentation::snapshot(&run_id, &restored);
+                        crate::projection::snapshot(&run_id, &restored);
                     *handle
                         .session
                         .lock()
@@ -3755,7 +3753,7 @@ async fn presentation_snapshot(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(session) = guard.as_ref() {
-            return Json(crate::presentation::snapshot(&id, session)).into_response();
+            return Json(crate::projection::snapshot(&id, session)).into_response();
         }
         let mut timeline = handle
             .presentation
@@ -3766,7 +3764,7 @@ async fn presentation_snapshot(
         return Json(timeline).into_response();
     }
     match open_historical_session(&state, &id) {
-        Some(session) => Json(crate::presentation::snapshot(&id, &session)).into_response(),
+        Some(session) => Json(crate::projection::snapshot(&id, &session)).into_response(),
         None => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "unknown session" })),
@@ -3794,7 +3792,7 @@ async fn presentation_events_sse(
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 guard
                     .as_ref()
-                    .map(|session| crate::presentation::snapshot(&id, session))
+                    .map(|session| crate::projection::snapshot(&id, session))
                     .unwrap_or_else(|| {
                         handle
                             .presentation
@@ -3809,21 +3807,20 @@ async fn presentation_events_sse(
             ));
             handle.subscribed.notify_one();
             let live_id = id.clone();
-            let live = BroadcastStream::new(rx).filter_map(move |event| match event {
-                Ok(event) => {
-                    crate::presentation::live_event(&live_id, event).map(|projected| {
+            let live =
+                BroadcastStream::new(rx).filter_map(move |event| match event {
+                    Ok(event) => crate::projection::live_event(&live_id, event).map(|projected| {
                         Ok(Event::default()
                             .data(serde_json::to_string(&projected).unwrap_or_default()))
-                    })
-                }
-                Err(_) => Some(Ok(Event::default().data("{\"lagged\":true}"))),
-            });
+                    }),
+                    Err(_) => Some(Ok(Event::default().data("{\"lagged\":true}"))),
+                });
             Box::pin(initial.chain(live))
         }
         None => match open_historical_session(&state, &id) {
             Some(session) => {
                 let event = vak_delivery::OutputStreamEvent::Snapshot {
-                    timeline: crate::presentation::snapshot(&id, &session),
+                    timeline: crate::projection::snapshot(&id, &session),
                 };
                 Box::pin(tokio_stream::once(Ok(
                     Event::default().data(serde_json::to_string(&event).unwrap_or_default())
@@ -7546,7 +7543,7 @@ async fn side_chat(
                 .presentation
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                crate::presentation::snapshot(&id, &restored);
+                crate::projection::snapshot(&id, &restored);
             *handle
                 .session
                 .lock()
@@ -7801,7 +7798,7 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str) {
                 *h2.presentation
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                    crate::presentation::snapshot(&turn_session_id, &restored);
+                    crate::projection::snapshot(&turn_session_id, &restored);
                 *h2.session
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);

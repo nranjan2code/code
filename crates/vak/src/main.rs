@@ -1707,7 +1707,8 @@ async fn run_discord(server: String, token_flag: Option<String>, bot_id: Option<
     else {
         return 2;
     };
-    let bridge = vak_server::discord::DiscordBridge::from_env(server, token, bot_token, bot_id);
+    let bridge =
+        vak_server::surfaces::discord::DiscordBridge::from_env(server, token, bot_token, bot_id);
     println!(
         "discord bridge: {} -> {} ({} channel(s))",
         bridge.api_base,
@@ -1733,7 +1734,8 @@ async fn run_slack(server: String, token_flag: Option<String>, bot_id: Option<St
     else {
         return 2;
     };
-    let bridge = vak_server::slack::SlackBridge::from_env(server, token, bot_token, bot_id);
+    let bridge =
+        vak_server::surfaces::slack::SlackBridge::from_env(server, token, bot_token, bot_id);
     println!(
         "slack bridge: {} -> {} ({} channel(s))",
         bridge.api_base,
@@ -1764,7 +1766,7 @@ async fn run_telegram(server: String, token_flag: Option<String>, bot_id: Option
     // Single-instance guard keyed by bot token: a second local bridge
     // fails fast with the holder's identity instead of flapping 409s.
     let locks_dir = Some(vak_config::paths::data_home().join("locks"));
-    let bridge = vak_server::telegram::TelegramBridge {
+    let bridge = vak_server::surfaces::telegram::TelegramBridge {
         api_base,
         bot_token: bot_token.clone(),
         gateway_url: server.trim_end_matches('/').to_string(),

@@ -15,8 +15,8 @@ use vak_core::Core;
 use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
-use vak_server::discord::DiscordBridge;
-use vak_server::slack::SlackBridge;
+use vak_server::surfaces::discord::DiscordBridge;
+use vak_server::surfaces::slack::SlackBridge;
 
 struct Scripted {
     responses: Mutex<VecDeque<AssistantMessage>>,

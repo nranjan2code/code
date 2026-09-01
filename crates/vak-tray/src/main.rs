@@ -420,7 +420,7 @@ fn open_desktop() {
 /// macOS starts merely re-activating the running app rather than
 /// spawning a new one) doing nothing visible at all.
 ///
-/// Same mechanism as `vak_server::telegram::InstanceLock`: an O_EXCL
+/// Same mechanism as `vak_server::surfaces::telegram::InstanceLock`: an O_EXCL
 /// marker plus a liveness probe on the recorded pid, so a crashed holder
 /// leaves a marker the next launch reclaims rather than a lock that
 /// wedges the menu bar until a reboot. Deliberately not flock, which
@@ -468,7 +468,7 @@ fn try_claim(path: &std::path::Path) -> bool {
 }
 
 /// Liveness probe without libc: `kill -0` via a subprocess, matching
-/// how `vak_server::telegram::InstanceLock` does it.
+/// how `vak_server::surfaces::telegram::InstanceLock` does it.
 fn pid_alive(pid: u32) -> bool {
     std::process::Command::new("kill")
         .arg("-0")

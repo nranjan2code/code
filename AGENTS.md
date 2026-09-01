@@ -225,6 +225,13 @@ crates/vak-store     SQLite FTS5 rebuildable index over session JSONL:
                      calls/results/thinking), structured metadata queries,
                      idempotent import, WAL mode — docs/design/23 +
                      33 (JSONL stays source of truth)
+                     Transport vs. formatting: `vak-server/src/surfaces/`
+                     holds the chat-surface TRANSPORT adapters (long-poll /
+                     webhook bridges into POST /gateway/inbound), while
+                     `vak-delivery`'s same-named modules own the MARKUP
+                     projection for each surface. Both used to sit at
+                     `src/telegram.rs` in their own crate and read as
+                     duplication until you opened both.
 crates/vak-delivery  schema-v2 channel-neutral semantic output contract,
                      closed AST/compiler, capability projection, safe templates,
                      exact Markdown fallback, ordered chunks, Telegram HTML,
