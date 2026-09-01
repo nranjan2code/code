@@ -444,12 +444,18 @@ async fn main() {
 /// Release feed URL for `self update`: the flag when given, otherwise the
 /// `[update] url` already used by the startup update check, so the two
 /// paths can never point at different feeds.
+///
+/// Loaded untrusted on purpose. The feed names the binary that replaces this
+/// one and supplies its own artifact checksums, so a project config must not
+/// be able to redirect it; `load_with_trust` drops `[update] url` from an
+/// untrusted project layer and the user's global value still applies.
 fn resolve_update_url(flag: Option<String>) -> Option<String> {
     if let Some(u) = flag.filter(|u| !u.trim().is_empty()) {
         return Some(u);
     }
     let cwd = std::env::current_dir().ok()?;
-    vak_config::load(&cwd).ok()?.update.url
+    let trusted = trust_marker_path(&cwd).is_some_and(|marker| marker.exists());
+    vak_config::load_with_trust(&cwd, trusted).ok()?.update.url
 }
 
 fn fnv1a(bytes: &[u8]) -> u64 {

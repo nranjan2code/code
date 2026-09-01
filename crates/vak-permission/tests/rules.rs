@@ -73,7 +73,19 @@ fn bash_subcommand_matching() {
         Mode::WorkspaceWrite,
         std::path::Path::new("/tmp"),
     );
-    assert_eq!(d, Decision::Allow);
+    assert!(
+        matches!(d, Decision::Ask { .. }),
+        "`npm test` is not covered by `Bash(git push *)`; one covered segment \
+         must not authorize its neighbours"
+    );
+
+    let d = eng.evaluate(
+        "bash",
+        &bash("git push origin main && git push --tags"),
+        Mode::WorkspaceWrite,
+        std::path::Path::new("/tmp"),
+    );
+    assert_eq!(d, Decision::Allow, "every segment is covered");
 
     let d = eng.evaluate(
         "bash",
@@ -148,6 +160,10 @@ fn restricted_read_scope_resolves_symlinks() {
     {
         let cwd = std::env::temp_dir().join("vak-perm-read-symlink");
         let outside = std::env::temp_dir().join("vak-perm-read-symlink-secret.txt");
+        // Fixed paths: a previously failed run leaves both behind, and
+        // `symlink` on an existing name is an error, so start from clean.
+        let _ = std::fs::remove_dir_all(&cwd);
+        let _ = std::fs::remove_file(&outside);
         std::fs::create_dir_all(&cwd).unwrap();
         std::fs::write(&outside, "secret").unwrap();
         std::os::unix::fs::symlink(&outside, cwd.join("looks-safe")).unwrap();
@@ -288,7 +304,7 @@ fn substitution_and_newline_commands_are_opaque_to_allow_patterns() {
             std::path::Path::new("/tmp"),
         );
         assert!(
-            matches!(d, Decision::Ask { .. }),
+            !matches!(d, Decision::Allow),
             "'{cmd}' must not match a patterned allow rule"
         );
     }

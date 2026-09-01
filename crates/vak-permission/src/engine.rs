@@ -78,10 +78,13 @@ impl PermissionEngine {
         self
     }
 
-    /// Severity aggregation over matching rules — Deny > Ask > Allow no
-    /// matter what order the rules were registered in. A deny rule can
-    /// never be shadowed by an allow rule purely because of vec ordering.
-    /// With no matching rule, the mode's default applies.
+    /// Restrictive rules first — Deny beats Ask no matter what order they
+    /// were registered in — then allow-coverage, then the mode default.
+    ///
+    /// `Allow` is universally quantified: the allow rules must cover EVERY
+    /// effect the invocation can have. One matching segment of a compound
+    /// shell command never authorizes its neighbours, so `+Bash(git *)`
+    /// does not allow `git status; rm -rf /`.
     pub fn evaluate(
         &self,
         tool: &str,
@@ -104,36 +107,27 @@ impl PermissionEngine {
                 };
             }
         }
-        let mut best: Option<(u8, Decision)> = None;
-        for rule in &self.rules {
-            if !rule.matches(tool, args) {
-                continue;
-            }
-            let severity = match rule.decision {
-                RuleDecision::Deny => 2u8,
-                RuleDecision::Ask => 1,
-                RuleDecision::Allow => 0,
+        if self
+            .rules
+            .iter()
+            .any(|rule| rule.decision == RuleDecision::Deny && rule.matches(tool, args))
+        {
+            return Decision::Deny {
+                reason: format!("denied by rule: {}", describe(tool, args)),
             };
-            let better = match &best {
-                Some((s, _)) => severity > *s,
-                None => true,
-            };
-            if better {
-                let decision = match rule.decision {
-                    RuleDecision::Allow => Decision::Allow,
-                    RuleDecision::Ask => Decision::Ask {
-                        reason: format!("rule requires approval: {}", describe(tool, args)),
-                        source: AskSource::Rule,
-                    },
-                    RuleDecision::Deny => Decision::Deny {
-                        reason: format!("denied by rule: {}", describe(tool, args)),
-                    },
-                };
-                best = Some((severity, decision));
-            }
         }
-        if let Some((_, decision)) = best {
-            return decision;
+        if self
+            .rules
+            .iter()
+            .any(|rule| rule.decision == RuleDecision::Ask && rule.matches(tool, args))
+        {
+            return Decision::Ask {
+                reason: format!("rule requires approval: {}", describe(tool, args)),
+                source: AskSource::Rule,
+            };
+        }
+        if crate::rules::allow_covers(&self.rules, tool, args) {
+            return Decision::Allow;
         }
 
         match mode {
@@ -267,27 +261,42 @@ pub fn path_in_workspace(path: &std::path::Path, cwd: &std::path::Path) -> bool 
     } else {
         cwd_abs.join(path)
     };
-    match candidate.canonicalize() {
-        Ok(p) => p.starts_with(&cwd_abs),
-        Err(_) => {
-            let mut acc = cwd_abs.clone();
-            for comp in candidate
-                .strip_prefix(&cwd_abs)
-                .unwrap_or(candidate.components().as_path())
-                .components()
-            {
-                match comp {
-                    std::path::Component::ParentDir => {
-                        if !acc.pop() {
-                            return false;
-                        }
+    match resolve_through_existing(&candidate) {
+        Some(resolved) => resolved.starts_with(&cwd_abs),
+        None => false,
+    }
+}
+
+/// Canonicalizes the longest existing prefix of `path`, then re-applies the
+/// components that do not exist yet.
+///
+/// `Path::canonicalize` fails outright when the leaf has not been created —
+/// the normal case for `write`. Resolving purely lexically instead (what this
+/// used to do) cannot see a symlinked ancestor, so a workspace containing
+/// `link -> /etc` accepted a write to `link/passwd` as in-workspace.
+///
+/// Returns `None` when the path cannot be resolved at all; callers treat that
+/// as "outside", so this fails closed.
+fn resolve_through_existing(path: &Path) -> Option<PathBuf> {
+    let mut existing = path.to_path_buf();
+    let mut pending: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        if let Ok(base) = existing.canonicalize() {
+            let mut out = base;
+            for part in pending.iter().rev() {
+                if part == ".." {
+                    if !out.pop() {
+                        return None;
                     }
-                    std::path::Component::Normal(c) => acc.push(c),
-                    std::path::Component::CurDir => {}
-                    _ => return false,
+                } else if part != "." {
+                    out.push(part);
                 }
             }
-            acc.starts_with(&cwd_abs)
+            return Some(out);
+        }
+        pending.push(existing.file_name()?.to_os_string());
+        if !existing.pop() {
+            return None;
         }
     }
 }
@@ -299,5 +308,5 @@ fn normalize_scope_path(path: &Path, cwd: &Path) -> PathBuf {
     } else {
         base.join(path)
     };
-    candidate.canonicalize().unwrap_or(candidate)
+    resolve_through_existing(&candidate).unwrap_or(candidate)
 }

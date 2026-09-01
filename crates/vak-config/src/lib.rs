@@ -1754,7 +1754,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
 
 /// Keys a PROJECT-level config may not set when its workspace has not been
 /// marked trusted: they grant execution or redirect credentials.
-const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox";
+const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox, update, capabilities";
 
 pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
     let mut warnings = Vec::new();
@@ -1795,6 +1795,18 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             if fc.sandbox.backend.is_some() || fc.sandbox.image.is_some() {
                 fc.sandbox = SandboxSettings::default();
             }
+            // The release feed decides which binary replaces this one, and
+            // its artifact hashes come from the feed itself — an attacker who
+            // picks the URL picks the checksum too. Same class of power as
+            // anthropic_base_url, and it was not stripped here.
+            if fc.update.url.is_some() {
+                fc.update.url = None;
+            }
+            // `inherit_* = false` clears the corresponding global layer in
+            // `merge_into`, so an untrusted project could switch off the
+            // user's own hooks and MCP servers — disabling a protection is
+            // as privileged as adding a capability.
+            fc.capabilities = CapabilityInheritanceSettings::default();
             warnings.push(format!(
                 "project .vak/config.toml is not trusted for this workspace; \
                  ignored privileged keys ({PRIVILEGED_KEYS_NOTICE}). \
