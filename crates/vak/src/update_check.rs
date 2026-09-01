@@ -69,9 +69,7 @@ fn write_cache_timestamp(cache_path: &std::path::Path) {
 }
 
 fn vak_home() -> Option<PathBuf> {
-    std::env::var_os("VAK_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".vak")))
+    Some(vak_config::paths::data_home())
 }
 
 fn fetch_latest_version(url: &str) -> Option<(u64, u64, u64)> {

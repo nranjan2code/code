@@ -25,14 +25,14 @@ fn feeds_dir(cwd: &std::path::Path) -> PathBuf {
     cwd.join("scripts").join("feeds")
 }
 
-/// Config file path for feed sources.
+/// Config file path for feed sources, in the canonical data home.
+///
+/// This used to hand-roll `~/.config/vak/feeds.toml` — a fifth layout
+/// convention nothing else in the tree used — and `HOME` was read with
+/// `unwrap_or_default()`, so an unset `HOME` produced a *relative* path
+/// resolved against whatever directory the server happened to start in.
 fn feeds_config_path(_cwd: &std::path::Path) -> PathBuf {
-    // Global config lives at ~/.config/vak/feeds.toml
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home)
-        .join(".config")
-        .join("vak")
-        .join("feeds.toml")
+    vak_config::paths::data_home().join("feeds.toml")
 }
 
 /// Run a Python feed script and return its JSON output.

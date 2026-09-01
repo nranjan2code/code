@@ -262,11 +262,11 @@ pub fn migrate_legacy_home() -> Result<(), String> {
     if get_var("VAK_HOME").is_some() {
         return Ok(());
     }
+    let homes = resolve(None);
     let legacy = base_home().join(LEGACY_HOME_SUFFIX);
     if !legacy.exists() {
-        return Ok(());
+        return migrate_stray_feeds_config(&homes.data);
     }
-    let homes = resolve(None);
     let target = &homes.data;
     if target.exists() {
         // Both exist: leave everything alone rather than guess a merge
@@ -312,6 +312,27 @@ pub fn migrate_legacy_home() -> Result<(), String> {
         }
         let _ = std::fs::remove_dir(&old_logs);
     }
+
+    migrate_stray_feeds_config(target)
+}
+
+/// Relocate `~/.config/vak/feeds.toml` into the data home.
+///
+/// The feeds config was the one file written outside this module's layout —
+/// an XDG *config* path nothing else in the tree used. It is migrated
+/// separately from the `~/.vak` rename above because it never lived there.
+fn migrate_stray_feeds_config(data: &std::path::Path) -> Result<(), String> {
+    let legacy = base_home().join(".config/vak/feeds.toml");
+    if !legacy.is_file() {
+        return Ok(());
+    }
+    let target = data.join("feeds.toml");
+    if target.exists() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(data).map_err(|e| e.to_string())?;
+    std::fs::rename(&legacy, &target).map_err(|e| format!("relocate feeds.toml: {e}"))?;
+    let _ = std::fs::remove_dir(legacy.parent().unwrap_or(&legacy));
     Ok(())
 }
 

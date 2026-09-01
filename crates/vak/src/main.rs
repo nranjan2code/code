@@ -468,11 +468,11 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 }
 
 fn trust_marker_path(cwd: &std::path::Path) -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|h| {
-        PathBuf::from(h)
-            .join(".vak/trusted")
-            .join(format!("{:016x}", fnv1a(cwd.to_string_lossy().as_bytes())))
-    })
+    Some(
+        vak_config::paths::data_home()
+            .join("trusted")
+            .join(format!("{:016x}", fnv1a(cwd.to_string_lossy().as_bytes()))),
+    )
 }
 
 fn resolve_trust(cwd: &std::path::Path, flag: bool, interactive: bool) -> bool {
@@ -523,14 +523,10 @@ pub(crate) fn print_config_warnings(core: &Core) {
 }
 
 fn flow_dirs(cwd: &std::path::Path) -> Vec<PathBuf> {
-    let mut dirs = vec![cwd.join(".vak/flows")];
-    if let Some(home) = std::env::var_os("VAK_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".vak")))
-    {
-        dirs.push(home.join("flows"));
-    }
-    dirs
+    vec![
+        cwd.join(".vak/flows"),
+        vak_config::paths::data_home().join("flows"),
+    ]
 }
 
 fn discover_flows(cwd: &std::path::Path) -> Vec<(String, PathBuf)> {
