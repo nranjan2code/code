@@ -473,6 +473,7 @@ pub struct CapabilityInheritanceSettings {
     pub inherit_mcp: Option<bool>,
     pub inherit_hooks: Option<bool>,
     pub inherit_skills: Option<bool>,
+    pub inherit_commands: Option<bool>,
     pub inherit_plugins: Option<bool>,
 }
 
@@ -481,6 +482,7 @@ pub struct CapabilityInheritanceResolved {
     pub inherit_mcp: bool,
     pub inherit_hooks: bool,
     pub inherit_skills: bool,
+    pub inherit_commands: bool,
     pub inherit_plugins: bool,
 }
 
@@ -908,6 +910,7 @@ impl Default for Config {
                 inherit_mcp: true,
                 inherit_hooks: true,
                 inherit_skills: true,
+                inherit_commands: true,
                 inherit_plugins: true,
             },
             ui: UiResolved {
@@ -1175,6 +1178,7 @@ pub fn persist_capability_inheritance(
     inherit_mcp: Option<bool>,
     inherit_hooks: Option<bool>,
     inherit_skills: Option<bool>,
+    inherit_commands: Option<bool>,
     inherit_plugins: Option<bool>,
 ) -> Result<(), ConfigError> {
     let mut root = if path.is_file() {
@@ -1205,6 +1209,7 @@ pub fn persist_capability_inheritance(
         ("inherit_mcp", inherit_mcp),
         ("inherit_hooks", inherit_hooks),
         ("inherit_skills", inherit_skills),
+        ("inherit_commands", inherit_commands),
         ("inherit_plugins", inherit_plugins),
     ] {
         if let Some(value) = value {
@@ -1896,6 +1901,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         inherit_mcp: merged.capabilities.inherit_mcp.unwrap_or(true),
         inherit_hooks: merged.capabilities.inherit_hooks.unwrap_or(true),
         inherit_skills: merged.capabilities.inherit_skills.unwrap_or(true),
+        inherit_commands: merged.capabilities.inherit_commands.unwrap_or(true),
         inherit_plugins: merged.capabilities.inherit_plugins.unwrap_or(true),
     };
     cfg.ui.theme = merged.ui.theme.clone().unwrap_or_else(|| "dark".into());
@@ -2253,6 +2259,7 @@ const KNOWN_CAPABILITY_KEYS: &[&str] = &[
     "inherit_mcp",
     "inherit_hooks",
     "inherit_skills",
+    "inherit_commands",
     "inherit_plugins",
 ];
 const KNOWN_UI_KEYS: &[&str] = &[
@@ -2638,6 +2645,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.capabilities.inherit_skills.is_some() {
         base.capabilities.inherit_skills = over.capabilities.inherit_skills;
+    }
+    if over.capabilities.inherit_commands.is_some() {
+        base.capabilities.inherit_commands = over.capabilities.inherit_commands;
     }
     if over.capabilities.inherit_plugins.is_some() {
         base.capabilities.inherit_plugins = over.capabilities.inherit_plugins;

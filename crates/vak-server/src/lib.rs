@@ -5728,6 +5728,7 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
             "mcp": state.core.effective_capability_inheritance().inherit_mcp,
             "hooks": state.core.effective_capability_inheritance().inherit_hooks,
             "skills": state.core.effective_capability_inheritance().inherit_skills,
+            "commands": state.core.effective_capability_inheritance().inherit_commands,
             "plugins": state.core.effective_capability_inheritance().inherit_plugins,
         },
         "telegram": {
@@ -5800,6 +5801,7 @@ fn config_layer_response(
             "inherit_mcp": layer.capabilities.inherit_mcp,
             "inherit_hooks": layer.capabilities.inherit_hooks,
             "inherit_skills": layer.capabilities.inherit_skills,
+            "inherit_commands": layer.capabilities.inherit_commands,
             "inherit_plugins": layer.capabilities.inherit_plugins,
         },
     }))
@@ -6018,6 +6020,8 @@ struct ConfigPatch {
     #[serde(default)]
     inherit_skills: Option<bool>,
     #[serde(default)]
+    inherit_commands: Option<bool>,
+    #[serde(default)]
     inherit_plugins: Option<bool>,
 }
 
@@ -6037,6 +6041,7 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
         && (body.inherit_mcp.is_some()
             || body.inherit_hooks.is_some()
             || body.inherit_skills.is_some()
+            || body.inherit_commands.is_some()
             || body.inherit_plugins.is_some())
     {
         return StatusCode::BAD_REQUEST;
@@ -6272,6 +6277,7 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
     if body.inherit_mcp.is_some()
         || body.inherit_hooks.is_some()
         || body.inherit_skills.is_some()
+        || body.inherit_commands.is_some()
         || body.inherit_plugins.is_some()
     {
         let path = vak_config::project_path(state.core.cwd());
@@ -6280,6 +6286,7 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
             body.inherit_mcp,
             body.inherit_hooks,
             body.inherit_skills,
+            body.inherit_commands,
             body.inherit_plugins,
         )
         .is_err()

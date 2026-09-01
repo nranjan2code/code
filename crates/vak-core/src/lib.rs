@@ -383,6 +383,31 @@ struct CoreInner {
 
 /// Learned permission rules live outside the main config so they can be
 /// written at runtime without touching (possibly committed) project config.
+/// Where a capability (skill, command, plugin, hook, MCP server) was found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilityScope {
+    /// The workspace being operated on: `<cwd>/.vak`.
+    Workspace,
+    /// The user's shared workspace: `default_workspace()/.vak`.
+    Shared,
+}
+
+impl CapabilityScope {
+    pub fn label(self) -> &'static str {
+        match self {
+            CapabilityScope::Workspace => "workspace",
+            CapabilityScope::Shared => "shared",
+        }
+    }
+}
+
+/// One capability root and the scope it speaks for.
+#[derive(Debug, Clone)]
+pub struct CapabilityRoot {
+    pub path: std::path::PathBuf,
+    pub scope: CapabilityScope,
+}
+
 pub const PERMISSIONS_LOCAL_FILE: &str = ".vak/permissions.local.toml";
 
 #[derive(serde::Deserialize, Default)]
@@ -972,18 +997,57 @@ impl Core {
         vak_config::paths::default_workspace().join(".vak")
     }
 
-    fn extend_enabled_plugin_mcp(&self, config: &mut vak_config::McpConfig) {
-        let shared_root = self.shared_capability_root();
-        let local_root = self.inner.cwd.join(".vak");
-        let mut roots = vec![local_root.clone()];
-        if local_root != shared_root {
-            roots.push(shared_root.clone());
-        }
-        for root in roots {
-            if root == shared_root && !self.effective_capability_inheritance().inherit_plugins {
+    /// Plugin package roots contributing skills and commands, tagged with the
+    /// provenance string inspection surfaces render.
+    fn enabled_plugin_skill_roots(&self) -> Vec<(std::path::PathBuf, String)> {
+        let mut out = Vec::new();
+        for root in self.capability_roots() {
+            let Ok(enabled) = vak_plugin::PluginStore::new(&root.path).enabled() else {
                 continue;
-            }
-            let Ok(plugins) = vak_plugin::PluginStore::new(root).enabled() else {
+            };
+            out.extend(enabled.into_iter().map(|plugin| {
+                (
+                    plugin.package_path,
+                    format!(
+                        "plugin:{}:{}:{}",
+                        root.scope.label(),
+                        plugin.name,
+                        plugin.trace_id
+                    ),
+                )
+            }));
+        }
+        out
+    }
+
+    /// The capability roots this Core reads, workspace-local first so a
+    /// workspace-scoped skill, command, plugin, or hook shadows a shared one
+    /// of the same name.
+    ///
+    /// The shared root is dropped when `capabilities.inherit_plugins = false`,
+    /// and collapsed when the workspace IS the shared workspace. Every
+    /// capability lookup goes through here: this resolution was copied into
+    /// six call sites, one of which had already drifted to the opposite
+    /// ordering, and a shared-scope bug in one copy is invisible in the rest.
+    fn capability_roots(&self) -> Vec<CapabilityRoot> {
+        let shared = self.shared_capability_root();
+        let workspace = self.inner.cwd.join(".vak");
+        let mut roots = vec![CapabilityRoot {
+            path: workspace.clone(),
+            scope: CapabilityScope::Workspace,
+        }];
+        if workspace != shared && self.effective_capability_inheritance().inherit_plugins {
+            roots.push(CapabilityRoot {
+                path: shared,
+                scope: CapabilityScope::Shared,
+            });
+        }
+        roots
+    }
+
+    fn extend_enabled_plugin_mcp(&self, config: &mut vak_config::McpConfig) {
+        for root in self.capability_roots() {
+            let Ok(plugins) = vak_plugin::PluginStore::new(root.path).enabled() else {
                 continue;
             };
             for plugin in plugins {
@@ -1047,17 +1111,8 @@ impl Core {
 
     fn plugin_mcp_invocation_context(&self) -> Vec<(vak_plugin::PluginStore, String, String)> {
         let mut context = Vec::new();
-        let shared_root = self.shared_capability_root();
-        let local_root = self.inner.cwd.join(".vak");
-        let mut roots = vec![local_root.clone()];
-        if local_root != shared_root {
-            roots.push(shared_root.clone());
-        }
-        for root in roots {
-            if root == shared_root && !self.effective_capability_inheritance().inherit_plugins {
-                continue;
-            }
-            let store = vak_plugin::PluginStore::new(root);
+        for root in self.capability_roots() {
+            let store = vak_plugin::PluginStore::new(root.path);
             let Ok(plugins) = store.enabled() else {
                 continue;
             };
@@ -1362,18 +1417,8 @@ impl Core {
             self.inner.config.hooks.clone()
         };
         let mut hooks = hooks;
-        let shared_root = self.shared_capability_root();
-        let local_root = self.inner.cwd.join(".vak");
-        let mut roots = vec![local_root.clone()];
-        if local_root != shared_root {
-            roots.push(shared_root.clone());
-        }
-        for store_home in roots {
-            if store_home == shared_root && !self.effective_capability_inheritance().inherit_plugins
-            {
-                continue;
-            }
-            let store = vak_plugin::PluginStore::new(store_home);
+        for root in self.capability_roots() {
+            let store = vak_plugin::PluginStore::new(root.path);
             if let Ok(plugin_hooks) = store.enabled_hooks() {
                 hooks.extend(plugin_hooks.into_iter().map(|(_plugin, hook)| {
                     vak_config::HookConfig {
@@ -1783,26 +1828,8 @@ impl Core {
     }
 
     pub fn skills(&self) -> Vec<skills::Skill> {
-        let mut plugin_roots = Vec::new();
         let shared_root = self.shared_capability_root();
-        let local_root = self.inner.cwd.join(".vak");
-        let mut roots = vec![(local_root.clone(), "workspace".to_string())];
-        if local_root != shared_root {
-            roots.push((shared_root.clone(), "shared".to_string()));
-        }
-        for (root, label) in roots {
-            if label == "shared" && !self.effective_capability_inheritance().inherit_plugins {
-                continue;
-            }
-            if let Ok(enabled) = vak_plugin::PluginStore::new(&root).enabled() {
-                plugin_roots.extend(enabled.into_iter().map(|plugin| {
-                    (
-                        plugin.package_path,
-                        format!("plugin:{}:{}:{}", label, plugin.name, plugin.trace_id),
-                    )
-                }));
-            }
-        }
+        let plugin_roots = self.enabled_plugin_skill_roots();
         let mut skills =
             skills::discover_with_plugins(&self.inner.cwd, &shared_root, &plugin_roots);
         if !self.effective_capability_inheritance().inherit_skills {
@@ -1821,26 +1848,8 @@ impl Core {
     }
 
     pub fn skills_with_shadowed(&self) -> Vec<skills::Skill> {
-        let mut plugin_roots = Vec::new();
         let shared_root = self.shared_capability_root();
-        let local_root = self.inner.cwd.join(".vak");
-        let mut roots = vec![(local_root.clone(), "workspace".to_string())];
-        if local_root != shared_root {
-            roots.push((shared_root.clone(), "shared".to_string()));
-        }
-        for (root, label) in roots {
-            if label == "shared" && !self.effective_capability_inheritance().inherit_plugins {
-                continue;
-            }
-            if let Ok(enabled) = vak_plugin::PluginStore::new(&root).enabled() {
-                plugin_roots.extend(enabled.into_iter().map(|plugin| {
-                    (
-                        plugin.package_path,
-                        format!("plugin:{}:{}:{}", label, plugin.name, plugin.trace_id),
-                    )
-                }));
-            }
-        }
+        let plugin_roots = self.enabled_plugin_skill_roots();
         let mut skills =
             skills::discover_all_with_plugins(&self.inner.cwd, &shared_root, &plugin_roots);
         if !self.effective_capability_inheritance().inherit_skills {
@@ -1864,27 +1873,17 @@ impl Core {
     }
 
     pub fn custom_commands(&self) -> Vec<custom_commands::CustomCommand> {
-        let mut plugin_roots = Vec::new();
         let shared_root = self.shared_capability_root();
-        let local_root = self.inner.cwd.join(".vak");
-        let mut roots = vec![(local_root.clone(), "workspace".to_string())];
-        if local_root != shared_root {
-            roots.push((shared_root.clone(), "shared".to_string()));
+        let plugin_roots = self.enabled_plugin_skill_roots();
+        let mut commands =
+            custom_commands::discover_with_plugins(&self.inner.cwd, &shared_root, &plugin_roots);
+        if !self.effective_capability_inheritance().inherit_commands {
+            // `discover_with_plugins` labels the shared root's commands
+            // "user"; workspace ones are "project" and plugin ones carry a
+            // "plugin:" prefix.
+            commands.retain(|command| command.source != "user");
         }
-        for (root, label) in roots {
-            if label == "shared" && !self.effective_capability_inheritance().inherit_plugins {
-                continue;
-            }
-            if let Ok(enabled) = vak_plugin::PluginStore::new(&root).enabled() {
-                plugin_roots.extend(enabled.into_iter().map(|plugin| {
-                    (
-                        plugin.package_path,
-                        format!("plugin:{}:{}:{}", label, plugin.name, plugin.trace_id),
-                    )
-                }));
-            }
-        }
-        custom_commands::discover_with_plugins(&self.inner.cwd, &shared_root, &plugin_roots)
+        commands
     }
 
     pub fn tool_names(&self) -> Vec<String> {
@@ -3368,20 +3367,11 @@ impl Core {
             Some(std::sync::Arc::new(build_hooks_from(&hook_configs)?));
         cfg.hooks = hooks.clone();
         let shared_root = self.shared_capability_root();
-        let plugin_homes = if self.effective_capability_inheritance().inherit_plugins {
-            let local_root = self.inner.cwd.join(".vak");
-            if local_root == shared_root {
-                vec![local_root]
-            } else {
-                vec![shared_root.clone(), local_root]
-            }
-        } else {
-            vec![self.inner.cwd.join(".vak")]
-        };
-        let plugin_hooks: Vec<_> = plugin_homes
+        let plugin_hooks: Vec<_> = self
+            .capability_roots()
             .into_iter()
-            .flat_map(|home| {
-                vak_plugin::PluginStore::new(home)
+            .flat_map(|root| {
+                vak_plugin::PluginStore::new(root.path)
                     .enabled_hooks()
                     .unwrap_or_default()
             })
