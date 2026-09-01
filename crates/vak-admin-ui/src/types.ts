@@ -49,6 +49,7 @@ export interface HealthInfo {
   model_source?: string;
   route_revision?: string;
   permission_mode: string;
+  approval_mode: "ask" | "approve-safe" | "auto-approve";
   sandbox: string;
   context_window: number;
   cwd: string;
@@ -105,6 +106,8 @@ export interface ConfigInfo {
   route_revision?: string;
   max_turns: number;
   permission_mode: string;
+  approval_mode: "ask" | "approve-safe" | "auto-approve";
+  sandbox: string;
   theme: string;
   subagents: boolean;
   /** Resolved permission rule lists, exactly as the engine evaluates them. */

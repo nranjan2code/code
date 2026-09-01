@@ -27,16 +27,60 @@ Key choices:
 2. **No network** (`--network none`) in restricted modes. Tasks needing the
    internet run under FullAccess, which disables sandboxes entirely — same
    rule as today.
-3. **Hard caps and privilege reduction**: memory 2g, cpus 2, 256 PIDs, all
-   capabilities dropped, `no-new-privileges`, a read-only root filesystem,
-   bounded tmpfs, and throwaway containers (`--rm`).
-4. **ReadOnly mode** additionally mounts the workspace `:ro`; workspace-write
+3. **Ephemeral root filesystem**: ReadOnly uses `--read-only`; WorkspaceWrite
+   uses Docker's private writable container layer. Since every invocation uses
+   `--rm`, package managers and compilers may install arbitrary software inside
+   the container, but those writes disappear unless explicitly written to the
+   mounted workspace. This never installs software on the host.
+4. **Hard caps and privilege reduction**: memory 2g, cpus 2, 256 PIDs, all
+   capabilities dropped, `no-new-privileges`, bounded tmpfs, and throwaway
+   containers (`--rm`). ReadOnly additionally uses a read-only root filesystem.
+5. **ReadOnly mode** additionally mounts the workspace `:ro`; workspace-write
    mounts it read-write. Both modes use only the bounded writable `/tmp` tmpfs.
-5. **Fail closed**: an unreachable daemon surfaces as a failed wrapped
+6. **Fail closed**: an unreachable daemon surfaces as a failed wrapped
    command (never silently falls back to host execution). A cheap cached
    `docker info` probe powers availability checks.
-6. **Two-layer quoting discipline**: BashTool wraps the wrapper in another
+7. **Two-layer quoting discipline**: BashTool wraps the wrapper in another
    `sh -c`; the inner command is POSIX single-quote escaped here.
+
+## Task environments
+
+The command-scoped wrapper is not the final environment experience: a fresh
+container per Bash call does not preserve an installation between calls. The
+general-purpose environment API must own a task-scoped container lifecycle:
+
+```text
+create(task, workspace, base-image-digest, limits, network-policy)
+  → install/build/execute via validated docker exec
+  → snapshot immutable environment or discard
+```
+
+The task container may have a writable root layer and an unprivileged identity
+inside its user namespace. The broker, not the model, chooses its name,
+mounts, image digest, limits, and lifetime. Host credentials, the Docker
+socket, Vak control files, and unrelated workspaces are never mounted. A
+snapshot is content-addressed by base image, environment manifest, and policy
+generation; changing any of those creates a new environment.
+
+Until that lifecycle exists, installation and execution must be combined in one
+command or use a workspace-local environment. The system must not claim that a
+package installed in one command will survive the next command.
+
+## Brokered workspace network
+
+Network remains `none` by default. A future task environment may request a
+named brokered network, but a Docker bridge alone is not an authorization
+boundary. The broker must create a per-workspace identity and enforce explicit
+workspace-to-workspace edges approved by both workspace policies,
+authenticated short-lived task identities, destination validation, quotas,
+append-only connection receipts, and revocation that closes existing
+connections. Host gateway, metadata services, Docker sockets, and private
+address ranges remain blocked unless separately brokered.
+
+Two agents must communicate through a brokered service or authenticated
+workspace network, never by guessing localhost ports or joining a shared
+unrestricted Docker network. Provider inference and user credentials remain
+outside this network.
 
 ## Configuration
 
@@ -71,6 +115,13 @@ image   = "alpine:3.20"   # default alpine:3.20
   Seatbelt/Landlock can contain the entire local worker. A future worker image
   can move the complete protocol server into the container once vak ships
   a pinned Linux worker artifact for each supported architecture.
+- Task-scoped lifecycle is implemented by `DockerTaskEnvironment` and is used
+  for agent execution; its private writable layer is retained until the task
+  ends or the owner is dropped.
+- The workspace authorization broker and authenticated server endpoints are
+  implemented, but the container-to-broker transport adapter is still pending.
+  Keep task containers on `--network none` until that adapter mounts only a
+  broker-controlled socket and carries a short-lived capability.
 - No `--user` mapping yet: on Linux hosts with plain dockerd, container
   writes are root-owned. macOS/Windows Desktop handle this transparently;
   rootless/docker-userns-remap setups are unaffected.

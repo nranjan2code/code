@@ -5576,6 +5576,12 @@ const MODE_COPY: Record<string, string> = {
   FullAccess: "Nothing is checked with you first. Only for a project you trust completely.",
 };
 
+const APPROVAL_MODES: { value: "ask" | "approve-safe" | "auto-approve"; label: string; desc: string }[] = [
+  { value: "ask", label: "Ask for approval", desc: "Pause before actions that need approval." },
+  { value: "approve-safe", label: "Approve safe actions", desc: "Automatically approve reads and actions inside the restricted sandbox; still ask for network and external access." },
+  { value: "auto-approve", label: "Auto-approve", desc: "Automatically resolve Ask decisions. Permission denies and the sandbox still apply." },
+];
+
 /// One page, six self-contained panels. Each answers a single question about
 /// how this instance is configured; nothing here is a summary of a screen
 /// that already exists elsewhere.
@@ -5966,6 +5972,28 @@ function Settings() {
                 <a href="#/integrations">Extensions</a>.
               </p>
             </Show>
+            <div class="panel-title-row" style={{ "margin-top": "18px" }}>
+              <div>
+                <h3>How should approvals be handled?</h3>
+                <p class="dim">This controls how Ask decisions are resolved. It does not expand the permission mode or disable the sandbox.</p>
+              </div>
+            </div>
+            <div class="mode-grid">
+              <For each={APPROVAL_MODES}>
+                {(m) => (
+                  <button
+                    class="mode-btn"
+                    classList={{ active: config()?.approval_mode === m.value }}
+                    onClick={() => void guard(() => api.patchConfig({ approval_mode: m.value }), `Approval mode set to “${m.label}”`)}
+                    disabled={config()?.approval_mode === m.value}
+                  >
+                    <span class="mode-name">{m.label}<Show when={config()?.approval_mode === m.value}><span class="chip chip-tone-success">current</span></Show></span>
+                    <span class="mode-desc">{m.desc}</span>
+                  </button>
+                )}
+              </For>
+            </div>
+            <p class="dim" style={{ "margin-top": "10px" }}>Effective sandbox: <code>{config()?.sandbox ?? "…"}</code></p>
           </section>
 
           <section class="panel">

@@ -295,6 +295,7 @@ export const api = {
     provider?: string;
     model?: string;
     max_turns?: number;
+    approval_mode?: "ask" | "approve-safe" | "auto-approve";
     theme?: string;
     subagents?: boolean;
     /** `[memory]` toggles (docs/design/23-memory.md). Omitted = leave alone. */

@@ -2,6 +2,7 @@
 //! the agent loop behind one entry point. TUI, server, and exec mode are
 //! thin consumers of this crate.
 
+pub mod agent_network;
 pub mod backup;
 pub mod checkpoints;
 pub mod custom_commands;
@@ -294,6 +295,7 @@ struct CoreInner {
     max_turns_runtime_pinned: std::sync::atomic::AtomicBool,
     mode_override: std::sync::Mutex<Option<vak_config::PermissionMode>>,
     mode_runtime_pinned: std::sync::atomic::AtomicBool,
+    approval_mode_override: std::sync::Mutex<Option<vak_config::ApprovalMode>>,
     theme_override: std::sync::Mutex<Option<String>>,
     theme_runtime_pinned: std::sync::atomic::AtomicBool,
     /// Live overrides for `[memory]` toggles (docs/design/23-memory.md).
@@ -316,6 +318,7 @@ struct CoreInner {
     finops_max_run_usd_override: std::sync::Mutex<Option<Option<f64>>>,
     finops_max_day_usd_override: std::sync::Mutex<Option<Option<f64>>>,
     sandbox_backend_override: std::sync::Mutex<Option<String>>,
+    agent_network: agent_network::AgentNetworkBroker,
     provider_instance: std::sync::Mutex<Option<Arc<dyn Provider>>>,
     sessions_home_override: std::sync::Mutex<Option<PathBuf>>,
     breaker: Arc<vak_agent::CircuitBreaker>,
@@ -524,7 +527,9 @@ impl Core {
                 max_turns_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 mode_override: std::sync::Mutex::new(None),
                 mode_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
+                approval_mode_override: std::sync::Mutex::new(None),
                 sandbox_backend_override: std::sync::Mutex::new(None),
+                agent_network: agent_network::AgentNetworkBroker::default(),
                 theme_override: std::sync::Mutex::new(None),
                 theme_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 memory_search_enabled_override: std::sync::Mutex::new(None),
@@ -767,7 +772,13 @@ impl Core {
     }
 
     pub fn agent_sandbox(&self) -> Option<Arc<dyn vak_tools::sandbox::Sandbox>> {
-        self.build_sandbox()
+        self.build_execution_sandbox()
+    }
+
+    /// Returns the broker for this Core's isolated agent environment. The
+    /// broker is capability-based and does not grant network access by itself.
+    pub fn agent_network_broker(&self) -> agent_network::AgentNetworkBroker {
+        self.inner.agent_network.clone()
     }
 
     pub fn effective_max_turns(&self) -> usize {
@@ -792,6 +803,19 @@ impl Core {
         self.inner
             .mode_runtime_pinned
             .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub fn effective_approval_mode(&self) -> vak_config::ApprovalMode {
+        Self::read_override(&self.inner.approval_mode_override)
+            .unwrap_or(self.inner.config.approval_mode)
+    }
+
+    pub fn set_approval_mode(&self, mode: vak_config::ApprovalMode) {
+        Self::write_override(&self.inner.approval_mode_override, Some(mode));
+    }
+
+    pub fn apply_persisted_approval_mode(&self, mode: vak_config::ApprovalMode) {
+        Self::write_override(&self.inner.approval_mode_override, Some(mode));
     }
 
     /// Runtime sandbox-backend selection ("os", "docker", or config default
@@ -1516,6 +1540,7 @@ impl Core {
             Some(config.finops.max_day_usd),
         );
         self.apply_persisted_work(config.work.clone());
+        self.apply_persisted_approval_mode(config.approval_mode);
         Ok(config.permission_mode)
     }
 
@@ -2903,6 +2928,11 @@ impl Core {
         cfg.handoff_reset = self.inner.config.goal.handoff_reset;
         cfg.max_audit_blocks = self.inner.config.goal.max_audit_blocks;
         cfg.approver = approver.clone();
+        cfg.approval_mode = match self.effective_approval_mode() {
+            vak_config::ApprovalMode::Ask => vak_agent::ApprovalMode::Ask,
+            vak_config::ApprovalMode::ApproveSafe => vak_agent::ApprovalMode::ApproveSafe,
+            vak_config::ApprovalMode::AutoApprove => vak_agent::ApprovalMode::AutoApprove,
+        };
         // Pre-dispatch budget admission (docs/design/27 Phase D): active
         // whenever any finops knob is configured.
         let f = self.effective_finops();
@@ -2979,7 +3009,7 @@ impl Core {
         let Some(engine) = cfg.permission.clone() else {
             return Err(CoreError::MissingEngine);
         };
-        cfg.sandbox = self.build_sandbox();
+        cfg.sandbox = self.agent_sandbox();
 
         // Phase B: materialize fallback legs beyond the primary provider.
         // Unresolvable legs (missing key/registry) skip silently --
@@ -3456,6 +3486,30 @@ impl Core {
                 "restricted execution is unsupported on this platform",
             )))
         }
+    }
+
+    fn build_execution_sandbox(&self) -> Option<std::sync::Arc<dyn vak_tools::sandbox::Sandbox>> {
+        let mode = match self.effective_permission_mode() {
+            vak_config::PermissionMode::ReadOnly => SandboxMode::ReadOnly,
+            vak_config::PermissionMode::WorkspaceWrite => SandboxMode::WorkspaceWrite,
+            vak_config::PermissionMode::FullAccess => return None,
+        };
+        if self.effective_sandbox_backend() == "docker" {
+            return Some(
+                match sandbox_docker::DockerTaskSandbox::create(
+                    mode,
+                    self.inner.config.sandbox.image.clone(),
+                    self.inner.cwd.as_path(),
+                    Some(&agent_network::AgentNetworkBroker::socket_path(
+                        &self.inner.sessions_home,
+                    )),
+                ) {
+                    Ok(sandbox) => std::sync::Arc::new(sandbox),
+                    Err(error) => std::sync::Arc::new(vak_tools::sandbox::DenySandbox::new(error)),
+                },
+            );
+        }
+        self.build_sandbox()
     }
 
     pub fn effective_sandbox_name(&self) -> String {
@@ -4775,6 +4829,7 @@ mod route_control_tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         first.refresh_persisted_route().unwrap();
@@ -4794,6 +4849,7 @@ mod route_control_tests {
             None,
             Some(17),
             None,
+            None,
             Some("plain"),
         )
         .unwrap();
@@ -4802,7 +4858,7 @@ mod route_control_tests {
         assert_eq!(core.effective_theme(), "plain");
 
         core.set_max_turns(23);
-        vak_config::persist_project_preferences(dir.path(), None, None, Some(31), None, None)
+        vak_config::persist_project_preferences(dir.path(), None, None, Some(31), None, None, None)
             .unwrap();
         core.refresh_persisted_preferences().unwrap();
         assert_eq!(core.effective_max_turns(), 23, "scoped runtime pin wins");

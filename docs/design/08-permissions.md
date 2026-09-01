@@ -13,6 +13,13 @@ The agent loop gates every tool call before dispatch. `Ask` is resolved by an
 (AutoApprove) or defaults to AutoDeny with the reason fed back to the model as
 an error tool result — the model can adapt instead of crashing.
 
+Permission mode and approval behavior are separate controls. Permission mode
+sets the maximum execution boundary (`read-only`, `workspace-write`, or
+`full-access`); the approver decides how an `Ask` is resolved. An automatic
+approver must never replace the sandbox: it can approve work inside the
+selected boundary, while broker and OS enforcement still constrain the
+resulting process.
+
 An invoking surface may also supply a run-scoped direct-write allowlist. For
 CLI this is repeatable `vak exec --write-path <path>`. It is not a model
 instruction or a global setting: `write` and `edit` calls outside the declared
@@ -77,7 +84,8 @@ constrains *what the process can touch* even when allowed.
   `ReadOnly` grants no write paths at all.
 - The optional Docker backend is command-scoped: the broker rewrites the
   validated Bash command inside its worker request, and that shell command runs
-  with no network, a read-only root, bounded tmpfs, CPU/memory/PID limits,
+  with no network, a disposable writable root in workspace-write mode or a
+  read-only root in read-only mode, bounded tmpfs, CPU/memory/PID limits,
   dropped capabilities, and `no-new-privileges`. File tools still use local
   workers; a pinned Linux worker image is required before the full protocol can
   move into the container. See `25-docker-sandbox.md`.

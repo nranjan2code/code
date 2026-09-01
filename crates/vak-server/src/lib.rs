@@ -38,6 +38,9 @@
 //! - `POST /gateway/inbound`          → surface message routed to its bound session (22-gateway)
 //! - `GET  /gateway/status`           → gateway enabled flag + binding table
 //! - `DELETE /gateway/bindings/:key`  → unbind a surface from its session
+//! - `POST /agent-network/capabilities` → issue an explicitly scoped agent capability
+//! - `POST /agent-network/messages`      → broker a bounded workspace message
+//! - `GET  /agent-network/messages`      → receive queued workspace messages
 
 mod admin;
 mod admin_ui;
@@ -456,6 +459,14 @@ fn router_with_state(state: AppState) -> Router {
         .route("/config", get(get_config).patch(patch_config))
         .route("/config/global", axum::routing::patch(patch_global_config))
         .route("/config/mode", post(set_permission_mode))
+        .route(
+            "/agent-network/capabilities",
+            post(agent_network_capability),
+        )
+        .route(
+            "/agent-network/messages",
+            post(agent_network_send).get(agent_network_receive),
+        )
         .route("/config/mcp", get(get_mcp_servers).put(put_mcp_servers))
         .route(
             "/config/mcp/global",
@@ -1905,6 +1916,24 @@ pub fn secured_router_with_port(core: Core, force_gateway: bool, port: u16) -> (
             require_bearer,
         ))
         .layer(cors);
+    #[cfg(unix)]
+    {
+        let broker = state.core.agent_network_broker();
+        let policy_file = state
+            .core
+            .sessions_home()
+            .join("agent-network/policies.json");
+        if let Err(error) = broker.load_policies(&policy_file) {
+            eprintln!("[agent-network] policy load failed: {error}");
+        }
+        let socket =
+            vak_core::agent_network::AgentNetworkBroker::socket_path(&state.core.sessions_home());
+        tokio::spawn(async move {
+            if let Err(error) = broker.serve_unix(&socket).await {
+                eprintln!("[agent-network] broker stopped: {error}");
+            }
+        });
+    }
     // Local routines: fires due scheduled tasks while this server lives.
     start_scheduler(&state);
     delivery::start_replay(&state.core);
@@ -2153,6 +2182,7 @@ fn health_projection(state: &AppState) -> serde_json::Value {
         "model_source": route.model_source,
         "route_revision": route.revision,
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
+        "approval_mode": state.core.effective_approval_mode().as_str(),
         "sandbox": state.core.effective_sandbox_name(),
         "context_window": state.core.config().context_window,
         "cwd": state.core.cwd(),
@@ -4889,6 +4919,15 @@ pub(crate) fn parse_mode(raw: &str) -> Option<vak_config::PermissionMode> {
     })
 }
 
+pub(crate) fn parse_approval_mode(raw: &str) -> Option<vak_config::ApprovalMode> {
+    vak_config::ApprovalMode::parse(raw).or(match raw {
+        "Ask" => Some(vak_config::ApprovalMode::Ask),
+        "ApproveSafe" => Some(vak_config::ApprovalMode::ApproveSafe),
+        "AutoApprove" => Some(vak_config::ApprovalMode::AutoApprove),
+        _ => None,
+    })
+}
+
 async fn set_permission_mode(
     State(state): State<AppState>,
     Json(body): Json<ModeBody>,
@@ -4902,6 +4941,7 @@ async fn set_permission_mode(
                 None,
                 None,
                 Some(mode),
+                None,
                 None,
             )
             .is_err()
@@ -5674,12 +5714,161 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
     }))
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct AgentNetworkCapabilityBody {
+    workspace: String,
+    enabled: bool,
+    #[serde(default)]
+    allowed_peers: Vec<String>,
+    max_message_bytes: Option<usize>,
+}
+
+async fn agent_network_capability(
+    State(state): State<AppState>,
+    Json(body): Json<AgentNetworkCapabilityBody>,
+) -> impl IntoResponse {
+    let workspace = match std::path::Path::new(&body.workspace).canonicalize() {
+        Ok(path) if path.is_dir() => path.display().to_string(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "workspace must be an existing directory"})),
+            );
+        }
+    };
+    let peers = match body
+        .allowed_peers
+        .into_iter()
+        .map(|peer| {
+            std::path::Path::new(&peer)
+                .canonicalize()
+                .ok()
+                .filter(|path| path.is_dir())
+                .map(|path| path.display().to_string())
+        })
+        .collect::<Option<Vec<_>>>()
+    {
+        Some(peers) => peers.into_iter().collect(),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(
+                    serde_json::json!({"error": "every allowed peer must be an existing directory"}),
+                ),
+            );
+        }
+    };
+    let policy = vak_core::agent_network::WorkspaceNetworkPolicy {
+        enabled: body.enabled,
+        allowed_peers: peers,
+        max_message_bytes: body
+            .max_message_bytes
+            .unwrap_or(256 * 1024)
+            .clamp(1, 256 * 1024),
+    };
+    let broker = state.core.agent_network_broker();
+    let capability = broker.register(workspace.clone(), policy);
+    if let Err(error) = broker.save_policies(
+        &state
+            .core
+            .sessions_home()
+            .join("agent-network/policies.json"),
+    ) {
+        let _ = broker.revoke(&capability);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": error})),
+        );
+    }
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "workspace": workspace,
+            "capability": capability.token(),
+            "expires_in_seconds": 900
+        })),
+    )
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AgentNetworkSendBody {
+    sender_workspace: String,
+    capability: String,
+    destination_workspace: String,
+    body: String,
+}
+
+async fn agent_network_send(
+    State(state): State<AppState>,
+    Json(body): Json<AgentNetworkSendBody>,
+) -> impl IntoResponse {
+    use base64::Engine as _;
+    let Ok(payload) = base64::engine::general_purpose::STANDARD.decode(body.body.trim()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "body must be standard base64"})),
+        );
+    };
+    let sender = vak_core::agent_network::BrokerCapability::from_parts(
+        body.sender_workspace,
+        body.capability,
+    );
+    match state
+        .core
+        .agent_network_broker()
+        .send_to(&sender, &body.destination_workspace, payload)
+    {
+        Ok(()) => (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({"accepted": true})),
+        ),
+        Err(error) => (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": error})),
+        ),
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AgentNetworkReceiveQuery {
+    workspace: String,
+    capability: String,
+}
+
+async fn agent_network_receive(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<AgentNetworkReceiveQuery>,
+) -> impl IntoResponse {
+    use base64::Engine as _;
+    let receiver =
+        vak_core::agent_network::BrokerCapability::from_parts(query.workspace, query.capability);
+    match state.core.agent_network_broker().receive(&receiver) {
+        Ok(Some(message)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "from_workspace": message.from_workspace,
+                "to_workspace": message.to_workspace,
+                "body": base64::engine::general_purpose::STANDARD.encode(message.body)
+            })),
+        ),
+        Ok(None) => (
+            StatusCode::NO_CONTENT,
+            Json(serde_json::json!({"message": null})),
+        ),
+        Err(error) => (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": error})),
+        ),
+    }
+}
+
 #[derive(serde::Deserialize, Default)]
 struct ConfigPatch {
     provider: Option<String>,
     model: Option<String>,
     max_turns: Option<usize>,
     permission_mode: Option<String>,
+    approval_mode: Option<String>,
     theme: Option<String>,
     /// Whether sub-agent delegation (the `task` tool) is available. Absent
     /// means "leave alone", same convention every field here uses.
@@ -5741,6 +5930,10 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
             .as_deref()
             .is_some_and(|value| parse_mode(value).is_none())
         || body
+            .approval_mode
+            .as_deref()
+            .is_some_and(|value| parse_approval_mode(value).is_none())
+        || body
             .work_default_mode
             .as_deref()
             .is_some_and(|value| !matches!(value, "direct" | "managed" | "auto"))
@@ -5761,6 +5954,7 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
         return StatusCode::BAD_REQUEST;
     }
     let permission_mode = body.permission_mode.as_deref().and_then(parse_mode);
+    let approval_mode = body.approval_mode.as_deref().and_then(parse_approval_mode);
     let current_route = state.core.effective_route();
     let route_change = body.provider.is_some() || body.model.is_some();
     let provider = route_change.then(|| {
@@ -5781,6 +5975,7 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
         || body.model.is_some()
         || body.max_turns.is_some()
         || permission_mode.is_some()
+        || approval_mode.is_some()
         || body.theme.is_some())
         && (if global {
             vak_config::persist_global_preferences(
@@ -5788,6 +5983,7 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
                 model.as_deref(),
                 body.max_turns,
                 permission_mode,
+                approval_mode,
                 body.theme.as_deref(),
             )
         } else {
@@ -5797,6 +5993,7 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
                 model.as_deref(),
                 body.max_turns,
                 permission_mode,
+                approval_mode,
                 body.theme.as_deref(),
             )
         })
@@ -5829,6 +6026,13 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
         };
         apply_permission_mode(&state, mode, true);
         changes.push(format!("permission_mode={mode:?}"));
+    }
+    if let Some(raw) = body.approval_mode {
+        let Some(mode) = parse_approval_mode(&raw) else {
+            return StatusCode::BAD_REQUEST;
+        };
+        state.core.apply_persisted_approval_mode(mode);
+        changes.push(format!("approval_mode={}", mode.as_str()));
     }
     if let Some(theme) = body.theme {
         if !matches!(theme.as_str(), "dark" | "light" | "plain") {
@@ -8670,6 +8874,7 @@ mod configuration_control_tests {
             None,
             Some(19),
             Some(vak_config::PermissionMode::ReadOnly),
+            None,
             None,
         )
         .unwrap();

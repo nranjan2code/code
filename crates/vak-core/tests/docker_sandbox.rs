@@ -126,3 +126,13 @@ fn effective_sandbox_name_reports_docker_when_selected() {
     let name = core.effective_sandbox_name();
     assert!(name.starts_with("docker"), "got {name}");
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_auto_backend_uses_seatbelt_for_restricted_modes() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = vak_core::Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+    core.set_permission_mode(vak_config::PermissionMode::WorkspaceWrite);
+    core.set_sandbox_backend(Some("auto".into()));
+    assert_eq!(core.effective_sandbox_name(), "seatbelt");
+}

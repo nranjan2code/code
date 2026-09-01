@@ -28,6 +28,14 @@ pub enum WorkMode {
     Auto,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ApprovalMode {
+    #[default]
+    Ask,
+    ApproveSafe,
+    AutoApprove,
+}
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -233,6 +241,7 @@ pub struct AgentConfig {
     pub permission: Option<Arc<PermissionEngine>>,
     pub mode: Mode,
     pub approver: Option<Arc<dyn Approver>>,
+    pub approval_mode: ApprovalMode,
     pub sandbox: Option<Arc<dyn vak_tools::sandbox::Sandbox>>,
     pub hooks: Option<Arc<Vec<vak_hooks::HookDef>>>,
     pub hook_recorder: Option<HookRecorder>,
@@ -300,6 +309,7 @@ impl AgentConfig {
             permission: None,
             mode: Mode::WorkspaceWrite,
             approver: None,
+            approval_mode: ApprovalMode::Ask,
             sandbox: None,
             hooks: None,
             hook_recorder: None,
@@ -3255,17 +3265,50 @@ async fn authorize(
     match decision {
         Decision::Allow => Ok(()),
         Decision::Deny { reason } => Err(reason),
-        Decision::Ask { reason } => match &config.approver {
-            Some(a)
-                if a.approve(&call.name, &args_preview(&call.input), &reason)
-                    .await =>
+        Decision::Ask { reason } => {
+            if matches!(config.approval_mode, ApprovalMode::AutoApprove)
+                || (matches!(config.approval_mode, ApprovalMode::ApproveSafe)
+                    && is_safe_approval(config, call, cwd))
             {
-                Ok(())
+                return Ok(());
             }
-            Some(_) => Err(format!("denied by user: {reason}")),
-            None => Err(format!("{reason} (no approver available)")),
-        },
+            match &config.approver {
+                Some(a)
+                    if a.approve(&call.name, &args_preview(&call.input), &reason)
+                        .await =>
+                {
+                    Ok(())
+                }
+                Some(_) => Err(format!("denied by user: {reason}")),
+                None => Err(format!("{reason} (no approver available)")),
+            }
+        }
     }
+}
+
+fn is_safe_approval(config: &AgentConfig, call: &PendingToolCall, cwd: &std::path::Path) -> bool {
+    if matches!(
+        call.name.as_str(),
+        "read" | "glob" | "grep" | "ls" | "search"
+    ) {
+        return true;
+    }
+    if matches!(call.name.as_str(), "write" | "edit") {
+        return call
+            .input
+            .get("path")
+            .and_then(|path| path.as_str())
+            .is_some_and(|path| {
+                let path = std::path::Path::new(path);
+                let resolved = if path.is_absolute() {
+                    path.to_path_buf()
+                } else {
+                    cwd.join(path)
+                };
+                resolved.starts_with(cwd)
+            });
+    }
+    call.name == "bash" && config.sandbox.is_some() && !matches!(config.mode, Mode::FullAccess)
 }
 
 enum ToolRunOutput {

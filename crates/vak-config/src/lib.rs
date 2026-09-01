@@ -66,6 +66,34 @@ impl PermissionMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApprovalMode {
+    #[default]
+    Ask,
+    ApproveSafe,
+    AutoApprove,
+}
+
+impl ApprovalMode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "ask" | "ask-approval" => Some(Self::Ask),
+            "approve-safe" | "approve-for-me" => Some(Self::ApproveSafe),
+            "auto-approve" => Some(Self::AutoApprove),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::ApproveSafe => "approve-safe",
+            Self::AutoApprove => "auto-approve",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Profile {
@@ -83,6 +111,7 @@ pub struct FileConfig {
     pub max_tokens: Option<u32>,
     pub max_turns: Option<usize>,
     pub permission_mode: Option<PermissionMode>,
+    pub approval_mode: Option<ApprovalMode>,
     pub profile: Option<String>,
     pub profiles: std::collections::BTreeMap<String, Profile>,
     pub anthropic_base_url: Option<String>,
@@ -543,6 +572,7 @@ pub struct Config {
     pub max_tokens: u32,
     pub max_turns: usize,
     pub permission_mode: PermissionMode,
+    pub approval_mode: ApprovalMode,
     pub anthropic_base_url: Option<String>,
     pub allow: Vec<String>,
     pub ask: Vec<String>,
@@ -774,6 +804,7 @@ impl Default for Config {
             max_tokens: 8192,
             max_turns: 40,
             permission_mode: PermissionMode::WorkspaceWrite,
+            approval_mode: ApprovalMode::Ask,
             anthropic_base_url: None,
             allow: Vec::new(),
             ask: Vec::new(),
@@ -1053,6 +1084,7 @@ pub fn persist_project_preferences(
     model: Option<&str>,
     max_turns: Option<usize>,
     permission_mode: Option<PermissionMode>,
+    approval_mode: Option<ApprovalMode>,
     theme: Option<&str>,
 ) -> Result<(), ConfigError> {
     persist_preferences_at(
@@ -1061,6 +1093,7 @@ pub fn persist_project_preferences(
         model,
         max_turns,
         permission_mode,
+        approval_mode,
         theme,
     )
 }
@@ -1072,13 +1105,22 @@ pub fn persist_global_preferences(
     model: Option<&str>,
     max_turns: Option<usize>,
     permission_mode: Option<PermissionMode>,
+    approval_mode: Option<ApprovalMode>,
     theme: Option<&str>,
 ) -> Result<(), ConfigError> {
     let path = global_path().ok_or_else(|| ConfigError::Write {
         path: PathBuf::from("<user-config>"),
         source: std::io::Error::other("user home is unavailable"),
     })?;
-    persist_preferences_at(path, provider, model, max_turns, permission_mode, theme)
+    persist_preferences_at(
+        path,
+        provider,
+        model,
+        max_turns,
+        permission_mode,
+        approval_mode,
+        theme,
+    )
 }
 
 fn persist_preferences_at(
@@ -1087,6 +1129,7 @@ fn persist_preferences_at(
     model: Option<&str>,
     max_turns: Option<usize>,
     permission_mode: Option<PermissionMode>,
+    approval_mode: Option<ApprovalMode>,
     theme: Option<&str>,
 ) -> Result<(), ConfigError> {
     static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -1132,6 +1175,12 @@ fn persist_preferences_at(
                 }
                 .into(),
             ),
+        );
+    }
+    if let Some(value) = approval_mode {
+        table.insert(
+            "approval_mode".into(),
+            toml::Value::String(value.as_str().into()),
         );
     }
     if let Some(value) = theme {
@@ -1550,8 +1599,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
 
 /// Keys a PROJECT-level config may not set when its workspace has not been
 /// marked trusted: they grant execution or redirect credentials.
-const PRIVILEGED_KEYS_NOTICE: &str =
-    "permission_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox";
+const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox";
 
 pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
     let mut warnings = Vec::new();
@@ -1572,6 +1620,9 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             // still apply.
             if fc.permission_mode.is_some() {
                 fc.permission_mode = None;
+            }
+            if fc.approval_mode.is_some() {
+                fc.approval_mode = None;
             }
             if fc.anthropic_base_url.is_some() {
                 fc.anthropic_base_url = None;
@@ -1627,6 +1678,9 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     }
     if let Some(mode) = merged.permission_mode {
         cfg.permission_mode = mode;
+    }
+    if let Some(mode) = merged.approval_mode {
+        cfg.approval_mode = mode;
     }
     cfg.anthropic_base_url = merged.anthropic_base_url;
     cfg.allow = merged.allow;
@@ -1970,6 +2024,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "max_tokens",
     "max_turns",
     "permission_mode",
+    "approval_mode",
     "profile",
     "profiles",
     "anthropic_base_url",
@@ -2319,6 +2374,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.permission_mode.is_some() {
         base.permission_mode = over.permission_mode;
+    }
+    if over.approval_mode.is_some() {
+        base.approval_mode = over.approval_mode;
     }
     if over.profile.is_some() {
         base.profile = over.profile;
@@ -3083,6 +3141,7 @@ mod tests {
             Some("gemini-test"),
             Some(17),
             Some(PermissionMode::WorkspaceWrite),
+            None,
             Some("dark"),
         )
         .unwrap();

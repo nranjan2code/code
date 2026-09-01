@@ -102,8 +102,9 @@ Primary-source review on 2026-08-23 found recurring failure classes:
   Task only creates governed child agents whose effectful tools are brokered;
   session search only queries the append-only session index. Workers do not
   receive the session store or orchestration handles.
-- The opt-in Docker backend contains Bash with no network, a read-only root,
-  bounded tmpfs, CPU/memory/PID ceilings, dropped capabilities, and
+- The opt-in Docker backend contains Bash with no network, a read-only root in
+  read-only mode, a disposable writable root in workspace-write mode, bounded
+  tmpfs, CPU/memory/PID ceilings, dropped capabilities, and
   `no-new-privileges`. It is command-scoped until a pinned multi-architecture
   Linux worker artifact can run the complete protocol inside the image.
 
@@ -157,6 +158,14 @@ Primary-source review on 2026-08-23 found recurring failure classes:
   unprivileged identity and seccomp, and add a VM/remote backend for the
   strongest hostile-code profile. Keep Seatbelt/Landlock as the low-friction
   local backend, not the strongest advertised boundary.
+- The broker-owned task-environment lifecycle now has disposable writable
+  layers; content-addressed snapshots and explicit install/build receipts are
+  still future hardening.
+- The capability-checked workspace broker and authenticated server message
+  endpoints now provide the policy seam. The remaining transport adapter must
+  use a broker-controlled socket, policy-generation revocation, destination
+  controls, quotas, and no host-gateway access. Never replace `--network none`
+  with a shared Docker bridge as a shortcut.
 - Add adversarial evaluations for prompt injection, wrapper chains, symlink and
   rename races, worktrees, malicious archives, localhost/metadata SSRF, DNS
   rebinding, approval replay, policy downgrade races, fork bombs, and output or
