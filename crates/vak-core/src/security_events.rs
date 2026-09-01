@@ -40,6 +40,11 @@ pub enum EventKind {
     ChatDenied,
     /// An operator revoked a previously allowed entry.
     ChatRevoked,
+    /// docs/design/22-gateway.md: an inbound turn that was admitted but failed
+    /// to execute (e.g. broker protocol failure, provider unavailable, lost
+    /// session lock). Recorded so a silently-failed unattended turn is
+    /// auditable instead of indistinguishable from a successful completion.
+    ExecutionError,
     /// docs/design/34-channel-onboarding.md: a per-channel permission-mode
     /// override asked for more than the target workspace's own configured
     /// mode allows, and was capped down to that workspace's mode. A

@@ -89,6 +89,14 @@ async fn spawn_gateway(
     // Gateway turns run unattended with AutoDeny; give the fixture bash
     // execution so scripted tool flows behave like an interactive session.
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
+    // Pin the REAL brokered-tool worker instead of `current_exe()`: under
+    // `cargo test` the latter is the test harness itself, which cannot speak
+    // the broker protocol and makes brokered bash flake (or hard-fail) under
+    // CPU contention. Mirrors the established fixture pattern in
+    // scheduler_personal_os.rs / inbox_endpoints.rs / vak-tool-worker.rs.
+    core.set_tool_worker_exe(std::path::PathBuf::from(env!(
+        "CARGO_BIN_EXE_vak-tool-worker"
+    )));
     core.set_provider_instance(provider);
     std::mem::forget(dir);
 
@@ -419,7 +427,7 @@ fn urlencoding_escape(s: &str) -> String {
 async fn busy_message_is_steered_not_dropped() {
     let provider = Arc::new(Scripted {
         responses: Mutex::new(VecDeque::from(vec![
-            tool_call("t1", "bash", serde_json::json!({"command": "sleep 2"})),
+            tool_call("t1", "bash", serde_json::json!({"command": "sleep 8"})),
             text("done two"),
         ])),
     });

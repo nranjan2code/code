@@ -65,10 +65,34 @@ fn tool_call(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage
     }
 }
 
+/// Pin `VAK_HOME` to an empty, process-stable tempdir so `spawn_server`'s
+/// `Core::new` does not inherit the operator's real user-global config — which
+/// here is `permission_mode = fullaccess` with `approval_mode` != `ask` and
+/// would, via `refresh_persisted_preferences`, clobber the test's runtime
+/// `set_permission_mode` pin and auto-approve the `bash` -> `Ask` arm so no
+/// `ApprovalRequested` is ever published. With the global layer absent,
+/// `Config::default()` applies (`approval_mode = Ask`, vak-config lib.rs:891)
+/// and the per-test `mode` pin plus `WorkspaceWrite` default restore the
+/// intended human-in-the-loop path. Installed once via `Once`; harmless to the
+/// sibling tests because the temp never holds a global config.
+fn isolate_global_config() {
+    use std::sync::Once;
+    static SET: Once = Once::new();
+    SET.call_once(|| {
+        let tmp = std::env::temp_dir().join(format!("vak-isolated-global-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).ok();
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("VAK_HOME", &tmp);
+        }
+    });
+}
+
 async fn spawn_server(
     provider: Arc<dyn Provider>,
     mode: vak_config::PermissionMode,
 ) -> (String, tokio::task::JoinHandle<()>) {
+    isolate_global_config();
     let dir = tempfile::tempdir().unwrap();
     let core = Core::new(dir.path().to_path_buf()).unwrap();
     core.set_sessions_home(dir.path().join("home"));

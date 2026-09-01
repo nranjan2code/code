@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 0.8.x   | Yes       |
-| < 0.8   | No        |
+| 0.2.x   | Yes       |
+| < 0.2   | No        |
 
 ## Reporting a Vulnerability
 
@@ -15,7 +15,7 @@ responsibly:
 1. **Do not** open a public GitHub issue for security vulnerabilities.
 2. Email the maintainers at the address listed in `Cargo.toml` or open a
    **private** security advisory at
-   <https://github.com/anomalyco/vak/security/advisories/new>.
+   <https://github.com/vak/vak/security/advisories/new>.
 3. Include: description, steps to reproduce, potential impact, and any
    suggested fix.
 4. You will receive an initial acknowledgement within 72 hours.
@@ -89,7 +89,10 @@ Exceeded limits return `429 Too Many Requests` with `Retry-After`.
 - Gateway ships disabled; enable via `[gateway] enabled = true` (trusted
   config) or `serve --gateway` (CLI override).
 - `chat_allowlist` restricts which `surface:chat` pairs can send inbound
-  messages. Empty list = all permitted (backward compatible).
+  messages. An empty allowlist **fails closed**: an unknown chat lands as a
+  reviewable `pending` entry (not a flat rejection) unless
+  `chat_allowlist_open = true` is set explicitly; a `denied` entry is sticky
+  and never re-prompts.
 - Approval gates auto-deny on unattended turns unless `[gateway] approvals`
   is set to `"forward"` with a configured approver surface.
 - Constant-time token comparison prevents timing attacks on bearer tokens.

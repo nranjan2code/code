@@ -3769,6 +3769,27 @@ fn is_managed_work_request(prompt: &str) -> bool {
     action && multi_step
 }
 
+/// Pin `VAK_HOME` to an empty, process-stable tempdir so `Core::new[_with_trust]`
+/// in unit tests does not inherit the operator's real user-global config.
+/// `global_path()` then resolves to a nonexistent file and the ambient Shared
+/// layer is skipped (clean-CI equivalent). Installed once per process via
+/// `Once`; harmless to sibling tests because the temp never contains a global
+/// config to inherit. `default_workspace()` reads `VAK_HOME` on every call
+/// (no cache), so this takes effect for any `Core` built after it returns.
+#[cfg(test)]
+fn isolate_global_config() {
+    use std::sync::Once;
+    static SET: Once = Once::new();
+    SET.call_once(|| {
+        let tmp = std::env::temp_dir().join(format!("vak-isolated-global-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).ok();
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("VAK_HOME", &tmp);
+        }
+    });
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod capability_contract_tests {
@@ -3827,6 +3848,7 @@ mod channel_mcp_network_tests {
     use std::collections::BTreeMap;
 
     fn core_with_servers(dir: &std::path::Path, servers: &[(&str, bool)]) -> Core {
+        super::isolate_global_config();
         let mut servers_toml = String::new();
         for (name, network) in servers {
             servers_toml.push_str(&format!(
@@ -4628,6 +4650,7 @@ mod plugin_runtime_tests {
             r#"{"mcpServers":{"lookup":{"command":"lookup-bin","args":["--safe"]}}}"#,
         )
         .unwrap();
+        isolate_global_config();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
         let store = vak_plugin::PluginStore::new(dir.path().join(".vak"));

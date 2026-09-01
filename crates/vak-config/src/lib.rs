@@ -3442,7 +3442,9 @@ mod tests {
     }
 
     /// A `[[hooks]]` entry written before `enabled` existed has no such key
-    /// in its TOML; it must still load as enabled, not silently vanish.
+    /// in its TOML; it must still deserialize as enabled, not silently vanish.
+    /// Parsed directly from the project file (not `load_with_trust`) so the
+    /// assertion is hermetic and does not inherit an ambient user-global hook.
     #[test]
     fn hook_without_enabled_key_deserializes_as_enabled() {
         let dir = tempfile::tempdir().unwrap();
@@ -3450,8 +3452,8 @@ mod tests {
             dir.path(),
             "[[hooks]]\nevent = \"pre_tool_use\"\ncommand = \"echo hi\"\n",
         );
-        let cfg = load_with_trust(dir.path(), true).unwrap();
-        assert_eq!(cfg.hooks.len(), 1);
-        assert!(cfg.hooks[0].enabled);
+        let (fc, _warnings) = parse_file(&dir.path().join(".vak/config.toml")).unwrap();
+        assert_eq!(fc.hooks.len(), 1);
+        assert!(fc.hooks[0].enabled);
     }
 }

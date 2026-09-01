@@ -30,6 +30,11 @@ use vak_delivery::{
 
 use crate::{AppState, SessionHandle};
 
+/// One-shot guard so the forward-mode-but-FullAccess warning does not spam
+/// stderr on every inbound turn.
+static FORWARD_FULLACCESS_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Contract every inbound channel bridge (Telegram today; Slack, Discord,
 /// ... later) must satisfy before calling `POST /gateway/inbound` (0c-03).
 /// `gateway.chat_allowlist` and the per-conversation session binding are
@@ -2111,6 +2116,35 @@ async fn execute_turn_chain(
             .map(|h| h.session_id.clone())
             .unwrap_or_default();
 
+        // Forward mode is the human-in-the-loop gate (AGENTS rule 16). Under
+        // FullAccess the engine returns `Allow` for bash/read/write, so no
+        // Ask is ever raised and the approver is never invoked — the gate is
+        // silently hollow. Warn once; keep going so legitimate setups still
+        // run, but make the bypass unmistakable.
+        if gw.forward_mode()
+            && matches!(
+                core.effective_permission_mode(),
+                vak_config::PermissionMode::FullAccess
+            )
+            && FORWARD_FULLACCESS_WARNED
+                .compare_exchange(
+                    false,
+                    true,
+                    std::sync::atomic::Ordering::AcqRel,
+                    std::sync::atomic::Ordering::Acquire,
+                )
+                .is_ok()
+        {
+            eprintln!(
+                "vak gateway: WARNING approvals=\"forward\" is configured while the \
+                 effective permission_mode is FullAccess — bash/read/write resolve to \
+                 Allow, so no Ask gate is raised and the forward approver is never \
+                 invoked (the human-in-the-loop is silently bypassed for Allow-class \
+                 tools). Set [permissions] permission_mode = \"workspace-write\" on this \
+                 workspace to make forward mode effective, or drop the forward \
+                 approval configuration."
+            );
+        }
         // Unattended policy: deny by default, forward to the approver
         // surface when configured (G2).
         let approver: Arc<dyn vak_agent::Approver> = if gw.forward_mode() {
@@ -2156,6 +2190,13 @@ async fn execute_turn_chain(
                 (text, err, Some(log))
             }
             Err(e) => {
+                vak_core::security_events::record(
+                    &core.sessions_home(),
+                    vak_core::security_events::EventKind::ExecutionError,
+                    "inbound turn failed",
+                    &format!("session_id={session_id} error={e}"),
+                    None,
+                );
                 recover_ledger(&core, handle.clone(), &session_id).await;
                 (format!("error: {e}"), true, None)
             }

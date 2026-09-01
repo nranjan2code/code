@@ -73,8 +73,13 @@ struct Gateway {
     _server: tokio::task::JoinHandle<()>,
 }
 
-/// Gateway enabled purely through trusted project config, permission mode
-/// left at WorkspaceWrite so bash triggers real Ask gates.
+/// Gateway enabled purely through trusted project config. The agent modes
+/// (permission/approval) are pinned in the project config by [`config`] so an
+/// ambient global `fullaccess` profile cannot silently collapse the Ask gate
+/// these forwarded-approval tests assert on, or hang the deny test on a
+/// blocking approver. Project overrides global per the layered-config merge;
+/// note a runtime `set_approval_mode` would be clobbered by the control-plane
+/// refresh, so the modes live in the persisted config instead.
 async fn spawn_with_config(provider: Arc<dyn Provider>, gateway_toml: &str) -> Gateway {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
@@ -85,7 +90,6 @@ async fn spawn_with_config(provider: Arc<dyn Provider>, gateway_toml: &str) -> G
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     let home = dir.path().join("home");
     core.set_sessions_home(home.clone());
-    // WorkspaceWrite default: bash is an Ask-class call here.
     core.set_provider_instance(provider);
     std::mem::forget(dir);
 
@@ -118,8 +122,19 @@ fn client_with(token: &str) -> reqwest::Client {
 }
 
 fn config(toml_body: &str) -> String {
+    config_with_modes(toml_body, "workspace-write", "ask")
+}
+
+fn config_with_modes(toml_body: &str, permission_mode: &str, approval_mode: &str) -> String {
     format!(
-        "[gateway]\nenabled = true\nchat_allowlist_open = true\n{toml_body}\n\n[memory]\nreflection = false\n"
+        "permission_mode = \"{permission_mode}\"\n\
+         approval_mode = \"{approval_mode}\"\n\
+         [gateway]\n\
+         enabled = true\n\
+         chat_allowlist_open = true\n\
+         {toml_body}\n\n\
+         [memory]\n\
+         reflection = false\n"
     )
 }
 
@@ -445,7 +460,7 @@ async fn default_policy_denies_without_forwarding() {
                 text("skipping that step"),
             ])),
         }),
-        &config(""), // approvals unset => deny
+        &config_with_modes("", "read-only", "ask"), // approvals unset => deny
     )
     .await;
     let client = client_with(&gw.token);
