@@ -266,7 +266,7 @@ fn notify(title: &str, body: &str) {
 }
 
 fn pinned_gateway_token() -> Option<String> {
-    std::fs::read_to_string(vak_config::paths::data_home().join(".env"))
+    std::fs::read_to_string(vak_config::user_env_path()?)
         .ok()?
         .lines()
         .find_map(|line| {

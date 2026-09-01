@@ -340,7 +340,7 @@ fn ops_config() -> vak_ops::OpsConfig {
 /// so a token added by reinstalling after the tray was already running
 /// is picked up immediately.
 fn pinned_gateway_token() -> Option<String> {
-    let path = vak_config::paths::data_home().join(".env");
+    let path = vak_config::user_env_path()?;
     let text = std::fs::read_to_string(path).ok()?;
     text.lines().find_map(|line| {
         let (key, value) = line.split_once('=')?;
