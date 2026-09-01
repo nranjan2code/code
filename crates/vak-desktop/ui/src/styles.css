@@ -1731,3 +1731,19 @@ body.is-resizing .split-divider {
 .work-item { display: flex; align-items: center; gap: 8px; min-height: 32px; }
 .work-item-id { min-width: 120px; color: var(--text); }
 .work-item .ghost { margin-left: auto; }
+
+/* Inherited capabilities */
+.capability-state.inherited { color: var(--accent-bright); background: var(--accent-wash); }
+.inherited-capabilities-group { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border-soft); display: flex; flex-direction: column; gap: 12px; }
+.inherited-capabilities-head { display: flex; align-items: flex-start; gap: 10px; color: var(--muted); }
+.inherited-capabilities-head .icon { color: var(--accent-bright); margin-top: 2px; }
+.inherited-capabilities-head strong { display: block; color: var(--text-soft); font-size: 12.5px; margin-bottom: 2px; }
+.inherited-capabilities-head span { font-size: 11px; line-height: 1.4; }
+.inherited-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 14px; }
+.inherited-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.inherited-info strong { color: var(--text-soft); font-size: 12px; }
+.inherited-info code { color: var(--muted); font-family: var(--mono); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inherited-info small { color: var(--faint); font-size: 10px; }
+.inherited-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.capability-item-overridden { opacity: 0.6; }
+

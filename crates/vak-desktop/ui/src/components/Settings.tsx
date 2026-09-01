@@ -163,10 +163,12 @@ export default function Settings() {
   // MCP manager state: loaded when the integrations page opens; edits are
   // local until Save pushes the whole table.
   const [mcpServers, setMcpServers] = createSignal<Record<string, api.McpServerDef> | null>(null);
+  const [inheritedMcpServers, setInheritedMcpServers] = createSignal<Record<string, api.McpServerDef>>({});
   const [mcpDirty, setMcpDirty] = createSignal(false);
   const [mcpSaving, setMcpSaving] = createSignal(false);
   const [skills, setSkills] = createSignal<api.DiscoveredSkill[]>([]);
   const [plugins, setPlugins] = createSignal<api.InstalledPlugin[]>([]);
+  const [inheritedPlugins, setInheritedPlugins] = createSignal<api.InstalledPlugin[]>([]);
   const [pluginSources, setPluginSources] = createSignal<api.MarketplaceSource[]>([]);
   const [marketplaceEntries, setMarketplaceEntries] = createSignal<api.MarketplaceEntry[]>([]);
   const [marketplaceQuery, setMarketplaceQuery] = createSignal("");
@@ -177,6 +179,7 @@ export default function Settings() {
   const [pluginPath, setPluginPath] = createSignal("");
   const [pluginBusy, setPluginBusy] = createSignal(false);
   const [hooks, setHooks] = createSignal<api.HookConfig[]>([]);
+  const [inheritedHooks, setInheritedHooks] = createSignal<api.HookConfig[]>([]);
   const [hooksDirty, setHooksDirty] = createSignal(false);
   const [hooksSaving, setHooksSaving] = createSignal(false);
   const [capabilityTab, setCapabilityTab] = createSignal<"mcp" | "skills" | "hooks" | "plugins">("mcp");
@@ -184,10 +187,39 @@ export default function Settings() {
     scope() === "user" ? skills().filter((skill) => skill.scope === "user") : skills(),
   );
 
+  const totalMcpCount = () => {
+    const local = Object.keys(mcpServers() ?? {}).length;
+    if (scope() === "user") return local;
+    const inherited = Object.keys(inheritedMcpServers()).filter((k) => !(k in (mcpServers() ?? {}))).length;
+    return local + inherited;
+  };
+
+  const totalHooksCount = () => {
+    const local = hooks().length;
+    if (scope() === "user") return local;
+    return local + inheritedHooks().length;
+  };
+
+  const totalPluginsCount = () => {
+    const local = plugins().length;
+    if (scope() === "user") return local;
+    return local + inheritedPlugins().length;
+  };
+
   async function refreshMcp() {
     try {
-      const res = scope() === "user" ? await api.getGlobalMcpServers() : await api.getMcpServers();
-      setMcpServers(res.servers ?? {});
+      if (scope() === "user") {
+        const res = await api.getGlobalMcpServers();
+        setMcpServers(res.servers ?? {});
+        setInheritedMcpServers({});
+      } else {
+        const [projectRes, globalRes] = await Promise.all([
+          api.getMcpServers(),
+          api.getGlobalMcpServers().catch(() => ({ servers: {} })),
+        ]);
+        setMcpServers(projectRes.servers ?? {});
+        setInheritedMcpServers(globalRes.servers ?? {});
+      }
       setMcpDirty(false);
     } catch (e) {
       setNotice({ kind: "error", text: `Could not load MCP servers: ${e instanceof Error ? e.message : String(e)}` });
@@ -196,12 +228,39 @@ export default function Settings() {
 
   async function refreshCapabilities() {
     try {
-      const [skillResult, hookResult, pluginResult, sourceResult, catalogResult] = await Promise.all([api.listSkills(), scope() === "user" ? api.getGlobalHooks() : api.getHooks(), api.listPlugins(capabilityScope()), api.listPluginSources(capabilityScope()), api.listPluginCatalog(marketplaceQuery(), capabilityScope())]);
-      setSkills(skillResult.skills ?? []);
-      setHooks(hookResult.hooks ?? []);
-      setPlugins(pluginResult.plugins ?? []);
-      setPluginSources(sourceResult.sources ?? []);
-      setMarketplaceEntries(catalogResult.entries ?? []);
+      if (scope() === "user") {
+        const [skillResult, hookResult, pluginResult, sourceResult, catalogResult] = await Promise.all([
+          api.listSkills(),
+          api.getGlobalHooks(),
+          api.listPlugins("user"),
+          api.listPluginSources("user"),
+          api.listPluginCatalog(marketplaceQuery(), "user"),
+        ]);
+        setSkills(skillResult.skills ?? []);
+        setHooks(hookResult.hooks ?? []);
+        setInheritedHooks([]);
+        setPlugins(pluginResult.plugins ?? []);
+        setInheritedPlugins([]);
+        setPluginSources(sourceResult.sources ?? []);
+        setMarketplaceEntries(catalogResult.entries ?? []);
+      } else {
+        const [skillResult, hookResult, globalHookResult, pluginResult, globalPluginResult, sourceResult, catalogResult] = await Promise.all([
+          api.listSkills(),
+          api.getHooks(),
+          api.getGlobalHooks().catch(() => ({ hooks: [] })),
+          api.listPlugins("workspace"),
+          api.listPlugins("user").catch(() => ({ plugins: [] })),
+          api.listPluginSources("workspace"),
+          api.listPluginCatalog(marketplaceQuery(), "workspace"),
+        ]);
+        setSkills(skillResult.skills ?? []);
+        setHooks(hookResult.hooks ?? []);
+        setInheritedHooks(globalHookResult.hooks ?? []);
+        setPlugins(pluginResult.plugins ?? []);
+        setInheritedPlugins(globalPluginResult.plugins ?? []);
+        setPluginSources(sourceResult.sources ?? []);
+        setMarketplaceEntries(catalogResult.entries ?? []);
+      }
       setHooksDirty(false);
     } catch (e) {
       setNotice({ kind: "error", text: `Could not load capabilities: ${e instanceof Error ? e.message : String(e)}` });
@@ -398,6 +457,7 @@ export default function Settings() {
   });
   createEffect(() => {
     if (page() !== "integrations") return;
+    scope();
     void refreshMcp();
     void refreshCapabilities();
   });
@@ -1055,15 +1115,15 @@ export default function Settings() {
               <header><h1>Capabilities</h1><p>{scope() === "user" ? "Shared capabilities are available to every project. A project may add its own capability or override a same-named MCP server." : "Edit only this folder’s capabilities. Shared capabilities remain available unless this project deliberately replaces a same-named MCP server."}</p></header>
               <div class="settings-callout scope-callout"><Icon name={scope() === "user" ? "layers" : "folder"} /><div><strong>{scope() === "user" ? "Shared defaults apply everywhere." : "You are changing this project only."}</strong><span>{scope() === "user" ? "Project-specific changes never rewrite these shared settings." : "Use Shared above to change your defaults for every project."}</span></div></div>
               <nav class="capability-tabs" aria-label="Capability types">
-                <button classList={{ active: capabilityTab() === "mcp" }} onClick={() => setCapabilityTab("mcp")}><Icon name="plug" /><span>MCP servers</span><em>{Object.keys(mcpServers() ?? {}).length}</em></button>
+                <button classList={{ active: capabilityTab() === "mcp" }} onClick={() => setCapabilityTab("mcp")}><Icon name="plug" /><span>MCP servers</span><em>{totalMcpCount()}</em></button>
                 <button classList={{ active: capabilityTab() === "skills" }} onClick={() => setCapabilityTab("skills")}><Icon name="spark" /><span>Skills</span><em>{visibleSkills().length}</em></button>
-                <button classList={{ active: capabilityTab() === "hooks" }} onClick={() => setCapabilityTab("hooks")}><Icon name="tune" /><span>Hooks</span><em>{hooks().length}</em></button>
-                <button classList={{ active: capabilityTab() === "plugins" }} onClick={() => setCapabilityTab("plugins")}><Icon name="grid" /><span>Plugins</span><em>{plugins().length}</em></button>
+                <button classList={{ active: capabilityTab() === "hooks" }} onClick={() => setCapabilityTab("hooks")}><Icon name="tune" /><span>Hooks</span><em>{totalHooksCount()}</em></button>
+                <button classList={{ active: capabilityTab() === "plugins" }} onClick={() => setCapabilityTab("plugins")}><Icon name="grid" /><span>Plugins</span><em>{totalPluginsCount()}</em></button>
               </nav>
               <Show when={capabilityTab() === "mcp"}>
                 <Group title="Tool servers"><Show when={mcpServers()} fallback={<Row title="Loading servers…" description="Reading the effective MCP configuration."><span /></Row>}>
                   <div class="mcp-editor">
-                    <Show when={Object.keys(mcpServers() ?? {}).length > 0} fallback={<div class="capability-empty"><Icon name="plug" /><strong>No MCP servers connected</strong><span>Add a local server to give the agent tools such as search, browser, or data access.</span></div>}>
+                    <Show when={Object.keys(mcpServers() ?? {}).length > 0} fallback={<div class="capability-empty"><Icon name="plug" /><strong>{scope() === "user" ? "No shared MCP servers connected" : (Object.keys(inheritedMcpServers()).length > 0 ? "No project-specific MCP overrides" : "No MCP servers connected")}</strong><span>{scope() === "user" ? "Add a shared server to make it available across all your projects." : (Object.keys(inheritedMcpServers()).length > 0 ? "This project is using the shared MCP servers listed below. Add a server here to create a project-specific override or tool." : "Add a local server to give the agent tools such as search, browser, or data access.")}</span></div>}>
                       <For each={Object.entries(mcpServers() ?? {})}>{([name, def]) => <div class="mcp-row">
                         <div class="mcp-row-head"><div><strong>{name}</strong><span class="capability-state ready">Configured</span></div><button class="settings-button danger" onClick={() => removeServer(name)}><Icon name="trash" /> Remove</button></div>
                         <div class="mcp-fields"><label>Server name<input value={name} aria-label="Server name" onChange={(e) => renameServer(name, e.currentTarget.value.trim())} /></label><label>Command<input placeholder="/path/to/command" value={def.command} aria-label="Command" onInput={(e) => updateServer(name, { command: e.currentTarget.value })} /></label><label>Arguments<input placeholder="Space-separated arguments" value={def.args.join(" ")} aria-label="Arguments" onInput={(e) => updateServer(name, { args: e.currentTarget.value.split(" ").filter(Boolean) })} /></label></div>
@@ -1072,6 +1132,47 @@ export default function Settings() {
                     </Show>
                     <div class="settings-actions"><button class="btn" onClick={addServer}><Icon name="add" /> Add server</button><button class="btn primary" disabled={!mcpDirty() || mcpSaving()} onClick={() => void saveMcp()}>{mcpSaving() ? "Saving…" : "Save & apply"}</button><Show when={mcpDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
                     <p class="settings-hint">{scope() === "user" ? "These are your shared server definitions. Projects inherit them. Secrets are referenced by name and never shown here." : "A same-named project server replaces the shared one for this folder only. Network is off until you turn it on; secrets stay user-owned."}</p>
+
+                    <Show when={scope() === "project" && Object.keys(inheritedMcpServers()).length > 0}>
+                      <div class="inherited-capabilities-group">
+                        <div class="inherited-capabilities-head">
+                          <Icon name="layers" />
+                          <div>
+                            <strong>Shared MCP servers ({Object.keys(inheritedMcpServers()).length})</strong>
+                            <span>Inherited from your global settings. Available in every task in this project unless replaced by a same-named server above.</span>
+                          </div>
+                        </div>
+                        <div class="capability-list">
+                          <For each={Object.entries(inheritedMcpServers())}>{([name, def]) => {
+                            const isOverridden = () => !!mcpServers()?.[name];
+                            return (
+                              <div class="capability-item" classList={{ "capability-item-overridden": isOverridden() }}>
+                                <div class="inherited-row">
+                                  <div class="inherited-info">
+                                    <strong>{name}</strong>
+                                    <code>{def.command} {def.args.join(" ")}</code>
+                                    <small>{def.network ? "Network allowed" : "Local only"}</small>
+                                  </div>
+                                  <div class="inherited-actions">
+                                    <Show when={isOverridden()} fallback={
+                                      <>
+                                        <span class="capability-state inherited">Inherited (Active)</span>
+                                        <button class="settings-button" onClick={() => {
+                                          updateServer(name, { command: def.command, args: [...def.args], env: { ...def.env }, network: def.network });
+                                          setNotice({ kind: "info", text: `Copied ${name} to project settings. You can now edit it.` });
+                                        }}>Customize for project</button>
+                                      </>
+                                    }>
+                                      <span class="capability-state muted">Overridden by project</span>
+                                    </Show>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }}</For>
+                        </div>
+                      </div>
+                    </Show>
                   </div>
                 </Show></Group>
               </Show>
@@ -1080,7 +1181,40 @@ export default function Settings() {
                 <Group title={`Pending proposals (${proposals().length})`}><Show when={proposals().length > 0} fallback={<Row title="No proposals waiting" description="The agent can suggest reusable skills; they stay inactive until you review them."><span class="settings-status good">Clear</span></Row>}><For each={proposals()}>{(proposal) => <div class="setting-row"><div class="setting-copy"><strong>{proposal.name}</strong><span>{proposal.description}</span></div><div class="setting-control"><button class="settings-button" onClick={() => void promote(proposal.id)}>Review & promote</button><button class="settings-button danger" onClick={() => void reject(proposal.id)}>Reject</button></div></div>}</For></Show></Group>
               </Show>
               <Show when={capabilityTab() === "hooks"}>
-                <Group title="Lifecycle automation"><div class="settings-callout"><Icon name="shield" /><div><strong>Hooks run commands at controlled lifecycle points.</strong><span>Use closed failure handling for guards where a timeout or unavailable script must stop the operation.</span></div></div><Show when={hooks().length > 0} fallback={<div class="capability-empty"><Icon name="tune" /><strong>No hooks configured</strong><span>Add a hook to run a safe, repeatable action at session or tool lifecycle events.</span></div>}><div class="hook-editor"><For each={hooks()}>{(hook, index) => <div class="hook-row"><div class="hook-row-head"><span class="capability-state" classList={{ ready: hook.enabled !== false, muted: hook.enabled === false }}>{hook.enabled === false ? "Disabled" : "Enabled"}</span><Switch checked={hook.enabled !== false} label={`Enable hook ${index() + 1}`} onChange={(v) => updateHook(index(), { enabled: v })} /><button class="settings-button danger" onClick={() => removeHook(index())}><Icon name="trash" /></button></div><label>Lifecycle event<select value={hook.event} onChange={(e) => updateHook(index(), { event: e.currentTarget.value })}><option value="session_start">Session start</option><option value="pre_tool_use">Before a tool runs</option><option value="post_tool_use">After a tool runs</option><option value="stop">Task stop</option></select></label><label>Tool matcher <span class="label-hint">optional</span><input value={hook.matcher ?? ""} placeholder="bash, write, or leave blank" onInput={(e) => updateHook(index(), { matcher: e.currentTarget.value })} /></label><label>Command<input class="hook-command" value={hook.command} placeholder="e.g. cargo fmt --all --check" onInput={(e) => updateHook(index(), { command: e.currentTarget.value })} /></label><label>Timeout (ms)<input type="number" min="100" max="120000" value={hook.timeout_ms ?? 10000} onInput={(e) => updateHook(index(), { timeout_ms: Number(e.currentTarget.value) || 10000 })} /></label><label>On hook failure<select value={hook.failure_mode ?? "open"} onChange={(e) => updateHook(index(), { failure_mode: e.currentTarget.value as "open" | "closed" })}><option value="open">Continue and report</option><option value="closed">Block the operation</option></select></label></div>}</For></div></Show><div class="settings-actions"><button class="btn" onClick={addHook}><Icon name="add" /> Add hook</button><button class="btn primary" disabled={!hooksDirty() || hooksSaving()} onClick={() => void saveHooks()}>{hooksSaving() ? "Saving…" : "Save hooks"}</button><Show when={hooksDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div></Group>
+                <Group title="Lifecycle automation"><div class="settings-callout"><Icon name="shield" /><div><strong>Hooks run commands at controlled lifecycle points.</strong><span>Use closed failure handling for guards where a timeout or unavailable script must stop the operation.</span></div></div><Show when={hooks().length > 0} fallback={<div class="capability-empty"><Icon name="tune" /><strong>{scope() === "user" ? "No shared hooks configured" : (inheritedHooks().length > 0 ? "No project-specific hooks" : "No hooks configured")}</strong><span>{scope() === "user" ? "Add a hook to run a safe, repeatable action at session or tool lifecycle events across all projects." : (inheritedHooks().length > 0 ? "This project is using the shared hooks listed below. Add a hook here to run project-specific actions." : "Add a hook to run a safe, repeatable action at session or tool lifecycle events.")}</span></div>}><div class="hook-editor"><For each={hooks()}>{(hook, index) => <div class="hook-row"><div class="hook-row-head"><span class="capability-state" classList={{ ready: hook.enabled !== false, muted: hook.enabled === false }}>{hook.enabled === false ? "Disabled" : "Enabled"}</span><Switch checked={hook.enabled !== false} label={`Enable hook ${index() + 1}`} onChange={(v) => updateHook(index(), { enabled: v })} /><button class="settings-button danger" onClick={() => removeHook(index())}><Icon name="trash" /></button></div><label>Lifecycle event<select value={hook.event} onChange={(e) => updateHook(index(), { event: e.currentTarget.value })}><option value="session_start">Session start</option><option value="pre_tool_use">Before a tool runs</option><option value="post_tool_use">After a tool runs</option><option value="stop">Task stop</option></select></label><label>Tool matcher <span class="label-hint">optional</span><input value={hook.matcher ?? ""} placeholder="bash, write, or leave blank" onInput={(e) => updateHook(index(), { matcher: e.currentTarget.value })} /></label><label>Command<input class="hook-command" value={hook.command} placeholder="e.g. cargo fmt --all --check" onInput={(e) => updateHook(index(), { command: e.currentTarget.value })} /></label><label>Timeout (ms)<input type="number" min="100" max="120000" value={hook.timeout_ms ?? 10000} onInput={(e) => updateHook(index(), { timeout_ms: Number(e.currentTarget.value) || 10000 })} /></label><label>On hook failure<select value={hook.failure_mode ?? "open"} onChange={(e) => updateHook(index(), { failure_mode: e.currentTarget.value as "open" | "closed" })}><option value="open">Continue and report</option><option value="closed">Block the operation</option></select></label></div>}</For></div></Show><div class="settings-actions"><button class="btn" onClick={addHook}><Icon name="add" /> Add hook</button><button class="btn primary" disabled={!hooksDirty() || hooksSaving()} onClick={() => void saveHooks()}>{hooksSaving() ? "Saving…" : "Save hooks"}</button><Show when={hooksDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
+                <Show when={scope() === "project" && inheritedHooks().length > 0}>
+                  <div class="inherited-capabilities-group">
+                    <div class="inherited-capabilities-head">
+                      <Icon name="layers" />
+                      <div>
+                        <strong>Shared lifecycle hooks ({inheritedHooks().length})</strong>
+                        <span>Inherited from your global settings. These run automatically alongside project-specific hooks.</span>
+                      </div>
+                    </div>
+                    <div class="capability-list">
+                      <For each={inheritedHooks()}>{(hook) => (
+                        <div class="capability-item">
+                          <div class="inherited-row">
+                            <div class="inherited-info">
+                              <strong>{hook.event}{hook.matcher ? ` (${hook.matcher})` : ""}</strong>
+                              <code>{hook.command}</code>
+                              <small>Timeout: {hook.timeout_ms ?? 10000}ms · On failure: {hook.failure_mode ?? "open"}</small>
+                            </div>
+                            <div class="inherited-actions">
+                              <span class="capability-state inherited">{hook.enabled === false ? "Disabled" : "Inherited (Active)"}</span>
+                              <button class="settings-button" onClick={() => {
+                                setHooks((current) => [...current, { ...hook }]);
+                                setHooksDirty(true);
+                                setNotice({ kind: "info", text: `Copied hook to project settings.` });
+                              }}>Copy to project</button>
+                            </div>
+                          </div>
+                        </div>
+                      )}</For>
+                    </div>
+                  </div>
+                </Show>
+                </Group>
               </Show>
               <Show when={capabilityTab() === "plugins"}>
                 <Group title="Installed plugins">
@@ -1090,8 +1224,37 @@ export default function Settings() {
                   <details class="advanced"><summary>Detached Ed25519 evidence (optional)</summary><div class="mcp-fields"><label>Key ID<input class="mono" value={sourceKeyId()} onInput={(e) => setSourceKeyId(e.currentTarget.value)} /></label><label>Public key (base64)<input class="mono" value={sourcePublicKey()} onInput={(e) => setSourcePublicKey(e.currentTarget.value)} /></label><label>Signature (base64)<input class="mono" value={sourceSignature()} onInput={(e) => setSourceSignature(e.currentTarget.value)} /></label></div></details>
                   <Show when={pluginSources().length > 0}><div class="capability-list"><For each={pluginSources()}>{(source) => <div class="capability-item"><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 16)}</code><div class="settings-actions"><button class="settings-button" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable", capabilityScope()); await refreshCapabilities(); } finally { setPluginBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button class="settings-button danger" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke", capabilityScope()); await refreshCapabilities(); } finally { setPluginBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
                   <div class="mcp-fields"><label>Search marketplace entries<input value={marketplaceQuery()} placeholder="frontend, testing, release…" onInput={(e) => setMarketplaceQuery(e.currentTarget.value)} onChange={() => void refreshCapabilities()} /></label></div><Show when={marketplaceEntries().length > 0}><div class="capability-list"><For each={marketplaceEntries()}>{(entry) => <div class="capability-item"><strong>{entry.name}</strong><small>{entry.source_label} · {entry.source_enabled ? "Source enabled" : "Source disabled"}{entry.version ? ` · v${entry.version}` : ""}</small><p>{entry.description || "No description"}</p><code title={entry.catalog_digest}>sha256:{entry.catalog_digest.slice(0, 16)}</code><small>{entry.license ? `License: ${entry.license}` : "License: not declared"}</small></div>}</For></div></Show>
-                  <Show when={plugins().length > 0} fallback={<div class="capability-empty"><Icon name="grid" /><strong>No plugins installed</strong><span>Install a reviewed local package to make its skills, commands, and integrations available.</span></div>}>
+                  <Show when={plugins().length > 0} fallback={<div class="capability-empty"><Icon name="grid" /><strong>{scope() === "user" ? "No shared plugins installed" : (inheritedPlugins().length > 0 ? "No project-specific plugins installed" : "No plugins installed")}</strong><span>{scope() === "user" ? "Install a reviewed package to make its skills, commands, and integrations available everywhere." : (inheritedPlugins().length > 0 ? "This project inherits the shared plugins listed below. Install a project-specific package below if needed." : "Install a reviewed local package to make its skills, commands, and integrations available.")}</span></div>}>
                     <div class="capability-list"><For each={plugins()}>{(plugin) => <details class="capability-item"><summary><span><strong>{plugin.name}</strong><small>v{plugin.version} · {plugin.scope} · {plugin.format}</small></span><span class="capability-state" classList={{ ready: plugin.enabled, muted: !plugin.enabled }}>{plugin.enabled ? "Enabled" : "Disabled"}</span></summary><div class="capability-detail"><p>{plugin.description || "No description provided."}</p><code title={plugin.digest}>sha256:{plugin.digest.slice(0, 16)}</code><code>{plugin.trace_id}</code><div class="settings-actions"><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, plugin.enabled ? "disable" : "enable")}>{plugin.enabled ? "Disable" : "Enable"}</button><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "rollback")}>Rollback</button><button class="settings-button danger" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "remove")}>Remove</button></div></div></details>}</For></div>
+                  </Show>
+                  <Show when={scope() === "project" && inheritedPlugins().length > 0}>
+                    <div class="inherited-capabilities-group">
+                      <div class="inherited-capabilities-head">
+                        <Icon name="layers" />
+                        <div>
+                          <strong>Shared user plugins ({inheritedPlugins().length})</strong>
+                          <span>Installed globally. Available across all projects.</span>
+                        </div>
+                      </div>
+                      <div class="capability-list">
+                        <For each={inheritedPlugins()}>{(plugin) => (
+                          <details class="capability-item">
+                            <summary>
+                              <span>
+                                <strong>{plugin.name}</strong>
+                                <small>v{plugin.version} · user · {plugin.format}</small>
+                              </span>
+                              <span class="capability-state inherited">{plugin.enabled ? "Inherited (Active)" : "Disabled (User)"}</span>
+                            </summary>
+                            <div class="capability-detail">
+                              <p>{plugin.description || "No description provided."}</p>
+                              <code title={plugin.digest}>sha256:{plugin.digest.slice(0, 16)}</code>
+                              <code>{plugin.trace_id}</code>
+                            </div>
+                          </details>
+                        )}</For>
+                      </div>
+                    </div>
                   </Show>
                 </Group>
               </Show>
