@@ -1,6 +1,6 @@
 ---
 name: vak
-description: A coding agent you can inspect, constrain, and extend.
+description: An agent you can inspect, constrain, and extend.
 colors:
   bg: "#171714"
   surface: "#1c1c19"

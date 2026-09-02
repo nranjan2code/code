@@ -75,6 +75,7 @@ fn build_agent(provider: Arc<dyn Provider>, session_id: &str, attempts: u32) -> 
             system_prompt: "sys".into(),
             permission_mode: "full-access".into(),
             capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
         },
     };
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();

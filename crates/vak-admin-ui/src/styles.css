@@ -1786,3 +1786,43 @@ a.tab-btn {
 .capability-inheritance-row { justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--border-soft); }
 .capability-inheritance-row span { display: grid; gap: 2px; }
 .capability-inheritance-row small { color: var(--muted); font-size: 11.5px; }
+
+/* Prompts (docs/design/45-prompt-layers.md). Two panes so the layer being
+   edited and the assembled result are always visible together; the grid
+   collapses on narrow viewports rather than scrolling the page sideways. */
+.prompts-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 1100px) { .prompts-grid { grid-template-columns: minmax(0, 1fr); } }
+.prompt-block { padding: 12px 0; border-top: 1px solid var(--border-soft); }
+.prompt-block:first-of-type { border-top: none; padding-top: 4px; }
+.prompt-block-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.prompt-block-head h3 { margin: 0; font-size: 12.5px; }
+.prompt-block .row-gap { margin-top: 8px; }
+.prompt-preview,
+.prompt-full {
+  margin: 8px 0 0;
+  padding: 9px 11px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.prompt-preview { max-height: 190px; overflow-y: auto; }
+.prompt-full { max-height: 420px; overflow-y: auto; }
+.prompt-editor {
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 11px;
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  line-height: 1.55;
+  resize: vertical;
+}
+.prompt-editor:focus { outline: none; border-color: var(--border-focus); }
+.guardrail-sources { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0 0; padding: 0; list-style: none; }

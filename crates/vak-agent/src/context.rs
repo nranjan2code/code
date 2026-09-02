@@ -76,15 +76,16 @@ pub fn estimate_tokens(
 }
 
 pub const COMPACTION_SYSTEM: &str = "\
-You are a context compactor for a coding-agent session. Produce a dense \
+You are a context compactor for an agent session. Produce a dense \
 structured summary of the conversation so far. Keep: the original task, \
-current state, files created/modified (with paths), key decisions, errors \
+current state, what was created or changed (files with paths, plus any \
+other artifact or external effect), key decisions, errors \
 hit and their fixes, and open items. Drop pleasantries and redundant tool \
 output. Maximum 400 words.";
 
 pub fn compaction_prompt(transcript: &str) -> String {
     format!(
-        "Summarize this coding-session segment for continuation. The summary \
+        "Summarize this session segment for continuation. The summary \
          will replace these turns in context; later turns stay verbatim.\n\n\
          <segment>\n{transcript}\n</segment>"
     )

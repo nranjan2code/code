@@ -94,6 +94,7 @@ async fn third_identical_call_is_blocked_with_reason() {
             system_prompt: "sys".into(),
             permission_mode: "full-access".into(),
             capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
         },
     };
     let home = dir.path().join("home");
@@ -183,6 +184,7 @@ async fn different_args_are_not_counted_together() {
             system_prompt: "sys".into(),
             permission_mode: "full-access".into(),
             capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
         },
     };
     let home = dir.path().join("home");

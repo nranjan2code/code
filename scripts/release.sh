@@ -118,6 +118,10 @@ fi
 #   had a real fix, dist/ was never regenerated from it, and nothing
 #   caught the mismatch before the release went out. Rebuilding here and
 #   failing on a diff makes that class of miss impossible to ship again.
+#   Since then vak-server's build.rs also refuses to compile against a
+#   dist/ whose .src-manifest no longer matches src/, so an ordinary
+#   `cargo build` fails first; this gate stays as the backstop that also
+#   catches a *committed* dist/ diff, which a local build cannot see.
 #
 #   vak-desktop/ui/dist is *not* committed (gitignored) — self install
 #   copies whatever is currently on disk into the bundle's Resources.

@@ -174,7 +174,9 @@ impl CorePool {
         }
         // Start outside the lock: `Core::new_with_trust` does filesystem IO
         // (config load) and must not hold up every other pool lookup.
-        let core = Core::new_with_trust(key.0.clone(), true).map_err(|e| e.to_string())?;
+        let core = Core::new_with_trust(key.0.clone(), true)
+            .map(|c| c.with_surface(vak_core::Surface::Server))
+            .map_err(|e| e.to_string())?;
         core.set_agent_network_broker(self.agent_network.clone());
         if policy != vak_config::ChannelPolicy::default() {
             core.apply_channel_policy(policy);

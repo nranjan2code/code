@@ -71,6 +71,26 @@ pub struct FrozenContract {
     /// must all derive from this exact list.
     #[serde(default)]
     pub capabilities: Vec<CapabilityDescriptor>,
+    /// Which prompt layer contributed each block, with a digest of the text
+    /// it contributed (docs/design/45-prompt-layers.md). `system_prompt` says
+    /// what the model was told; this says *who told it* and lets a resumed
+    /// session notice that an editable layer changed underneath it. Empty on
+    /// headers written before prompt layers existed.
+    #[serde(default)]
+    pub prompt_layers: Vec<PromptLayerDescriptor>,
+}
+
+/// One layer's contribution to the assembled system prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromptLayerDescriptor {
+    /// "identity" | "operating-rules" | "guardrails".
+    pub block: String,
+    /// "seed" | "shared" | "project" | "surface" | "bot" | "chat" | "agent".
+    pub layer: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    pub digest: String,
+    pub bytes: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

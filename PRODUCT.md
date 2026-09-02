@@ -8,11 +8,11 @@ web
 
 ## Users
 
-Primary user: a solo, security-conscious developer who wants powerful coding-agent automation but refuses to give up inspectability and control. They run vak against their own machine and codebase, want to see what the agent actually did, and want to constrain what it's allowed to do before it does it.
+Primary user: a solo, security-conscious technical user who wants powerful agent automation but refuses to give up inspectability and control. They run vak against their own machine, files, and tools, want to see what the agent actually did, and want to constrain what it's allowed to do before it does it.
 
 ## Product Purpose
 
-vak is a local-first Rust harness for running coding agents without giving up the receipts. It lets a developer delegate real coding work (fix, plan, refactor) to an agent while retaining an inspectable, constrainable system: every session is reconstructable, every effect is permission-gated, and failures are handled explicitly rather than silently.
+vak is a local-first Rust harness for running general-purpose agents without giving up the receipts. It lets a user delegate real work — engineering, research, writing, data, and operations alike — to an agent while retaining an inspectable, constrainable system: every session is reconstructable, every effect is permission-gated, and failures are handled explicitly rather than silently.
 
 ## Positioning
 
@@ -20,7 +20,7 @@ vak's mechanism is "one core, many surfaces": a single auditable, policy-gated c
 
 ## Operating Context
 
-- Runs locally against the developer's own machine and codebase; provider credentials come from a gitignored project `.env`, a user secret store, or the environment.
+- Runs locally against the user's own machine, workspace, and connected tools; provider credentials come from a gitignored project `.env`, a user secret store, or the environment.
 - Sessions are append-only JSONL ledgers; branching and compaction append rather than rewrite history.
 - Agent turns, tools, subagents, flows, plans, evals, server runs, and desktop runs all pass through the same permission/policy engine before any effect.
 - Supports multiple model providers (Anthropic, OpenAI, OpenRouter, OpenCode Zen, Gemini, Ollama for local use).
@@ -39,7 +39,7 @@ vak's mechanism is "one core, many surfaces": a single auditable, policy-gated c
 ## Brand Commitments
 
 - Product name: vak.
-- Existing tagline: "A coding agent you can inspect, constrain, and extend."
+- Existing tagline: "An agent you can inspect, constrain, and extend." (Broadened from "A coding agent…" — vak is no longer positioned as coding-only; do not reintroduce the narrower wording.)
 - Existing README hero/surfaces illustrations use a flat editorial illustration style (`docs/assets/vak-hero.webp`, `docs/assets/vak-surfaces.webp`) with badge colors E66A2C (version), 2B2B2B (Rust), 536B58 (license), 384A6B (safety) — treat as existing brand evidence, not yet confirmed as binding design tokens.
 
 ## Evidence on Hand

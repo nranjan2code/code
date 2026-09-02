@@ -221,6 +221,38 @@ export interface HookConfig {
   failure_mode?: "open" | "closed";
 }
 
+// Prompt layers (docs/design/45-prompt-layers.md). Same endpoints the admin
+// console uses — doc 44 requires Desktop and Admin to exercise identical
+// scope contracts, so this is one API, not a parallel one.
+export type PromptBlock = "identity" | "operating-rules" | "guardrails" | "surface-note";
+
+export interface PromptLayerContent {
+  identity?: string | null;
+  operating_rules?: string | null;
+  guardrails?: string[];
+  surface_notes?: string[];
+}
+
+export interface PromptLayerDescriptor {
+  block: PromptBlock;
+  layer: "seed" | "shared" | "project" | "surface" | "bot" | "chat" | "agent";
+  source?: string | null;
+  digest: string;
+  bytes: number;
+}
+
+export function getPromptLayer(scope: "user" | "project"): Promise<{ scope: string; path: string; layer: PromptLayerContent }> {
+  return req(`/config/prompts?scope=${scope}`);
+}
+
+export function putPromptBlock(scope: "user" | "project", block: PromptBlock, text: string | null): Promise<unknown> {
+  return req("/config/prompts", { method: "PUT", body: JSON.stringify({ scope, block, text }) });
+}
+
+export function getPromptEffective(): Promise<{ text: string; fingerprint: string; estimated_tokens: number; surface: string; layers: PromptLayerDescriptor[] }> {
+  return req("/config/prompts/effective");
+}
+
 export function getHooks(): Promise<{ hooks: HookConfig[] }> {
   return req("/config/hooks");
 }

@@ -1192,6 +1192,12 @@ pub(crate) struct AllowlistPatchBody {
     /// `bot_id` above, for the same reason.
     #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
     voice: Option<Option<vak_config::VoiceConfig>>,
+    /// This chat's prompt tier (docs/design/45-prompt-layers.md). Absent
+    /// leaves it alone; an object replaces it. Restrictive by construction:
+    /// its guardrails add to the chain and its identity can only lose to a
+    /// narrower layer, never reach the code-owned blocks.
+    #[serde(default)]
+    prompt: Option<vak_core::prompts::LayerContent>,
 }
 
 /// `PATCH /admin/api/gateway/allowlist/{key}` (docs/design/34 "Editing an
@@ -1281,6 +1287,7 @@ pub(crate) async fn patch_gateway_allowlist(
         bot_id,
         body.inherit_bot_policy,
         body.voice,
+        body.prompt,
     ) else {
         return StatusCode::NOT_FOUND.into_response();
     };

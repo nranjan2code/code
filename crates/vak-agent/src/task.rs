@@ -21,6 +21,11 @@ use vak_tools::{Tool, ToolContext, ToolOutput};
 use crate::{Agent, AgentConfig, ApprovalMode, Approver, InputNormalizer, SteeringQueues};
 
 pub struct TaskDeps {
+    /// Prompts for named roles, admitted up front by the host exactly like
+    /// capabilities are. A child can only ever run under a role that was
+    /// resolvable when the parent session was admitted, so an unknown or
+    /// injected role name cannot conjure new instructions mid-run.
+    pub role_prompts: std::collections::BTreeMap<String, String>,
     pub provider: Arc<dyn Provider>,
     pub system_prompt: String,
     pub model: String,
@@ -209,10 +214,23 @@ impl Tool for TaskTool {
     }
 
     fn schema(&self) -> Value {
+        // The admitted roles go in the schema as an `enum` rather than in
+        // prose: it is the only form the provider will actually constrain
+        // the model against, and an unadmitted name is refused at call time
+        // anyway.
+        let roles: Vec<&str> = self.deps.role_prompts.keys().map(String::as_str).collect();
+        let mut role_property = serde_json::json!({
+            "type": "string",
+            "description": "Named role whose instructions this child runs under. Omit to use the default subagent instructions."
+        });
+        if !roles.is_empty() {
+            role_property["enum"] = serde_json::json!(roles);
+        }
         serde_json::json!({
             "type": "object",
             "properties": {
                 "prompt": {"type": "string", "description": "Complete, self-contained instructions for the subagent"},
+                "role": role_property,
                 "label": {"type": "string", "description": "Short label shown in the UI"},
                 "readonly": {"type": "boolean", "description": "If true, the subagent gets only read/glob/grep and may run concurrently with other tasks", "default": false},
                 "paths": {"type": "array", "items": {"type": "string"}, "description": "Path scopes (globs) this task will write to; tasks with disjoint scopes run in parallel, overlapping scopes are serialized"},
@@ -310,6 +328,31 @@ impl TaskTool {
         } else {
             self.deps.mode
         };
+        // An unknown role is refused rather than quietly ignored: a child
+        // that silently ran under the default prompt when a role was asked
+        // for would be the hardest kind of misconfiguration to notice.
+        let child_system_prompt = match args.get("role").and_then(|r| r.as_str()) {
+            Some(role) if !role.trim().is_empty() => {
+                match self.deps.role_prompts.get(role.trim()) {
+                    Some(prompt) => prompt.clone(),
+                    None => {
+                        let known = self
+                            .deps
+                            .role_prompts
+                            .keys()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        return ToolOutput::error(if known.is_empty() {
+                            format!("unknown role '{role}': no roles are defined")
+                        } else {
+                            format!("unknown role '{role}'; defined roles: {known}")
+                        });
+                    }
+                }
+            }
+            _ => self.deps.system_prompt.clone(),
+        };
         let child_tool_names = child_tools
             .iter()
             .map(|tool| tool.name())
@@ -349,7 +392,7 @@ impl TaskTool {
                 route_ladder: Vec::new(),
                 route_objective: String::new(),
                 route_annotations: Vec::new(),
-                system_prompt: self.deps.system_prompt.clone(),
+                system_prompt: child_system_prompt.clone(),
                 permission_mode: match child_mode {
                     Mode::ReadOnly => "read-only",
                     Mode::WorkspaceWrite => "workspace-write",
@@ -357,6 +400,7 @@ impl TaskTool {
                 }
                 .into(),
                 capabilities: child_capabilities,
+                prompt_layers: Vec::new(),
             },
         };
         let log = match SessionLog::create(path, header) {
@@ -364,7 +408,7 @@ impl TaskTool {
             Err(e) => return ToolOutput::error(format!("cannot create child session: {e}")),
         };
 
-        let mut cfg = AgentConfig::new(self.deps.system_prompt.clone());
+        let mut cfg = AgentConfig::new(child_system_prompt.clone());
         cfg.model = self.deps.model.clone();
         cfg.tool_definitions = Some(vak_tools::definitions(&child_tools));
         cfg.tools = child_tools;

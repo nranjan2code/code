@@ -235,6 +235,7 @@ async fn run_case_with_tools(
             system_prompt: "eval".into(),
             permission_mode: "full-access".into(),
             capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
         },
     };
     let sessions_home = cwd.join(".vak-home");

@@ -230,6 +230,14 @@ pub struct AllowlistEntry {
     /// that triggered this entry, truncated for operator review.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_seen_text: Option<String>,
+    /// Prompt tier for this chat, the narrowest gateway layer
+    /// (docs/design/45). Gated by `inherit_bot_policy` the same way `voice`
+    /// and `route` are.
+    #[serde(
+        default,
+        skip_serializing_if = "vak_core::prompts::LayerContent::is_empty"
+    )]
+    pub prompt: vak_core::prompts::LayerContent,
 }
 
 pub(crate) fn default_true() -> bool {
@@ -297,6 +305,14 @@ pub struct Bot {
     /// tier for any chat that inherits it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice: Option<vak_config::VoiceConfig>,
+    /// Prompt tier for this bot (docs/design/45). Identity and rules fall
+    /// through to the chat tier below; guardrails concatenate and cannot be
+    /// removed by anything narrower.
+    #[serde(
+        default,
+        skip_serializing_if = "vak_core::prompts::LayerContent::is_empty"
+    )]
+    pub prompt: vak_core::prompts::LayerContent,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]
@@ -439,6 +455,7 @@ impl GatewayState {
                                 added_at: now.clone(),
                                 added_by: "config_import".into(),
                                 first_seen_text: None,
+                                prompt: Default::default(),
                                 bot_id: None,
                                 inherit_bot_policy: true,
                             },
@@ -909,6 +926,7 @@ impl GatewayState {
                             added_by: format!("gateway (inherited from {legacy_key})"),
                             added_at: chrono::Utc::now().to_rfc3339(),
                             first_seen_text: None,
+                            prompt: Default::default(),
                             ..legacy
                         },
                     );
@@ -945,6 +963,7 @@ impl GatewayState {
                             added_at: chrono::Utc::now().to_rfc3339(),
                             added_by: "gateway".into(),
                             first_seen_text: Some(truncated),
+                            prompt: Default::default(),
                             bot_id: bot_id.map(str::to_string),
                             inherit_bot_policy: true,
                         },
@@ -992,6 +1011,7 @@ impl GatewayState {
                 added_at: chrono::Utc::now().to_rfc3339(),
                 added_by: added_by.to_string(),
                 first_seen_text: None,
+                prompt: Default::default(),
                 bot_id,
                 inherit_bot_policy,
             };
@@ -1020,6 +1040,7 @@ impl GatewayState {
                 added_at: chrono::Utc::now().to_rfc3339(),
                 added_by: added_by.to_string(),
                 first_seen_text: None,
+                prompt: Default::default(),
                 bot_id: None,
                 inherit_bot_policy: true,
             };
@@ -1053,6 +1074,7 @@ impl GatewayState {
         bot_id: Option<Option<String>>,
         inherit_bot_policy: Option<bool>,
         voice: Option<Option<vak_config::VoiceConfig>>,
+        prompt: Option<vak_core::prompts::LayerContent>,
     ) -> Option<AllowlistEntry> {
         let entry = {
             let mut map = self
@@ -1075,6 +1097,9 @@ impl GatewayState {
             }
             if let Some(voice) = voice {
                 entry.voice = voice;
+            }
+            if let Some(prompt) = prompt {
+                entry.prompt = prompt;
             }
             entry.clone()
         };
@@ -1112,6 +1137,9 @@ impl GatewayState {
             Some(entry.bot_id),
             Some(entry.inherit_bot_policy),
             Some(entry.voice),
+            // A route write must not disturb this chat's prompt tier, for
+            // the same reason the comment above gives about permission mode.
+            None,
         )
         .is_some()
     }
@@ -1178,6 +1206,83 @@ impl GatewayState {
     /// bot's (unless inheritance was broken), otherwise `None` (no voice
     /// configured — caller falls back to a built-in default). Mirrors
     /// `effective_route_override` exactly.
+    /// Bot then chat prompt tiers, broadest first, for `Core::with_prompt_overlays`.
+    ///
+    /// Deliberately *not* shaped like `resolve_voice`, which picks one
+    /// winner: guardrails from both tiers must survive, so both are handed
+    /// to the resolver and it applies the narrowest-wins rule to identity
+    /// and rules while concatenating guardrails. `inherit_bot_policy` gates
+    /// the bot tier exactly as it gates policy, route, and voice.
+    pub(crate) fn resolve_prompt_overlays(&self, key: &str) -> Vec<vak_core::prompts::LayerInput> {
+        let Some(entry) = self
+            .allowlist_get(key)
+            .filter(|e| e.status == AllowlistStatus::Allowed)
+        else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if entry.inherit_bot_policy
+            && let Some(bot) = entry.bot_id.as_deref().and_then(|id| self.bot_get(id))
+            && !bot.prompt.is_empty()
+        {
+            out.push(vak_core::prompts::LayerInput::new(
+                vak_core::prompts::PromptLayer::Bot,
+                Some(format!("bot:{}", bot.id)),
+                bot.prompt,
+            ));
+        }
+        if !entry.prompt.is_empty() {
+            out.push(vak_core::prompts::LayerInput::new(
+                vak_core::prompts::PromptLayer::Chat,
+                Some(format!("chat:{key}")),
+                entry.prompt,
+            ));
+        }
+        out
+    }
+
+    /// The style directive for spoken replies on this chat.
+    ///
+    /// One source of truth (docs/design/45-prompt-layers.md): the bot/chat
+    /// `identity` block *is* the persona. `VoiceConfig.persona` predates
+    /// prompt layers and said the same thing in a second place; keeping both
+    /// authoritative would let a bot's spoken and written selves drift apart
+    /// within a release. The legacy field is still honoured when no prompt
+    /// tier sets an identity, so existing configs keep working untouched.
+    ///
+    /// Only the *gateway tiers'* own identity text is used, never the
+    /// assembled prompt — the seed identity and capability contract are
+    /// meaningless as a text-to-speech style directive.
+    pub(crate) fn resolve_persona(&self, key: &str) -> Option<String> {
+        self.resolve_prompt_overlays(key)
+            .into_iter()
+            .rev()
+            .find_map(|layer| layer.content.identity)
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+            .or_else(|| {
+                self.resolve_voice(key)
+                    .and_then(|voice| voice.persona)
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty())
+            })
+    }
+
+    /// The bot tier's own persona, for a `bot_id` with no chat.
+    pub(crate) fn resolve_bot_persona(&self, bot_id: &str) -> Option<String> {
+        let bot = self.bot_get(bot_id)?;
+        bot.prompt
+            .identity
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+            .or_else(|| {
+                bot.voice
+                    .and_then(|voice| voice.persona)
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty())
+            })
+    }
+
     pub(crate) fn resolve_voice(&self, key: &str) -> Option<vak_config::VoiceConfig> {
         let entry = self
             .allowlist_get(key)
@@ -1860,11 +1965,21 @@ async fn gateway_inbound(
     // So "remind me every morning at 8" typed (or spoken, via Gemini Live
     // transcription feeding the same turn) into this chat reports back into
     // this same chat unless the model is told to route it elsewhere.
-    let core_for_turn = core.clone().with_default_deliver_to(Some(format!(
-        "{}:{}",
-        body.surface.trim(),
-        body.chat.trim()
-    )));
+    // Same clone-and-stamp carries the surface, so the system prompt tells
+    // the model its reply is read as a chat message rather than printed in a
+    // terminal (docs/design/07-prompt.md). The pooled core underneath is
+    // stamped `Server`; this narrows it to the actual transport.
+    let core_for_turn = core
+        .clone()
+        .with_default_deliver_to(Some(format!(
+            "{}:{}",
+            body.surface.trim(),
+            body.chat.trim()
+        )))
+        .with_surface(vak_core::Surface::Chat {
+            channel: body.surface.trim().to_string(),
+        })
+        .with_prompt_overlays(state.gateway.resolve_prompt_overlays(&key));
     start_turn_chain(
         &state,
         &core_for_turn,
@@ -2009,7 +2124,44 @@ fn session_matches_route(
             && header.contract.provider == provider
             && header.contract.model == model
             && header.contract.capabilities == core.capability_descriptors()
+            // A prompt layer edited since this binding froze makes the
+            // session stale for the same reason a changed capability packet
+            // does: it would keep running instructions the operator has
+            // already replaced (docs/design/45-prompt-layers.md). A chat
+            // binding is implicit, so it rotates rather than failing —
+            // the old ledger is preserved either way.
+            && core.prompt_drift(&header.contract).is_none()
     })
+}
+
+/// Note a prompt-layer change in the security log before rotating.
+///
+/// Rotation is otherwise indistinguishable from a route change or a deleted
+/// ledger, and "my bot started answering differently" is exactly the question
+/// an operator brings to the audit trail.
+///
+/// Takes the already-computed drift rather than a session id: the caller
+/// holds the ledger lock through its live handle, so reopening the session
+/// here would fail every time and silently record nothing.
+fn record_prompt_drift(
+    core: &Core,
+    key: &str,
+    session_id: &str,
+    drift: Option<vak_core::prompts::PromptDrift>,
+) {
+    let Some(drift) = drift else {
+        return;
+    };
+    vak_core::security_events::record(
+        &core.sessions_home(),
+        vak_core::security_events::EventKind::ConfigChange,
+        "prompt layers changed",
+        &format!(
+            "chat {key} rotated off session {session_id}: {}",
+            drift.lines().join("; ")
+        ),
+        None,
+    );
 }
 
 /// Attach-or-create the session bound to `key`. Stale bindings (ledger
@@ -2022,19 +2174,28 @@ async fn resolve_session(
     let (provider, model, revision) = binding_route(state, core, key);
     if let Some(sid) = binding_session(state, key) {
         if let Some(handle) = state.get(&sid) {
-            let matches = {
+            let (matches, drift) = {
                 let session = handle
                     .session
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 match session.as_ref() {
-                    Some(session) => session_matches_route(session, core, &provider, &model),
-                    None => busy_binding_matches_revision(state, core, key, &revision),
+                    Some(session) => (
+                        session_matches_route(session, core, &provider, &model),
+                        session
+                            .header()
+                            .and_then(|header| core.prompt_drift(&header.contract)),
+                    ),
+                    None => (
+                        busy_binding_matches_revision(state, core, key, &revision),
+                        None,
+                    ),
                 }
             };
             if matches {
                 return Ok(handle);
             }
+            record_prompt_drift(core, key, &sid, drift);
             state.gateway.rotate(core, key);
         } else {
             match core.open_session(&sid).await {
@@ -2051,6 +2212,14 @@ async fn resolve_session(
                             core.cwd().clone(),
                         ));
                     }
+                    record_prompt_drift(
+                        core,
+                        key,
+                        &sid,
+                        session
+                            .header()
+                            .and_then(|header| core.prompt_drift(&header.contract)),
+                    );
                     state.gateway.rotate(core, key);
                 }
                 Err(_) => {
@@ -2650,6 +2819,148 @@ mod tests {
             let contract = &lock.as_ref().unwrap().header().unwrap().contract;
             assert_eq!(contract.provider, "provider-b");
             assert_eq!(contract.model, "model-b");
+        }
+        let old_path =
+            vak_session::SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &old_id);
+        assert!(old_path.is_file(), "old append-only ledger remains intact");
+    }
+
+    /// One persona, not two. The `identity` prompt block wins over the
+    /// deprecated `VoiceConfig.persona`, and the legacy field still works
+    /// when no prompt tier sets one (docs/design/45-prompt-layers.md).
+    #[tokio::test]
+    async fn identity_block_is_the_persona_with_voice_config_as_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core.clone());
+
+        state.gateway.bot_upsert(
+            &core,
+            Bot {
+                id: "support".into(),
+                surface: "telegram".into(),
+                label: "Support".into(),
+                token_env: "BOT_TOKEN__SUPPORT".into(),
+                policy: Default::default(),
+                permission_mode: None,
+                route: None,
+                workspace: None,
+                voice: Some(vak_config::VoiceConfig {
+                    voice_name: Some("Kore".into()),
+                    persona: Some("legacy persona".into()),
+                }),
+                prompt: Default::default(),
+            },
+        );
+        state.gateway.allowlist_approve(
+            &core,
+            "telegram:42",
+            core.cwd().clone(),
+            None,
+            None,
+            Default::default(),
+            Some("support".into()),
+            true,
+            "test",
+        );
+
+        // No prompt tier yet: the legacy field still drives the voice.
+        assert_eq!(
+            state.gateway.resolve_persona("telegram:42").as_deref(),
+            Some("legacy persona")
+        );
+
+        // Give the bot an identity block; it takes over.
+        let mut bot = state.gateway.bot_get("support").unwrap();
+        bot.prompt.identity = Some("You are the ACME support bot: warm and brief.".into());
+        state.gateway.bot_upsert(&core, bot);
+        assert_eq!(
+            state.gateway.resolve_persona("telegram:42").as_deref(),
+            Some("You are the ACME support bot: warm and brief.")
+        );
+        assert_eq!(
+            state.gateway.resolve_bot_persona("support").as_deref(),
+            Some("You are the ACME support bot: warm and brief.")
+        );
+
+        // The chat tier is narrower still.
+        let entry = state.gateway.allowlist_get("telegram:42").unwrap();
+        state.gateway.allowlist_patch(
+            &core,
+            "telegram:42",
+            entry.workspace,
+            entry.route,
+            entry.permission_mode,
+            entry.policy,
+            Some(entry.bot_id),
+            Some(entry.inherit_bot_policy),
+            Some(entry.voice),
+            Some(vak_core::prompts::LayerContent {
+                identity: Some("You are ACME support for this VIP chat.".into()),
+                ..Default::default()
+            }),
+        );
+        assert_eq!(
+            state.gateway.resolve_persona("telegram:42").as_deref(),
+            Some("You are ACME support for this VIP chat.")
+        );
+        // Voice *name* selection is untouched — that was never duplicated.
+        assert_eq!(
+            state
+                .gateway
+                .resolve_voice("telegram:42")
+                .and_then(|v| v.voice_name)
+                .as_deref(),
+            Some("Kore")
+        );
+    }
+
+    /// A chat binding is implicit — the operator never named the session —
+    /// so an edited prompt layer rotates it rather than failing, and the old
+    /// ledger survives (docs/design/45-prompt-layers.md).
+    #[tokio::test]
+    async fn prompt_layer_change_rotates_binding_and_keeps_the_old_ledger() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let session = core
+            .start_session_with_route(core.effective_provider(), core.effective_model())
+            .await
+            .unwrap();
+        let old_id = session.header().unwrap().session_id.clone();
+        assert!(
+            !session.header().unwrap().contract.prompt_layers.is_empty(),
+            "a new session must record which prompt layers it froze"
+        );
+        let state = AppState::new(core.clone());
+        crate::register_handle(&state, old_id.clone(), session, core.cwd().clone());
+        state.gateway.bind(
+            &core,
+            "telegram:42".into(),
+            old_id.clone(),
+            "route-revision".into(),
+        );
+
+        // Unchanged workspace: the same session is reused.
+        let same = resolve_session(&state, &core, "telegram:42").await.unwrap();
+        assert_eq!(same.id, old_id);
+
+        // Now edit a layer under the running binding.
+        let prompts_dir = core.cwd().join(".vak/prompts");
+        std::fs::create_dir_all(&prompts_dir).unwrap();
+        std::fs::write(prompts_dir.join("guardrails.md"), "- never touch infra/\n").unwrap();
+
+        let fresh = resolve_session(&state, &core, "telegram:42").await.unwrap();
+        assert_ne!(fresh.id, old_id, "edited prompt layer did not rotate");
+        {
+            let lock = fresh
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let contract = &lock.as_ref().unwrap().header().unwrap().contract;
+            assert!(contract.system_prompt.contains("never touch infra/"));
+            assert!(core.prompt_drift(contract).is_none());
         }
         let old_path =
             vak_session::SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &old_id);

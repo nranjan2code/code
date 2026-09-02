@@ -15,6 +15,9 @@ import type {
   McpServerConfig,
   ConfigLayer,
   ConfigScope,
+  PromptBlock,
+  PromptEffective,
+  PromptLayerResponse,
   IntegrationStatus,
   MemoryItem,
   OpsDiagnostics,
@@ -445,6 +448,29 @@ export const api = {
 
   opsDiagnostics: (): Promise<OpsDiagnostics> =>
     fetch("/ops/diagnostics").then((r) => handle(r)),
+
+  promptLayer: (scope: ConfigScope): Promise<PromptLayerResponse> =>
+    fetch(`/config/prompts?scope=${scope}`).then((r) => handle(r)),
+
+  putPromptBlock: (scope: ConfigScope, block: PromptBlock, text: string | null): Promise<void> =>
+    fetch("/config/prompts", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope, block, text }),
+    }).then((r) => void handle(r)),
+
+  promptEffective: (): Promise<PromptEffective> =>
+    fetch("/config/prompts/effective").then((r) => handle(r)),
+
+  promptPreview: (surface: string, role?: string): Promise<PromptEffective> =>
+    fetch("/config/prompts/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ surface, ...(role ? { role } : {}) }),
+    }).then((r) => handle(r)),
+
+  promptRoles: (): Promise<{ roles: string[] }> =>
+    fetch("/config/prompts/roles").then((r) => handle(r)),
 
   configLayer: (scope: ConfigScope): Promise<ConfigLayer> =>
     fetch(scope === "user" ? "/config/global" : "/config/project").then((r) => handle(r)),

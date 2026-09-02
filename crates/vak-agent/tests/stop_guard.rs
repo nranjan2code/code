@@ -94,6 +94,7 @@ fn harness(policy: Option<StopPolicy>, responses: Vec<ScriptedResponse>) -> Harn
             system_prompt: "sys".into(),
             permission_mode: "full-access".into(),
             capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
         },
     };
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).expect("ledger");

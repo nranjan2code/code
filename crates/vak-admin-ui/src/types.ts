@@ -466,6 +466,40 @@ export interface McpListResponse {
 
 export type ConfigScope = "user" | "project";
 
+// Prompt layers (docs/design/45-prompt-layers.md). Only these three blocks
+// are editable; the capability contract, the Surface line, and the skill/MCP
+// inventories are code-owned and describe the interface as it actually is.
+export type PromptBlock = "identity" | "operating-rules" | "guardrails" | "surface-note";
+
+export interface PromptLayerContent {
+  identity?: string | null;
+  operating_rules?: string | null;
+  guardrails?: string[];
+  surface_notes?: string[];
+}
+
+export interface PromptLayerResponse {
+  scope: ConfigScope;
+  path: string;
+  layer: PromptLayerContent;
+}
+
+export interface PromptLayerDescriptor {
+  block: PromptBlock;
+  layer: "seed" | "shared" | "project" | "surface" | "bot" | "chat" | "agent";
+  source?: string | null;
+  digest: string;
+  bytes: number;
+}
+
+export interface PromptEffective {
+  text: string;
+  fingerprint: string;
+  estimated_tokens: number;
+  surface: string;
+  layers: PromptLayerDescriptor[];
+}
+
 export interface ConfigLayer {
   scope: ConfigScope;
   path: string;

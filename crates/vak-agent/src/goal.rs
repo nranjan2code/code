@@ -35,7 +35,7 @@ pub struct GoalState {
 }
 
 pub const AUDIT_SYSTEM: &str = "\
-You are a completion auditor for a coding-agent session. You receive the \
+You are a completion auditor for an agent session. You receive the \
 session's objective, its acceptance criteria, and a transcript digest of \
 what the agent actually did. Judge each criterion independently against \
 EVIDENCE IN THE TRANSCRIPT ONLY — never give benefit of the doubt. Reply \

@@ -161,6 +161,7 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
             system_prompt: "sys".into(),
             permission_mode: "full-access".into(),
             capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
         },
     };
     let log = SessionLog::create(
@@ -192,6 +193,7 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
     let mut cfg = AgentConfig::new("sys");
     cfg.model = "test-model".into();
     cfg.tools = vec![Arc::new(TaskTool::new(TaskDeps {
+        role_prompts: Default::default(),
         provider: provider.clone(),
         system_prompt: "child-sys".into(),
         model: "test-model".into(),

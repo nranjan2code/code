@@ -520,7 +520,9 @@ fn load_workspace_env(cwd: &std::path::Path) {
 /// config is trusted — mirroring an interactive CLI session.
 async fn boot_backend(cwd: PathBuf) -> Result<Running, String> {
     vak_config::ensure_project_config(&cwd).map_err(|e| e.to_string())?;
-    let core = vak_core::Core::new_with_trust(cwd.clone(), true).map_err(|e| e.to_string())?;
+    let core = vak_core::Core::new_with_trust(cwd.clone(), true)
+        .map(|c| c.with_surface(vak_core::Surface::Desktop))
+        .map_err(|e| e.to_string())?;
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

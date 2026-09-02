@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
-#[command(name = "Vak", version, about = "A coding agent harness")]
+#[command(name = "Vak", version, about = "An agent harness")]
 pub(crate) struct Cli {
     #[command(subcommand)]
     pub(crate) command: Option<Command>,
@@ -41,6 +41,10 @@ pub(crate) enum Command {
         /// Resume an existing session instead of starting a new one
         #[arg(long)]
         session: Option<String>,
+        /// Acknowledge that prompt layers changed since the resumed session
+        /// was created, and run its frozen prompt anyway
+        #[arg(long)]
+        accept_drift: bool,
         /// Track this run as a durable managed work contract
         #[arg(long)]
         managed: bool,
@@ -60,6 +64,11 @@ pub(crate) enum Command {
     Config {
         #[command(subcommand)]
         action: Option<ConfigAction>,
+    },
+    /// Inspect and edit the layered system prompt
+    Prompts {
+        #[command(subcommand)]
+        action: PromptsAction,
     },
     /// List recorded sessions for this project
     Sessions,
@@ -592,6 +601,64 @@ pub(crate) enum FlowAction {
 #[derive(Subcommand, Debug)]
 pub(crate) enum ConfigAction {
     Dump,
+}
+
+/// Scope for a prompt edit. Matches the wire names the admin API uses;
+/// interfaces label these "Shared" and "This project" (docs/design/44).
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PromptScope {
+    /// ~/vak-home — the baseline every project inherits
+    User,
+    /// this workspace only
+    Project,
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum PromptsAction {
+    /// Print the assembled prompt, or one layer's own text
+    Show {
+        /// Show only this block (identity, operating-rules, guardrails)
+        block: Option<String>,
+        /// Print the layer's own text instead of the assembled result
+        #[arg(long)]
+        scope: Option<PromptScope>,
+        /// Annotate each contributing layer
+        #[arg(long)]
+        provenance: bool,
+    },
+    /// Open a block in $EDITOR and save it to the chosen scope
+    Edit {
+        block: String,
+        #[arg(long, default_value = "project")]
+        scope: PromptScope,
+    },
+    /// Set a block from a file or stdin (`-`), non-interactively
+    Set {
+        block: String,
+        /// File to read; `-` reads stdin
+        from: String,
+        #[arg(long, default_value = "project")]
+        scope: PromptScope,
+    },
+    /// Delete this layer's block and resume inheritance
+    Reset {
+        block: String,
+        #[arg(long, default_value = "project")]
+        scope: PromptScope,
+    },
+    /// Show what this workspace changed against the shipped default
+    Diff,
+    /// Render the exact prompt a given surface and role would receive
+    Preview {
+        /// cli, desktop, server, background, subagent, or a chat channel
+        #[arg(long, default_value = "cli")]
+        surface: String,
+        /// Named agent role to apply
+        #[arg(long)]
+        role: Option<String>,
+    },
+    /// List named agent roles defined for this workspace
+    Roles,
 }
 
 #[derive(Subcommand, Debug)]

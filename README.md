@@ -2,9 +2,9 @@
 
 # vak
 
-### A coding agent you can inspect, constrain, and extend.
+### An agent you can inspect, constrain, and extend.
 
-**A local-first Rust harness for running serious coding agents without giving up the receipts.**
+**A local-first Rust harness for running serious general-purpose agents without giving up the receipts.**
 
 [![Version](https://img.shields.io/badge/version-0.2.4-E66A2C?style=flat-square)](CHANGELOG.md)
 [![Rust](https://img.shields.io/badge/Rust-2024-2B2B2B?style=flat-square&logo=rust)](Cargo.toml)
@@ -15,9 +15,9 @@
 
 </div>
 
-![An editorial illustration of vak moving a coding task through an auditable ledger, permission gate, sandboxed execution, and verified patch](docs/assets/vak-hero.webp)
+![An editorial illustration of vak moving a task through an auditable ledger, permission gate, sandboxed execution, and verified result](docs/assets/vak-hero.webp)
 
-vak is an open-source coding-agent runtime for people who want powerful automation **and** a system they can reason about. It combines a native desktop app, a headless CLI, flows, an HTTP/SSE server, and chat gateways on top of one auditable core.
+vak is an open-source agent runtime for people who want powerful automation **and** a system they can reason about. It combines a native desktop app, a headless CLI, flows, an HTTP/SSE server, and chat gateways on top of one auditable core. Engineering, research, writing, data, and operations all run through that core, the same permission gate, and the same ledger.
 
 Its thesis is simple: **Codex-grade safety, pi-grade transparency, Claude Code-grade extensibility, and opencode-grade simplicity.**
 
@@ -27,7 +27,7 @@ The result is not another thin model wrapper. Sessions are append-only ledgers, 
 
 ## Why vak
 
-Most coding agents make you choose between capability and legibility. vak is built around the idea that the agent can be ambitious while the runtime remains explicit.
+Most agents make you choose between capability and legibility. vak is built around the idea that the agent can be ambitious while the runtime remains explicit.
 
 | Principle | What it means in practice |
 |---|---|

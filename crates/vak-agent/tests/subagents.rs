@@ -101,6 +101,7 @@ async fn subagent_roundtrip_with_shared_scripted_provider() {
             system_prompt: "sys".into(),
             permission_mode: "workspace-write".into(),
             capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
         },
     };
     let log = SessionLog::create(
@@ -122,6 +123,7 @@ async fn subagent_roundtrip_with_shared_scripted_provider() {
     let mut cfg = AgentConfig::new("sys");
     cfg.model = "test-model".into();
     cfg.tools = vec![Arc::new(TaskTool::new(TaskDeps {
+        role_prompts: Default::default(),
         provider: scripted.clone(),
         system_prompt: "child-sys".into(),
         model: "test-model".into(),

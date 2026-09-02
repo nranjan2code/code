@@ -160,6 +160,9 @@ async fn run_heartbeat_turn(
     // Dedicated child core over the SERVER cwd: the model pin stays scoped
     // here instead of mutating shared runtime overrides.
     let core = vak_core::Core::new_with_trust(state.core.cwd().clone(), true)
+        // Unattended by construction: the turn's approver is `AutoDeny` and
+        // no one is reading the reply as it streams.
+        .map(|c| c.with_surface(vak_core::Surface::Background))
         .map_err(|e| format!("heartbeat core failed: {e}"))?;
     core.set_provider_instance(provider);
     core.set_sessions_home(state.core.sessions_home());
@@ -255,6 +258,7 @@ fn create_persistent_session(core: &Core) -> Result<SessionLog, String> {
             system_prompt: core.system_prompt(),
             permission_mode: permission_mode_tag(core.effective_permission_mode()).to_string(),
             capabilities: core.capability_descriptors(),
+            prompt_layers: Vec::new(),
         },
     };
     SessionLog::create(path, header).map_err(|e| format!("heartbeat session create: {e}"))

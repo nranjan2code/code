@@ -522,6 +522,7 @@ async fn execute_node(
                     }
                     .into(),
                     capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
                 },
             };
             let path = SessionPath::new_session_file(&deps.sessions_home, &deps.cwd, &session_id);

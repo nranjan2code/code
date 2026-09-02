@@ -19,7 +19,7 @@ pub use search::{
 pub use types::{
     ActivityKind, ActivityRecord, ActivityStatus, CapabilityDescriptor, CapabilityInvocation,
     CapabilityKind, CompactionEntry, Entry, EntryPayload, FrozenContract, MessageMeta,
-    MessageRecord, SessionError, SessionHeader,
+    MessageRecord, PromptLayerDescriptor, SessionError, SessionHeader,
 };
 pub use work::{
     WorkError, WorkProjection, project_work, validate_contract, validate_contract_for_admission,

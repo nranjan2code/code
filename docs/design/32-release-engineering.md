@@ -212,3 +212,24 @@ at startup before any other logic.
 Plists pointing at `target/release/*` are legacy. `self services-sync`
 rewrites them onto the installed path on first run; `self status` flags
 any unit still exec'ing from a build tree until migrated.
+
+## Frontend bundle staleness
+
+`vak-admin-ui/dist` is committed and embedded into `vak-server` by
+`include_dir!`; `vak-desktop/ui/dist` is gitignored and copied into the app
+bundle by `self install`. Both can silently ship a frontend that no longer
+matches its source — that is how v0.8.1 shipped a blank admin console.
+
+Three layers now, innermost first:
+
+1. `npm run build` writes `dist/.src-manifest`, one sha256 per source file
+   (`crates/vak-admin-ui/scripts/stamp.mjs`, and the same file under
+   `crates/vak-desktop/ui/scripts/`).
+2. Each crate's `build.rs` re-verifies that manifest and fails the build with
+   `cargo::error` naming the offending file — so a plain `cargo build` or
+   `cargo test` after a UI edit stops, instead of quietly embedding the
+   previous bundle. Shared via `include!("../../scripts/ui_bundle_check.rs")`.
+   A missing manifest is accepted, so an older checkout still builds.
+3. `scripts/build.sh` builds the admin frontend (it already built the desktop
+   one); `scripts/release.sh` rebuilds both and additionally fails on a
+   *committed* `dist/` diff, which a local build cannot see.

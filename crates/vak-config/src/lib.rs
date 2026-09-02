@@ -557,7 +557,12 @@ pub struct VoiceConfig {
     /// Live API prebuilt voice name, e.g. "Kore", "Puck", "Zephyr".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice_name: Option<String>,
-    /// Style directive fed to the Live session as a system instruction.
+    /// **Deprecated** (docs/design/45-prompt-layers.md): the bot/chat
+    /// `identity` prompt block is the persona now, so a bot's spoken and
+    /// written selves cannot drift apart. Still read as a fallback when no
+    /// prompt tier sets an identity, and still honoured as an explicit
+    /// per-request override, so existing configs keep working. New writes
+    /// should set the `identity` block instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persona: Option<String>,
 }

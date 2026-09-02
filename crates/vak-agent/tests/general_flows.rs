@@ -110,6 +110,7 @@ fn setup(
             system_prompt: "sys".into(),
             permission_mode: "full-access".into(),
             capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
         },
     };
     let home = cwd.join(".vak-home");

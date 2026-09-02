@@ -1750,3 +1750,36 @@ body.is-resizing .split-divider {
 .inherited-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .capability-item-overridden { opacity: 0.6; }
 
+
+/* Prompt layers (docs/design/45-prompt-layers.md). */
+.prompt-block { padding: 12px 0; border-top: 1px solid var(--border-soft); }
+.prompt-block:first-of-type { border-top: none; padding-top: 0; }
+.prompt-block-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.prompt-preview {
+  margin: 8px 0 0;
+  padding: 9px 11px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.prompt-full { max-height: 400px; }
+.prompt-editor {
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 11px;
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  resize: vertical;
+}
+.prompt-editor:focus { outline: none; border-color: var(--border-focus); }

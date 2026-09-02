@@ -92,6 +92,7 @@ fn multi_setup(
             system_prompt: "sys".into(),
             permission_mode: "workspace-write".into(),
             capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
         },
     };
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();

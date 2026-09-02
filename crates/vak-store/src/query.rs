@@ -292,6 +292,7 @@ mod tests {
                 system_prompt: String::new(),
                 permission_mode: "workspace-write".into(),
                 capabilities: Vec::new(),
+                prompt_layers: Vec::new(),
             },
         }
     }

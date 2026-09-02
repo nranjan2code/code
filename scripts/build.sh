@@ -68,6 +68,18 @@ if [[ "$CLEAN" == true ]]; then
     cargo clean
 fi
 
+# vak-admin-ui/dist is committed and embedded into vak-server at Cargo
+# compile time. vak-server's build.rs refuses to compile a bundle that no
+# longer matches its own source, so building it here is what keeps an
+# ordinary `vak.sh build` working after a UI edit instead of failing with an
+# instruction to go run npm.
+if command -v npm >/dev/null; then
+    printf '\n== admin frontend ==\n'
+    ( cd "$ROOT_DIR/crates/vak-admin-ui" && npm ci --silent && npm run build --silent >/dev/null )
+else
+    printf '\nnpm not found — leaving crates/vak-admin-ui/dist as committed\n' >&2
+fi
+
 # The desktop frontend is embedded into the bundle's Resources by the
 # installer, so it has to exist before `self install` runs.
 if [[ "$DESKTOP" == true ]]; then

@@ -49,3 +49,7 @@ http-body-util = "0.1"
 
 [lints]
 workspace = true
+
+[build-dependencies]
+# build.rs re-verifies the committed admin bundle against its sources.
+sha2 = { workspace = true }

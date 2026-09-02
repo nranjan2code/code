@@ -145,6 +145,7 @@ fn setup_with(
             system_prompt: "sys".into(),
             permission_mode: "workspace-write".into(),
             capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
         },
     };
     let log = SessionLog::create(path, header).unwrap();

@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   density,
@@ -29,12 +29,13 @@ import DigestCard from "./DigestCard";
 /** Sentinel option that swaps the model select for a free-text field. */
 const CUSTOM_MODEL = "\u0000custom";
 
-type Page = "general" | "appearance" | "agent" | "permissions" | "reliability" | "integrations" | "services" | "learning" | "advanced" | "archived";
+type Page = "general" | "appearance" | "agent" | "prompts" | "permissions" | "reliability" | "integrations" | "services" | "learning" | "advanced" | "archived";
 
 const pages: { id: Page; label: string; icon: IconName; hint: string }[] = [
   { id: "general", label: "General", icon: "gear", hint: "notifications suggestions" },
   { id: "appearance", label: "Appearance", icon: "palette", hint: "theme text density motion" },
   { id: "agent", label: "Agent", icon: "spark", hint: "provider model turns subagents" },
+  { id: "prompts", label: "Prompts", icon: "spark", hint: "system prompt identity rules guardrails persona" },
   { id: "permissions", label: "Permissions", icon: "shield", hint: "access sandbox approvals" },
   { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker" },
   { id: "integrations", label: "Integrations", icon: "plug", hint: "mcp hooks skills" },
@@ -43,6 +44,23 @@ const pages: { id: Page; label: string; icon: IconName; hint: string }[] = [
   { id: "advanced", label: "Advanced", icon: "tune", hint: "paths context configuration" },
   { id: "archived", label: "Archived tasks", icon: "archive", hint: "restore delete history" },
 ];
+
+const PROMPT_BLOCKS: { id: api.PromptBlock; label: string; help: string }[] = [
+  { id: "identity", label: "Identity", help: "Who the agent is. The narrowest layer that sets this wins." },
+  { id: "operating-rules", label: "Operating rules", help: "How it works. The narrowest layer that sets this wins." },
+  { id: "guardrails", label: "Guardrails", help: "Every layer's guardrails apply together. Nothing narrower can remove one." },
+  { id: "surface-note", label: "Surface note", help: "Appended after the generated Surface line — what this deployment knows about where the reply lands. Accumulates across layers." },
+];
+
+const PROMPT_LAYER_LABELS: Record<api.PromptLayerDescriptor["layer"], string> = {
+  seed: "shipped default",
+  shared: "Shared",
+  project: "This project",
+  surface: "surface",
+  bot: "bot",
+  chat: "chat",
+  agent: "agent role",
+};
 
 function Switch(props: { checked: boolean; onChange: (next: boolean) => void; label: string }) {
   return <button class="switch" classList={{ on: props.checked }} role="switch" aria-checked={props.checked} aria-label={props.label} onClick={() => props.onChange(!props.checked)}><span /></button>;
@@ -63,6 +81,43 @@ function fmt(value: number): string {
 export default function Settings() {
   const scope = () => settingsScope();
   const capabilityScope = () => scope() === "user" ? "user" as const : "workspace" as const;
+
+  // Prompt layers (docs/design/45). The layer resource is keyed on scope so
+  // switching Shared/This project reloads the editable layer, while the
+  // effective composition is scope-independent — it is what the model gets.
+  const [promptLayer, { refetch: refetchPromptLayer }] = createResource(scope, (s) => api.getPromptLayer(s).catch(() => null));
+  const [promptEffective, { refetch: refetchPromptEffective }] = createResource(() => api.getPromptEffective().catch(() => null));
+  const [promptEditing, setPromptEditing] = createSignal<api.PromptBlock | null>(null);
+  const [promptDraft, setPromptDraft] = createSignal("");
+  const promptLayerPath = () => promptLayer()?.path ?? "";
+  const promptBlockText = (block: api.PromptBlock): string | null => {
+    const l = promptLayer()?.layer;
+    if (!l) return null;
+    if (block === "identity") return l.identity ?? null;
+    if (block === "operating-rules") return l.operating_rules ?? null;
+    const rules = (block === "guardrails" ? l.guardrails : l.surface_notes) ?? [];
+    return rules.length ? rules.map((r) => `- ${r}`).join("\n") : null;
+  };
+  const promptSources = (block: api.PromptBlock): string =>
+    (promptEffective()?.layers ?? [])
+      .filter((d) => d.block === block)
+      .map((d) => PROMPT_LAYER_LABELS[d.layer])
+      .join(", ");
+  async function savePromptBlock(block: api.PromptBlock, text: string | null) {
+    try {
+      await api.putPromptBlock(scope(), block, text);
+      setPromptEditing(null);
+      await Promise.all([refetchPromptLayer(), refetchPromptEffective()]);
+      setNotice({
+        kind: "info",
+        text: text === null
+          ? `${block} reset; it is inherited again.`
+          : `${block} saved. Applies to new sessions.`,
+      });
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not save ${block}: ${(e as Error).message}` });
+    }
+  }
   const [page, setPage] = createSignal<Page>(pendingSettingsPage() ?? "general");
   const [query, setQuery] = createSignal("");
   const [config, setConfig] = createSignal<ConfigSnapshot | null>(null);
@@ -1258,6 +1313,73 @@ export default function Settings() {
                   </Show>
                 </Group>
               </Show>
+            </Show>
+
+            <Show when={page() === "prompts"}>
+              <header><h1>Prompts</h1><p>What the agent is told before every turn. Edit a layer; narrower layers inherit it.</p></header>
+              <Group title="This layer">
+                <p class="settings-hint">
+                  Editing <strong>{scope() === "user" ? "Shared" : "This project"}</strong>
+                  <Show when={promptLayerPath()}> — <code>{promptLayerPath()}</code></Show>
+                </p>
+                <For each={PROMPT_BLOCKS}>{(block) => {
+                  const own = () => promptBlockText(block.id);
+                  return (
+                    <div class="prompt-block">
+                      <div class="prompt-block-head">
+                        <strong>{block.label}</strong>
+                        <span class="capability-state" classList={{ ready: own() !== null, muted: own() === null }}>
+                          {own() === null ? "Inherited" : "Set here"}
+                        </span>
+                      </div>
+                      <span class="settings-hint">{block.help}</span>
+                      <Show when={promptEditing() === block.id} fallback={
+                        <>
+                          <Show when={own() !== null} fallback={<p class="settings-hint">Coming from {promptSources(block.id) || "nowhere"}.</p>}>
+                            <pre class="prompt-preview">{own()}</pre>
+                          </Show>
+                          <div class="settings-actions">
+                            <button class="settings-button" onClick={() => { setPromptDraft(own() ?? ""); setPromptEditing(block.id); }}>
+                              {own() === null ? "Override" : "Edit"}
+                            </button>
+                            <Show when={own() !== null}>
+                              <button class="settings-button" onClick={() => void savePromptBlock(block.id, null)}>Reset to inherited</button>
+                            </Show>
+                          </div>
+                        </>
+                      }>
+                        <textarea class="prompt-editor" rows={block.id === "identity" ? 8 : 12} value={promptDraft()} onInput={(e) => setPromptDraft(e.currentTarget.value)} placeholder={block.id === "guardrails" ? "- one guardrail per line" : block.id === "surface-note" ? "- this is a public channel; assume anyone can read the reply" : "Plain text or markdown"} />
+                        <Show when={block.id === "guardrails"}>
+                          {/* Prevents the dangerous belief that adding text here
+                              sandboxes anything, which would invite relaxing a
+                              real permission rule. */}
+                          <div class="settings-callout"><Icon name="shield" /><div><strong>Guardrails instruct the model; they do not enforce anything.</strong><span>A model can misread or be argued out of one. Permissions and the sandbox are the enforcement boundary.</span></div></div>
+                        </Show>
+                        <div class="settings-actions">
+                          <button class="btn primary" onClick={() => void savePromptBlock(block.id, promptDraft())}>Save to {scope() === "user" ? "Shared" : "this project"}</button>
+                          <button class="settings-button" onClick={() => setPromptEditing(null)}>Cancel</button>
+                        </div>
+                      </Show>
+                    </div>
+                  );
+                }}</For>
+              </Group>
+              <Group title="Effective prompt">
+                <p class="settings-hint">What the model actually receives, and where each part came from. Changes apply to new sessions; a running turn keeps the prompt it started with.</p>
+                <Row title="Estimated size" description="Spent on every turn of every session."><span class="metric">~{promptEffective()?.estimated_tokens ?? 0} tokens</span></Row>
+                <div class="capability-list">
+                  <For each={promptEffective()?.layers ?? []}>{(d) => (
+                    <div class="capability-inheritance-row">
+                      <span><strong>{d.block}</strong><small>{PROMPT_LAYER_LABELS[d.layer]}</small></span>
+                      <span class="capability-state ready">{d.bytes}B</span>
+                    </div>
+                  )}</For>
+                </div>
+                <pre class="prompt-preview prompt-full">{promptEffective()?.text ?? ""}</pre>
+              </Group>
+              <Group title="Not editable">
+                <div class="settings-callout"><Icon name="shield" /><div><strong>The capability contract, the Surface line, and the skill and MCP lists are code-owned.</strong><span>They describe the callable interface as it actually is. Editing them could only make the model wrong about its own tools.</span></div></div>
+              </Group>
             </Show>
 
             <Show when={page() === "advanced"}>

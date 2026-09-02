@@ -158,7 +158,7 @@ Why this shape:
   SSH-to-serve covers remote machines without custody of user code.
 - **Phone dispatch.** Depends on cloud push plumbing; skip.
 - **Merged super-app shell** (Codex folding Codex into ChatGPT UI): their own
-  bug reports show the cost. Desktop stays a coding-agent surface.
+  bug reports show the cost. Desktop stays a focused agent surface.
 
 ## Gap matrix (us vs leaders, post-D5 target)
 

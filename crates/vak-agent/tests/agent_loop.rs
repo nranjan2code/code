@@ -119,6 +119,7 @@ fn harness(responses: Vec<ScriptedResponse>, tools: Vec<Arc<dyn Tool>>) -> Harne
                 provenance: None,
                 configuration: serde_json::Value::Null,
             }],
+            prompt_layers: Vec::new(),
         },
     };
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();

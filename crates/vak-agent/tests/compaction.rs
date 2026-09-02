@@ -94,6 +94,7 @@ async fn overflow_triggers_compaction_then_run_completes() {
             system_prompt: "sys".into(),
             permission_mode: "full-access".into(),
             capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
         },
     };
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();
@@ -207,6 +208,7 @@ async fn still_over_after_compaction_fails_closed() {
             system_prompt: "sys".into(),
             permission_mode: "full-access".into(),
             capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
         },
     };
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();
@@ -354,6 +356,7 @@ mod pair_boundary_and_reuse {
                 system_prompt: "sys".into(),
                 permission_mode: "full-access".into(),
                 capabilities: Vec::new(),
+                prompt_layers: Vec::new(),
             },
         };
         let mut log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();

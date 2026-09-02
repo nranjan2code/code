@@ -181,6 +181,33 @@
     packages; the product must not advertise mock, placeholder, or TODO
     capabilities.
 
+28. **The prompt is layered; its safety floor only grows.** The shipped
+    prompt is a seed, not a constant (docs/design/45). `identity`,
+    `operating_rules`, `guardrails`, and `surface_note` are user-editable and
+    resolve through the same seed → Shared → project → surface → bot → chat →
+    agent-role chain everything else uses. The capability contract, the
+    `Surface:` line, and the skill/MCP inventories are **code-owned**:
+    `PromptBlock` cannot name them, so no API can accept an edit to one — they
+    describe the callable interface as it actually is, and a user who could
+    edit them could only make the model wrong about its own tools.
+    `identity`/`operating_rules` fall through narrowest-wins like `route`;
+    `guardrails`/`surface_note` concatenate and de-duplicate like
+    `ChannelPolicy` deny lists, so nothing narrower can remove what a wider
+    layer said, and a surface note appends to the generated line rather than
+    replacing it. File presence is the inheritance switch: there is
+    deliberately no way to spell `guardrails.inherit = false`. A project layer
+    is untrusted config until the workspace is trusted — its identity, rules,
+    and surface notes are demoted exactly like `hooks`/`allow`/`mcp.servers`,
+    while its **guardrails still apply**, because a guardrail can only narrow.
+    Guardrail text instructs and never enforces; `PermissionEngine`, the
+    broker, and the sandbox are the boundary, and no surface may word it
+    otherwise. Every winning contribution is recorded in
+    `FrozenContract.prompt_layers` with a digest, ordered by layer breadth,
+    never alphabetically. On resume an implicit binding (a gateway chat)
+    rotates and records the drift; a session the user named by id fails closed
+    until `--accept-drift`. An empty frozen list means *unknown baseline*, not
+    *everything changed*. An inbound message may never write a prompt layer.
+
 ## Code rules
 
 - Edition 2024, stable toolchain. `cargo fmt` + `cargo clippy -D warnings` must pass.
@@ -195,8 +222,14 @@
   never mounted. Presentation snapshot/SSE endpoints are reconnectable
   projections over the ledger and live events; legacy transcript, `AgentEvent`,
   webhook, and channel text paths remain compatibility surfaces.
-- System prompt stays under 1500 tokens; changes require updating
-  `docs/design/07-prompt.md` diff notes.
+- The shipped prompt seed stays under 1500 tokens and carries its
+  `<!-- block: -->` markers; changes require a diff note in
+  `docs/design/07-prompt.md`. Layer composition, trust, and the editing
+  surfaces are `docs/design/45-prompt-layers.md`.
+- A committed or shipped frontend bundle must match its source. `npm run
+  build` writes `dist/.src-manifest`; `vak-server`'s and `vak-desktop`'s build
+  scripts re-verify it and fail the build naming the stale file. Never
+  weaken that check to get a build through — regenerate the bundle.
 - Config keys unknown to this version are ignored with a warning, never fatal.
 
 ## Layout

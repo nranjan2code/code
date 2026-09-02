@@ -224,7 +224,7 @@ pub fn parse_proposals(reply: &str) -> Proposals {
 /// The reflector's system prompt. Public so budget admission can price the
 /// auxiliary dispatch with its real input shape.
 pub fn system_prompt() -> String {
-    "You are the reflection stage of a coding agent. Given a recent \
+    "You are the reflection stage of a general-purpose agent. Given a recent \
      conversation, decide what is worth persisting across future sessions. \
      Be extremely selective: only durable decisions, facts or preferences — \
      not task chatter. Reply with ONLY minified JSON of shape \

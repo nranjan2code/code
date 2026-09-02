@@ -151,6 +151,7 @@ fn setup_with_primary(
             system_prompt: "sys".into(),
             permission_mode: "workspace-write".into(),
             capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
         },
     };
     let home = cwd.join(".vak-home");

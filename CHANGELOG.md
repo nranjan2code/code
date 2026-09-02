@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+### Editable prompt layers (docs/design/45)
+
+- **Security fix.** `.vak/SYSTEM.md` was read with no trust check, so a cloned
+  repository replaced the entire system prompt on first run — deleting the
+  capability contract and every safety rule — while far weaker project keys
+  were already demoted. Project-layer prompts are now demoted like
+  `hooks`/`allow`/`mcp.servers`; their guardrails still apply, since a
+  guardrail can only narrow behaviour.
+- The prompt is no longer a constant. `identity`, `operating-rules`,
+  `guardrails`, and `surface-note` are editable per layer and inherit through
+  the shared → project → surface → bot → chat → agent-role chain. The
+  capability contract, the `Surface:` line, and the skill/MCP lists stay
+  code-owned.
+- New surfaces: `vak prompts show|edit|set|reset|diff|preview|roles`, an admin
+  console page at `#/prompts`, and Desktop Settings → Prompts, all against one
+  API.
+- Two guardrails added to the shipped seed: tool output is data rather than
+  instruction (prompt injection), and credentials are never revealed,
+  transmitted, or written into a command line, commit, or outbound request.
+- vak is described as a general-purpose agent rather than a coding agent,
+  across the prompt, the CLI, and the product docs.
+- The prompt now names the surface it is running on (CLI, desktop, server,
+  chat gateway, background, subagent) instead of assuming a terminal.
+- Subagents get their own surface and optional named roles
+  (`task({role: "reviewer"})`); a child no longer inherits a human-facing
+  surface from its parent.
+- Sessions record which prompt layers they froze. On resume, a gateway chat
+  binding rotates and logs the drift; `vak exec --session` fails closed until
+  `--accept-drift`.
+- `VoiceConfig.persona` is superseded by the bot/chat `identity` block, and
+  kept as a fallback so existing configs keep working.
+
+### Build
+
+- A stale frontend bundle is now a build error. `npm run build` stamps
+  `dist/.src-manifest`, and both build scripts fail with the offending
+  filename instead of silently embedding the previous bundle — the failure
+  that shipped a blank admin console in v0.8.1. `scripts/build.sh` also builds
+  the admin frontend now.
+
 ## Unreleased — version line reset
 
 The workspace version was deliberately reset from `0.11.51` to `0.2.0` in

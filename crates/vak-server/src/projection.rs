@@ -839,6 +839,7 @@ mod tests {
                     system_prompt: String::new(),
                     permission_mode: "read-only".into(),
                     capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
                 },
             },
         )
@@ -950,6 +951,7 @@ mod tests {
                     system_prompt: String::new(),
                     permission_mode: "read-only".into(),
                     capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
                 },
             },
         )

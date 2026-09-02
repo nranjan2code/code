@@ -25,5 +25,5 @@ export const beats: StoryBeat[] = [
   {id: 'doctor', eyebrow: '11 / WHEN REALITY BREAKS', title: 'Doctor diagnoses. Repair only does what is known.', line: 'Facts stay visible, mechanical fixes are explicit, and unresolved problems remain with the operator.', asset: 'doctor', tint: '#d4a85d'},
   {id: 'after', eyebrow: '12 / OPERATE WITH EVIDENCE', title: 'Operations is not a dashboard of guesses.', line: 'Live state, receipts, incidents, delivery, and service-manager truth form the operational picture.', asset: 'ops', tint: '#73a982'},
   {id: 'handoff', eyebrow: 'THE HANDOFF', title: 'The answer is only the last frame.', line: 'The real product is a system that can explain its work, constrain its power, and recover from failure.', tint: '#df795f'},
-  {id: 'end', eyebrow: 'VAK', title: 'Power with a paper trail.', line: 'A coding agent you can inspect, constrain, and extend.', tint: '#df795f'},
+  {id: 'end', eyebrow: 'VAK', title: 'Power with a paper trail.', line: 'An agent you can inspect, constrain, and extend.', tint: '#df795f'},
 ];

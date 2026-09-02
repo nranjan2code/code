@@ -90,6 +90,7 @@ fn build(responses: Vec<AssistantMessage>, hooks: Option<Vec<HookDef>>) -> Agent
             system_prompt: "sys".into(),
             permission_mode: "full-access".into(),
             capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
         },
     };
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();

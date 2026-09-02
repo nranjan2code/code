@@ -26,6 +26,7 @@ fn header() -> SessionHeader {
             system_prompt: "system prompt v1".into(),
             permission_mode: "workspace-write".into(),
             capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
         },
     }
 }

@@ -544,6 +544,13 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/config/hooks", get(get_hooks).put(put_hooks))
         .route(
+            "/config/prompts",
+            get(get_prompt_layer).put(put_prompt_block),
+        )
+        .route("/config/prompts/effective", get(get_prompt_effective))
+        .route("/config/prompts/preview", post(preview_prompt))
+        .route("/config/prompts/roles", get(list_prompt_roles))
+        .route(
             "/config/hooks/global",
             get(get_global_hooks).put(put_global_hooks),
         )
@@ -1176,7 +1183,25 @@ async fn voice_speak(
         .and_then(|v| v.voice_name.clone())
         .filter(|v| !v.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_VOICE_NAME.to_string());
-    let persona = resolved.as_ref().and_then(|v| v.persona.clone());
+    // The persona now comes from the bot/chat `identity` prompt block; the
+    // legacy `VoiceConfig.persona` is the fallback inside `resolve_persona`
+    // (docs/design/45-prompt-layers.md). An explicit `voice_override` from
+    // the caller — what the admin console's Preview button sends — still
+    // wins, since it is the operator auditioning a value directly.
+    let persona = body
+        .voice_override
+        .as_ref()
+        .and_then(|v| v.persona.clone())
+        .filter(|p| !p.trim().is_empty())
+        .or_else(|| {
+            if let Some(chat_key) = body.chat_key.as_deref() {
+                state.gateway.resolve_persona(chat_key)
+            } else if let Some(bot_id) = body.bot_id.as_deref() {
+                state.gateway.resolve_bot_persona(bot_id)
+            } else {
+                None
+            }
+        });
 
     let api_key = match vak_config::get_var("GEMINI_API_KEY")
         .or_else(|| vak_config::get_var("GOOGLE_API_KEY"))
@@ -5629,6 +5654,11 @@ struct UpdateBotBody {
     /// sets it.
     #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
     voice: Option<Option<vak_config::VoiceConfig>>,
+    /// This bot's prompt tier (docs/design/45-prompt-layers.md). Absent
+    /// leaves it alone; an object replaces it. Its `identity` block is also
+    /// what drives this bot's spoken persona, so the two cannot drift.
+    #[serde(default)]
+    prompt: Option<vak_core::prompts::LayerContent>,
 }
 
 async fn update_bot(
@@ -5679,6 +5709,9 @@ async fn update_bot(
     }
     if let Some(voice) = body.voice {
         bot.voice = voice;
+    }
+    if let Some(prompt) = body.prompt {
+        bot.prompt = prompt;
     }
     state.gateway.bot_upsert(&state.core, bot.clone());
     state.hub.emit_config_changed("bot_updated", &id);
@@ -6524,6 +6557,153 @@ struct HooksPutBody {
 /// and compounding on every subsequent edit as the merge re-extends over an
 /// already-doubled list. Mirrors `get_global_hooks`, which has always read
 /// its own file directly for the same reason.
+/// Prompt layers (docs/design/45-prompt-layers.md).
+///
+/// `GET /config/prompts?scope=` reports **only** the selected layer's own
+/// text, never the merged view — AGENTS.md rule 21: this GET seeds a
+/// same-shape PUT, and returning inherited text would write a parent layer's
+/// content into the child file on the next save. The effective composition
+/// is a separate endpoint on purpose.
+async fn get_prompt_layer(
+    State(state): State<AppState>,
+    Query(query): Query<ScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let dir = vak_core::prompts::layer_dir(&query.scope.prompt_root(&state.core));
+    let content = vak_core::prompts::read_layer(&dir);
+    Json(serde_json::json!({
+        "scope": query.scope.label(),
+        "path": dir.display().to_string(),
+        "layer": content,
+    }))
+    .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct PromptBlockBody {
+    scope: ConfigScope,
+    block: String,
+    /// Absent or null resets the block and resumes inheritance.
+    #[serde(default)]
+    text: Option<String>,
+}
+
+async fn put_prompt_block(
+    State(state): State<AppState>,
+    Json(body): Json<PromptBlockBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(block) = vak_core::prompts::PromptBlock::parse(&body.block) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("unknown block '{}'", body.block),
+                "editable": ["identity", "operating-rules", "guardrails"],
+                "note": "the capability contract, Surface line, and skill/MCP lists are code-owned",
+            })),
+        )
+            .into_response();
+    };
+    // A prompt is spent on every turn of every session, so an unbounded
+    // editor is a permanent context tax rather than a one-off mistake.
+    const MAX_BLOCK_BYTES: usize = 24_000;
+    if let Some(text) = body.text.as_deref()
+        && text.len() > MAX_BLOCK_BYTES
+    {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({
+                "error": format!("{} is {}B; the cap is {MAX_BLOCK_BYTES}B", block.slug(), text.len()),
+            })),
+        )
+            .into_response();
+    }
+    let dir = vak_core::prompts::layer_dir(&body.scope.prompt_root(&state.core));
+    match vak_core::prompts::write_block(&dir, block, body.text.as_deref()) {
+        Ok(()) => Json(serde_json::json!({
+            "ok": true,
+            "scope": body.scope.label(),
+            "block": block.slug(),
+            "reset": body.text.is_none(),
+            // Prompts freeze into the session contract, so the UI must not
+            // imply a running turn changed under the user.
+            "applies": "new sessions",
+        }))
+        .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// The assembled prompt plus per-layer provenance — the right-hand pane.
+async fn get_prompt_effective(State(state): State<AppState>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    Json(prompt_effective_payload(&state.core)).into_response()
+}
+
+fn prompt_effective_payload(core: &vak_core::Core) -> serde_json::Value {
+    let resolution = core.resolve_prompt(&core.capability_descriptors());
+    serde_json::json!({
+        "text": resolution.text,
+        "fingerprint": resolution.fingerprint(),
+        "estimated_tokens": resolution.text.len() / 4,
+        "surface": core.surface().slug(),
+        "layers": resolution.descriptors,
+    })
+}
+
+#[derive(serde::Deserialize)]
+struct PromptPreviewBody {
+    #[serde(default)]
+    surface: Option<String>,
+    #[serde(default)]
+    role: Option<String>,
+}
+
+/// Render exactly what a chosen surface and role would receive. Composition
+/// across seven tiers is not guessable, so an editor without this is asking
+/// the operator to simulate the resolver in their head.
+async fn preview_prompt(
+    State(state): State<AppState>,
+    Json(body): Json<PromptPreviewBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let surface = match body.surface.as_deref().map(str::trim).unwrap_or("") {
+        "" | "unknown" => vak_core::Surface::Unknown,
+        "cli" => vak_core::Surface::Cli,
+        "desktop" => vak_core::Surface::Desktop,
+        "server" => vak_core::Surface::Server,
+        "background" => vak_core::Surface::Background,
+        "subagent" => vak_core::Surface::Subagent,
+        channel => vak_core::Surface::Chat {
+            channel: channel.to_string(),
+        },
+    };
+    if let Some(role) = body.role.as_deref()
+        && !state.core.prompt_role_names().iter().any(|n| n == role)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": format!("no role '{role}'") })),
+        )
+            .into_response();
+    }
+    let core = state
+        .core
+        .clone()
+        .with_surface(surface)
+        .with_prompt_role(body.role);
+    Json(prompt_effective_payload(&core)).into_response()
+}
+
+async fn list_prompt_roles(State(state): State<AppState>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    Json(serde_json::json!({ "roles": state.core.prompt_role_names() })).into_response()
+}
+
 async fn get_hooks(State(state): State<AppState>) -> axum::response::Response {
     use axum::response::IntoResponse;
     let path = state.core.cwd().join(".vak/config.toml");
@@ -6941,6 +7121,14 @@ impl ConfigScope {
         match self {
             Self::User => "user",
             Self::Project => "project",
+        }
+    }
+
+    /// Root whose `.vak/prompts` directory this scope edits.
+    fn prompt_root(self, core: &vak_core::Core) -> std::path::PathBuf {
+        match self {
+            Self::User => vak_config::paths::default_workspace(),
+            Self::Project => core.cwd().clone(),
         }
     }
 
@@ -7719,6 +7907,7 @@ async fn spawn_isolated_run(
     model_pin: Option<&str>,
 ) -> Result<String, String> {
     let child_core = vak_core::Core::new_with_trust(wt.path.clone(), true)
+        .map(|c| c.with_surface(vak_core::Surface::Background))
         .map_err(|e| format!("child core failed: {e}"))?;
     child_core.set_provider_instance(provider);
     child_core.set_sessions_home(state.core.sessions_home());

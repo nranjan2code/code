@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { api, AuthRequired } from "./api";
 import { OperationsCenter } from "./OperationsCenter";
+import { PromptsSection } from "./Prompts";
 import { clock, shortId, timeAgo } from "./time";
 import {
   AccessPicker, BUILTIN_TOOLS, MATCHER_TOOLS, MatcherBuilder, ScheduleBuilder,
@@ -59,6 +60,7 @@ const Icon = (props: { d: string; size?: number }) => (
 );
 
 const ICONS = {
+  prompts: "M4 4h16v16H4z M8 9h8 M8 13h8 M8 17h5",
   overview: "M3 3v18h18M7 15l4-6 4 4 5-8",
   operations: "M4 6h16M4 12h16M4 18h16 M8 6v12 M16 6v12",
   sessions: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87",
@@ -88,6 +90,19 @@ function PageHeader(props: { title: string; description: string; actions?: impor
         <div class="page-actions">{props.actions}</div>
       </Show>
     </header>
+  );
+}
+
+function PromptsPage() {
+  return (
+    <>
+      <PageHeader
+        title="Prompts"
+        description="What the agent is told before every turn. Edit a layer; narrower layers inherit it."
+      />
+      <ScopeControl />
+      <PromptsSection scope={configScope} pushToast={pushToast} />
+    </>
   );
 }
 
@@ -6132,6 +6147,7 @@ const NAV: NavItem[] = [
   { group: "Knowledge", hash: "#/feeds", label: "Feeds", icon: ICONS.feeds },
   { group: "Knowledge", hash: "#/search", label: "Search", icon: ICONS.search },
   { group: "Settings", hash: "#/finops", label: "FinOps", icon: ICONS.finops },
+  { group: "Settings", hash: "#/prompts", label: "Prompts", icon: ICONS.prompts },
   { group: "Settings", hash: "#/settings", label: "Settings", icon: ICONS.settings },
 ];
 
@@ -6870,6 +6886,7 @@ export default function App() {
               <Match when={currentRoute() === "#/inbox"}><Inbox /></Match>
               <Match when={currentRoute() === "#/finops"}><FinOpsView /></Match>
               <Match when={currentRoute() === "#/security"}><Security /></Match>
+              <Match when={currentRoute() === "#/prompts"}><PromptsPage /></Match>
               <Match when={currentRoute() === "#/settings"}><Settings /></Match>
             </Switch>
           </main>

@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [build-dependencies]
+# build.rs re-verifies the built UI bundle against its sources.
+sha2 = { workspace = true }
 tauri-build = { workspace = true }
 
 [dependencies]
