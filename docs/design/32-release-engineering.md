@@ -233,3 +233,57 @@ Three layers now, innermost first:
 3. `scripts/build.sh` builds the admin frontend (it already built the desktop
    one); `scripts/release.sh` rebuilds both and additionally fails on a
    *committed* `dist/` diff, which a local build cannot see.
+
+## Release discipline
+
+Rules earned from the 1.0.0 run, where four defects stacked so that no
+release could be cut at all and none of them was individually visible.
+
+**Never move a version line backwards.** `0.11.51 -> 0.2.0` cost, in order:
+every 0.11.x install stranded with no update path; a minor-bump path that
+could never be taken again, because `0.3.0`-`0.11.50` were already tagged; an
+abandoned release that left a dirty tree and a phantom installed build; and a
+monotonicity gate that failed closed and hid the rest. If a version line must
+restart, restart it *forward*, past the whole retired range — which is what
+`1.0.0` did.
+
+**Neutralise optional inputs inside pipelines.** Under `set -o pipefail`, `ls
+dist` on a checkout with no `dist/` fails the pipeline, then the assignment,
+then the script — mid-report, so the ✓ lines already printed read as the
+complete run. Any best-effort command in a pipeline needs `|| true`.
+
+**Build the frontends before the gates.** `cargo clippy --all-targets` and
+`cargo test --workspace` both compile `vak-desktop`, whose tauri codegen
+hard-fails without the gitignored `crates/vak-desktop/ui/dist`. Gates first
+meant a release only passed on a machine that had built the desktop UI at
+some earlier point — the exact leftover-state dependency this document exists
+to remove.
+
+**Check every worktree before pushing, not just `origin`.** A clean
+fast-forward against `origin/main` says nothing about a local `main` holding
+unpushed commits, or a sibling worktree holding an uncommitted version bump.
+Before a push or a release, read `git worktree list`, each worktree's dirty
+count, and `git log` in *both* directions against origin.
+
+**Never pipe a gate script through `tail` or a pager.** The pipeline reports
+the pager's exit status, so a failed release prints success.
+
+**A gate must not accept "Unreleased" when a tag is being cut.**
+`check-version.sh` passes a CHANGELOG whose newest heading is `## Unreleased`
+— right for day-to-day work, wrong at release time, because the release can
+ship with its own entry unnamed. Converting that heading is currently a
+manual step that nothing enforces and `bump-version.sh` does not mention.
+
+### Open items for the next release
+
+- `doctor` reports "all checks passed" while managed services crash-loop; it
+  does not read per-unit exit status. `self status` shows a crash-looping
+  service as `down ✓`, indistinguishable from one deliberately disabled.
+- `self install` prints "the CLI is not on PATH" even when `vak` resolves via
+  a symlink into the installed bundle. It should resolve `command -v vak` and
+  compare realpaths.
+- `bump-version.sh` should refuse to run on a dirty tree, and `release.sh`'s
+  dirty-tree gate should run first rather than after the test suite.
+- `self status` should flag an installed version with no corresponding git
+  tag; the abandoned attempt left a 0.2.5 build installed that existed
+  nowhere in the repository.

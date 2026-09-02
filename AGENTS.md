@@ -546,7 +546,10 @@ scripts/check-version.sh && python3 scripts/check_doc_paths.py
 git tags), not just the ones the build system reads, and fails on a version
 that moves BACKWARDS unless the abandoned line is declared in
 `scripts/.version-reset` — a decreasing version makes every install on the
-higher line permanently un-updatable. `check_doc_paths.py` fails on a design
+higher line permanently un-updatable, and walks into tag space the earlier
+line already used. Both happened; see the release-discipline rules in
+`docs/design/32-release-engineering.md` before cutting a release, and never
+move a version line backwards. `check_doc_paths.py` fails on a design
 doc citing a path that no longer exists; docs whose `Status:` line says
 "proposal" are skipped, because their paths are targets rather than
 citations.
