@@ -808,8 +808,8 @@ export default function Settings() {
         <div class="settings-search"><Icon name="search" /><input aria-label="Search settings" placeholder="Search settings…" value={query()} onInput={(event) => setQuery(event.currentTarget.value)} /></div>
         <div class="settings-nav-label">Settings scope</div>
         <div class="settings-scope-toggle" role="group" aria-label="Settings scope">
-          <button classList={{ active: scope() === "user" }} onClick={() => setSettingsScope("user")}>Shared</button>
-          <button classList={{ active: scope() === "project" }} onClick={() => setSettingsScope("project")}>This project</button>
+          <button aria-pressed={scope() === "user"} classList={{ active: scope() === "user" }} onClick={() => setSettingsScope("user")}>Shared</button>
+          <button aria-pressed={scope() === "project"} classList={{ active: scope() === "project" }} onClick={() => setSettingsScope("project")}>This project</button>
         </div>
         <p class="settings-scope-copy">Shared is your default. This project only changes what belongs to this folder.</p>
         <nav>
@@ -1316,12 +1316,10 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "prompts"}>
-              <header><h1>Prompts</h1><p>What the agent is told before every turn. Edit a layer; narrower layers inherit it.</p></header>
-              <Group title="This layer">
-                <p class="settings-hint">
-                  Editing <strong>{scope() === "user" ? "Shared" : "This project"}</strong>
-                  <Show when={promptLayerPath()}> — <code>{promptLayerPath()}</code></Show>
-                </p>
+              <div class="prompt-page">
+              <header><h1>Prompts</h1><p>Shape the agent’s voice and working rules without changing what it is allowed to do.</p></header>
+              <div class="prompt-scope-note"><Icon name="layers" /><div><strong>{scope() === "user" ? "Shared prompt layer" : "Project prompt layer"}</strong><span>{scope() === "user" ? "Used as the default across your projects. A project can override individual blocks." : "Applies only in this project. Unchanged blocks continue to inherit from Shared."}</span><Show when={promptLayerPath()}><code>{promptLayerPath()}</code></Show></div></div>
+              <Group title="Editable blocks">
                 <For each={PROMPT_BLOCKS}>{(block) => {
                   const own = () => promptBlockText(block.id);
                   return (
@@ -1332,10 +1330,10 @@ export default function Settings() {
                           {own() === null ? "Inherited" : "Set here"}
                         </span>
                       </div>
-                      <span class="settings-hint">{block.help}</span>
+                      <span class="settings-hint prompt-block-help">{block.help}</span>
                       <Show when={promptEditing() === block.id} fallback={
                         <>
-                          <Show when={own() !== null} fallback={<p class="settings-hint">Coming from {promptSources(block.id) || "nowhere"}.</p>}>
+                          <Show when={own() !== null} fallback={<p class="settings-hint prompt-inherited">Inherited from {promptSources(block.id) || "the shipped default"}.</p>}>
                             <pre class="prompt-preview">{own()}</pre>
                           </Show>
                           <div class="settings-actions">
@@ -1348,7 +1346,7 @@ export default function Settings() {
                           </div>
                         </>
                       }>
-                        <textarea class="prompt-editor" rows={block.id === "identity" ? 8 : 12} value={promptDraft()} onInput={(e) => setPromptDraft(e.currentTarget.value)} placeholder={block.id === "guardrails" ? "- one guardrail per line" : block.id === "surface-note" ? "- this is a public channel; assume anyone can read the reply" : "Plain text or markdown"} />
+                        <textarea class="prompt-editor" rows={block.id === "identity" ? 8 : 12} aria-label={`Edit ${block.label} prompt`} value={promptDraft()} onInput={(e) => setPromptDraft(e.currentTarget.value)} placeholder={block.id === "guardrails" ? "- one guardrail per line" : block.id === "surface-note" ? "- this is a public channel; assume anyone can read the reply" : "Plain text or markdown"} />
                         <Show when={block.id === "guardrails"}>
                           {/* Prevents the dangerous belief that adding text here
                               sandboxes anything, which would invite relaxing a
@@ -1365,7 +1363,7 @@ export default function Settings() {
                 }}</For>
               </Group>
               <Group title="Effective prompt">
-                <p class="settings-hint">What the model actually receives, and where each part came from. Changes apply to new sessions; a running turn keeps the prompt it started with.</p>
+                <p class="settings-hint prompt-effective-intro">What the model actually receives, and where each part came from. Changes apply to new sessions; a running turn keeps the prompt it started with.</p>
                 <Row title="Estimated size" description="Spent on every turn of every session."><span class="metric">~{promptEffective()?.estimated_tokens ?? 0} tokens</span></Row>
                 <div class="capability-list">
                   <For each={promptEffective()?.layers ?? []}>{(d) => (
@@ -1380,6 +1378,7 @@ export default function Settings() {
               <Group title="Not editable">
                 <div class="settings-callout"><Icon name="shield" /><div><strong>The capability contract, the Surface line, and the skill and MCP lists are code-owned.</strong><span>They describe the callable interface as it actually is. Editing them could only make the model wrong about its own tools.</span></div></div>
               </Group>
+              </div>
             </Show>
 
             <Show when={page() === "advanced"}>
