@@ -20,7 +20,6 @@ pub mod digest;
 pub mod feed;
 pub mod layout;
 pub mod manifest;
-pub mod seed;
 pub mod transaction;
 
 use std::io::{IsTerminal as _, Write as _};
@@ -83,10 +82,6 @@ pub fn run_install(prefix: Option<PathBuf>, force: bool) -> i32 {
             for c in &m.components {
                 println!("  {:<22} {}", c.name, c.path.display());
             }
-            if root.prefix() == crate::install::layout::platform_default_prefix() {
-                seed::seed_shared_capabilities();
-            }
-            bootstrap_default_workspace_if_fresh();
             report_next_steps(&root);
             0
         }
@@ -94,77 +89,6 @@ pub fn run_install(prefix: Option<PathBuf>, force: bool) -> i32 {
             eprintln!("error: {e}");
             1
         }
-    }
-}
-
-/// Creates and activates the canonical default workspace on a truly fresh
-/// install. Service generation independently resolves this same path, so a
-/// later `self services-sync` can never rebind the gateway to its caller's
-/// current directory.
-///
-/// Only acts when NEITHER service is configured with the platform
-/// service manager yet (`vak_ops::status` reports `NotInstalled` for
-/// both) — an operator who already made a workspace choice, on this
-/// install or an earlier one, is never silently rebound. The gateway
-/// server is left running so the admin console is reachable right away;
-/// unattended remote chat surfaces stay fail-closed on their own axis
-/// (empty `gateway.chat_allowlist`, `AGENTS.md` invariant 15) regardless
-/// of whether the server process itself is up. Telegram stays stopped
-/// until a bot token is actually configured.
-fn bootstrap_default_workspace_if_fresh() {
-    let cfg = vak_ops::OpsConfig::detect();
-    let already_configured = vak_ops::status(vak_ops::Service::Gateway, &cfg)
-        != vak_ops::State::NotInstalled
-        || vak_ops::status(vak_ops::Service::Telegram, &cfg) != vak_ops::State::NotInstalled;
-    if already_configured {
-        return;
-    }
-    let workspace = vak_config::paths::default_workspace();
-    if let Err(e) = std::fs::create_dir_all(&workspace) {
-        eprintln!(
-            "warning: could not create default workspace {}: {e}",
-            workspace.display()
-        );
-        return;
-    }
-    println!();
-    println!(
-        "no services configured yet — bootstrapping the default workspace at {}",
-        workspace.display()
-    );
-    let code = run_services_sync(None, Vec::new());
-    // Leave the gateway server running: it's what serves the admin
-    // console, and an operator needs that reachable right after install
-    // to actually configure anything (provider key, channels) — a
-    // service that's "stopped until you dig up a separate start step"
-    // just moves the same footgun one step later. This does not weaken
-    // "gateway ships disabled" (AGENTS.md invariant 15): that invariant
-    // is about *unattended remote surfaces* accepting inbound chat, which
-    // stays fail-closed on its own axis — `gateway.chat_allowlist` is
-    // empty on a fresh install, so every inbound message still gets
-    // rejected into `pending` until an operator approves one via the
-    // admin console this server now makes reachable. The HTTP server
-    // itself is loopback-only and bearer-token gated regardless.
-    //
-    // The Telegram bridge is different: with no bot token configured yet
-    // it has nothing to poll and would just crash-loop under KeepAlive,
-    // so it's stopped (not started) until a token is set — the same
-    // point where Desktop Settings / the admin console already restarts
-    // it automatically on save.
-    vak_ops::stop(vak_ops::Service::Telegram, &cfg);
-    // The desktop service needs no special handling here: it is in
-    // SERVICES, so the sync above wrote and loaded its unit, and its
-    // RunAtLoad started it — with `--tray`, so a fresh install ends with a
-    // live menu-bar icon and no window the operator did not ask for. It is
-    // skipped entirely when the build shipped no `vak-desktop` binary
-    // (`default_service_names`), which is what keeps a headless server from
-    // acquiring a GUI unit that could only ever fail.
-    if code == 0 {
-        println!(
-            "gateway is running at {} — open the admin console to set a provider key \
-             and approve channels; Telegram stays stopped until a bot token is configured",
-            workspace.display()
-        );
     }
 }
 
@@ -247,19 +171,6 @@ fn install_into(root: &InstallRoot, force: bool) -> Result<Manifest, String> {
 
     tx.commit()?;
 
-    // Pin the gateway's bearer token into the canonical .env, once,
-    // rather than letting it re-mint on every boot (the un-pinned
-    // fallback in vak-server::AppState::new). A token that changes every
-    // restart invalidates every admin-console session cookie and any
-    // saved one-click login link on each restart; it also means nothing
-    // outside the running process -- the tray's "Open Admin Console",
-    // in particular -- can know the current token to build a URL with.
-    // Loaded automatically on every future boot: main.rs always sources
-    // this file via `vak_config::user_env_path()` before dispatching to
-    // `serve`. Idempotent: an existing token is left alone so a
-    // reinstall or update never invalidates a link already in use.
-    ensure_gateway_token()?;
-
     let version = manifest::build_version().to_string();
     bundle::write_metadata(root, &version, bundle::locate_frontend_assets().as_deref())?;
 
@@ -281,27 +192,6 @@ fn install_into(root: &InstallRoot, force: bool) -> Result<Manifest, String> {
     Ok(m)
 }
 
-/// Ensure `VAK_GATEWAY_TOKEN` is set in the canonical `.env`,
-/// generating one only if the key is entirely absent (an existing empty
-/// value is left as-is too -- that is an explicit "unpinned" choice, not
-/// something install should override).
-fn ensure_gateway_token() -> Result<(), String> {
-    let Some(env_path) = vak_config::user_env_path() else {
-        return Ok(());
-    };
-    let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
-    let already_set = existing.lines().any(|line| {
-        line.split_once('=')
-            .is_some_and(|(k, _)| k.trim() == "VAK_GATEWAY_TOKEN")
-    });
-    if already_set {
-        return Ok(());
-    }
-    let token = format!("vk_{}", uuid::Uuid::now_v7());
-    vak_config::upsert_env_file(&env_path, "VAK_GATEWAY_TOKEN", &token)
-        .map_err(|e| format!("writing {}: {e}", env_path.display()))
-}
-
 fn report_next_steps(root: &InstallRoot) {
     let cli = root.bin_dir().join("vak");
     let on_path = std::env::var_os("PATH")
@@ -315,7 +205,7 @@ fn report_next_steps(root: &InstallRoot) {
         println!("  ln -sf {} /usr/local/bin/vak", cli.display());
     }
     println!();
-    println!("next: vak self services-sync");
+    println!("next: vak setup   (choose a workspace, connect a model, activate services)");
 }
 
 // ----------------------------------------------------------------- verify

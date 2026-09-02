@@ -921,9 +921,12 @@ manifest produces the refusal message, not a stack trace.
 - Delete Tier 1 legacy items 1, 2, 3, 5, 6, and 7.
 
 **Exit:** a fresh install starts no process, writes no workspace, seeds
-nothing. `vak setup status --json` on a clean data home reports every step
-incomplete with an accurate reason. Web, desktop, and CLI receive
-byte-identical readiness facts for the same environment.
+nothing. `vak setup status --json` on a clean data home reports each step
+accurately — note that a keyless local provider (Ollama) or an ambient
+environment credential legitimately makes the provider step *satisfied* on
+a clean home, so the criterion is accuracy, not uniform emptiness. Web,
+desktop, and CLI receive byte-identical readiness facts for the same
+environment.
 
 ### S2 — The setup server and the web wizard
 

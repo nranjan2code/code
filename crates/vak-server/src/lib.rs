@@ -604,6 +604,7 @@ fn router_with_state(state: AppState) -> Router {
             axum::routing::patch(amend_memory_note).delete(forget_memory_note),
         )
         .route("/doctor", get(doctor_report))
+        .route("/onboarding", get(onboarding_state))
         .route("/backup/export", post(backup_export))
         .route("/backup/import", post(backup_import))
         .route("/digest", get(digest_report))
@@ -4054,6 +4055,47 @@ fn health_report_json(report: vak_core::health::HealthReport) -> serde_json::Val
             "annotations": l.annotations,
         })),
     })
+}
+
+/// `GET /onboarding` — the derived setup projection
+/// (`docs/design/46-stabilization-install-and-onboarding.md` Part III).
+///
+/// The same `vak_core::onboarding::derive` the CLI renders, so web,
+/// desktop, and terminal cannot disagree about what is configured. The
+/// install manifest is probed by the CLI (which owns install layout) and
+/// is therefore reported here as not-probed; services are probed from the
+/// same service manager the ops endpoints already use.
+async fn onboarding_state(State(state): State<AppState>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    // The service manager probe shells out, so it belongs on a blocking
+    // worker rather than inside an async handler (invariant 26).
+    let services = tokio::task::spawn_blocking(|| {
+        let cfg = vak_ops::OpsConfig::detect();
+        let probed: Vec<(String, bool)> = [vak_ops::Service::Gateway, vak_ops::Service::Telegram]
+            .into_iter()
+            .filter_map(|service| {
+                let st = vak_ops::status(service, &cfg);
+                (st != vak_ops::State::NotInstalled).then(|| {
+                    (
+                        service.launchd_label().to_string(),
+                        st == vak_ops::State::Running,
+                    )
+                })
+            })
+            .collect();
+        (!probed.is_empty()).then_some(probed)
+    })
+    .await
+    .unwrap_or(None);
+
+    let projection = vak_core::onboarding::derive(
+        &state.core,
+        &vak_core::onboarding::ProbedFacts {
+            services,
+            install: None,
+        },
+    );
+    Json(projection).into_response()
 }
 
 async fn doctor_report(

@@ -183,6 +183,11 @@ pub(crate) enum Command {
         bot_id: Option<String>,
     },
     /// Diagnose provider auth, config warnings, and extensions
+    /// Guided first run: choose a workspace, connect a model, activate services
+    Setup {
+        #[command(subcommand)]
+        action: Option<SetupAction>,
+    },
     Doctor {
         /// Trust this workspace's project config and .env
         #[arg(long)]
@@ -443,6 +448,24 @@ pub(crate) enum InboxAction {
     Ack { id_prefix: String },
     /// One-line unread total
     Count,
+}
+
+/// `vak setup` actions. Bare `vak setup` runs the guided flow; `status`
+/// is the read-only projection every surface shares
+/// (docs/design/46-stabilization-install-and-onboarding.md).
+#[derive(Subcommand, Debug)]
+pub(crate) enum SetupAction {
+    /// Install the Shared starter skills and plugins into ~/vak-home
+    Seed,
+    /// What is configured, what is not, and the one repair for each gap
+    Status {
+        /// Emit the readiness projection as JSON instead of a report
+        #[arg(long)]
+        json: bool,
+        /// Inspect a managed install at this prefix
+        #[arg(long)]
+        prefix: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Debug)]

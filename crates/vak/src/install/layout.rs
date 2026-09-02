@@ -106,10 +106,6 @@ fn platform_default() -> PathBuf {
     core_install::platform_default_prefix()
 }
 
-pub(crate) fn platform_default_prefix() -> PathBuf {
-    platform_default()
-}
-
 fn is_bundle(root: &Path) -> bool {
     core_install::is_bundle(root)
 }

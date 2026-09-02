@@ -15,6 +15,7 @@ pub mod inbox;
 pub mod install;
 pub mod learning;
 pub mod memory;
+pub mod onboarding;
 pub mod prompts;
 pub mod reflection;
 pub mod routing;
@@ -25,6 +26,7 @@ pub mod skills;
 pub mod tasks;
 pub mod tools_tasks;
 pub mod transcript_md;
+pub mod trust;
 pub mod worktree;
 
 use std::collections::HashMap;

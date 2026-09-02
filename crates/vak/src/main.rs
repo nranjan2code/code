@@ -18,6 +18,8 @@ mod install;
 mod memory;
 mod plugins;
 mod prompts;
+mod setup;
+mod setup_seed;
 mod tasks;
 mod update_check;
 
@@ -397,6 +399,19 @@ async fn main() {
             bot_id,
         }) => run_slack(server, token, bot_id).await,
         Some(Command::Flow { action }) => run_flow(cwd, action).await,
+        Some(Command::Setup { action }) => match action {
+            Some(cli::SetupAction::Status { json, prefix }) => setup::run_status(cwd, prefix, json),
+            Some(cli::SetupAction::Seed) => setup::run_seed(),
+            // The guided flow is S2 (web) and S3 (terminal). Saying so
+            // beats a stub that pretends to configure something.
+            None => {
+                eprintln!(
+                    "the guided setup flow is not built yet; \
+                     `vak setup status` reports what is configured"
+                );
+                2
+            }
+        },
         Some(Command::Doctor { trust, repair }) => {
             let trusted = resolve_trust(&cwd, trust, false);
             if trusted {

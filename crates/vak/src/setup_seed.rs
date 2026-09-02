@@ -1,4 +1,12 @@
-//! Safe, useful Shared capability seeds for a fresh installation.
+//! Shared capability seeds, applied by **setup** and never by install.
+//!
+//! Placing binaries used to seed skills, plugins, and a disabled hook as a
+//! side effect (`docs/design/46-stabilization-install-and-onboarding.md`
+//! D6). That had two defects beyond the contract violation: it only ran
+//! when the prefix happened to equal the platform default, so any
+//! `--prefix` install silently got nothing; and it never ran on update, so
+//! a seed shipped in a release reached nobody who upgraded. Setup owns it
+//! now, against the workspace the operator actually chose.
 
 use std::path::Path;
 
