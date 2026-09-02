@@ -1,29 +1,20 @@
 //! Backup export/import over the vak home directory
-//! (docs/design/29-personal-os.md P3): a plain directory copy of sessions,
-//! memory, checkpoints, skill proposals, trust data, and ledgers. Secrets
-//! (.env) are excluded unless explicitly requested — and then a loud
-//! WARNING.txt travels beside them. Import never deletes or silently
-//! overwrites existing data; conflicts skip or rename.
+//! (docs/design/29-personal-os.md P3): a plain directory copy of whatever
+//! the durable state registry declares as backed up. Secrets (.env) are
+//! excluded unless explicitly requested — and then a loud WARNING.txt
+//! travels beside them. Import never deletes or silently overwrites
+//! existing data; conflicts skip or rename.
+//!
+//! **What a backup covers comes from `crate::state`, not from a list kept
+//! here.** This module used to hardcode five directories and four files,
+//! so anything added to the data home afterwards was silently outside
+//! every backup taken — `gateway/` with the whole channel allowlist,
+//! `operations/` with the incident ledger, `inbox.jsonl`, `learning/`.
+//! That is the drift a registry exists to prevent.
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-
-/// Directories copied wholesale when present.
-const BACKUP_DIRS: [&str; 5] = [
-    "sessions",
-    "memory",
-    "checkpoints",
-    "skill-proposals",
-    "trusted",
-];
-/// Home-level ledger/state files copied when present.
-const BACKUP_FILES: [&str; 4] = [
-    "cost-log.jsonl",
-    "routing-evidence.jsonl",
-    "tasks.json",
-    "desktop.json",
-];
 
 const MANIFEST_NAME: &str = "manifest.json";
 const SECRETS_FILE: &str = ".env";
@@ -119,9 +110,13 @@ pub fn export_to(
     let mut manifest = BackupManifest::default();
 
     let mut jobs: Vec<(PathBuf, PathBuf)> = Vec::new();
-    for dir in BACKUP_DIRS {
-        let src = home.join(dir);
-        if !src.exists() {
+    for relative in crate::state::backup_paths(crate::state::Root::Data) {
+        let src = home.join(relative);
+        if src.is_file() {
+            jobs.push((src, dest_dir.join(relative)));
+            continue;
+        }
+        if !src.is_dir() {
             continue;
         }
         for file in list_files(&src) {
@@ -133,12 +128,6 @@ pub fn export_to(
                 })?
                 .to_path_buf();
             jobs.push((file, dest_dir.join(rel)));
-        }
-    }
-    for name in BACKUP_FILES {
-        let src = home.join(name);
-        if src.is_file() {
-            jobs.push((src.clone(), dest_dir.join(name)));
         }
     }
 

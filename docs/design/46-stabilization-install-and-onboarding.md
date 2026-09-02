@@ -986,7 +986,15 @@ coverage, and the upgrade gate all read it instead of each carrying a
 half-list. Both enforcement tests land here: no unregistered writes, and
 purge matches the registry.
 
-**Exit:** a durable file that nobody declared fails the build.
+**Exit:** a durable file that nobody declared fails the build — verified by
+temporarily writing one and watching the test fail, because a guard that
+has never failed is a guard nobody has checked.
+
+Landed with one finding: `vak_core::backup` hardcoded five directories and
+four files, so everything added to the data home since — `gateway/` with
+the whole channel allowlist, `operations/` with the incident ledger,
+`inbox.jsonl`, `learning/` — was silently outside every backup ever taken.
+It reads the registry now.
 
 ### S6 — The upgrade gate
 
