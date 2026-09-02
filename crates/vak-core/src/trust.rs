@@ -41,6 +41,44 @@ pub fn requests_privilege(cwd: &Path) -> bool {
     vak_config::project_path(cwd).is_file() || cwd.join(".env").is_file()
 }
 
+/// Which privileged sections a workspace's project layer actually asks
+/// for, read as **text**, never loaded.
+///
+/// The trust review has to tell an operator what they would be agreeing
+/// to, and it must do that without activating any of it — parsing the
+/// config through the normal loader to describe it would be granting the
+/// thing being asked about (doc 46, Step 2).
+pub fn requested_privileges(cwd: &Path) -> Vec<&'static str> {
+    let mut found = Vec::new();
+    if cwd.join(".env").is_file() {
+        found.push("secrets in a project .env");
+    }
+    let Ok(text) = std::fs::read_to_string(vak_config::project_path(cwd)) else {
+        return found;
+    };
+    // Section headers and top-level keys only. A substring scan is enough
+    // to answer "does this file ask for X?", and cannot execute anything.
+    for (needle, label) in [
+        ("[[hooks]]", "hooks that run commands"),
+        ("[hooks]", "hooks that run commands"),
+        // No closing bracket: a server is declared as
+        // `[mcp.servers.<name>]`, so matching the full header would miss
+        // every real one.
+        ("[mcp.servers", "external tool servers"),
+        ("permission_mode", "a permission mode"),
+        ("anthropic_base_url", "a redirected provider endpoint"),
+        ("[sandbox]", "sandbox settings"),
+        ("[gateway]", "gateway settings"),
+        ("allow", "pre-granted allow rules"),
+        ("[prompt", "prompt layers"),
+    ] {
+        if text.contains(needle) && !found.contains(&label) {
+            found.push(label);
+        }
+    }
+    found
+}
+
 /// Record the decision. Best-effort: an unwritable data home means the
 /// workspace is simply asked about again next time, never silently
 /// trusted.
@@ -73,6 +111,26 @@ mod tests {
         let other = tempfile::tempdir().unwrap();
         std::fs::write(other.path().join(".env"), "K=v").unwrap();
         assert!(requests_privilege(other.path()));
+    }
+
+    #[test]
+    fn a_review_names_what_a_project_asks_for_without_loading_it() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".vak")).unwrap();
+        std::fs::write(
+            dir.path().join(".vak/config.toml"),
+            "permission_mode = \"full-access\"\n[mcp.servers.thing]\ncommand = \"sh\"\n",
+        )
+        .unwrap();
+        let asked = requested_privileges(dir.path());
+        assert!(asked.contains(&"a permission mode"), "{asked:?}");
+        assert!(asked.contains(&"external tool servers"), "{asked:?}");
+    }
+
+    #[test]
+    fn a_plain_directory_asks_for_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(requested_privileges(dir.path()).is_empty());
     }
 
     #[test]

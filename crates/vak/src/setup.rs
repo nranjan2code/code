@@ -204,7 +204,7 @@ fn render(state: &OnboardingState) {
 pub fn run_seed() -> i32 {
     let root = vak_config::paths::default_workspace();
     println!("seeding Shared capabilities into {}", root.display());
-    crate::setup_seed::seed_shared_capabilities();
+    vak_core::seed::seed_shared_capabilities();
     let skills = root.join(".vak/skills");
     let count = std::fs::read_dir(&skills)
         .map(|e| e.flatten().filter(|e| e.path().is_dir()).count())

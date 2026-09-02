@@ -1,5 +1,10 @@
 //! Shared capability seeds, applied by **setup** and never by install.
 //!
+//! Lives in `vak-core` because every surface that can run setup needs it:
+//! the CLI (`vak setup seed`) and the web wizard (`POST /onboarding/seed`)
+//! must install the same seeds the same way, and a copy in the binary
+//! crate could only ever serve one of them.
+//!
 //! Placing binaries used to seed skills, plugins, and a disabled hook as a
 //! side effect (`docs/design/46-stabilization-install-and-onboarding.md`
 //! D6). That had two defects beyond the contract violation: it only ran
@@ -122,9 +127,14 @@ fn seed_skills(root: &Path) -> std::io::Result<()> {
 
 fn seed_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let store = PluginStore::new(root);
+    // Stage inside the plugin root rather than the system temp dir: same
+    // filesystem as the destination, so installing is a rename and never a
+    // cross-device copy — the same reason the installer stages inside its
+    // own prefix.
+    let staging = root.join(".seed-staging");
+    let _ = std::fs::remove_dir_all(&staging);
     for (name, version, description, skill_name) in PLUGINS {
-        let temp = tempfile::tempdir()?;
-        let package = temp.path().join(name);
+        let package = staging.join(name);
         let skill_path = package.join(format!("skills/{skill_name}"));
         std::fs::create_dir_all(&skill_path)?;
         std::fs::write(
@@ -161,5 +171,6 @@ fn seed_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
             let _ = store.enable(name)?;
         }
     }
+    let _ = std::fs::remove_dir_all(&staging);
     Ok(())
 }

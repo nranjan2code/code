@@ -1879,3 +1879,31 @@ a.tab-btn {
      that sent the message (doc 46 D10). */
   .setup-step-head { flex-direction: column; gap: 0.15rem; }
 }
+
+.setup-step-actions { margin-top: 0.7rem; }
+.setup-action-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.setup-action-grid input { min-width: 22rem; flex: 1 1 22rem; }
+.setup-postures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.setup-postures button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  text-align: left;
+  padding: 0.6rem 0.8rem;
+  flex: 1 1 14rem;
+}
+.setup-postures button .dim { font-weight: 400; font-size: 0.85rem; }
+@media (max-width: 640px) {
+  .setup-action-grid input { min-width: 0; flex-basis: 100%; }
+  .setup-postures { flex-direction: column; }
+}

@@ -5327,6 +5327,134 @@ const SETUP_STEPS: { key: keyof OnboardingState; title: string; why: string }[] 
   { key: "first_result", title: "Your first task", why: "One safe, read-only run so you can see a result." },
 ];
 
+/// The three safety postures, in plain words.
+///
+/// Presets are a *projection* of the existing permission modes, never a
+/// fourth mode (doc 46, Step 4). Full access is reachable and clearly
+/// separated, and is never the recommendation.
+const POSTURES: { mode: string; title: string; blurb: string; recommended?: boolean; danger?: boolean }[] = [
+  { mode: "read-only", title: "Inspect only", blurb: "Read and search inside the folder. Changes nothing." },
+  { mode: "workspace-write", title: "Work with approval", blurb: "Edit inside the folder; ask before shell commands.", recommended: true },
+  { mode: "full-access", title: "Unrestricted", blurb: "Full access to this machine, unsandboxed.", danger: true },
+];
+
+/// The actions a step offers, inline.
+///
+/// The wizard *composes*; it does not reimplement the panels. Integrations
+/// and bots already have complete screens, and a second implementation of
+/// either here would be two contracts that must agree forever (AGENTS.md
+/// invariant 30) — so those steps link, and the rest act in place.
+function SetupActions(props: { step: keyof OnboardingState; done: () => void }) {
+  const [busy, setBusy] = createSignal(false);
+  const [key, setKey] = createSignal("");
+  const [chosenProvider, setChosenProvider] = createSignal("");
+  const [models, { refetch: refetchModels }] = createResource(
+    () => chosenProvider() || undefined,
+    (name: string) => api.models(name).catch(() => ({ provider: name, models: [] as string[] })),
+  );
+  const [providers] = createResource(() => api.providers().catch(() => ({ providers: [] })));
+
+  const run = async (what: string, f: () => Promise<unknown>) => {
+    setBusy(true);
+    try {
+      await f();
+      pushToast("info", what);
+      props.done();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Switch>
+      <Match when={props.step === "capabilities"}>
+        <button disabled={busy()} onClick={() => void run("Starter skills installed", () => api.seedCapabilities())}>
+          {busy() ? "Installing…" : "Install starter skills"}
+        </button>
+      </Match>
+
+      <Match when={props.step === "provider" || props.step === "route"}>
+        <div class="setup-action-grid">
+          <select value={chosenProvider()} onChange={(e) => setChosenProvider(e.currentTarget.value)}>
+            <option value="">Choose a service…</option>
+            <For each={providers()?.providers ?? []}>
+              {(p) => <option value={p.name}>{p.name}{p.configured ? " — key saved" : ""}</option>}
+            </For>
+          </select>
+          <Show when={chosenProvider()}>
+            <input
+              type="password"
+              autocomplete="off"
+              placeholder="Paste the API key (leave empty if already saved)"
+              value={key()}
+              onInput={(e) => setKey(e.currentTarget.value)}
+            />
+            <button
+              disabled={busy()}
+              onClick={() =>
+                void run("Key saved — pick a model below", async () => {
+                  if (key().trim()) await api.setProviderKey(chosenProvider(), key().trim(), "user");
+                  setKey("");
+                  // A stored key is not success: the route is only
+                  // verified once the provider tells us what it can run.
+                  await refetchModels();
+                })
+              }
+            >
+              Save key and list models
+            </button>
+            <Show when={(models()?.models ?? []).length > 0}>
+              <select
+                onChange={(e) =>
+                  void run("Model saved", () =>
+                    api.patchConfig({ provider: chosenProvider(), model: e.currentTarget.value }),
+                  )
+                }
+              >
+                <option value="">Choose a model…</option>
+                <For each={models()?.models ?? []}>{(m) => <option value={m}>{m}</option>}</For>
+              </select>
+            </Show>
+          </Show>
+        </div>
+      </Match>
+
+      <Match when={props.step === "permission"}>
+        <div class="setup-postures">
+          <For each={POSTURES}>
+            {(p) => (
+              <button
+                class={p.danger ? "danger small" : "ghost small"}
+                disabled={busy()}
+                onClick={() => {
+                  // Unrestricted is a deliberate human decision and is
+                  // never selected on someone's behalf (invariant 13).
+                  if (p.danger && !window.confirm("Unrestricted means vak can reach anything on this machine, unsandboxed. Continue?")) return;
+                  void run(`Set to ${p.title}`, () => api.setMode(p.mode));
+                }}
+              >
+                <strong>{p.title}</strong>
+                <span class="dim">{p.blurb}</span>
+                <Show when={p.recommended}><span class="chip chip-ok">recommended</span></Show>
+              </button>
+            )}
+          </For>
+        </div>
+      </Match>
+
+      <Match when={props.step === "integrations"}>
+        <a class="ghost small" href="#/integrations">Choose connected apps</a>
+      </Match>
+
+      <Match when={props.step === "channels"}>
+        <a class="ghost small" href="#/gateway">Add a chat bot</a>
+      </Match>
+    </Switch>
+  );
+}
+
 function SetupWizard() {
   const [state, { refetch }] = createResource(() => api.onboarding());
   const [activating, setActivating] = createSignal(false);
@@ -5414,6 +5542,11 @@ function SetupWizard() {
                       </div>
                     </Match>
                   </Switch>
+                  <Show when={st()?.state !== "satisfied"}>
+                    <div class="setup-step-actions">
+                      <SetupActions step={meta.key} done={() => refetch()} />
+                    </div>
+                  </Show>
                 </li>
               );
             }}

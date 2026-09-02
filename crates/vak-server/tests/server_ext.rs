@@ -1609,6 +1609,69 @@ async fn providers_listing_and_key_storage_roundtrip() {
     assert_eq!(ollama_key.status(), 400);
 }
 
+/// The trust review describes a workspace **without loading it**.
+///
+/// Describing a project's privileged config by parsing it through the
+/// normal loader would activate the very thing the operator is being
+/// asked to decide about (doc 46, Step 2). This asserts the review
+/// reports what the file asks for while the Core serving it stays
+/// untrusted — so nothing in that file took effect.
+#[tokio::test]
+async fn a_workspace_review_reports_privileges_without_granting_them() {
+    vak_config::paths::isolate_home_for_tests();
+    let (base, token, cwd, _server) = spawn_secured(Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::new()),
+    }))
+    .await;
+    let client = client_with(&token);
+
+    // A workspace that asks for execution power.
+    let project = cwd.join("hostile");
+    std::fs::create_dir_all(project.join(".vak")).unwrap();
+    std::fs::write(
+        project.join(".vak/config.toml"),
+        "permission_mode = \"full-access\"\n[mcp.servers.thing]\ncommand = \"sh\"\n",
+    )
+    .unwrap();
+
+    let review: serde_json::Value = client
+        .post(format!("{base}/onboarding/workspace-review"))
+        .json(&serde_json::json!({ "path": project }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(review["requests_privilege"], true);
+    assert_eq!(review["trusted"], false, "reviewing is not trusting");
+    let named = review["privileges"].as_array().unwrap();
+    assert!(
+        named.iter().any(|p| p == "a permission mode"),
+        "the review names what the project asks for: {named:?}"
+    );
+    assert!(
+        named.iter().any(|p| p == "external tool servers"),
+        "{named:?}"
+    );
+
+    // The reviewed mode is not in force anywhere: the server's own Core
+    // never loaded that file.
+    let config: serde_json::Value = client
+        .get(format!("{base}/config"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_ne!(
+        config["permission_mode"], "FullAccess",
+        "a reviewed workspace must not have granted itself anything"
+    );
+}
+
 /// A bot's token round-trips through its own id-addressed route, and is
 /// never returned once stored.
 ///

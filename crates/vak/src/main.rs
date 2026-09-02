@@ -19,7 +19,6 @@ mod memory;
 mod plugins;
 mod prompts;
 mod setup;
-mod setup_seed;
 mod tasks;
 mod update_check;
 

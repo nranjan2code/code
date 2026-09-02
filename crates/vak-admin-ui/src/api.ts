@@ -633,6 +633,34 @@ export const api = {
   onboarding: (): Promise<OnboardingState> =>
     fetch("/onboarding").then((r) => handle<OnboardingState>(r)),
 
+  /** Install the Shared starter skills and plugins. Idempotent, and it
+   * never overwrites a file you have edited. */
+  seedCapabilities: (): Promise<{ ok: boolean }> =>
+    fetch("/onboarding/seed", { method: "POST" }).then((r) => handle(r)),
+
+  /** What a folder would ask for, read without loading any of it. */
+  reviewWorkspace: (path: string): Promise<{
+    path: string;
+    git: boolean;
+    requests_privilege: boolean;
+    privileges: string[];
+    trusted: boolean;
+  }> =>
+    fetch("/onboarding/workspace-review", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path }),
+    }).then((r) => handle(r)),
+
+  /** Record an explicit trust decision. Only ever grants: opening safely
+   * is the absence of a decision, and is already the default. */
+  trustWorkspace: (path: string): Promise<{ trusted: boolean }> =>
+    fetch("/onboarding/trust", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path }),
+    }).then((r) => handle(r)),
+
   /** Register services with the platform service manager. The one action
    * that activates; every configuration write is inert until it runs. */
   activateServices: (): Promise<{ ok: boolean; units: { name: string; action: string; error?: string }[] }> =>

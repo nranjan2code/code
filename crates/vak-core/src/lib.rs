@@ -21,6 +21,7 @@ pub mod reflection;
 pub mod routing;
 pub mod sandbox_docker;
 pub mod security_events;
+pub mod seed;
 pub mod session_search;
 pub mod skills;
 pub mod tasks;

@@ -599,6 +599,15 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/doctor", get(doctor_report))
         .route("/onboarding", get(onboarding_state))
+        // The composition layer setup needs, and nothing more: every other
+        // choice reuses the config, provider, integration, and bot APIs
+        // that already exist (doc 46, "API and command design").
+        .route("/onboarding/seed", post(onboarding_seed))
+        .route(
+            "/onboarding/workspace-review",
+            post(onboarding_workspace_review),
+        )
+        .route("/onboarding/trust", post(onboarding_trust))
         .route("/backup/export", post(backup_export))
         .route("/backup/import", post(backup_import))
         .route("/digest", get(digest_report))
@@ -4149,6 +4158,90 @@ async fn onboarding_state(State(state): State<AppState>) -> axum::response::Resp
         },
     );
     Json(projection).into_response()
+}
+
+/// `POST /onboarding/seed` — install the Shared starter capabilities.
+///
+/// Idempotent, and it never overwrites an existing skill, plugin, or hook,
+/// so re-running after an upgrade adds what is new and leaves edited files
+/// alone. Explicit because seeding is a setup action, never an install
+/// side effect (doc 46 D6).
+async fn onboarding_seed(State(state): State<AppState>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    // Touches the filesystem and the plugin store; not an async handler's
+    // work (invariant 26).
+    let outcome = tokio::task::spawn_blocking(vak_core::seed::seed_shared_capabilities).await;
+    match outcome {
+        Ok(()) => {
+            state.hub.emit_config_changed("capabilities_seeded", "");
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("seeding did not complete: {e}") })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct WorkspacePath {
+    path: String,
+}
+
+/// `POST /onboarding/workspace-review` — what a folder would ask for.
+///
+/// Reports privileged sections **without loading them** (doc 46, Step 2).
+/// Describing a project's config by parsing it through the normal loader
+/// would activate the very thing the operator is being asked about.
+async fn onboarding_workspace_review(Json(body): Json<WorkspacePath>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = std::path::PathBuf::from(body.path.trim());
+    if std::fs::read_dir(&path).is_err() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": format!("cannot read {}", path.display()) })),
+        )
+            .into_response();
+    }
+    Json(serde_json::json!({
+        "path": path,
+        "git": path.join(".git").exists(),
+        "requests_privilege": vak_core::trust::requests_privilege(&path),
+        "privileges": vak_core::trust::requested_privileges(&path),
+        "trusted": vak_core::trust::is_trusted(&path),
+    }))
+    .into_response()
+}
+
+/// `POST /onboarding/trust` — record an explicit trust decision.
+///
+/// Only ever *grants*: opening safely is the absence of a decision, and is
+/// already the default, so there is nothing to write for it. Selecting a
+/// folder is never itself consent (doc 46 security invariant 2).
+async fn onboarding_trust(
+    State(state): State<AppState>,
+    Json(body): Json<WorkspacePath>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = std::path::PathBuf::from(body.path.trim());
+    match vak_core::trust::record(&path) {
+        Ok(()) => {
+            vak_core::security_events::record(
+                &state.core.sessions_home(),
+                vak_core::security_events::EventKind::ConfigChange,
+                "workspace_trusted",
+                &path.display().to_string(),
+                None,
+            );
+            Json(serde_json::json!({ "trusted": true, "path": path })).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 async fn doctor_report(
