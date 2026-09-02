@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-09-02
 
 ### Editable prompt layers (docs/design/45)
 
@@ -34,8 +34,14 @@
 - `VoiceConfig.persona` is superseded by the bot/chat `identity` block, and
   kept as a fallback so existing configs keep working.
 
-### Build
+### Release engineering
 
+- `scripts/check-version.sh` could not run on any checkout without a local
+  `dist/`: under `set -o pipefail` a failing `ls` killed the script mid-report,
+  before the monotonicity check it feeds. With that fixed, the check
+  underneath was also wrong — it matched the exact highest shipped version
+  instead of the abandoned release *line* its own comment describes, and
+  0.11.51 shipped untagged so the two never agreed. Releases were blocked.
 - A stale frontend bundle is now a build error. `npm run build` stamps
   `dist/.src-manifest`, and both build scripts fail with the offending
   filename instead of silently embedding the previous bundle — the failure
