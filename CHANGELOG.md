@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1 — 2026-09-02
+
+### Desktop prompt settings usability
+
+- Improved Shared and This project prompt layouts with clearer inheritance
+  context, non-overlapping actions, accessible scope state, and responsive
+  narrow-window behavior.
+
 ## 1.0.0 — 2026-09-02
 
 ### Editable prompt layers (docs/design/45)
