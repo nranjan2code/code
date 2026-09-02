@@ -1,5 +1,8 @@
 # 32 — Release engineering
 
+The practical runbook — what to run, and what a person on each platform
+gets — is `docs/release-and-install.md`. This document owns the contract.
+
 One version, one install location, one lifecycle. No hand-synced stamps,
 no plists pointing into build trees, no spot-fixing deploys.
 

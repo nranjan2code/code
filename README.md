@@ -116,6 +116,13 @@ never forwarded as ambient Bash or MCP subprocess state, and project `.env`
 files and privileged project configuration load only after you trust that
 workspace.
 
+### Full install, release, and platform documentation
+
+[`docs/release-and-install.md`](docs/release-and-install.md) covers the
+lifecycle end to end: what each platform gets, how to cut a release, the
+supply-chain evidence a release carries, how updates are proven not to lose
+data, and how to exercise the Linux path from a Mac.
+
 ### Building from source
 
 Contributors need a [stable Rust toolchain](https://www.rust-lang.org/tools/install),
