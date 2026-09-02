@@ -64,6 +64,7 @@ async fn mcp_servers_get_put_roundtrip_and_persist() {
     )
     .unwrap();
 
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).expect("core");
     core.set_sessions_home(dir.path().join("home"));
     core.set_provider_instance(Arc::new(Scripted {

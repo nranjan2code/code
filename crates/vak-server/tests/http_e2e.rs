@@ -76,16 +76,7 @@ fn tool_call(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage
 /// intended human-in-the-loop path. Installed once via `Once`; harmless to the
 /// sibling tests because the temp never holds a global config.
 fn isolate_global_config() {
-    use std::sync::Once;
-    static SET: Once = Once::new();
-    SET.call_once(|| {
-        let tmp = std::env::temp_dir().join(format!("vak-isolated-global-{}", std::process::id()));
-        std::fs::create_dir_all(&tmp).ok();
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("VAK_HOME", &tmp);
-        }
-    });
+    vak_config::paths::isolate_home_for_tests();
 }
 
 async fn spawn_server(
@@ -94,6 +85,7 @@ async fn spawn_server(
 ) -> (String, tokio::task::JoinHandle<()>) {
     isolate_global_config();
     let dir = tempfile::tempdir().unwrap();
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new(dir.path().to_path_buf()).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_permission_mode(mode);
@@ -274,6 +266,7 @@ async fn operations_center_is_a_real_evidence_projection() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn secured_operations_center_uses_the_bound_port() {
     let dir = tempfile::tempdir().unwrap();
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new(dir.path().to_path_buf()).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     std::mem::forget(dir);

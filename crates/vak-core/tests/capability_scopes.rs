@@ -45,10 +45,10 @@ fn command(root: &Path, name: &str, description: &str) {
 /// collision per kind.
 fn layout() -> Layout {
     let root = tempfile::tempdir().unwrap();
-    #[allow(unsafe_code)]
-    unsafe {
-        std::env::set_var("VAK_HOME", root.path());
-    }
+    // Safe: `get_var` consults the override map above the real
+    // environment, so pinning the home needs no `std::env::set_var` and
+    // therefore no `unsafe` (AGENTS.md invariant 6).
+    vak_config::paths::set_home_override(root.path());
 
     let shared = root.path().join("vak-home/.vak");
     let workspace = root.path().join("project/.vak");

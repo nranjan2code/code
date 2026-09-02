@@ -7,6 +7,7 @@ fn learned_rules_persist_reload_and_cannot_shadow_denies() {
     let dir = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(dir.path().join(".vak")).expect("mkdir");
 
+    vak_config::paths::isolate_home_for_tests();
     let core = vak_core::Core::new_with_trust(dir.path().to_path_buf(), true).expect("core");
     core.learn_allow_rule("bash(cargo *)").expect("learn");
     core.learn_allow_rule("bash(cargo *)").expect("dedupe ok");
@@ -16,6 +17,7 @@ fn learned_rules_persist_reload_and_cannot_shadow_denies() {
     assert!(text.contains(r#""bash(cargo *)""#));
 
     // Reload path: a fresh Core picks up the persisted rule.
+    vak_config::paths::isolate_home_for_tests();
     let core2 = vak_core::Core::new_with_trust(dir.path().to_path_buf(), true).expect("core2");
     assert_eq!(
         core2.extra_allow_snapshot(),
@@ -57,6 +59,7 @@ fn learned_rules_persist_reload_and_cannot_shadow_denies() {
 
     // Untrusted workspaces refuse to persist grants.
     let untrusted_dir = tempfile::tempdir().expect("tempdir2");
+    vak_config::paths::isolate_home_for_tests();
     let untrusted =
         vak_core::Core::new_with_trust(untrusted_dir.path().to_path_buf(), false).expect("u");
     assert!(untrusted.learn_allow_rule("bash(cargo *)").is_err());

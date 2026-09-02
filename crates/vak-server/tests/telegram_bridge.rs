@@ -137,6 +137,7 @@ async fn telegram_bridge_routes_message_and_delivers_reply() {
         cwd.join(".vak/config.toml"),
         "[memory]\nreflection = false\n\n[gateway]\nchat_allowlist = [\"telegram:4242\"]\n",
     );
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_provider_instance(Arc::new(Scripted {
@@ -253,6 +254,7 @@ async fn bridge_survives_outage_window_and_resumes_cursor() {
         cwd.join(".vak/config.toml"),
         "[memory]\nreflection = false\n\n[gateway]\nchat_allowlist = [\"telegram:1\"]\n",
     );
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_provider_instance(Arc::new(Scripted {

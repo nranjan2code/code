@@ -72,6 +72,7 @@ async fn search_endpoint_returns_ranked_hits() {
     .unwrap();
     drop(log);
 
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(home.clone());
     core.set_provider_instance(Arc::new(Empty));

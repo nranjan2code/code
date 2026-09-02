@@ -121,6 +121,7 @@ fn effective_sandbox_name_reports_docker_when_selected() {
         "[sandbox]\nbackend = \"docker\"\nimage = \"alpine:3.20\"\n",
     )
     .unwrap();
+    vak_config::paths::isolate_home_for_tests();
     let core = vak_core::Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
     core.set_permission_mode(vak_config::PermissionMode::WorkspaceWrite);
     let name = core.effective_sandbox_name();
@@ -131,6 +132,7 @@ fn effective_sandbox_name_reports_docker_when_selected() {
 #[test]
 fn macos_auto_backend_uses_seatbelt_for_restricted_modes() {
     let dir = tempfile::tempdir().unwrap();
+    vak_config::paths::isolate_home_for_tests();
     let core = vak_core::Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
     core.set_permission_mode(vak_config::PermissionMode::WorkspaceWrite);
     core.set_sandbox_backend(Some("auto".into()));

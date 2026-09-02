@@ -142,6 +142,7 @@ async fn spawn_full(
     }
 
     let dispatches = Arc::new(AtomicUsize::new(0));
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(ws.clone(), true).unwrap();
     core.set_sessions_home(home.clone());
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
@@ -443,6 +444,7 @@ async fn missing_worker_delivers_typed_error_not_silence() {
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(cwd.join(".vak/config.toml"), "").unwrap();
     let home = dir.path().join("home");
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd, true).unwrap();
     core.set_sessions_home(home.clone());
     core.set_provider_instance(Arc::new(Counting {

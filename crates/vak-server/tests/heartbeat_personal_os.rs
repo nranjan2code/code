@@ -96,6 +96,7 @@ async fn spawn_full_seeded(
     }
     let dispatches = Arc::new(AtomicUsize::new(0));
     let reply = Arc::new(Mutex::new(reply_text.to_string()));
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(ws.clone(), true).unwrap();
     core.set_sessions_home(home.clone());
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);

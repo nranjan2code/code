@@ -112,6 +112,7 @@ async fn session_search_tool_is_available_and_logged() {
     drop(past); // release the ledger lock
 
     // Live run: the scripted model reaches for memory, then answers.
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(home.clone());
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);

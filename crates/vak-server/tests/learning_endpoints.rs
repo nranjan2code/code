@@ -39,6 +39,7 @@ async fn memory_and_proposal_endpoints() {
     let home = dir.path().join("home");
     let cwd = dir.path().to_path_buf();
 
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(home.clone());
     core.set_provider_instance(Arc::new(Empty));

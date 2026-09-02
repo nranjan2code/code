@@ -573,6 +573,17 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 scripts/check-version.sh && python3 scripts/check_doc_paths.py
 ```
 
+**A test that builds a `Core` must isolate its home first.** Call
+`vak_config::paths::isolate_home_for_tests()` (or pin a specific one with
+`set_home_override`) before `Core::new`/`Core::new_with_trust`. Without it,
+`load_with_trust` reads the operator's real Shared layer — `~/vak-home/.vak/config.toml`
+and `~/vak-home/.env` — so the suite exercises whatever that machine happens
+to have configured. Twenty-one test files did exactly that: a real MCP
+server was advertised inside tests, and a personal provider key could make
+an "unconfigured" case pass on one machine and fail in CI. Neither
+`std::env::set_var` nor `unsafe` is needed for this; the override map sits
+above the real environment in `get_var`'s precedence.
+
 `check-version.sh` covers the stamps a user reads (README badge, CHANGELOG,
 git tags), not just the ones the build system reads, and fails on a version
 that moves BACKWARDS unless the abandoned line is declared in

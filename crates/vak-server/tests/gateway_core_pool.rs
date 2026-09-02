@@ -45,12 +45,7 @@ impl Provider for NoCred {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn approved_entry_routes_to_its_own_workspace_core() {
     let vak_home = tempfile::tempdir().unwrap();
-    // SAFETY: this test file spawns exactly one test, so no sibling test in
-    // this binary can race this process-wide mutation.
-    #[allow(unsafe_code)]
-    unsafe {
-        std::env::set_var("VAK_HOME", vak_home.path());
-    }
+    vak_config::paths::set_home_override(vak_home.path());
 
     let default_dir = tempfile::tempdir().unwrap();
     let other_dir = tempfile::tempdir().unwrap();
@@ -177,8 +172,6 @@ async fn approved_entry_routes_to_its_own_workspace_core() {
          not the gateway's default"
     );
 
-    #[allow(unsafe_code)]
-    unsafe {
-        std::env::remove_var("VAK_HOME");
-    }
+    // Drop the pin so a later test in this binary resolves normally.
+    vak_config::clear_override("VAK_HOME");
 }

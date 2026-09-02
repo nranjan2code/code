@@ -84,6 +84,7 @@ async fn spawn_gateway(
         cwd.join(".vak/config.toml"),
         "[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
     );
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     // Gateway turns run unattended with AutoDeny; give the fixture bash
@@ -123,6 +124,7 @@ async fn spawn_gateway_bare(
         cwd.join(".vak/config.toml"),
         "[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
     );
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
@@ -141,6 +143,7 @@ async fn spawn_gateway_bare(
 async fn spawn_plain(provider: Arc<dyn Provider>) -> (String, tokio::task::JoinHandle<()>) {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_provider_instance(provider);
@@ -368,6 +371,7 @@ async fn bindings_survive_process_restart() {
     server.abort();
     let _ = server.await;
 
+    vak_config::paths::isolate_home_for_tests();
     let core2 = Core::new(cwd.clone()).unwrap();
     core2.set_sessions_home(cwd.join("home"));
     core2.set_provider_instance(Arc::new(Scripted {
@@ -571,6 +575,7 @@ async fn empty_chat_allowlist_denies_by_default() {
         cwd.join(".vak/config.toml"),
         "[memory]\nreflection = false\n",
     );
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);

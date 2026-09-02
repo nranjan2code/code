@@ -248,6 +248,44 @@ fn resolve_base_home(environment_home: Option<PathBuf>, account_home: Option<Pat
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
+/// Pin this process's installation home, at the highest precedence.
+///
+/// `VAK_HOME` is normally read from the environment, which makes it
+/// awkward to set from inside a test: `std::env::set_var` is `unsafe`, and
+/// `unsafe_code` is denied workspace-wide (AGENTS.md invariant 6). The
+/// override map [`crate::set_override`] already sits above the real
+/// environment in [`crate::get_var`]'s precedence, so pinning the home is
+/// safe and needs no `unsafe` at all.
+pub fn set_home_override(path: &std::path::Path) {
+    crate::set_override("VAK_HOME", path.to_string_lossy().into_owned());
+}
+
+/// Point this process at a private, empty home, and return it.
+///
+/// **Every test that builds a `Core` must call this.** Without it,
+/// `load_with_trust` reads the operator's real Shared layer
+/// (`~/vak-home/.vak/config.toml` and `~/vak-home/.env`), so a personal
+/// setting silently changes what the test exercises — a real MCP server
+/// gets advertised, `[memory] reflection = true` consumes a scripted
+/// provider response, a real provider key makes an "unconfigured" case
+/// pass. Tests were reading the developer's machine.
+///
+/// Idempotent per process: the first call wins and later ones return the
+/// same directory, so tests sharing a binary share one empty home. That is
+/// the isolation that matters — each test already scopes its own cwd and
+/// sessions home.
+pub fn isolate_home_for_tests() -> PathBuf {
+    static ISOLATED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    ISOLATED
+        .get_or_init(|| {
+            let dir = std::env::temp_dir().join(format!("vak-test-home-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            set_home_override(&dir);
+            dir
+        })
+        .clone()
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]

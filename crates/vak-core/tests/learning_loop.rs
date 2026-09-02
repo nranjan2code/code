@@ -71,6 +71,7 @@ async fn remember_propose_recall_promote_loop() {
     let home = dir.path().join("home");
     let cwd = dir.path().to_path_buf();
 
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(home.clone());
     core.set_permission_mode(vak_config::PermissionMode::WorkspaceWrite);

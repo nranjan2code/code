@@ -4098,25 +4098,12 @@ fn is_managed_work_request(prompt: &str) -> bool {
     action && multi_step
 }
 
-/// Pin `VAK_HOME` to an empty, process-stable tempdir so `Core::new[_with_trust]`
-/// in unit tests does not inherit the operator's real user-global config.
-/// `global_path()` then resolves to a nonexistent file and the ambient Shared
-/// layer is skipped (clean-CI equivalent). Installed once per process via
-/// `Once`; harmless to sibling tests because the temp never contains a global
-/// config to inherit. `default_workspace()` reads `VAK_HOME` on every call
-/// (no cache), so this takes effect for any `Core` built after it returns.
+/// Point unit tests at a private, empty home so they never read the
+/// operator's real Shared configuration. Delegates to the one seam every
+/// test in the workspace uses; see its doc comment for why this matters.
 #[cfg(test)]
 fn isolate_global_config() {
-    use std::sync::Once;
-    static SET: Once = Once::new();
-    SET.call_once(|| {
-        let tmp = std::env::temp_dir().join(format!("vak-isolated-global-{}", std::process::id()));
-        std::fs::create_dir_all(&tmp).ok();
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("VAK_HOME", &tmp);
-        }
-    });
+    let _ = vak_config::paths::isolate_home_for_tests();
 }
 
 #[cfg(test)]

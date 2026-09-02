@@ -62,6 +62,7 @@ async fn spawn_secured(
         "[memory]\nreflection = false\n",
     )
     .unwrap();
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_provider_instance(provider);
@@ -179,6 +180,7 @@ async fn sessions_list_attach_and_title_roundtrip() {
     // released — mirroring "TUI wrote this session earlier and exited".
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
+    vak_config::paths::isolate_home_for_tests();
     let core_a = Core::new(cwd.clone()).unwrap();
     core_a.set_sessions_home(cwd.join("home"));
     std::mem::forget(dir);
@@ -205,6 +207,7 @@ async fn sessions_list_attach_and_title_roundtrip() {
     drop(log);
 
     // A fresh server over the same store: lists the session, resumes it.
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(cwd.join("home"));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -252,6 +255,7 @@ async fn sessions_list_attach_and_title_roundtrip() {
 async fn sessions_list_hides_abandoned_header_only_drafts() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(cwd.join("home"));
     let draft = core.start_session().await.unwrap();
@@ -431,6 +435,7 @@ async fn mode_switch_and_diff_endpoint() {
         .unwrap();
     assert!(persisted.contains("provider = \"google\""));
     assert!(persisted.contains("model = \"gemini-test\""));
+    vak_config::paths::isolate_home_for_tests();
     let restarted = Core::new_with_trust(cwd, true).unwrap();
     assert_eq!(restarted.effective_provider(), "google");
     assert_eq!(restarted.effective_model(), "gemini-test");
@@ -1161,6 +1166,7 @@ async fn checkpoints_list_and_restore_roundtrip() {
 async fn archive_toggle_is_reflected_in_session_list() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
+    vak_config::paths::isolate_home_for_tests();
     let core_a = Core::new(cwd.clone()).unwrap();
     core_a.set_sessions_home(cwd.join("home"));
     std::mem::forget(dir);
@@ -1178,6 +1184,7 @@ async fn archive_toggle_is_reflected_in_session_list() {
     .unwrap();
     drop(log);
 
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(cwd.join("home"));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1273,6 +1280,7 @@ async fn delete_all_archived_never_touches_a_different_workspaces_session() {
     std::mem::forget(home_dir);
 
     async fn make_archived_session(cwd: &std::path::Path, home: &std::path::Path) -> String {
+        vak_config::paths::isolate_home_for_tests();
         let core = Core::new(cwd.to_path_buf()).unwrap();
         core.set_sessions_home(home.to_path_buf());
         let mut log = core.start_session().await.unwrap();
@@ -1310,6 +1318,7 @@ async fn delete_all_archived_never_touches_a_different_workspaces_session() {
     .unwrap();
 
     // A server bound to workspace B only.
+    vak_config::paths::isolate_home_for_tests();
     let core_b = Core::new(cwd_b.clone()).unwrap();
     core_b.set_sessions_home(home.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1355,6 +1364,7 @@ async fn skills_listing_and_pascalcase_mode() {
     .unwrap();
     std::mem::forget(dir);
 
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(cwd.join("home"));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1419,6 +1429,7 @@ async fn providers_listing_and_key_storage_roundtrip() {
     let cwd = dir.path().to_path_buf();
     std::mem::forget(dir);
 
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(cwd.join("home"));
     // Hermetic secret store: never touch the developer's real ~/.vak.
@@ -1611,6 +1622,7 @@ async fn bot_token_storage_roundtrip() {
     let cwd = dir.path().to_path_buf();
     std::mem::forget(dir);
 
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(cwd.join("home"));
     // Hermetic secret store: never touch the developer's real home.
@@ -1758,6 +1770,7 @@ async fn hooks_roundtrip_preserves_disabled_hooks_instead_of_deleting_them() {
     assert!(raw.contains("enabled = false"), "config.toml:\n{raw}");
 
     // A fresh Core loading that same file must not run the disabled hook.
+    vak_config::paths::isolate_home_for_tests();
     let restarted = Core::new_with_trust(cwd, true).unwrap();
     let built = vak_core::build_hooks(restarted.config()).unwrap();
     assert_eq!(

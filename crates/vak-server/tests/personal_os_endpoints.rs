@@ -74,6 +74,7 @@ async fn spawn_server(config_toml: &str) -> Server {
     )
     .unwrap();
 
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);

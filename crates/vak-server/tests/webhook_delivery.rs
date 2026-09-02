@@ -129,6 +129,7 @@ async fn spawn_with_config(provider: Arc<dyn Provider>, gateway_toml: &str) -> G
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(project.join("config.toml"), gateway_toml).unwrap();
 
+    vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_provider_instance(provider);
