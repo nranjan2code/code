@@ -87,7 +87,12 @@ fi
 highest_shipped="$(
     {
         git -C "$ROOT_DIR" tag 2>/dev/null | sed 's/^v//'
-        ls "$ROOT_DIR/dist" 2>/dev/null | sed 's/^v//'
+        # `|| true`: with `set -o pipefail`, a missing dist/ makes `ls` fail,
+        # which fails the whole pipeline, which fails the assignment, which
+        # exits the script — before the monotonicity check it feeds ever
+        # runs. Every checkout without a local dist/ (i.e. every fresh
+        # clone) could not pass this gate.
+        { ls "$ROOT_DIR/dist" 2>/dev/null || true; } | sed 's/^v//'
     } | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
 )"
 reset_marker="$ROOT_DIR/scripts/.version-reset"
@@ -97,7 +102,15 @@ if [[ -n "$highest_shipped" ]] \
     # Matched on the line being left BEHIND, not the exact pair: the
     # declaration is "we abandoned 0.11.x", and it must not need re-editing
     # on every patch bump or it rots into a rubber stamp.
-    if [[ -f "$reset_marker" ]] && grep -qE "^${highest_shipped//./\\.} -> " "$reset_marker"; then
+    # Match on the release LINE (major.minor) being left behind, not the
+    # exact highest version. The declaration is "we abandoned 0.11.x"; the
+    # highest tag on that line drifts (0.11.51 shipped untagged, leaving
+    # 0.11.50 as the highest tag) and an exact match would then demand a
+    # re-edit of the marker for a release nobody is making — which is
+    # precisely the rubber stamp this comment warns against.
+    shipped_line="${highest_shipped%.*}"
+    if [[ -f "$reset_marker" ]] \
+        && grep -qE "^${shipped_line//./\\.}\.[0-9]+ -> " "$reset_marker"; then
         printf '  ✓ %-40s %s (reset away from %s, declared)\n' \
             "release line" "$version" "$highest_shipped"
     else
