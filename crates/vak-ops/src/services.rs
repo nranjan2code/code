@@ -413,10 +413,7 @@ impl ServiceDef {
     /// systemd unit stem derived from the launchd label
     /// (`com.vak.gateway` → `vak-gateway.service`).
     pub fn systemd_unit(&self) -> String {
-        format!(
-            "vak-{}.service",
-            self.name.strip_prefix("com.vak.").unwrap_or(self.name)
-        )
+        systemd_unit_name(self.name)
     }
 }
 
@@ -592,8 +589,24 @@ impl CommandRunner for SystemRunner {
     }
 }
 
+/// The systemd unit name for a launchd-style service label.
+///
+/// One definition, shared by [`ServiceSpec::systemd_unit`] and the
+/// platform helpers below. They previously had a method and a free
+/// function of the same name, and only the method existed — so every
+/// `#[cfg(not(target_os = "macos"))]` branch referenced something that was
+/// not there and `vak-ops` did not compile on Linux at all.
+pub fn systemd_unit_name(label: &str) -> String {
+    format!(
+        "vak-{}.service",
+        label.strip_prefix("com.vak.").unwrap_or(label)
+    )
+}
+
 mod platform {
     use super::CommandRunner;
+    #[cfg(not(target_os = "macos"))]
+    use super::systemd_unit_name;
     use std::path::Path;
 
     #[cfg(target_os = "macos")]
@@ -620,7 +633,7 @@ mod platform {
                     "--user".to_string(),
                     "disable".to_string(),
                     "--now".to_string(),
-                    systemd_unit(name),
+                    systemd_unit_name(name),
                 ],
             );
         }
@@ -649,7 +662,7 @@ mod platform {
                     "--user".to_string(),
                     "enable".to_string(),
                     "--now".to_string(),
-                    systemd_unit(name),
+                    systemd_unit_name(name),
                 ],
             )
         }
@@ -675,7 +688,7 @@ mod platform {
                 &[
                     "--user".to_string(),
                     "start".to_string(),
-                    systemd_unit(name),
+                    systemd_unit_name(name),
                 ],
             )
         }
@@ -704,7 +717,7 @@ mod platform {
                 &[
                     "--user".to_string(),
                     "restart".to_string(),
-                    systemd_unit(name),
+                    systemd_unit_name(name),
                 ],
             )
         }
@@ -729,7 +742,7 @@ mod platform {
                     "show".to_string(),
                     "-P".to_string(),
                     "MainPID".to_string(),
-                    systemd_unit(name),
+                    systemd_unit_name(name),
                 ],
             )?;
             text.parse::<u32>().ok().filter(|pid| *pid != 0)

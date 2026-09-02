@@ -75,16 +75,29 @@ if [[ -x "$BIN" ]]; then
 fi
 
 # --- signing ------------------------------------------------------------
+# Three distinct states, reported as three distinct things. Collapsing
+# ad-hoc into "unsigned" hides that the seal exists and works; collapsing
+# it into "signed" would claim a distribution signature we do not have.
 SIGNED=false
 if codesign --verify --deep --strict "$APP" >/dev/null 2>&1; then
-    AUTHORITY="$(codesign -dv --verbose=4 "$APP" 2>&1 \
-        | awk -F'=' '/Authority=/ {print $2; exit}')"
+    DETAIL="$(codesign -dv --verbose=4 "$APP" 2>&1)"
+    AUTHORITY="$(printf '%s\n' "$DETAIL" | awk -F'=' '/Authority=/ {print $2; exit}')"
+    SIGNATURE="$(printf '%s\n' "$DETAIL" | awk -F'=' '/^Signature=/ {print $2; exit}')"
     if [[ "$AUTHORITY" == *"Developer ID"* ]]; then
         SIGNED=true
         pass "code signature" "$AUTHORITY"
+    elif [[ "$SIGNATURE" == "adhoc" ]]; then
+        # A real seal with no identity: tamper-evident, not distributable.
+        pass "code signature" "ad-hoc (seals the bundle; not a Developer ID)"
     else
         warn "code signature" "present but not a Developer ID: ${AUTHORITY:-unknown}"
     fi
+elif codesign -d "$APP" >/dev/null 2>&1; then
+    # A signature is present but does not validate. That is not "unsigned"
+    # — it means the bundle was modified after signing, which is precisely
+    # what a seal exists to detect, so it fails rather than warns.
+    bad "code signature" "present but INVALID — the bundle was modified after signing"
+    codesign --verify --deep --strict "$APP" 2>&1 | sed 's/^/      /' || true
 else
     warn "code signature" "unsigned"
 fi
@@ -113,7 +126,9 @@ if ((status != 0)); then
     exit 1
 fi
 if [[ "$SIGNED" != true ]]; then
-    printf '✓ structure verifies; artifact is UNSIGNED (doc 46 S10 tracks signing)\n'
+    printf '✓ structure verifies; NOT signed by a Developer ID — Gatekeeper will\n'
+    printf '  refuse a double-click, and notarization is impossible until one\n'
+    printf '  exists (doc 46 S10).\n'
 else
     printf '✓ verified\n'
 fi

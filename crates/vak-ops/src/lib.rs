@@ -17,6 +17,7 @@
 use std::fmt;
 use std::path::PathBuf;
 use std::process::Command;
+#[cfg(target_os = "macos")]
 use std::sync::OnceLock;
 
 pub mod services;
@@ -166,7 +167,7 @@ pub(crate) fn home() -> PathBuf {
 /// Register the service with the platform manager and start it. On macOS
 /// this requires the plist produced by
 /// `scripts/install_gateway_service.sh`; on Linux it enables the unit.
-pub fn install(service: Service, cfg: &OpsConfig) -> Result<(), String> {
+pub fn install(service: Service, #[allow(unused_variables)] cfg: &OpsConfig) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let labels = service.unit_labels();
@@ -198,16 +199,19 @@ pub fn install(service: Service, cfg: &OpsConfig) -> Result<(), String> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        if !run(Command::new("systemctl").args([
-            "--user",
-            "enable",
-            "--now",
-            service.systemd_unit(),
-        ])) {
+        let units = service.systemd_units();
+        if units.is_empty() {
             return Err(format!(
-                "unit {} not found — install via scripts/install_gateway_service.sh",
-                service.systemd_unit()
+                "{} has no units configured — create a bot, then run `vak self services-sync`",
+                service.label()
             ));
+        }
+        for unit in &units {
+            if !run(Command::new("systemctl").args(["--user", "enable", "--now", unit])) {
+                return Err(format!(
+                    "unit {unit} not found — run `vak self services-sync`"
+                ));
+            }
         }
         Ok(())
     }
@@ -286,13 +290,15 @@ fn manager_state(service: Service) -> State {
         if active {
             State::Running
         } else {
-            let enabled = Command::new("systemctl")
-                .args(["--user", "is-enabled", service.systemd_unit()])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
+            let enabled = units.iter().all(|unit| {
+                Command::new("systemctl")
+                    .args(["--user", "is-enabled", unit])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+            });
             if enabled {
                 State::Stopped
             } else {

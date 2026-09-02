@@ -1089,6 +1089,36 @@ dispatch it.
 install indistinguishable from a first install on a new machine, proven by
 test.
 
+### Verifying without the things we do not have
+
+Two gaps had workarounds worth taking rather than waiting on.
+
+**Signing.** With no Developer ID the release signs the bundle **ad-hoc**
+(`codesign --sign -`). That is not a distribution signature — Gatekeeper
+still refuses a double-click — but it is a real seal: the bundle becomes
+internally consistent and modification after signing is detectable. It also
+exercises the whole signing step, so the only change when a certificate
+arrives is the identity. `VAK_SIGN_IDENTITY` supplies one.
+
+The verifier reports three distinct states rather than two, because
+collapsing ad-hoc into "unsigned" hides that the seal works and collapsing
+it into "signed" claims a distribution signature we do not have. Running it
+found a defect in itself: a **tampered** bundle was reported identically to
+an honestly unsigned one and exited 0. A present-but-invalid signature is
+now a hard failure — that is precisely what a seal exists to detect.
+
+**Linux.** `scripts/linux-check.sh` runs the whole install and setup path
+in a container, because half the supported platforms cannot be tested on
+the machine most of this is written on. It found that `vak-ops` **did not
+compile on Linux at all**: the `#[cfg(not(target_os = "macos"))]` branches
+called a free `systemd_unit(name)` that never existed, and S1's
+`Option`-returning accessors were only fixed on the macOS side.
+
+Because Linux is headless, the check exercises *both* surfaces the way an
+operator would: `vak setup --print-url`, then the projection and the
+console over HTTP, and a check that an unauthenticated request is refused
+even on loopback.
+
 ### S10 — Sign and notarize — **blocked on a Developer ID**
 
 The half that does not need a certificate is done.

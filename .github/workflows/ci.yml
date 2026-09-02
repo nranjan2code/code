@@ -83,6 +83,28 @@ jobs:
         run: |
           cargo install cargo-audit --locked
           cargo audit
+      # The linux job already runs ON Linux, so it exercises the same
+      # properties `scripts/linux-check.sh` puts in a container for a macOS
+      # developer: install starts nothing, setup refuses a missing choice,
+      # and the headless web surface serves and authenticates.
+      - name: linux install and setup path
+        run: |
+          cargo build --release --package vak
+          VAK=target/release/vak
+          export VAK_HOME=/tmp/vak-home
+          PREFIX=/tmp/vak-prefix
+          "$VAK" self install --prefix "$PREFIX" --force
+          test ! -d "$VAK_HOME/sessions" || { echo "install created state"; exit 1; }
+          mkdir -p /tmp/workspace && cd /tmp/workspace
+          code=0; "$PREFIX/bin/vak" setup --non-interactive </dev/null >/dev/null 2>&1 || code=$?
+          test "$code" -eq 2 || { echo "expected refusal, got $code"; exit 1; }
+          VAK_SETUP_PROVIDER=ollama VAK_SETUP_MODEL=llama3 \
+          VAK_SETUP_POSTURE=workspace-write VAK_SETUP_SEED=1 \
+            "$PREFIX/bin/vak" setup --non-interactive </dev/null >/dev/null 2>&1
+          test -d "$VAK_HOME/vak-home/.vak/skills" || { echo "seeding did not run"; exit 1; }
+          "$PREFIX/bin/vak" self uninstall --yes --purge --prefix "$PREFIX" >/dev/null
+          test ! -e "$VAK_HOME/vak-home/.vak/config.toml" || { echo "purge left state"; exit 1; }
+
       - name: Landlock sandbox smoke (Linux 5.13+ runners)
         run: |
           cargo build -p vak
