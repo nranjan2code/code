@@ -630,25 +630,131 @@ pub fn run_uninstall(prefix: Option<PathBuf>, yes: bool, purge: bool) -> i32 {
         Err(e) => eprintln!("warning: remove {}: {e}", root.prefix().display()),
     }
 
+    // The symlink `report_next_steps` tells people to create. Leaving it
+    // is how an uninstall leaves a dangling `vak` on PATH that fails with
+    // a confusing "no such file" months later.
+    remove_dangling_cli_symlink(root.prefix());
+
     if purge {
-        let data = vak_config::paths::data_home();
-        if !confirm(
-            &format!(
-                "ALSO delete the data home at {} (sessions, memory, tasks)?",
-                data.display()
-            ),
-            yes,
-        ) {
-            println!("kept data home at {}", data.display());
-            return 0;
-        }
-        match std::fs::remove_dir_all(&data) {
-            Ok(()) => println!("purged {}", data.display()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => eprintln!("warning: purge {}: {e}", data.display()),
+        return purge_state(yes);
+    }
+    println!();
+    println!("configuration and data were kept; `--purge` removes them too");
+    0
+}
+
+/// Remove a `/usr/local/bin/vak` symlink that points into the prefix we
+/// just deleted.
+///
+/// Only ever a symlink, and only when it resolves into this prefix: a real
+/// binary someone else installed there is theirs, not ours to remove.
+fn remove_dangling_cli_symlink(prefix: &Path) {
+    let link = Path::new("/usr/local/bin/vak");
+    let Ok(meta) = std::fs::symlink_metadata(link) else {
+        return;
+    };
+    if !meta.file_type().is_symlink() {
+        return;
+    }
+    let Ok(target) = std::fs::read_link(link) else {
+        return;
+    };
+    if !target.starts_with(prefix) {
+        return;
+    }
+    match std::fs::remove_file(link) {
+        Ok(()) => println!("removed the {} symlink", link.display()),
+        Err(e) => eprintln!(
+            "note: {} points into the removed prefix; remove it with: sudo rm {} ({e})",
+            link.display(),
+            link.display()
+        ),
+    }
+}
+
+/// Everything the state registry says a purge removes.
+///
+/// Derived from `vak_core::state`, not from a list kept here, and framed
+/// as a **preserve rule** rather than a delete list: when a new durable
+/// file appears, the safe default is to leave it alone, and the registry
+/// test fails the build until someone declares what should happen to it
+/// (doc 46 D3, Part VII.2).
+fn purge_state(yes: bool) -> i32 {
+    use vak_core::state::{OnPurge, Root};
+
+    let roots = [Root::Data, Root::Cache, Root::Shared];
+    let mut targets: Vec<(PathBuf, &'static str)> = Vec::new();
+    for root in roots {
+        let base = vak_core::state::root_path(root);
+        for entry in vak_core::state::entries_for(root) {
+            if entry.on_purge != OnPurge::Remove {
+                continue;
+            }
+            let path = if entry.path.is_empty() {
+                base.clone()
+            } else {
+                base.join(entry.path)
+            };
+            if path.exists() {
+                targets.push((path, entry.path));
+            }
         }
     }
-    0
+
+    if targets.is_empty() {
+        println!("nothing to purge — no declared state is present");
+        return 0;
+    }
+
+    // Name what dies. A confirmation that says "delete everything?" is one
+    // people answer without reading.
+    println!();
+    println!("--purge will permanently delete:");
+    for (path, _) in &targets {
+        println!("  {}", path.display());
+    }
+    println!();
+    println!("this includes your Shared configuration, your stored keys, every session");
+    println!("ledger, and every installed skill and plugin.");
+    println!("project `.vak` directories inside your own repositories are NOT touched.");
+    if !confirm("permanently delete all of that?", yes) {
+        println!("kept everything; nothing was deleted");
+        return 0;
+    }
+
+    let mut failed = false;
+    for (path, declared) in &targets {
+        // A symlinked root would make `remove_dir_all` follow the link and
+        // delete somebody else's directory. Refuse rather than guess.
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                eprintln!(
+                    "refused: {} is a symlink; remove it by hand if you meant to",
+                    path.display()
+                );
+                failed = true;
+                continue;
+            }
+            _ => {}
+        }
+        let outcome = if path.is_dir() {
+            std::fs::remove_dir_all(path)
+        } else {
+            std::fs::remove_file(path)
+        };
+        match outcome {
+            Ok(()) => println!("  removed {declared}"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                eprintln!("  warning: {}: {e}", path.display());
+                failed = true;
+            }
+        }
+    }
+
+    println!();
+    println!("purged. the next install is a genuine first run.");
+    i32::from(failed)
 }
 
 #[cfg(test)]

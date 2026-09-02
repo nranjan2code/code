@@ -81,7 +81,9 @@ pub struct DispatchAttempt {
     /// frozen-ladder legs, so the receipt-level provider/model names only
     /// the FINAL leg; fallback legs must be attributed to what actually
     /// failed over FROM. None ⇒ attribute to the receipt-level fields
-    /// (single-leg receipts and legacy entries).
+    /// (single-leg receipts, and receipts written before per-leg
+    /// attribution existed — which stay readable permanently, per the
+    /// additive-only contract in docs/design/46 VII.3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -463,7 +465,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_receipt_without_provider_deserializes() {
+    fn a_receipt_written_before_per_leg_attribution_still_loads() {
         let legacy = serde_json::json!({
             "purpose": "execute",
             "model": "m",

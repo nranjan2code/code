@@ -52,16 +52,19 @@ pub struct FrozenContract {
     /// Frozen route ladder (docs/design/15-reliability.md): ordered candidate
     /// legs committed at admission; dispatch walks it top-down on typed
     /// failures. Walking the ladder IS contract execution — never a
-    /// mid-contract switch. Empty/missing ⇒ single-model legacy.
+    /// mid-contract switch. Empty/missing ⇒ a single-model header, which
+    /// includes every header written before ladders existed.
     #[serde(default)]
     pub route_ladder: Vec<vak_llm::RouteLeg>,
     /// Objective the ladder was ordered for (Phase R): "utility" |
-    /// "balanced" | "quality-critical". Empty on legacy headers.
+    /// "balanced" | "quality-critical". Empty on headers written before
+    /// objectives existed.
     #[serde(default)]
     pub route_objective: String,
     /// Freeze-time routing warnings (thin chain, dominant failure
     /// domain, unreachable cross-model fallbacks). Audit-only context,
-    /// never model-visible input. Empty on legacy headers.
+    /// never model-visible input. Empty on headers written before this
+    /// field existed.
     #[serde(default)]
     pub route_annotations: Vec<String>,
     pub system_prompt: String,

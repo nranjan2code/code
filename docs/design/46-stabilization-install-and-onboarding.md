@@ -799,29 +799,38 @@ Sorted into three tiers because they carry very different risk.
 | 7 | `feeds.toml` caller-compatibility branch | `crates/vak-server/src/feeds.rs` | one feed-config shape |
 | 8 | Dismissible `SetupCard` and trust-implying `ProjectGate` | `crates/vak-desktop/ui/src/components/` | the wizard (D7) |
 
-### Tier 2 — Legacy data shapes (delete; costs stored state)
+### Tier 2 — Withdrawn: these are the contract, not legacy
 
-These are `serde` tolerances that let today's binary read files written by
-an older one. Keeping them is exactly the "backward compatibility" being
-withdrawn; deleting them means **an old file no longer loads**.
+**This tier was wrong, and executing it would have broken the contract
+stated three parts earlier in this same document.** Recorded rather than
+quietly deleted, because the mistake is instructive.
 
-| # | Tolerance | Location | What is lost |
-|---|---|---|---|
-| 9 | Two-segment `surface:chat` allowlist keys and `legacy_key_for` | `crates/vak-server/src/gateway.rs` | existing chat approvals; re-approved through the wizard's Step 7 loop, which takes seconds and teaches the loop anyway |
-| 10 | `WorkReceipt` without a provider field | `crates/vak-llm/src/work.rs` | old receipts stop rendering |
-| 11 | Legacy `tasks.json` shape | `crates/vak-core/src/tasks.rs` | existing scheduled tasks |
-| 12 | Empty/missing route-ladder and voice fields on session headers | `crates/vak-session/src/types.rs` | old sessions stop resuming |
-| 13 | `RouteLeg` with no `credential_id`; empty circuit-breaker key as global; `None` search timestamps; spend fixtures without a caller | `crates/vak-llm/src/route.rs`, `crates/vak-agent/src/circuit.rs`, `crates/vak-session/src/search.rs`, `crates/vak-agent/src/spend.rs` | derived state only; rebuilt |
+It listed `#[serde(default)]` tolerances — a `WorkReceipt` with no
+provider, a session header with no route ladder, a `RouteLeg` with no
+credential id, an empty circuit-breaker key — as "backward compatibility to
+withdraw". They are not. VII.3 rule 2 *requires* exactly this mechanism:
+every added field carries `#[serde(default)]` so a file written by a build
+that predates the field still loads. Deleting them would mean a 2.1 reader
+could not open a 2.0 file, which is the opposite of additive-only.
 
-**The call this needs.** Items 10–13 make existing session ledgers and
-receipts unreadable. The append-only ledger is a product promise, so the
-honest way to take this is a **clean-slate reset at the version where the
-tolerances die**: the release notes say so, `--purge` is the supported way
-through it, and the binary *refuses* an old ledger with a clear message
-rather than half-reading it. Silently dropping the tolerance and letting
-old files fail with a serde error is the one option that is not acceptable.
-This is called out separately because it is the only item in this doc that
-destroys user data, and it should be an explicit yes.
+The remaining item, two-segment `surface:chat` allowlist keys, is not
+legacy either: that is the shape an operator writes by hand in
+`gateway.chat_allowlist`, documented in `docs/design/05-config.md` and
+required by AGENTS.md invariant 24. `legacy_key_for` resolves a
+config-written row against a bot-scoped inbound key, which is live
+behaviour, not a migration.
+
+What *was* wrong is the naming. Calling a permanent forward-compatibility
+default "legacy" invites precisely the deletion attempted here, so the
+comments and tests are renamed to say what they mean: a file written before
+this field existed still loads, and always will.
+
+The lesson generalises. **"Delete all legacy" is a real instruction with a
+real exception**: a tolerance that lets an *older reader* open a *newer
+file*, or a newer reader open an older one, is the compatibility contract
+doing its job. Legacy is a second way of doing something that has a
+canonical way (invariant 30) — not every branch that handles an absent
+field.
 
 ### Tier 3 — Documentation and naming legacy
 

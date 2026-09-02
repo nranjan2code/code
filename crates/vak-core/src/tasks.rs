@@ -719,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_tasks_json_loads_unchanged_and_roundtrips() {
+    fn a_tasks_file_written_before_added_fields_loads_and_roundtrips() {
         let dir = tempfile::tempdir().unwrap();
         let raw = r#"[
           {

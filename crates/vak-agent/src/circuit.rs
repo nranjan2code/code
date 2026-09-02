@@ -59,7 +59,7 @@ impl CircuitBreaker {
     }
 
     /// Check one provider/key circuit. Provider names are used by the agent
-    /// as the stable health domain; an empty key retains the legacy global
+    /// as the stable health domain; an empty key means the process-global
     /// helper semantics for callers that do not have a route identity.
     pub fn check_key(&self, key: &str) -> Result<(), CircuitOpen> {
         let mut states = self.lock();
