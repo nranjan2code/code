@@ -352,6 +352,7 @@ async fn main() {
             0
         }
         Some(Command::Self_ { action }) => match action {
+            cli::SelfAction::State { verify } => setup::run_state(verify),
             cli::SelfAction::Install { prefix, force } => install::run_install(prefix, force),
             cli::SelfAction::Reinstall { prefix, yes } => install::run_reinstall(prefix, yes),
             cli::SelfAction::Verify { prefix } => install::run_verify(prefix),

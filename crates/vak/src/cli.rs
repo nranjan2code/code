@@ -386,6 +386,14 @@ pub(crate) enum PluginAction {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum SelfAction {
+    /// Digest every durable file the state registry declares, or check a
+    /// snapshot taken before an update against what is on disk now
+    State {
+        /// Compare the current state against this snapshot and report any
+        /// entry the update contract forbids changing
+        #[arg(long)]
+        verify: Option<std::path::PathBuf>,
+    },
     /// Copy release binaries into the managed prefix + manifest
     /// Place this build into the managed prefix
     Install {

@@ -71,6 +71,12 @@ jobs:
       - run: cargo test --workspace
       - name: doc citations resolve
         run: python3 scripts/check_doc_paths.py
+      # Everything in doc 46 Part VII is a promise; this is the machine
+      # that keeps it. Runs on every push because the regression it catches
+      # -- an update quietly losing durable state -- is invisible until
+      # someone has already lost data.
+      - name: upgrade gate
+        run: ./scripts/upgrade-gate.sh
       - name: Landlock sandbox smoke (Linux 5.13+ runners)
         run: |
           cargo build -p vak

@@ -508,6 +508,86 @@ mod tests {
         }
     }
 
+    fn snap(entry: &str, on_update: &str, files: Vec<FileSnapshot>) -> StateSnapshot {
+        StateSnapshot {
+            version: "test".into(),
+            taken_at: "now".into(),
+            entries: vec![EntrySnapshot {
+                entry: entry.into(),
+                root: "data".into(),
+                on_update: on_update.into(),
+                files,
+            }],
+        }
+    }
+
+    fn file(path: &str, sha: &str) -> FileSnapshot {
+        FileSnapshot {
+            path: path.into(),
+            sha256: sha.into(),
+            bytes: 1,
+            json: None,
+        }
+    }
+
+    #[test]
+    fn an_untouched_ledger_that_changed_is_a_violation() {
+        // The rule that makes append-only real: an update rewriting a
+        // ledger is the failure this gate exists to catch.
+        let before = snap("sessions", "Untouched", vec![file("a.jsonl", "aaa")]);
+        let after = snap("sessions", "Untouched", vec![file("a.jsonl", "bbb")]);
+        let found = verify_upgrade(&before, &after);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].detail.contains("contents changed"));
+    }
+
+    #[test]
+    fn a_vanished_file_is_a_violation_under_either_rule() {
+        for rule in ["Untouched", "AdditiveOnly"] {
+            let before = snap("gateway", rule, vec![file("bots.json", "aaa")]);
+            let after = snap("gateway", rule, Vec::new());
+            let found = verify_upgrade(&before, &after);
+            assert_eq!(found.len(), 1, "{rule}: {found:?}");
+            assert!(found[0].detail.contains("gone after the update"));
+        }
+    }
+
+    #[test]
+    fn an_additive_change_is_allowed_but_a_dropped_field_is_not() {
+        // Adding a field is the whole point of additive-only; losing one
+        // is the silent data loss it forbids.
+        let mut before = snap("gateway", "AdditiveOnly", vec![file("bots.json", "aaa")]);
+        before.entries[0].files[0].json =
+            Some(serde_json::json!({ "schema": 1, "bots": [], "kept": true }));
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bots.json");
+
+        // Same fields plus a new one: allowed.
+        std::fs::write(
+            &path,
+            serde_json::json!({ "schema": 1, "bots": [], "kept": true, "added": 2 }).to_string(),
+        )
+        .unwrap();
+        assert!(dropped_keys(&path, &before.entries[0].files[0]).is_none());
+
+        // A field silently removed: refused.
+        std::fs::write(
+            &path,
+            serde_json::json!({ "schema": 1, "bots": [] }).to_string(),
+        )
+        .unwrap();
+        let detail = dropped_keys(&path, &before.entries[0].files[0]).expect("dropped field");
+        assert!(detail.contains("kept"), "{detail}");
+    }
+
+    #[test]
+    fn rebuilt_state_may_differ_freely() {
+        let before = snap("locks", "Rebuilt", vec![file("x", "aaa")]);
+        let after = snap("locks", "Rebuilt", Vec::new());
+        assert!(verify_upgrade(&before, &after).is_empty());
+    }
+
     #[test]
     fn an_undeclared_path_is_reported_as_undeclared() {
         assert!(is_declared(Root::Data, Path::new("sessions/x.jsonl")));
@@ -516,4 +596,292 @@ mod tests {
             Path::new("something-nobody-declared.json")
         ));
     }
+}
+
+// ---- Snapshots and the upgrade contract ------------------------------------
+
+use serde::{Deserialize, Serialize};
+
+/// One durable file, as it stood at a moment in time.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileSnapshot {
+    /// Path relative to its root.
+    pub path: String,
+    pub sha256: String,
+    pub bytes: u64,
+    /// The document as it stood, for JSON files only.
+    ///
+    /// A digest can prove a file changed but not *how*, and
+    /// `AdditiveOnly` needs the earlier key set to prove nothing was
+    /// dropped. Carried here so a snapshot is self-contained: the gate
+    /// compares a file written by one build against a document captured
+    /// by another, possibly on a different machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub json: Option<serde_json::Value>,
+}
+
+/// Everything the registry declares, as it stood at a moment in time.
+///
+/// Taken before an update and again after it, this is what turns "an
+/// update must not lose data" from a promise into an assertion
+/// (`docs/design/46-stabilization-install-and-onboarding.md` VII.5).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateSnapshot {
+    pub version: String,
+    pub taken_at: String,
+    /// Registry entry path → the files found under it.
+    pub entries: Vec<EntrySnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntrySnapshot {
+    pub entry: String,
+    pub root: String,
+    pub on_update: String,
+    pub files: Vec<FileSnapshot>,
+}
+
+/// A way an update broke the contract.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Violation {
+    pub entry: String,
+    pub path: String,
+    pub rule: String,
+    pub detail: String,
+}
+
+impl std::fmt::Display for Violation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} ({} / {}): {}",
+            self.path, self.entry, self.rule, self.detail
+        )
+    }
+}
+
+fn digest_of(path: &Path) -> Option<(String, u64)> {
+    use sha2::{Digest as _, Sha256};
+    let bytes = std::fs::read(path).ok()?;
+    Some((format!("{:x}", Sha256::digest(&bytes)), bytes.len() as u64))
+}
+
+fn walk(root: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                found.push(path);
+            }
+        }
+    }
+    found
+}
+
+fn root_label(root: Root) -> &'static str {
+    match root {
+        Root::Data => "data",
+        Root::Cache => "cache",
+        Root::Shared => "shared",
+    }
+}
+
+/// Digest every declared file, right now.
+pub fn snapshot(version: &str) -> StateSnapshot {
+    let mut entries = Vec::new();
+    for entry in REGISTRY {
+        let base = root_path(entry.root);
+        let target = if entry.path.is_empty() {
+            base.clone()
+        } else {
+            base.join(entry.path)
+        };
+        let mut files = Vec::new();
+        let candidates = if target.is_dir() {
+            walk(&target)
+        } else if target.is_file() {
+            vec![target.clone()]
+        } else {
+            Vec::new()
+        };
+        for file in candidates {
+            let Some((sha256, bytes)) = digest_of(&file) else {
+                continue;
+            };
+            let relative = file
+                .strip_prefix(&base)
+                .unwrap_or(&file)
+                .to_string_lossy()
+                .into_owned();
+            // Only for entries whose contract needs it: a ledger is
+            // compared byte-for-byte, so carrying its parsed body would
+            // bloat the snapshot for nothing.
+            let json = (entry.on_update == OnUpdate::AdditiveOnly && relative.ends_with(".json"))
+                .then(|| {
+                    std::fs::read_to_string(&file)
+                        .ok()
+                        .and_then(|raw| serde_json::from_str(&raw).ok())
+                })
+                .flatten();
+            files.push(FileSnapshot {
+                path: relative,
+                sha256,
+                bytes,
+                json,
+            });
+        }
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        entries.push(EntrySnapshot {
+            entry: entry.path.to_string(),
+            root: root_label(entry.root).to_string(),
+            on_update: format!("{:?}", entry.on_update),
+            files,
+        });
+    }
+    StateSnapshot {
+        version: version.to_string(),
+        taken_at: chrono::Utc::now().to_rfc3339(),
+        entries,
+    }
+}
+
+/// Every key path present in a JSON document.
+///
+/// "Additive-only" means a field may be added and never removed, so the
+/// check that matters is whether the *earlier* key set still exists —
+/// comparing whole documents would fail on any legitimate addition.
+fn key_paths(value: &serde_json::Value, prefix: &str, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (k, v) in map {
+                let path = if prefix.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{prefix}.{k}")
+                };
+                out.push(path.clone());
+                key_paths(v, &path, out);
+            }
+        }
+        // Array *contents* are data, not shape: an appended session or
+        // ledger row is exactly what these files are for.
+        serde_json::Value::Array(_) => {}
+        _ => {}
+    }
+}
+
+/// Check a later snapshot against an earlier one, per registry rule.
+///
+/// This is the assertion behind "an update never loses data" — and it
+/// deliberately lives beside the registry rather than in the script that
+/// calls it, so the rules have one definition.
+pub fn verify_upgrade(before: &StateSnapshot, after: &StateSnapshot) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    for prior in &before.entries {
+        let Some(later) = after
+            .entries
+            .iter()
+            .find(|e| e.entry == prior.entry && e.root == prior.root)
+        else {
+            violations.push(Violation {
+                entry: prior.entry.clone(),
+                path: prior.entry.clone(),
+                rule: "declared".into(),
+                detail: "the entry is gone from the registry entirely".into(),
+            });
+            continue;
+        };
+        let base = match later.root.as_str() {
+            "shared" => root_path(Root::Shared),
+            "cache" => root_path(Root::Cache),
+            _ => root_path(Root::Data),
+        };
+
+        for file in &prior.files {
+            let now = later.files.iter().find(|f| f.path == file.path);
+            match prior.on_update.as_str() {
+                "Untouched" => match now {
+                    None => violations.push(Violation {
+                        entry: prior.entry.clone(),
+                        path: file.path.clone(),
+                        rule: "Untouched".into(),
+                        detail: "the file is gone after the update".into(),
+                    }),
+                    Some(now) if now.sha256 != file.sha256 => violations.push(Violation {
+                        entry: prior.entry.clone(),
+                        path: file.path.clone(),
+                        rule: "Untouched".into(),
+                        detail: format!(
+                            "contents changed ({} bytes → {} bytes)",
+                            file.bytes, now.bytes
+                        ),
+                    }),
+                    Some(_) => {}
+                },
+                "AdditiveOnly" => {
+                    let Some(_) = now else {
+                        violations.push(Violation {
+                            entry: prior.entry.clone(),
+                            path: file.path.clone(),
+                            rule: "AdditiveOnly".into(),
+                            detail: "the file is gone after the update".into(),
+                        });
+                        continue;
+                    };
+                    // For JSON, prove no prior field was dropped. Other
+                    // formats assert presence only, which this says
+                    // plainly rather than implying a check it does not do.
+                    if file.path.ends_with(".json")
+                        && let Some(missing) = dropped_keys(&base.join(&file.path), file)
+                    {
+                        violations.push(Violation {
+                            entry: prior.entry.clone(),
+                            path: file.path.clone(),
+                            rule: "AdditiveOnly".into(),
+                            detail: missing,
+                        });
+                    }
+                }
+                // Rebuilt state is allowed to differ; it is derived.
+                _ => {}
+            }
+        }
+    }
+    violations
+}
+
+/// Keys the earlier document had that the current file no longer does.
+///
+/// Needs the earlier document, which a digest alone cannot supply, so this
+/// is only meaningful when the caller kept it. Returns `None` when nothing
+/// was dropped or the comparison cannot be made.
+fn dropped_keys(current: &Path, prior: &FileSnapshot) -> Option<String> {
+    let raw = std::fs::read_to_string(current).ok()?;
+    let now: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let before = prior.json.as_ref()?;
+    let mut before_keys = Vec::new();
+    key_paths(before, "", &mut before_keys);
+    let mut now_keys = Vec::new();
+    key_paths(&now, "", &mut now_keys);
+    let missing: Vec<&String> = before_keys
+        .iter()
+        .filter(|k| !now_keys.contains(k))
+        .collect();
+    (!missing.is_empty()).then(|| {
+        format!(
+            "fields present before the update are gone: {}",
+            missing
+                .iter()
+                .map(|k| k.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    })
 }

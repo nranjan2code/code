@@ -1011,6 +1011,21 @@ seed-digest tracking so an edited seed file is never clobbered.
 is the phase that makes "we do not do this again" true rather than
 intended — nothing after it can quietly break an existing install.
 
+Shipped as `scripts/upgrade-gate.sh`, run by CI on every push. The
+comparison rules live in `vak_core::state` beside the registry and are
+applied by `vak self state --verify`, so a shell script and a library
+cannot drift apart about what an update may do.
+
+`--previous` defaults to the current build until a real prior release
+exists. That is not a tautology: with both legs the same binary it still
+proves install and update do not themselves disturb state, which is the
+regression most likely to happen. Point it at a published artifact and the
+same script becomes a true cross-version gate.
+
+Verified by injection, not by watching it pass: rewriting
+`security-events.jsonl` between the snapshot and the update makes the gate
+fail with `contents changed (37 bytes → 18 bytes)`.
+
 ### S7 — Bundle and package
 
 Bundle materialization moves into the release. DMG for macOS, tarball for

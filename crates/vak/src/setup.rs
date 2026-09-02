@@ -621,3 +621,62 @@ pub async fn run_terminal(cwd: PathBuf, non_interactive: bool) -> i32 {
 /// The starter task, identical to the one the web wizard runs.
 const FIRST_TASK_PROMPT: &str = "Map this codebase and explain its architecture, key flows, \
      and highest-risk areas. Do not modify files or run any destructive command.";
+
+/// `vak self state [--verify <snapshot>]`.
+///
+/// The plumbing the upgrade gate drives (doc 46 VII.5). Without `--verify`
+/// it prints a snapshot of every durable file the registry declares; with
+/// it, it compares the current state against a snapshot taken before an
+/// update and reports every entry the contract forbids changing.
+///
+/// The comparison rules live in `vak_core::state`, beside the registry
+/// they belong to, rather than in the script that calls this — one
+/// definition, so a shell and a library cannot drift apart about what an
+/// update is allowed to do.
+pub fn run_state(verify: Option<PathBuf>) -> i32 {
+    let current = vak_core::state::snapshot(env!("CARGO_PKG_VERSION"));
+    let Some(path) = verify else {
+        match serde_json::to_string_pretty(&current) {
+            Ok(text) => {
+                println!("{text}");
+                return 0;
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 2;
+            }
+        }
+    };
+
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(e) => {
+            eprintln!("error: cannot read {}: {e}", path.display());
+            return 2;
+        }
+    };
+    let before: vak_core::state::StateSnapshot = match serde_json::from_str(&raw) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: {} is not a state snapshot: {e}", path.display());
+            return 2;
+        }
+    };
+
+    let violations = vak_core::state::verify_upgrade(&before, &current);
+    println!("upgrade check: {} → {}", before.version, current.version);
+    if violations.is_empty() {
+        println!("  ✓ every declared entry survived the update as its rule requires");
+        return 0;
+    }
+    for violation in &violations {
+        println!("  ✗ {violation}");
+    }
+    eprintln!();
+    eprintln!(
+        "{} entr(ies) changed in a way the update contract forbids \
+         (docs/design/46-stabilization-install-and-onboarding.md VII.3).",
+        violations.len()
+    );
+    1
+}
