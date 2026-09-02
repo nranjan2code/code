@@ -4,7 +4,7 @@ Rules for every AI agent (and human) working in this repository.
 
 ## Identity
 
-vak is a Rust coding-agent harness. Thesis: Codex-grade safety, pi-grade
+vak is a Rust general-purpose agent harness. Thesis: Codex-grade safety, pi-grade
 transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
