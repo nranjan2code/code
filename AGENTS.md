@@ -9,10 +9,11 @@ transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
-**Status: v0.2.4 — all roadmap phases implemented and live-tested.**
-The version line was deliberately reset from `0.11.51` to `0.2.0`, so
-`0.2.x` is the current line even though it sorts below the retired
-`0.11.x` one; CHANGELOG.md records the consequence.
+**Status: v1.0.0 — all roadmap phases implemented and live-tested.**
+Two earlier version lines are retired: the original `0.1.0`–`0.11.51`, and the
+short `0.2.0`–`0.2.4` line created by the reset in `fc9c78f`. `1.0.0` sorts
+above both, so version ordering is meaningful again and every version in `1.x`
+is free; CHANGELOG.md records the history.
 See `docs/design/00-roadmap.md` for the phase history and
 `docs/design/15-reliability.md` for the failure-handling matrix. Security work
 must also follow the threat model and priority order in

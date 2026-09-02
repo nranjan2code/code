@@ -10,3 +10,9 @@
 # any 0.11.x build must be reinstalled by hand; `vak self update` cannot
 # cross backwards. See the CHANGELOG's "version line reset" entry.
 0.11.51 -> 0.2.0
+
+# ENDED 2026-09-02 at 1.0.0. The 0.2.x line could never take a minor bump —
+# 0.3.0 through 0.11.50 were already tagged by the first pass — and every
+# install on 0.11.x stayed un-updatable for as long as it ran. 1.0.0 sorts
+# above both retired lines, so no entry below is expected to match again;
+# they are kept as the record of why the gap exists.

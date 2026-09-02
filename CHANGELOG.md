@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 — 2026-09-02
+## 1.0.0 — 2026-09-02
 
 ### Editable prompt layers (docs/design/45)
 
@@ -36,6 +36,20 @@
 
 ### Release engineering
 
+- **The version line reset is over.** `0.11.51 → 0.2.0` left the version
+  walking backwards through tag space the first pass had already used —
+  `0.3.0`, `0.4.0`, `0.5.0` … `0.11.50` are all taken, so from `0.2.4` the
+  only free version was another patch bump, forever. `1.0.0` clears the whole
+  range at once. It also repairs the consequence the reset note below
+  describes: `1.0.0 > 0.11.50`, so **an install stranded on any 0.11.x build
+  can update again**, and no manual reinstall is needed.
+- `scripts/release.sh` built the frontends *after* running `cargo clippy
+  --all-targets` and `cargo test --workspace`, both of which compile
+  `vak-desktop`, whose tauri codegen hard-fails without the gitignored
+  `crates/vak-desktop/ui/dist`. A release could therefore only pass on a
+  machine that happened to have built the desktop UI earlier — the exact
+  leftover-state dependency the script exists to remove. The frontends are
+  built first now.
 - `scripts/check-version.sh` could not run on any checkout without a local
   `dist/`: under `set -o pipefail` a failing `ls` killed the script mid-report,
   before the monotonicity check it feeds. With that fixed, the check
@@ -48,16 +62,26 @@
   that shipped a blank admin console in v0.8.1. `scripts/build.sh` also builds
   the admin frontend now.
 
-## Unreleased — version line reset
+## The version line reset, and its end
 
 The workspace version was deliberately reset from `0.11.51` to `0.2.0` in
-`fc9c78f` and has continued from there. This is a real discontinuity, not a
-typo, and it has one consequence worth stating plainly:
+`fc9c78f`, and ran as `0.2.0`–`0.2.4`. This is a real discontinuity, not a
+typo, and it had two consequences.
 
-**An existing install on any 0.11.x build will never be offered an update.**
-Update checks compare by semver precedence, and `0.2.x < 0.11.x`. Moving from
-a 0.11.x install onto the current line requires a manual reinstall; `vak self
-update` cannot cross backwards and will report no update available.
+**While it lasted, an install on any 0.11.x build could never be offered an
+update.** Update checks compare by semver precedence and `0.2.x < 0.11.x`, so
+`vak self update` reported nothing available and moving forward needed a
+manual reinstall.
+
+**It also walked into occupied tag space.** The first pass through the version
+line had already shipped `0.3.0`, `0.4.0`, `0.5.0` and everything up to
+`0.11.50`, so the reset line could never take a minor bump — only patches,
+indefinitely.
+
+`1.0.0` (2026-09-02) ends both. It sorts above the entire retired line, so
+stranded `0.11.x` installs update normally again, and the whole `1.x` range is
+unused. Releases before `1.0.0` belong to one of the two earlier lines; read
+their dates, not their ordering.
 
 Entries below `0.11.23` were written by hand. The `0.11.24`–`0.11.51` block is
 **reconstructed from commit subjects** — those releases shipped without

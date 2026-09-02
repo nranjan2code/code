@@ -98,15 +98,14 @@ run_bounded() {
     wait "$pid"
 }
 
-if [[ "$SKIP_CHECKS" != true ]]; then
-    cargo fmt --all -- --check
-    printf '  ✓ %-44s clean\n' "cargo fmt"
-    cargo clippy --workspace --all-targets -- -D warnings
-    printf '  ✓ %-44s clean\n' "cargo clippy"
-    run_bounded "$TEST_TIMEOUT" "cargo test --workspace" \
-        cargo test --workspace --quiet
-    printf '  ✓ %-44s passing\n' "cargo test"
-fi
+# The frontends are built BEFORE the gates, not after.
+#
+# `cargo clippy --all-targets` and `cargo test --workspace` both compile
+# vak-desktop, whose tauri codegen hard-fails when crates/vak-desktop/ui/dist
+# is missing — and that directory is gitignored. Running the gates first
+# meant a release could only pass on a machine that happened to have built
+# the desktop UI earlier, which is precisely the leftover-state dependency
+# this script exists to eliminate. On a fresh clone it failed every time.
 
 # Both frontends must be rebuilt from their current source before this
 # gate can mean anything, for two different reasons:
@@ -145,6 +144,17 @@ fi
 printf '  ✓ %-44s matches source\n' "vak-admin-ui/dist"
 ( cd "$ROOT_DIR/crates/vak-desktop/ui" && npm ci --silent && npm run build --silent >/dev/null )
 printf '  ✓ %-44s rebuilt\n' "vak-desktop/ui/dist"
+
+if [[ "$SKIP_CHECKS" != true ]]; then
+    cargo fmt --all -- --check
+    printf '  ✓ %-44s clean\n' "cargo fmt"
+    cargo clippy --workspace --all-targets -- -D warnings
+    printf '  ✓ %-44s clean\n' "cargo clippy"
+    run_bounded "$TEST_TIMEOUT" "cargo test --workspace" \
+        cargo test --workspace --quiet
+    printf '  ✓ %-44s passing\n' "cargo test"
+fi
+
 
 if [[ "$ALLOW_DIRTY" != true ]]; then
     if [[ -n "$(git status --porcelain)" ]]; then
