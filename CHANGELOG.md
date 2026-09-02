@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.2 — 2026-09-02
+
+### MCP capability activation
+
+- Discovered MCP tools now become schema-backed compatibility aliases within
+  the same agent run after broker discovery, while preserving admission and
+  channel-policy restrictions.
+- MCP calls validate their discovered JSON-schema argument shape before
+  dispatching to the server, returning actionable errors for invalid payloads.
+
 ## 1.0.1 — 2026-09-02
 
 ### Desktop prompt settings usability
