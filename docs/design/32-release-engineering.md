@@ -190,22 +190,16 @@ Releases and updates must never lose data or credentials:
   `systemctl --user restart` on Linux) converges the process. Three
   tests in vak-ops enforce this invariant.
 
-### Legacy migration (one-time, per machine)
+### Layout (canonical only)
 
-The pre-0.8 layout stored everything under `~/.vak/`. On first run,
-`migrate_legacy_home()` performs a one-time rename:
-
-1. `~/.vak` → the platform data home (atomic rename under `$HOME`).
-2. `store.db*` → relocated to the cache home (rebuildable, not user data).
-3. `logs/` contents → relocated to `logs_dir()` so Console.app / journald
-   keeps seeing them.
-4. When `VAK_HOME` is set, migration is skipped (the override is
-   already self-contained).
-5. If both old and new locations exist, migration refuses to guess a merge
-   order and surfaces an error for manual resolution.
-
-All entry points (vak binary, vak-tray, vak-desktop) call migration
-at startup before any other logic.
+There is no migration step. A fresh install writes state to the canonical
+platform locations on first use: `data_home()` for sessions, config, and
+    gateway state; `cache_home()` for the rebuildable store index; and
+`logs_dir()` for service logs. `default_workspace()` (`~/vak-home`) is the
+sole workspace root, carrying its `.vak/` shared layer and `.env` secret
+store. With no prior user base to upgrade, the pre-0.8 `~/.vak` dotdir is
+not migrated — operators who need retained data restore from a `vak backup`
+export.
 
 ## Migration of legacy deployments
 

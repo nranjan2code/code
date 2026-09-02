@@ -16,8 +16,8 @@
 //!   cache  $XDG_CACHE_HOME/vak       (~/.cache/vak)
 //!   logs   $XDG_STATE_HOME/vak/logs  (~/.local/state/vak/logs)
 //!
-//! `VAK_HOME` overrides the DATA home everywhere and disables the
-//! legacy migration — an explicit override is the user's layout choice.
+//! `VAK_HOME` overrides the DATA home everywhere — an explicit override
+//! is the user's layout choice and yields a self-contained tree.
 
 use std::path::PathBuf;
 
@@ -246,94 +246,6 @@ fn resolve_base_home(environment_home: Option<PathBuf>, account_home: Option<Pat
         .filter(|path| path.is_absolute())
         .or_else(|| account_home.filter(|path| path.is_absolute()))
         .unwrap_or_else(|| PathBuf::from("/"))
-}
-
-#[cfg(target_os = "macos")]
-const LEGACY_HOME_SUFFIX: &str = ".vak";
-
-/// One-time migration of the pre-0.8 dotdir layout into the canonical
-/// Library/XDG locations. Renames `~/.vak` → data home (atomic when
-/// both sit under $HOME), then relocates rebuildable store artifacts to
-/// the cache home. Skipped entirely when VAK_HOME overrides the
-/// location, when the legacy dir is absent, or when the target already
-/// exists. Never deletes data: if any step fails the legacy tree stays
-/// put and the caller surfaces a warning.
-pub fn migrate_legacy_home() -> Result<(), String> {
-    if get_var("VAK_HOME").is_some() {
-        return Ok(());
-    }
-    let homes = resolve(None);
-    let legacy = base_home().join(LEGACY_HOME_SUFFIX);
-    if !legacy.exists() {
-        return migrate_stray_feeds_config(&homes.data);
-    }
-    let target = &homes.data;
-    if target.exists() {
-        // Both exist: leave everything alone rather than guess a merge
-        // order. Surface loudly instead.
-        return Err(format!(
-            "both {} and {} exist; resolve manually (move or delete the legacy dir)",
-            legacy.display(),
-            target.display()
-        ));
-    }
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::rename(&legacy, target).map_err(|e| format!("rename {}: {e}", legacy.display()))?;
-
-    // Relocate rebuildable index files to the cache home.
-    let cache = &homes.cache;
-    std::fs::create_dir_all(cache).map_err(|e| e.to_string())?;
-    for name in ["store.db", "store.db-wal", "store.db-shm"] {
-        let from = target.join(name);
-        if from.exists()
-            && let Err(e) = std::fs::rename(&from, cache.join(name))
-        {
-            return Err(format!("relocate {name}: {e}"));
-        }
-    }
-
-    // Relocate service logs so Console.app keeps seeing them.
-    let logs = &homes.logs;
-    let old_logs = target.join("logs");
-    if old_logs.is_dir() {
-        std::fs::create_dir_all(logs).map_err(|e| e.to_string())?;
-        for entry in std::fs::read_dir(&old_logs)
-            .map_err(|e| e.to_string())?
-            .flatten()
-        {
-            let dest = logs.join(entry.file_name());
-            if !dest.exists()
-                && let Err(e) = std::fs::rename(entry.path(), &dest)
-            {
-                return Err(format!("relocate log {}: {e}", entry.path().display()));
-            }
-        }
-        let _ = std::fs::remove_dir(&old_logs);
-    }
-
-    migrate_stray_feeds_config(target)
-}
-
-/// Relocate `~/.config/vak/feeds.toml` into the data home.
-///
-/// The feeds config was the one file written outside this module's layout —
-/// an XDG *config* path nothing else in the tree used. It is migrated
-/// separately from the `~/.vak` rename above because it never lived there.
-fn migrate_stray_feeds_config(data: &std::path::Path) -> Result<(), String> {
-    let legacy = base_home().join(".config/vak/feeds.toml");
-    if !legacy.is_file() {
-        return Ok(());
-    }
-    let target = data.join("feeds.toml");
-    if target.exists() {
-        return Ok(());
-    }
-    std::fs::create_dir_all(data).map_err(|e| e.to_string())?;
-    std::fs::rename(&legacy, &target).map_err(|e| format!("relocate feeds.toml: {e}"))?;
-    let _ = std::fs::remove_dir(legacy.parent().unwrap_or(&legacy));
-    Ok(())
 }
 
 #[cfg(test)]

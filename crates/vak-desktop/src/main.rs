@@ -739,11 +739,6 @@ fn main() {
         std::env::set_var("PATH", vak_config::paths::augmented_process_path());
     }
 
-    // Canonical layout migration (doc 32): pre-0.8 dotdir → Library/XDG
-    // homes. One-time rename; no-op when absent or overridden.
-    if let Err(e) = vak_config::paths::migrate_legacy_home() {
-        eprintln!("[warn] home migration skipped: {e}");
-    }
     // The tray is installed before the async project/backend bootstrap. Load
     // the user environment synchronously so its service status and admin
     // links use a configured VAK_PORT from the first paint onward.

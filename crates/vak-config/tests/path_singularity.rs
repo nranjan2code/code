@@ -2,12 +2,13 @@
 
 //! Guards `paths.rs`'s claim to be THE source of truth for the data home.
 //!
-//! The 0.7 drift incident is the standing reason that module exists, and the
-//! tree drifted again anyway: trust markers, flow discovery, and the update
-//! check each rebuilt `HOME/.vak` by hand, and the feeds config invented a
-//! fifth convention at `~/.config/vak/`. Those are cheap mistakes to make and
-//! expensive to notice, because each site works in isolation and only
-//! disagrees with the others once `VAK_HOME` is set or a migration runs.
+//! The 0.7 drift incident is why this module owns every home path and why
+//! every entry point reads from it. There is no migration step and no legacy
+//! dotdir: sessions, gateway state, config, and the shared workspace layer land
+//! only in the canonical `data_home()` / `cache_home()` / `logs_dir()`
+//! locations, so the tree never has a second home to drift from. The check
+//! below fails bluntly on any new hand-rolled `HOME`-relative or
+//! `~/.config/vak` path and points the author at `vak_config::paths`.
 //!
 //! This test reads the workspace's own source. It is deliberately blunt: any
 //! new hand-rolled home path fails here with the file and line, and the fix is
@@ -21,10 +22,6 @@ const ALLOWED: &[(&str, &str)] = &[
     (
         "crates/vak-config/src/paths.rs",
         "the module that defines the layout",
-    ),
-    (
-        "crates/vak-core/src/health.rs",
-        "doctor deliberately probes the legacy location to report on it",
     ),
     (
         "crates/vak-core/src/install.rs",

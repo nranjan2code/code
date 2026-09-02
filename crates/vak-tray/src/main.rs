@@ -481,12 +481,6 @@ fn pid_alive(pid: u32) -> bool {
 }
 
 fn main() {
-    // Canonical layout migration (doc 32); tray has no config override
-    // path of its own — a failed migration only degrades to old paths.
-    if let Err(e) = vak_config::paths::migrate_legacy_home() {
-        eprintln!("[warn] home migration skipped: {e}");
-    }
-
     // Held for the whole process lifetime: dropping it early would
     // release the lock and let a later launch add a second icon.
     let Some(_menu_bar) = claim_menu_bar() else {

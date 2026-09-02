@@ -8,116 +8,16 @@ use vak_session::SessionLog;
 
 use crate::{APP_VERSION, Core, install};
 
-fn user_home() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
-}
-
-/// Mechanical fix for the `install layout` check's legacy-split failure,
-/// called from `vak doctor --repair`.
-///
-/// Deliberately narrower than `migrate_legacy_home()`'s original rename:
-/// once both homes exist we refuse to guess a merge order for anything
-/// that could conflict, exactly like the boot-time migration does. The
-/// only case this acts on is the common accidental one — the legacy
-/// dotdir holds nothing but a stray `config.toml` (plus OS litter like
-/// `.DS_Store`) and the canonical home has no `config.toml` of its own —
-/// where "move the one file, then remove the now-empty dir" isn't a
-/// guess. Anything else (a legacy `sessions/` tree, a `config.toml` on
-/// both sides, other leftover files) is left for the operator with an
-/// explanation of why.
-pub fn repair_legacy_home_split() -> Result<String, String> {
-    let legacy = user_home().join(".vak");
-    let canonical = vak_config::paths::data_home();
-    if !legacy.is_dir() || !canonical.is_dir() {
-        return Ok("nothing to repair".to_string());
-    }
-    let entries: Vec<PathBuf> = std::fs::read_dir(&legacy)
-        .map_err(|e| format!("read {}: {e}", legacy.display()))?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.file_name().and_then(|n| n.to_str()) != Some(".DS_Store"))
-        .collect();
-    let only_config = entries.len() == 1
-        && entries[0].file_name().and_then(|n| n.to_str()) == Some("config.toml");
-    if !only_config {
-        return Err(format!(
-            "legacy {} holds more than a stray config.toml (or a sessions/ tree) — \
-             not safe to merge automatically; move or delete it by hand",
-            legacy.display()
-        ));
-    }
-    let target = canonical.join("config.toml");
-    if target.exists() {
-        return Err(format!(
-            "both {} and {} have a config.toml — won't guess which wins; merge by hand",
-            legacy.join("config.toml").display(),
-            target.display()
-        ));
-    }
-    std::fs::rename(legacy.join("config.toml"), &target)
-        .map_err(|e| format!("move config.toml: {e}"))?;
-    // Best-effort: drop OS litter and the now-empty dir. A failure here
-    // (e.g. something else raced a new file into it) isn't fatal — the
-    // config move already landed, which is the part that matters.
-    let _ = std::fs::remove_file(legacy.join(".DS_Store"));
-    let _ = std::fs::remove_dir(&legacy);
-    Ok(format!(
-        "moved {} → {}",
-        legacy.join("config.toml").display(),
-        target.display()
-    ))
-}
-
-/// Canonical-layout conformance (doc 32). The legacy dotdir must not
-/// reappear as the data home: if it exists alongside the canonical home
-/// something skipped migration, and any service still writing there is
-/// invisible to the rest of the stack.
+/// Canonical-layout conformance (doc 32). Confirms the active data home
+/// is the platform-canonical location. There is no legacy dotdir to
+/// migrate: a fresh install writes sessions, gateway state, and config
+/// only under the canonical homes, and `default_workspace()`
+/// (`~/vak-home`) is the sole workspace root — so there is never a
+/// second home to fall out of step.
 fn layout_check() -> HealthCheck {
-    let label = "install layout".to_string();
-    let overridden = std::env::var_os("VAK_HOME").is_some();
-    let canonical = vak_config::paths::data_home();
-    let legacy = user_home().join(".vak");
-    if overridden {
-        return HealthCheck {
-            label,
-            detail: Ok(format!("override active → {}", canonical.display())),
-        };
-    }
-    // A dotdir holding only logs/store remnants after migration is fine;
-    // sessions living there means the tree never migrated.
-    let legacy_sessions = legacy.join("sessions");
-    if legacy_sessions.is_dir() && !canonical.join("sessions").is_dir() {
-        return HealthCheck {
-            label,
-            detail: Err(format!(
-                "sessions found in legacy {} — run vak once to migrate to {}",
-                legacy_sessions.display(),
-                canonical.join("sessions").display()
-            )),
-        };
-    }
-    // `migrate_legacy_home()` refuses to touch anything once both the
-    // legacy dotdir and the canonical home exist (it won't guess a merge
-    // order) and warns on every boot instead. That warning is easy to
-    // miss in a busy terminal; surface the same unresolved split here so
-    // `vak doctor` catches it even when nobody's watching startup output.
-    if legacy.is_dir() && canonical.is_dir() {
-        return HealthCheck {
-            label,
-            detail: Err(format!(
-                "legacy {} and canonical {} both exist — startup migration \
-                 skips this on every boot; run `vak doctor --repair` or move/delete \
-                 the legacy dir by hand",
-                legacy.display(),
-                canonical.display()
-            )),
-        };
-    }
     HealthCheck {
-        label,
-        detail: Ok(canonical.display().to_string()),
+        label: "install layout".to_string(),
+        detail: Ok(vak_config::paths::data_home().display().to_string()),
     }
 }
 

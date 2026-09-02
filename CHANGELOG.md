@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.3 — 2026-09-02
+
+### Single canonical layout (legacy removed)
+
+- Removed the one-time `~/.vak` → data-home migration (`migrate_legacy_home`) and
+  the stray `~/.config/vak/feeds.toml` relocation, so there is a single golden path
+  with no dual-path error when both directories exist.
+- The `install layout` doctor check no longer probes or repairs a legacy dotdir —
+  it reports the canonical `data_home()` only.
+- Removed the retired `com.vak.tray` launchd service machinery (`RETIRED_SERVICES`,
+  `retire_legacy_tray`), a no-op on fresh installs.
+- Renamed leftover `vak-tray` fixtures in the install-machinery tests.
+- Updated stale `~/.vak/...` path references across docs and comments.
+
 ## 1.0.2 — 2026-09-02
 
 ### MCP capability activation

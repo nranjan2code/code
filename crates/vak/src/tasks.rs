@@ -1,5 +1,5 @@
 //! `vak tasks` (docs/design/29-personal-os.md P2): CRUD over
-//! `vak_core::tasks::TaskStore` (~/.vak/tasks.json) without the
+//! `vak_core::tasks::TaskStore` (tasks.json in the sessions home) without the
 //! server. Validation and cron math live in the library; this module only
 //! maps flags onto `TaskDef` and renders the table.
 

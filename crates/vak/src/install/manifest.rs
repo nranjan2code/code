@@ -271,7 +271,7 @@ mod tests {
     fn verify_reports_a_missing_required_component_but_tolerates_optional() {
         let (_d, root) = temp_root("missing");
         let required = root.bin_dir().join("vak");
-        let optional = root.bin_dir().join("vak-tray");
+        let optional = root.bin_dir().join("vak-delivery-worker");
         let m = Manifest {
             schema: SCHEMA,
             version: "0.8.0".into(),
@@ -286,7 +286,7 @@ mod tests {
                     required: true,
                 },
                 Component {
-                    name: "vak-tray".into(),
+                    name: "vak-delivery-worker".into(),
                     path: optional,
                     sha256: "deadbeef".into(),
                     required: false,

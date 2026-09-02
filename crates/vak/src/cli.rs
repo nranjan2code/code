@@ -202,7 +202,7 @@ pub(crate) enum Command {
         #[arg(long, default_value_t = 7)]
         days: u32,
     },
-    /// Scheduled tasks stored in ~/.vak/tasks.json: CRUD without the server
+    /// Scheduled tasks stored as tasks.json in the sessions home: CRUD without the server
     Tasks {
         #[command(subcommand)]
         action: TasksAction,

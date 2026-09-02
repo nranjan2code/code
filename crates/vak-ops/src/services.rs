@@ -147,11 +147,6 @@ pub const SERVICES: &[ServiceDef] = &[
     },
 ];
 
-/// Obsolete GUI launch agents that must be removed during an upgrade. The
-/// desktop app now owns its tray, so a separate launchd tray must never keep
-/// the bundle's LaunchServices identity alive without a window to reveal.
-pub const RETIRED_SERVICES: &[&str] = &["com.vak.tray"];
-
 // ------------------------------------------------------- multi-bot units
 //
 // docs/design/34 (multi-bot-per-channel): a user adds/removes Telegram,

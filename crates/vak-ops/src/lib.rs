@@ -21,11 +21,11 @@ use std::sync::OnceLock;
 
 pub mod services;
 pub use services::{
-    CommandRunner, Paths, RETIRED_SERVICES, SERVICES, ServiceDef, ServiceRow, ServiceSpec,
-    SyncAction, SyncOutcome, SystemRunner, bot_service_name, bot_service_specs,
-    configured_bot_service_names, default_service_names, render_launchd_plist, render_systemd_unit,
-    resolve_specs, restart_bot_unit, services_status, services_sync, services_uninstall,
-    status_specs, sync_bots, sync_specs,
+    CommandRunner, Paths, SERVICES, ServiceDef, ServiceRow, ServiceSpec, SyncAction, SyncOutcome,
+    SystemRunner, bot_service_name, bot_service_specs, configured_bot_service_names,
+    default_service_names, render_launchd_plist, render_systemd_unit, resolve_specs,
+    restart_bot_unit, services_status, services_sync, services_uninstall, status_specs, sync_bots,
+    sync_specs,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

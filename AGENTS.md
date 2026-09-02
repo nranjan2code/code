@@ -444,7 +444,7 @@ crates/vak-eval      deterministic eval suite + live-model mode +
 crates/vak-config    layered TOML config + atomic persisted workspace
                      preferences + .env secret loading + canonical filesystem
                      paths (paths.rs: data_home, cache_home,
-                     logs_dir, migrate_legacy_home) + [finops]
+                     logs_dir) + [finops]
                      caps/pricing + [goal] policy + [route] ladder
                      preferences (docs/design/27 Phases D+H+R) +
                      [automation]/[update]/[tools] (docs/design/29)

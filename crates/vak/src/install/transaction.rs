@@ -231,10 +231,10 @@ mod tests {
     fn commit_places_every_staged_file_and_clears_scratch() {
         let (_d, root) = root();
         let a = root.bin_dir().join("vak");
-        let b = root.bin_dir().join("vak-tray");
+        let b = root.bin_dir().join("vak-delivery-worker");
         let mut tx = Transaction::begin(&root).unwrap();
         tx.stage_bytes("vak", b"new-cli", a.clone(), true).unwrap();
-        tx.stage_bytes("vak-tray", b"new-tray", b.clone(), true)
+        tx.stage_bytes("vak-delivery-worker", b"new-tray", b.clone(), true)
             .unwrap();
         tx.commit().unwrap();
 
@@ -258,16 +258,19 @@ mod tests {
         // placement would succeed.)
         let wall = root.bin_dir().join("not-a-dir");
         std::fs::write(&wall, b"regular file").unwrap();
-        let blocked = wall.join("vak-tray");
+        let blocked = wall.join("vak-delivery-worker");
 
         let mut tx = Transaction::begin(&root).unwrap();
         tx.stage_bytes("vak", b"new-cli", good.clone(), true)
             .unwrap();
-        tx.stage_bytes("vak-tray", b"new-tray", blocked, true)
+        tx.stage_bytes("vak-delivery-worker", b"new-tray", blocked, true)
             .unwrap();
         let err = tx.commit().unwrap_err();
 
-        assert!(err.contains("vak-tray"), "error names the failure: {err}");
+        assert!(
+            err.contains("vak-delivery-worker"),
+            "error names the failure: {err}"
+        );
         assert_eq!(
             std::fs::read(&good).unwrap(),
             b"old-cli",
