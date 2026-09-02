@@ -179,6 +179,40 @@ apart about what an update may do:
 at. That still proves install and update do not themselves disturb state;
 one flag makes it a true cross-version gate.
 
+## End-to-end checks
+
+Two scripts, one per supported platform, asserting the same properties.
+Both run against an isolated home and prefix — they drive destructive
+lifecycle commands on purpose and must never touch real state.
+
+```bash
+scripts/macos-check.sh --with-model <ollama-model>
+scripts/linux-check.sh --with-model <ollama-model>
+```
+
+Each asserts: install places and starts nothing; the install verifies
+against its manifest; setup refuses a missing choice and completes when
+told; CLI and HTTP report identical state for every core step, because they
+render one derivation; the wizard serves and refuses unauthenticated
+requests; the guided first task is capped ReadOnly regardless of the
+workspace posture; a real turn produces a real dispatch receipt; a bot is
+configured *without* being activated and its token never comes back; the
+integration catalog is offered as peers with no key returned; an update
+preserves everything the registry protects; and a purge leaves nothing.
+
+The Linux check reaches the host's Ollama at `host.docker.internal`, so the
+Linux path is proven to dispatch rather than merely to start.
+
+Credentials come from the environment and are never printed:
+
+| Variable | Exercises |
+|---|---|
+| `VAK_CHECK_BOT_TOKEN` | the channel path, with a real bot |
+| `VAK_CHECK_TAVILY_KEY` | the integration path, with a real key |
+
+Both steps skip when unset, so the scripts run without secrets and contain
+none.
+
 ## Testing Linux from a Mac
 
 ```bash
