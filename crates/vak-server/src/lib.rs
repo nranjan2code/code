@@ -2099,6 +2099,17 @@ pub async fn serve(core: Core, addr: std::net::SocketAddr) -> std::io::Result<()
 
 /// `force_gateway` mirrors `serve --gateway`: enable routing regardless of
 /// the (untrusted-stripped) project config.
+/// Serve an already-bound listener with an already-built router.
+///
+/// The pieces `secured_router` returns, joined. `vak setup` binds its own
+/// ephemeral loopback port so it can print the URL *before* serving, and
+/// needs the token from the same call — which `serve_with` cannot give it,
+/// because that mints and consumes the token internally. Exposed here so
+/// axum stays a dependency of this crate rather than leaking into the CLI.
+pub async fn serve_router(listener: tokio::net::TcpListener, app: Router) -> std::io::Result<()> {
+    axum::serve(listener, app).await
+}
+
 pub async fn serve_with(
     core: Core,
     addr: std::net::SocketAddr,

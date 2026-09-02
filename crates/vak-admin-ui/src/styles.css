@@ -1826,3 +1826,56 @@ a.tab-btn {
 }
 .prompt-editor:focus { outline: none; border-color: var(--border-focus); }
 .guardrail-sources { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0 0; padding: 0; list-style: none; }
+
+/* ---- Setup wizard (docs/design/46 Part IV) ------------------------------
+   One decision per line, and a step's state readable without colour alone:
+   the mark spells it out, so the page works for a reader who cannot
+   distinguish the tints. */
+.setup-steps {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.setup-step {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem 0.9rem;
+  background: var(--surface);
+}
+.setup-step[data-state="satisfied"] { border-left-color: var(--ok, #3f7d58); }
+.setup-step[data-state="incomplete"] { border-left-color: var(--warn, #b8762e); }
+.setup-step[data-state="not_applicable"] { opacity: 0.72; }
+.setup-step-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.setup-step-mark {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.setup-step p { margin: 0.25rem 0 0; }
+.setup-step-detail { font-size: 0.92rem; }
+.setup-step-problem { margin-top: 0.4rem; }
+.setup-step-repair { font-weight: 600; }
+.setup-step-problem details { margin-top: 0.4rem; }
+.setup-step-problem pre {
+  white-space: pre-wrap;
+  font-size: 0.82rem;
+  margin: 0.35rem 0 0;
+}
+.setup-wizard .row-gap { margin-top: 1.25rem; }
+
+@media (max-width: 640px) {
+  /* An operator approving their first chat is often holding the phone
+     that sent the message (doc 46 D10). */
+  .setup-step-head { flex-direction: column; gap: 0.15rem; }
+}

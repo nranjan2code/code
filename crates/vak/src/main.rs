@@ -399,18 +399,14 @@ async fn main() {
             bot_id,
         }) => run_slack(server, token, bot_id).await,
         Some(Command::Flow { action }) => run_flow(cwd, action).await,
-        Some(Command::Setup { action }) => match action {
+        Some(Command::Setup {
+            action,
+            no_browser,
+            print_url,
+        }) => match action {
             Some(cli::SetupAction::Status { json, prefix }) => setup::run_status(cwd, prefix, json),
             Some(cli::SetupAction::Seed) => setup::run_seed(),
-            // The guided flow is S2 (web) and S3 (terminal). Saying so
-            // beats a stub that pretends to configure something.
-            None => {
-                eprintln!(
-                    "the guided setup flow is not built yet; \
-                     `vak setup status` reports what is configured"
-                );
-                2
-            }
+            None => setup::run_wizard(cwd, !no_browser && !print_url, print_url).await,
         },
         Some(Command::Doctor { trust, repair }) => {
             let trusted = resolve_trust(&cwd, trust, false);

@@ -799,3 +799,36 @@ export interface FeedAlertRule {
   cooldown_minutes?: number;
   enabled?: boolean;
 }
+
+/// The derived setup projection (`GET /onboarding`). Mirrors
+/// `vak_core::onboarding` exactly: readiness is derived on every read, so
+/// this is never cached and never trusted from a stored value.
+export interface StepFailure {
+  what: string;
+  preserved: string;
+  repair: string;
+  detail?: string | null;
+}
+
+export type StepState =
+  | { state: "satisfied"; detail: string; provenance?: string | null }
+  | { state: "incomplete"; what: string; preserved: string; repair: string; detail?: string | null }
+  | { state: "not_applicable"; reason: string };
+
+export interface OnboardingState {
+  install: StepState;
+  dependencies: StepState;
+  workspace: StepState;
+  trust: StepState;
+  provider: StepState;
+  route: StepState;
+  permission: StepState;
+  sandbox: StepState;
+  capabilities: StepState;
+  integrations: StepState;
+  channels: StepState;
+  services: StepState;
+  first_result: StepState;
+  core_ready: boolean;
+  unattended_ready: boolean;
+}

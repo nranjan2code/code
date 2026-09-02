@@ -13,7 +13,7 @@ import {
   route, sessionsVersion, setAuthed, statsVersion, toasts,
 } from "./store";
 import type {
-  AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ChatSurface, ConfigInfo, CorePoolEntry, DiscoveredModelsResponse,
+  AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ChatSurface, ConfigInfo, OnboardingState, StepState, CorePoolEntry, DiscoveredModelsResponse,
   ConfigScope, FinOpsStatus, FinOpsDailyPoint, FinOpsRollupEntry, HookConfig, IntegrationStatus,
   GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval,
   PermissionMode, ProviderSummary,
@@ -5303,6 +5303,138 @@ function gatewayTab(): string {
   return GATEWAY_TABS.slice(1).find((t) => r.startsWith(t.hash))?.hash ?? "#/gateway";
 }
 
+// ---- Setup wizard (docs/design/46, Part IV) --------------------------------
+
+/// Plain-language names for the steps the projection reports.
+///
+/// The design contract (doc 46 D10) is that the *question* is in plain
+/// words and the precise vocabulary lives behind disclosure — a reader who
+/// has never heard of a permission mode or a sandbox backend must still
+/// know what a screen is asking.
+const SETUP_STEPS: { key: keyof OnboardingState; title: string; why: string }[] = [
+  { key: "install", title: "Installation", why: "The app's own files are present and unmodified." },
+  { key: "dependencies", title: "Tools on this machine", why: "Optional helpers some features use." },
+  { key: "workspace", title: "Where vak works", why: "The folder vak reads, writes, and remembers in." },
+  { key: "trust", title: "Trusting this folder", why: "Whether settings inside the folder may grant it power." },
+  { key: "provider", title: "The AI service", why: "Which company's model answers, and your key for it." },
+  { key: "route", title: "The model", why: "Which specific model runs your work." },
+  { key: "permission", title: "How much vak may do alone", why: "Read only, work with approval, or unrestricted." },
+  { key: "sandbox", title: "Containment", why: "What stops a command reaching outside the folder." },
+  { key: "capabilities", title: "Starter skills", why: "Instructions that make vak better at common jobs." },
+  { key: "integrations", title: "Connected apps", why: "Optional services vak can call, like web search." },
+  { key: "channels", title: "Chat bots", why: "Talking to vak from Telegram, Discord, or Slack." },
+  { key: "services", title: "Running in the background", why: "Whether vak keeps working when you close this." },
+  { key: "first_result", title: "Your first task", why: "One safe, read-only run so you can see a result." },
+];
+
+function SetupWizard() {
+  const [state, { refetch }] = createResource(() => api.onboarding());
+  const [activating, setActivating] = createSignal(false);
+
+  const step = (key: keyof OnboardingState) => state()?.[key] as StepState | undefined;
+
+  const activate = async () => {
+    setActivating(true);
+    try {
+      const res = await api.activateServices();
+      const failed = res.units.filter((u) => u.error);
+      if (failed.length === 0) {
+        pushToast("info", `Activated ${res.units.length} service(s)`);
+      } else {
+        pushToast("alert", `${failed.length} service(s) failed: ${failed.map((u) => u.name).join(", ")}`);
+      }
+      refetch();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setActivating(false);
+    }
+  };
+
+  return (
+    <section class="panel setup-wizard">
+      <div class="panel-title-row">
+        <div>
+          <span class="eyebrow">Setup</span>
+          <h2>{state()?.core_ready ? "You are set up" : "Let us get you running"}</h2>
+          <p class="dim">
+            {state()?.core_ready
+              ? "Everything needed to run a task is in place. Change anything below."
+              : "Each line below is one thing vak needs. Anything marked with a dot is optional."}
+          </p>
+        </div>
+        <span class={`chip ${state()?.core_ready ? "chip-ok" : "chip-warn"}`}>
+          {state()?.core_ready ? "ready" : "setup needed"}
+        </span>
+      </div>
+
+      <Show when={state()} fallback={<div class="skel skel-block" />}>
+        <ol class="setup-steps">
+          <For each={SETUP_STEPS}>
+            {(meta) => {
+              const st = () => step(meta.key);
+              return (
+                <li class="setup-step" data-state={st()?.state ?? "unknown"}>
+                  <div class="setup-step-head">
+                    <strong>{meta.title}</strong>
+                    <span class="setup-step-mark">
+                      {st()?.state === "satisfied" ? "done" : st()?.state === "not_applicable" ? "not needed" : "to do"}
+                    </span>
+                  </div>
+                  <p class="dim">{meta.why}</p>
+                  <Switch>
+                    <Match when={st()?.state === "satisfied"}>
+                      <p class="setup-step-detail">
+                        {(st() as { detail: string }).detail}
+                        <Show when={(st() as { provenance?: string | null }).provenance}>
+                          {(p) => <span class="dim"> · set in the {p()} </span>}
+                        </Show>
+                      </p>
+                    </Match>
+                    <Match when={st()?.state === "not_applicable"}>
+                      <p class="setup-step-detail dim">{(st() as { reason: string }).reason}</p>
+                    </Match>
+                    <Match when={st()?.state === "incomplete"}>
+                      {/* All four fields, always: what failed, what is
+                          still safe, the one repair, and the technical
+                          detail behind disclosure. A single "setup
+                          failed" line is what this shape prevents. */}
+                      <div class="setup-step-problem">
+                        <p>{(st() as { what: string }).what}</p>
+                        <p class="dim">{(st() as { preserved: string }).preserved}</p>
+                        <p class="setup-step-repair">{(st() as { repair: string }).repair}</p>
+                        <Show when={(st() as { detail?: string | null }).detail}>
+                          {(d) => (
+                            <details>
+                              <summary class="dim">What exactly went wrong?</summary>
+                              <pre class="mono">{d()}</pre>
+                            </details>
+                          )}
+                        </Show>
+                      </div>
+                    </Match>
+                  </Switch>
+                </li>
+              );
+            }}
+          </For>
+        </ol>
+
+        <div class="row-gap">
+          <button disabled={activating()} onClick={() => void activate()}>
+            {activating() ? "Activating…" : "Activate background services"}
+          </button>
+          <button class="ghost small" onClick={() => refetch()}>Re-check</button>
+        </div>
+        <p class="dim">
+          Nothing you configure starts running on its own. Activating is the one
+          step that registers vak with this machine's service manager.
+        </p>
+      </Show>
+    </section>
+  );
+}
+
 function GatewaySection() {
   // The transport list comes from the server, once, and every channel
   // control in this section reads it. Nothing here names a channel.
@@ -5983,6 +6115,7 @@ function navHref(hash: string): string {
 }
 
 const NAV: NavItem[] = [
+  { group: "Home", hash: "#/setup", label: "Setup", icon: ICONS.overview },
   { group: "Home", hash: "#/overview", label: "Home", icon: ICONS.overview },
   { group: "Work", hash: "#/sessions", label: "Sessions", icon: ICONS.sessions },
   { group: "Work", hash: "#/inbox", label: "Approvals", icon: ICONS.inbox, badge: () => unread().toString() || "" },
@@ -6678,6 +6811,7 @@ export default function App() {
 
   const currentRoute = () => {
     const r = route().split("?", 1)[0] || "#/overview";
+    if (r === "#/setup") return "#/setup";
     if (r.startsWith("#/sessions/")) return "transcript";
     // Operations owns a real subtree. Resolve it before the generic
     // top-level prefix matcher so nested routes never fall through to a
@@ -6749,6 +6883,7 @@ export default function App() {
           </aside>
           <main class="main">
             <Switch>
+              <Match when={currentRoute() === "#/setup"}><SetupWizard /></Match>
               <Match when={currentRoute() === "#/overview"}><Overview /></Match>
               <Match when={currentRoute() === "#/sessions"}><Sessions /></Match>
               <Match when={currentRoute() === "#/operations"}><OperationsCenter section={operationsSection()} /></Match>

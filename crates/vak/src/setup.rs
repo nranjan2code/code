@@ -212,3 +212,96 @@ pub fn run_seed() -> i32 {
     println!("{count} shared skills available");
     0
 }
+
+/// `vak setup` — start the local setup server and hand over its URL.
+///
+/// The wizard is the web admin console (doc 46 D7): it is present in every
+/// install — headless box, Linux server, macOS desktop — so it is the only
+/// surface that can carry one first-run experience everywhere. There is no
+/// second server and no second frontend; this binds the same secured
+/// router the desktop shell uses.
+///
+/// It is **not** a durable service (D9). Nothing is registered with
+/// launchd or systemd, so `vak self install` still starts nothing and
+/// nothing unattended exists until the wizard's activation step says so.
+/// The process ends when the operator ends it.
+pub async fn run_wizard(cwd: PathBuf, open_browser: bool, print_url_only: bool) -> i32 {
+    // The server runs against the invoking directory; the wizard's
+    // workspace step is what actually chooses where work happens, and
+    // durable services always resolve the canonical default independently
+    // (AGENTS.md invariant 18) regardless of where this was run.
+    let workspace = cwd;
+    if let Err(e) = std::fs::create_dir_all(&workspace) {
+        eprintln!("error: cannot create {}: {e}", workspace.display());
+        return 2;
+    }
+
+    let trusted = vak_core::trust::is_trusted(&workspace);
+    let core = match vak_core::Core::new_with_trust(workspace.clone(), trusted) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+
+    // Loopback only. A setup server binds no external interface, so the
+    // window in which an unconfigured install is reachable is this
+    // machine, and only with the token below.
+    let listener = match tokio::net::TcpListener::bind(("127.0.0.1", 0)).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("error: cannot bind a local port: {e}");
+            return 2;
+        }
+    };
+    let addr = match listener.local_addr() {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    let (app, token) = vak_server::secured_router(core);
+    // The token reaches the operator on stdout and nowhere else: not a
+    // file, not a log, not a service unit.
+    let url = format!("http://{addr}/admin?token={token}#/setup");
+
+    println!("vak setup — {}", workspace.display());
+    println!();
+    println!("  {url}");
+    println!();
+    if print_url_only {
+        println!(
+            "open that in a browser (or tunnel to it: ssh -L {0}:127.0.0.1:{0} <host>)",
+            addr.port()
+        );
+    } else if open_browser && open_in_browser(&url) {
+        println!("opened in your browser");
+    } else {
+        println!("open that URL to continue");
+    }
+    println!("press Ctrl-C when you are finished");
+
+    if let Err(e) = vak_server::serve_router(listener, app).await {
+        eprintln!("error: setup server stopped: {e}");
+        return 2;
+    }
+    0
+}
+
+/// Best-effort browser launch. A headless box has none, which is normal —
+/// the URL was already printed, so failure here costs nothing.
+fn open_in_browser(url: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(not(target_os = "macos"))]
+    let mut command = std::process::Command::new("xdg-open");
+    command
+        .arg(url)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}

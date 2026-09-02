@@ -187,6 +187,12 @@ pub(crate) enum Command {
     Setup {
         #[command(subcommand)]
         action: Option<SetupAction>,
+        /// Print the URL and wait instead of opening a browser
+        #[arg(long)]
+        no_browser: bool,
+        /// Print the URL for tunnelling to a headless host, then wait
+        #[arg(long)]
+        print_url: bool,
     },
     Doctor {
         /// Trust this workspace's project config and .env

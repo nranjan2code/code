@@ -421,7 +421,7 @@ fn capabilities_step() -> StepState {
         return StepState::Incomplete(StepFailure::new(
             "No shared skills are installed yet.",
             "Nothing was written; the agent runs without them.",
-            "Run setup to review and install the starter skills.",
+            "Install the starter skills (`vak setup seed`, or the button in setup).",
         ));
     }
     StepState::ok_from(format!("{count} shared skills"), "Shared layer")

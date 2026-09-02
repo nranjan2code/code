@@ -1,5 +1,6 @@
 import type {
   ChatSurface,
+  OnboardingState,
   AllowlistEntry,
   AllowlistRoute,
   ChannelPolicy,
@@ -627,6 +628,16 @@ export const api = {
    * connected chat to a workspace/model, and has no field for this). */
   /** The chat transports the server supports, with labels. The only
    * source of channel names in this app. */
+  /** The derived setup projection. Never cached: deleting a key or moving
+   * a workspace has to make setup incomplete again on the next read. */
+  onboarding: (): Promise<OnboardingState> =>
+    fetch("/onboarding").then((r) => handle<OnboardingState>(r)),
+
+  /** Register services with the platform service manager. The one action
+   * that activates; every configuration write is inert until it runs. */
+  activateServices: (): Promise<{ ok: boolean; units: { name: string; action: string; error?: string }[] }> =>
+    fetch("/ops/services/activate", { method: "POST" }).then((r) => handle(r)),
+
   chatSurfaces: (): Promise<ChatSurface[]> =>
     fetch("/config")
       .then((r) => handle<{ surfaces?: ChatSurface[] }>(r))
