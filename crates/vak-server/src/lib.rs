@@ -7233,16 +7233,22 @@ struct IntegrationCatalogEntry {
     documentation_url: &'static str,
 }
 
+/// The curated integrations, **alphabetically**.
+///
+/// Order is not cosmetic here. Whatever sits first reads as the default,
+/// and this list led with Tavily — which is how one connector came to look
+/// like the real one and the others like extras (doc 46 D5). They are
+/// peers: same shape, same status projection, same scoped read/write path.
 const INTEGRATION_CATALOG: &[IntegrationCatalogEntry] = &[
     IntegrationCatalogEntry {
-        id: "tavily",
-        label: "Tavily",
-        description: "Real-time web search, extraction, site maps, and crawling.",
+        id: "context7",
+        label: "Context7",
+        description: "Current library documentation and version-specific code examples.",
         command: "npx",
-        args: &["-y", "tavily-mcp@latest"],
-        env_var: Some("TAVILY_API_KEY"),
-        key_required: true,
-        documentation_url: "https://github.com/tavily-ai/tavily-mcp",
+        args: &["-y", "@upstash/context7-mcp@latest"],
+        env_var: Some("CONTEXT7_API_KEY"),
+        key_required: false,
+        documentation_url: "https://github.com/upstash/context7",
     },
     IntegrationCatalogEntry {
         id: "exa",
@@ -7255,16 +7261,6 @@ const INTEGRATION_CATALOG: &[IntegrationCatalogEntry] = &[
         documentation_url: "https://github.com/exa-labs/exa-mcp-server",
     },
     IntegrationCatalogEntry {
-        id: "context7",
-        label: "Context7",
-        description: "Current library documentation and version-specific code examples.",
-        command: "npx",
-        args: &["-y", "@upstash/context7-mcp@latest"],
-        env_var: Some("CONTEXT7_API_KEY"),
-        key_required: false,
-        documentation_url: "https://github.com/upstash/context7",
-    },
-    IntegrationCatalogEntry {
         id: "firecrawl",
         label: "Firecrawl",
         description: "Search, scrape, crawl, extract, and operate cloud browser sessions.",
@@ -7273,6 +7269,16 @@ const INTEGRATION_CATALOG: &[IntegrationCatalogEntry] = &[
         env_var: Some("FIRECRAWL_API_KEY"),
         key_required: true,
         documentation_url: "https://github.com/firecrawl/firecrawl-mcp-server",
+    },
+    IntegrationCatalogEntry {
+        id: "tavily",
+        label: "Tavily",
+        description: "Real-time web search, extraction, site maps, and crawling.",
+        command: "npx",
+        args: &["-y", "tavily-mcp@latest"],
+        env_var: Some("TAVILY_API_KEY"),
+        key_required: true,
+        documentation_url: "https://github.com/tavily-ai/tavily-mcp",
     },
 ];
 
