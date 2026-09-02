@@ -49,35 +49,10 @@ struct AdapterRegistry {
 }
 
 impl AdapterRegistry {
-    /// Legacy single-slot token for `surface`, falling back to *some*
-    /// configured multi-bot (docs/design/34) row on that surface when the
-    /// legacy env var is unset — so a deployment that only ever went
-    /// through the new "Add another bot" flow (no `TELEGRAM_BOT_TOKEN` set
-    /// directly) can still deliver outbound replies, not just receive
-    /// inbound ones. When more than one bot is configured for a surface
-    /// this necessarily picks one arbitrarily; a target naming a specific
-    /// bot never goes through this path (see `all_bot_tokens`/
-    /// `bot_adapters`) — this fallback exists only for a target with no
-    /// bot id at all. The legacy slot, when set, always wins so existing
-    /// single-bot behavior is unchanged.
-    fn resolve_surface_token(
-        sessions_home: &std::path::Path,
-        legacy_env_var: &str,
-        surface: &str,
-    ) -> Option<String> {
-        if let Some(token) = vak_config::get_var(legacy_env_var) {
-            return Some(token);
-        }
-        Self::all_bot_tokens(sessions_home, surface)
-            .into_iter()
-            .next()
-            .map(|(_, token)| token)
-    }
-
     /// Every configured bot on `surface` with a token actually set, as
-    /// (bot id, token) pairs — the multi-bot counterpart of
-    /// `resolve_surface_token`'s single arbitrary pick, used to give each
-    /// bot its own adapter instead of collapsing them into one.
+    /// (bot id, token) pairs. Each gets its own adapter: collapsing them
+    /// into one per surface is how a reply goes out under the wrong bot's
+    /// identity (AGENTS.md invariant 24).
     fn all_bot_tokens(sessions_home: &std::path::Path, surface: &str) -> Vec<(String, String)> {
         let Ok(raw) = std::fs::read_to_string(sessions_home.join("gateway").join("bots.json"))
         else {
@@ -111,43 +86,10 @@ impl AdapterRegistry {
         };
         registry.register(LogAdapter);
         registry.register(WebhookAdapter);
-        // `[gateway] approver = "telegram:<chat>"` needs a real push path,
-        // not just the reply to whichever message happens to be in flight
-        // — an approval gate can open while the approver isn't the one
-        // currently talking. Registered only when a bot token is
-        // configured so an unconfigured deployment fails with the same
-        // clear "unsupported gateway surface" error as before.
-        if let Some(bot_token) =
-            Self::resolve_surface_token(sessions_home, "TELEGRAM_BOT_TOKEN", "telegram")
-        {
-            let api_base = vak_config::get_var("TELEGRAM_API_BASE")
-                .unwrap_or_else(|| "https://api.telegram.org".into());
-            registry.register(TelegramAdapter {
-                bot_token,
-                api_base,
-            });
-        }
-        // Same rule for the Phase 3 surfaces (docs/design/34): registered
-        // only when a bot token exists, so an unconfigured deployment
-        // still fails with the clear "unsupported gateway surface" error.
-        if let Some(bot_token) =
-            Self::resolve_surface_token(sessions_home, "DISCORD_BOT_TOKEN", "discord")
-        {
-            registry.register(DiscordAdapter {
-                bot_token,
-                api_base: vak_config::get_var("DISCORD_API_BASE")
-                    .unwrap_or_else(|| "https://discord.com/api/v10".into()),
-            });
-        }
-        if let Some(bot_token) =
-            Self::resolve_surface_token(sessions_home, "SLACK_BOT_TOKEN", "slack")
-        {
-            registry.register(SlackAdapter {
-                bot_token,
-                api_base: vak_config::get_var("SLACK_API_BASE")
-                    .unwrap_or_else(|| "https://slack.com/api".into()),
-            });
-        }
+        // No per-surface chat adapter is registered. A chat credential
+        // belongs to a bot (invariant 23), so every chat surface resolves
+        // through the (surface, bot_id) map below. Log and webhook stay
+        // surface-level because neither is a bot.
         let telegram_api_base = vak_config::get_var("TELEGRAM_API_BASE")
             .unwrap_or_else(|| "https://api.telegram.org".into());
         for (id, bot_token) in Self::all_bot_tokens(sessions_home, "telegram") {
@@ -201,11 +143,13 @@ impl AdapterRegistry {
             .insert((surface.to_string(), bot_id), Arc::new(adapter));
     }
 
-    /// A delivery target is `surface:address` for a legacy/single-bot
-    /// chat, or `surface:address:bot_id` for one scoped to a specific bot
-    /// (multi-bot-per-channel) — the third segment, when present, always
-    /// wins over the legacy per-surface fallback so a reply is never sent
-    /// under the wrong bot's identity.
+    /// A delivery target is `surface:address:bot_id` for a chat surface,
+    /// or `surface:address` for `log` and `webhook`, which are not bots.
+    ///
+    /// A chat target with no bot id is refused rather than resolved: there
+    /// is no per-surface fallback any more, because picking "some bot on
+    /// this surface" replies under an identity the chat was never bound to
+    /// (AGENTS.md invariant 24).
     fn resolve(&self, target: &str) -> Result<(Arc<dyn ChannelAdapter>, String), String> {
         let mut parts = target.splitn(3, ':');
         let scheme = parts.next().filter(|s| !s.is_empty()).ok_or_else(|| {
@@ -229,6 +173,12 @@ impl AdapterRegistry {
                 .ok_or_else(|| {
                     format!("delivery target '{target}' names bot '{bot_id}', which has no token configured")
                 });
+        }
+        if vak_core::Core::is_surface(scheme) {
+            return Err(format!(
+                "delivery target '{target}' names no bot; a {scheme} target must be \
+                 '<surface>:<address>:<bot_id>'"
+            ));
         }
         self.adapters
             .get(scheme)
@@ -1019,22 +969,36 @@ mod tests {
         assert!(err.contains("no token configured"), "{err}");
     }
 
-    /// A legacy two-part target (no bot id) must still resolve through the
-    /// per-surface fallback exactly as before — single-bot deployments see
-    /// no behavior change even once other bots are registered.
+    /// A chat target with no bot id is refused, not resolved. Picking
+    /// "some bot on this surface" replies under an identity the chat was
+    /// never bound to (AGENTS.md invariant 24).
     #[test]
-    fn legacy_two_part_target_still_uses_the_surface_fallback() {
-        let legacy = telegram_adapter("legacy-token");
+    fn a_chat_target_with_no_bot_id_is_refused() {
         let registry = AdapterRegistry {
-            adapters: HashMap::from([("telegram", legacy.clone())]),
+            adapters: HashMap::new(),
             bot_adapters: HashMap::from([(
                 ("telegram".to_string(), "VakBot".to_string()),
                 telegram_adapter("vakbot-token"),
             )]),
         };
-        let (adapter, address) = registry.resolve("telegram:8846301562").unwrap();
-        assert_eq!(address, "8846301562");
-        assert!(Arc::ptr_eq(&adapter, &legacy));
+        let err = registry
+            .resolve("telegram:8846301562")
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.contains("names no bot"), "{err}");
+        assert!(err.contains("<bot_id>"), "{err}");
+    }
+
+    /// `log` and `webhook` are not bots, so they keep the two-part shape.
+    #[test]
+    fn non_chat_surfaces_still_resolve_without_a_bot_id() {
+        let mut registry = AdapterRegistry {
+            adapters: HashMap::new(),
+            bot_adapters: HashMap::new(),
+        };
+        registry.register(LogAdapter);
+        let (_, address) = registry.resolve("log:anywhere").unwrap();
+        assert_eq!(address, "anywhere");
     }
 
     #[test]

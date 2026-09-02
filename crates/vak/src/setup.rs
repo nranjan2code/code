@@ -19,6 +19,7 @@ pub fn probe(prefix: Option<PathBuf>) -> ProbedFacts {
     ProbedFacts {
         install: probe_install(prefix),
         services: probe_services(),
+        awaiting_activation: probe_awaiting_activation(),
     }
 }
 
@@ -76,18 +77,31 @@ fn probe_install(prefix: Option<PathBuf>) -> Option<Result<String, StepFailure>>
     )))
 }
 
+/// Bots configured in `bots.json` that the service manager has never been
+/// told about. Configuring a bot does not activate it (doc 46 D6), so this
+/// is a normal, deliberate state — and one the operator has to be able to
+/// see, or a created bot looks identical to a running one.
+fn probe_awaiting_activation() -> Vec<String> {
+    let data_home = vak_config::paths::data_home();
+    let paths = vak_ops::services::Paths::default();
+    vak_ops::services::configured_bot_service_names_all(&data_home)
+        .into_iter()
+        .filter(|name| !vak_ops::services::unit_is_registered(name, &paths))
+        .collect()
+}
+
 /// What the service manager says about the units this installation
 /// expects. `None` when nothing is registered — an installation that
 /// never asked for durable services is complete without them.
 fn probe_services() -> Option<Vec<(String, bool)>> {
     let cfg = vak_ops::OpsConfig::detect();
-    let probed: Vec<(String, bool)> = [vak_ops::Service::Gateway, vak_ops::Service::Telegram]
+    let probed: Vec<(String, bool)> = [vak_ops::Service::Gateway, vak_ops::Service::Bridges]
         .into_iter()
         .filter_map(|service| {
             let state = vak_ops::status(service, &cfg);
             (state != vak_ops::State::NotInstalled).then(|| {
                 (
-                    service.launchd_label().to_string(),
+                    service.label().to_string(),
                     state == vak_ops::State::Running,
                 )
             })

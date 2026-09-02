@@ -152,6 +152,7 @@ async fn telegram_bridge_routes_message_and_delivers_reply() {
     });
 
     let bridge = TelegramBridge {
+        token_env: String::new(),
         locks_dir: None,
         api_base: tg_base,
         bot_token: "bottok".into(),
@@ -267,6 +268,7 @@ async fn bridge_survives_outage_window_and_resumes_cursor() {
     });
 
     let bridge = TelegramBridge {
+        token_env: String::new(),
         locks_dir: None,
         api_base: format!("http://{addr}"),
         bot_token: "bottok".into(),

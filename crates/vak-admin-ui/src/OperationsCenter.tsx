@@ -253,8 +253,8 @@ function AutomationsView(props: { data: OperationsSnapshot }) {
   </div>;
 }
 
-function RuntimeView(props: { data: OperationsSnapshot; act: (service: "gateway" | "telegram", action: "start" | "stop" | "restart") => void; acting: string | null }) {
-  const services = [{ id: "gateway" as const, label: "Gateway", info: props.data.services.gateway }, { id: "telegram" as const, label: "Telegram bridge", info: props.data.services.telegram }];
+function RuntimeView(props: { data: OperationsSnapshot; act: (service: "gateway" | "bridges", action: "start" | "stop" | "restart") => void; acting: string | null }) {
+  const services = [{ id: "gateway" as const, label: "Gateway", info: props.data.services.gateway }, { id: "bridges" as const, label: "Chat bridges", info: props.data.services.bridges }];
   return <div class="operations-stack">
     <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Runtime</span><h2>Service manager</h2><p class="dim">Manager state and HTTP health are separate signals. Actions delegate to vak-ops.</p></div><StatusMark value={props.data.services.gateway_healthy ? "healthy" : "degraded"} /></div>
       <div class="operations-service-grid"><For each={services}>{(service) => <article class="operations-service-card"><div class="panel-title-row"><div><h3>{service.label}</h3><StatusMark value={service.info.state} /></div><span class="mono dim">port {props.data.ops_port}</span></div><div class="ops-action-row"><button class="ghost small" disabled={props.acting !== null} onClick={() => props.act(service.id, "start")}>Start</button><button class="ghost small" disabled={props.acting !== null} onClick={() => props.act(service.id, "restart")}>Restart</button><button class="ghost small" disabled={props.acting !== null} onClick={() => props.act(service.id, "stop")}>Stop</button></div><Show when={props.acting === service.id}><span class="dim">Applying manager action…</span></Show></article>}</For></div>
@@ -354,7 +354,7 @@ export function OperationsCenter(props: { section?: Section }) {
   });
   const timer = window.setInterval(() => refetch(), 8000);
   onCleanup(() => window.clearInterval(timer));
-  const act = async (service: "gateway" | "telegram", action: "start" | "stop" | "restart") => {
+  const act = async (service: "gateway" | "bridges", action: "start" | "stop" | "restart") => {
     setActing(service);
     try {
       const result = await api.opsAction(service, action);

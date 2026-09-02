@@ -707,10 +707,13 @@ pub async fn delete_feed_source(
 /// PATCH /feeds/sources/{name} — Update a source's enabled/interval/trust fields.
 ///
 /// Same DB-primary, TOML-best-effort shape as `delete_feed_source` — see
-/// its doc comment. `tags` is accepted by the request body for backward
-/// compatibility with existing callers but only applied to feeds.toml:
-/// the `feeds` table has no tags column, so it can't be reflected in
-/// what the UI displays either way.
+/// its doc comment.
+///
+/// `tags` is **refused** here. The `feeds` table has no tags column, so a
+/// tag written on update reached feeds.toml and nothing else: the DB never
+/// saw it and the UI never showed it. A PATCH that silently half-applies
+/// is worse than one that says no, so the caller is told where tags are
+/// actually set instead (AGENTS.md invariant 30).
 pub async fn update_feed_source(
     Path(name): Path<String>,
     State(state): State<AppState>,
@@ -721,12 +724,20 @@ pub async fn update_feed_source(
     let enabled = payload.get("enabled").and_then(|v| v.as_bool());
     let interval = payload.get("interval").and_then(|v| v.as_str());
     let trust = payload.get("trust").and_then(|v| v.as_str());
-    let tags = payload.get("tags").and_then(|v| v.as_array());
-
-    if enabled.is_none() && interval.is_none() && trust.is_none() && tags.is_none() {
+    if payload.get("tags").is_some() {
         return Err((
             StatusCode::BAD_REQUEST,
-            "No recognized fields to update (enabled, interval, trust, tags)".into(),
+            "tags cannot be updated here: the feeds table has no tags column, so the \
+             change would reach feeds.toml and nothing else. Set tags when creating \
+             the source."
+                .into(),
+        ));
+    }
+
+    if enabled.is_none() && interval.is_none() && trust.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "No recognized fields to update (enabled, interval, trust)".into(),
         ));
     }
 
@@ -801,24 +812,6 @@ pub async fn update_feed_source(
         {
             content = next;
             touched = true;
-        }
-        if let Some(tags) = tags {
-            let tags_str = tags
-                .iter()
-                .filter_map(|v| v.as_str())
-                .map(|t| format!("\"{}\"", escape_toml(t)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            if let Some(next) = set_field_in_block(
-                &content,
-                "sources",
-                &name,
-                "tags",
-                &format!("tags = [{}]", tags_str),
-            ) {
-                content = next;
-                touched = true;
-            }
         }
         if touched {
             let _ = write_config_atomically(&config_path, &content).await;

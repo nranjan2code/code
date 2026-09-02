@@ -281,10 +281,10 @@ export interface ConfigSnapshot {
     quality_hints: string[];
   };
   integrations: { mcp_servers: string[]; hooks: number; skills: string[] };
-  telegram: { env_var: string; configured: boolean };
-  /// Every chat bridge's credential state (docs/design/34 Phase 3).
-  /// `managed_service` is false for surfaces started by hand.
-  chat_surfaces?: ChatSurfaceStatus[];
+  /// Transports a bot can be created on. A surface is not a credential
+  /// slot (AGENTS.md invariant 23) — bot tokens live on bots, and the
+  /// admin console reports them.
+  surfaces: string[];
   paths: { project_config: string; global_config?: string | null; sessions_home: string; cwd: string };
   warnings: string[];
 }
@@ -347,7 +347,7 @@ export interface OpsServiceState {
 
 export interface OpsStatus {
   gateway: OpsServiceState;
-  telegram: OpsServiceState;
+  bridges: OpsServiceState;
   gateway_healthy: boolean;
 }
 
@@ -390,13 +390,6 @@ export interface WorkProjection {
   status: string;
   items: Record<string, { status: string; attempt: number; blocker?: string; evidence: unknown[] }>;
   criteria: Record<string, unknown>;
-}
-
-export interface ChatSurfaceStatus {
-  surface: "telegram" | "discord" | "slack";
-  env_var: string;
-  configured: boolean;
-  managed_service: boolean;
 }
 
 export interface FeedSourceType {

@@ -469,41 +469,18 @@ impl GatewayState {
             }
         };
 
-        // Bot store: authoritative once bots.json exists. The *first* time
-        // it doesn't, auto-migrate one synthesized `Bot` per surface that
-        // already has a legacy single-slot token configured — so an
-        // existing Telegram/Discord/Slack setup shows up as a real, editable
-        // bot identity immediately rather than staying invisible until an
-        // operator manually recreates it. The synthesized row points at the
-        // *same* env var the legacy slot already uses (not a new
-        // `BOT_TOKEN__*` one), so nothing about the running bridge changes.
+        // Bot store. There is no migration from a per-surface token slot:
+        // those are deleted (AGENTS.md invariants 23 and 29), and
+        // synthesizing a bot from one would be exactly the pre-baseline
+        // fold-forward the baseline forbids. A bot is created explicitly,
+        // through setup or the admin console, and owns its own token env.
         let bots_file_path = bots_path(&core.sessions_home());
         let bots: HashMap<String, Bot> = match std::fs::read_to_string(&bots_file_path) {
             Ok(raw) => serde_json::from_str::<BotsFile>(&raw)
                 .map(|file| file.bots.into_iter().map(|b| (b.id.clone(), b)).collect())
                 .unwrap_or_default(),
-            Err(_) => {
-                let migrated: HashMap<String, Bot> = ["telegram", "discord", "slack"]
-                    .iter()
-                    .filter(|s| Core::bot_token_configured(s))
-                    .filter_map(|s| {
-                        Core::bot_token_env(s).map(|env| {
-                            let bot = Bot {
-                                id: (*s).to_string(),
-                                surface: (*s).to_string(),
-                                label: format!("{s} (migrated)"),
-                                token_env: env.to_string(),
-                                ..Bot::default()
-                            };
-                            (bot.id.clone(), bot)
-                        })
-                    })
-                    .collect();
-                if !migrated.is_empty() {
-                    persist_bots_map(&bots_file_path, &migrated);
-                }
-                migrated
-            }
+            // No bots.json yet means no bots. Not an error.
+            Err(_) => HashMap::new(),
         };
 
         let state = GatewayState {

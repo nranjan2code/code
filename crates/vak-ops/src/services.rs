@@ -111,16 +111,6 @@ pub const SERVICES: &[ServiceDef] = &[
         optional: false,
         gui: false,
     },
-    ServiceDef {
-        name: "com.vak.telegram",
-        bin_file: "vak",
-        args: &["telegram", "--server"],
-        log_file: "telegram.log",
-        keep_alive: true,
-        workspace_scoped: true,
-        optional: false,
-        gui: false,
-    },
     // The desktop app is what puts the menu-bar icon on screen; without a
     // unit nothing brings it back after a logout or reboot, so the tray —
     // the surface that starts and stops everything else — was the one
@@ -196,24 +186,34 @@ fn read_bots(data_home: &Path) -> Vec<BotRecord> {
         .unwrap_or_default()
 }
 
-/// Whether the user has configured at least one bot for `surface` in
-/// `bots.json`. Used to keep the legacy bot-id-less static unit for that
-/// surface (e.g. `com.vak.telegram`) out of the sync set once real
-/// per-bot units have taken over — running both against the same token
-/// env produces two long-pollers on the same bot and 409 Conflicts on the
-/// Telegram API.
-pub fn has_configured_bots(data_home: &Path, surface: &str) -> bool {
-    read_bots(data_home)
-        .into_iter()
-        .any(|b| b.surface == surface)
-}
-
 pub fn configured_bot_service_names(data_home: &Path, surface: &str) -> Vec<String> {
     read_bots(data_home)
         .into_iter()
         .filter(|bot| bot.surface == surface && BRIDGE_SURFACES.contains(&bot.surface.as_str()))
         .map(|bot| bot_service_name(&bot.surface, &bot.id))
         .collect()
+}
+
+/// Every configured bot's unit name, across all bridge surfaces.
+///
+/// The per-surface form above answers "which telegram bridges?"; this one
+/// answers "everything that ought to be registered", which is what
+/// activation and drift detection both need.
+pub fn configured_bot_service_names_all(data_home: &Path) -> Vec<String> {
+    read_bots(data_home)
+        .into_iter()
+        .filter(|bot| BRIDGE_SURFACES.contains(&bot.surface.as_str()))
+        .map(|bot| bot_service_name(&bot.surface, &bot.id))
+        .collect()
+}
+
+/// True when the service manager has a unit file for `name`.
+///
+/// Presence of the unit file is what distinguishes "configured" from
+/// "activated": a bot can exist in `bots.json` with no unit, which is a
+/// deliberate state, not a fault.
+pub fn unit_is_registered(name: &str, paths: &Paths) -> bool {
+    unit_file_path(name, paths).is_file()
 }
 
 /// launchd/systemd labels only tolerate a narrow character set; a bot id is
@@ -378,14 +378,10 @@ pub fn restart_bot_unit(surface: &str, id: &str, runner: &dyn CommandRunner) -> 
 impl ServiceDef {
     fn resolved_args(&self, port: u16) -> Vec<String> {
         let mut args: Vec<String> = self.args.iter().map(|a| (*a).to_string()).collect();
-        match self.name {
-            "com.vak.gateway" => {
-                args.extend(["--port".into(), port.to_string()]);
-            }
-            "com.vak.telegram" => {
-                args.push(super::OpsConfig { port }.base_url());
-            }
-            _ => {}
+        // Only the gateway takes a port; per-bot bridge units carry their
+        // own `--bot-id` and base URL from `bot_service_specs`.
+        if self.name == "com.vak.gateway" {
+            args.extend(["--port".into(), port.to_string()]);
         }
         args
     }
@@ -1187,17 +1183,18 @@ mod tests {
     /// had — the GUI exception must not leak into them.
     #[test]
     fn headless_services_are_still_kept_alive() {
-        for name in ["com.vak.gateway", "com.vak.telegram"] {
-            let spec = spec_for(def_named(name), Path::new("/b"), Path::new("/l"));
-            assert!(render_launchd_plist(&spec).contains("<key>KeepAlive</key>\n\t<true/>"));
-            assert!(render_systemd_unit(&spec).contains("Restart=always"));
-            // Aqua-pinning a headless daemon would stop it loading in any
-            // session without a logged-in GUI user.
-            assert!(
-                !render_launchd_plist(&spec).contains("LimitLoadToSessionType"),
-                "{name} has no UI and must not be pinned to a GUI session"
-            );
-        }
+        // Per-bot bridge units are generated from bots.json rather than
+        // living in SERVICES, and are covered by the multi-bot tests below.
+        let name = "com.vak.gateway";
+        let spec = spec_for(def_named(name), Path::new("/b"), Path::new("/l"));
+        assert!(render_launchd_plist(&spec).contains("<key>KeepAlive</key>\n\t<true/>"));
+        assert!(render_systemd_unit(&spec).contains("Restart=always"));
+        // Aqua-pinning a headless daemon would stop it loading in any
+        // session without a logged-in GUI user.
+        assert!(
+            !render_launchd_plist(&spec).contains("LimitLoadToSessionType"),
+            "{name} has no UI and must not be pinned to a GUI session"
+        );
     }
 
     /// Headless services use the canonical default workspace regardless of
@@ -1225,12 +1222,6 @@ mod tests {
         assert_eq!(
             gateway.get(gateway.len() - 2).map(String::as_str),
             Some("--port")
-        );
-
-        let telegram = def_named("com.vak.telegram").resolved_args(9123);
-        assert_eq!(
-            telegram,
-            vec!["telegram", "--server", "http://127.0.0.1:9123",]
         );
     }
 
@@ -1696,14 +1687,29 @@ mod tests {
         );
     }
 
+    /// Configured and activated are different states, and the difference
+    /// has to be visible: a bot in `bots.json` with no unit file is one an
+    /// operator created but has not activated yet, not a fault.
     #[test]
-    fn has_configured_bots_reflects_bots_json_by_surface() {
+    fn a_configured_bot_without_a_unit_reads_as_not_registered() {
         let data = tempfile::tempdir().unwrap();
-        assert!(!has_configured_bots(data.path(), "telegram"));
+        let units = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            launch_agents_dir: units.path().to_path_buf(),
+            systemd_unit_dir: units.path().to_path_buf(),
+        };
+        assert!(configured_bot_service_names_all(data.path()).is_empty());
 
         write_bots_json(data.path(), &[("VakBot", "telegram")]);
-        assert!(has_configured_bots(data.path(), "telegram"));
-        assert!(!has_configured_bots(data.path(), "discord"));
+        let names = configured_bot_service_names_all(data.path());
+        assert_eq!(names, vec!["com.vak.telegram-VakBot"]);
+        assert!(
+            !unit_is_registered(&names[0], &paths),
+            "configured is not activated"
+        );
+
+        std::fs::write(unit_file_path(&names[0], &paths), b"unit").unwrap();
+        assert!(unit_is_registered(&names[0], &paths));
     }
 
     #[test]

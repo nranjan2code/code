@@ -37,6 +37,14 @@ pub struct TelegramBridge {
     /// self-hosted relays and tests via `TELEGRAM_API_BASE`.
     pub api_base: String,
     pub bot_token: String,
+    /// The env var this bridge's credential lives in.
+    ///
+    /// Held so the bridge can re-read it while running: a token resolved
+    /// once at startup made revocation ineffective until a restart, which
+    /// is why an API handler used to bounce this process
+    /// (`surfaces::CredentialWatch`). Empty disables the watch, for tests
+    /// that pass a literal token.
+    pub token_env: String,
     pub gateway_url: String,
     pub gateway_token: String,
     /// Directory for the per-token single-instance lock
@@ -737,7 +745,31 @@ impl TelegramBridge {
 
         let mut offset: i64 = 0;
         let mut failures: u32 = 0;
+        let watch = (!self.token_env.is_empty())
+            .then(|| super::CredentialWatch::new(&self.token_env, &self.bot_token));
         loop {
+            // Revocation and rotation are facts about `.env`, noticed here
+            // within one poll cycle, rather than something an API handler
+            // orchestrates by restarting this process.
+            if let Some(watch) = &watch {
+                match watch.check() {
+                    super::CredentialState::Unchanged => {}
+                    super::CredentialState::Rotated => {
+                        eprintln!(
+                            "[telegram] credential rotated; exiting so the service manager \
+                             restarts this bridge with the new one"
+                        );
+                        return Ok(());
+                    }
+                    super::CredentialState::Revoked => {
+                        eprintln!(
+                            "[telegram] credential revoked; this bridge is stopping and will \
+                             not poll again until a token is set"
+                        );
+                        return Ok(());
+                    }
+                }
+            }
             match self.tick(offset).await {
                 Ok(next) => {
                     offset = next;

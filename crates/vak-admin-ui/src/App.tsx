@@ -13,7 +13,7 @@ import {
   route, sessionsVersion, setAuthed, statsVersion, toasts,
 } from "./store";
 import type {
-  AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ChatSurfaceStatus, ConfigInfo, CorePoolEntry, DiscoveredModelsResponse,
+  AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ChatSurface, ConfigInfo, CorePoolEntry, DiscoveredModelsResponse,
   ConfigScope, FinOpsStatus, FinOpsDailyPoint, FinOpsRollupEntry, HookConfig, IntegrationStatus,
   GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval,
   PermissionMode, ProviderSummary,
@@ -25,7 +25,12 @@ import type {
 // a matching Core::bot_token_env entry. A routing key's surface prefix is
 // validated against this list — the bare colon check it replaced accepted
 // a pasted bot token (itself "digits:secret"-shaped) as a plausible key.
-const KNOWN_SURFACES = ["telegram", "discord", "slack"] as const;
+// No channel list lives in this file. The server owns it
+// (`vak_core::Core::SURFACES`), so adding a transport is one edit there and
+// no channel becomes the implicit default by being the one a UI hardcoded.
+const [chatSurfaces, setChatSurfaces] = createSignal<ChatSurface[]>([]);
+const surfaceIds = () => chatSurfaces().map((s) => s.id);
+const surfaceLabel = (id: string) => chatSurfaces().find((s) => s.id === id)?.label ?? id;
 
 // Theme state: initialized from localStorage and synchronized to document root dataset
 const [theme, setTheme] = createSignal<"warm" | "dark" | "contrast">(
@@ -699,7 +704,7 @@ function summarizeEvent(ev: import("./types").SystemEvent): string {
     case "ConfigChanged":
       return `${ev.data.label}: ${ev.data.detail}`;
     case "GatewayInbound":
-      return `${SURFACE_LABEL[ev.data.surface] ?? ev.data.surface} · ${ev.data.who}: ${ev.data.preview}`;
+      return `${surfaceLabel(ev.data.surface)} · ${ev.data.who}: ${ev.data.preview}`;
     case "ApprovalGranted":
     case "ApprovalDenied":
       return `${ev.data.tool} (${ev.data.id.slice(0, 8)})`;
@@ -3577,17 +3582,12 @@ const ALLOWLIST_CHIP_TONE: Record<string, string> = {
 // Per-surface badge so a mixed Telegram+Discord+Slack deployment reads at
 // a glance (docs/design/34 Phase 3). Everything else in these panels is
 // already surface-agnostic — it keys off `surface:chat` alone.
-const SURFACE_LABEL: Record<string, string> = {
-  telegram: "Telegram",
-  discord: "Discord",
-  slack: "Slack",
-};
 
 function SurfaceBadge(props: { channelKey: string }) {
   const surface = () => props.channelKey.split(":")[0] ?? "";
   return (
-    <span class="chip chip-surface" data-surface={surface()} title={`${SURFACE_LABEL[surface()] ?? surface()} chat`}>
-      {SURFACE_LABEL[surface()] ?? surface()}
+    <span class="chip chip-surface" data-surface={surface()} title={`${surfaceLabel(surface())} chat`}>
+      {surfaceLabel(surface())}
     </span>
   );
 }
@@ -4428,111 +4428,12 @@ function PendingChannelCard(props: {
   );
 }
 
-// One credential row: the token a bridge authenticates to its platform
-// with (BotFather, Discord's Developer Portal, a Slack app's Bot User
-// OAuth Token). Deliberately shares no screen real estate with a routing
-// key (`surface:chat`) — the two were adjacent in one long page, and an
-// operator pasted a token into the routing-key field.
-function CredentialRow(props: { surface: string; state: ChatSurfaceStatus | undefined; refresh: () => void }) {
-  const [editing, setEditing] = createSignal(false);
-  const [draft, setDraft] = createSignal("");
-  const [busy, setBusy] = createSignal<"save" | "remove" | null>(null);
-
-  const configured = () => props.state?.configured ?? false;
-
-  const save = async () => {
-    const token = draft().trim();
-    if (!token) return;
-    setBusy("save");
-    try {
-      const res = await api.putBotToken(props.surface, token);
-      setEditing(false);
-      setDraft("");
-      pushToast(
-        "info",
-        res.restarted
-          ? `${SURFACE_LABEL[props.surface] ?? props.surface} token saved — the bridge restarted itself`
-          : `${SURFACE_LABEL[props.surface] ?? props.surface} token saved. Start the bridge yourself from the tray, or run: vak ${props.surface} --server`,
-      );
-      props.refresh();
-    } catch (err) {
-      pushToast("alert", `${err}`);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const remove = async () => {
-    if (!window.confirm(`Remove the ${SURFACE_LABEL[props.surface] ?? props.surface} bot token? Every chat on it goes quiet until you set a new one.`)) return;
-    setBusy("remove");
-    try {
-      await api.removeBotToken(props.surface);
-      pushToast("info", `${SURFACE_LABEL[props.surface] ?? props.surface} token removed`);
-      props.refresh();
-    } catch (err) {
-      pushToast("alert", `${err}`);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  return (
-    <div class="cred-row">
-      <div class="cred-id">
-        <SurfaceBadge channelKey={`${props.surface}:`} />
-        <code class="binding-meta">{props.state?.env_var ?? "—"}</code>
-      </div>
-      <span class={`chip ${configured() ? "chip-tone-success" : ""}`}>
-        {configured() ? "signed in" : "no token yet"}
-      </span>
-      <span class="binding-meta cred-service">
-        {props.state?.managed_service ? "vak restarts the bridge when you save" : "you start the bridge yourself"}
-      </span>
-      <span class="spacer" />
-      <Show
-        when={editing()}
-        fallback={
-          <div class="row-gap">
-            <button class="ghost small" onClick={() => setEditing(true)}>
-              {configured() ? "Replace token" : "Set token"}
-            </button>
-            <Show when={configured()}>
-              <button class="danger small" disabled={busy() === "remove"} onClick={() => void remove()}>
-                {busy() === "remove" ? "Removing…" : "Remove"}
-              </button>
-            </Show>
-          </div>
-        }
-      >
-        <div class="cred-edit">
-          <input
-            type="password"
-            autocomplete="off"
-            spellcheck={false}
-            autofocus
-            placeholder={`Paste the ${SURFACE_LABEL[props.surface] ?? props.surface} bot token`}
-            value={draft()}
-            onInput={(e) => setDraft(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void save();
-              if (e.key === "Escape") setEditing(false);
-            }}
-          />
-          <button disabled={busy() === "save" || !draft().trim()} onClick={() => void save()}>
-            {busy() === "save" ? "Saving…" : "Save"}
-          </button>
-          <button class="ghost small" onClick={() => { setEditing(false); setDraft(""); }}>Cancel</button>
-        </div>
-      </Show>
-    </div>
-  );
-}
-
-/// A second (or third...) bot on a surface that already has its legacy
-/// single-token slot filled — or a surface's first bot, run as a named
-/// identity from the start rather than the anonymous per-surface slot.
-/// Each row is its own credential *and* its own policy/permission/route
-/// tier that a chat can inherit from (see `ChannelPolicy::merge` server-side).
+/// Every bot on every surface. A bot is the only credential identity there
+/// is (AGENTS.md invariant 23): the anonymous per-surface token slot that
+/// used to sit beside this list could describe just one bot per transport,
+/// so it is gone. Each row is its own credential *and* its own
+/// policy/permission/route tier a chat can inherit from (see
+/// `ChannelPolicy::merge` server-side).
 /// A bot's own defaults — workspace, model, permission mode, and tool/skill/
 /// automation policy — exactly the same controls and the same components
 /// (`WorkspacePicker`, `ChannelPermissionPicker`, `ChannelCapabilityPolicy`)
@@ -4766,14 +4667,17 @@ function BotRow(props: {
   );
 }
 
-/// Extra bots beyond each surface's single legacy slot, plus the form to
-/// add one — this is the whole "I can't add a second bot" gap: the legacy
-/// `CredentialRow` above is capped at one row per surface by construction,
-/// this list is not.
+/// Every bot, plus the form to add one. No cap per surface: a transport
+/// can carry as many independently-policed bot identities as you create.
 function ExtraBotsList(props: { ctx: GatewayCtx }) {
   const [adding, setAdding] = createSignal(false);
   const [id, setId] = createSignal("");
-  const [surface, setSurface] = createSignal<string>(KNOWN_SURFACES[0]);
+  // Defaults to whatever the server lists first, so this file still names
+  // no channel.
+  const [surface, setSurface] = createSignal<string>("");
+  createEffect(() => {
+    if (!surface() && chatSurfaces().length > 0) setSurface(chatSurfaces()[0].id);
+  });
   const [label, setLabel] = createSignal("");
   const [busy, setBusy] = createSignal(false);
 
@@ -4817,7 +4721,7 @@ function ExtraBotsList(props: { ctx: GatewayCtx }) {
       >
         <div class="cred-edit">
           <select value={surface()} onInput={(e) => setSurface(e.currentTarget.value)}>
-            <For each={KNOWN_SURFACES}>{(s) => <option value={s}>{SURFACE_LABEL[s] ?? s}</option>}</For>
+            <For each={chatSurfaces()}>{(s) => <option value={s.id}>{surfaceLabel(s.id)}</option>}</For>
           </select>
           <input
             placeholder="id, e.g. telegram-sales"
@@ -4847,12 +4751,8 @@ interface GatewayCtx {
   entries: () => AllowlistEntry[];
   pending: () => AllowlistEntry[];
   providers: () => ProviderSummary[];
-  surfaces: () => ChatSurfaceStatus[];
-  surfacesLoading: () => boolean;
-  configured: () => ChatSurfaceStatus[];
-  /// Extra bot identities beyond each surface's single legacy token slot
-  /// (multi-bot-per-channel). A surface can be run with zero of these (the
-  /// legacy slot alone) or several, each independently policed.
+  /// Every bot identity. A bot owns its credential, policy, permission
+  /// mode, and route; a surface is a transport, never a credential slot.
   bots: () => Bot[];
   botsLoading: () => boolean;
   refresh: () => void;
@@ -4927,10 +4827,10 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
   const registerManually = async () => {
     const key = manualKey().trim();
     const surface = key.split(":", 1)[0];
-    if (!key.includes(":") || !(KNOWN_SURFACES as readonly string[]).includes(surface)) {
+    if (!key.includes(":") || !surfaceIds().includes(surface)) {
       pushToast(
         "alert",
-        `That doesn't look like a chat id. Write it as app:chat-id — for example telegram:12345 — where the app is one of ${KNOWN_SURFACES.join(", ")}. Bot tokens go under Credentials, never here.`,
+        `That doesn't look like a chat id. Write it as app:chat-id — for example telegram:12345 — where the app is one of ${surfaceIds().join(", ")}. Bot tokens go under Credentials, never here.`,
       );
       return;
     }
@@ -5125,7 +5025,7 @@ A connected chat — a Telegram group, a Discord channel, a Slack conversation �
 /// track: a token either is set or is not, a chat either has knocked or
 /// has not.
 function ConnectView(props: { ctx: GatewayCtx }) {
-  const credentialDone = () => props.ctx.configured().length > 0;
+  const credentialDone = () => props.ctx.bots().some((b) => b.token_configured);
   const knockDone = () => props.ctx.pending().length > 0 || (props.ctx.status()?.bindings.length ?? 0) > 0;
   const current = () => (!credentialDone() ? 1 : !props.ctx.pending().length ? 2 : 3);
 
@@ -5157,19 +5057,6 @@ function ConnectView(props: { ctx: GatewayCtx }) {
               “Bot User OAuth Token”. It is saved to your private <code>.env</code> and never shown
               again.
             </p>
-            <Show when={!props.ctx.surfacesLoading()} fallback={<div class="cred-list"><span class="skel skel-block" /><span class="skel skel-block" /></div>}>
-              <div class="cred-list">
-                <For each={KNOWN_SURFACES}>
-                  {(surface) => (
-                    <CredentialRow
-                      surface={surface}
-                      state={props.ctx.surfaces().find((s) => s.surface === surface)}
-                      refresh={props.ctx.refresh}
-                    />
-                  )}
-                </For>
-              </div>
-            </Show>
             <ExtraBotsList ctx={props.ctx} />
           </div>
         </li>
@@ -5261,22 +5148,6 @@ function CredentialsView(props: { ctx: GatewayCtx }) {
         </div>
         <button class="ghost small" onClick={() => props.ctx.refresh()}>Refresh</button>
       </div>
-      <Show
-        when={!props.ctx.surfacesLoading()}
-        fallback={<div class="cred-list"><span class="skel skel-block" /><span class="skel skel-block" /><span class="skel skel-block" /></div>}
-      >
-        <div class="cred-list">
-          <For each={KNOWN_SURFACES}>
-            {(surface) => (
-              <CredentialRow
-                surface={surface}
-                state={props.ctx.surfaces().find((s) => s.surface === surface)}
-                refresh={props.ctx.refresh}
-              />
-            )}
-          </For>
-        </div>
-      </Show>
       <ExtraBotsList ctx={props.ctx} />
     </section>
   );
@@ -5433,16 +5304,25 @@ function gatewayTab(): string {
 }
 
 function GatewaySection() {
+  // The transport list comes from the server, once, and every channel
+  // control in this section reads it. Nothing here names a channel.
+  createResource(() =>
+    api
+      .chatSurfaces()
+      .then((surfaces) => {
+        setChatSurfaces(surfaces);
+        return surfaces;
+      })
+      .catch(() => []),
+  );
   const [status, { refetch: refetchStatus }] = createResource(() => api.gatewayStatus());
   const [allowlist, { refetch: refetchAllowlist }] = createResource(() => api.gatewayAllowlist());
   const [providers] = createResource(() => api.providers().catch(() => ({ providers: [] })));
-  const [surfaces, { refetch: refetchSurfaces }] = createResource(() => api.chatSurfaces().catch(() => []));
   const [bots, { refetch: refetchBots }] = createResource(() => api.listBots().catch(() => ({ bots: [] })));
 
   const refresh = () => {
     refetchStatus();
     refetchAllowlist();
-    refetchSurfaces();
     refetchBots();
   };
 
@@ -5453,9 +5333,6 @@ function GatewaySection() {
     entries,
     pending: createMemo(() => entries().filter((e) => e.status === "pending")),
     providers: () => providers()?.providers ?? [],
-    surfaces: () => surfaces() ?? [],
-    surfacesLoading: () => surfaces.loading,
-    configured: createMemo(() => (surfaces() ?? []).filter((s) => s.configured)),
     bots: () => bots()?.bots ?? [],
     botsLoading: () => bots.loading,
     refresh,

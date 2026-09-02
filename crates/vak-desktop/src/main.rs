@@ -24,7 +24,7 @@ const TRAY_OPERATIONS_ID: &str = "desktop.operations";
 const TRAY_WATCHDOG_ID: &str = "desktop.watchdog";
 const TRAY_QUIT_ID: &str = "desktop.quit";
 const GATEWAY: usize = 0;
-const TELEGRAM: usize = 1;
+const BRIDGES: usize = 1;
 
 struct TrayState {
     watchdog: Arc<AtomicBool>,
@@ -81,7 +81,7 @@ fn service(index: usize) -> vak_ops::Service {
     if index == GATEWAY {
         vak_ops::Service::Gateway
     } else {
-        vak_ops::Service::Telegram
+        vak_ops::Service::Bridges
     }
 }
 
@@ -89,14 +89,14 @@ fn states_now() -> [vak_ops::State; 2] {
     let config = vak_ops::OpsConfig::detect();
     [
         vak_ops::status(vak_ops::Service::Gateway, &config),
-        vak_ops::status(vak_ops::Service::Telegram, &config),
+        vak_ops::status(vak_ops::Service::Bridges, &config),
     ]
 }
 
 fn status_tooltip(states: &[vak_ops::State; 2]) -> String {
     format!(
-        "Vak — gateway {}, telegram {}",
-        states[GATEWAY], states[TELEGRAM]
+        "Vak — gateway {}, chat bridges {}",
+        states[GATEWAY], states[BRIDGES]
     )
 }
 
@@ -108,7 +108,9 @@ fn service_menu(
     let prefix = if index == GATEWAY {
         "gateway"
     } else {
-        "telegram"
+        // One label for every transport: a bridge belongs to a bot, and
+        // bots name their own surface (AGENTS.md invariant 23).
+        "bridges"
     };
     let dot = match state {
         vak_ops::State::Running => "●",
@@ -186,8 +188,8 @@ fn build_tray_menu(
     let separator = PredefinedMenuItem::separator(app)?;
     let gateway = service_menu(app, GATEWAY, states[GATEWAY])?;
     let separator_gateway = PredefinedMenuItem::separator(app)?;
-    let telegram = service_menu(app, TELEGRAM, states[TELEGRAM])?;
-    let separator_telegram = PredefinedMenuItem::separator(app)?;
+    let bridges = service_menu(app, BRIDGES, states[BRIDGES])?;
+    let separator_bridges = PredefinedMenuItem::separator(app)?;
     let watchdog = CheckMenuItem::with_id(
         app,
         TRAY_WATCHDOG_ID,
@@ -207,12 +209,12 @@ fn build_tray_menu(
     );
     items.push(&separator_gateway);
     items.extend(
-        telegram
+        bridges
             .iter()
             .map(|item| item as &dyn tauri::menu::IsMenuItem<tauri::Wry>),
     );
     items.extend([
-        &separator_telegram as &dyn tauri::menu::IsMenuItem<tauri::Wry>,
+        &separator_bridges as &dyn tauri::menu::IsMenuItem<tauri::Wry>,
         &watchdog,
         &separator_watchdog,
         &quit,
@@ -341,7 +343,7 @@ fn handle_tray_menu(app: &AppHandle, id: &str) {
         _ => {
             for (prefix, service) in [
                 ("desktop.gateway.", vak_ops::Service::Gateway),
-                ("desktop.telegram.", vak_ops::Service::Telegram),
+                ("desktop.bridges.", vak_ops::Service::Bridges),
             ] {
                 if let Some(action) = id.strip_prefix(prefix) {
                     run_service_action(app, service, action);
@@ -719,6 +721,20 @@ async fn export_text_file(path: String, contents: String) -> Result<usize, Strin
         .map_err(|e| format!("could not write {path}: {e}"))
 }
 
+/// Open the admin console at a route, from the UI.
+///
+/// Chat bots are created and credentialed there, not in desktop Settings:
+/// a credential belongs to a bot, and several bots can share a transport
+/// (AGENTS.md invariant 23), so a per-surface field here could only ever
+/// describe one of them. One place owns that, and this is how the desktop
+/// hands the operator over to it.
+#[tauri::command]
+fn open_admin(route: String) {
+    // Route is chosen by our own UI, never by remote content; the admin
+    // fragment is appended to a loopback URL built here.
+    open_admin_path(&route);
+}
+
 #[tauri::command]
 fn backend_info(state: State<'_, BackendState>) -> BackendInfo {
     let guard = state
@@ -865,6 +881,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             backend_info,
+            open_admin,
             start_backend,
             append_profile_note,
             export_text_file,

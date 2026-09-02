@@ -125,6 +125,14 @@ impl StepState {
 pub struct ProbedFacts {
     /// (service name, running) for each unit this installation expects.
     pub services: Option<Vec<(String, bool)>>,
+    /// Units that configuration calls for but the service manager has not
+    /// been told about yet — bots created without being activated.
+    ///
+    /// Reported separately from `services` because it is a different
+    /// state: not "broken", but "you configured this and have not
+    /// activated it". Before this was surfaced, a bot created in the
+    /// console looked identical to one that was live.
+    pub awaiting_activation: Vec<String>,
     /// The managed install: `Ok(detail)` when it verifies, `Err(failure)`
     /// with the *right* four fields when it does not. Typed rather than a
     /// string, because the caller knows whether this is drift (repair:
@@ -453,6 +461,14 @@ fn channels_step(core: &Core) -> StepState {
 }
 
 fn services_step(probed: &ProbedFacts) -> StepState {
+    if !probed.awaiting_activation.is_empty() {
+        let count = probed.awaiting_activation.len();
+        return StepState::Incomplete(StepFailure::new(
+            format!("{count} configured bridge(s) are not activated yet."),
+            "Their configuration and credentials are saved; nothing is running for them.",
+            "Activate services to register and start them.",
+        ));
+    }
     let Some(services) = &probed.services else {
         return StepState::NotApplicable {
             reason: "no durable services requested".into(),
@@ -580,6 +596,7 @@ mod tests {
             &core,
             &ProbedFacts {
                 services: None,
+                awaiting_activation: Vec::new(),
                 install: Some(Err(StepFailure::new(
                     "predates the baseline",
                     "project files untouched",
@@ -604,6 +621,7 @@ mod tests {
             &ProbedFacts {
                 services: Some(vec![("com.vak.gateway".into(), false)]),
                 install: None,
+                awaiting_activation: Vec::new(),
             },
         );
         let failure = down.services.failure().expect("a down service is a defect");
@@ -627,6 +645,26 @@ mod tests {
                 "expected {detail:?} to lead with the configured provider {configured:?}"
             );
         }
+    }
+
+    /// Configured-but-not-activated is its own state, and it has to be
+    /// visible: a bot created in the console must not look identical to
+    /// one that is actually running.
+    #[test]
+    fn a_bot_awaiting_activation_is_reported_as_such() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core_in(dir.path());
+        let state = derive(
+            &core,
+            &ProbedFacts {
+                services: None,
+                install: None,
+                awaiting_activation: vec!["com.vak.discord-ops".into()],
+            },
+        );
+        let failure = state.services.failure().expect("activation is owed");
+        assert!(failure.what.contains("not activated"));
+        assert!(failure.repair.contains("Activate"));
     }
 
     #[test]

@@ -276,6 +276,18 @@ impl CompactOutcome {
     }
 }
 
+/// A chat transport vak can bridge. Carries its own label so no surface
+/// has to maintain a parallel id-to-name map that can drift.
+///
+/// Distinct from [`Surface`], which names *which client* is driving a turn
+/// (CLI, desktop, a chat) — this names one of the chat transports a bot
+/// can live on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct ChatSurface {
+    pub id: &'static str,
+    pub label: &'static str,
+}
+
 impl Core {
     /// Today's estimated spend (local midnight window), USD 0.0 when the
     /// ledger is absent or unpriced rows dominate — absent is zero here
@@ -2759,48 +2771,54 @@ impl Core {
             .or_else(|| std::env::var(env_var).ok())
     }
 
-    /// The env var that authenticates the Telegram bridge. Not a "provider"
-    /// in the LLM sense, but stored the same way: the shared user `.env`
-    /// that every surface and service loads.
-    pub const TELEGRAM_TOKEN_ENV: &'static str = "TELEGRAM_BOT_TOKEN";
+    /// The chat transports a bot can be created on.
+    ///
+    /// A surface is a **transport, not a credential slot** (AGENTS.md
+    /// invariant 23): several bots can share one, each with its own token,
+    /// policy, permission mode, and route. The fixed per-surface env vars
+    /// this replaces (`TELEGRAM_BOT_TOKEN` and friends) could only ever
+    /// describe one bot per transport, which is why they are gone.
+    ///
+    /// **Alphabetical, and this is the only list.** Every surface — API,
+    /// admin console, desktop — renders from here rather than carrying its
+    /// own copy, so adding a transport is one edit and no channel can
+    /// quietly become the default by being first or by being the one a UI
+    /// happens to hardcode.
+    pub const SURFACES: &'static [ChatSurface] = &[
+        ChatSurface {
+            id: "discord",
+            label: "Discord",
+        },
+        ChatSurface {
+            id: "slack",
+            label: "Slack",
+        },
+        ChatSurface {
+            id: "telegram",
+            label: "Telegram",
+        },
+    ];
 
-    /// True when a Telegram bridge launched right now would find a token.
-    pub fn telegram_configured(&self) -> bool {
-        vak_config::get_var(Self::TELEGRAM_TOKEN_ENV).is_some()
+    /// True when `surface` names a transport vak can bridge.
+    pub fn is_surface(surface: &str) -> bool {
+        Self::SURFACES.iter().any(|s| s.id == surface)
     }
 
-    /// Persists the Telegram bot token into the Shared `~/vak-home/.env`
-    /// (0600, shared by every surface) and registers it as a runtime
-    /// override so it's visible immediately. The launchd/systemd unit for
-    /// the bridge still reads `.env` itself on (re)start — this only makes
-    /// `telegram_configured()` and any in-process check correct right away.
-    /// The token itself never re-enters any response.
-    pub fn set_telegram_token(&self, token: &str) -> Result<String, CoreError> {
-        self.set_bot_token(Self::TELEGRAM_TOKEN_ENV, token)
+    /// The human label for a surface id, falling back to the id itself so
+    /// an unknown value renders as data rather than as an empty cell.
+    pub fn surface_label(id: &str) -> &str {
+        Self::SURFACES
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.label)
+            .unwrap_or(id)
     }
 
-    /// The env var that authenticates each chat bridge, by surface name
-    /// (docs/design/34 Phase 3). All three are stored identically: the
-    /// shared user `.env`, owner-only. `None` for an unknown surface, so a
-    /// typo'd path segment is a 400 rather than a new env var nothing
-    /// reads.
-    pub fn bot_token_env(surface: &str) -> Option<&'static str> {
-        match surface {
-            "telegram" => Some(Self::TELEGRAM_TOKEN_ENV),
-            "discord" => Some("DISCORD_BOT_TOKEN"),
-            "slack" => Some("SLACK_BOT_TOKEN"),
-            _ => None,
-        }
-    }
-
-    /// True when a bridge for `surface` launched right now would find a
-    /// token.
-    pub fn bot_token_configured(surface: &str) -> bool {
-        Self::bot_token_env(surface).is_some_and(|env| vak_config::get_var(env).is_some())
-    }
-
-    /// Generic form of [`Core::set_telegram_token`], shared by every chat
-    /// surface so one storage convention covers all of them.
+    /// Persist a bot's token into the Shared `~/vak-home/.env` (0600) and
+    /// register a runtime override so an in-process check is correct right
+    /// away. `env` is the bot's own `token_env` (`BOT_TOKEN__<ID>`); the
+    /// bridge unit re-reads `.env` itself on restart. The token never
+    /// re-enters any response.
     pub fn set_bot_token(&self, env: &str, token: &str) -> Result<String, CoreError> {
         let token = token.trim();
         if token.is_empty() {
@@ -2813,15 +2831,9 @@ impl Core {
         Ok(env.to_string())
     }
 
-    /// Revoke the stored Telegram bot token: strip it from the user `.env`
-    /// and drop the runtime override. A token exported in the real
-    /// environment cannot be unset from here — the caller is told so it can
-    /// say as much.
-    pub fn remove_telegram_token(&self) -> Result<RemovedKey, CoreError> {
-        self.remove_bot_token(Self::TELEGRAM_TOKEN_ENV)
-    }
-
-    /// Generic form of [`Core::remove_telegram_token`].
+    /// Revoke a bot's stored token: strip it from the user `.env` and drop
+    /// the runtime override. A token exported in the real environment
+    /// cannot be unset from here — the caller is told so it can say as much.
     pub fn remove_bot_token(&self, env: &str) -> Result<RemovedKey, CoreError> {
         let path = self.user_env_file();
         vak_config::remove_env_file_key(&path, env)

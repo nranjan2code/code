@@ -23,36 +23,81 @@ pub mod services;
 pub use services::{
     CommandRunner, Paths, SERVICES, ServiceDef, ServiceRow, ServiceSpec, SyncAction, SyncOutcome,
     SystemRunner, bot_service_name, bot_service_specs, configured_bot_service_names,
-    default_service_names, render_launchd_plist, render_systemd_unit, resolve_specs,
-    restart_bot_unit, services_status, services_sync, services_uninstall, status_specs, sync_bots,
-    sync_specs,
+    configured_bot_service_names_all, default_service_names, render_launchd_plist,
+    render_systemd_unit, resolve_specs, restart_bot_unit, services_status, services_sync,
+    services_uninstall, status_specs, sync_bots, sync_specs,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Service {
     Gateway,
-    Telegram,
+    /// Every chat bridge, across every transport.
+    ///
+    /// Deliberately not one variant per surface. A bridge unit belongs to
+    /// a *bot* (AGENTS.md invariant 23) and a bot names its own transport,
+    /// so the set of bridges is data in `bots.json`, not a shape in this
+    /// enum. The variant this replaces was `Telegram` — one transport with
+    /// a named service while Discord and Slack had none, which made
+    /// Telegram read as the real one and the others as extras. They are
+    /// peers; per-transport detail comes from the bot list.
+    Bridges,
 }
 
 impl Service {
     pub fn label(self) -> &'static str {
         match self {
             Service::Gateway => "Gateway",
-            Service::Telegram => "Telegram bridge",
+            Service::Bridges => "Chat bridges",
         }
     }
 
-    pub fn launchd_label(self) -> &'static str {
+    /// The single unit this service is, where it is one.
+    ///
+    /// `Telegram` is **not** a unit: a bot owns its own bridge unit
+    /// (`com.vak.telegram-<id>`), and the bot-id-less `com.vak.telegram`
+    /// that used to sit here could only ever describe one bot per
+    /// transport (AGENTS.md invariant 23). `Telegram` is an aggregate view
+    /// over whatever per-bot units are configured, so it resolves to a
+    /// list rather than a name — see [`Service::unit_labels`].
+    pub fn launchd_label(self) -> Option<&'static str> {
         match self {
-            Service::Gateway => "com.vak.gateway",
-            Service::Telegram => "com.vak.telegram",
+            Service::Gateway => Some("com.vak.gateway"),
+            Service::Bridges => None,
         }
     }
 
-    pub fn systemd_unit(self) -> &'static str {
+    pub fn systemd_unit(self) -> Option<&'static str> {
         match self {
-            Service::Gateway => "vak-gateway.service",
-            Service::Telegram => "vak-telegram.service",
+            Service::Gateway => Some("vak-gateway.service"),
+            Service::Bridges => None,
+        }
+    }
+
+    /// Every unit this service covers right now. One for the gateway; one
+    /// per configured bot for `Telegram`, which is why this is resolved
+    /// from `bots.json` on each call rather than being a constant.
+    pub fn unit_labels(self) -> Vec<String> {
+        match self {
+            Service::Gateway => self
+                .launchd_label()
+                .map(|l| vec![l.to_string()])
+                .unwrap_or_default(),
+            Service::Bridges => configured_bot_service_names_all(&vak_config::paths::data_home()),
+        }
+    }
+
+    /// Systemd counterpart of [`Service::unit_labels`].
+    pub fn systemd_units(self) -> Vec<String> {
+        match self {
+            Service::Gateway => self
+                .systemd_unit()
+                .map(|u| vec![u.to_string()])
+                .unwrap_or_default(),
+            Service::Bridges => self
+                .unit_labels()
+                .into_iter()
+                .map(|name| format!("{name}.service"))
+                .collect(),
         }
     }
 }
@@ -124,21 +169,29 @@ pub(crate) fn home() -> PathBuf {
 pub fn install(service: Service, cfg: &OpsConfig) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let plist = home()
-            .join("Library/LaunchAgents")
-            .join(format!("{}.plist", service.launchd_label()));
-        if !plist.is_file() {
+        let labels = service.unit_labels();
+        if labels.is_empty() {
             return Err(format!(
-                "no plist at {} — run scripts/install_gateway_service.sh once",
-                plist.display()
+                "{} has no units configured — create a bot, then run `vak self services-sync`",
+                service.label()
             ));
         }
-        if !run(Command::new("launchctl").args([
-            "bootstrap",
-            &format!("gui/{}", uid()),
-            &plist.display().to_string(),
-        ])) {
+        for label in &labels {
+            let plist = home()
+                .join("Library/LaunchAgents")
+                .join(format!("{label}.plist"));
+            if !plist.is_file() {
+                return Err(format!(
+                    "no plist at {} — run `vak self services-sync`",
+                    plist.display()
+                ));
+            }
             // Already bootstrapped is fine.
+            run(Command::new("launchctl").args([
+                "bootstrap",
+                &format!("gui/{}", uid()),
+                &plist.display().to_string(),
+            ]));
         }
         start(service, cfg);
         Ok(())
@@ -165,14 +218,23 @@ pub fn uninstall(service: Service, cfg: &OpsConfig) -> Result<(), String> {
     stop(service, cfg);
     #[cfg(target_os = "macos")]
     {
-        let plist = home()
-            .join("Library/LaunchAgents")
-            .join(format!("{}.plist", service.launchd_label()));
-        std::fs::remove_file(&plist).map_err(|e| format!("remove plist: {e}"))?;
+        for label in service.unit_labels() {
+            let plist = home()
+                .join("Library/LaunchAgents")
+                .join(format!("{label}.plist"));
+            // A unit that is already gone is the desired end state.
+            match std::fs::remove_file(&plist) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("remove plist: {e}")),
+            }
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {
-        run(Command::new("systemctl").args(["--user", "disable", service.systemd_unit()]));
+        for unit in service.systemd_units() {
+            run(Command::new("systemctl").args(["--user", "disable", &unit]));
+        }
     }
     Ok(())
 }
@@ -193,16 +255,12 @@ pub fn status(service: Service, cfg: &OpsConfig) -> State {
 fn manager_state(service: Service) -> State {
     #[cfg(target_os = "macos")]
     {
-        let labels = if service == Service::Telegram {
-            let names = configured_bot_service_names(&vak_config::paths::data_home(), "telegram");
-            if names.is_empty() {
-                vec![service.launchd_label().to_string()]
-            } else {
-                names
-            }
-        } else {
-            vec![service.launchd_label().to_string()]
-        };
+        let labels = service.unit_labels();
+        if labels.is_empty() {
+            // No units configured is "nothing installed", not "stopped":
+            // a transport with no bots has nothing that could be running.
+            return State::NotInstalled;
+        }
         let states: Vec<State> = labels.iter().map(|label| launchd_state(label)).collect();
         if states.iter().all(|state| *state == State::Running) {
             State::Running
@@ -214,11 +272,17 @@ fn manager_state(service: Service) -> State {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let active = Command::new("systemctl")
-            .args(["--user", "is-active", "--quiet", service.systemd_unit()])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        let units = service.systemd_units();
+        if units.is_empty() {
+            return State::NotInstalled;
+        }
+        let active = units.iter().all(|unit| {
+            Command::new("systemctl")
+                .args(["--user", "is-active", "--quiet", unit])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        });
         if active {
             State::Running
         } else {
@@ -302,29 +366,42 @@ pub fn health_ok(cfg: &OpsConfig) -> bool {
 pub fn start(service: Service, _cfg: &OpsConfig) -> bool {
     #[cfg(target_os = "macos")]
     {
-        run(Command::new("launchctl").args([
-            "kickstart",
-            "-k",
-            &format!("gui/{}/{}", uid(), service.launchd_label()),
-        ]))
+        let labels = service.unit_labels();
+        !labels.is_empty()
+            && labels.into_iter().all(|label| {
+                run(Command::new("launchctl").args([
+                    "kickstart",
+                    "-k",
+                    &format!("gui/{}/{label}", uid()),
+                ]))
+            })
     }
     #[cfg(not(target_os = "macos"))]
     {
-        run(Command::new("systemctl").args(["--user", "start", service.systemd_unit()]))
+        let units = service.systemd_units();
+        !units.is_empty()
+            && units
+                .into_iter()
+                .all(|unit| run(Command::new("systemctl").args(["--user", "start", &unit])))
     }
 }
 
 pub fn stop(service: Service, _cfg: &OpsConfig) -> bool {
     #[cfg(target_os = "macos")]
     {
-        run(Command::new("launchctl").args([
-            "bootout",
-            &format!("gui/{}/{}", uid(), service.launchd_label()),
-        ]))
+        let labels = service.unit_labels();
+        !labels.is_empty()
+            && labels.into_iter().all(|label| {
+                run(Command::new("launchctl").args(["bootout", &format!("gui/{}/{label}", uid())]))
+            })
     }
     #[cfg(not(target_os = "macos"))]
     {
-        run(Command::new("systemctl").args(["--user", "stop", service.systemd_unit()]))
+        let units = service.systemd_units();
+        !units.is_empty()
+            && units
+                .into_iter()
+                .all(|unit| run(Command::new("systemctl").args(["--user", "stop", &unit])))
     }
 }
 
@@ -341,7 +418,7 @@ pub fn open_log(service: Service) {
         // Console.app-visible. Overridden homes keep self-contained logs.
         let log = vak_config::paths::logs_dir().join(match service {
             Service::Gateway => "gateway.log",
-            Service::Telegram => "telegram.log",
+            Service::Bridges => "bridges.log",
         });
         if let Some(parent) = log.parent() {
             std::fs::create_dir_all(parent).ok();
@@ -355,7 +432,7 @@ pub fn open_log(service: Service) {
     {
         let unit = match service {
             Service::Gateway => "vak-gateway",
-            Service::Telegram => "vak-telegram",
+            Service::Bridges => "vak-bridges",
         };
         run(Command::new("sh").arg("-c").arg(format!(
             "journalctl --user -u {unit} -n 200 --no-pager 2>/dev/null || true"

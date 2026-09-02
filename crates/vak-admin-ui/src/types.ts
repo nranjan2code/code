@@ -56,28 +56,27 @@ export interface HealthInfo {
   warnings: string[];
 }
 
-/// Credential state for one chat bridge, as `/config` reports it
-/// (`chat_surface_status` in vak-server). `configured` is the only thing
-/// the server will say about a bot token — the value itself never comes
-/// back over the wire.
-export interface ChatSurfaceStatus {
-  surface: string;
-  env_var: string;
-  configured: boolean;
-  /// Telegram alone has a managed service unit; the others are started by
-  /// hand, and the console must not promise otherwise.
-  managed_service: boolean;
-}
 
 /// One bot identity (multi-bot-per-channel). Independent of chat bindings —
 /// several chats can share a bot, and a chat's `bot_id` names one of these.
 /// The token itself is never part of this shape; it's set/cleared via
-/// `PUT/DELETE /gateway/bots/:id/token`, mirroring `ChatSurfaceStatus`.
+/// `PUT/DELETE /gateway/bots/:id/token`.
+/// A chat transport, as the server defines it. The UI keeps no list of
+/// its own: adding a transport is a server-side edit, and no channel can
+/// become the implicit default by being the one a UI hardcoded.
+export interface ChatSurface {
+  id: string;
+  label: string;
+}
+
 export interface Bot {
   id: string;
   surface: string;
   label: string;
   token_env: string;
+  /// Whether a token is actually set for this bot. The token itself is
+  /// never returned once stored.
+  token_configured: boolean;
   policy: ChannelPolicy;
   permission_mode: PermissionMode | null;
   route: AllowlistRoute | null;
@@ -355,7 +354,7 @@ export interface FinOpsStatus {
 
 export interface OpsStatus {
   gateway: { state: string };
-  telegram: { state: string };
+  bridges: { state: string };
   gateway_healthy: boolean;
 }
 

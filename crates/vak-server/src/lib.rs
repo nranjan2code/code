@@ -54,6 +54,7 @@ mod heartbeat;
 mod operations;
 mod projection;
 mod rate_limit;
+mod service_control;
 pub mod surfaces;
 
 use std::collections::HashMap;
@@ -558,16 +559,6 @@ fn router_with_state(state: AppState) -> Router {
             "/config/key",
             put(put_provider_key).delete(delete_provider_key),
         )
-        .route(
-            "/config/telegram-token",
-            put(put_telegram_token).delete(delete_telegram_token),
-        )
-        // Per-surface form of the same thing (docs/design/34 Phase 3);
-        // the telegram-specific route above stays for compatibility.
-        .route(
-            "/config/bot-token/{surface}",
-            put(put_bot_token).delete(delete_bot_token),
-        )
         // Multi-bot-per-surface (docs/design/34, multi-bot): a `Bot` is an
         // independent identity, so it gets its own id-addressed routes
         // rather than reusing the one-slot-per-surface ones above.
@@ -595,6 +586,9 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/ops/{service}/{action}", post(ops_action))
         .route("/ops/diagnostics", get(ops_diagnostics))
+        // Activation, explicitly (docs/design/46 D6). Configuration writes
+        // never register a service; this is the one action that does.
+        .route("/ops/services/activate", post(activate_services))
         .route("/finops", get(finops_status).patch(patch_finops))
         .route("/voice/speak", post(voice_speak))
         .route("/memory", get(list_memory).post(append_memory))
@@ -627,7 +621,7 @@ fn ops_payload(cfg: &vak_ops::OpsConfig) -> serde_json::Value {
     let st = |svc| vak_ops::status(svc, cfg);
     serde_json::json!({
         "gateway": { "state": st(vak_ops::Service::Gateway).to_string() },
-        "telegram": { "state": st(vak_ops::Service::Telegram).to_string() },
+        "bridges": { "state": st(vak_ops::Service::Bridges).to_string() },
         "gateway_healthy": vak_ops::health_ok(cfg),
     })
 }
@@ -706,10 +700,10 @@ async fn ops_diagnostics(State(state): State<AppState>) -> Json<serde_json::Valu
 
 fn operation_services(cfg: &vak_ops::OpsConfig) -> serde_json::Value {
     let gateway = vak_ops::status(vak_ops::Service::Gateway, cfg);
-    let telegram = vak_ops::status(vak_ops::Service::Telegram, cfg);
+    let bridges = vak_ops::status(vak_ops::Service::Bridges, cfg);
     serde_json::json!({
         "gateway": { "state": gateway.to_string() },
-        "telegram": { "state": telegram.to_string() },
+        "bridges": { "state": bridges.to_string() },
         "gateway_healthy": vak_ops::health_ok(cfg),
     })
 }
@@ -1415,6 +1409,36 @@ struct OpsActionQuery {
     port: Option<u16>,
 }
 
+/// `POST /ops/services/activate` — reconcile the service manager with
+/// configuration.
+///
+/// Creating a bot, renaming it, or storing its token writes `bots.json`
+/// and stops there; this is the deliberate act that turns those records
+/// into running bridges. Same contract as `vak self services-sync`, and
+/// the same one `vak setup` runs at its activation step: install and
+/// configuration place things, activation starts them
+/// (`docs/design/46-stabilization-install-and-onboarding.md` D6).
+async fn activate_services(State(state): State<AppState>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match service_control::reconcile(&state.core, state.ops_port).await {
+        Ok(outcomes) => {
+            state.hub.emit_config_changed("services_activated", "");
+            let failed: Vec<&service_control::UnitOutcome> =
+                outcomes.iter().filter(|o| o.error.is_some()).collect();
+            Json(serde_json::json!({
+                "ok": failed.is_empty(),
+                "units": outcomes,
+            }))
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
 async fn ops_action(
     State(state): State<AppState>,
     Path((service, action)): Path<(String, String)>,
@@ -1423,7 +1447,7 @@ async fn ops_action(
     use axum::response::IntoResponse;
     let svc = match service.as_str() {
         "gateway" => Some(vak_ops::Service::Gateway),
-        "telegram" => Some(vak_ops::Service::Telegram),
+        "bridges" => Some(vak_ops::Service::Bridges),
         _ => None,
     };
     let Some(svc) = svc else {
@@ -1438,11 +1462,21 @@ async fn ops_action(
     if let Some(port) = q.port {
         cfg.port = port;
     }
-    let before = vak_ops::status(svc, &cfg).to_string();
+    // Every service-manager call goes through service_control, which runs
+    // it on a blocking worker: launchctl and systemctl are subprocesses,
+    // and `launchctl bootstrap` can block indefinitely. Calling them from
+    // this async handler stalled a tokio worker for as long as the manager
+    // took to answer (AGENTS.md invariant 26).
+    let before = service_control::status(svc, cfg.clone())
+        .await
+        .map(|s| s.to_string())
+        .unwrap_or_else(|e| e);
     let requested_at = Utc::now();
     let (result, succeeded) = match action.as_str() {
         "start" => {
-            let ok = vak_ops::start(svc, &cfg);
+            let ok = service_control::act(svc, service_control::Action::Start, cfg.clone())
+                .await
+                .unwrap_or(false);
             (
                 if ok {
                     serde_json::json!({ "ok": true, "action": "start" })
@@ -1457,7 +1491,9 @@ async fn ops_action(
             )
         }
         "stop" => {
-            let ok = vak_ops::stop(svc, &cfg);
+            let ok = service_control::act(svc, service_control::Action::Stop, cfg.clone())
+                .await
+                .unwrap_or(false);
             (
                 if ok {
                     serde_json::json!({ "ok": true, "action": "stop" })
@@ -1472,7 +1508,9 @@ async fn ops_action(
             )
         }
         "restart" => {
-            let ok = vak_ops::restart(svc, &cfg);
+            let ok = service_control::act(svc, service_control::Action::Restart, cfg.clone())
+                .await
+                .unwrap_or(false);
             (
                 if ok {
                     serde_json::json!({ "ok": true, "action": "restart" })
@@ -1505,7 +1543,10 @@ async fn ops_action(
                 .into_response();
         }
     };
-    let after = vak_ops::status(svc, &cfg).to_string();
+    let after = service_control::status(svc, cfg.clone())
+        .await
+        .map(|s| s.to_string())
+        .unwrap_or_else(|e| e);
     let desired_reached = match action.as_str() {
         "start" | "restart" | "install" => after == "running",
         "stop" => matches!(after.as_str(), "stopped" | "not installed"),
@@ -4071,16 +4112,12 @@ async fn onboarding_state(State(state): State<AppState>) -> axum::response::Resp
     // worker rather than inside an async handler (invariant 26).
     let services = tokio::task::spawn_blocking(|| {
         let cfg = vak_ops::OpsConfig::detect();
-        let probed: Vec<(String, bool)> = [vak_ops::Service::Gateway, vak_ops::Service::Telegram]
+        let probed: Vec<(String, bool)> = [vak_ops::Service::Gateway, vak_ops::Service::Bridges]
             .into_iter()
             .filter_map(|service| {
                 let st = vak_ops::status(service, &cfg);
-                (st != vak_ops::State::NotInstalled).then(|| {
-                    (
-                        service.launchd_label().to_string(),
-                        st == vak_ops::State::Running,
-                    )
-                })
+                (st != vak_ops::State::NotInstalled)
+                    .then(|| (service.label().to_string(), st == vak_ops::State::Running))
             })
             .collect();
         (!probed.is_empty()).then_some(probed)
@@ -4088,11 +4125,16 @@ async fn onboarding_state(State(state): State<AppState>) -> axum::response::Resp
     .await
     .unwrap_or(None);
 
+    let awaiting_activation = service_control::activation_drift(&state.core)
+        .await
+        .map(|drift| drift.awaiting_activation)
+        .unwrap_or_default();
     let projection = vak_core::onboarding::derive(
         &state.core,
         &vak_core::onboarding::ProbedFacts {
             services,
             install: None,
+            awaiting_activation,
         },
     );
     Json(projection).into_response()
@@ -5411,202 +5453,7 @@ struct TelegramTokenBody {
     token: String,
 }
 
-/// Persists the Telegram bot token to the same Shared `~/vak-home/.env` the
-/// provider keys use, then kicks the bridge service so the new token takes
-/// effect right away — it self-sources `.env` at launch, it doesn't
-/// inherit this process's environment or the runtime override. The token
-/// is accepted once and never echoed back.
-async fn put_telegram_token(
-    State(state): State<AppState>,
-    Json(body): Json<TelegramTokenBody>,
-) -> axum::response::Response {
-    match state.core.set_telegram_token(&body.token) {
-        Ok(env_var) => {
-            vak_core::security_events::record(
-                &state.core.sessions_home(),
-                vak_core::security_events::EventKind::ProviderKeyChange,
-                "telegram_token_set",
-                "telegram",
-                None,
-            );
-            state
-                .hub
-                .emit_config_changed("telegram_token_set", "telegram");
-            // Best-effort: kickstart -k (macOS) / systemctl restart (linux)
-            // reads the fresh .env on the way back up. If the bridge isn't
-            // installed as a service yet, this is a harmless no-op — the
-            // caller still gets `restarted: false` to reflect that.
-            let mut cfg = vak_ops::OpsConfig::detect();
-            cfg.port = state.ops_port;
-            let restarted = vak_ops::restart(vak_ops::Service::Telegram, &cfg);
-            Json(serde_json::json!({
-                "env_var": env_var,
-                "configured": true,
-                "restarted": restarted,
-            }))
-            .into_response()
-        }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-/// Revoke the stored Telegram bot token. Reports when the variable is
-/// still set in the real environment, since that keeps the bridge
-/// authenticated and no app-level action can change it.
-async fn delete_telegram_token(State(state): State<AppState>) -> axum::response::Response {
-    match state.core.remove_telegram_token() {
-        Ok(removed) => {
-            vak_core::security_events::record(
-                &state.core.sessions_home(),
-                vak_core::security_events::EventKind::ProviderKeyChange,
-                "telegram_token_removed",
-                &format!("shadowed={}", removed.shadowed_by_env),
-                None,
-            );
-            state
-                .hub
-                .emit_config_changed("telegram_token_removed", "telegram");
-            // Same best-effort kick as on save, so a removed token doesn't
-            // keep serving off a stale in-memory credential.
-            let mut cfg = vak_ops::OpsConfig::detect();
-            cfg.port = state.ops_port;
-            let restarted = vak_ops::restart(vak_ops::Service::Telegram, &cfg);
-            Json(serde_json::json!({
-                "env_var": removed.env_var,
-                "configured": removed.shadowed_by_env,
-                "shadowed_by_env": removed.shadowed_by_env,
-                "restarted": restarted,
-            }))
-            .into_response()
-        }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-/// Per-surface bot token, stored exactly like the Telegram one: Shared-level
-/// `.env`, owner-only, accepted once and never echoed back
-/// (docs/design/34 Phase 3 "a bot-token field per surface").
-///
-/// Only Telegram has a managed service unit today, so `restarted` is true
-/// only for that surface; Discord/Slack bridges are started by hand
-/// (`vak discord --server ...`) and the caller says so.
-async fn put_bot_token(
-    State(state): State<AppState>,
-    axum::extract::Path(surface): axum::extract::Path<String>,
-    Json(body): Json<TelegramTokenBody>,
-) -> axum::response::Response {
-    let Some(env) = vak_core::Core::bot_token_env(&surface) else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": format!("unknown chat surface '{surface}'") })),
-        )
-            .into_response();
-    };
-    match state.core.set_bot_token(env, &body.token) {
-        Ok(env_var) => {
-            vak_core::security_events::record(
-                &state.core.sessions_home(),
-                vak_core::security_events::EventKind::ProviderKeyChange,
-                "bot_token_set",
-                &surface,
-                None,
-            );
-            state.hub.emit_config_changed("bot_token_set", &surface);
-            let mut cfg = vak_ops::OpsConfig::detect();
-            cfg.port = state.ops_port;
-            let restarted =
-                surface == "telegram" && vak_ops::restart(vak_ops::Service::Telegram, &cfg);
-            Json(serde_json::json!({
-                "surface": surface,
-                "env_var": env_var,
-                "configured": true,
-                "restarted": restarted,
-            }))
-            .into_response()
-        }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-async fn delete_bot_token(
-    State(state): State<AppState>,
-    axum::extract::Path(surface): axum::extract::Path<String>,
-) -> axum::response::Response {
-    let Some(env) = vak_core::Core::bot_token_env(&surface) else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": format!("unknown chat surface '{surface}'") })),
-        )
-            .into_response();
-    };
-    match state.core.remove_bot_token(env) {
-        Ok(removed) => {
-            vak_core::security_events::record(
-                &state.core.sessions_home(),
-                vak_core::security_events::EventKind::ProviderKeyChange,
-                "bot_token_removed",
-                &format!("surface={surface} shadowed={}", removed.shadowed_by_env),
-                None,
-            );
-            state.hub.emit_config_changed("bot_token_removed", &surface);
-            let mut cfg = vak_ops::OpsConfig::detect();
-            cfg.port = state.ops_port;
-            let restarted =
-                surface == "telegram" && vak_ops::restart(vak_ops::Service::Telegram, &cfg);
-            Json(serde_json::json!({
-                "surface": surface,
-                "env_var": removed.env_var,
-                "configured": removed.shadowed_by_env,
-                "shadowed_by_env": removed.shadowed_by_env,
-                "restarted": restarted,
-            }))
-            .into_response()
-        }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
 // ---- Multi-bot (docs/design/34, multi-bot-per-channel) --------------------
-
-/// Reconcile per-bot bridge units after any `bots.json` change (create,
-/// delete, or rename) so the admin console's Bots list never gets ahead of
-/// what's actually running. Mirrors the legacy single-bot
-/// `vak_ops::restart(Service::Telegram, ...)` calls above, generalized to a
-/// dynamic per-bot unit — see docs/design/34 and `vak-ops::services`.
-///
-/// `std::env::current_exe()` is deliberately used instead of resolving an
-/// install manifest: this handler runs inside the gateway process itself
-/// (`vak serve --gateway --trust`), so the currently-executing binary path
-/// *is* the correct one to launch bridge processes from.
-fn sync_bot_units(core: &vak_core::Core, port: u16) {
-    let Ok(bin_path) = std::env::current_exe() else {
-        return;
-    };
-    let gateway_url = vak_ops::OpsConfig { port }.base_url();
-    let _ = vak_ops::sync_bots(
-        &bin_path,
-        &core.sessions_home(),
-        &gateway_url,
-        &vak_ops::Paths::default(),
-        &vak_ops::SystemRunner,
-    );
-}
 
 fn bot_env_var(id: &str) -> String {
     // A dedicated env var per bot id, distinct from the legacy per-surface
@@ -5616,7 +5463,24 @@ fn bot_env_var(id: &str) -> String {
 }
 
 async fn list_bots(State(state): State<AppState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "bots": state.gateway.bots_snapshot() }))
+    // `token_configured` rather than the token: a bot's credential is
+    // never returned once set (invariant 23). Every surface needs to know
+    // *whether* a bot can authenticate — that is what "is this bot ready?"
+    // means — without any of them being able to read the secret.
+    let bots: Vec<serde_json::Value> = state
+        .gateway
+        .bots_snapshot()
+        .into_iter()
+        .map(|bot| {
+            let configured = vak_config::get_var(&bot.token_env).is_some();
+            let mut value = serde_json::to_value(&bot).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(map) = value.as_object_mut() {
+                map.insert("token_configured".into(), serde_json::json!(configured));
+            }
+            value
+        })
+        .collect();
+    Json(serde_json::json!({ "bots": bots }))
 }
 
 #[derive(serde::Deserialize)]
@@ -5638,7 +5502,7 @@ async fn create_bot(
         )
             .into_response();
     }
-    if vak_core::Core::bot_token_env(&body.surface).is_none() {
+    if !vak_core::Core::is_surface(&body.surface) {
         return (
             StatusCode::BAD_REQUEST,
             Json(
@@ -5666,9 +5530,12 @@ async fn create_bot(
         ..Default::default()
     };
     state.gateway.bot_upsert(&state.core, bot.clone());
-    sync_bot_units(&state.core, state.ops_port);
     state.hub.emit_config_changed("bot_created", id);
-    Json(serde_json::json!({ "bot": bot })).into_response()
+    // Creating a bot writes `bots.json`. It does not register an OS
+    // service: activation is a separate, explicit act (see
+    // `service_control`), so a routine edit never mutates the machine's
+    // service manager behind the operator's back.
+    Json(serde_json::json!({ "bot": bot, "activation_required": true })).into_response()
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -5764,7 +5631,10 @@ async fn delete_bot(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> StatusCode {
     if state.gateway.bot_remove(&state.core, &id) {
-        sync_bot_units(&state.core, state.ops_port);
+        // No service-manager call here. The bridge watches its own
+        // credential (`surfaces::CredentialWatch`) and stops when it goes
+        // away, so removal takes effect without a handler orchestrating
+        // anything. Its unit is cleaned up at the next activation.
         state.hub.emit_config_changed("bot_deleted", &id);
         StatusCode::OK
     } else {
@@ -5794,17 +5664,15 @@ async fn put_bot_id_token(
                 None,
             );
             state.hub.emit_config_changed("bot_token_set", &id);
-            // A rotate needs no new unit, only a bounce so the process
-            // re-reads its env var (see `restart_bot_unit`'s doc comment).
-            // A first-time token set has no unit yet — `sync_bot_units`
-            // creates and starts it, and `restart_bot_unit` then no-ops.
-            sync_bot_units(&state.core, state.ops_port);
-            let restarted = vak_ops::restart_bot_unit(&bot.surface, &id, &vak_ops::SystemRunner);
+            // Storing a credential is configuration, not activation: it
+            // registers no unit and restarts nothing. The operator
+            // activates when they mean to, and `activation_required` is
+            // how a surface knows to say so.
             Json(serde_json::json!({
                 "id": id,
                 "env_var": env_var,
                 "configured": true,
-                "restarted": restarted,
+                "activation_required": true,
             }))
             .into_response()
         }
@@ -5837,16 +5705,14 @@ async fn delete_bot_id_token(
                 None,
             );
             state.hub.emit_config_changed("bot_token_removed", &id);
-            // Bounce the running process so it stops using the now-cleared
-            // token immediately, instead of continuing on the one it read
-            // at its last start.
-            let restarted = vak_ops::restart_bot_unit(&bot.surface, &id, &vak_ops::SystemRunner);
+            // Nothing to orchestrate: the bridge re-reads its credential
+            // each poll cycle and stops using a cleared one on its own
+            // (`surfaces::CredentialWatch`).
             Json(serde_json::json!({
                 "id": id,
                 "env_var": removed.env_var,
                 "configured": removed.shadowed_by_env,
                 "shadowed_by_env": removed.shadowed_by_env,
-                "restarted": restarted,
             }))
             .into_response()
         }
@@ -5856,26 +5722,6 @@ async fn delete_bot_id_token(
         )
             .into_response(),
     }
-}
-
-/// Every chat bridge's credential state in one shape, so Settings renders
-/// all three surfaces from one list instead of three copies of the
-/// Telegram block (docs/design/34 Phase 3).
-fn chat_surface_status() -> Vec<serde_json::Value> {
-    ["telegram", "discord", "slack"]
-        .iter()
-        .map(|surface| {
-            serde_json::json!({
-                "surface": surface,
-                "env_var": vak_core::Core::bot_token_env(surface),
-                "configured": vak_core::Core::bot_token_configured(surface),
-                // Only Telegram has a managed service unit today; the
-                // others are started by hand and the UI must not promise
-                // otherwise.
-                "managed_service": *surface == "telegram",
-            })
-        })
-        .collect()
 }
 
 async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -5942,13 +5788,9 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
             "commands": state.core.effective_capability_inheritance().inherit_commands,
             "plugins": state.core.effective_capability_inheritance().inherit_plugins,
         },
-        "telegram": {
-            "env_var": Core::TELEGRAM_TOKEN_ENV,
-            "configured": state.core.telegram_configured(),
-        },
-        // docs/design/34 Phase 3: same shape per surface, so Settings can
-        // render all three chat bridges from one list.
-        "chat_surfaces": chat_surface_status(),
+        // A surface is a transport, not a credential slot (invariant 23):
+        // credentials belong to bots, and `GET /gateway/bots` reports them.
+        "surfaces": vak_core::Core::SURFACES,
         "paths": {
             "project_config": project_path,
             "global_config": vak_config::global_path(),

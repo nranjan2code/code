@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import {
   density,
   openInEditor,
@@ -461,7 +462,7 @@ export default function Settings() {
     }
   }
 
-  async function runOp(service: "gateway" | "telegram", action: "start" | "stop" | "restart" | "install" | "uninstall") {
+  async function runOp(service: "gateway" | "bridges", action: "start" | "stop" | "restart" | "install" | "uninstall") {
     try {
       await api.opsAction(service, action);
       await refreshOps();
@@ -484,8 +485,6 @@ export default function Settings() {
   const [keyBusy, setKeyBusy] = createSignal(false);
   // Per-surface token drafts, keyed by surface name — one Telegram-shaped
   // field per chat bridge (docs/design/34 Phase 3) instead of three copies.
-  const [tokenDraft, setTokenDraft] = createSignal<Record<string, string>>({});
-  const [tokenBusy, setTokenBusy] = createSignal<string | null>(null);
 
   const loadProviders = async () => {
     try {
@@ -703,58 +702,6 @@ export default function Settings() {
     }
   };
 
-  const draftFor = (surface: string) => tokenDraft()[surface];
-
-  const setDraftFor = (surface: string, value: string | null) =>
-    setTokenDraft((prev) => {
-      const next = { ...prev };
-      if (value === null) delete next[surface];
-      else next[surface] = value;
-      return next;
-    });
-
-  const saveBotToken = async (surface: string, managed: boolean) => {
-    const draft = draftFor(surface)?.trim();
-    if (!draft) return;
-    setTokenBusy(surface);
-    try {
-      const res = await api.putBotToken(surface, draft);
-      setDraftFor(surface, null);
-      await load();
-      setNotice({
-        kind: "info",
-        text: res.restarted
-          ? `${surface} token stored locally (${res.env_var}) and the bridge was restarted with it.`
-          : managed
-            ? `${surface} token stored locally (${res.env_var}). The bridge isn't installed as a service yet — start it from Operations to use it.`
-            : `${surface} token stored locally (${res.env_var}). Start the bridge with \`vak ${surface} --server <gateway-url>\` to use it.`,
-      });
-    } catch (error) {
-      setNotice({ kind: "error", text: `Could not store ${surface} token: ${error instanceof Error ? error.message : String(error)}` });
-    } finally {
-      setTokenBusy(null);
-    }
-  };
-
-  const removeBotToken = async (surface: string) => {
-    setTokenBusy(surface);
-    try {
-      const res = await api.removeBotToken(surface);
-      await load();
-      setNotice({
-        kind: "info",
-        text: res.shadowed_by_env
-          ? `Removed from ~/.vak/.env, but ${res.env_var} is still set in the real environment.`
-          : res.restarted
-            ? `${surface} token removed and the bridge was restarted.`
-            : `${surface} token removed.`,
-      });
-    } catch (error) {
-      setNotice({ kind: "error", text: `Could not remove ${surface} token: ${error instanceof Error ? error.message : String(error)}` });
-    } finally {
-      setTokenBusy(null);
-    }
-  };
 
   const removeKey = async () => {
     const name = provider() || providers()?.current || "";
@@ -967,33 +914,20 @@ export default function Settings() {
                     </Show>
                   </Show>
                 </Row>
-                {/* docs/design/34 Phase 3: one token field per chat
-                    surface, all stored the same way. Falls back to the
-                    Telegram-only shape when talking to an older server. */}
-                <For each={config()?.chat_surfaces ?? [{ surface: "telegram" as const, env_var: config()?.telegram.env_var ?? "TELEGRAM_BOT_TOKEN", configured: !!config()?.telegram.configured, managed_service: true }]}>{(chat) => (
+                {/* A chat credential belongs to a bot, not to a surface
+                    (AGENTS.md invariant 23), and several bots can share a
+                    transport. The per-surface token field that used to sit
+                    here could only ever describe one bot per transport, so
+                    it is gone: bots are created and credentialed in the
+                    admin console, which is also where a chat is approved. */}
                 <Row
-                  title={`${chat.surface} bridge — ${chat.env_var}`}
-                  description={`${chat.configured ? "Saved on this device" : "Not set yet"} · stored in ~/.vak/.env with owner-only permissions. ${chat.managed_service ? "Saving restarts the bridge automatically." : `Start it with \`vak ${chat.surface} --server <gateway-url>\` after saving.`}`}
+                  title="Chat bots"
+                  description="Telegram, Discord, and Slack bots — each with its own token, policy, and route — are managed in the admin console."
                 >
-                  <Show
-                    when={draftFor(chat.surface) === undefined}
-                    fallback={
-                      <span class="key-edit">
-                        <input type="password" autocomplete="off" spellcheck={false} placeholder={`paste ${chat.surface} bot token`} aria-label={`${chat.surface} bot token`} value={draftFor(chat.surface) ?? ""} onInput={(e) => setDraftFor(chat.surface, e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void saveBotToken(chat.surface, chat.managed_service)} />
-                        <button class="btn primary sm" disabled={tokenBusy() === chat.surface || !draftFor(chat.surface)?.trim()} onClick={() => void saveBotToken(chat.surface, chat.managed_service)}>{tokenBusy() === chat.surface ? "Saving…" : "Save"}</button>
-                        <button class="settings-button" onClick={() => setDraftFor(chat.surface, null)}>Cancel</button>
-                      </span>
-                    }
-                  >
-                    <span class="key-edit">
-                      <button class="settings-button" onClick={() => setDraftFor(chat.surface, "")}>{chat.configured ? "Replace token" : "Add token"}</button>
-                      <Show when={chat.configured}>
-                        <button class="settings-button danger" disabled={tokenBusy() === chat.surface} onClick={() => void removeBotToken(chat.surface)}>Remove token</button>
-                      </Show>
-                    </span>
-                  </Show>
+                  <span class="key-edit">
+                    <button class="settings-button" onClick={() => void invoke("open_admin", { route: "#/gateway" })}>Open admin console</button>
+                  </span>
                 </Row>
-                )}</For>
               </Group>
               <div class="settings-actions">
                 <button class="btn primary" disabled={saving() || !agentDirty() || !provider().trim() || !model().trim()} onClick={() => void applyAgent()}>{saving() ? "Applying…" : "Apply changes"}</button>

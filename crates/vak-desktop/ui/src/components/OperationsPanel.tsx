@@ -21,7 +21,7 @@ export default function OperationsPanel(props: { onNotice?: (text: string) => vo
     finally { setLoading(false); }
   };
   createEffect(() => { void refresh(); const timer = setInterval(() => void refresh(), 8000); onCleanup(() => clearInterval(timer)); });
-  const action = async (service: "gateway" | "telegram", verb: "start" | "stop" | "restart") => {
+  const action = async (service: "gateway" | "bridges", verb: "start" | "stop" | "restart") => {
     try { await api.opsAction(service, verb); await refresh(); }
     catch (e) { props.onNotice?.(e instanceof Error ? e.message : String(e)); }
   };
@@ -36,7 +36,7 @@ export default function OperationsPanel(props: { onNotice?: (text: string) => vo
           <Show when={data()!.health.warnings.length}><div class="settings-warning">{data()!.health.warnings.length} configuration warning(s) need attention.</div></Show>
         </section>
         <section class="operation-card"><header><div><h3>Background services</h3><p>Managed by vak-ops</p></div><Status value={data()!.services.gateway_healthy ? "healthy" : "unreachable"} /></header>
-          <For each={["gateway", "telegram"] as const}>{(service) => <div class="operation-service"><div><strong>{service === "gateway" ? "Gateway" : "Telegram bridge"}</strong><small>{data()!.services[service].state}</small></div><div><button class="settings-button" onClick={() => void action(service, "restart")}>Restart</button><button class="settings-button" onClick={() => void action(service, data()!.services[service].state === "running" ? "stop" : "start")}>{data()!.services[service].state === "running" ? "Stop" : "Start"}</button></div></div>}</For>
+          <For each={["gateway", "bridges"] as const}>{(service) => <div class="operation-service"><div><strong>{service === "gateway" ? "Gateway" : "Chat bridges"}</strong><small>{data()!.services[service].state}</small></div><div><button class="settings-button" onClick={() => void action(service, "restart")}>Restart</button><button class="settings-button" onClick={() => void action(service, data()!.services[service].state === "running" ? "stop" : "start")}>{data()!.services[service].state === "running" ? "Stop" : "Start"}</button></div></div>}</For>
         </section>
         <section class="operation-card"><header><div><h3>Gateway</h3><p>Surfaces and approvals</p></div><Status value={data()!.gateway.enabled ? "enabled" : "disabled"} /></header>
           <div class="operation-facts"><span><b>Approvals</b>{data()!.gateway.approvals.mode}</span><span><b>Pending</b>{data()!.gateway.approvals.pending}</span><span><b>Bindings</b>{data()!.gateway.bindings.length}</span></div>

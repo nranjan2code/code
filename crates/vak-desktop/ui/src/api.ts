@@ -65,7 +65,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export interface OpsStatusShape {
   gateway: { state: string };
-  telegram: { state: string };
+  bridges: { state: string };
   gateway_healthy: boolean;
 }
 
@@ -74,7 +74,7 @@ export function opsStatus(): Promise<OpsStatusShape> {
 }
 
 export function opsAction(
-  service: "gateway" | "telegram",
+  service: "gateway" | "bridges",
   action: "start" | "stop" | "restart" | "install" | "uninstall",
 ): Promise<{ ok: boolean; error?: string }> {
   return req(`/ops/${service}/${action}`, { method: "POST", body: "{}" });
@@ -482,41 +482,9 @@ export function patchConfig(patch: { provider?: string; model?: string; max_turn
   return req("/config", { method: "PATCH", body: JSON.stringify(patch) });
 }
 
-/** Store the Telegram bot token in the shared user `.env` and kick the
- * bridge service so it restarts with the new token. */
-export function putTelegramToken(
-  token: string,
-): Promise<{ env_var: string; configured: boolean; restarted: boolean }> {
-  return req("/config/telegram-token", {
-    method: "PUT",
-    body: JSON.stringify({ token }),
-  });
-}
 
-/** Revoke the stored Telegram bot token and kick the bridge service. */
-export function removeTelegramToken(): Promise<{ env_var: string; configured: boolean; shadowed_by_env: boolean; restarted: boolean }> {
-  return req("/config/telegram-token", { method: "DELETE" });
-}
 
-/** Store a chat bridge's bot token in the shared user `.env`. Restarts
- * the bridge for surfaces that have a managed service unit (Telegram);
- * the others are started by hand and report `restarted: false`. */
-export function putBotToken(
-  surface: string,
-  token: string,
-): Promise<{ surface: string; env_var: string; configured: boolean; restarted: boolean }> {
-  return req(`/config/bot-token/${encodeURIComponent(surface)}`, {
-    method: "PUT",
-    body: JSON.stringify({ token }),
-  });
-}
 
-/** Revoke a stored bot token. */
-export function removeBotToken(
-  surface: string,
-): Promise<{ surface: string; env_var: string; configured: boolean; shadowed_by_env: boolean; restarted: boolean }> {
-  return req(`/config/bot-token/${encodeURIComponent(surface)}`, { method: "DELETE" });
-}
 
 // ---- MCP server management ----------------------------------------------------
 

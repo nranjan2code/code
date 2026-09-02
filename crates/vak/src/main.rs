@@ -1821,6 +1821,7 @@ async fn run_telegram(server: String, token_flag: Option<String>, bot_id: Option
     // fails fast with the holder's identity instead of flapping 409s.
     let locks_dir = Some(vak_config::paths::data_home().join("locks"));
     let bridge = vak_server::surfaces::telegram::TelegramBridge {
+        token_env: env_var.clone(),
         api_base,
         bot_token: bot_token.clone(),
         gateway_url: server.trim_end_matches('/').to_string(),

@@ -1,9 +1,9 @@
 import type {
+  ChatSurface,
   AllowlistEntry,
   AllowlistRoute,
   ChannelPolicy,
   BestOfNRun,
-  ChatSurfaceStatus,
   ConfigInfo,
   DiscoveredModelsResponse,
   FinOpsStatus,
@@ -202,7 +202,7 @@ export const api = {
   replayOperationsOutbox: (jobId: string): Promise<{ ok: boolean; job_id: string }> =>
     fetch(`/ops/outbox/${encodeURIComponent(jobId)}/replay`, { method: "POST" }).then((r) => handle(r)),
 
-  opsAction: (service: "gateway" | "telegram", action: "start" | "stop" | "restart" | "install" | "uninstall"): Promise<{ ok: boolean; action?: string; error?: string; receipt_id?: string; receipt_persisted?: boolean; verification?: { status: string; before: string; after: string; detail: string } }> =>
+  opsAction: (service: "gateway" | "bridges", action: "start" | "stop" | "restart" | "install" | "uninstall"): Promise<{ ok: boolean; action?: string; error?: string; receipt_id?: string; receipt_persisted?: boolean; verification?: { status: string; before: string; after: string; detail: string } }> =>
     fetch(`/ops/${service}/${action}`, { method: "POST" }).then((r) => handle(r)),
 
   patchGatewayWorkspace: (workspace: string | null): Promise<{ workspace: string; restart_required: boolean }> =>
@@ -619,21 +619,19 @@ export const api = {
   unreadCount: (): Promise<{ count: number }> =>
     fetch("/inbox/unread_count").then((r) => handle(r)),
 
-  /** Which chat bridges have a bot token set. `/config` is the only route
-   * that reports this — the admin projection (`/admin/api/config`) omits
-   * it — and it reports presence only; the token itself never comes back
-   * over the wire. */
-  chatSurfaces: (): Promise<ChatSurfaceStatus[]> =>
-    fetch("/config")
-      .then((r) => handle<{ chat_surfaces?: ChatSurfaceStatus[] }>(r))
-      .then((c) => c.chat_surfaces ?? []),
-
   /** Store a chat bridge's bot token in the shared user `.env`. Restarts
    * the bridge for surfaces with a managed service unit (Telegram); the
    * others are started by hand and report `restarted: false`. This is
    * the credential a bridge authenticates to Telegram/Discord/Slack
    * with — distinct from a gateway *binding* (which routes an already-
    * connected chat to a workspace/model, and has no field for this). */
+  /** The chat transports the server supports, with labels. The only
+   * source of channel names in this app. */
+  chatSurfaces: (): Promise<ChatSurface[]> =>
+    fetch("/config")
+      .then((r) => handle<{ surfaces?: ChatSurface[] }>(r))
+      .then((c) => c.surfaces ?? []),
+
   putBotToken: (
     surface: string,
     token: string,

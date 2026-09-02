@@ -7,7 +7,7 @@
 //! controller with no window of its own was otherwise the one surface a
 //! user could not visually tie back to "Vak" at a glance. "One
 //! glance answers is my agent alive?" now lives in the tooltip
-//! (`status_tooltip`) instead of an icon-color swap: gateway/telegram
+//! (`status_tooltip`) instead of an icon-color swap: gateway/bridges
 //! status in words on hover, not a color the user has to remember the
 //! meaning of. The menu starts/stops/restarts, installs/uninstalls,
 //! opens logs, and toggles a watchdog that reports a crashed service
@@ -52,13 +52,13 @@ enum TrayEvent {
 
 const SVC_COUNT: usize = 2;
 const GATEWAY: usize = 0;
-const TELEGRAM: usize = 1;
+const BRIDGES: usize = 1;
 
 fn service(idx: usize) -> vak_ops::Service {
     if idx == GATEWAY {
         vak_ops::Service::Gateway
     } else {
-        vak_ops::Service::Telegram
+        vak_ops::Service::Bridges
     }
 }
 
@@ -323,16 +323,24 @@ fn desktop_binary() -> Option<std::path::PathBuf> {
 /// track that state here. Spawned detached — the tray outlives the
 /// window and must not wait on it or inherit its lifetime.
 /// Resolve the managed gateway port from the same user-level environment as
-/// the server. The legacy tray is launched directly by the session manager,
-/// so it does not pass through the CLI's dotenv-loading path first.
+/// the server. The tray is launched directly by the session manager, so it
+/// never passes through the CLI's dotenv-loading path first and has to
+/// source the canonical user `.env` itself.
+///
+/// That file is `~/vak-home/.env` (`vak_config::user_env_path`), beside the
+/// Shared config layer — not `data_home()/.env`, which is where this used
+/// to look and where nothing has been written since the canonical layout
+/// landed. Reading the wrong path meant the tray found no
+/// `VAK_GATEWAY_TOKEN` and could not build an authenticated admin URL.
 fn ops_config() -> vak_ops::OpsConfig {
-    let env_path = vak_config::paths::data_home().join(".env");
-    vak_config::replace_env_files(&[env_path.as_path()]);
+    if let Some(env_path) = vak_config::user_env_path() {
+        vak_config::replace_env_files(&[env_path.as_path()]);
+    }
     vak_ops::OpsConfig::detect()
 }
 
-/// The token pinned into the canonical `.env` at `self install`
-/// (`ensure_gateway_token`, crates/vak/src/install/mod.rs). `None`
+/// The token written into the canonical `.env` when setup activates the
+/// gateway. `None`
 /// on an install that predates that pinning step -- the token still
 /// exists (freshly minted on every boot), it is just not discoverable
 /// from outside the running process, so there is nothing to build a link
@@ -587,7 +595,7 @@ fn states_now() -> [vak_ops::State; 2] {
     let cfg = ops_config();
     [
         vak_ops::status(vak_ops::Service::Gateway, &cfg),
-        vak_ops::status(vak_ops::Service::Telegram, &cfg),
+        vak_ops::status(vak_ops::Service::Bridges, &cfg),
     ]
 }
 
@@ -598,8 +606,8 @@ fn states_now() -> [vak_ops::State; 2] {
 fn status_tooltip(states: &[vak_ops::State; 2]) -> String {
     // State's Display already renders lowercase ("running", "stopped", …).
     format!(
-        "vak — gateway {}, telegram {}",
-        states[GATEWAY], states[TELEGRAM]
+        "vak — gateway {}, chat bridges {}",
+        states[GATEWAY], states[BRIDGES]
     )
 }
 
