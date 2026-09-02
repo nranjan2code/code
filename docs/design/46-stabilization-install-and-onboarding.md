@@ -1089,157 +1089,47 @@ dispatch it.
 install indistinguishable from a first install on a new machine, proven by
 test.
 
-### S10 — Sign and notarize
+### S10 — Sign and notarize — **blocked on a Developer ID**
 
-Apple Developer ID, secrets in CI, notarize and staple both the `.app` and
-the `.dmg`, and a verifier that walks the **produced artifact**: every
-executable payload the expected architecture, every dylib `@`-relative or
-system-owned, a Developer ID authority in the signing record, Gatekeeper
-assessment passing, stapled ticket validating. Signing is verified from the
-artifact, never asserted by the build. Linux gets a detached signature over
-the tarball.
+The half that does not need a certificate is done.
+`scripts/verify-macos-release.sh` walks the **produced bundle** — executable
+architecture, every dylib dependency `@`-relative or system-owned, the
+signing authority, the Gatekeeper assessment, and a stapled ticket — and it
+runs in the release today, reporting honestly that the artifact is
+unsigned. That is invariant 15's actual requirement: signing is verified
+from the artifact, never asserted by the build config. The dylib check
+already earns its place: an absolute path into a build machine's Homebrew
+tree works there and nowhere else, and reaches a user as "it just doesn't
+open".
 
-**Exit:** the DMG opens with no warning, and D2's honest-about-unsigned copy
-is deleted rather than left to rot.
+What is blocked is the certificate itself. `--require-signed` turns the
+same script into a release gate the moment a Developer ID exists in CI
+secrets; until then the honest artifact is an unsigned one that says so, in
+the DMG and in the docs (D2).
 
-### S11 — Windows (separate project)
+**Exit, when unblocked:** the DMG opens with no warning, `--require-signed`
+is on in the release workflow, and D2's unsigned notice is deleted rather
+than left to rot.
 
-Not packaging — platform. Paths (`crates/vak-config`), a service backend
-(`crates/vak-ops` is launchd and systemd only), and a real sandbox backend
-(Seatbelt and Landlock only) must all exist first. An `.msi` over a binary
-with no sandbox backend ships a fail-*open* product, which contradicts
-`docs/design/24-agent-security.md`. Until then the answer is "macOS and
-Linux", said plainly.
+### S11 — Windows — **not a packaging task, and not started**
 
-The web wizard is the one part of this that is already portable: on
-Windows, first run is the same page.
+Deliberately not attempted. Windows is missing three things that have
+nothing to do with producing an `.msi`:
 
----
+- **Paths.** `crates/vak-config` resolves a data home, cache home, logs
+  directory, and Shared layer for macOS and Linux only.
+- **A service backend.** `crates/vak-ops` speaks launchd and systemd. There
+  is no Windows service implementation, so nothing could be activated.
+- **A sandbox backend.** Seatbelt and Landlock only. An `.msi` over a
+  binary with no containment would ship a fail-*open* product, which
+  contradicts `docs/design/24-agent-security.md` and every restricted mode
+  in `docs/design/08-permissions.md`.
 
-## Part XI — Test plan
+Packaging it before those exist would produce something installable that is
+less safe than the product it claims to be. Until they exist the supported
+answer is **macOS and Linux**, said plainly in `README.md` rather than
+implied by silence.
 
-### Deterministic
+The one part already portable is the wizard: on Windows, first run would be
+the same page (D7).
 
-- Readiness derivation across every present/absent combination of every step.
-- Trust review detects each privileged section **without loading it**.
-- Safe-open cannot load project `.env`, hooks, MCP servers, base URLs,
-  grants, or prompt layers.
-- Key saved + discovery failed ⇒ route unchanged.
-- Provider/model apply is atomic against a concurrent reader.
-- Permission apply revokes active capability before the new mode is reported.
-- The first guided task is read-only capped under all three postures.
-- Corrupt `onboarding.json` alters presentation only; it grants nothing.
-- Non-TTY setup with a missing choice refuses.
-- Fresh install starts no service and creates no workspace.
-- Seed materialization is idempotent and never overwrites an edited file.
-- Integration enable/disable writes the managed definition and never returns
-  a key.
-- Uninstall `--purge` preserve-allowlist: asserts survivors, refuses on a
-  symlinked data root.
-
-### End-to-end
-
-- Clean macOS: DMG → app → wizard → first receipt.
-- Clean Linux: `install.sh` → `vak setup` → first receipt.
-- Ollama / keyless path end to end.
-- Invalid key; valid key with a model-discovery outage; provider outage.
-- Node absent: integrations step degrades, core path unaffected.
-- Hostile privileged project config opened safely.
-- Interrupted setup resumed after every step.
-- Always-on: bot created, message pends, approval lands, reply arrives.
-- Reinstall over a configured machine: nothing re-asked, nothing re-written.
-- Install → purge → install: second install is a true first run.
-- Headless Linux: wizard reached over an SSH tunnel, completed end to end.
-- Desktop and web wizard produce byte-identical config from the same choices.
-
-### Configuration and inheritance
-
-- Every wizard write lands in the layer the Part VI table names, and only
-  that layer.
-- A project-layer GET that seeds a PUT returns the project layer alone;
-  saving it never copies an inherited Shared value into the project file
-  (invariant 21).
-- A Shared value changed after a project override exists does not disturb
-  the override; removing the override restores inheritance.
-- Provenance is reported for every displayed setting, on every surface.
-- A key set through any surface is never returned by any surface.
-- A revoked key invalidates the provider client and the model cache in one
-  operation.
-- Untrusted project config is demoted exactly as invariants 27 and 28
-  require, guardrails included.
-- `--purge` removes Shared config and secrets and leaves project `.vak/`
-  directories in other repositories untouched — asserted on the filesystem.
-
-### Baseline and durability
-
-- Pre-baseline state (1.x manifest, gateway store, config) produces the
-  refusal message, never a partial read and never a stack trace.
-- The update feed offers nothing below 2.0.0; `self update` from 1.x
-  reports the baseline rather than resolving.
-- No unregistered durable write: a full setup plus a real turn against a
-  temporary home produces only files the registry declares.
-- `--purge` removes exactly the `Remove` entries and nothing marked
-  `Preserve`, asserted on the filesystem.
-- Every added field carries `#[serde(default)]`; no durable type uses
-  `deny_unknown_fields`.
-- Round-trip: parse → mutate → write preserves fields the reader did not
-  understand.
-- A file whose schema exceeds the supported version is refused by the one
-  shared message, on every schemaed file.
-- Update snapshot exists before any registry entry is touched, and
-  `self rollback` restores binaries and snapshot together.
-- Seed with our shipped digest advances; seed edited by the user is never
-  written to.
-- The upgrade gate itself, both legs: previous → HEAD, and HEAD → previous.
-- Every cell of the VII.7 lifecycle table has a test named after it.
-
-### Non-technical usability
-
-- Moderated clean-machine sessions with at least five people who have never
-  used the product and do not write software.
-- Every screen readable without a glossary; every failure sentence
-  actionable without a doc.
-- Median time to `core_ready` under three minutes, first receipt under
-  five, measured in those sessions rather than by us.
-
----
-
-## Part XII — Targets
-
-| Measure | Target |
-|---|---:|
-| Downloaded artifact to workspace chosen | under 60s |
-| Workspace to provider verified (key in hand) | under 2 min |
-| Downloaded artifact to `core_ready` | under 3 min |
-| Downloaded artifact to first audited result | under 5 min |
-| Interrupted setup | resumes at first incomplete step |
-| Unexplained dead ends | zero |
-
-Milestones are recorded locally, never transmitted. `vak setup status
---timings` and a "Copy setup diagnostics" action expose them. Any remote
-analytics would be a separate, explicitly opt-in design.
-
-## Part XIII — Security invariants
-
-Extending the AGENTS.md list; none of these weaken anything already there.
-
-1. Installation never grants workspace trust and never starts an unattended
-   agent.
-2. Folder selection is not consent to privileged project configuration.
-3. Non-interactive paths never prompt and never infer consent.
-4. Credentials are accepted once, stored only through the canonical secret
-   path, and never enter onboarding state, logs, argv, or receipts.
-5. The first guided task is read-only capped regardless of configured mode.
-6. `full-access` requires a separate explicit confirmation and is never
-   recommended or auto-selected.
-7. Setup uses the same permission engine, route writes, provider registry,
-   sandbox resolution, and service manager as ordinary operation — no
-   parallel path.
-8. Stale onboarding preferences alter presentation only.
-9. Durable services retain the workspace identity captured at explicit
-   activation.
-10. No integration is enabled without an explicit per-integration action.
-11. `--purge` operates from a preserve-allowlist and refuses a symlinked
-    data root.
-12. An unsigned artifact is labelled unsigned, in the DMG and in the docs,
-    until S7 makes the label false.

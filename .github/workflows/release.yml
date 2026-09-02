@@ -69,6 +69,20 @@ jobs:
           BASE_URL: ${{ github.event.inputs.base_url || 'https://get.vak.dev' }}
         run: ./scripts/release.sh --platform-key "$PLATFORM_KEY" --base-url "$BASE_URL"
 
+      # Verified from the produced artifact, never asserted by the build
+      # config (doc 46 Part V, invariant 15). Reports honestly while
+      # unsigned; add --require-signed once a Developer ID exists and the
+      # same script becomes the gate with nothing new to write.
+      - name: verify the macOS artifact
+        if: startsWith(matrix.key, 'macos/')
+        run: |
+          APP="$(find dist -maxdepth 3 -name 'Vak.app' -type d | head -1)"
+          if [ -n "$APP" ]; then
+            ./scripts/verify-macos-release.sh "$APP"
+          else
+            echo "no Vak.app in dist; the DMG staging tree is transient" >&2
+          fi
+
       - name: integrity manifest
         run: python3 scripts/integrity-manifest.py
 

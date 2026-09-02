@@ -45,10 +45,18 @@ Most agents make you choose between capability and legibility. vak is built arou
 Download the release for your platform and open it. No toolchain, no clone,
 no compile.
 
+vak supports **macOS and Linux**. Windows is not supported: paths, service
+management, and sandboxing are all two-platform today, and shipping an
+installer over a binary with no containment backend would be a less safe
+product than this one claims to be.
+
 | Platform | Artifact |
 |---|---|
 | macOS | `Vak-2.0.0-<arch>.dmg` — drag `Vak.app` to Applications |
 | Linux | `vak-2.0.0-<arch>.tar.gz`, or the bootstrap script below |
+
+The macOS build is not yet signed, so the first launch needs a right-click
+→ Open rather than a double-click. Every launch after that is normal.
 
 ```bash
 curl -fsSL https://get.vak.dev/install.sh | sh

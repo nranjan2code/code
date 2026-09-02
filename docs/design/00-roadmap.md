@@ -39,20 +39,20 @@ forward contract that keeps every later release non-destructive.
 Phases S0–S11 with exit criteria live in
 `docs/design/46-stabilization-install-and-onboarding.md`, Part X. In short:
 
-| Phase | Delivers |
-|---|---|
-| S0 | Baseline declared; record cleaned |
-| S1 | Install split from setup; derived readiness projection |
-| S2 | The setup server and the web onboarding wizard |
-| S3 | `vak setup --terminal` parity |
-| S4 | Desktop adopts the same wizard |
-| S5 | Durable state registry |
-| S6 | The upgrade gate |
-| S7 | DMG, tarball, bootstrap script |
-| S8 | CI release pipeline and supply-chain evidence |
-| S9 | Uninstall parity and the clean-slate cut |
-| S10 | Signing and notarization |
-| S11 | Windows, as a platform project |
+| Phase | Delivers | State |
+|---|---|---|
+| S0 | Baseline declared; record cleaned | done |
+| S1 | Install split from setup; derived readiness projection | done |
+| S2 | The setup server and the web onboarding wizard | done |
+| S3 | `vak setup --terminal` parity | done |
+| S4 | Desktop adopts the wizard; selection stops implying trust | done |
+| S5 | Durable state registry | done |
+| S6 | The upgrade gate | done |
+| S7 | DMG, tarball, bootstrap script | done |
+| S8 | CI release pipeline and supply-chain evidence | done |
+| S9 | Uninstall parity | done |
+| S10 | Signing and notarization | **blocked**: needs an Apple Developer ID. The artifact verifier is built and runs; the certificate is not available |
+| S11 | Windows | **not started**: a platform project (paths, a service backend, a sandbox backend), not a packaging step |
 
 ## After 2.0.0
 
