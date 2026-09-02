@@ -2,7 +2,8 @@
 //!
 //! Units are rendered from [`SERVICES`] and diffed onto disk by
 //! [`services_sync`]; nothing here is hand-edited. Templates embed zero
-//! credentials: the binary self-sources `data_home()/.env`, so regenerating
+//! credentials: the binary self-sources the canonical user `.env` at
+//! `~/vak-home/.env` (`vak_config::user_env_path`), so regenerating
 //! units can never strand auth. Logs stay at the platform `logs_dir()` and
 //! user data remains under the canonical platform data home.
 //! Headless units always run from [`vak_config::paths::default_workspace`],

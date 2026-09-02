@@ -1,9 +1,8 @@
 # 22 — Gateway: always-on surfaces + cron delivery
 
-Closes the platform gap versus OpenClaw / Hermes-agent (see research notes in
-`06-research-notes.md`): both are *always-on personal agent platforms* whose
-core differentiator is a gateway that routes many chat surfaces to persistent
-agent sessions, plus unattended scheduled work with delivery back out.
+Closes the platform gap versus always-on personal agent platforms whose core
+differentiator is a gateway that routes many chat surfaces to persistent agent
+sessions, plus unattended scheduled work with delivery back out.
 
 vak's structural advantage: **the core was always headless.** TUI and
 desktop were built as consumers of the server contract from day one. The

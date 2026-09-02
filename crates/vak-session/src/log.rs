@@ -378,7 +378,7 @@ impl SessionLog {
     }
 
     /// Distinct bash commands that ran GREEN on the active chain, in
-    /// first-run order (doc 27 Phase E adoption substrate). A command is
+    /// first-run order (docs/design/10-flows.md adoption substrate). A command is
     /// settled when its tool_result is not an error.
     pub fn settled_bash_commands(&self) -> Vec<String> {
         use std::collections::HashMap;
@@ -464,7 +464,7 @@ impl SessionLog {
         ))
     }
 
-    /// Reset-with-handoff (doc 27 Phase H): the projection becomes ONLY
+    /// Reset-with-handoff (docs/design/42-managed-work-contracts.md): the projection becomes ONLY
     /// this summary. Append-only; the full history stays on disk.
     pub fn append_handoff_reset(
         &mut self,

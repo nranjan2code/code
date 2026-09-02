@@ -304,7 +304,7 @@ pub struct StopPolicySettings {
     pub max_blocks: Option<u32>,
 }
 
-/// Spend admission (docs/design/27 Phase D). Absent prices are UNKNOWN:
+/// Spend admission (docs/design/15-reliability.md). Absent prices are UNKNOWN:
 /// unpriced models bypass USD math rather than guessing at zero.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
@@ -334,7 +334,7 @@ pub struct FinopsSettings {
     pub price_overrides: std::collections::BTreeMap<String, PriceEntry>,
 }
 
-/// Frozen-ladder routing preferences (docs/design/27 Phase B + Phase R).
+/// Frozen-ladder routing preferences (docs/design/15-reliability.md + Phase R).
 /// NOT privileged: choosing how to order discovered candidates grants no
 /// execution power.
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -751,7 +751,7 @@ fn parse_hhmm(s: &str) -> Option<u32> {
     Some(h * 60 + m)
 }
 
-/// Resolved goal-mode policy (docs/design/27 Phase H).
+/// Resolved goal-mode policy (docs/design/42-managed-work-contracts.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoalResolved {
     /// Reset-with-handoff rescue on still-over contexts.
@@ -770,7 +770,7 @@ pub struct WorkResolved {
     pub confirmation: String,
 }
 
-/// Resolved spend-admission policy (docs/design/27 Phase D).
+/// Resolved spend-admission policy (docs/design/15-reliability.md).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct FinopsResolved {
     pub max_run_usd: Option<f64>,

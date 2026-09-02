@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! Goal mode + audited completion + regression obligations +
-//! reset-with-handoff (docs/design/27 Phase H).
+//! reset-with-handoff (docs/design/42-managed-work-contracts.md).
 
 use std::collections::VecDeque;
 use std::sync::Arc;

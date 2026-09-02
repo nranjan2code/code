@@ -1,4 +1,4 @@
-//! Routing evidence ledger + ladder admission (docs/design/27 Phase B,
+//! Routing evidence ledger + ladder admission (docs/design/15-reliability.md,
 //! Phase R upgrades ported from the vakrouter study).
 //!
 //! Evidence is append-only JSONL; reads apply a TTL and treat outcomes as

@@ -1,4 +1,4 @@
-//! Frozen-ladder routing primitives (docs/design/27 Phase B).
+//! Frozen-ladder routing primitives (docs/design/15-reliability.md).
 //!
 //! The candidate SET is chosen by constraint satisfaction upstream (key
 //! present, model actually discovered on that provider); THIS module owns

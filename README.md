@@ -6,7 +6,7 @@
 
 **A local-first Rust harness for running serious general-purpose agents without giving up the receipts.**
 
-[![Version](https://img.shields.io/badge/version-1.0.3-E66A2C?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.0.0-E66A2C?style=flat-square)](CHANGELOG.md)
 [![Rust](https://img.shields.io/badge/Rust-2024-2B2B2B?style=flat-square&logo=rust)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-MIT-536B58?style=flat-square)](Cargo.toml)
 [![Safety](https://img.shields.io/badge/safety-fail--closed-384A6B?style=flat-square)](docs/design/24-agent-security.md)
@@ -23,7 +23,7 @@ Its thesis is simple: **Codex-grade safety, pi-grade transparency, Claude Code-g
 
 The result is not another thin model wrapper. Sessions are append-only ledgers, permissions are evaluated before every effect, restricted tools run across a broker boundary, partial work survives cancellation, and every provider dispatch produces a receipt.
 
-> **Project status:** v0.8.0. The core roadmap is implemented and live-tested. The project is actively developed; see the [roadmap](docs/design/00-roadmap.md) and [changelog](CHANGELOG.md).
+> **Supported baseline: 2.0.0.** Earlier versions are unsupported and cannot be upgraded in place. See the [roadmap](docs/design/00-roadmap.md) and [changelog](CHANGELOG.md).
 
 ## Why vak
 
@@ -40,51 +40,83 @@ Most agents make you choose between capability and legibility. vak is built arou
 
 ## Quick start
 
-### 1. Build from source
+### 1. Install
 
-You need a [stable Rust toolchain](https://www.rust-lang.org/tools/install) and Git.
+Download the release for your platform and open it. No toolchain, no clone,
+no compile.
 
-```bash
-git clone https://github.com/vak/vak.git
-cd vak
-cargo build --release -p vak
-cargo install --path crates/vak
-```
-
-`cargo install` places the `vak` binary in Cargo's bin directory. You can also run every command from the repository with `cargo run --bin vak -- <command>`.
-
-### 2. Add a provider key
-
-Put credentials in a gitignored project `.env`, in the user secret store at
-`data_home()/.env` (`~/Library/Application Support/vak/.env` on macOS,
-`~/.local/share/vak/.env` on Linux), or in your environment. Real
-environment variables take precedence.
+| Platform | Artifact |
+|---|---|
+| macOS | `Vak-2.0.0-<arch>.dmg` — drag `Vak.app` to Applications |
+| Linux | `vak-2.0.0-<arch>.tar.gz`, or the bootstrap script below |
 
 ```bash
-# Choose one—or use Ollama locally without a hosted-provider key.
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-OPENROUTER_API_KEY=sk-or-...
-OPENCODE_API_KEY=...
-GEMINI_API_KEY=...
+curl -fsSL https://get.vak.dev/install.sh | sh
 ```
 
-Secrets are never forwarded as ambient Bash or MCP subprocess state. Project `.env` files and privileged project configuration are loaded only after the workspace is trusted.
+Re-running the script is an update.
 
-### 3. Start coding
+### 2. Run setup
+
+Launch the app, or run `vak setup` from a terminal. Setup opens a guided
+first run that selects a workspace, connects a provider, verifies a model,
+chooses a safety posture, and — only if you ask for it — brings up
+always-on channels and services.
+
+```bash
+vak setup                  # opens the guided first run
+vak setup --terminal       # the same flow as terminal prompts
+vak setup status           # what is configured, and what is not
+```
+
+Setup runs once. Afterwards it shows a review, not a wizard.
+
+### 3. Start working
 
 ```bash
 vak exec "fix the failing test"
 vak plan "add rate limiting to the API"
 vak config dump             # inspect the effective configuration
+vak doctor                  # readiness, layer by layer
 ```
 
-The default provider is Anthropic. Select another provider and one of the models discovered for your key through configuration, environment variables, or command flags:
+Provider and model are one route, chosen during setup and changeable at any
+time. To override for a single run:
 
 ```bash
 vak exec "explain this workspace" \
   --provider openai-responses \
   --model YOUR_DISCOVERED_MODEL
+```
+
+### Where your configuration and secrets live
+
+vak resolves configuration from broadest to narrowest — shared defaults,
+then per-project overrides, then per-session pins. Secrets stay out of TOML
+entirely.
+
+| What | Where |
+|---|---|
+| Shared configuration | `~/vak-home/.vak/config.toml` |
+| Shared secrets | `~/vak-home/.env` |
+| Project overrides | `<workspace>/.vak/config.toml` |
+| Project secrets | `<workspace>/.env` |
+| Sessions, ledgers, gateway state | the platform data home |
+
+Real environment variables take precedence over any `.env`. Secrets are
+never forwarded as ambient Bash or MCP subprocess state, and project `.env`
+files and privileged project configuration load only after you trust that
+workspace.
+
+### Building from source
+
+Contributors need a [stable Rust toolchain](https://www.rust-lang.org/tools/install),
+Git, and Node.
+
+```bash
+git clone https://github.com/vak/vak.git
+cd vak
+scripts/vak.sh build
 ```
 
 ## What you get

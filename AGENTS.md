@@ -24,8 +24,8 @@ must also follow the threat model and priority order in
 `docs/design/28-operations.md` with docs/hosting.md for running the stack
 as durable services, `docs/design/31-network-resilience.md` for the
 four-plane network contract (loopback-only local, crash-only channels,
-ladder+endurance inference, store-and-forward delivery), and `docs/design/27-vakyartha-adoption.md` for the
-long-horizon program (work receipts + dispatch ceiling ✅, context packet
+ladder+endurance inference, store-and-forward delivery). The long-horizon
+program is landed (work receipts + dispatch ceiling ✅, context packet
 accounting + deterministic gate ✅, FinOps budget admission ✅,
 loop-engineering kernel ✅, frozen-ladder routing ✅, router-grade
 ordering over that ladder (demand objectives, cross-model fallbacks,
@@ -88,7 +88,8 @@ assuming a document describes shipped behaviour rather than a proposal.
    remaining cooldown so the half-close probe gets through. Never retry
    user aborts.
 8. **Secrets never enter git.** API keys live in `.env` (project) or
-   the user `.env` at `data_home()/.env` (gitignored), loaded via
+   the canonical user `.env` at `~/vak-home/.env`
+   (`vak_config::user_env_path`, gitignored), loaded via
    `vak_config::load_env_file/get_var`. Real environment variables take
    precedence over `.env`. Never hardcode, echo, or commit keys. Keys are
    user-supplied and user-revocable: `Core::set_provider_key` /
@@ -347,6 +348,37 @@ assuming a document describes shipped behaviour rather than a proposal.
     until `--accept-drift`. An empty frozen list means *unknown baseline*, not
     *everything changed*. An inbound message may never write a prompt layer.
 
+29. **2.0.0 is the supported baseline.** No code may accept, migrate, or
+    special-case state written by an earlier version. A data home, install
+    manifest, gateway store, or config file that predates the baseline is
+    refused by the one shared message — which names the file, says the
+    install predates the baseline, and gives the single command that
+    resolves it (`vak self uninstall --purge`, then install and run setup).
+    It is never partially read, never repaired in place, and never migrated.
+    The update feed offers no version below the baseline, so `self update`
+    from an older line reports the baseline rather than resolving. A
+    compatibility branch for a pre-baseline shape is a review failure, not a
+    kindness: the tolerances this replaces grew back one sympathetic commit
+    at a time, and that is exactly what this invariant exists to stop. From
+    the baseline forward the contract is additive-only within a major
+    version — a field may be added, never removed, renamed, retyped, or
+    redefined; readers ignore unknown fields; a writer that parses, mutates,
+    and rewrites a file preserves fields it did not understand; a file whose
+    schema exceeds the supported version is refused loudly rather than
+    half-read; and ledgers stay append-only forever (invariants 1 and 2), so
+    new information is a new entry type and never a changed one. Within a
+    major version no migration exists because none can be needed. See
+    `docs/design/46-stabilization-install-and-onboarding.md` Part VII.
+
+30. **One canonical way per capability.** A second way to set a token,
+    address a chat, name a workspace, or write a setting is not a
+    convenience — it is two contracts that must agree forever, and the
+    record shows they do not. A new mechanism *replaces* the one it
+    supersedes in the same change that introduces it; it never joins it.
+    "Kept for compatibility" is not a justification a review accepts.
+    Removing the older path is part of shipping the newer one, including
+    the tests that pinned it and the doc paragraphs that described it.
+
 ## Code rules
 
 - Edition 2024, stable toolchain. `cargo fmt` + `cargo clippy -D warnings` must pass.
@@ -379,8 +411,7 @@ crates/vak-llm       unified provider API (anthropic / openai-responses /
                      live model discovery (models.rs), work receipts +
                      dispatch ceiling (work.rs), frozen-ladder ordering:
                      demand-scored objectives, belief demotion,
-                     cross-model fallbacks (route.rs) -- docs/design/27
-                     Phases A+B+R + Gemini Live voice synthesis
+                     cross-model fallbacks (route.rs) -- docs/design/42-managed-work-contracts.mdPhases A+B+R + Gemini Live voice synthesis
                      (google_live.rs): BidiGenerateContent WebSocket
                      session, wall-clock timeout + input-length cap since
                      no upstream deadline exists otherwise, WAV wrapping,
@@ -388,7 +419,7 @@ crates/vak-llm       unified provider API (anthropic / openai-responses /
                      38-voice-personality.md)
 crates/vak-session   append-only JSONL trees, frozen contract, projection,
                       receipt entries (audit-only, projection-neutral),
-                      compaction packet partitions (docs/design/27 Phase C),
+                      compaction packet partitions (docs/design/17-context.md),
                       dependency-free cross-session search w/ mtime-indexed
                       cache + cross-project search_all (docs/design/
                       23-memory.md)
@@ -433,20 +464,20 @@ crates/vak-agent     loop, steering queues (full user messages: text +
                      image blocks), parallel tool execution w/
                      resource-claim waves, retries + watchdog + circuit
                      breaker + stop gate (premature-completion guard),
-                     spend-gate seam (docs/design/27 Phase D), frozen-ladder
-                     leg walk (docs/design/27 Phase B), goal mode + audited
+                     spend-gate seam (docs/design/15-reliability.md), frozen-ladder
+                     leg walk (docs/design/15-reliability.md), goal mode + audited
                      completion + regression obligations + handoff reset
-                     (docs/design/27 Phase H), subagents (task tool) +
+                     (docs/design/42-managed-work-contracts.md), subagents (task tool) +
                      parent-scoped SubagentRegistry
 crates/vak-flow      static flow DAGs + dynamic planner (bounded replan)
 crates/vak-eval      deterministic eval suite + live-model mode +
-                     context-quality scorecard (docs/design/27 Phase C)
+                     context-quality scorecard (docs/design/17-context.md)
 crates/vak-config    layered TOML config + atomic persisted workspace
                      preferences + .env secret loading + canonical filesystem
                      paths (paths.rs: data_home, cache_home,
                      logs_dir) + [finops]
                      caps/pricing + [goal] policy + [route] ladder
-                     preferences (docs/design/27 Phases D+H+R) +
+                     preferences (docs/design/42-managed-work-contracts.mdPhases D+H+R) +
                      [automation]/[update]/[tools] (docs/design/29)
 crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      session_search injection w/ profile tier, memory/
@@ -456,7 +487,7 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      override (docs/design/25-docker-sandbox.md), manual
                      compaction (compact_session_now), runtime MCP table
                      hot-apply, cost ledger + budget admission gate +
-                     alert rows (docs/design/27 Phase D), task store +
+                     alert rows (docs/design/15-reliability.md), task store +
                      cron engine, health report, backup export/import,
                      digest, shared transcript_md renderer
                      (docs/design/29-personal-os.md)

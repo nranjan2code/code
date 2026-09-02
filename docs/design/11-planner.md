@@ -33,7 +33,7 @@ task + tool catalog ──► planner model ──► candidate TOML DAG
   nested raw double quotes are escaped via terminator lookahead (a `"`
   closes only before valid TOML continuation). Anything still invalid fails
   closed.
-- **Bounded replan** (vakyartha pattern): max 1 retry; seeded with settled
+- **Bounded replan**: max 1 retry; seeded with settled
   outputs ("do not redo this work") and the failure reason. Budget exhausted
   ⇒ `Failed` with the last failing node.
 - Per-attempt state ledgers under `data_home()/flow-runs/plan-*.json` freeze

@@ -42,10 +42,6 @@ pub struct Manifest {
     pub prefix: PathBuf,
     #[serde(default)]
     pub components: Vec<Component>,
-    /// v1 compatibility: older manifests carried `binaries` instead of
-    /// `components` and had no digests. Retained for migration only.
-    #[serde(default, skip_serializing)]
-    binaries: Vec<(String, PathBuf)>,
 }
 
 /// What `verify` found wrong with an install.
@@ -82,7 +78,6 @@ impl Manifest {
             installed_at: now_rfc3339(),
             prefix,
             components,
-            binaries: Vec::new(),
         }
     }
 
@@ -96,37 +91,33 @@ impl Manifest {
         })?;
         let mut m: Manifest = serde_json::from_slice(&raw)
             .map_err(|e| format!("manifest at {} is unreadable: {e}", path.display()))?;
-        m.migrate(root);
-        Ok(m)
-    }
 
-    /// Fold a v1 manifest into the v2 shape so an older install stays
-    /// manageable instead of appearing absent. Digests are unknown for
-    /// migrated entries and are recomputed from disk.
-    fn migrate(&mut self, root: &InstallRoot) {
-        if self.prefix.as_os_str().is_empty() {
-            self.prefix = root.prefix().to_path_buf();
+        // AGENTS.md invariant 29: an install written before the baseline is
+        // refused whole. There is no v1 fold-forward any more -- a manifest
+        // that old describes a tree this build cannot reason about, and
+        // half-adopting it produced an install that `verify` and `update`
+        // disagreed about.
+        if vak_core::baseline::is_pre_baseline(&m.version) {
+            return Err(vak_core::baseline::refusal(
+                "The install manifest",
+                &m.version,
+            ));
         }
-        if self.schema >= SCHEMA || self.binaries.is_empty() {
-            if self.schema == 0 {
-                self.schema = SCHEMA;
-            }
-            return;
+        if m.schema > SCHEMA {
+            return Err(format!(
+                "manifest at {} is schema {} but this build supports schema {SCHEMA} \
+                 -- it was written by a newer vak; upgrade rather than downgrade",
+                path.display(),
+                m.schema
+            ));
         }
-        self.components = std::mem::take(&mut self.binaries)
-            .into_iter()
-            .map(|(name, path)| {
-                let sha256 = digest::of_file(&path).unwrap_or_default();
-                let required = name == "vak";
-                Component {
-                    name,
-                    path,
-                    sha256,
-                    required,
-                }
-            })
-            .collect();
-        self.schema = SCHEMA;
+        if m.prefix.as_os_str().is_empty() {
+            m.prefix = root.prefix().to_path_buf();
+        }
+        if m.schema == 0 {
+            m.schema = SCHEMA;
+        }
+        Ok(m)
     }
 
     pub fn write(&self, root: &InstallRoot) -> Result<(), String> {
@@ -159,8 +150,9 @@ impl Manifest {
                 }
                 continue;
             }
-            // A migrated v1 entry may have no digest on record; absence
-            // of a digest is not evidence of corruption.
+            // An entry with no digest on record predates digesting for
+            // that component; absence of a digest is not evidence of
+            // corruption.
             if c.sha256.is_empty() {
                 continue;
             }
@@ -211,28 +203,52 @@ mod tests {
     }
 
     #[test]
-    fn v1_manifest_migrates_and_keeps_the_install_manageable() {
-        let (_d, root) = temp_root("v1");
+    fn a_pre_baseline_manifest_is_refused_with_the_shared_message() {
+        // AGENTS.md invariant 29. The v1 shape used to be folded forward
+        // here; an install that old is now refused whole, and the operator
+        // is told the one command that resolves it rather than being left
+        // with an install `verify` and `update` disagree about.
+        let (_d, root) = temp_root("pre-baseline");
         let bin = root.bin_dir().join("vak");
         std::fs::create_dir_all(root.bin_dir()).unwrap();
         std::fs::write(&bin, b"binary").unwrap();
-        let v1 = serde_json::json!({
-            "version": "0.8.0",
+        let old = serde_json::json!({
+            "schema": SCHEMA,
+            "version": "1.0.3",
             "git_sha": "abc",
             "installed_at": "2026-01-01T00:00:00Z",
-            "binaries": [["vak", bin]],
+            "components": [{"name": "vak", "path": bin, "sha256": "", "required": true}],
         });
         std::fs::create_dir_all(root.manifest_path().parent().unwrap()).unwrap();
-        std::fs::write(root.manifest_path(), v1.to_string()).unwrap();
+        std::fs::write(root.manifest_path(), old.to_string()).unwrap();
 
-        let m = Manifest::read(&root).unwrap();
-        assert_eq!(m.schema, SCHEMA, "v1 must be folded into the current shape");
-        assert_eq!(m.cli_path().unwrap(), bin);
-        assert_eq!(
-            m.component("vak").unwrap().sha256,
-            digest::of_file(&bin).unwrap()
+        let err = Manifest::read(&root).unwrap_err();
+        assert!(err.contains("1.0.3"), "the refusal names what it found");
+        assert!(
+            err.contains(vak_core::baseline::BASELINE),
+            "and the baseline it expected"
         );
-        assert!(m.verify().is_empty(), "a migrated install verifies clean");
+        assert!(
+            err.contains("vak self uninstall --purge"),
+            "and the one command that resolves it"
+        );
+    }
+
+    #[test]
+    fn a_newer_schema_is_refused_rather_than_half_read() {
+        let (_d, root) = temp_root("newer-schema");
+        let newer = serde_json::json!({
+            "schema": SCHEMA + 1,
+            "version": "9.0.0",
+            "git_sha": "abc",
+            "installed_at": "2026-01-01T00:00:00Z",
+            "components": [],
+        });
+        std::fs::create_dir_all(root.manifest_path().parent().unwrap()).unwrap();
+        std::fs::write(root.manifest_path(), newer.to_string()).unwrap();
+
+        let err = Manifest::read(&root).unwrap_err();
+        assert!(err.contains("written by a newer vak"));
     }
 
     #[test]
@@ -243,7 +259,7 @@ mod tests {
         std::fs::write(&bin, b"original").unwrap();
         let m = Manifest {
             schema: SCHEMA,
-            version: "0.8.0".into(),
+            version: "2.0.0".into(),
             git_sha: "abc".into(),
             installed_at: now_rfc3339(),
             prefix: root.prefix().to_path_buf(),
@@ -253,7 +269,6 @@ mod tests {
                 sha256: digest::of_file(&bin).unwrap(),
                 required: true,
             }],
-            binaries: Vec::new(),
         };
         assert!(m.verify().is_empty());
 
@@ -274,7 +289,7 @@ mod tests {
         let optional = root.bin_dir().join("vak-delivery-worker");
         let m = Manifest {
             schema: SCHEMA,
-            version: "0.8.0".into(),
+            version: "2.0.0".into(),
             git_sha: "abc".into(),
             installed_at: now_rfc3339(),
             prefix: root.prefix().to_path_buf(),
@@ -292,7 +307,6 @@ mod tests {
                     required: false,
                 },
             ],
-            binaries: Vec::new(),
         };
         assert_eq!(
             m.verify(),

@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Frozen-ladder routing (docs/design/27 Phase B): dispatch walks the
+//! Frozen-ladder routing (docs/design/15-reliability.md): dispatch walks the
 //! frozen candidate legs on typed failures; ceiling/receipts/endurance
 //! are shared across legs; walking the ladder is contract execution.
 

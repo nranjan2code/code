@@ -68,5 +68,5 @@ are deterministic, hand/GPT-authored files validated before execution.
 
 Runs → flows adoption (`flows adopt --from <session>` with provider/model
 taken only from work receipts), deterministic run-vs-run diff, and typed
-recovery audits are specced in `27-vakyartha-adoption.md` Phase E
-(demand-backed 2026-08-23: a completed run manually rerun by hand).
+recovery audits are live (demand-backed 2026-08-23: a completed run manually
+rerun by hand).

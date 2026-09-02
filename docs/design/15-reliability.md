@@ -84,9 +84,9 @@ state machine per provider endpoint and credential fingerprint:
 Config keys: `circuit_breaker_threshold`,
 `circuit_breaker_cooldown_secs` (`0` cooldown disables opening).
 
-## Frozen route ladder (landed — Phase B, router-grade ordering in Phase R)
+## Frozen route ladder (landed)
 
-`27-vakyartha-adoption.md` Phases A–B are live: at session admission an
+The frozen ladder is live: at session admission an
 ordered candidate ladder is computed (primary + warm-discovery fallbacks
 only — no invented ids, no network) and frozen INTO the contract header.
 Dispatch walks legs top-down on typed failure domains; the first dispatch

@@ -350,7 +350,7 @@ pub fn load(sessions_home: &Path, session_id: &str, seq: u32) -> std::io::Result
 /// beyond-budget, or written by an old-format checkpoint without an
 /// observed manifest — is left untouched.
 /// Human-readable workspace delta between a stored checkpoint and the
-/// current tree (docs/design/27 Phase H): modified/added/deleted paths
+/// current tree (docs/design/42-managed-work-contracts.md): modified/added/deleted paths
 /// with byte deltas plus bounded excerpts for changed text files.
 /// Feeds goal-mode auditors so verdicts rest on environment facts.
 pub fn delta_summary(

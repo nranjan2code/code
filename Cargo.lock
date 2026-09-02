@@ -5795,7 +5795,7 @@ dependencies = [
 
 [[package]]
 name = "vak"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "chrono",
  "clap",
@@ -5828,7 +5828,7 @@ dependencies = [
 
 [[package]]
 name = "vak-agent"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5849,7 +5849,7 @@ dependencies = [
 
 [[package]]
 name = "vak-config"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "serde",
  "tempfile",
@@ -5860,12 +5860,13 @@ dependencies = [
 
 [[package]]
 name = "vak-core"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
  "globset",
+ "semver",
  "serde",
  "serde_json",
  "sha2",
@@ -5890,7 +5891,7 @@ dependencies = [
 
 [[package]]
 name = "vak-delivery"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "pulldown-cmark",
  "serde",
@@ -5901,7 +5902,7 @@ dependencies = [
 
 [[package]]
 name = "vak-desktop"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "axum",
  "notify-rust",
@@ -5927,7 +5928,7 @@ dependencies = [
 
 [[package]]
 name = "vak-eval"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5946,7 +5947,7 @@ dependencies = [
 
 [[package]]
 name = "vak-flow"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5966,7 +5967,7 @@ dependencies = [
 
 [[package]]
 name = "vak-hooks"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "libc",
  "serde",
@@ -5980,7 +5981,7 @@ dependencies = [
 
 [[package]]
 name = "vak-llm"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5998,7 +5999,7 @@ dependencies = [
 
 [[package]]
 name = "vak-mcp"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "globset",
@@ -6014,7 +6015,7 @@ dependencies = [
 
 [[package]]
 name = "vak-ops"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
@@ -6025,7 +6026,7 @@ dependencies = [
 
 [[package]]
 name = "vak-permission"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "globset",
  "serde",
@@ -6035,7 +6036,7 @@ dependencies = [
 
 [[package]]
 name = "vak-plugin"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "base64 0.22.1",
  "hex",
@@ -6051,7 +6052,7 @@ dependencies = [
 
 [[package]]
 name = "vak-server"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -6092,7 +6093,7 @@ dependencies = [
 
 [[package]]
 name = "vak-session"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "chrono",
  "serde",
@@ -6106,7 +6107,7 @@ dependencies = [
 
 [[package]]
 name = "vak-store"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -6123,7 +6124,7 @@ dependencies = [
 
 [[package]]
 name = "vak-tools"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "globset",
@@ -6144,7 +6145,7 @@ dependencies = [
 
 [[package]]
 name = "vak-tray"
-version = "1.0.3"
+version = "2.0.0"
 dependencies = [
  "notify-rust",
  "png 0.17.16",

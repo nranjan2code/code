@@ -1,5 +1,4 @@
-//! Work receipts: typed audit records for provider dispatches (doc 27
-//! Phase A). Receipts are ledger data, never model-visible input.
+//! Work receipts: typed audit records for provider dispatches (docs/design/42-managed-work-contracts.md//! Phase A). Receipts are ledger data, never model-visible input.
 
 use crate::{LlmError, Usage};
 use serde::{Deserialize, Serialize};

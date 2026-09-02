@@ -50,7 +50,7 @@ cd /path/to/the/workspace-the-gateway-should-serve
   `launchctl bootout gui/$UID/com.vak.desktop` /
   `systemctl --user disable --now vak-desktop.service` — re-running
   `self services-sync` will recreate it.
-- Put `VAK_GATEWAY_TOKEN` and channel credentials in `data_home()/.env`
+- Put `VAK_GATEWAY_TOKEN` and channel credentials in `~/vak-home/.env`
   before starting services so bridges keep working across restarts.
 - Re-run `self install` after upgrading binaries and `self services-sync` after
   changing the served workspace or generated-unit contract.
@@ -63,11 +63,14 @@ cd /path/to/the/workspace-the-gateway-should-serve
 
 ## Secrets
 
-All user-level secrets live in `data_home()/.env` (0600)—
-`~/Library/Application Support/vak/.env` on macOS or
-`~/.local/share/vak/.env` on Linux—including provider keys,
-`TELEGRAM_BOT_TOKEN`, and `VAK_GATEWAY_TOKEN`. Nothing secret is written
-to config.toml, generated units, the repo, or logs. Generated bearer tokens are
+All user-level secrets live in the canonical user `.env` at
+`~/vak-home/.env` (0600) — provider keys, bot tokens, and
+`VAK_GATEWAY_TOKEN` — beside the Shared config layer at
+`~/vak-home/.vak/config.toml`. Sessions, ledgers, and gateway state live
+separately under the platform data home (`~/Library/Application Support/vak`
+on macOS, `~/.local/share/vak` on Linux), which holds no secrets.
+
+Nothing secret is written to config.toml, generated units, the repo, or logs. Generated bearer tokens are
 printed only to an interactive terminal; Telegram HTTP errors omit Bot API URLs.
 
 ## Security posture
@@ -104,7 +107,7 @@ migration.
 | bridge replies "(gateway unreachable)" | gateway down or token mismatch — compare `VAK_GATEWAY_TOKEN` in `.env` vs the gateway's launchd environment |
 | replies "(aborted)" | pre-0.3.0 bug; upgrade. Also check `~/Library/Logs/vak/gateway.log` (macOS) or `~/.local/state/vak/logs/gateway.log` (Linux) |
 | tool calls denied on phone | expected in default deny mode; configure an approver surface or use TUI/desktop for escalations |
-| model errors | `/health` shows effective provider/model plus provenance/revision; keys live in `data_home()/.env` |
+| model errors | `/health` shows effective provider/model plus provenance/revision; keys live in `~/vak-home/.env` |
 | MCP server "spawn failed" / dies at handshake | under service managers PATH is minimal: use the absolute interpreter path (`which npx`) in `[mcp.servers.*].command`; network-client tools also need `network = true` |
 | Tavily/web search denied on phone | add `allow = ["+mcp(tavily/*)"]` to trusted config — scoped to that server |
 

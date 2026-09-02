@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Budget admission (docs/design/27 Phase D): denial fails the run
+//! Budget admission (docs/design/15-reliability.md): denial fails the run
 //! permanently with a typed budget message unless the approver accepts
 //! the one-time raise Ask; unattended (no approver) always aborts.
 
@@ -199,7 +199,7 @@ impl Approver for ApproveOnce {
 }
 
 /// Approval raises the cap for the WHOLE run: later dispatches pass
-/// without re-asking (raise-cap-once, doc 27 Phase D).
+/// without re-asking (raise-cap-once, docs/design/15-reliability.md).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn budget_approval_raises_cap_for_rest_of_run() {
     let gate = Arc::new(CapGate {

@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Cross-phase adoption matrix (docs/design/27): scenarios where Phases
+//! Cross-phase adoption matrix (docs/design/42-managed-work-contracts.md): scenarios where Phases
 //! A (receipts), B (ladder), C (partitions), D (budget), H (goal) must
 //! compose correctly — not just work in isolation.
 

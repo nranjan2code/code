@@ -293,7 +293,7 @@ covers the case without a new background task.
    matter beyond the audit log. Deferred; `added_by` is captured from day
    one so it's available if needed later.
 3. **Per-chat rate/cost caps** — out of scope here; `finops` already caps
-   globally per docs/design/27. Whether a per-channel cap belongs on the
+   globally per `docs/design/42-managed-work-contracts.md`. Whether a per-channel cap belongs on the
    allowlist entry is a separate decision.
 4. **Should `workspace` on an entry be restricted to a known/registered
    set of workspaces**, or free-text any path the gateway process can

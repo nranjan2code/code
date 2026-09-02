@@ -66,7 +66,6 @@ Read the relevant existing design documents and source before changing code:
 - `docs/design/10-flows.md`
 - `docs/design/11-planner.md`
 - `docs/design/22-gateway.md`
-- `docs/design/27-vakyartha-adoption.md`
 - `docs/design/30-output-engineering.md`
 - `docs/design/33-admin-console.md`
 - `docs/design/41-capability-registry.md`

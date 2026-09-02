@@ -1,4 +1,4 @@
-//! Runs→flows adoption (docs/design/27 Phase E): convert proven work —
+//! Runs→flows adoption (docs/design/10-flows.md): convert proven work —
 //! planner plan ledgers, flow-run snapshots, or a session's settled shell
 //! commands — into a governed, hand-editable flow file. Provider/model are
 //! NEVER baked in from caller hints; attribution stays in the receipts.

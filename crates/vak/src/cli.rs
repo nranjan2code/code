@@ -48,7 +48,7 @@ pub(crate) enum Command {
         /// Track this run as a durable managed work contract
         #[arg(long)]
         managed: bool,
-        /// Durable objective for goal mode (docs/design/27 Phase H):
+        /// Durable objective for goal mode (docs/design/42-managed-work-contracts.md):
         /// completion is audited against --criteria, never self-reported.
         #[arg(long)]
         goal: Option<String>,
@@ -556,7 +556,7 @@ pub(crate) enum MemoryAction {
 pub(crate) enum FlowAction {
     /// List discovered flows
     List,
-    /// Convert proven work into a flow file (doc 27 Phase E):
+    /// Convert proven work into a flow file (docs/design/10-flows.md):
     /// --from accepts a flow-run/plan ledger JSON path or a session id.
     Adopt {
         /// Ledger JSON path, or a session id whose green bash commands
@@ -604,7 +604,7 @@ pub(crate) enum ConfigAction {
 }
 
 /// Scope for a prompt edit. Matches the wire names the admin API uses;
-/// interfaces label these "Shared" and "This project" (docs/design/44).
+/// interfaces label these "Shared" and "This project" (docs/design/05-config.md).
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PromptScope {
     /// ~/vak-home — the baseline every project inherits

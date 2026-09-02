@@ -49,7 +49,7 @@ pub struct FrozenContract {
     pub app_version: String,
     pub provider: String,
     pub model: String,
-    /// Frozen route ladder (docs/design/27 Phase B): ordered candidate
+    /// Frozen route ladder (docs/design/15-reliability.md): ordered candidate
     /// legs committed at admission; dispatch walks it top-down on typed
     /// failures. Walking the ladder IS contract execution — never a
     /// mid-contract switch. Empty/missing ⇒ single-model legacy.
@@ -135,12 +135,12 @@ pub struct CompactionEntry {
     pub summary: String,
     pub first_kept_entry_id: String,
     pub tokens_before: u64,
-    /// Packet accounting (doc 27 Phase C): which visible message entries
+    /// Packet accounting (docs/design/17-context.md): which visible message entries
     /// stayed verbatim vs became summary material. `None` for entries
     /// written before accounting existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partition: Option<ContextPartition>,
-    /// Full-context reset (doc 27 Phase H): when true, the projection
+    /// Full-context reset (docs/design/42-managed-work-contracts.md): when true, the projection
     /// replaces EVERYTHING with this summary — the reset-with-handoff
     /// rescue. Default false; older ledgers parse unchanged.
     #[serde(default)]
@@ -157,7 +157,7 @@ pub struct ContextPartition {
     pub dropped_entry_ids: Vec<String>,
 }
 
-/// A durable objective with acceptance criteria (docs/design/27 Phase H).
+/// A durable objective with acceptance criteria (docs/design/42-managed-work-contracts.md).
 /// Status transitions append new entries — the ledger never rewrites.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GoalEntry {
@@ -453,10 +453,10 @@ pub enum EntryPayload {
     Header(SessionHeader),
     Message(MessageRecord),
     Compaction(CompactionEntry),
-    /// Audit record for one unit of provider work (doc 27 Phase A).
+    /// Audit record for one unit of provider work (docs/design/42-managed-work-contracts.md).
     /// Never model-visible: `derive_messages` skips it.
     Receipt(vak_llm::WorkReceipt),
-    /// Goal lifecycle (doc 27 Phase H). Never model-visible.
+    /// Goal lifecycle (docs/design/42-managed-work-contracts.md). Never model-visible.
     Goal(GoalEntry),
     /// UI/audit lifecycle facts; never model-visible.
     Activity(ActivityRecord),
@@ -536,6 +536,6 @@ pub struct CompactionPlan {
     /// Id of the FIRST KEPT projected entry — the new compaction's
     /// first_kept_entry_id anchor.
     pub first_kept_entry_id: String,
-    /// Where each visible message entry lands (doc 27 Phase C).
+    /// Where each visible message entry lands (docs/design/17-context.md).
     pub partition: ContextPartition,
 }

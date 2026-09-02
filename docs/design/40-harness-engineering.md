@@ -1,4 +1,4 @@
-# VAK harness engineering
+# 40 — Harness engineering
 
 VAK has two complementary regression lanes:
 

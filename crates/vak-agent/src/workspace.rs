@@ -1,4 +1,4 @@
-//! Workspace-delta seam (docs/design/27 Phase H MEA): the auditor judges
+//! Workspace-delta seam (docs/design/42-managed-work-contracts.md MEA): the auditor judges
 //! environment facts, not just transcript claims. Core implements this by
 //! diffing the run-start checkpoint against the live tree.
 

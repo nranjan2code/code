@@ -47,6 +47,18 @@ no plists pointing into build trees, no spot-fixing deploys.
    verifies, renames over the installed binary, re-syncs services —
    never in-place writes, never auto-run.
 
+13. **2.0.0 is the supported baseline.** An install manifest, data home,
+    or config written by an earlier version is refused whole by the one
+    shared message in `vak_core::baseline`, which names the artifact, the
+    version found, the baseline expected, and the single command that
+    resolves it. Nothing is folded forward and nothing is migrated: the v1
+    manifest fold-forward that used to live in `crates/vak/src/install/manifest.rs`
+    is deleted, because half-adopting an old install produced a tree that
+    `verify` and `update` disagreed about. The release feed carries no
+    version below the baseline, so `self update` from an older line reports
+    the baseline rather than resolving. See `AGENTS.md` invariant 29 and
+    `docs/design/46-stabilization-install-and-onboarding.md` Part VII.
+
 ## Command surface
 
 ```
@@ -171,7 +183,8 @@ self-contained sandboxes (tests, portable installs).
 Releases and updates must never lose data or credentials:
 
 - **No secrets in units.** Templates embed zero credentials. The binary
-  self-sources from the user `.env` at `data_home()/.env` (gateway token,
+  self-sources from the canonical user `.env` at `~/vak-home/.env`
+  (`user_env_path()`) (gateway token,
   bot tokens, provider keys) — `secured_router_with` falls back to `.env`
   when the process env is empty. Regenerating units on a new machine
   therefore cannot strand auth.
@@ -201,11 +214,11 @@ store. With no prior user base to upgrade, the pre-0.8 `~/.vak` dotdir is
 not migrated — operators who need retained data restore from a `vak backup`
 export.
 
-## Migration of legacy deployments
+## Units that exec outside the managed prefix
 
-Plists pointing at `target/release/*` are legacy. `self services-sync`
-rewrites them onto the installed path on first run; `self status` flags
-any unit still exec'ing from a build tree until migrated.
+A unit pointing at `target/release/*` is drift, not a supported deployment.
+`self services-sync` rewrites it onto the installed path; `self status`
+flags any unit still exec'ing from a build tree until it does.
 
 ## Frontend bundle staleness
 

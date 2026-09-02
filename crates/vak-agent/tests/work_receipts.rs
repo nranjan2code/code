@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Work receipts + dispatch ceiling (doc 27 Phase A): every provider
+//! Work receipts + dispatch ceiling (docs/design/42-managed-work-contracts.md): every provider
 //! dispatch lands as a typed ledger entry on every exit path; the ceiling
 //! fails closed without another paid call.
 

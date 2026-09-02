@@ -1,4 +1,4 @@
-//! Spend-admission seam (docs/design/27 Phase D). The agent loop asks the
+//! Spend-admission seam (docs/design/15-reliability.md). The agent loop asks the
 //! gate before every paid dispatch and reports settled usage after; the
 //! implementation lives above (vak-core) where the ledger, caps, and
 //! pricing config exist. Budget denial is a typed Ask through the normal
@@ -30,7 +30,7 @@ pub trait SpendGate: Send + Sync {
     fn record_settled(&self, provider: &str, model: &str, session_id: &str, usage: &Usage);
 
     /// The approver accepted the budget Ask: lift the cap for the REST of
-    /// this run (raise-cap-once semantics, doc 27 Phase D). Default no-op
+    /// this run (raise-cap-once semantics, docs/design/15-reliability.md). Default no-op
     /// for gates without run state.
     fn on_budget_approved(&self) {}
 }

@@ -2697,7 +2697,7 @@ struct RunBody {
     /// (docs/design/22-gateway.md media passthrough).
     #[serde(default)]
     attachments: Vec<RunAttachment>,
-    /// Goal mode (docs/design/27 Phase H): durable objective; completion
+    /// Goal mode (docs/design/42-managed-work-contracts.md): durable objective; completion
     /// is audited against `criteria`, never self-reported.
     #[serde(default)]
     goal: Option<String>,
@@ -3242,7 +3242,7 @@ async fn answer_approval(
     }
 }
 
-/// Dispatch forensics (docs/design/27 Phase A): the session's work
+/// Dispatch forensics (docs/design/42-managed-work-contracts.md): the session's work
 /// receipts, newest last.
 async fn session_receipts(
     State(state): State<AppState>,
@@ -3672,7 +3672,7 @@ async fn session_work_command(
     }
 }
 
-/// Flow names discovered under `<sessions_home>/flow-runs` (doc 27 G).
+/// Flow names discovered under `<sessions_home>/flow-runs` (docs/design/42-managed-work-contracts.mdG).
 async fn flows_list(State(state): State<AppState>) -> Json<Vec<String>> {
     let root = state.core.sessions_home().join("flow-runs");
     let mut out = Vec::new();
@@ -4526,8 +4526,7 @@ async fn delete_session(
     let mut deleted = read_deleted(&state.core);
     deleted.insert(id.clone(), true);
     write_deleted(&state.core, &deleted);
-    // Drop the session's cached FinOps spend gate along with it (docs/design/27
-    // Phase D) — otherwise a long-running server accumulates one entry per
+    // Drop the session's cached FinOps spend gate along with it (docs/design/42-managed-work-contracts.md// Phase D) — otherwise a long-running server accumulates one entry per
     // session ever seen, forever.
     state.core.forget_spend_gate(&id);
     Json(serde_json::json!({ "deleted": id })).into_response()

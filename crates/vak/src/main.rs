@@ -743,7 +743,7 @@ async fn run_flow_exec(
         }
     };
 
-    // Plan preview (doc 27 Phase G): show the shape before any effect.
+    // Plan preview (docs/design/10-flows.md): show the shape before any effect.
     if let Ok(layers) = vak_flow::parse::layers(&flow) {
         let rendered: Vec<String> = layers.iter().map(|l| l.join(", ")).collect();
         eprintln!("plan: {}", rendered.join(" | "));
@@ -817,7 +817,7 @@ async fn run_flow_exec(
         runs_dir.join(format!("{run_id}.json"))
     };
 
-    // Recovery audit (docs/design/27 Phase E): classify the snapshot vs
+    // Recovery audit (docs/design/10-flows.md): classify the snapshot vs
     // the live flow file BEFORE touching anything. Drift fails closed
     // unless explicitly accepted; the frozen snapshot always wins.
     if resume {
@@ -883,7 +883,7 @@ async fn run_flow_exec(
     }
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
-    // Layer-aware progress strip (doc 27 Phase G): prefix ✓/✗/⊘ events
+    // Layer-aware progress strip (docs/design/10-flows.md): prefix ✓/✗/⊘ events
     // with their topological layer, other lines verbatim.
     let layer_of: std::collections::HashMap<String, usize> = match vak_flow::parse::layers(&flow) {
         Ok(layers) => layers
@@ -1555,7 +1555,7 @@ async fn run_eval(
             );
             reports.push(r);
         }
-        // Deterministic context-quality gate (doc 27 Phase C) — no model
+        // Deterministic context-quality gate (docs/design/17-context.md) — no model
         // calls; packet-accounting properties over real compaction.
         let card = match vak_eval::run_context_scorecard() {
             Ok(card) => card,

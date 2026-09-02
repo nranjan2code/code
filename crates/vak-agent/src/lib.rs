@@ -194,7 +194,7 @@ pub enum AgentEvent {
         before_tokens: u64,
         after_tokens: u64,
         summarized_messages: usize,
-        /// Packet accounting (doc 27 Phase C): how many visible message
+        /// Packet accounting (docs/design/17-context.md): how many visible message
         /// entries stayed verbatim vs became summary material.
         selected_messages: usize,
         dropped_messages: usize,
@@ -296,7 +296,7 @@ pub struct AgentConfig {
     pub run_retry_attempts: u32,
     /// Exponential backoff base for run-level endurance, capped at 30s.
     pub run_retry_base_backoff_ms: u64,
-    /// Hard cap on provider dispatches for one unit of work (doc 27 Phase
+    /// Hard cap on provider dispatches for one unit of work (docs/design/42-managed-work-contracts.mdPhase
     /// A). Exhaustion fails closed before another paid call goes out. The
     /// single-ladder default codifies today's worst case:
     /// `(max_retries + 1) * (run_retry_attempts + 1)`; the frozen ladder
@@ -306,7 +306,7 @@ pub struct AgentConfig {
     pub context_policy: context::ContextPolicy,
     /// Built-in premature-completion gate. None disables entirely.
     pub stop_policy: Option<StopPolicy>,
-    /// Pre-dispatch budget admission (docs/design/27 Phase D). None
+    /// Pre-dispatch budget admission (docs/design/15-reliability.md). None
     /// disables spend gating entirely.
     pub spend_gate: Option<Arc<dyn SpendGate>>,
     /// Frozen route ladder (Phase B): primary-first candidate legs beyond

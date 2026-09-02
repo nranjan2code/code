@@ -1,7 +1,7 @@
 # 17 — Long-horizon context
 
 How multi-turn sessions survive context-window limits. Inspired by
-vakyartha's prompt-budget protocol, reduced to a coding-harness kernel.
+A prompt-budget protocol reduced to a coding-harness kernel.
 
 ## Policy
 
@@ -28,7 +28,7 @@ Before every model step:
    ≤400 words), and write it as a **compaction entry** via
    `SessionLog::compact_tail`.
 3. Re-estimate. Still over the *full* input budget ⇒ **reset-with-handoff
-   rescue** (doc 27 Phase H, once per run, `[goal] handoff_reset`): the
+   rescue** (`docs/design/42-managed-work-contracts.md`, once per run, `[goal] handoff_reset`): the
    model writes a structured shift-change summary and the projection
    becomes ONLY that summary (`reset_all` compaction entry). If the rescue
    is disabled or its write fails ⇒ **fail closed** with a
@@ -44,7 +44,7 @@ Recent turns stay verbatim so stateless follow-ups keep working.
 summarized_messages, selected_messages, dropped_messages }` — surfaced in
 the TUI as a 📦 line.
 
-## Packet accounting + deterministic gate (doc 27 Phase C)
+## Packet accounting + deterministic gate (`docs/design/42-managed-work-contracts.md`)
 
 Every compaction plan and entry now carries a **partition**: the message
 entries visible in the projection split into `selected` (verbatim tail)
@@ -63,10 +63,8 @@ stays with `eval --live` — absent evidence is UNKNOWN, never assumed.
 
 ## Still not built
 
-- Relevance-scored retrieval of dropped turns (vakyartha's
-  context-assembly goes further with `<session_state>` packets and typed
-  reference frames; our ledger keeps everything on disk so recall can be
-  added later without changing the format).
+- Relevance-scored retrieval of dropped turns. Our ledger keeps everything
+  on disk, so recall can be added later without changing the format.
 - Provider-cache-aware prefix shaping beyond our stable system prompt.
 
 ## Tests

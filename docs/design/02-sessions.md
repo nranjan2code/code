@@ -16,9 +16,9 @@ One JSONL file per session at
 - `compaction` — `{summary, first_kept_entry_id, tokens_before}`.
 - `receipt` — one work unit's provider dispatches (`WorkReceipt`:
   purpose, winning attempt, per-attempt reason/domain/settlement/usage).
-  Audit only — `derive_messages()` skips it (doc 27 Phase A).
+  Audit only — `derive_messages()` skips it (`docs/design/42-managed-work-contracts.md`).
 - `goal` — objective/criteria lifecycle statuses (Active/Done{audited}/
-  Unverified). Audit only — skipped by projection (doc 27 Phase H).
+  Unverified). Audit only — skipped by projection (`docs/design/42-managed-work-contracts.md`).
 
 ## Invariants
 

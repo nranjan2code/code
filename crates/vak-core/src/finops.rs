@@ -1,4 +1,4 @@
-//! FinOps (docs/design/27 Phase D): persisted cost ledger + pre-dispatch
+//! FinOps (docs/design/15-reliability.md): persisted cost ledger + pre-dispatch
 //! budget admission. Every settled dispatch appends an estimated-USD row
 //! keyed by durable attribution ids; caps are checked BEFORE each paid
 //! call. Denial is a question (budget Ask), not a crash; unattended

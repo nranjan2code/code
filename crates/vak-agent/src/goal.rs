@@ -1,4 +1,4 @@
-//! Goal mode + audited completion (docs/design/27 Phase H).
+//! Goal mode + audited completion (docs/design/42-managed-work-contracts.md).
 //!
 //! A goal is a durable objective with acceptance criteria. Completion is
 //! never self-reported: when the model claims done, the loop audits the

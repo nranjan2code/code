@@ -1,4 +1,4 @@
-//! Run-graph snapshots (docs/design/27 Phase G): typed projection over a
+//! Run-graph snapshots (docs/design/10-flows.md): typed projection over a
 //! flow-run ledger — zero rendering opinions, safe to serve as JSON or
 //! drive any UI strip.
 

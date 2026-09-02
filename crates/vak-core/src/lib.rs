@@ -4,6 +4,7 @@
 
 pub mod agent_network;
 pub mod backup;
+pub mod baseline;
 pub mod checkpoints;
 pub mod custom_commands;
 pub mod digest;
@@ -317,7 +318,7 @@ struct CoreInner {
     /// Same no-pin, always-take-latest shape as the memory overrides above.
     subagents_override: std::sync::Mutex<Option<bool>>,
     work_override: std::sync::Mutex<Option<vak_config::WorkResolved>>,
-    /// Live overrides for `[finops]` budget caps (docs/design/27 Phase D).
+    /// Live overrides for `[finops]` budget caps (docs/design/15-reliability.md).
     /// `None` = follow the persisted value; `Some(None)` = explicitly
     /// cleared (no cap); `Some(Some(v))` = pinned to `v`. Distinct from
     /// the other overrides here because "no cap" is a real, settable
@@ -367,7 +368,7 @@ struct CoreInner {
     /// (Phase R). Fed from work receipts at run end; read at ladder
     /// admission.
     beliefs: Arc<routing::BeliefState>,
-    /// Per-session FinOps spend gates (docs/design/27 Phase D), keyed by
+    /// Per-session FinOps spend gates (docs/design/15-reliability.md), keyed by
     /// session id. Built once per session and reused for every turn: a
     /// fresh gate per turn used to zero out `max_run_usd`'s accounting on
     /// every message, so a multi-turn conversation could blow past the
@@ -1643,7 +1644,7 @@ impl Core {
     }
 
     /// The spend gate for `session_id`, built once and reused for every
-    /// subsequent turn of that session (docs/design/27 Phase D). Rebuilding
+    /// subsequent turn of that session (docs/design/15-reliability.md). Rebuilding
     /// a fresh gate per turn used to reset `max_run_usd`'s in-memory spend
     /// counter to zero on every message — this cache is what makes the run
     /// cap actually span the whole run rather than a single turn. Live cap
@@ -2951,7 +2952,7 @@ impl Core {
         }
     }
 
-    /// Frozen-ladder admission (docs/design/27 Phase B + Phase R).
+    /// Frozen-ladder admission (docs/design/15-reliability.md + Phase R).
     ///
     /// Pure with respect to its inputs: warm discovery caches, the
     /// evidence ledger, session beliefs, config, and tool count. No
@@ -3099,7 +3100,7 @@ impl Core {
                 app_version: APP_VERSION.into(),
                 provider,
                 model,
-                // Frozen-ladder admission (docs/design/27 Phase B +
+                // Frozen-ladder admission (docs/design/15-reliability.md +
                 // Phase R): primary leg always first; additional legs
                 // ONLY from warm discovery caches -- the same model on
                 // other keyed providers, plus explicit `[route]`
@@ -3225,7 +3226,7 @@ impl Core {
         .await
     }
 
-    /// Goal-mode turn (docs/design/27 Phase H): the run may only end when
+    /// Goal-mode turn (docs/design/42-managed-work-contracts.md): the run may only end when
     /// the objective's acceptance criteria pass an independent audit.
     #[allow(clippy::too_many_arguments)]
     pub async fn run_goal_turn_with(
@@ -3391,7 +3392,7 @@ impl Core {
             vak_config::ApprovalMode::ApproveSafe => vak_agent::ApprovalMode::ApproveSafe,
             vak_config::ApprovalMode::AutoApprove => vak_agent::ApprovalMode::AutoApprove,
         };
-        // Pre-dispatch budget admission (docs/design/27 Phase D): active
+        // Pre-dispatch budget admission (docs/design/15-reliability.md): active
         // whenever any finops knob is configured.
         let f = self.effective_finops();
         if f.max_run_usd.is_some() || f.max_day_usd.is_some() || !f.price_overrides.is_empty() {

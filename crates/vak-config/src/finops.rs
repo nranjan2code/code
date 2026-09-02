@@ -1,4 +1,4 @@
-//! Spend pricing (docs/design/27 Phase D). Every dollar figure produced
+//! Spend pricing (docs/design/15-reliability.md). Every dollar figure produced
 //! here is an ESTIMATE — providers do not return cost in responses, so
 //! rows are labeled `estimated` and never treated as settled fact.
 

@@ -1,4 +1,4 @@
-//! Deterministic context-quality gate (doc 27 Phase C): packet-accounting
+//! Deterministic context-quality gate (docs/design/17-context.md): packet-accounting
 //! properties asserted over real compaction machinery with zero model
 //! calls. Every fixed context bug becomes a fixture here.
 //!
