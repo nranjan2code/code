@@ -5444,6 +5444,24 @@ function SetupActions(props: { step: keyof OnboardingState; done: () => void }) 
         </div>
       </Match>
 
+      <Match when={props.step === "first_result"}>
+        <button
+          disabled={busy()}
+          onClick={() =>
+            void run("Starter session created — open it to watch it run", async () => {
+              const started = await api.startFirstTask();
+              location.hash = `#/sessions/${started.session_id}`;
+            })
+          }
+        >
+          {busy() ? "Starting…" : "Run the starter task"}
+        </button>
+        <p class="dim">
+          It reads and explains this codebase. It cannot change anything: the run is
+          capped to read-only even if you chose a more permissive setting above.
+        </p>
+      </Match>
+
       <Match when={props.step === "integrations"}>
         <a class="ghost small" href="#/integrations">Choose connected apps</a>
       </Match>

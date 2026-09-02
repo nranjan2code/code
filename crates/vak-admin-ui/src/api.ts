@@ -661,6 +661,12 @@ export const api = {
       body: JSON.stringify({ path }),
     }).then((r) => handle(r)),
 
+  /** Start the guided starter session. Read-only regardless of the
+   * workspace's configured mode — the cap is applied server-side and is
+   * not this caller's to choose. */
+  startFirstTask: (): Promise<{ session_id: string; prompt: string; permission_mode: string }> =>
+    fetch("/onboarding/first-task", { method: "POST" }).then((r) => handle(r)),
+
   /** Register services with the platform service manager. The one action
    * that activates; every configuration write is inert until it runs. */
   activateServices: (): Promise<{ ok: boolean; units: { name: string; action: string; error?: string }[] }> =>

@@ -88,6 +88,16 @@ const MAX_LIVE_SESSIONS: usize = 128;
 
 pub(crate) struct SessionHandle {
     pub(crate) id: String,
+    /// The `Core` this session runs under, resolved once at creation.
+    ///
+    /// A session's contract freezes when it is created (invariant 17), and
+    /// its permission ceiling is part of that contract — so it belongs on
+    /// the handle rather than being re-read from `state.core` at dispatch.
+    /// The gateway already passes its pooled `Core` explicitly into turn
+    /// execution; this is the same fact, held where every run path can see
+    /// it, which is what lets a session be capped *below* the workspace
+    /// mode (doc 46 security invariant 5).
+    pub(crate) core: Core,
     /// Workspace this session's tools/diffs operate in (main cwd, or a
     /// best-of-N worktree).
     pub(crate) cwd: PathBuf,
@@ -608,6 +618,7 @@ fn router_with_state(state: AppState) -> Router {
             post(onboarding_workspace_review),
         )
         .route("/onboarding/trust", post(onboarding_trust))
+        .route("/onboarding/first-task", post(onboarding_first_task))
         .route("/backup/export", post(backup_export))
         .route("/backup/import", post(backup_import))
         .route("/digest", get(digest_report))
@@ -2433,6 +2444,7 @@ pub(crate) fn register_handle(
     id: String,
     session: SessionLog,
     cwd: PathBuf,
+    core: Core,
 ) -> Arc<SessionHandle> {
     let (events_tx, _) = broadcast::channel(1024);
     let (side_events_tx, _) = broadcast::channel(1024);
@@ -2442,6 +2454,7 @@ pub(crate) fn register_handle(
     let presentation_activities = Arc::new(Mutex::new(Vec::new()));
     let handle = Arc::new(SessionHandle {
         id: id.clone(),
+        core,
         cwd,
         session: Arc::new(Mutex::new(Some(session))),
         steering: Arc::new(SteeringQueues::new()),
@@ -2541,7 +2554,13 @@ async fn create_session(State(state): State<AppState>) -> axum::response::Respon
         .header()
         .map(|h| h.session_id.clone())
         .unwrap_or_default();
-    register_handle(&state, id.clone(), session, state.core.cwd().clone());
+    register_handle(
+        &state,
+        id.clone(),
+        session,
+        state.core.cwd().clone(),
+        state.core.clone(),
+    );
 
     state.hub.emit_session_created(&id, "");
     index_session_later(state.store.clone(), state.core.sessions_home(), id.clone());
@@ -2620,7 +2639,13 @@ async fn attach_session(
             // The header id can differ from the requested one; if that handle
             // is already live, keep it rather than replacing it.
             if state.get(&id).is_none() {
-                register_handle(&state, id.clone(), session, state.core.cwd().clone());
+                register_handle(
+                    &state,
+                    id.clone(),
+                    session,
+                    state.core.cwd().clone(),
+                    state.core.clone(),
+                );
             }
             (
                 StatusCode::OK,
@@ -2901,7 +2926,7 @@ async fn run_prompt(
     else {
         return StatusCode::CONFLICT.into_response(); // run already active
     };
-    if let Err(e) = state.core.provider() {
+    if let Err(e) = handle.core.provider() {
         *handle
             .session
             .lock()
@@ -2925,7 +2950,7 @@ async fn run_prompt(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
-    let core = state.core.clone();
+    let core = handle.core.clone();
 
     let expanded_prompt = body.prompt.clone();
     let prompt_message = if body.attachments.is_empty() {
@@ -4242,6 +4267,70 @@ async fn onboarding_trust(
         )
             .into_response(),
     }
+}
+
+/// The starter task. Read-only by construction, and deliberately not
+/// something the caller supplies: a prompt this endpoint accepted would be
+/// a way to run arbitrary work under the onboarding path.
+const FIRST_TASK_PROMPT: &str = "Map this codebase and explain its architecture, key flows, \
+     and highest-risk areas. Do not modify files or run any destructive command.";
+
+/// `POST /onboarding/first-task` — create the guided starter session.
+///
+/// Capped to read-only **regardless of the workspace's configured mode**
+/// (doc 46 security invariant 5). The cap is not advisory and not the
+/// caller's to choose: the session is created against a `Core` resolved
+/// through `CorePool` with a read-only override, which `capped_by` folds
+/// against the workspace ceiling as a `min` — so the result is provably
+/// never more permissive than the workspace, and never less strict than
+/// read-only. The handle carries that `Core`, and every run path uses the
+/// handle's `Core`, so the cap holds for the actual dispatch rather than
+/// only at creation.
+///
+/// Returns the session id; the caller drives it through the normal run and
+/// SSE endpoints, which is what makes its receipt an ordinary receipt.
+async fn onboarding_first_task(State(state): State<AppState>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let workspace = state.core.cwd().clone();
+    let capped = match state.gateway.core_pool.resolve_at(
+        &workspace,
+        Some(vak_config::PermissionMode::ReadOnly),
+        std::time::Instant::now(),
+    ) {
+        Ok(core) => core,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            )
+                .into_response();
+        }
+    };
+
+    let session = match capped.start_session().await {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    };
+    let id = session
+        .header()
+        .map(|h| h.session_id.clone())
+        .unwrap_or_default();
+    register_handle(&state, id.clone(), session, workspace, capped.clone());
+    state.hub.emit_session_created(&id, "");
+    index_session_later(state.store.clone(), state.core.sessions_home(), id.clone());
+
+    Json(serde_json::json!({
+        "session_id": id,
+        "prompt": FIRST_TASK_PROMPT,
+        "permission_mode": format!("{:?}", capped.effective_permission_mode()),
+    }))
+    .into_response()
 }
 
 async fn doctor_report(
@@ -7677,7 +7766,9 @@ async fn side_chat(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
-    let core = state.core.clone();
+    // A side chat reads this session's context, so it runs under the same
+    // ceiling the session was created with.
+    let core = handle.core.clone();
 
     tokio::spawn(async move {
         // No steering on side chats by design: they are read-only Q&A over
@@ -7911,7 +8002,13 @@ async fn spawn_isolated_run(
         return Err("child session has no header".to_string());
     };
     let child_id = format!("{}-{}", child_header.session_id, rid);
-    let handle = register_handle(state, child_id.clone(), child_log, wt.path.clone());
+    let handle = register_handle(
+        state,
+        child_id.clone(),
+        child_log,
+        wt.path.clone(),
+        state.core.clone(),
+    );
     begin_turn(&handle, &child_core, prompt);
     Ok(child_id)
 }
@@ -9527,7 +9624,7 @@ mod configuration_control_tests {
         let state = AppState::new(core.clone());
         let session = core.start_session().await.unwrap();
         let id = session.header().unwrap().session_id.clone();
-        let handle = register_handle(&state, id, session, core.cwd().clone());
+        let handle = register_handle(&state, id, session, core.cwd().clone(), core.clone());
         assert!(!handle.cancel.lock().unwrap().is_cancelled());
 
         vak_config::persist_project_preferences(

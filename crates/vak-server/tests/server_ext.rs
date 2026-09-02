@@ -1609,6 +1609,76 @@ async fn providers_listing_and_key_storage_roundtrip() {
     assert_eq!(ollama_key.status(), 400);
 }
 
+/// The guided first task is read-only **even when the workspace is
+/// full-access** (doc 46 security invariant 5).
+///
+/// This is the assertion that makes the guarantee real rather than
+/// documented: the workspace below is configured `full-access` and
+/// trusted, so an ordinary session there would be unsandboxed — and the
+/// starter session still comes back ReadOnly, because the cap is applied
+/// by `CorePool`'s `capped_by` (a `min`) and carried on the handle the run
+/// path uses.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_first_task_is_read_only_even_in_a_full_access_workspace() {
+    vak_config::paths::isolate_home_for_tests();
+    let (base, token, cwd, _server) = spawn_secured(Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::new()),
+    }))
+    .await;
+    let client = client_with(&token);
+
+    // Make the workspace as permissive as it can be.
+    std::fs::write(
+        cwd.join(".vak/config.toml"),
+        "permission_mode = \"full-access\"\n[memory]\nreflection = false\n",
+    )
+    .unwrap();
+    client
+        .post(format!("{base}/config/mode"))
+        .json(&serde_json::json!({ "mode": "full-access" }))
+        .send()
+        .await
+        .unwrap();
+    let config: serde_json::Value = client
+        .get(format!("{base}/config"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        config["permission_mode"], "FullAccess",
+        "precondition: the workspace really is unrestricted"
+    );
+
+    let started: serde_json::Value = client
+        .post(format!("{base}/onboarding/first-task"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        started["permission_mode"], "ReadOnly",
+        "the guided first task is capped regardless of the workspace mode"
+    );
+    assert!(
+        started["session_id"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()),
+        "and it produced a real session to run"
+    );
+    assert!(
+        started["prompt"]
+            .as_str()
+            .is_some_and(|p| p.contains("Do not modify files")),
+        "the prompt is ours, not the caller's"
+    );
+}
+
 /// The trust review describes a workspace **without loading it**.
 ///
 /// Describing a project's privileged config by parsing it through the

@@ -2187,6 +2187,7 @@ async fn resolve_session(
                             id,
                             session,
                             core.cwd().clone(),
+                            core.clone(),
                         ));
                     }
                     record_prompt_drift(
@@ -2213,7 +2214,8 @@ async fn resolve_session(
         .header()
         .map(|h| h.session_id.clone())
         .unwrap_or_default();
-    let handle = crate::register_handle(state, id.clone(), session, core.cwd().clone());
+    let handle =
+        crate::register_handle(state, id.clone(), session, core.cwd().clone(), core.clone());
     // Two racing first-messages could each mint a session; last bind wins
     // and the loser stays a hidden header-only draft.
     state.gateway.bind(core, key.to_string(), id, revision);
@@ -2773,7 +2775,13 @@ mod tests {
             .await
             .unwrap();
         let old_id = old.header().unwrap().session_id.clone();
-        crate::register_handle(&state, old_id.clone(), old, core.cwd().clone());
+        crate::register_handle(
+            &state,
+            old_id.clone(),
+            old,
+            core.cwd().clone(),
+            core.clone(),
+        );
         state.gateway.bind(
             &core,
             "telegram:42".into(),
@@ -2911,7 +2919,13 @@ mod tests {
             "a new session must record which prompt layers it froze"
         );
         let state = AppState::new(core.clone());
-        crate::register_handle(&state, old_id.clone(), session, core.cwd().clone());
+        crate::register_handle(
+            &state,
+            old_id.clone(),
+            session,
+            core.cwd().clone(),
+            core.clone(),
+        );
         state.gateway.bind(
             &core,
             "telegram:42".into(),
@@ -2964,7 +2978,13 @@ mod tests {
         );
         let legacy = vak_session::SessionLog::create(legacy_path.clone(), legacy_header).unwrap();
         let state = AppState::new(core.clone());
-        crate::register_handle(&state, "legacy-session".into(), legacy, core.cwd().clone());
+        crate::register_handle(
+            &state,
+            "legacy-session".into(),
+            legacy,
+            core.cwd().clone(),
+            core.clone(),
+        );
         state.gateway.bind(
             &core,
             "telegram:42".into(),

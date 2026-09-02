@@ -943,18 +943,6 @@ demonstrated live.
 browser, on macOS and on a headless Linux box over a tunnel. Someone who
 has never used the product completes it without reading a doc.
 
-**Known gap, carried into its own change:** the read-only first-task run.
-`run_prompt` resolves its permission mode from `state.core`, and a
-`SessionHandle` carries no Core of its own, so a session cannot yet be
-capped below the workspace mode. Security invariant 5 — *the first guided
-task is read-only capped regardless of configured mode* — therefore cannot
-be enforced today, and an endpoint asserting it would be a guarantee in
-prose and not in code. The mechanism to reuse is `CorePool`'s: it already
-resolves a Core with `PermissionMode::capped_by` against the workspace
-ceiling (a `min`, so provably never more permissive), which is exactly the
-cap this needs; what is missing is carrying that Core onto the handle so
-the run path uses it.
-
 ### S3 — `vak setup --terminal`
 
 The same state machine as prompts, for anyone with no browser.

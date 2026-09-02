@@ -1627,7 +1627,7 @@ mod tests {
             let core = state.core.clone();
             let s = core.start_session().await.unwrap();
             let id = s.header().map(|h| h.session_id.clone()).unwrap_or_default();
-            crate::register_handle(&state, id, s, state.core.cwd().clone());
+            crate::register_handle(&state, id, s, state.core.cwd().clone(), state.core.clone());
         }
 
         let app =
