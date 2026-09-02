@@ -77,6 +77,12 @@ jobs:
       # someone has already lost data.
       - name: upgrade gate
         run: ./scripts/upgrade-gate.sh
+      # An unavailable check is a failure, not a pass (doc 46 Part V): a
+      # missing audit tool must fail rather than silently skip the gate.
+      - name: advisory gate
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
       - name: Landlock sandbox smoke (Linux 5.13+ runners)
         run: |
           cargo build -p vak

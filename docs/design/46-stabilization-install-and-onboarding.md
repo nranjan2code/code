@@ -1044,6 +1044,17 @@ unsigned-first-open sequence in plain words (D2).
 **Exit:** a person with no Rust toolchain installs from a downloaded
 artifact on macOS and Linux and completes setup in a browser.
 
+The bundle needed no new implementation: `self install --prefix …/Vak.app`
+already materializes one, so building it in the release uses the same code
+path an install uses and the artifact cannot diverge from the installed
+tree. What changed is *when* — at release time, so there is something a
+notarization service could accept.
+
+`hdiutil -exclude` does not reliably keep the installer's own scratch out
+of the image, so the DMG is built from a staging root that contains exactly
+`Vak.app` and an `Applications` symlink — verified by mounting the produced
+image and listing it.
+
 ### S8 — Release pipeline and evidence
 
 Matrix release workflow, `--platform-key`, merged feed, integrity manifest,
@@ -1052,6 +1063,16 @@ signed feed, SBOM, `cargo audit`/`cargo deny` with unavailable-is-failure,
 
 **Exit:** a release is produced by CI from a tag, describes every platform,
 and is verifiable from the artifacts rather than from the build config.
+
+`scripts/integrity-manifest.py` and `scripts/merge-feeds.py` both fail for
+the right reasons, verified against fixtures: a tampered artifact is caught
+as digest drift, and two legs claiming one platform key are refused rather
+than silently overwriting each other.
+
+Workflow inputs reach the shell through `env:` rather than `${{ }}`
+interpolation inside `run:` — an input expanded into a command line is a
+command-injection vector even when only people with write access can
+dispatch it.
 
 ### S9 — Uninstall parity and the clean-slate cut
 

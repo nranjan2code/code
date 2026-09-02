@@ -1,0 +1,96 @@
+name: release
+
+# A release is a matrix build, not something a laptop produces
+# (docs/design/46-stabilization-install-and-onboarding.md S8).
+#
+# `scripts/release.sh` derived one platform key from `uname`, so a release
+# could only ever describe the machine that ran it — every other platform
+# was missing from the feed and `self update` had nothing to offer those
+# installs. Each leg here declares what it built with `--platform-key`, and
+# a final leg merges every leg's feed into one.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Where artifacts will be served from"
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      # One leg failing must not hide what the others found: a release is
+      # only assembled when every platform succeeded, and seeing all the
+      # failures at once is what makes that quick to fix.
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            key: macos/aarch64
+          - runner: macos-13
+            key: macos/x86_64
+          - runner: ubuntu-latest
+            key: linux/x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # An unavailable check is a failure, not a pass (doc 46 Part V,
+      # invariant 18): a tool that is not installed must fail the release
+      # rather than silently skip the gate it was there to enforce.
+      - name: install audit tooling
+        run: |
+          cargo install cargo-audit --locked || exit 1
+          cargo install cargo-cyclonedx --locked || exit 1
+
+      - name: advisory gate
+        run: cargo audit
+
+      - name: dependency inventory
+        run: cargo cyclonedx --format json --all
+
+      # Workflow inputs reach the shell through the environment, never
+      # through `${{ }}` interpolation inside `run:` — an input expanded
+      # into a command line is a command-injection vector even when the
+      # only people who can dispatch it already have write access.
+      - name: build the release
+        env:
+          PLATFORM_KEY: ${{ matrix.key }}
+          BASE_URL: ${{ github.event.inputs.base_url || 'https://get.vak.dev' }}
+        run: ./scripts/release.sh --platform-key "$PLATFORM_KEY" --base-url "$BASE_URL"
+
+      - name: integrity manifest
+        run: python3 scripts/integrity-manifest.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.runner }}
+          path: dist/
+
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: legs
+      # One feed describing every platform. Without this each leg's
+      # release.json names only its own key, so an install on any other
+      # platform sees a feed that offers it nothing.
+      - name: merge platform feeds
+        run: python3 scripts/merge-feeds.py legs dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: dist/

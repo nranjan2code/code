@@ -19,6 +19,7 @@ set -Eeuo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/version.sh"
 
 BASE_URL=""
+PLATFORM_KEY=""
 ALLOW_DIRTY=false
 BUILD=true
 SKIP_CHECKS=false
@@ -27,6 +28,7 @@ TEST_TIMEOUT="${VAK_TEST_TIMEOUT:-900}"
 while (($# > 0)); do
     case "$1" in
         --base-url) BASE_URL="${2:-}"; shift ;;
+        --platform-key) PLATFORM_KEY="${2:-}"; shift ;;
         --allow-dirty) ALLOW_DIRTY=true ;;
         --no-build) BUILD=false ;;
         --skip-checks) SKIP_CHECKS=true ;;
@@ -222,15 +224,22 @@ done
 printf '\n== artifacts ==\n'
 ( cd "$OUT" && shasum -a 256 "${collected[@]%%:*}" > SHA256SUMS )
 
-PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
-case "$PLATFORM" in
-    darwin) PLATFORM="macos" ;;
-esac
-ARCH="$(uname -m)"
-case "$ARCH" in
-    arm64) ARCH="aarch64" ;;
-esac
-KEY="$PLATFORM/$ARCH"
+# A release is a matrix build: each leg declares what it produced rather
+# than inferring it from the machine that happened to run the script, which
+# is why a laptop release could only ever describe one platform.
+if [[ -n "$PLATFORM_KEY" ]]; then
+    KEY="$PLATFORM_KEY"
+else
+    PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    case "$PLATFORM" in
+        darwin) PLATFORM="macos" ;;
+    esac
+    ARCH="$(uname -m)"
+    case "$ARCH" in
+        arm64) ARCH="aarch64" ;;
+    esac
+    KEY="$PLATFORM/$ARCH"
+fi
 
 if [[ -z "$BASE_URL" ]]; then
     BASE_URL="http://127.0.0.1:8899"
