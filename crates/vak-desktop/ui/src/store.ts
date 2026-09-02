@@ -45,10 +45,10 @@ export const [workspaceSwitching, setWorkspaceSwitching] = createSignal(false);
 export const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
 export const [activeId, setActiveId] = createSignal<string | null>(null);
 export const [health, setHealth] = createSignal<Health | null>(null);
-// Provider/model picker state; setupNeeded keeps the project gate up until a
-// usable credential exists for the current provider.
+// Provider/model picker state. Whether *setup* is complete is not tracked
+// here: it is derived from `GET /onboarding` on every read, so there is no
+// local flag that can disagree with the server about what is configured.
 export const [providers, setProviders] = createSignal<import("./types").ProvidersResponse | null>(null);
-export const [setupNeeded, setSetupNeeded] = createSignal(false);
 const storedDensity = localStorage.getItem("vak.density");
 const initialDensity: Density = storedDensity === "balanced" || storedDensity === "audit" ? storedDensity : "outcome";
 export const [density, setDensitySignal] = createSignal<Density>(initialDensity);

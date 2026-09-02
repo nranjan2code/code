@@ -988,3 +988,11 @@ export function feedIngest(): Promise<{
 export function feedDeleteSource(name: string): Promise<{ status: string }> {
   return req(`/feeds/sources/${encodeURIComponent(name)}`, { method: "DELETE" });
 }
+
+import type { OnboardingState } from "./types";
+
+/// The derived setup projection. Shared with the web wizard and the CLI:
+/// one definition of "ready", never a per-surface guess.
+export function onboarding(): Promise<OnboardingState> {
+  return req<OnboardingState>("/onboarding");
+}

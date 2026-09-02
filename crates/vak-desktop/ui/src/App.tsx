@@ -42,7 +42,6 @@ import {
   setNotice,
   setBestOfOpen,
   setProviders,
-  setSetupNeeded,
   setTasksOpen,
   tasksOpen,
   historyOpen,
@@ -92,7 +91,7 @@ import ReceiptsModal from "./components/ReceiptsModal";
 import WorkModal from "./components/WorkModal";
 import PreviewPane from "./components/PreviewPane";
 import SubagentsPanel from "./components/SubagentsPanel";
-import ProjectGate from "./components/ProjectGate";
+import WorkspaceGate from "./components/WorkspaceGate";
 import WorkspaceHeader from "./components/WorkspaceHeader";
 import Icon, { type IconName } from "./components/Icon";
 import ResizeHandle from "./components/ResizeHandle";
@@ -102,7 +101,7 @@ import BudgetBanner from "./components/BudgetBanner";
 import SearchModal from "./components/SearchModal";
 import FeedsPanel from "./components/FeedsPanel";
 import FeedsModal from "./components/FeedsModal";
-import SetupCard from "./components/SetupCard";
+import SetupBanner from "./components/SetupBanner";
 import TranscriptModal from "./components/TranscriptModal";
 import InboxPage from "./components/InboxPage";
 
@@ -499,19 +498,16 @@ export async function refreshBackend(knownInfo?: import("./types").BackendInfo):
     const changedWorkspace = !!backend().cwd && backend().cwd !== info.cwd;
     api.adoptBackend(info);
     if (changedWorkspace) resetWorkspaceView();
-    // Resolve the provider picture *before* publishing readiness. Flipping
-    // backend() first mounts the workspace for an instant with a stale
-    // setupNeeded, and any error thrown by that render would propagate out
-    // of this function and leave providers unset — stranding the gate.
+    // Resolve the provider picture *before* publishing readiness: an error
+    // thrown while the workspace mounts would propagate out of this
+    // function and leave providers unset, stranding the gate.
     try {
       const p = await api.listProviders();
       if (epoch !== backendRefreshEpoch) return false;
       setProviders(p);
-      setSetupNeeded(!p.current_configured);
     } catch {
       if (epoch !== backendRefreshEpoch) return false;
       setProviders(null);
-      setSetupNeeded(false);
     }
     setBackend(info);
     await loadHealth();
@@ -799,7 +795,7 @@ export default function App() {
   return (
     <Show
       when={backend().ready ? backend() : null}
-      fallback={<ProjectGate />}
+      fallback={<WorkspaceGate />}
     >
       {(info) => (
         <div
@@ -897,9 +893,9 @@ export default function App() {
             )}
           </Show>
           <StatusBar />
-          {/* Missing provider never blocks the workspace — the card is
-              dismissible and everything read-only stays usable. */}
-          <SetupCard />
+          {/* Incomplete setup never blocks the workspace; the banner
+              points at the one wizard rather than being a second one. */}
+          <SetupBanner />
           <BudgetBanner />
           <Show when={showShortcuts()}>
             <ShortcutsModal />

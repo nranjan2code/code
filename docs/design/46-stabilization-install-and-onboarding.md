@@ -962,7 +962,18 @@ rather than assuming.
 ### S4 — Desktop adopts the wizard
 
 `ProjectGate` and `SetupCard` are deleted (Tier 1 item 8). The desktop
-webview opens the same wizard. Folder selection stops implying trust.
+opens the same wizard the browser does, served by the backend it already
+embeds.
+
+Folder selection stops implying trust, which was a real hole rather than a
+tidiness point: the desktop booted every picked folder with
+`Core::new_with_trust(cwd, true)` and merged that project's `.env` into the
+process environment, so opening a repository granted whatever its
+`.vak/config.toml` asked for. Selection and consent are now two decisions —
+a folder that asks for nothing privileged opens with no prompt, and one
+that does gets a review naming exactly what it wants, read as text without
+loading it. Reopening a remembered project uses the decision already on
+record; opening safely is the absence of a decision and writes nothing.
 
 **Exit:** desktop and web produce identical effective config from
 equivalent choices, because they are the same code.

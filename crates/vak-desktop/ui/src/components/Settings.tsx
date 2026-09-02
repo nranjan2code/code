@@ -12,7 +12,6 @@ import {
   setSettingsOpen,
   setSettingsScope,
   settingsScope,
-  setSetupNeeded,
   setShowShortcuts,
   uiPreferences,
   updateUiPreference,
@@ -490,7 +489,6 @@ export default function Settings() {
     try {
       const p = await api.listProviders();
       setProviders(p);
-      setSetupNeeded(!p.current_configured);
     } catch {
       /* keep previous snapshot */
     }

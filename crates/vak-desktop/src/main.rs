@@ -510,19 +510,32 @@ fn save_project(cwd: &str) {
     }
 }
 
-fn load_workspace_env(cwd: &std::path::Path) {
+/// Load the Shared `.env`, and the project's own only when the workspace
+/// is trusted.
+///
+/// A project `.env` can inject `VAK_*_BASE_URL` and other privileged
+/// values, so loading it is part of the trust decision — not a consequence
+/// of having opened a folder (doc 46 security invariant 2).
+fn load_workspace_env(cwd: &std::path::Path, trusted: bool) {
     let user = vak_home().join(".env");
-    let project = cwd.join(".env");
-    vak_config::replace_env_files(&[user.as_path(), project.as_path()]);
+    if trusted {
+        let project = cwd.join(".env");
+        vak_config::replace_env_files(&[user.as_path(), project.as_path()]);
+    } else {
+        vak_config::replace_env_files(&[user.as_path()]);
+    }
 }
 
 /// Boot the embedded agent server on an ephemeral loopback port.
 ///
-/// Trust note: the user picked this folder explicitly in-app, so its project
-/// config is trusted — mirroring an interactive CLI session.
-async fn boot_backend(cwd: PathBuf) -> Result<Running, String> {
+/// `trusted` is the operator's recorded decision about *this* folder, not
+/// an assumption drawn from having opened it. Selecting a directory used
+/// to imply full consent to whatever its `.vak/config.toml` asked for —
+/// hooks, MCP servers, a redirected provider endpoint — which is the
+/// hole doc 46 Step 2 exists to close.
+async fn boot_backend(cwd: PathBuf, trusted: bool) -> Result<Running, String> {
     vak_config::ensure_project_config(&cwd).map_err(|e| e.to_string())?;
-    let core = vak_core::Core::new_with_trust(cwd.clone(), true)
+    let core = vak_core::Core::new_with_trust(cwd.clone(), trusted)
         .map(|c| c.with_surface(vak_core::Surface::Desktop))
         .map_err(|e| e.to_string())?;
 
@@ -585,11 +598,19 @@ fn install_backend(
     info
 }
 
+/// Start the embedded backend for `cwd`.
+///
+/// `trust` is the operator's answer when they have just been asked, and
+/// `None` when nobody is being asked — reopening a remembered project, for
+/// instance — in which case the decision already on record governs.
+/// Opening safely is the *absence* of a decision and is the default, so
+/// there is nothing to record for it.
 async fn start_project_backend(
     app: AppHandle,
     state: &BackendState,
     cwd: String,
     persist: bool,
+    trust: Option<bool>,
 ) -> Result<BackendInfo, String> {
     let path = PathBuf::from(&cwd);
     let path = match path.canonicalize() {
@@ -618,10 +639,14 @@ async fn start_project_backend(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_ref()
         .and_then(|running| running.info.cwd.clone());
-    // The freshly picked workspace is trusted; its .env joins the process
-    // env table (real environment variables keep precedence).
-    load_workspace_env(&path);
-    match boot_backend(path).await {
+    if trust == Some(true)
+        && let Err(e) = vak_core::trust::record(&path)
+    {
+        eprintln!("warning: could not record the trust decision: {e}");
+    }
+    let trusted = trust.unwrap_or_else(|| vak_core::trust::is_trusted(&path));
+    load_workspace_env(&path, trusted);
+    match boot_backend(path, trusted).await {
         Ok(running) => {
             let info = install_backend(&app, state, running, persist);
             set_boot_error(state, None);
@@ -629,7 +654,8 @@ async fn start_project_backend(
         }
         Err(e) => {
             if let Some(previous_cwd) = previous_cwd {
-                load_workspace_env(std::path::Path::new(&previous_cwd));
+                let previous = std::path::Path::new(&previous_cwd);
+                load_workspace_env(previous, vak_core::trust::is_trusted(previous));
             } else {
                 vak_config::replace_env_files(&[vak_home().join(".env").as_path()]);
             }
@@ -644,8 +670,9 @@ async fn start_backend(
     app: AppHandle,
     state: State<'_, BackendState>,
     cwd: String,
+    trust: Option<bool>,
 ) -> Result<BackendInfo, String> {
-    start_project_backend(app, &state, cwd, true).await
+    start_project_backend(app, &state, cwd, true, trust).await
 }
 
 fn set_boot_error(state: &BackendState, error: Option<String>) {
@@ -719,6 +746,35 @@ async fn export_text_file(path: String, contents: String) -> Result<usize, Strin
         .await
         .map(|_| contents.len())
         .map_err(|e| format!("could not write {path}: {e}"))
+}
+
+/// What a folder would ask for, before anything opens it.
+///
+/// The same facts `POST /onboarding/workspace-review` reports, but reached
+/// without a server: this runs *before* a backend exists, which is exactly
+/// when the operator needs to decide. Reads section headers as text and
+/// never through the config loader — describing a project's privileged
+/// settings by parsing them normally would activate the very thing being
+/// asked about.
+#[derive(serde::Serialize)]
+struct WorkspaceReview {
+    path: String,
+    git: bool,
+    requests_privilege: bool,
+    privileges: Vec<&'static str>,
+    trusted: bool,
+}
+
+#[tauri::command]
+fn review_workspace(cwd: String) -> WorkspaceReview {
+    let path = std::path::PathBuf::from(&cwd);
+    WorkspaceReview {
+        git: path.join(".git").exists(),
+        requests_privilege: vak_core::trust::requests_privilege(&path),
+        privileges: vak_core::trust::requested_privileges(&path),
+        trusted: vak_core::trust::is_trusted(&path),
+        path: cwd,
+    }
 }
 
 /// Open the admin console at a route, from the UI.
@@ -824,6 +880,7 @@ fn main() {
                         &state,
                         project.to_string_lossy().into_owned(),
                         true,
+                        None,
                     )
                     .await
                     {
@@ -867,6 +924,7 @@ fn main() {
                         &state,
                         cwd.to_string_lossy().into_owned(),
                         explicit_project.is_some(),
+                        None,
                     )
                     .await
                     {
@@ -882,6 +940,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             backend_info,
             open_admin,
+            review_workspace,
             start_backend,
             append_profile_note,
             export_text_file,
