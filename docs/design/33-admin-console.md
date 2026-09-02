@@ -165,8 +165,50 @@ and workspace-scope enforcement as desktop and gateway clients.
 
 ## Console views
 
-- **Overview** — stat cards, system health, pending-approval card with
-  Approve/Deny (live via SSE), activity feed.
+- **Home** — the operator's first screen, answering four questions in order
+  and nothing else: is the system healthy, what is waiting on me, what is
+  running, what is it costing.
+  - **Readiness ring** — eight arcs, one per subsystem (doctor, model route,
+    permissions, chat gateway, channels, delivery, approval gates, budget),
+    each drawn from that subsystem's own probe. A probe that did not answer
+    is `unknown` and is excluded from the healthy count rather than counted
+    as healthy; a subsystem the operator switched off (`off`) is excluded
+    too, and the count says how many. State is carried by colour, stroke
+    pattern, and a printed word, never by colour alone.
+  - **Attention queue** — one severity-ranked list merging every signal in
+    the product that blocks, asks, or drifts: held approval gates, failed
+    doctor checks, open incidents, dead-lettered and queued deliveries,
+    budget position, chats knocking at the allowlist, a stopped gateway
+    unit, drifted bindings, configuration warnings, provider errors and
+    rate limits seen on the hub, overdue scheduled jobs, best-of-N drafts,
+    unread inbox, skill proposals, security events, and unfinished setup
+    steps (whose own `repair` string is the row's detail). Incidents whose
+    fingerprint Home already states in its own words are dropped so one
+    stuck queue does not read as three problems. Empty is a measured claim:
+    it names how many probes produced it and when they were sampled.
+  - **Approval gates** — the one thing Home answers rather than links to,
+    since a gate is a run that has already stopped.
+  - **Right now** — live runs and their state, CorePool occupancy, service
+    state, the next scheduled job, server version and uptime.
+  - **Pulse** — event rate and family mix off a 30-minute ring buffer of hub
+    arrivals kept separately from the 60-item display feed, because a rate
+    computed from the display buffer pins itself exactly when the system
+    gets busy. The rate names the window it is over and never divides by
+    less than a minute.
+  - **Spend today** — settled cost against the admission cap with an 80%
+    mark, burn rate, when the cap lands at that rate, top model and
+    provider, a 14-day trend, budget alerts, and the count of dispatches
+    carrying no price — which makes the headline figure a floor, stated as
+    such.
+  - **Recent sessions** and the **live event stream**.
+
+  Home samples `/ops/center` on the same bounded interval the Operations
+  Center uses and reads everything else off the event hub. Sampling it also
+  reconciles the durable incident ledger, so incidents open and resolve
+  while an operator sits on Home rather than only while Operations is open.
+  Home is a *projection*, not a second source of truth: every figure resolves
+  to a probe, a ledger, or a manager state, and every row links to the screen
+  that owns it.
 - **Operations** — first-class control plane with Posture, Live work,
   Runtime & pools, Channels & delivery, Automations, Providers, and Incidents
   routes. The
@@ -389,7 +431,8 @@ properties:
 3. **Nothing is lost.** The full path is on the `title` and is selectable.
 
 Applied wherever a path sits in a constrained cell: Channels, Core pool,
-skill sources, the Overview workspace, the routing summary, Best-of-N repos.
+skill sources, Home's workspace facts and run list, the routing summary,
+Best-of-N repos.
 `.wrap` remains for genuinely free text, but breaks at spaces before it
 breaks a word.
 

@@ -21,6 +21,44 @@ later release non-destructive.
   pre-baseline state, and invariant 30 requires one canonical way per
   capability.
 
+### Admin console
+
+- Rebuilt the console's first screen as **Home**. It answers four questions
+  in order — is the system healthy, what is waiting on me, what is running,
+  what is it costing — where the previous Overview showed four stat cards,
+  three hardcoded attention tiles, and a key/value dump.
+  - A **readiness ring** draws one arc per subsystem from that subsystem's
+    own probe. A probe that did not answer reads `unknown` and is excluded
+    from the healthy count instead of being counted as healthy; a subsystem
+    switched off is excluded too and the count says so. State is carried by
+    colour, stroke pattern, and a printed word, so the ring stays readable
+    without colour vision.
+  - An **attention queue** merges every blocking, asking, or drifting signal
+    the product already knew about but never surfaced on the first screen:
+    failed doctor checks, open incidents, dead-lettered and queued
+    deliveries, chats knocking at the allowlist, a stopped gateway unit,
+    drifted bindings, overdue scheduled jobs, provider errors and rate
+    limits, skill proposals, unread inbox, and unfinished setup steps —
+    each with its own repair as the row's detail. Incidents whose
+    fingerprint Home already states in its own words are dropped, so one
+    stuck outbox no longer reads as three separate problems. An empty queue
+    names how many probes produced it and when, rather than rendering a
+    decorative green tick.
+  - **Approval gates** are answered on Home rather than linked to; a gate is
+    a run that has already stopped.
+  - **Pulse** reads a new 30-minute ring buffer of hub arrivals kept apart
+    from the 60-item display feed, so the event rate no longer pins itself
+    exactly when the system gets busy. The rate names the window it covers
+    and never divides by less than a minute.
+  - **Spend today** adds burn rate, when the cap lands at that rate, top
+    model and provider, a 14-day trend, budget alerts, and the count of
+    dispatches carrying no price — which makes the headline figure a floor,
+    and says so.
+- Extracted the console's shared presentation vocabulary into
+  `crates/vak-admin-ui/src/display.tsx`: provider labels, permission-mode
+  wording, security-event kinds, hub-event labels, path truncation, and the
+  chat-surface catalog. One spelling of each, imported by every view.
+
 ### Documentation
 
 - Deleted eight design documents that described pre-baseline behavior or

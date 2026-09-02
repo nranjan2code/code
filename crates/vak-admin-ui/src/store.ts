@@ -64,6 +64,41 @@ function describe(ev: SystemEvent): { kind: Toast["kind"]; text: string } | null
   }
 }
 
+/// A 30-minute rolling record of *every* event the hub delivered, kept
+/// separately from `feed` because `feed` is a 60-item display buffer. Rate
+/// and mix read off a 60-item window are wrong the moment the system gets
+/// busy — which is exactly when someone is looking at them — so the pulse
+/// on Home reads this instead. Only the timestamp and the variant tag are
+/// retained; payloads stay in `feed`.
+export interface Pulse {
+  ts: number;
+  type: string;
+}
+const PULSE_WINDOW_MS = 30 * 60 * 1000;
+const PULSE_MAX = 6000;
+const [activity, setActivity] = createSignal<Pulse[]>([]);
+export { activity };
+
+/// Wall-clock of the first event this connection saw, so a rate can say
+/// what window it is a rate over instead of implying "since forever".
+const [observingSince, setObservingSince] = createSignal<number | null>(null);
+export { observingSince };
+
+function recordPulse(type: string) {
+  const now = Date.now();
+  setObservingSince((prev) => prev ?? now);
+  setActivity((prev) => {
+    const cutoff = now - PULSE_WINDOW_MS;
+    const next = prev.length >= PULSE_MAX ? prev.slice(prev.length - PULSE_MAX + 1) : prev.slice();
+    next.push({ ts: now, type });
+    // Trimming from the front is O(n) but only ever walks the expired
+    // prefix; the array is already ordered by arrival.
+    let drop = 0;
+    while (drop < next.length && next[drop].ts < cutoff) drop++;
+    return drop > 0 ? next.slice(drop) : next;
+  });
+}
+
 // Bumped whenever approval-related events arrive; consumers createResource
 // on this to refetch the pending list live.
 const [approvalsVersion, bumpApprovals] = createSignal(0);
@@ -75,6 +110,7 @@ export { approvalsVersion, sessionsVersion, statsVersion, bestofnVersion };
 export function ingest(ev: SystemEvent) {
   const d = describe(ev);
   if (d) pushToast(d.kind, d.text);
+  recordPulse(ev.type);
   setFeed((prev) => [...prev.slice(-59), { id: ++feedSeq, ts: new Date().toISOString(), event: ev }]);
   if (ev.type.startsWith("Approval")) bumpApprovals((v) => v + 1);
   if (ev.type === "SessionCreated" || ev.type === "SessionEntryAppended" || ev.type === "Agent" || ev.type === "ConfigChanged") {

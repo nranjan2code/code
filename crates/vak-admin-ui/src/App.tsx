@@ -1,5 +1,11 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { api, AuthRequired } from "./api";
+import {
+  CHANNEL_MODES, ICONS, Icon, MODES, PageHeader, PathCell, SEC_KINDS, SETUP_STEPS, StatCard,
+  chatSurfaces, confirmDestructive, modeLabel, providerLabel, secKindLabel, setChatSurfaces,
+  surfaceIds, surfaceLabel,
+} from "./display";
+import { Home } from "./Home";
 import { OperationsCenter } from "./OperationsCenter";
 import { PromptsSection } from "./Prompts";
 import { clock, shortId, timeAgo } from "./time";
@@ -9,28 +15,17 @@ import {
 } from "./controls";
 import type { AccessOption } from "./controls";
 import {
-  approvalsVersion, authed, conn, connectEvents, disconnectEvents, feed, navigate, pushToast,
-  route, sessionsVersion, setAuthed, statsVersion, toasts,
+  authed, conn, connectEvents, disconnectEvents, navigate, pushToast, route, sessionsVersion,
+  setAuthed, toasts,
 } from "./store";
 import type {
-  AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ChatSurface, ConfigInfo, OnboardingState, StepState, CorePoolEntry, DiscoveredModelsResponse,
+  AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ConfigInfo, OnboardingState, StepState, CorePoolEntry, DiscoveredModelsResponse,
   ConfigScope, FinOpsStatus, FinOpsDailyPoint, FinOpsRollupEntry, HookConfig, IntegrationStatus,
-  GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus, PendingApproval,
+  GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus,
   PermissionMode, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
   ActiveSubagent, SkillItem, SkillProposal, TaskItem, TranscriptEntry, VoiceConfig, WorkReceipt,
 } from "./types";
-
-// Chat surfaces with a bridge (crates/vak-server's InboundChannel impls) and
-// a matching Core::bot_token_env entry. A routing key's surface prefix is
-// validated against this list — the bare colon check it replaced accepted
-// a pasted bot token (itself "digits:secret"-shaped) as a plausible key.
-// No channel list lives in this file. The server owns it
-// (`vak_core::Core::SURFACES`), so adding a transport is one edit there and
-// no channel becomes the implicit default by being the one a UI hardcoded.
-const [chatSurfaces, setChatSurfaces] = createSignal<ChatSurface[]>([]);
-const surfaceIds = () => chatSurfaces().map((s) => s.id);
-const surfaceLabel = (id: string) => chatSurfaces().find((s) => s.id === id)?.label ?? id;
 
 // Theme state: initialized from localStorage and synchronized to document root dataset
 const [theme, setTheme] = createSignal<"warm" | "dark" | "contrast">(
@@ -46,57 +41,6 @@ createEffect(() => {
 // Unread inbox badge: polled lightly while signed in.
 const [unread, setUnread] = createSignal(0);
 const [configScope, setConfigScope] = createSignal<ConfigScope>("user");
-
-// ---- icons (inline, stroke style) ------------------------------------------
-
-const Icon = (props: { d: string; size?: number }) => (
-  <svg
-    width={props.size ?? 16}
-    height={props.size ?? 16}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  >
-    <path d={props.d} />
-  </svg>
-);
-
-const ICONS = {
-  prompts: "M4 4h16v16H4z M8 9h8 M8 13h8 M8 17h5",
-  overview: "M3 3v18h18M7 15l4-6 4 4 5-8",
-  operations: "M4 6h16M4 12h16M4 18h16 M8 6v12 M16 6v12",
-  sessions: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87",
-  integrations: "M16.5 9.4 7.55 4.24a1.78 1.78 0 0 0-2.5 1.55v12.42a1.78 1.78 0 0 0 2.5 1.55L16.5 14.6a1.78 1.78 0 0 0 0-3.2z M21 12h-3 M3 12h1",
-  gateway: "M4 4h16v12H4z M8 20h8 M12 16v4 M8 8h.01 M12 8h4 M8 12h8",
-  memory: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20 M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15z",
-  feeds: "M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16M5 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
-  search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35",
-  inbox: "M22 12h-6l-2 3h-4l-2-3H2M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z",
-  security: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
-  finops: "M12 1v22 M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6",
-  settings: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
-};
-
-function confirmDestructive(message: string): boolean {
-  return window.confirm(`${message}\n\nThis cannot be undone from the admin console.`);
-}
-
-function PageHeader(props: { title: string; description: string; actions?: import("solid-js").JSX.Element }) {
-  return (
-    <header class="page-header">
-      <div>
-        <h1>{props.title}</h1>
-        <p>{props.description}</p>
-      </div>
-      <Show when={props.actions}>
-        <div class="page-actions">{props.actions}</div>
-      </Show>
-    </header>
-  );
-}
 
 function PromptsPage() {
   return (
@@ -143,49 +87,6 @@ function LoadError(props: { message?: string; onRetry?: () => void }) {
 
 // ---- filesystem paths ------------------------------------------------------
 
-/// Shorten a path by dropping WHOLE middle segments, never by breaking one.
-/// Two workspaces differ in their tail (`…/Projects/vakcoder`), almost never
-/// in the `/Users/<name>` prefix every one of them shares, so the head is
-/// what gets spent and the tail is kept to the last possible character.
-///
-/// The budget is in characters rather than segments on purpose: a
-/// segment-counted result can still overflow the column and get clipped by
-/// CSS from the right, which throws away exactly the end that distinguishes
-/// two workspaces. Fitting the budget here means the CSS ellipsis is only
-/// ever a backstop for a single segment longer than the whole column.
-export function truncatePath(path: string, budget = 38): string {
-  if (path.length <= budget) return path;
-  const absolute = path.startsWith("/");
-  const segments = path.split("/").filter(Boolean);
-  if (segments.length <= 2) return path;
-
-  const head = `${absolute ? "/" : ""}${segments[0]}/…`;
-  // Grow the tail one segment at a time while it still fits, always keeping
-  // at least the final segment even when nothing fits.
-  let tail = segments[segments.length - 1];
-  for (let i = segments.length - 2; i >= 1; i--) {
-    const candidate = `${segments[i]}/${tail}`;
-    if (head.length + 1 + candidate.length > budget) break;
-    tail = candidate;
-  }
-  return `${head}/${tail}`;
-}
-
-/// A filesystem path in a width-constrained cell. Never wraps: middle
-/// segments are elided first, and anything still too wide for the column is
-/// clipped with an ellipsis by CSS. The untruncated path is always on the
-/// `title` and selectable, so nothing is actually lost.
-function PathCell(props: { path: string; budget?: number }) {
-  // The CSS cap is derived from the same budget the text was fitted to, so
-  // the two can never disagree and clip a tail that JS had already made room
-  // for. `ch` is the right unit here because `.path` is monospaced.
-  const budget = () => props.budget ?? 38;
-  return (
-    <span class="path" title={props.path} style={{ "max-width": `${budget() + 1}ch` }}>
-      {truncatePath(props.path, budget())}
-    </span>
-  );
-}
 
 // ---- permission rules ------------------------------------------------------
 
@@ -363,360 +264,6 @@ function Login() {
       </form>
     </div>
   );
-}
-
-// ---- Overview --------------------------------------------------------------
-
-function StatCard(props: { label: string; value: string | number; sub?: string; tone?: string; progress?: number }) {
-  return (
-    <div class="stat-card" data-tone={props.tone ?? "default"}>
-      <div class="stat-value">{props.value}</div>
-      <div class="stat-label">{props.label}</div>
-      <Show when={props.progress != null}>
-        <div class="progress-bar">
-          <div
-            class={`progress-fill ${props.progress! > 90 ? "alert" : props.progress! > 75 ? "warn" : ""}`}
-            style={{ width: `${Math.min(100, Math.max(0, props.progress!))}%` }}
-          />
-        </div>
-      </Show>
-      <Show when={props.sub}>
-        <div class="stat-sub">{props.sub}</div>
-      </Show>
-    </div>
-  );
-}
-
-function Overview() {
-  const [health, healthActions] = createResource(statsVersion, () => api.health());
-  const [sessions, sessionsActions] = createResource(statsVersion, () => api.sessions());
-  const [security] = createResource(statsVersion, () => api.security(500));
-  const [finops] = createResource(statsVersion, () => api.finops().catch(() => null));
-  const [ops] = createResource(statsVersion, () => api.opsStatus().catch(() => null));
-  const [config] = createResource(statsVersion, () => api.config().catch(() => null));
-  const [gateway] = createResource(statsVersion, () => api.gatewayStatus().catch(() => null));
-  const [approvals] = createResource(approvalsVersion, () => api.approvals());
-  const [bestofn] = createResource(statsVersion, () => api.bestofn().catch(() => ({ runs: [], total: 0 })));
-
-  const recentSecurity = createMemo(
-    () =>
-      (security()?.events ?? []).filter((e) => Date.now() - new Date(e.ts).getTime() < 86_400_000)
-        .length,
-  );
-
-  const feedItems = createMemo(() => [...feed()].reverse());
-
-  // Today's spend against the day cap — the run cap is a per-turn ceiling,
-  // not a running total, so it has no meaningful "progress" to show here.
-  const spendUSD = createMemo(() => finops()?.day_usd ?? 0);
-  const capUSD = createMemo(() => finops()?.day_cap_usd ?? null);
-  const spendProgress = createMemo(() => {
-    const cap = capUSD();
-    return cap && cap > 0 ? (spendUSD() / cap) * 100 : undefined;
-  });
-
-  const recentSessions = createMemo(() =>
-    [...(sessions()?.sessions ?? [])].sort((a, b) => new Date(b.last_ts).getTime() - new Date(a.last_ts).getTime()).slice(0, 5),
-  );
-  const recentWarnings = createMemo(() => health()?.warnings ?? []);
-  const attentionCount = createMemo(() =>
-    (approvals()?.total ?? 0) + (bestofn()?.total ?? 0) + recentWarnings().length + recentSecurity(),
-  );
-  const activityCounts = createMemo(() => {
-    const counts = new Map<string, number>();
-    for (const item of feed()) counts.set(item.event.type, (counts.get(item.event.type) ?? 0) + 1);
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
-  });
-
-  const newSession = async () => {
-    try {
-      const { session_id } = await api.createSession();
-      navigate(`#/sessions/${session_id}`);
-    } catch (err) {
-      if (err instanceof AuthRequired) setAuthed(false);
-      else pushToast("alert", `${err}`);
-    }
-  };
-
-  const refresh = () => {
-    healthActions.refetch();
-    sessionsActions.refetch();
-    pushToast("info", "Overview refreshed");
-  };
-
-  return (
-    <div class="view">
-      <PageHeader
-        title="Overview"
-        description="What is running, what needs you, and what changed."
-        actions={<>
-          <button class="ghost" onClick={refresh}>Refresh</button>
-          <button onClick={newSession}>+ New session</button>
-        </>}
-      />
-      <section class="overview-hero">
-        <div>
-          <div class="hero-kicker"><span class={`dot dot-${conn()}`} /> {conn() === "live" ? "Live telemetry" : `Telemetry ${conn()}`}</div>
-          <h2>{attentionCount() === 0 ? "Everything is clear." : `${attentionCount()} thing${attentionCount() === 1 ? "" : "s"} need a look.`}</h2>
-          <p>{attentionCount() === 0 ? "Nothing is waiting on you — no approvals, warnings, draft runs, or security events." : "Start with the list below, then read the panels underneath to see what changed."}</p>
-        </div>
-        <div class="hero-route">
-          <span class="hero-route-label">Answering with</span>
-          <strong>{providerLabel(config()?.provider ?? health()?.provider ?? "") || "Loading…"}</strong>
-          <span class="mono">{config()?.model ?? health()?.model ?? ""}</span>
-          <button class="text-action" onClick={() => navigate("#/settings")}>Change this →</button>
-        </div>
-      </section>
-      <div class="stats-row">
-        <StatCard label="Sessions" value={sessions()?.total ?? "…"} />
-        <StatCard
-          label="Messages recorded"
-          value={sessions()?.sessions.reduce((a, s) => a + s.entry_count, 0) ?? "…"}
-          sub={
-            sessions() && sessions()!.total > sessions()!.sessions.length
-              ? `Across the ${sessions()!.sessions.length} most recent of ${sessions()!.total} sessions`
-              : undefined
-          }
-        />
-        <StatCard
-          label="Spent today"
-          value={`$${spendUSD().toFixed(4)}`}
-          progress={spendProgress()}
-          sub={capUSD() ? `of your $${capUSD()!.toFixed(2)} daily budget` : "No daily budget set"}
-          tone={spendProgress() && spendProgress()! > 90 ? "warn" : undefined}
-        />
-        <StatCard
-          label="Security events today"
-          value={security.loading ? "…" : recentSecurity()}
-          tone={recentSecurity() > 0 ? "warn" : undefined}
-        />
-      </div>
-
-      <section class="attention-panel panel">
-        <div class="panel-title-row">
-          <div><h2>Needs your attention</h2><p>Anything that can hold work up, or change what vak is allowed to do.</p></div>
-          <span class={`chip ${attentionCount() > 0 ? "chip-warn" : "chip-ok"}`}>{attentionCount()} open</span>
-        </div>
-        <div class="attention-grid">
-          <button class="attention-item" onClick={() => navigate("#/inbox")}>
-            <span class="attention-icon warning">!</span><span><strong>{approvals()?.total ?? "…"} waiting for your approval</strong><small>Vak paused and asked before doing something — review it in the Inbox</small></span><span class="chev">›</span>
-          </button>
-          <button class="attention-item" onClick={() => navigate("#/sessions")}>
-            <span class="attention-icon info">◆</span><span><strong>{bestofn()?.total ?? "…"} draft attempts</strong><small>Vak tried the same task several ways — pick the one to keep</small></span><span class="chev">›</span>
-          </button>
-          <button class="attention-item" onClick={() => navigate("#/security")}>
-            <span class="attention-icon danger">⌁</span><span><strong>{recentSecurity()} security events</strong><small>Everything worth recording from the last 24 hours</small></span><span class="chev">›</span>
-          </button>
-        </div>
-      </section>
-
-      <ApprovalsCard />
-
-      <div class="two-col">
-        <section class="panel">
-          <h2>This machine</h2>
-          <Show when={!health.loading} fallback={<div class="empty">Loading…</div>}>
-            <dl class="kv">
-              <dt>Provider</dt>
-              <dd>{providerLabel(health()?.provider ?? "")}</dd>
-              <dt>Model</dt>
-              <dd class="mono">{health()?.model}</dd>
-              <dt>What it may do</dt>
-              <dd><span class="chip chip-phrase chip-mode">{modeLabel(health()?.permission_mode)}</span></dd>
-              <dt>Sandbox</dt>
-              <dd>{health()?.sandbox}</dd>
-              <dt>Memory per turn</dt>
-              <dd>{(health()?.context_window ?? 0).toLocaleString()} tokens</dd>
-              <dt>Chat gateway</dt>
-              <dd>
-                <span class="chip" data-on={ops()?.gateway?.state === "running" || ops()?.gateway_healthy}>
-                  {ops()?.gateway?.state ?? (health()?.status === "ok" ? "ready" : "offline")}
-                </span>
-              </dd>
-              <dt>Project folder</dt>
-              <dd><PathCell path={health()?.cwd ?? ""} budget={46} /></dd>
-            </dl>
-            <Show when={(health()?.warnings?.length ?? 0) > 0}>
-              <div class="warnings">
-                <For each={health()?.warnings}>{(w) => <div class="warning">⚠ {w}</div>}</For>
-              </div>
-            </Show>
-            <div class="row-gap" style="margin-top:14px">
-              <button class="ghost small" onClick={() => healthActions.refetch()}>
-                Refresh
-              </button>
-            </div>
-          </Show>
-        </section>
-
-        <section class="panel">
-          <div class="panel-title-row"><div><h2>What is running</h2><p>Live status of each part of the system.</p></div><button class="ghost small" onClick={() => navigate("#/gateway")}>Open gateway</button></div>
-          <div class="posture-list">
-            <div><span class={`status-mark ${(health()?.posture ?? (health()?.status === "ok" ? "healthy" : "degraded")) === "healthy" ? "good" : "bad"}`} /> <span>Vak itself</span><strong>{health()?.posture ?? health()?.status ?? "Loading…"}</strong></div>
-            <div><span class={`status-mark ${ops()?.gateway_healthy ? "good" : "bad"}`} /> <span>Chat gateway</span><strong>{ops()?.gateway?.state ?? "Unknown"}</strong></div>
-            <div><span class={`status-mark ${gateway()?.enabled ? "good" : "neutral"}`} /> <span>Connected chats</span><strong>{gateway()?.bindings.length ?? "…"}</strong></div>
-            <div><span class="status-mark neutral" /> <span>What it may do</span><strong>{config()?.permission_mode ?? health()?.permission_mode ? modeLabel(config()?.permission_mode ?? health()?.permission_mode) : "…"}</strong></div>
-          </div>
-          <Show when={recentWarnings().length > 0}>
-            <div class="posture-warning">{recentWarnings()[0]} <button class="text-action" onClick={() => navigate("#/settings")}>Review settings →</button></div>
-          </Show>
-        </section>
-
-        <section class="panel recent-panel">
-          <div class="panel-title-row"><div><h2>Recent sessions</h2><p>The latest conversations, across every project.</p></div><button class="ghost small" onClick={() => navigate("#/sessions")}>View all</button></div>
-          <Show when={recentSessions().length > 0} fallback={<div class="empty">No sessions yet.</div>}>
-            <div class="recent-sessions">
-              <For each={recentSessions()}>{(session) => <button class="recent-session" onClick={() => navigate(`#/sessions/${session.session_id}`)}>
-                <span class="session-pulse" /><span class="mono">{shortId(session.session_id)}</span><span class="session-entries">{session.entry_count} messages</span><span class="when">{timeAgo(session.last_ts)}</span>
-              </button>}</For>
-            </div>
-          </Show>
-        </section>
-
-        <section class="panel">
-          <div class="panel-title-row"><div><h2>What has been happening</h2><p>The mix of events since this page connected.</p></div><span class="chip chip-tone-info">{feed().length} events</span></div>
-          <Show when={activityCounts().length > 0} fallback={<div class="empty">Waiting for events…</div>}>
-            <div class="activity-report"><For each={activityCounts()}>{([kind, count]) => <div class="activity-row"><span title={kind}>{EVENT_LABELS[kind] ?? kind}</span><div class="activity-track"><i style={{ width: `${Math.max(8, (count / Math.max(1, feed().length)) * 100)}%` }} /></div><strong>{count}</strong></div>}</For></div>
-          </Show>
-          <button class="text-action report-link" onClick={() => navigate("#/security")}>See every recorded event →</button>
-        </section>
-
-        <section class="panel live-panel">
-          <div class="panel-title-row"><div><h2>Happening now</h2><p>New events appear here the moment they occur.</p></div><span class="chip chip-tone-success">streaming</span></div>
-          <Show
-            when={feedItems().length > 0}
-            fallback={<div class="empty">Waiting for events… they will appear here in real time.</div>}
-          >
-            <ul class="feed">
-              <For each={feedItems()}>
-                {(item) => (
-                  <li data-type={item.event.type}>
-                    <span class="feed-time">{clock(item.ts)}</span>
-                    <span class="feed-kind" title={item.event.type}>{EVENT_LABELS[item.event.type] ?? item.event.type}</span>
-                    <span class="feed-text">{summarizeEvent(item.event)}</span>
-                  </li>
-                )}
-              </For>
-            </ul>
-          </Show>
-        </section>
-      </div>
-    </div>
-  );
-}
-
-// ---- Pending approvals -----------------------------------------------------
-
-function ApprovalsCard() {
-  const [pending, { refetch }] = createResource(approvalsVersion, () => api.approvals());
-  const [busyId, setBusyId] = createSignal("");
-
-  const answer = async (a: PendingApproval, approve: boolean) => {
-    setBusyId(a.request_id);
-    try {
-      await api.answer(a.session_id, a.request_id, approve);
-      pushToast("info", `${approve ? "Allowed" : "Refused"} — ${a.tool}`);
-    } catch (err) {
-      if (err instanceof AuthRequired) setAuthed(false);
-      else pushToast("alert", `${err}`);
-    } finally {
-      setBusyId("");
-      refetch();
-    }
-  };
-
-  return (
-    <section class="panel" classList={{ "panel-alert": (pending()?.total ?? 0) > 0 }} style="margin-bottom:14px">
-      <div class="panel-title-row">
-        <div>
-          <h2>Waiting for your approval</h2>
-          <p class="dim">Vak stopped before doing each of these and is waiting on your answer.</p>
-        </div>
-      </div>
-      <Show
-        when={(pending()?.approvals.length ?? 0) > 0}
-        fallback={<div class="empty">Nothing is waiting. Vak is getting on with it.</div>}
-      >
-        <ul class="approval-list">
-          <For each={pending()!.approvals}>
-            {(a) => (
-              <li>
-                <div class="approval-head">
-                  <span class="chip chip-tool mono">{a.tool}</span>
-                  <span class="mono dim">{shortId(a.session_id)}</span>
-                  <span class="when">{timeAgo(a.requested_at)}</span>
-                </div>
-                <Show when={a.reason}>
-                  <div class="approval-reason">{a.reason}</div>
-                </Show>
-                <pre class="mono approval-args">{a.args_json}</pre>
-                <div class="row-gap">
-                  <button
-                    class="approve"
-                    disabled={busyId() === a.request_id}
-                    onClick={() => answer(a, true)}
-                  >
-                    Approve
-                  </button>
-                  <button class="danger" disabled={busyId() === a.request_id} onClick={() => answer(a, false)}>
-                    Deny
-                  </button>
-                  <span class="spacer" />
-                  <button class="ghost small" onClick={() => navigate(`#/sessions/${a.session_id}`)}>
-                    View session
-                  </button>
-                </div>
-              </li>
-            )}
-          </For>
-        </ul>
-      </Show>
-    </section>
-  );
-}
-
-/// `SystemEvent`'s serde tag is a Rust variant name. Print what happened
-/// instead, and keep the tag on hover for anyone matching it against a log.
-const EVENT_LABELS: Record<string, string> = {
-  Agent: "Agent step",
-  SessionCreated: "Session started",
-  SessionEntryAppended: "Message recorded",
-  ConfigChanged: "Setting changed",
-  GatewayInbound: "Message from a chat",
-  ApprovalRequested: "Approval requested",
-  ApprovalGranted: "Approval granted",
-  ApprovalDenied: "Approval refused",
-  SecurityEvent: "Security event",
-  ProviderError: "Provider error",
-  RateLimit: "Rate limited",
-  Heartbeat: "Still connected",
-  Lagged: "Events skipped",
-};
-
-function summarizeEvent(ev: import("./types").SystemEvent): string {
-  switch (ev.type) {
-    case "Agent":
-      return ev.data.summary + (ev.data.detail ? ` · ${ev.data.detail}` : "");
-    case "SessionCreated":
-      return ev.data.session_id.slice(0, 12);
-    case "SessionEntryAppended":
-      return `${ev.data.kind} in ${ev.data.session_id.slice(0, 12)}`;
-    case "ConfigChanged":
-      return `${ev.data.label}: ${ev.data.detail}`;
-    case "GatewayInbound":
-      return `${surfaceLabel(ev.data.surface)} · ${ev.data.who}: ${ev.data.preview}`;
-    case "ApprovalGranted":
-    case "ApprovalDenied":
-      return `${ev.data.tool} (${ev.data.id.slice(0, 8)})`;
-    case "SecurityEvent":
-      return `${secKindLabel(ev.data.kind)} — ${ev.data.label}`;
-    case "ProviderError":
-      return `${ev.data.provider}/${ev.data.model}: ${ev.data.error}`;
-    case "RateLimit":
-      return ev.data.provider;
-    default:
-      return "";
-  }
 }
 
 // ---- Sessions list & Best-of-N Candidate Management ------------------------
@@ -3393,28 +2940,6 @@ function SearchView() {
 
 // ---- Security --------------------------------------------------------------
 
-/// The audit ledger's own kind strings, each paired with what it means. The
-/// value is what `GET /security?kind=` filters on and must not change; the
-/// label is all the operator ever needs to read.
-const SEC_KINDS: { value: string; label: string }[] = [
-  { value: "", label: "Everything" },
-  { value: "auth_failure", label: "Failed sign-in" },
-  { value: "rate_limit", label: "Rate limited" },
-  { value: "chat_allowlist", label: "Chat allowed" },
-  { value: "chat_pending", label: "Chat knocked" },
-  { value: "chat_approved", label: "Chat approved" },
-  { value: "chat_denied", label: "Chat refused" },
-  { value: "chat_revoked", label: "Chat removed" },
-  { value: "permission_denial", label: "Action blocked" },
-  { value: "config_change", label: "Setting changed" },
-  { value: "provider_key_change", label: "Provider key changed" },
-  { value: "full_access_grant", label: "Full access granted" },
-  { value: "full_access_revoke", label: "Full access removed" },
-];
-
-const secKindLabel = (kind: string) =>
-  SEC_KINDS.find((k) => k.value === kind)?.label ?? kind.replaceAll("_", " ");
-
 function Security() {
   const [kind, setKind] = createSignal("");
   // The source function, not the fetcher, is what Solid tracks — reading
@@ -3829,26 +3354,6 @@ function GatewayBindingEditor(props: {
       </Show>
     </article>
   );
-}
-
-/// The three permission modes in wire (kebab-case) form, ordered least to
-/// most permissive — the same order and the same `mode-btn` control the
-/// Settings page's "Permission Mode" panel uses, so an operator sees one
-/// vocabulary in both places.
-const CHANNEL_MODES: { value: PermissionMode; label: string; desc: string }[] = [
-  { value: "read-only", label: "Look, don't touch", desc: "Reads and searches only; every change refused" },
-  { value: "workspace-write", label: "Work inside this project", desc: "Changes files here; anything else asks first" },
-  { value: "full-access", label: "No limits", desc: "Nothing is checked with you first" },
-];
-
-/// Same three words wherever a wire mode is printed back, in either casing
-/// the server may use (`read-only` from the gateway, `ReadOnly` from
-/// `GET /config`).
-function modeLabel(mode: string | null | undefined): string {
-  if (!mode) return "the workspace default";
-  const kebab = CHANNEL_MODES.find((m) => m.value === mode);
-  if (kebab) return kebab.label;
-  return MODES.find((m) => m.value === mode)?.label ?? mode;
 }
 
 function defaultChannelPolicy(): ChannelPolicy {
@@ -5305,27 +4810,6 @@ function gatewayTab(): string {
 
 // ---- Setup wizard (docs/design/46, Part IV) --------------------------------
 
-/// Plain-language names for the steps the projection reports.
-///
-/// The design contract (doc 46 D10) is that the *question* is in plain
-/// words and the precise vocabulary lives behind disclosure — a reader who
-/// has never heard of a permission mode or a sandbox backend must still
-/// know what a screen is asking.
-const SETUP_STEPS: { key: keyof OnboardingState; title: string; why: string }[] = [
-  { key: "install", title: "Installation", why: "The app's own files are present and unmodified." },
-  { key: "dependencies", title: "Tools on this machine", why: "Optional helpers some features use." },
-  { key: "workspace", title: "Where vak works", why: "The folder vak reads, writes, and remembers in." },
-  { key: "trust", title: "Trusting this folder", why: "Whether settings inside the folder may grant it power." },
-  { key: "provider", title: "The AI service", why: "Which company's model answers, and your key for it." },
-  { key: "route", title: "The model", why: "Which specific model runs your work." },
-  { key: "permission", title: "How much vak may do alone", why: "Read only, work with approval, or unrestricted." },
-  { key: "sandbox", title: "Containment", why: "What stops a command reaching outside the folder." },
-  { key: "capabilities", title: "Starter skills", why: "Instructions that make vak better at common jobs." },
-  { key: "integrations", title: "Connected apps", why: "Optional services vak can call, like web search." },
-  { key: "channels", title: "Chat bots", why: "Talking to vak from Telegram, Discord, or Slack." },
-  { key: "services", title: "Running in the background", why: "Whether vak keeps working when you close this." },
-  { key: "first_result", title: "Your first task", why: "One safe, read-only run so you can see a result." },
-];
 
 /// The three safety postures, in plain words.
 ///
@@ -5666,31 +5150,6 @@ function GatewaySection() {
     </div>
   );
 }
-
-/// Wire values are the `Debug` form the server prints (`GET /config`
-/// reports `format!("{:?}", mode)`); the labels are what an operator reads.
-/// Ordered least to most permissive.
-const MODES: { value: string; label: string }[] = [
-  { value: "ReadOnly", label: "Look, don't touch" },
-  { value: "WorkspaceWrite", label: "Work inside this project" },
-  { value: "FullAccess", label: "No limits" },
-];
-
-// Cosmetic labels only — the actual set of selectable providers comes from
-// `GET /providers` (`vak_core::Core::provider_names`, backed by the
-// registration list in `vak-llm/src/registry.rs`). A name missing here
-// (a provider added to the registry without a label added here) still
-// renders — just under its own registry id.
-const PROVIDER_LABELS: Record<string, string> = {
-  anthropic: "Anthropic (Claude)",
-  openai: "OpenAI (Completions)",
-  "openai-responses": "OpenAI (Responses)",
-  google: "Google (Gemini)",
-  openrouter: "OpenRouter",
-  "opencode-zen": "OpenCode Zen",
-  ollama: "Ollama (local)",
-};
-const providerLabel = (id: string) => PROVIDER_LABELS[id] ?? id;
 
 /// The three rule lists, titled and explained the way they read rather than
 /// by the keyword they use in config.
@@ -7035,7 +6494,7 @@ export default function App() {
           <main class="main">
             <Switch>
               <Match when={currentRoute() === "#/setup"}><SetupWizard /></Match>
-              <Match when={currentRoute() === "#/overview"}><Overview /></Match>
+              <Match when={currentRoute() === "#/overview"}><Home /></Match>
               <Match when={currentRoute() === "#/sessions"}><Sessions /></Match>
               <Match when={currentRoute() === "#/operations"}><OperationsCenter section={operationsSection()} /></Match>
               <Match when={currentRoute() === "transcript"}>
