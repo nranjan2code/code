@@ -382,6 +382,11 @@ pub fn run_services_sync(prefix: Option<PathBuf>, names: Vec<String>) -> i32 {
             return 1;
         }
     };
+    // Activation is where a durable bearer token is first needed: the
+    // bridge units registered below authenticate with it.
+    if let Err(e) = vak_core::gateway_token::ensure_gateway_token() {
+        eprintln!("warning: could not pin the gateway token: {e}");
+    }
     let data_home = vak_config::paths::data_home();
     let default_workspace = vak_config::paths::default_workspace();
     if let Err(error) = std::fs::create_dir_all(&default_workspace) {

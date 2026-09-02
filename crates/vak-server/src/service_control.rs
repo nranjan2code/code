@@ -69,6 +69,10 @@ pub async fn reconcile(core: &vak_core::Core, port: u16) -> Result<Vec<UnitOutco
     // developer's machine. Refuse rather than guess.
     let bin_path =
         std::env::current_exe().map_err(|e| format!("cannot locate the running binary: {e}"))?;
+    // A bridge unit authenticates against the gateway with this, so it has
+    // to exist *before* the unit is registered — otherwise the unit is
+    // written, starts, and crash-loops on "gateway token missing".
+    vak_core::gateway_token::ensure_gateway_token()?;
     let data_home = core.sessions_home();
     let gateway_url = vak_ops::OpsConfig { port }.base_url();
 

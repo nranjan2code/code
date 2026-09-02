@@ -29,6 +29,11 @@ pub enum Root {
     Cache,
     /// `vak_config::paths::default_workspace()` — the Shared layer.
     Shared,
+    /// `vak_config::paths::logs_dir()` — service and CLI logs.
+    ///
+    /// A fourth root, and one that escaped this registry until a real
+    /// install showed logs from a previous version surviving a purge.
+    Logs,
 }
 
 /// What kind of thing this is, which is what decides how it may be treated.
@@ -413,6 +418,17 @@ pub const REGISTRY: &[StateEntry] = &[
     },
     StateEntry {
         path: "",
+        root: Root::Logs,
+        owner: "vak-ops",
+        schema: None,
+        kind: Kind::Ledger,
+        // Upgrades append to a log; they never rewrite one.
+        on_update: OnUpdate::Untouched,
+        on_purge: OnPurge::Remove,
+        in_backup: false,
+    },
+    StateEntry {
+        path: "",
         root: Root::Cache,
         owner: "vak-store",
         schema: None,
@@ -450,6 +466,7 @@ pub fn root_path(root: Root) -> PathBuf {
         Root::Data => vak_config::paths::data_home(),
         Root::Cache => vak_config::paths::cache_home(),
         Root::Shared => vak_config::paths::default_workspace(),
+        Root::Logs => vak_config::paths::logs_dir(),
     }
 }
 
@@ -690,6 +707,7 @@ fn root_label(root: Root) -> &'static str {
         Root::Data => "data",
         Root::Cache => "cache",
         Root::Shared => "shared",
+        Root::Logs => "logs",
     }
 }
 
