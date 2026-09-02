@@ -946,8 +946,14 @@ has never used the product completes it without reading a doc.
 ### S3 — `vak setup --terminal`
 
 The same state machine as prompts, for anyone with no browser.
-`--non-interactive` accepts explicit flags and **fails on any missing
-choice**. Credentials come from environment or stdin, never argv.
+`--non-interactive` takes every choice from the environment
+(`VAK_SETUP_PROVIDER`, `_MODEL`, `_POSTURE`, `_SEED`, `_ACTIVATE`,
+`_FIRST_TASK`) and **fails on any missing choice**. Credentials come from
+the environment or stdin, never argv — a key in a command line is in the
+shell history, in `ps`, and in every process listing on the machine.
+
+Menus print only when a terminal can answer them: offering a numbered list
+to a pipe and then refusing buries the real error in noise.
 
 **Exit:** clean machine to first receipt from the terminal alone.
 Re-running is idempotent. A piped stdin with a missing choice refuses

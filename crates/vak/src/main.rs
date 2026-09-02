@@ -402,9 +402,12 @@ async fn main() {
             action,
             no_browser,
             print_url,
+            terminal,
+            non_interactive,
         }) => match action {
             Some(cli::SetupAction::Status { json, prefix }) => setup::run_status(cwd, prefix, json),
             Some(cli::SetupAction::Seed) => setup::run_seed(),
+            None if terminal || non_interactive => setup::run_terminal(cwd, non_interactive).await,
             None => setup::run_wizard(cwd, !no_browser && !print_url, print_url).await,
         },
         Some(Command::Doctor { trust, repair }) => {

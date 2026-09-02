@@ -182,7 +182,6 @@ pub(crate) enum Command {
         #[arg(long)]
         bot_id: Option<String>,
     },
-    /// Diagnose provider auth, config warnings, and extensions
     /// Guided first run: choose a workspace, connect a model, activate services
     Setup {
         #[command(subcommand)]
@@ -193,7 +192,15 @@ pub(crate) enum Command {
         /// Print the URL for tunnelling to a headless host, then wait
         #[arg(long)]
         print_url: bool,
+        /// Run the whole flow as terminal prompts, with no browser
+        #[arg(long)]
+        terminal: bool,
+        /// Take every choice from the environment and fail on any missing
+        /// one, instead of prompting
+        #[arg(long)]
+        non_interactive: bool,
     },
+    /// Diagnose provider auth, config warnings, and extensions
     Doctor {
         /// Trust this workspace's project config and .env
         #[arg(long)]

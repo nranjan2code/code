@@ -305,3 +305,319 @@ fn open_in_browser(url: &str) -> bool {
         .map(|s| s.success())
         .unwrap_or(false)
 }
+
+// ---- Terminal flow (docs/design/46 S3) -------------------------------------
+
+/// One choice the operator has to make, and where it came from.
+///
+/// `--non-interactive` exists so a scripted install can run setup without a
+/// person, and it **fails on any missing choice** rather than picking one
+/// (doc 46 S3). Inferring a default for an unanswered question is how a
+/// machine ends up configured in a way nobody chose.
+struct Answers {
+    provider: Option<String>,
+    model: Option<String>,
+    posture: Option<String>,
+    seed: bool,
+    activate: bool,
+    first_task: bool,
+}
+
+/// True when a person is on the other end.
+///
+/// Menus are only printed when they can be answered: offering a numbered
+/// list to a pipe and then refusing buries the actual error in noise.
+fn interactive() -> bool {
+    use std::io::IsTerminal as _;
+    std::io::stdin().is_terminal()
+}
+
+/// Read a line from a real terminal, or refuse.
+///
+/// Prompts are TTY-only. A piped stdin is not a person, so reading from it
+/// would turn "no answer" into whatever bytes happened to be there.
+fn ask(prompt: &str) -> Option<String> {
+    use std::io::{IsTerminal as _, Write as _};
+    if !std::io::stdin().is_terminal() {
+        return None;
+    }
+    print!("{prompt}");
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line).ok()?;
+    Some(line.trim().to_string())
+}
+
+/// Read a secret without echoing it, from a terminal or from stdin.
+///
+/// Never from argv: a key in a command line is in the shell history, in
+/// `ps`, and in any process listing on the machine (doc 46 S3).
+fn ask_secret(prompt: &str) -> Option<String> {
+    use std::io::{BufRead as _, IsTerminal as _, Write as _};
+    if !std::io::stdin().is_terminal() {
+        // Piped: the credential is the piped content, which is how a
+        // scripted install supplies one.
+        let mut line = String::new();
+        return std::io::stdin()
+            .lock()
+            .read_line(&mut line)
+            .ok()
+            .filter(|read| *read > 0)
+            .map(|_| line.trim().to_string());
+    }
+    print!("{prompt}");
+    let _ = std::io::stdout().flush();
+    // No portable no-echo without another dependency; say so rather than
+    // let someone believe the key was hidden when it was not.
+    println!();
+    println!("  (the key will be visible as you type)");
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line).ok()?;
+    Some(line.trim().to_string())
+}
+
+pub async fn run_terminal(cwd: PathBuf, non_interactive: bool) -> i32 {
+    let answers = Answers {
+        provider: std::env::var("VAK_SETUP_PROVIDER").ok(),
+        model: std::env::var("VAK_SETUP_MODEL").ok(),
+        posture: std::env::var("VAK_SETUP_POSTURE").ok(),
+        seed: std::env::var("VAK_SETUP_SEED").is_ok(),
+        activate: std::env::var("VAK_SETUP_ACTIVATE").is_ok(),
+        first_task: std::env::var("VAK_SETUP_FIRST_TASK").is_ok(),
+    };
+
+    let trusted = vak_core::trust::is_trusted(&cwd);
+    let core = match vak_core::Core::new_with_trust(cwd.clone(), trusted) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+
+    println!("vak setup — {}", cwd.display());
+    println!();
+
+    // --- workspace and trust -------------------------------------------
+    let asks = vak_core::trust::requested_privileges(&cwd);
+    if !asks.is_empty() && !trusted {
+        println!("This folder's own settings ask for:");
+        for item in &asks {
+            println!("  · {item}");
+        }
+        println!("Opening safely ignores them. Trusting lets them take effect.");
+        match ask("Trust this folder? [y/N] ").as_deref() {
+            Some(a) if a.eq_ignore_ascii_case("y") => {
+                if let Err(e) = vak_core::trust::record(&cwd) {
+                    eprintln!("warning: could not record the decision: {e}");
+                } else {
+                    println!("  trusted");
+                }
+            }
+            Some(_) => println!("  opened safely — those settings stay ignored"),
+            None if non_interactive => println!("  opened safely (non-interactive)"),
+            None => {
+                eprintln!("error: this folder needs a trust decision and stdin is not a terminal");
+                eprintln!("       re-run with --non-interactive to open it safely");
+                return 2;
+            }
+        }
+        println!();
+    }
+
+    // --- provider and route --------------------------------------------
+    if core.provider().is_err() || core.effective_model().trim().is_empty() {
+        let provider = match answers.provider.clone().or_else(|| {
+            if !interactive() {
+                return None;
+            }
+            println!("Available services: {}", core.provider_names().join(", "));
+            ask("Which service should answer? ")
+        }) {
+            Some(p) if !p.is_empty() => p,
+            _ => {
+                eprintln!("error: no provider chosen");
+                eprintln!("       set VAK_SETUP_PROVIDER, or run without --non-interactive");
+                return 2;
+            }
+        };
+        if !core.provider_names().iter().any(|n| n == &provider) {
+            eprintln!("error: unknown provider '{provider}'");
+            return 2;
+        }
+
+        if let Some(key) = ask_secret(&format!("Paste the {provider} API key (blank to skip): "))
+            && !key.is_empty()
+            && let Err(e) = core.set_provider_key(&provider, &key)
+        {
+            eprintln!("error: could not store the key: {e}");
+            return 2;
+        }
+
+        // A stored key is not success. The route is verified by asking the
+        // provider what this key can actually reach (invariant 9).
+        println!("asking {provider} which models your key can reach…");
+        let discovered = core.discover_models(&provider).await;
+        let model = match (answers.model.clone(), &discovered) {
+            (Some(m), _) => m,
+            (None, Ok(models)) if !models.is_empty() && interactive() => {
+                for (i, m) in models.iter().take(20).enumerate() {
+                    println!("  {:>2}. {m}", i + 1);
+                }
+                match ask("Model (number or exact id): ") {
+                    Some(a) if a.is_empty() => {
+                        eprintln!("error: no model chosen");
+                        return 2;
+                    }
+                    Some(a) => a
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|n| models.get(n.saturating_sub(1)).cloned())
+                        .unwrap_or(a),
+                    None => {
+                        eprintln!("error: no model chosen and stdin is not a terminal");
+                        eprintln!("       set VAK_SETUP_MODEL to choose one explicitly");
+                        return 2;
+                    }
+                }
+            }
+            (None, Ok(_)) | (None, Err(_)) => {
+                if let Err(e) = &discovered {
+                    println!("  could not list models: {e}");
+                }
+                match ask("Enter an exact model id: ") {
+                    Some(a) if !a.is_empty() => a,
+                    _ => {
+                        eprintln!("error: no model chosen");
+                        return 2;
+                    }
+                }
+            }
+        };
+
+        // Provider and model are one atomic route (invariant 17).
+        if let Err(e) = vak_config::persist_global_preferences(
+            Some(&provider),
+            Some(&model),
+            None,
+            None,
+            None,
+            None,
+        ) {
+            eprintln!("error: could not save the route: {e}");
+            return 2;
+        }
+        core.apply_persisted_route(provider.clone(), model.clone());
+        println!("  route saved: {provider}/{model}");
+        println!();
+    }
+
+    // --- safety posture -------------------------------------------------
+    let posture = answers.posture.clone().or_else(|| {
+        if !interactive() {
+            return None;
+        }
+        println!("How much should vak be allowed to do on its own?");
+        println!("  1. Inspect only        — reads and searches, changes nothing");
+        println!("  2. Work with approval  — edits here, asks before shell commands (recommended)");
+        println!("  3. Unrestricted        — full access to this machine, unsandboxed");
+        ask("Choose [1/2/3]: ").map(|a| match a.as_str() {
+            "1" => "read-only".to_string(),
+            "3" => "full-access".to_string(),
+            _ => "workspace-write".to_string(),
+        })
+    });
+    match posture {
+        Some(mode) => {
+            let parsed = match mode.as_str() {
+                "read-only" => vak_config::PermissionMode::ReadOnly,
+                "workspace-write" => vak_config::PermissionMode::WorkspaceWrite,
+                "full-access" => vak_config::PermissionMode::FullAccess,
+                other => {
+                    eprintln!("error: unknown posture '{other}'");
+                    return 2;
+                }
+            };
+            if let Err(e) =
+                vak_config::persist_global_preferences(None, None, None, Some(parsed), None, None)
+            {
+                eprintln!("error: could not save the posture: {e}");
+                return 2;
+            }
+            core.set_permission_mode(parsed);
+            println!("  posture: {parsed:?}");
+        }
+        None => {
+            eprintln!("error: no safety posture chosen and stdin is not a terminal");
+            eprintln!("       set VAK_SETUP_POSTURE to read-only|workspace-write|full-access");
+            return 2;
+        }
+    }
+    println!();
+
+    // --- seeds ----------------------------------------------------------
+    let seed = answers.seed
+        || matches!(ask("Install the starter skills? [Y/n] ").as_deref(), Some(a) if !a.eq_ignore_ascii_case("n"));
+    if seed {
+        vak_core::seed::seed_shared_capabilities();
+        println!("  starter skills installed");
+    }
+
+    // --- activation -----------------------------------------------------
+    let activate = answers.activate
+        || matches!(ask("Run vak in the background (durable services)? [y/N] ").as_deref(), Some(a) if a.eq_ignore_ascii_case("y"));
+    if activate {
+        println!("  registering services…");
+        let code = crate::install::run_services_sync(None, Vec::new());
+        if code != 0 {
+            eprintln!("warning: some services did not register; `vak self status` has detail");
+        }
+    }
+
+    // --- first result ---------------------------------------------------
+    //
+    // Read-only is the strictest mode, so passing it as the run's override
+    // can only ever cap — it cannot raise the ceiling whatever the posture
+    // above was (doc 46 security invariant 5). The web wizard reaches the
+    // same guarantee through `CorePool`; this reaches it through the
+    // scoped override `exec` already takes.
+    let first = answers.first_task
+        || matches!(
+            ask("Run a safe, read-only starter task now? [Y/n] ").as_deref(),
+            Some(a) if !a.eq_ignore_ascii_case("n")
+        );
+    if first {
+        println!();
+        let code = crate::run_exec(
+            cwd.clone(),
+            FIRST_TASK_PROMPT.to_string(),
+            None,
+            None,
+            // Matches `exec`'s own default rather than inventing a
+            // second number the two could drift apart on.
+            40,
+            false,
+            true,
+            Some("read-only".to_string()),
+            Vec::new(),
+            false,
+            None,
+            false,
+            false,
+            None,
+            Vec::new(),
+            trusted,
+        )
+        .await;
+        if code != 0 {
+            eprintln!("the starter task did not finish; `vak doctor` has detail");
+        }
+    }
+
+    println!();
+    run_status(cwd, None, false)
+}
+
+/// The starter task, identical to the one the web wizard runs.
+const FIRST_TASK_PROMPT: &str = "Map this codebase and explain its architecture, key flows, \
+     and highest-risk areas. Do not modify files or run any destructive command.";
