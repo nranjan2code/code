@@ -595,23 +595,42 @@ pub fn run_uninstall(prefix: Option<PathBuf>, yes: bool, purge: bool) -> i32 {
         return 0;
     }
 
-    let names: Vec<&str> = vak_ops::services::SERVICES.iter().map(|d| d.name).collect();
-    if let Err(e) = vak_ops::services::services_uninstall(
-        &names,
-        &vak_ops::services::Paths::default(),
-        &vak_ops::services::SystemRunner,
-    ) {
+    // Only tear down units that actually exec from THIS prefix.
+    //
+    // Service teardown used to run against every known unit name with the
+    // real `Paths::default()`, whatever `--prefix` said — so uninstalling a
+    // throwaway prefix unregistered the operator's real services. Running
+    // the test suite on a machine with vak installed stopped its gateway,
+    // tray, and bridges, silently. A unit that execs a different install
+    // belongs to that install.
+    let paths = vak_ops::services::Paths::default();
+    let owned: Vec<&str> = vak_ops::services::SERVICES
+        .iter()
+        .map(|d| d.name)
+        .filter(|name| vak_ops::services::unit_belongs_to_prefix(name, root.prefix(), &paths))
+        .collect();
+    if !owned.is_empty()
+        && let Err(e) =
+            vak_ops::services::services_uninstall(&owned, &paths, &vak_ops::services::SystemRunner)
+    {
         eprintln!("warning: service teardown incomplete: {e}");
     }
 
-    // Per-bot bridge units (docs/design/34) live outside the static
-    // SERVICES table above and were previously left running after
-    // uninstall, leaking a bridge process per configured Telegram/
-    // Discord/Slack bot with a stale token env reference.
-    vak_ops::services::uninstall_bot_units(
-        &vak_ops::services::Paths::default(),
-        &vak_ops::services::SystemRunner,
-    );
+    // Per-bot bridge units are generated from bots.json rather than living
+    // in the static table, and are filtered the same way.
+    let data_home = vak_config::paths::data_home();
+    let owned_bots: Vec<String> = vak_ops::services::configured_bot_service_names_all(&data_home)
+        .into_iter()
+        .filter(|name| vak_ops::services::unit_belongs_to_prefix(name, root.prefix(), &paths))
+        .collect();
+    if !owned_bots.is_empty() {
+        let refs: Vec<&str> = owned_bots.iter().map(String::as_str).collect();
+        if let Err(e) =
+            vak_ops::services::services_uninstall(&refs, &paths, &vak_ops::services::SystemRunner)
+        {
+            eprintln!("warning: bridge teardown incomplete: {e}");
+        }
+    }
 
     // Report components installed elsewhere, which removing this prefix
     // will not reach.

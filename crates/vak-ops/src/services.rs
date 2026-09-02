@@ -207,6 +207,22 @@ pub fn configured_bot_service_names_all(data_home: &Path) -> Vec<String> {
         .collect()
 }
 
+/// True when `name`'s unit file execs a binary inside `prefix`.
+///
+/// The question an uninstall has to ask before removing anything. A unit
+/// that execs a *different* install belongs to that install, and tearing
+/// it down because a throwaway prefix was being removed is how one
+/// uninstall stops somebody else's running services — which is exactly
+/// what happened: `vak self uninstall --prefix <tmp>` unregistered the
+/// operator's real launchd units, so simply running the test suite on a
+/// machine with vak installed silently stopped its gateway.
+pub fn unit_belongs_to_prefix(name: &str, prefix: &Path, paths: &Paths) -> bool {
+    let Ok(unit) = std::fs::read_to_string(unit_file_path(name, paths)) else {
+        return false;
+    };
+    unit.contains(&prefix.to_string_lossy().into_owned())
+}
+
 /// True when the service manager has a unit file for `name`.
 ///
 /// Presence of the unit file is what distinguishes "configured" from
@@ -1697,6 +1713,40 @@ mod tests {
         assert_eq!(
             bot_service_name("discord", "weird id!"),
             "com.vak.discord-weird_id_"
+        );
+    }
+
+    /// An uninstall must not reach into another install's units.
+    ///
+    /// The defect: `vak self uninstall --prefix <tmp>` tore down units by
+    /// global name against the real units directory, so running the test
+    /// suite on a machine with vak installed silently stopped its
+    /// services. Ownership is decided by what the unit actually execs.
+    #[test]
+    fn a_unit_belongs_only_to_the_prefix_it_execs_from() {
+        let units = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            launch_agents_dir: units.path().to_path_buf(),
+            systemd_unit_dir: units.path().to_path_buf(),
+        };
+        let name = "com.vak.gateway";
+        std::fs::write(
+            unit_file_path(name, &paths),
+            "ExecStart=/Applications/Vak.app/Contents/MacOS/vak serve\n",
+        )
+        .unwrap();
+
+        assert!(
+            unit_belongs_to_prefix(name, Path::new("/Applications/Vak.app"), &paths),
+            "the real install owns its own unit"
+        );
+        assert!(
+            !unit_belongs_to_prefix(name, Path::new("/tmp/throwaway-prefix"), &paths),
+            "a throwaway prefix must not claim a unit it does not exec"
+        );
+        assert!(
+            !unit_belongs_to_prefix("com.vak.absent", Path::new("/anything"), &paths),
+            "a unit that does not exist is owned by nobody"
         );
     }
 
