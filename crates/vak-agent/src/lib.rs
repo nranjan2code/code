@@ -71,7 +71,7 @@ pub fn auto_approve(
 }
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 
 use futures::FutureExt;
 use serde_json::Value;
@@ -261,7 +261,7 @@ pub struct AgentConfig {
     pub tools: Vec<Arc<dyn Tool>>,
     /// Discovered MCP tool names accepted as compatibility aliases. Calls
     /// are rewritten to the `mcp` broker before authorization and dispatch.
-    pub mcp_aliases: std::collections::HashMap<String, McpToolAlias>,
+    pub mcp_aliases: Arc<StdMutex<std::collections::HashMap<String, McpToolAlias>>>,
     /// Optional host dispatcher exposed only as the managed `flow` tool.
     pub flow_dispatcher: Option<Arc<dyn FlowDispatcher>>,
     /// Exact tool schemas admitted with the session. When absent, standalone
@@ -334,7 +334,7 @@ impl AgentConfig {
             system_prompt: system_prompt.into(),
             model: String::new(),
             tools: Vec::new(),
-            mcp_aliases: std::collections::HashMap::new(),
+            mcp_aliases: Arc::new(StdMutex::new(std::collections::HashMap::new())),
             flow_dispatcher: None,
             tool_definitions: None,
             input_normalizer: None,
@@ -533,7 +533,12 @@ impl Agent {
                 }),
             ));
         }
-        for (name, alias) in &self.config.mcp_aliases {
+        let aliases = self
+            .config
+            .mcp_aliases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (name, alias) in aliases.iter() {
             if !definitions
                 .iter()
                 .any(|definition| definition.name == *name)
@@ -2548,9 +2553,15 @@ impl Agent {
         cancel: &CancellationToken,
         events: &mpsc::Sender<AgentEvent>,
     ) -> Vec<(String, ToolRunOutput)> {
+        let aliases = self
+            .config
+            .mcp_aliases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let calls = calls
             .into_iter()
-            .map(|call| normalize_mcp_alias(call, &self.config.mcp_aliases))
+            .map(|call| normalize_mcp_alias(call, &aliases))
             .collect::<Vec<_>>();
         let n = calls.len();
         let cwd = self

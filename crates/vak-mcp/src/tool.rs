@@ -8,6 +8,7 @@ use vak_tools::{Tool, ToolContext, ToolOutput};
 use crate::manager::McpManager;
 
 type InvocationRecorder = Arc<dyn Fn(&str, &str, bool) + Send + Sync>;
+type CatalogObserver = Arc<dyn Fn(&[(String, Vec<crate::McpToolInfo>)]) + Send + Sync>;
 
 /// One meta-tool exposing every configured MCP server without dumping tool
 /// descriptions into context. The model lists on demand, then calls.
@@ -16,6 +17,7 @@ pub struct McpTool {
     allow: Option<Vec<String>>,
     deny: Vec<String>,
     invocation_recorder: Option<InvocationRecorder>,
+    catalog_observer: Option<CatalogObserver>,
 }
 
 impl McpTool {
@@ -25,6 +27,7 @@ impl McpTool {
             allow: None,
             deny: Vec::new(),
             invocation_recorder: None,
+            catalog_observer: None,
         }
     }
 
@@ -38,6 +41,7 @@ impl McpTool {
             allow,
             deny,
             invocation_recorder: None,
+            catalog_observer: None,
         }
     }
 
@@ -52,7 +56,13 @@ impl McpTool {
             allow,
             deny,
             invocation_recorder: Some(recorder),
+            catalog_observer: None,
         }
+    }
+
+    pub fn with_catalog_observer(mut self, observer: CatalogObserver) -> Self {
+        self.catalog_observer = Some(observer);
+        self
     }
 
     fn matches(patterns: &[String], value: &str) -> bool {
@@ -80,7 +90,7 @@ impl Tool for McpTool {
     }
 
     fn description(&self) -> &str {
-        "Call tools exposed by configured MCP servers. First use action \"list\"; it returns each exact tool name and inputSchema. Then use action \"call\" with the exact server/tool names and arguments that satisfy that inputSchema."
+        "Call tools exposed by configured MCP servers. Always use this broker (never call an MCP tool name directly). First use action \"list\"; it returns each exact tool name and inputSchema. Then use action \"call\" with server, tool, and arguments matching that schema exactly."
     }
 
     fn schema(&self) -> Value {
@@ -109,12 +119,14 @@ impl Tool for McpTool {
 impl McpTool {
     async fn list(&self) -> ToolOutput {
         let mut out = String::new();
+        let mut catalog = Vec::new();
         for server in self.manager.server_names() {
             out.push_str(&format!("{server}:\n"));
             match self.manager.get(&server).await {
                 Ok(client) => match client.list_tools().await {
                     Ok(tools) if tools.is_empty() => out.push_str("  (no tools)\n"),
                     Ok(tools) => {
+                        let mut visible = Vec::new();
                         for t in tools {
                             if !self.allowed(&server, &t.name) {
                                 continue;
@@ -127,7 +139,9 @@ impl McpTool {
                                 "  {} — {}\n    inputSchema: {schema}\n",
                                 t.name, t.description
                             ));
+                            visible.push(t);
                         }
+                        catalog.push((server.clone(), visible));
                     }
                     Err(e) => out.push_str(&format!(
                         "  error: {}\n",
@@ -142,6 +156,9 @@ impl McpTool {
         }
         if out.is_empty() {
             return ToolOutput::ok("no MCP servers configured");
+        }
+        if let Some(observer) = &self.catalog_observer {
+            observer(&catalog);
         }
         ToolOutput::ok(out)
     }

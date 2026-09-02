@@ -3530,13 +3530,33 @@ impl Core {
                     }
                 }
             });
-            tools.push(Arc::new(vak_mcp::McpTool::with_policy_and_recorder(
+            let aliases = Arc::new(std::sync::Mutex::new(
+                self.mcp_aliases_for_session(session_contract.as_ref()),
+            ));
+            let aliases_for_catalog = aliases.clone();
+            let policy_for_catalog = policy.clone();
+            let admitted_for_catalog = admitted_mcp.clone();
+            let builtins_for_catalog = self.tool_names();
+            let mcp_tool = vak_mcp::McpTool::with_policy_and_recorder(
                 manager,
                 admitted_mcp.or(policy.mcp_allow),
                 policy.mcp_deny,
                 recorder,
-            )));
-            cfg.mcp_aliases = self.mcp_aliases_for_session(session_contract.as_ref());
+            )
+            .with_catalog_observer(Arc::new(move |catalog| {
+                let resolved = mcp_aliases_from_inventory(
+                    catalog,
+                    &policy_for_catalog,
+                    admitted_for_catalog.as_deref(),
+                    &builtins_for_catalog,
+                );
+                let mut current = aliases_for_catalog
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                *current = resolved;
+            }));
+            tools.push(Arc::new(mcp_tool));
+            cfg.mcp_aliases = aliases;
         }
         if self.effective_memory_search_enabled() {
             let exclude = session
@@ -4980,46 +5000,51 @@ impl Core {
                 .capabilities
                 .iter()
                 .filter(|capability| capability.kind == CapabilityKind::McpServer)
-                .map(|capability| capability.name.as_str())
-                .collect::<std::collections::HashSet<_>>()
+                .map(|capability| capability.name.clone())
+                .collect::<Vec<_>>()
         });
-        let builtins = self.tool_names();
-        let mut aliases = std::collections::HashMap::new();
-        let mut ambiguous = std::collections::HashSet::new();
-        for (server, tools) in inventory {
-            if admitted
-                .as_ref()
-                .is_some_and(|servers| !servers.contains(server.as_str()))
+        mcp_aliases_from_inventory(&inventory, &policy, admitted.as_deref(), &self.tool_names())
+    }
+}
+
+fn mcp_aliases_from_inventory(
+    inventory: &[(String, Vec<vak_mcp::McpToolInfo>)],
+    policy: &vak_config::ChannelPolicy,
+    admitted: Option<&[String]>,
+    builtins: &[String],
+) -> std::collections::HashMap<String, vak_agent::McpToolAlias> {
+    let mut aliases = std::collections::HashMap::new();
+    let mut ambiguous = std::collections::HashSet::new();
+    for (server, tools) in inventory {
+        if admitted.is_some_and(|servers| !servers.iter().any(|name| name == server)) {
+            continue;
+        }
+        for tool in tools {
+            let qualified = format!("{server}/{}", tool.name);
+            if !Core::allowed_by(&policy.mcp_allow, &policy.mcp_deny, &qualified)
+                || builtins.iter().any(|name| name == &tool.name)
             {
                 continue;
             }
-            for tool in tools {
-                let qualified = format!("{server}/{}", tool.name);
-                if !Self::allowed_by(&policy.mcp_allow, &policy.mcp_deny, &qualified)
-                    || builtins.iter().any(|name| name == &tool.name)
-                {
-                    continue;
-                }
-                if aliases.contains_key(&tool.name) {
-                    ambiguous.insert(tool.name.clone());
-                    continue;
-                }
-                aliases.insert(
-                    tool.name.clone(),
-                    vak_agent::McpToolAlias {
-                        server: server.clone(),
-                        tool: tool.name,
-                        description: tool.description,
-                        schema: tool.input_schema,
-                    },
-                );
+            if aliases.contains_key(&tool.name) {
+                ambiguous.insert(tool.name.clone());
+                continue;
             }
+            aliases.insert(
+                tool.name.clone(),
+                vak_agent::McpToolAlias {
+                    server: server.clone(),
+                    tool: tool.name.clone(),
+                    description: tool.description.clone(),
+                    schema: tool.input_schema.clone(),
+                },
+            );
         }
-        for name in ambiguous {
-            aliases.remove(&name);
-        }
-        aliases
     }
+    for name in ambiguous {
+        aliases.remove(&name);
+    }
+    aliases
 }
 
 /// Phase H MEA provider: diff the run-start checkpoint against disk.

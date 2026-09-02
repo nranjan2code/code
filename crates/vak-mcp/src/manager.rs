@@ -70,7 +70,7 @@ impl McpManager {
     ) -> Result<String, McpError> {
         let client = self.get(server).await?;
         let tools = client.list_tools().await?;
-        if !tools.iter().any(|candidate| candidate.name == tool) {
+        let Some(info) = tools.iter().find(|candidate| candidate.name == tool) else {
             let available = tools
                 .iter()
                 .map(|candidate| candidate.name.as_str())
@@ -83,7 +83,9 @@ impl McpManager {
                     available.join(", ")
                 }
             )));
-        }
+        };
+        crate::validate::validate_arguments(&arguments, &info.input_schema)
+            .map_err(McpError::Protocol)?;
         client.call_tool(tool, arguments).await
     }
 

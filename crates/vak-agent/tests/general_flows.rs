@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -465,7 +465,26 @@ async fn mcp_notes_lookup_informs_planning_answer() {
         },
     );
     let manager = Arc::new(McpManager::new(servers, dir_safe_cwd()));
-    let mcp_tool: Arc<dyn vak_tools::Tool> = Arc::new(McpTool::new(manager));
+    let aliases = Arc::new(Mutex::new(HashMap::new()));
+    let aliases_after_list = aliases.clone();
+    let mcp_tool: Arc<dyn vak_tools::Tool> = Arc::new(McpTool::new(manager).with_catalog_observer(
+        Arc::new(move |catalog| {
+            let mut registered = aliases_after_list.lock().unwrap();
+            for (server, tools) in catalog {
+                for tool in tools {
+                    registered.insert(
+                        tool.name.clone(),
+                        McpToolAlias {
+                            server: server.clone(),
+                            tool: tool.name.clone(),
+                            description: tool.description.clone(),
+                            schema: tool.input_schema.clone(),
+                        },
+                    );
+                }
+            }
+        }),
+    ));
 
     let (mut agent, _provider, dir) = setup(
         vec![
@@ -483,19 +502,7 @@ async fn mcp_notes_lookup_informs_planning_answer() {
         ],
         vec![mcp_tool, Arc::new(WriteTool)],
         |config| {
-            config.mcp_aliases.insert(
-                "echo".into(),
-                McpToolAlias {
-                    server: "notes".into(),
-                    tool: "echo".into(),
-                    description: "Echo text".into(),
-                    schema: serde_json::json!({
-                        "type": "object",
-                        "properties": {"text": {"type": "string"}},
-                        "required": ["text"]
-                    }),
-                },
-            );
+            config.mcp_aliases = aliases.clone();
         },
     );
 
