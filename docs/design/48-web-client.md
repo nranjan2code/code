@@ -8,7 +8,9 @@ same bundle must keep serving the Tauri desktop shell, and must extend to a
 single-tenant cloud deployment without a second codebase or a second
 security model.
 
-Status: **proposed**. Nothing here ships until Phase 0 lands.
+Status: **Phases 0–4 shipped.** What follows describes what exists, with
+the places implementation corrected the plan called out in place. Phase E
+(multi-user cloud) remains explicitly out of scope.
 
 Related: 13-server (HTTP+SSE contract), 20-tauri-desktop (the client this
 generalizes), 33-admin-console (the *operations* surface, which this does
@@ -283,12 +285,23 @@ Cookie only. No token in a query string, on any surface, after this lands.
   `subtle::ConstantTimeEq`, sets `vak_session`: `HttpOnly`, `SameSite=Strict`,
   `Path=/`, `Max-Age` from `[server].session_ttl_hours` (default 168),
   and `Secure` whenever `public_url` is https or `X-Forwarded-Proto: https`.
-- **The desktop performs the same exchange at boot.** It has the token; it
-  posts it once; every subsequent request and every `EventSource` rides
-  the cookie. `?token=` is then dead everywhere and is deleted from
-  `require_bearer`, from `api.ts`, and from the startup banner. One
-  canonical channel for browser-shaped clients (invariant 30), and the
-  §2.3 exposure disappears rather than being documented around.
+- **`?token=` is now loopback-only** (`require_bearer` gates it on the
+  request's own `Host`).
+
+  The plan said to delete it outright, on the theory that the desktop
+  could do the same cookie exchange. It cannot: the Tauri webview's origin
+  is the asset protocol and the embedded server's is
+  `http://127.0.0.1:<ephemeral>`, so a cookie set by the latter is
+  third-party to the former and modern webviews decline to send it.
+  `EventSource` cannot set headers either, which leaves the query string as
+  the desktop's only channel.
+
+  So the rule became narrower and truer than "delete it": the exposure a
+  token-in-a-URL carries — access logs, `Referer`, history — requires a
+  proxy, a log, or a shared browser to exist. On an in-process loopback
+  connection none do. On anything reachable by a hostname all three might,
+  and the web client does not need the channel at all because it is
+  same-origin. One channel per host, each the only one that works there.
 - **CSRF**: `SameSite=Strict` plus an `Origin` check on every
   state-changing method. A request with an `Origin` that is neither
   same-origin nor in `trusted_hosts` is rejected before routing. Requests
@@ -638,11 +651,61 @@ are real.**
 
 ### Phase 4 — Terminal and parity tail
 
-- `axum` `ws`; shared `pty` module; socket-scoped PTY lifecycle.
+- `axum` `ws`; PTY served from `vak-server::web`; socket-scoped lifecycle
+  (closing the tab kills the shell, by construction rather than by a
+  cleanup call that can be forgotten — which is exactly how the desktop's
+  own PTY leaked until `pty_close`).
 - `[server.web] terminal`, off by default, loopback-pinned when on.
 - Remaining desktop-only affordances audited: each one either gets a web
   equivalent or an explicit, written "this is desktop-only, because".
 - **Gate:** the parity matrix in §12 has no unexplained gaps.
+
+---
+
+## 15. What shipped, and what it is measured by
+
+Phases 0–4 are implemented. The security boundaries are covered by
+`crates/vak-server/tests/web_client.rs`, which drives the **real secured
+router over a real socket** rather than calling handlers directly — the
+middleware is the security property here, so a handler test would prove
+nothing about it:
+
+| Property | Test |
+|---|---|
+| Shell loads unauthenticated, data does not | `the_client_shell_loads_without_a_session_but_data_does_not` |
+| "No session" is distinguishable from "unreachable" | `session_status_answers_rather_than_rejecting` |
+| Cookie authenticates; `Secure` is absent on plain http | `the_login_cookie_authenticates_subsequent_requests` |
+| The superseded `/admin/login` is gone, not kept | `the_superseded_admin_login_is_gone` |
+| Cross-origin mutation refused even holding a cookie | `a_cross_origin_mutation_is_refused` |
+| Origin-less mutation still needs a real token | `an_originless_mutation_still_needs_a_token` |
+| DNS rebinding refused (`Host` pinning) | `an_untrusted_host_header_is_refused` |
+| `?token=` still works where it must (loopback) | `the_query_token_channel_works_on_loopback` |
+| Picker cannot be walked out of its roots | `the_directory_browser_stays_inside_its_roots` |
+| Terminal refused until enabled, and says which setting | `the_terminal_is_refused_until_it_is_enabled` |
+| `/host` hands out no credentials | `the_host_descriptor_hands_out_no_credentials` |
+
+Plus, in unit tests: the replay ring's three distinct answers
+(`events::bus_tests` — gap, caught-up, and lost-events-must-resync are
+three different things, and conflating the last two is how a client
+silently loses a turn), and both embedded bundles' assets being embedded
+*and* routable (`admin_ui`, `client_ui` — the failure that shipped three
+times).
+
+### Defects this work found in itself
+
+Worth recording, because both were invisible until something exercised
+them:
+
+1. **`path_within` canonicalized only the root.** Every folder under a
+   symlinked root — `/var` on macOS, `/home` on many Linuxes — was
+   rejected as "outside `workspace_roots`", so the picker would have
+   refused the operator's own projects. Found by a test written to check
+   the opposite property.
+2. **The terminal's config gate was unreachable by a plain GET**, because
+   `WebSocketUpgrade` rejects a non-upgrade request before the handler
+   body runs. Real clients always upgrade, so the behaviour is correct;
+   the *test* had to be written the way a client actually asks, which is
+   the more honest test anyway.
 
 ---
 
@@ -755,8 +818,14 @@ relaunching an app.
   parity `md.ts` documents as its goal.
 - Long transcripts and long session lists are not virtualized.
 - The sidebar groups every session under the *current* `cwd`
-  (`backend().cwd || session.cwd`), so recent projects always render as
-  "No tasks" whether or not they have any.
+  (`backend().cwd || session.cwd`) rather than the session's own.
+  **Correction, found while implementing §5:** the visible symptom this
+  described — other projects always reading "No tasks" — is not a bug.
+  Sessions are stored per workspace (`<home>/sessions/<hash of cwd>/`) and
+  `GET /sessions` lists exactly one workspace's, so a project you have not
+  opened genuinely has no sessions *loaded*, whatever the grouping key
+  says. The ordering fix is still right (a session's own cwd is what
+  identifies it) and shipped; the consequence attributed to it was not.
 
 ---
 

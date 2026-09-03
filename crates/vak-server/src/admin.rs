@@ -16,7 +16,6 @@ use crate::AppState;
 
 pub(crate) const SESSION_COOKIE: &str = "vak_session";
 
-
 // ---- GET /admin/api/sessions ----------------------------------------------
 
 #[derive(Debug, Deserialize)]

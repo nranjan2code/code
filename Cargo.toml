@@ -52,7 +52,8 @@ vak-commit = { path = "crates/vak-commit" }
 
 crossterm = { version = "0.28", features = ["event-stream"] }
 # HTTP+SSE server for the headless agent (tokio-native standard)
-axum = { version = "0.8", features = ["json"] }
+# "ws" powers the web client's terminal (docs/design/48-web-client.md §6).
+axum = { version = "0.8", features = ["json", "ws"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 # CORS so browser/webview surfaces (tauri://localhost, vite dev) can reach it
 tower-http = { version = "0.6", features = ["cors"] }

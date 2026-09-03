@@ -82,7 +82,10 @@ mod tests {
                 "GET {url_path} did not route to 200"
             );
             let bytes = response.into_body().collect().await.unwrap().to_bytes();
-            assert!(!bytes.is_empty(), "GET {url_path} routed but returned nothing");
+            assert!(
+                !bytes.is_empty(),
+                "GET {url_path} routed but returned nothing"
+            );
         }
     }
 

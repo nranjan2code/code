@@ -24,7 +24,10 @@ pub(crate) fn routes() -> axum::Router<crate::AppState> {
         // dist/favicon.svg is served by register_files below at
         // /admin/favicon.svg; the bare /favicon.svg alias is registered
         // here since it lives outside that prefix.
-        .route("/favicon.svg", get(|| async { serve_file(&ADMIN_UI, "favicon.svg") }));
+        .route(
+            "/favicon.svg",
+            get(|| async { serve_file(&ADMIN_UI, "favicon.svg") }),
+        );
     register_files(router, &ADMIN_UI, &ADMIN_UI, "/admin")
 }
 

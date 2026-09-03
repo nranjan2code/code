@@ -1,4 +1,4 @@
-import { createEffect, createMemo, onCleanup, onMount, Show, For } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show, For } from "solid-js";
 import { host } from "./host";
 import {
   activeId,
@@ -35,6 +35,8 @@ import {
   setHydratingId,
   setSidebarOpen,
   setSidebarWidth,
+  narrowViewport,
+  setNarrowViewport,
   sidebarOpen,
   sidebarWidth,
   setNotice,
@@ -66,6 +68,7 @@ import {
   setSplitRatio,
   paneSessions,
   registerVoiceAudioElement,
+  setConnection,
   setArmedGoal,
   goalAppliesTo,
 } from "./store";
@@ -184,8 +187,16 @@ function openStream(id: string) {
   if (streams.has(id)) return;
   const es = api.openEventStream(
     id,
-    (ev) => applyEvent(id, ev, { onFinish: (s) => onFinished(id, s) }),
+    (ev) =>
+      applyEvent(id, ev, {
+        onFinish: (s) => onFinished(id, s),
+        onApproval: (requestId, tool) => onApprovalRequested(id, requestId, tool),
+      }),
     () => {
+      // Any error means we are not currently receiving events, whether or
+      // not the browser will recover on its own — say so rather than
+      // leaving a stale "Live" on screen while nothing arrives.
+      setConnection(es.readyState === EventSource.CLOSED ? "offline" : "reconnecting");
       // A plain browser-level connection error is not necessarily fatal:
       // EventSource retries transient failures on its own per spec. Only
       // intervene once it has actually given up (readyState CLOSED) --
@@ -208,6 +219,14 @@ function openStream(id: string) {
         }, 2000),
       );
     },
+    () => {
+      // Resync: the gap was wider than the server's replay ring, so what
+      // is on screen may be missing events it cannot know about. Rebuild
+      // from the durable transcript, which is the only complete record.
+      setConnection("resyncing");
+      void hydrate(id).finally(() => setConnection("live"));
+    },
+    () => setConnection("live"),
   );
   streams.set(id, es);
   if (!presentationStreams.has(id)) {
@@ -228,18 +247,68 @@ const NOTIFY_DEDUPE_MS = 5 * 60 * 1000;
 const lastNotifyAt = new Map<string, number>();
 
 /** Native notification with per-source 5-minute dedupe (desktop round 2). */
-export async function notifyOnce(source: string, title: string, body: string) {
+export async function notifyOnce(source: string, title: string, body: string, route?: string) {
   const now = Date.now();
   if (now - (lastNotifyAt.get(source) ?? 0) < NOTIFY_DEDUPE_MS) return;
   lastNotifyAt.set(source, now);
+  if (route) pendingRoute = route;
   await notify(title, body);
+}
+
+/** Where a notification click should land. Consumed by `applyRoute`. */
+let pendingRoute: string | null = null;
+
+/**
+ * Point the client at a session, and optionally at one approval inside it.
+ *
+ * Used by the hash route on load (a bookmark, or a notification click that
+ * reopened the tab) and by a notification arriving in a live tab.
+ */
+export async function applyRoute(hash: string) {
+  const match = /^#\/s\/([^?]+)(?:\?(.*))?$/.exec(hash);
+  if (!match) return;
+  const [, sessionId, query] = match;
+  if (!sessions().some((s) => s.session_id === sessionId)) await refreshSessions();
+  await activate(sessionId);
+  const approval = new URLSearchParams(query ?? "").get("approval");
+  if (!approval) return;
+  // Scroll the card into view once it has actually rendered — the
+  // transcript hydrates asynchronously, so the element does not exist yet
+  // at the moment the route is applied.
+  requestAnimationFrame(() => {
+    document
+      .querySelector(`[data-approval="${CSS.escape(approval)}"]`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
 }
 
 async function notify(title: string, body: string) {
   if (!uiPreferences.notifications) return;
+  const route = pendingRoute;
+  pendingRoute = null;
   // OS notification centre on the desktop, the Web Notifications API in a
   // browser — the host knows which, and both are best-effort.
-  await host.notify(title, body);
+  await host.notify(title, body, route ?? undefined);
+}
+
+/**
+ * A run has stopped and is waiting on a person.
+ *
+ * This is the one notification that earns an interruption: everything else
+ * in the product can be read later, and an approval gate cannot — the work
+ * is stopped until someone answers. So it notifies whenever the window is
+ * not focused, not merely when the tab is hidden, and the notification
+ * carries a deep link straight to the card rather than to the app.
+ */
+function onApprovalRequested(id: string, requestId: string, tool: string) {
+  if (document.hasFocus() && id === activeId()) return;
+  const session = sessions().find((s) => s.session_id === id);
+  void notifyOnce(
+    `approval:${id}`,
+    "Vak needs your approval",
+    `${session?.title ?? "A task"} wants to run ${tool}.`,
+    `#/s/${id}?approval=${encodeURIComponent(requestId)}`,
+  );
 }
 
 function onFinished(id: string, summary: string) {
@@ -261,6 +330,9 @@ function onFinished(id: string, summary: string) {
 export async function activate(id: string) {
   // Choosing a task always lands back in the workspace view.
   setInboxOpen(false);
+  // On a narrow viewport the sidebar is an overlay covering the very
+  // transcript the tap asked for, so choosing dismisses it.
+  if (narrowViewport()) setSidebarOpen(false);
   // Clicking the session already shown in the other pane focuses it there
   // instead of duplicating it across both panes.
   if (splitId() && id === splitId()) {
@@ -727,8 +799,24 @@ export default function App() {
     const stopHostWatch = host.onInfoChanged((info) => {
       if (!workspaceSwitching()) void refreshBackend(info);
     });
-    void init();
+    // A bookmarked or notification-clicked deep link, applied once the
+    // backend is up — `activate` needs a session list to resolve against.
+    void init().then(() => {
+      if (window.location.hash) void applyRoute(window.location.hash);
+    });
+    const onHashChange = () => void applyRoute(window.location.hash);
+    window.addEventListener("hashchange", onHashChange);
     const sessionRefresh = window.setInterval(() => void refreshSessions(), 10_000);
+
+    // The browser knows about the radio before any request times out, so
+    // losing the network shows immediately rather than after a stalled
+    // fetch. Coming back does NOT assert "live" on its own — that is the
+    // stream's job to prove, and claiming it early is how a UI ends up
+    // saying "Live" at a blank pane.
+    const goOffline = () => setConnection("offline");
+    const goOnline = () => setConnection("reconnecting");
+    window.addEventListener("offline", goOffline);
+    window.addEventListener("online", goOnline);
 
     let pendingG = 0;
     const keys = (e: KeyboardEvent) => {
@@ -804,6 +892,9 @@ export default function App() {
     window.addEventListener("keydown", keys);
     onCleanup(() => {
       window.removeEventListener("keydown", keys);
+      window.removeEventListener("hashchange", onHashChange);
+      window.removeEventListener("offline", goOffline);
+      window.removeEventListener("online", goOnline);
       stopHostWatch();
       window.clearInterval(sessionRefresh);
       closeAllStreams();
@@ -815,8 +906,47 @@ export default function App() {
     if (backend().ready) void loadHealth();
   });
 
+  // "system" is resolved here rather than in CSS so one attribute always
+  // names the palette actually in force — every rule, and anything reading
+  // a token out of the DOM (the terminal's theme, for one), sees the same
+  // answer instead of half of them tracking a media query and half not.
+  const [systemDark, setSystemDark] = createSignal(
+    typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)").matches : true,
+  );
+  onMount(() => {
+    if (typeof matchMedia !== "function") return;
+    const query = matchMedia("(prefers-color-scheme: dark)");
+    const sync = (e: MediaQueryListEvent) => setSystemDark(e.matches);
+    query.addEventListener("change", sync);
+
+    // Rotating a phone, or dragging a window across the breakpoint,
+    // changes which layout is in force — the sidebar goes from column to
+    // overlay — so the panel's open state has to follow, or a rotation
+    // leaves an overlay covering the transcript.
+    const narrow = matchMedia("(max-width: 900px)");
+    const syncWidth = (e: MediaQueryListEvent) => {
+      setNarrowViewport(e.matches);
+      setSidebarOpen(!e.matches);
+    };
+    narrow.addEventListener("change", syncWidth);
+
+    onCleanup(() => {
+      query.removeEventListener("change", sync);
+      narrow.removeEventListener("change", syncWidth);
+    });
+  });
+
   createEffect(() => {
-    document.documentElement.dataset.theme = uiPreferences.theme;
+    const theme =
+      uiPreferences.theme === "system"
+        ? systemDark()
+          ? "warm"
+          : "light"
+        : uiPreferences.theme;
+    document.documentElement.dataset.theme = theme;
+    // Tells the browser which way to paint its own chrome: form controls,
+    // scrollbars, and the space behind the page during load.
+    document.documentElement.style.colorScheme = theme === "light" ? "light" : "dark";
     document.documentElement.dataset.compactSidebar = String(uiPreferences.compactSidebar);
     document.documentElement.dataset.reduceMotion = String(uiPreferences.reduceMotion);
     document.documentElement.style.setProperty("--text-scale", String(uiPreferences.textScale / 100));

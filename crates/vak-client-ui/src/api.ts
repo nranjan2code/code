@@ -807,8 +807,18 @@ export function openEventStream(
   id: string,
   onEvent: (ev: AgentEvent) => void,
   onError?: () => void,
+  /** The server lost our place in the replay ring: whatever is on screen
+   *  may be missing events, and only a re-read of the durable transcript
+   *  can be trusted (docs/design/48-web-client.md §4.4). */
+  onResync?: () => void,
+  /** Fires when the stream is actually carrying events again. */
+  onOpen?: () => void,
 ): EventSource {
   const es = eventSource(`/sessions/${encodeURIComponent(id)}/events`);
+  es.onopen = () => onOpen?.();
+  // A named event, so it cannot be confused with an agent event that
+  // happens to carry a similar shape.
+  es.addEventListener("resync", () => onResync?.());
   es.onmessage = (m) => {
     // Only the parse is allowed to fail silently -- a genuine keep-alive
     // or comment frame is not valid JSON, and that is expected. `onEvent`

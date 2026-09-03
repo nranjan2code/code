@@ -35,6 +35,8 @@ subtle = { workspace = true }
 # Decodes the ?token= query parameter EventSource clients must use.
 percent-encoding = "2"
 include_dir = { workspace = true }
+# One PTY implementation, shared by the desktop shell and the web client.
+portable-pty = { workspace = true }
 chrono = { workspace = true }
 walkdir = { workspace = true }
 toml = { workspace = true }

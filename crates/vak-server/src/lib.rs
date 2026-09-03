@@ -70,11 +70,11 @@ pub(crate) fn pin_test_data_home() {
 
 mod admin;
 mod admin_ui;
-mod client_ui;
 mod channels;
+mod client_ui;
 mod core_pool;
-mod embedded_ui;
 mod delivery;
+mod embedded_ui;
 mod events;
 mod feeds;
 pub mod gateway;
@@ -765,6 +765,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/workspaces", get(web::list_workspaces))
         .route("/workspaces/open", post(web::open_workspace))
         .route("/fs/dirs", get(web::list_dirs))
+        .route("/pty", get(web::pty_socket))
         .route("/backup/export", post(backup_export))
         .route("/backup/import", post(backup_import))
         .route("/digest", get(digest_report))
@@ -2542,7 +2543,11 @@ pub(crate) async fn require_bearer(
             &home,
             vak_core::security_events::EventKind::AuthFailure,
             "cross_origin_rejected",
-            &format!("origin={} path={}", origin.unwrap_or("<none>"), req.uri().path()),
+            &format!(
+                "origin={} path={}",
+                origin.unwrap_or("<none>"),
+                req.uri().path()
+            ),
             None,
         );
         return (
@@ -2830,7 +2835,13 @@ async fn create_session(State(state): State<AppState>) -> axum::response::Respon
         .header()
         .map(|h| h.session_id.clone())
         .unwrap_or_default();
-    register_handle(&state, id.clone(), session, core.cwd().clone(), core.clone());
+    register_handle(
+        &state,
+        id.clone(),
+        session,
+        core.cwd().clone(),
+        core.clone(),
+    );
 
     state.hub.emit_session_created(&id, "");
     index_session_later(state.store.clone(), state.core.sessions_home(), id.clone());
@@ -4297,14 +4308,15 @@ async fn presentation_events_sse(
             ));
             handle.subscribed.notify_one();
             let live_id = id.clone();
-            let live =
-                BroadcastStream::new(rx).filter_map(move |event| match event {
-                    Ok(framed) => crate::projection::live_event(&live_id, framed.event).map(|projected| {
+            let live = BroadcastStream::new(rx).filter_map(move |event| match event {
+                Ok(framed) => {
+                    crate::projection::live_event(&live_id, framed.event).map(|projected| {
                         Ok(Event::default()
                             .data(serde_json::to_string(&projected).unwrap_or_default()))
-                    }),
-                    Err(_) => Some(Ok(Event::default().data("{\"lagged\":true}"))),
-                });
+                    })
+                }
+                Err(_) => Some(Ok(Event::default().data("{\"lagged\":true}"))),
+            });
             Box::pin(initial.chain(live))
         }
         None => match open_historical_session(&state, &id) {

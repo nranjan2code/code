@@ -19,6 +19,9 @@ that concrete — from laptop LaunchAgent to a $5 VPS.
   and to your gateway — they do NOT need to be on the same machine.
 - TUI/desktop connect locally as always; remotely via SSH tunnel or
   tailnet pointing at the same port.
+- The **web client** is served by the same process at `/app` — the same
+  workspace client the desktop app ships, in a browser
+  (docs/design/48-web-client.md). See "Reaching the web client" below.
 
 ## Managed local install
 
@@ -73,19 +76,73 @@ on macOS, `~/.local/share/vak` on Linux), which holds no secrets.
 Nothing secret is written to config.toml, generated units, the repo, or logs. Generated bearer tokens are
 printed only to an interactive terminal; Telegram HTTP errors omit Bot API URLs.
 
+## Reaching the web client
+
+`vak serve` serves the full workspace client at `/app`. Three ways in,
+in increasing order of how much you are taking on:
+
+**1. Loopback (default).** Nothing to configure.
+
+```bash
+vak serve --port 8901
+open http://127.0.0.1:8901/app
+```
+
+**2. SSH tunnel — the recommended way to use a headless box.**
+
+```bash
+ssh -N -L 8901:127.0.0.1:8901 you@box     # then open http://127.0.0.1:8901/app
+```
+
+Zero new attack surface: the server stays on loopback, `Host` is
+`localhost`, SSH does the crypto, and the terminal keeps working. Prefer
+this unless you specifically need a browser that cannot tunnel.
+
+**3. A real hostname.** Requires opting in, because a non-loopback bind
+exposes the agent — including its tools — to whoever can reach the port.
+
+```toml
+[server]
+bind = "127.0.0.1"                        # behind a TLS proxy; or a tailnet IP
+trusted_hosts = ["vak.example.com"]       # exact names; wildcards are refused
+public_url = "https://vak.example.com"    # enables Secure cookies
+session_ttl_hours = 24                    # shorter than the 168h default
+
+[server.web]
+terminal = false                          # a shell over HTTP is remote code execution
+```
+
+`vak serve` **refuses to start** on a non-loopback bind with no
+`trusted_hosts`, rather than starting and then rejecting every request
+with 421. Put a TLS-terminating proxy in front (Caddy, nginx) and make
+sure it passes `Host` and sets `X-Forwarded-Proto`.
+
+Sign in with the server's token — the one it prints on startup, or your
+`VAK_GATEWAY_TOKEN`. It is exchanged once for an HttpOnly cookie and is
+never stored in the page.
+
 ## Security posture
 
-1. Bearer token on every route except `/health`.
-2. Bind to loopback by default. For remote bridges use a tunnel:
-   `ssh -R` reverse tunnel, Tailscale/WireGuard, or bind
-   `--host` behind a firewall that allows only your bridge's IP.
-3. `[gateway]` and `[sandbox]` are privileged config sections — untrusted
-   repositories cannot enable remote execution, pick sandbox backends or
-   images.
-4. Unattended turns auto-deny approval gates unless you configure
+1. Bearer token on every route except `/health` and the client shell.
+2. Bind to loopback by default. For remote access use a tunnel
+   (`ssh -L`, Tailscale/WireGuard) or, deliberately, `--host` /
+   `[server] bind` with `trusted_hosts` set and a firewall in front.
+3. `Host` headers are pinned: loopback names, plus exactly what
+   `trusted_hosts` lists. This is the DNS-rebinding defence — a page you
+   visit can resolve its own domain to 127.0.0.1 and `SameSite` will not
+   save you, but a pinned `Host` will.
+4. Cross-origin mutations are refused even when they carry a valid
+   session cookie.
+5. The web terminal is off by default, and loopback-only even when on.
+   Everything else the client can reach is permission-gated; a shell is
+   not.
+6. `[gateway]`, `[sandbox]` and `[server]` are privileged config sections
+   — untrusted repositories cannot enable remote execution, pick sandbox
+   backends or images, or widen network exposure.
+7. Unattended turns auto-deny approval gates unless you configure
    `approvals = "forward"` with an approver surface (docs/design/
    22-gateway.md G2).
-5. Backups = copy `<home>` (the data home: `~/Library/Application Support/vak` on macOS, `~/.local/share/vak` on Linux): sessions, memory,
+8. Backups = copy `<home>` (the data home: `~/Library/Application Support/vak` on macOS, `~/.local/share/vak` on Linux): sessions, memory,
    tasks, bindings are all plain files.
 
 ## Updating

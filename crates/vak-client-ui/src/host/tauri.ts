@@ -73,7 +73,7 @@ export const activeHost: Host = {
     return { kind: "saved", path };
   },
 
-  async notify(title: string, body: string): Promise<void> {
+  async notify(title: string, body: string, _route?: string): Promise<void> {
     try {
       const n = await import("@tauri-apps/plugin-notification");
       let granted = await n.isPermissionGranted();

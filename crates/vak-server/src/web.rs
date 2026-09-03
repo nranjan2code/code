@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 use axum::Json;
 use axum::extract::State;
 use axum::http::{StatusCode, header};
-use axum::response::{IntoResponse, Response};
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use crate::AppState;
@@ -136,10 +136,7 @@ pub(crate) async fn session_status(
             })
         })
         .map(|value| {
-            let ok: bool = value
-                .as_bytes()
-                .ct_eq(state.auth_token.as_bytes())
-                .into();
+            let ok: bool = value.as_bytes().ct_eq(state.auth_token.as_bytes()).into();
             ok
         })
         .unwrap_or(false);
@@ -187,9 +184,8 @@ pub(crate) async fn host_events(
         std::time::Duration::from_secs(2),
     ))
     .map(move |_| {
-        Ok(Event::default().data(
-            serde_json::to_string(&host_payload(&state)).unwrap_or_else(|_| "{}".into()),
-        ))
+        Ok(Event::default()
+            .data(serde_json::to_string(&host_payload(&state)).unwrap_or_else(|_| "{}".into())))
     });
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
@@ -223,7 +219,9 @@ fn recent_workspaces(state: &AppState) -> Vec<String> {
             (modified, path)
         })
         .collect();
-    dirs.sort_by(|a, b| b.0.cmp(&a.0));
+    // Newest first: `Reverse` rather than a flipped comparator, which
+    // clippy rightly reads as a sort key spelled the long way.
+    dirs.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
 
     for (_, dir) in dirs.into_iter().take(24) {
         let Some(cwd) = workspace_of_ledger_dir(&dir) else {
@@ -418,7 +416,12 @@ pub(crate) async fn list_dirs(
     axum::extract::Query(query): axum::extract::Query<DirQuery>,
 ) -> Response {
     let roots = workspace_roots(&state);
-    let here = match query.path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+    let here = match query
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
         Some(path) => match PathBuf::from(path).canonicalize() {
             Ok(path) => path,
             Err(e) => {
@@ -429,10 +432,7 @@ pub(crate) async fn list_dirs(
                     .into_response();
             }
         },
-        None => roots
-            .first()
-            .cloned()
-            .unwrap_or_else(|| PathBuf::from("/")),
+        None => roots.first().cloned().unwrap_or_else(|| PathBuf::from("/")),
     };
     if !within_roots(&state, &here) {
         return (
@@ -517,4 +517,199 @@ mod tests {
     fn an_empty_root_list_enforces_nothing() {
         assert!(path_within(&[], Path::new("/anywhere")));
     }
+}
+
+// ---- terminal over WebSocket (docs/design/48-web-client.md §6) -------------
+//
+// A PTY over HTTP is remote shell access. Everything else the client can
+// reach is mediated by the permission engine and the broker (invariants 14
+// and 16); a terminal is not — it is the operator's own hands, which is
+// exactly what makes it useful and exactly why it does not ship on by
+// default.
+//
+// Three gates, all of which must pass:
+//   1. `[server.web] terminal` — off unless an operator turned it on.
+//   2. `terminal_requires_loopback` — on by default, so enabling the
+//      terminal for local convenience does not silently also expose it to
+//      whatever hostname the server answers to.
+//   3. The session cookie, checked at upgrade like any other route.
+
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PtyQuery {
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+/// Whether this request may open a shell, and why not when it may not.
+fn terminal_refusal(state: &AppState, headers: &header::HeaderMap) -> Option<&'static str> {
+    let cfg = state.core.config();
+    if !cfg.server.web_terminal {
+        return Some("the terminal is disabled; set [server.web] terminal = true to enable it");
+    }
+    if cfg.server.web_terminal_requires_loopback {
+        let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
+        if !crate::host_is_loopback(host) {
+            return Some(
+                "the terminal is enabled but restricted to loopback; \
+                 set [server.web] terminal_requires_loopback = false to allow remote shells",
+            );
+        }
+    }
+    None
+}
+
+pub(crate) async fn pty_socket(
+    State(state): State<AppState>,
+    headers: header::HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<PtyQuery>,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    if let Some(reason) = terminal_refusal(&state, &headers) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": reason })),
+        )
+            .into_response();
+    }
+    // A shell inherits the workspace, so it is bounded by the same roots
+    // the picker is — a `cwd` query parameter must not be a way to start a
+    // shell somewhere the operator never authorized.
+    let cwd = match query
+        .cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+    {
+        Some(path) => {
+            let path = PathBuf::from(path);
+            match path.canonicalize() {
+                Ok(path) if path.is_dir() && within_roots(&state, &path) => path,
+                _ => state.active_core().cwd().clone(),
+            }
+        }
+        None => state.active_core().cwd().clone(),
+    };
+    upgrade.on_upgrade(move |socket| drive_pty(socket, cwd))
+}
+
+/// Control frames the client sends as text; keystrokes are binary. Nothing
+/// a user can type is mistakable for a control message.
+#[derive(Debug, Deserialize)]
+struct PtyControl {
+    resize: Option<PtyResize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PtyResize {
+    cols: u16,
+    rows: u16,
+}
+
+async fn drive_pty(socket: WebSocket, cwd: PathBuf) {
+    use futures::{SinkExt, StreamExt};
+    use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+
+    let pair = match native_pty_system().openpty(PtySize {
+        rows: 24,
+        cols: 80,
+        pixel_width: 0,
+        pixel_height: 0,
+    }) {
+        Ok(pair) => pair,
+        Err(error) => {
+            let mut socket = socket;
+            let _ = socket
+                .send(Message::Text(format!("openpty failed: {error}").into()))
+                .await;
+            return;
+        }
+    };
+
+    let mut cmd = CommandBuilder::new_default_prog();
+    cmd.cwd(&cwd);
+    cmd.env("TERM", "xterm-256color");
+    let mut child = match pair.slave.spawn_command(cmd) {
+        Ok(child) => child,
+        Err(error) => {
+            let mut socket = socket;
+            let _ = socket
+                .send(Message::Text(format!("shell spawn failed: {error}").into()))
+                .await;
+            return;
+        }
+    };
+    drop(pair.slave);
+
+    let killer = child.clone_killer();
+    let Ok(mut reader) = pair.master.try_clone_reader() else {
+        let _ = child.kill();
+        return;
+    };
+    let Ok(mut writer) = pair.master.take_writer() else {
+        let _ = child.kill();
+        return;
+    };
+    let master = pair.master;
+
+    let (mut sink, mut stream) = socket.split();
+
+    // Shell -> socket. A blocking read on its own thread, handed across by
+    // a channel, because `portable_pty`'s reader is not async.
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            match std::io::Read::read(&mut reader, &mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if out_tx.blocking_send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    let pump = tokio::spawn(async move {
+        while let Some(bytes) = out_rx.recv().await {
+            if sink.send(Message::Binary(bytes.into())).await.is_err() {
+                break;
+            }
+        }
+        let _ = sink.close().await;
+    });
+
+    // Socket -> shell, until the client goes away.
+    while let Some(Ok(message)) = stream.next().await {
+        match message {
+            Message::Binary(bytes) => {
+                if std::io::Write::write_all(&mut writer, &bytes).is_err() {
+                    break;
+                }
+            }
+            Message::Text(text) => {
+                if let Ok(PtyControl { resize: Some(size) }) =
+                    serde_json::from_str::<PtyControl>(&text)
+                {
+                    let _ = master.resize(PtySize {
+                        rows: size.rows,
+                        cols: size.cols,
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    });
+                }
+            }
+            Message::Close(_) => break,
+            _ => {}
+        }
+    }
+
+    // The socket IS the shell's lifetime. Closing the tab kills the
+    // process rather than leaving it running for the life of the server —
+    // the exact leak the desktop's own PTY had until `pty_close` landed.
+    let mut killer = killer;
+    let _ = killer.kill();
+    let _ = child.wait();
+    pump.abort();
 }

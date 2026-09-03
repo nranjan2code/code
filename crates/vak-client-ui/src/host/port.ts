@@ -70,7 +70,9 @@ export interface Host {
   /** Get bytes to the operator: a native save dialog, or a download. */
   saveText(suggestedName: string, contents: string, mime?: string): Promise<SaveOutcome>;
 
-  notify(title: string, body: string): Promise<void>;
+  /** `route` is where a click should land, as a hash route. Hosts that
+   *  cannot make a notification clickable simply ignore it. */
+  notify(title: string, body: string, route?: string): Promise<void>;
 
   /** Open the operations console. Same-origin on the web; a real browser
    *  launch from the desktop shell. */

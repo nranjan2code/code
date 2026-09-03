@@ -113,14 +113,23 @@ export const activeHost: Host = {
     return { kind: "downloaded" };
   },
 
-  async notify(title: string, body: string): Promise<void> {
+  async notify(title: string, body: string, route?: string): Promise<void> {
     if (typeof Notification === "undefined") return;
     try {
       let permission = Notification.permission;
       // Asked at the moment a notification is first actually warranted —
       // never on load, which is the request everyone denies reflexively.
       if (permission === "default") permission = await Notification.requestPermission();
-      if (permission === "granted") new Notification(title, { body, icon: "/app/vak-icon.png" });
+      if (permission !== "granted") return;
+      const notification = new Notification(title, { body, icon: "/app/vak-icon.png" });
+      // Clicking it must land on the thing it is about. Without this the
+      // tab merely surfaces, on whatever session was last open — which for
+      // an approval means hunting for the card the alert was about.
+      notification.onclick = () => {
+        window.focus();
+        if (route) window.location.hash = route;
+        notification.close();
+      };
     } catch {
       /* optional */
     }

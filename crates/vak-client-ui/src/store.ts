@@ -42,6 +42,20 @@ export type Item =
 
 export const [backend, setBackend] = createSignal<BackendInfo>({ ready: false, recent_projects: [] });
 export const [workspaceSwitching, setWorkspaceSwitching] = createSignal(false);
+
+/**
+ * Whether the client is actually in touch with the server right now
+ * (docs/design/48-web-client.md §7.4).
+ *
+ * In-process on the desktop, "Working" is instantaneous truth. Over a WAN
+ * it is a claim about a round trip that may not have happened — so the
+ * connection itself becomes a thing the UI has to state rather than
+ * assume. `resyncing` is its own state and not a flavour of `reconnecting`
+ * because it means something different to the reader: events were lost and
+ * the transcript is being rebuilt, so what is on screen is briefly behind.
+ */
+export type Connection = "live" | "reconnecting" | "resyncing" | "offline";
+export const [connection, setConnection] = createSignal<Connection>("live");
 export const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
 export const [activeId, setActiveId] = createSignal<string | null>(null);
 export const [health, setHealth] = createSignal<Health | null>(null);
@@ -91,7 +105,16 @@ export const [settingsOpen, setSettingsOpen] = createSignal(false);
  * the active project's overlay. The server remains the single source of truth. */
 export const [settingsScope, setSettingsScope] = createSignal<"user" | "project">("user");
 export const [hydratingId, setHydratingId] = createSignal<string | null>(null);
-export const [sidebarOpen, setSidebarOpen] = createSignal(true);
+/** Viewport narrow enough that the sidebar and dock are overlays rather
+ *  than columns (docs/design/48-web-client.md §7.2). Kept as a signal, not
+ *  read ad hoc, so every component agrees about which layout is in force. */
+export const [narrowViewport, setNarrowViewport] = createSignal(
+  typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches,
+);
+// Open on a desktop, closed on a phone: at that width the sidebar covers
+// the transcript, so starting open would greet a phone with a file list
+// and no conversation.
+export const [sidebarOpen, setSidebarOpen] = createSignal(!narrowViewport());
 export const [sidebarWidth, setSidebarWidth] = createSignal(252);
 export const [dockWidth, setDockWidth] = createSignal(520);
 
@@ -150,7 +173,10 @@ function noteRetry(id: string, state: RetryState | null) {
 }
 
 export interface UiPreferences {
-  theme: "warm" | "dark" | "contrast";
+  /** "system" follows the OS/browser, which is the only sane default for
+   *  a surface that can be a browser tab on a phone in daylight
+   *  (docs/design/48-web-client.md §7.1). */
+  theme: "system" | "light" | "warm" | "dark" | "contrast";
   textScale: number;
   codeScale: number;
   compactSidebar: boolean;
@@ -172,7 +198,7 @@ export interface UiPreferences {
 }
 
 const defaultUiPreferences: UiPreferences = {
-  theme: "warm",
+  theme: "system",
   textScale: 100,
   codeScale: 100,
   compactSidebar: false,
@@ -587,7 +613,13 @@ function appendToLast(bucket: Bucket, id: string, kind: "assistant" | "thinking"
 export function applyEvent(
   id: string,
   ev: AgentEvent,
-  opts: { onFinish?: (summary: string) => void; bucket?: Bucket },
+  opts: {
+    onFinish?: (summary: string) => void;
+    /** A gate is now waiting on a person. The only event in the stream
+     *  that is *about* the reader rather than the work. */
+    onApproval?: (requestId: string, tool: string) => void;
+    bucket?: Bucket;
+  },
 ) {
   const b: Bucket = opts.bucket ?? "main";
   if ("TurnStart" in ev) {
@@ -640,6 +672,7 @@ export function applyEvent(
       reason: ev.ApprovalRequested.reason,
       resolved: null,
     });
+    opts.onApproval?.(ev.ApprovalRequested.id, ev.ApprovalRequested.tool);
   } else if ("SubagentStarted" in ev) {
     pushItem(b, id, {
       kind: "subagent",

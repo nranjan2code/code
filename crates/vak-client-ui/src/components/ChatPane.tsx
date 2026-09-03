@@ -233,7 +233,7 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
     void speak(`Agent wants to run: ${props.item.tool}${target ? ", " + target : ""}. Approve or deny?`);
   });
   return (
-  <div class="approval">
+  <div class="approval" data-approval={props.item.id}>
     <div class="ap-head">Approval requested — {props.item.tool}</div>
     <Show when={primary()}>
       {(p) => (

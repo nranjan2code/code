@@ -317,9 +317,7 @@ impl EventBus {
     /// the ring immediately after receiving a live event cannot observe a
     /// ring that is missing it.
     pub fn send(&self, event: vak_agent::AgentEvent) -> usize {
-        let seq = self
-            .next
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let seq = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let framed = SeqEvent { seq, event };
         {
             let mut ring = self
