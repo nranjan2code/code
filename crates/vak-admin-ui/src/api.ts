@@ -24,8 +24,12 @@ import type {
   OpsDiagnostics,
   OpsStatus,
   OperationsSnapshot,
+  ApprovalAnswer,
+  GatewayApprovalPolicy,
   PendingApproval,
   PermissionMode,
+  PermissionRules,
+  PermissionRulesView,
   ProviderListResponse,
   RebuildStats,
   SearchHit,
@@ -284,12 +288,48 @@ export const api = {
   approvals: (): Promise<{ approvals: PendingApproval[]; total: number }> =>
     fetch("/admin/api/approvals").then((r) => handle(r)),
 
-  answer: (sessionId: string, requestId: string, approve: boolean): Promise<void> =>
+  /// Answer one gate. `remember` additionally persists the narrowest rule
+  /// that covers this call, so the same shape stops asking. Only meaningful
+  /// with `approve: true`.
+  answer: (
+    sessionId: string,
+    requestId: string,
+    approve: boolean,
+    remember = false,
+  ): Promise<ApprovalAnswer> =>
     fetch(`/sessions/${encodeURIComponent(sessionId)}/approvals/${encodeURIComponent(requestId)}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ approve }),
-    }).then((r) => void handle(r)),
+      body: JSON.stringify({ approve, remember }),
+    }).then((r) => handle(r)),
+
+  gatewayApprovals: (): Promise<GatewayApprovalPolicy> =>
+    fetch("/gateway/approvals").then((r) => handle(r)),
+
+  setGatewayApprovals: (body: {
+    mode: "deny" | "forward";
+    approver?: string;
+    timeout_secs?: number;
+    scope?: ConfigScope;
+  }): Promise<GatewayApprovalPolicy> =>
+    fetch("/gateway/approvals", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => handle(r)),
+
+  permissionRules: (scope: ConfigScope = "project"): Promise<PermissionRulesView> =>
+    fetch(`/config/permissions?scope=${scope}`).then((r) => handle(r)),
+
+  setPermissionRules: (
+    scope: ConfigScope,
+    lists: { allow?: string[]; ask?: string[]; deny?: string[] },
+  ): Promise<{ scope: ConfigScope; effective: PermissionRules }> =>
+    fetch("/config/permissions", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...lists, scope }),
+    }).then((r) => handle(r)),
 
   setMode: (mode: string): Promise<void> =>
     fetch("/config/mode", {

@@ -734,6 +734,24 @@ export default function Settings() {
     }
   };
 
+  /// How an `Ask` is resolved. Separate control from the permission mode
+  /// above and deliberately narrower: it never widens the boundary and never
+  /// switches off the sandbox — a denied call stays denied under every one
+  /// of these. The desktop had no control for it at all, so the only way to
+  /// change it was the browser console.
+  const changeApproval = async (mode: ConfigSnapshot["approval_mode"]) => {
+    try {
+      if (scope() === "user") await api.patchGlobalConfig({ approval_mode: mode });
+      else await api.patchConfig({ approval_mode: mode });
+      setConfig((current) => (current ? { ...current, approval_mode: mode } : current));
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        text: `Could not update approvals: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  };
+
   const openProjectConfig = async () => {
     const relative = ".vak/config.toml";
     try {
@@ -941,9 +959,64 @@ export default function Settings() {
             <Show when={page() === "permissions"}>
               <header><h1>Permissions</h1><p>Set the trust boundary for tool calls in this workspace.</p></header>
               <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Read only", text: "Inspect files and search the workspace without making changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Workspace write", text: "Edit files inside this project and ask before sensitive actions.", icon: "code" as IconName }, { id: "FullAccess", title: "Full access", text: "Run unrestricted commands and access files outside the workspace.", icon: "shield" as IconName }] as const}>{(mode) => <button classList={{ active: config()?.permission_mode === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={config()?.permission_mode === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
+              <Group title="Approvals">
+                <p class="settings-group-copy">
+                  When something needs your say-so, this decides who answers. It cannot widen the
+                  boundary above or switch off the sandbox — anything refused there stays refused.
+                </p>
+                <div class="permission-options">
+                  <For
+                    each={
+                      [
+                        { id: "ask", title: "Ask me every time", text: "Pause and wait for you before anything that needs approval.", icon: "shield" as IconName },
+                        { id: "approve-safe", title: "Approve safe actions", text: "Reads and edits inside this project go ahead; the web and outside access still ask.", icon: "check" as IconName },
+                        { id: "auto-approve", title: "Approve automatically", text: "Ordinary requests go ahead. Your own rules and the circuit breaker still stop and ask.", icon: "code" as IconName },
+                      ] as const
+                    }
+                  >
+                    {(mode) => (
+                      <button
+                        classList={{ active: config()?.approval_mode === mode.id }}
+                        onClick={() => void changeApproval(mode.id)}
+                      >
+                        <span class="permission-icon"><Icon name={mode.icon} /></span>
+                        <span><strong>{mode.title}</strong><small>{mode.text}</small></span>
+                        <span class="permission-check">
+                          <Show when={config()?.approval_mode === mode.id}><Icon name="check" /></Show>
+                        </span>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Group>
               <Group title="Sandbox">
                 <Row title="Workspace boundary" description="File tools are confined to the selected project and symlinks are resolved before access."><span class="settings-status good">Protected</span></Row>
-                <Row title="Permission rules" description="Configure allow, ask, and deny patterns in the project configuration."><button class="settings-button" onClick={() => void openProjectConfig()}>Edit rules</button></Row>
+                <Row title="Containment" description="How tool processes are confined on this machine."><span class="settings-status good">{config()?.sandbox ?? "…"}</span></Row>
+              </Group>
+              <Group title="Rules">
+                <p class="settings-group-copy">
+                  These decide specific calls before the setting above applies. “Never” always wins.
+                </p>
+                <For
+                  each={
+                    [
+                      { key: "deny", title: "Never allow", empty: "Nothing is blocked outright." },
+                      { key: "ask", title: "Always ask first", empty: "Nothing is singled out to ask about." },
+                      { key: "allow", title: "Always allow", empty: "Nothing is pre-approved." },
+                    ] as const
+                  }
+                >
+                  {(section) => (
+                    <Row title={section.title} description={
+                      (config()?.permissions?.[section.key]?.length ?? 0) > 0
+                        ? config()!.permissions[section.key].join(", ")
+                        : section.empty
+                    }>
+                      <span />
+                    </Row>
+                  )}
+                </For>
+                <Row title="Permission rules" description="Add or remove allow, ask, and deny patterns in the project configuration."><button class="settings-button" onClick={() => void openProjectConfig()}>Edit rules</button></Row>
               </Group>
             </Show>
 

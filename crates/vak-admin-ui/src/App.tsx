@@ -21,7 +21,7 @@ import {
 import type {
   AllowlistEntry, BestOfNRun, Bot, ChannelPolicy, ConfigInfo, OnboardingState, StepState, CorePoolEntry, DiscoveredModelsResponse,
   ConfigScope, FinOpsStatus, FinOpsDailyPoint, FinOpsRollupEntry, HookConfig, IntegrationStatus,
-  GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus,
+  GatewayApprovalPolicy, GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus,
   PermissionMode, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
   ActiveSubagent, SkillItem, SkillProposal, TaskItem, TranscriptEntry, VoiceConfig, WorkReceipt,
@@ -5183,6 +5183,288 @@ const APPROVAL_MODES: { value: "ask" | "approve-safe" | "auto-approve"; label: s
   { value: "auto-approve", label: "Auto-approve", desc: "Automatically resolve ordinary Ask decisions. Explicit rules and circuit-breaker stops still require approval; permission denies and the sandbox still apply." },
 ];
 
+/// Every chat that can be chosen as the approver: the approved ones, plus
+/// whatever is currently set even when it is not among them.
+function approverOptions(policy: GatewayApprovalPolicy): string[] {
+  const out = [...(policy.candidates ?? [])];
+  if (policy.approver && !out.includes(policy.approver)) out.unshift(policy.approver);
+  return out;
+}
+
+/// Whether an approval gate raised on a chat surface reaches a human.
+///
+/// This is the setting that was readable everywhere and writable nowhere.
+/// With `deny` — the default — every `Ask` on a chat surface is a foregone
+/// denial, so `webfetch`, `browse`, and every MCP server are dropped from
+/// the turn before the model sees them, and the only remedy the system
+/// could print was "edit config.toml by hand and restart".
+function ApprovalForwarding() {
+  const [policy, { refetch }] = createResource(() => api.gatewayApprovals());
+  const [target, setTarget] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+
+  // Seed the input from the live policy, or from the only candidate when
+  // there is exactly one — the common case, and typing a chat address from
+  // memory is not something anyone should be asked to do.
+  createEffect(() => {
+    const p = policy();
+    if (!p || target()) return;
+    const only = p.candidates?.length === 1 ? p.candidates[0] : "";
+    setTarget(p.approver ?? only);
+  });
+
+  const save = async (mode: "deny" | "forward") => {
+    setBusy(true);
+    try {
+      const next = await api.setGatewayApprovals(
+        mode === "forward" ? { mode, approver: target().trim() } : { mode },
+      );
+      pushToast(
+        "info",
+        next.mode === "forward"
+          ? `Gates now go to ${next.approver} for a yes or no`
+          : "Gates on chat surfaces are refused without asking",
+      );
+      refetch();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section class="panel">
+      <div class="panel-title-row">
+        <div>
+          <h2>Can a chat ask you first?</h2>
+          <p class="dim">
+            When vak running in a chat hits something that needs approval, it either refuses on
+            the spot or asks you in a chat you choose.
+          </p>
+        </div>
+        <Show when={policy()}>
+          {(p) => (
+            <span class={`chip ${p().forwarding ? "chip-ok" : "chip-warn"}`}>
+              {p().forwarding ? "asks you" : "refuses"}
+            </span>
+          )}
+        </Show>
+      </div>
+
+      <Show when={policy()} fallback={<div class="skel skel-block" />}>
+        {(p) => (
+          <>
+            <Show when={p().gateway_enabled === false || p().enabled === false}>
+              <p class="dim">
+                Chat surfaces are switched off, so nothing here takes effect yet. Turn them on
+                under <a href="#/gateway">Chats</a>.
+              </p>
+            </Show>
+
+            <div class="mode-grid">
+              <button
+                class="mode-btn"
+                classList={{ active: p().mode === "deny" }}
+                disabled={busy() || p().mode === "deny"}
+                onClick={() => void save("deny")}
+              >
+                <span class="mode-name">
+                  Refuse without asking
+                  <Show when={p().mode === "deny"}>
+                    <span class="chip chip-tone-success">current</span>
+                  </Show>
+                </span>
+                <span class="mode-desc">
+                  Safest, and it means the web, the browser, and connected apps are unavailable in
+                  chat — vak will say so instead of trying.
+                </span>
+              </button>
+              <button
+                class="mode-btn"
+                classList={{ active: p().mode === "forward" }}
+                disabled={busy() || !target().trim()}
+                onClick={() => void save("forward")}
+              >
+                <span class="mode-name">
+                  Ask me in a chat
+                  <Show when={p().mode === "forward"}>
+                    <span class="chip chip-tone-success">current</span>
+                  </Show>
+                </span>
+                <span class="mode-desc">
+                  The request is sent to the chat below; reply “yes” or “no”. No answer within{" "}
+                  {Math.round(p().timeout_secs / 60)} minutes counts as no.
+                </span>
+              </button>
+            </div>
+
+            <div class="form-row" style={{ "margin-top": "12px" }}>
+              <label>Ask me here</label>
+              {/* A target set by hand in config.toml need not be one of this
+                  gateway's approved chats. Offering only the candidates
+                  would hide it, so the current value is always an option —
+                  an operator must be able to see what is set before
+                  deciding whether to change it. */}
+              <Show
+                when={(p().candidates?.length ?? 0) > 0 || p().approver}
+                fallback={
+                  <p class="dim">
+                    No chats are approved yet. Add one under <a href="#/gateway">Chats</a> first —
+                    a request can only be sent somewhere vak is already allowed to talk.
+                  </p>
+                }
+              >
+                <select value={target()} onChange={(e) => setTarget(e.currentTarget.value)}>
+                  <option value="">Choose a chat…</option>
+                  <For each={approverOptions(p())}>{(c) => <option value={c}>{c}</option>}</For>
+                </select>
+              </Show>
+              <Show when={p().approver && !(p().candidates ?? []).includes(p().approver!)}>
+                <p class="dim">
+                  <code>{p().approver}</code> is not one of this gateway’s approved chats. It was
+                  set outside the console, and a request sent there may not reach anyone.
+                </p>
+              </Show>
+            </div>
+          </>
+        )}
+      </Show>
+    </section>
+  );
+}
+
+/// Add and remove permission rules in one config layer.
+///
+/// The console already sets the permission mode and the approval mode, both
+/// of which are strictly broader powers than a single rule, so the old copy
+/// here — "can't be changed from a browser" — drew a line the rest of this
+/// page had already crossed. What actually needs care is validation and
+/// scope, both of which the server enforces: a malformed rule is rejected
+/// whole rather than half-written, and a learned Allow can never shadow an
+/// explicit Deny because the engine aggregates by severity.
+function RuleEditor(props: { scope: ConfigScope; onSaved: () => void }) {
+  const [view, { refetch }] = createResource(
+    () => props.scope,
+    (scope: ConfigScope) => api.permissionRules(scope),
+  );
+  const [open, setOpen] = createSignal(false);
+  const [decision, setDecision] = createSignal<RuleDecision>("deny");
+  const [pattern, setPattern] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+
+  const listFor = (d: RuleDecision) => {
+    const layer = view()?.layer;
+    if (!layer) return [] as string[];
+    return d === "allow" ? layer.allow : d === "ask" ? layer.ask : layer.deny;
+  };
+
+  const write = async (d: RuleDecision, next: string[], message: string) => {
+    setBusy(true);
+    try {
+      await api.setPermissionRules(props.scope, { [d]: next });
+      pushToast("info", message);
+      refetch();
+      props.onSaved();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const add = () => {
+    const spec = pattern().trim();
+    if (!spec) return;
+    const d = decision();
+    if (listFor(d).includes(spec)) {
+      pushToast("alert", "That rule is already in this layer");
+      return;
+    }
+    void write(d, [...listFor(d), spec], `Added ${d} rule ${spec}`).then(() => setPattern(""));
+  };
+
+  return (
+    <div class="rule-editor">
+      <div class="row-gap">
+        <button class="ghost small" onClick={() => setOpen(!open())}>
+          {open() ? "Done editing" : "Edit rules"}
+        </button>
+        <span class="dim">
+          Editing the {props.scope === "user" ? "Shared" : "project"} layer.
+        </span>
+      </div>
+
+      <Show when={open()}>
+        <div class="form-row" style={{ "margin-top": "10px" }}>
+          <label>Add a rule</label>
+          <div class="row-gap">
+            <select
+              value={decision()}
+              onChange={(e) => setDecision(e.currentTarget.value as RuleDecision)}
+            >
+              <option value="deny">Never allow</option>
+              <option value="ask">Always ask first</option>
+              <option value="allow">Always allow</option>
+            </select>
+            <input
+              placeholder="Bash(git *)"
+              value={pattern()}
+              onInput={(e) => setPattern(e.currentTarget.value)}
+              onKeyDown={(e) => e.key === "Enter" && add()}
+            />
+            <button disabled={busy() || !pattern().trim()} onClick={() => add()}>
+              Add
+            </button>
+          </div>
+        </div>
+        <p class="dim">
+          A rule is a tool name, optionally with a pattern in brackets:{" "}
+          <code>Bash(git *)</code>, <code>Edit(src/**)</code>, <code>Mcp(tavily/*)</code>, or just{" "}
+          <code>Webfetch</code> for every use of it. “Never allow” always wins over the other two.
+        </p>
+
+        <Show when={view()}>
+          <div class="rule-lists">
+            <For each={RULE_SECTIONS}>
+              {({ decision: d, title }) => (
+                <div>
+                  <span class="eyebrow">{title} — set in this layer</span>
+                  <Show
+                    when={listFor(d).length > 0}
+                    fallback={<p class="dim">Nothing set here.</p>}
+                  >
+                    <div class="chip-stack">
+                      <For each={listFor(d)}>
+                        {(spec) => (
+                          <button
+                            class="chip chip-phrase"
+                            disabled={busy()}
+                            title={`Remove ${spec}`}
+                            onClick={() =>
+                              void write(
+                                d,
+                                listFor(d).filter((s) => s !== spec),
+                                `Removed ${spec}`,
+                              )
+                            }
+                          >
+                            {spec} <span aria-hidden="true">×</span>
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+      </Show>
+    </div>
+  );
+}
+
 /// One page, six self-contained panels. Each answers a single question about
 /// how this instance is configured; nothing here is a summary of a screen
 /// that already exists elsewhere.
@@ -5307,8 +5589,15 @@ function Settings() {
 
   const rules = createMemo(() => parseRuleLists(config()?.permissions));
   const rulesFor = (decision: RuleDecision) => rules().filter((r) => r.decision === decision);
-  const selectedPermissionMode = () => layer()?.permission_mode ?? (configScope() === "project" ? config()?.permission_mode : undefined);
-  const selectedApprovalMode = () => layer()?.approval_mode ?? (configScope() === "project" ? config()?.approval_mode : undefined);
+  // The layer's own value when it pins one, otherwise the effective value —
+  // which is what "inherited" means and what an operator needs to see. The
+  // fallback used to be scoped to the project view only, and the effective
+  // config did not report `approval_mode` at all, so the approval picker
+  // showed nothing selected no matter what was in force.
+  const selectedPermissionMode = () => layer()?.permission_mode ?? config()?.permission_mode;
+  const selectedApprovalMode = () => layer()?.approval_mode ?? config()?.approval_mode;
+  const inheritedPermissionMode = () => !layer()?.permission_mode;
+  const inheritedApprovalMode = () => !layer()?.approval_mode;
 
   return (
     <div class="view">
@@ -5572,7 +5861,9 @@ function Settings() {
                     <span class="mode-name">
                       {m.label}
                       <Show when={selectedPermissionMode() === m.value}>
-                        <span class="chip chip-tone-success">current</span>
+                        <span class="chip chip-tone-success">
+                          {inheritedPermissionMode() ? "in force (inherited)" : "set here"}
+                        </span>
                       </Show>
                     </span>
                     <span class="mode-desc">{MODE_COPY[m.value]}</span>
@@ -5613,11 +5904,10 @@ function Settings() {
                 </For>
               </div>
               <p class="dim">
-                These are set in the project’s config file and can’t be changed from a browser — a
-                console that could widen its own reach wouldn’t be worth much. Hover a rule to see
-                exactly how it is written. To see what a rule grants one connected app, open{" "}
-                <a href="#/integrations">Extensions</a>.
+                Hover a rule to see exactly how it is written. To see what a rule grants one
+                connected app, open <a href="#/integrations">Extensions</a>.
               </p>
+              <RuleEditor scope={configScope()} onSaved={() => void refetchConfig()} />
             </Show>
             <div class="panel-title-row" style={{ "margin-top": "18px" }}>
               <div>
@@ -5634,14 +5924,25 @@ function Settings() {
                     onClick={() => void guard(() => api.patchConfigScope(configScope(), { approval_mode: m.value }), `Approval mode set to “${m.label}”`)}
                     disabled={selectedApprovalMode() === m.value}
                   >
-                    <span class="mode-name">{m.label}<Show when={selectedApprovalMode() === m.value}><span class="chip chip-tone-success">set here</span></Show></span>
+                    <span class="mode-name">
+                      {m.label}
+                      <Show when={selectedApprovalMode() === m.value}>
+                        <span class="chip chip-tone-success">
+                          {inheritedApprovalMode() ? "in force (inherited)" : "set here"}
+                        </span>
+                      </Show>
+                    </span>
                     <span class="mode-desc">{m.desc}</span>
                   </button>
                 )}
               </For>
             </div>
-            <p class="dim" style={{ "margin-top": "10px" }}>Effective sandbox: <code>{config()?.sandbox ?? "…"}</code></p>
+            <p class="dim" style={{ "margin-top": "10px" }}>
+              Effective sandbox: <code>{config()?.sandbox ?? "…"}</code>
+            </p>
           </section>
+
+          <ApprovalForwarding />
 
           <section class="panel">
             <div class="panel-title-row">

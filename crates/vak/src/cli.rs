@@ -82,6 +82,15 @@ pub(crate) enum Command {
         task: String,
         #[arg(long)]
         yes: bool,
+        /// Permission mode for this run only, same as `vak exec`. A planner
+        /// dispatches model-generated shell through the same engine as any
+        /// other turn, so it needs the same boundary control.
+        #[arg(long)]
+        permission_mode: Option<String>,
+        /// Permit direct `write` and `edit` calls only for these workspace
+        /// paths during this run. Repeat the flag for more than one path.
+        #[arg(long = "write-path")]
+        write_paths: Vec<PathBuf>,
         /// Run in an isolated git worktree off HEAD
         #[arg(long)]
         worktree: bool,
@@ -644,7 +653,24 @@ pub(crate) enum FlowAction {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum ConfigAction {
+    /// Print the effective composed configuration
     Dump,
+    /// Show the permission mode, approval mode, and rule lists in force
+    Permissions,
+    /// Set the permission mode, persisted to a config layer
+    SetMode {
+        /// read-only | workspace-write | full-access
+        mode: String,
+        #[arg(long, default_value = "project")]
+        scope: PromptScope,
+    },
+    /// Set how `Ask` decisions are resolved, persisted to a config layer
+    SetApproval {
+        /// ask | approve-safe | auto-approve
+        mode: String,
+        #[arg(long, default_value = "project")]
+        scope: PromptScope,
+    },
 }
 
 /// Scope for a prompt edit. Matches the wire names the admin API uses;

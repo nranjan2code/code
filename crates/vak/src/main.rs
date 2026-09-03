@@ -342,9 +342,25 @@ async fn main() {
             )
             .await
         }
-        Some(Command::Config { .. }) => {
-            run_config_dump(cwd);
-            0
+        Some(Command::Config { action }) => {
+            // Each of these resolves workspace trust for itself, because a
+            // reader must see the same layers a run would: an untrusted
+            // project's `permission_mode` and allow rules are stripped by
+            // the loader, so reporting them would describe a policy no run
+            // uses.
+            match action {
+                None | Some(cli::ConfigAction::Dump) => {
+                    run_config_dump(cwd);
+                    0
+                }
+                Some(cli::ConfigAction::Permissions) => run_config_permissions(cwd),
+                Some(cli::ConfigAction::SetMode { mode, scope }) => {
+                    run_config_set_mode(cwd, &mode, scope)
+                }
+                Some(cli::ConfigAction::SetApproval { mode, scope }) => {
+                    run_config_set_approval(cwd, &mode, scope)
+                }
+            }
         }
         Some(Command::Prompts { action }) => {
             // Reading and previewing must show what a real run would see, so
@@ -431,6 +447,8 @@ async fn main() {
         Some(Command::Plan {
             task,
             yes,
+            permission_mode,
+            write_paths,
             worktree,
             trust,
         }) => {
@@ -438,7 +456,16 @@ async fn main() {
             if trusted {
                 vak_config::load_env_file(std::path::Path::new(".env"));
             }
-            run_plan(cwd, task, yes, worktree, trusted).await
+            run_plan(
+                cwd,
+                task,
+                yes,
+                permission_mode,
+                write_paths,
+                worktree,
+                trusted,
+            )
+            .await
         }
         Some(Command::Eval {
             report,
@@ -803,7 +830,7 @@ async fn run_flow_exec(
         std::sync::Arc::new(vak_agent::AutoDeny)
     });
 
-    let engine = match vak_core::build_engine_with(core.config(), &core.extra_allow_snapshot()) {
+    let engine = match core.build_permission_engine(&core.extra_allow_snapshot()) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("error: {e}");
@@ -1113,7 +1140,7 @@ async fn run_exec(
     let permission = if write_paths.is_empty() {
         None
     } else {
-        match vak_core::build_engine_with(core.config(), &core.extra_allow_snapshot()) {
+        match core.build_permission_engine(&core.extra_allow_snapshot()) {
             Ok(engine) => Some(std::sync::Arc::new(
                 engine.restrict_write_paths(core.cwd(), &write_paths),
             )),
@@ -1324,6 +1351,126 @@ fn exec_reflection_line(outcome: &vak_core::reflection::ReflectionOutcome) -> Op
     }
 }
 
+/// `vak config permissions` — the whole permission answer in one place.
+///
+/// The CLI could previously only dump the merged config, which prints the
+/// mode but not what the engine actually evaluates. An operator debugging a
+/// refusal had no terminal command that showed the rules, the approval mode,
+/// and which capabilities the composed policy will refuse on this surface.
+fn run_config_permissions(cwd: PathBuf) -> i32 {
+    // Trust matters here: an untrusted project's `allow` rules are stripped
+    // by the loader, so reading with the wrong trust would print a rule set
+    // no run would ever use.
+    let trusted = vak_core::trust::is_trusted(&cwd);
+    let core = match Core::new_with_trust(cwd, trusted) {
+        Ok(core) => core,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    let (allow, ask, deny) = core.effective_permission_rules();
+    println!("permission_mode  = {:?}", core.effective_permission_mode());
+    println!(
+        "approval_mode    = {}",
+        core.effective_approval_mode().as_str()
+    );
+    println!("sandbox          = {}", core.effective_sandbox_name());
+    println!("project_trusted  = {trusted}");
+    for (label, list) in [("deny", &deny), ("ask", &ask), ("allow", &allow)] {
+        if list.is_empty() {
+            println!("{label:<16} = (none)");
+        } else {
+            println!("{label:<16} = {}", list.join(", "));
+        }
+    }
+    let learned = core.extra_allow_snapshot();
+    if !learned.is_empty() {
+        println!("learned          = {}", learned.join(", "));
+    }
+    // The composed answer, not the configured one: this is the same
+    // computation the system prompt and the tool registry read.
+    let standings = core.capability_standings();
+    if standings.is_empty() {
+        println!("\ncapabilities     = (none configured)");
+        return 0;
+    }
+    println!("\ncapabilities");
+    for standing in &standings {
+        let mark = match standing.reach {
+            vak_core::reach::Reach::Open => "open",
+            vak_core::reach::Reach::Gated => "gated",
+            vak_core::reach::Reach::Blocked => "BLOCKED",
+        };
+        println!("  {mark:<8} {}", standing.label);
+        if !standing.reason.is_empty() {
+            println!("           {}", standing.reason);
+        }
+        if !standing.remedy.is_empty() {
+            println!("           fix: {}", standing.remedy);
+        }
+    }
+    0
+}
+
+/// Where a `vak config set-*` write lands. Mirrors the two scopes every
+/// other layered setting already uses.
+fn scope_config_path(scope: cli::PromptScope, cwd: &std::path::Path) -> Option<PathBuf> {
+    match scope {
+        cli::PromptScope::User => vak_config::global_path(),
+        cli::PromptScope::Project => Some(vak_config::project_path(cwd)),
+    }
+}
+
+fn run_config_set_mode(cwd: PathBuf, mode: &str, scope: cli::PromptScope) -> i32 {
+    let Some(parsed) = vak_config::PermissionMode::deserialize_str(mode) else {
+        eprintln!("error: unknown mode '{mode}' (read-only | workspace-write | full-access)");
+        return 2;
+    };
+    let Some(path) = scope_config_path(scope, &cwd) else {
+        eprintln!("error: user home unavailable");
+        return 2;
+    };
+    if let Err(e) =
+        vak_config::persist_preferences_to(path, None, None, None, Some(parsed), None, None)
+    {
+        eprintln!("error: {e}");
+        return 2;
+    }
+    println!("permission_mode = {mode} ({} layer)", scope_label(scope));
+    // A running server keeps its own copy; say so rather than implying the
+    // change reached every surface already.
+    println!("A running `vak serve` picks this up on its next config refresh.");
+    0
+}
+
+fn run_config_set_approval(cwd: PathBuf, mode: &str, scope: cli::PromptScope) -> i32 {
+    let Some(parsed) = vak_config::ApprovalMode::parse(mode) else {
+        eprintln!("error: unknown mode '{mode}' (ask | approve-safe | auto-approve)");
+        return 2;
+    };
+    let Some(path) = scope_config_path(scope, &cwd) else {
+        eprintln!("error: user home unavailable");
+        return 2;
+    };
+    if let Err(e) =
+        vak_config::persist_preferences_to(path, None, None, None, None, Some(parsed), None)
+    {
+        eprintln!("error: {e}");
+        return 2;
+    }
+    println!("approval_mode = {mode} ({} layer)", scope_label(scope));
+    println!("A running `vak serve` picks this up on its next config refresh.");
+    0
+}
+
+fn scope_label(scope: cli::PromptScope) -> &'static str {
+    match scope {
+        cli::PromptScope::User => "Shared",
+        cli::PromptScope::Project => "project",
+    }
+}
+
 fn run_config_dump(cwd: PathBuf) {
     match Core::new(cwd.clone()) {
         Ok(core) => {
@@ -1413,7 +1560,16 @@ fn run_sessions_list(cwd: PathBuf) {
     }
 }
 
-async fn run_plan(cwd: PathBuf, task: String, yes: bool, worktree: bool, trusted: bool) -> i32 {
+#[allow(clippy::too_many_arguments)]
+async fn run_plan(
+    cwd: PathBuf,
+    task: String,
+    yes: bool,
+    permission_mode: Option<String>,
+    write_paths: Vec<PathBuf>,
+    worktree: bool,
+    trusted: bool,
+) -> i32 {
     let mut effective_cwd = cwd.clone();
     if worktree {
         match vak_core::worktree::create(&cwd, &format!("plan-{}", timestamp_id())) {
@@ -1436,6 +1592,19 @@ async fn run_plan(cwd: PathBuf, task: String, yes: bool, worktree: bool, trusted
             return 2;
         }
     };
+    // Applied before the session is started, so the frozen prompt describes
+    // the boundary this run will actually have.
+    if let Some(pm) = permission_mode {
+        match vak_config::PermissionMode::deserialize_str(&pm) {
+            Some(m) => core.set_permission_mode(m),
+            None => {
+                eprintln!(
+                    "error: unknown --permission-mode '{pm}' (read-only | workspace-write | full-access)"
+                );
+                return 2;
+            }
+        }
+    }
     let provider = match core.provider() {
         Ok(p) => p,
         Err(e) => {
@@ -1461,7 +1630,12 @@ async fn run_plan(cwd: PathBuf, task: String, yes: bool, worktree: bool, trusted
     } else {
         std::sync::Arc::new(vak_agent::AutoDeny)
     });
-    let engine = match vak_core::build_engine_with(core.config(), &core.extra_allow_snapshot()) {
+    let engine = match core.build_permission_engine(&core.extra_allow_snapshot()) {
+        // Same execution contract `exec --write-path` carries: direct file
+        // mutations outside the declared paths are refused before rules or
+        // permission mode are consulted. A planner generates its own write
+        // targets, which is precisely why it needs this.
+        Ok(e) if !write_paths.is_empty() => e.restrict_write_paths(core.cwd(), &write_paths),
         Ok(e) => e,
         Err(e) => {
             eprintln!("error: {e}");

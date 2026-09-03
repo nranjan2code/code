@@ -210,12 +210,18 @@ pub fn derive(core: &Core, probed: &ProbedFacts) -> OnboardingState {
 
     // A route is only meaningful once the provider authenticates, so
     // `core_ready` deliberately does not double-count it.
+    //
+    // The permission step is `settled()`, not `is_satisfied()`. An unchosen
+    // posture is a decision still owed — worth showing, and worth an action
+    // in the wizard — but it does not stop a task from running: the default
+    // is `workspace-write` and the sandbox applies either way. Requiring it
+    // here would have declared every working install "not ready" the moment
+    // this step learned to be honest.
     let core_ready = install.settled()
         && workspace.is_satisfied()
         && trust.settled()
         && provider.is_satisfied()
-        && route.is_satisfied()
-        && permission.is_satisfied();
+        && route.is_satisfied();
     let unattended_ready = core_ready && services.is_satisfied() && channels.is_satisfied();
 
     OnboardingState {
@@ -379,10 +385,61 @@ fn route_provenance(core: &Core) -> &'static str {
     }
 }
 
+/// True when some config layer actually names a permission mode, as
+/// opposed to the effective value being the compiled default.
+///
+/// Read as **text**, the same way `trust::requested_privileges` reads a
+/// project config: this runs during setup, before an operator has decided
+/// anything, and loading a layer to ask a question about it is the mistake
+/// that module exists to avoid.
+fn permission_mode_is_chosen(core: &Core) -> bool {
+    let layers = [
+        vak_config::project_path(core.cwd()),
+        vak_config::global_path().unwrap_or_default(),
+    ];
+    layers.iter().any(|path| {
+        std::fs::read_to_string(path).is_ok_and(|text| {
+            text.lines()
+                .map(str::trim_start)
+                .any(|line| line.starts_with("permission_mode"))
+        })
+    })
+}
+
+/// How much vak may do on its own.
+///
+/// This step used to report `Satisfied` unconditionally, which made it
+/// invisible in exactly the way that matters: the wizard renders a step's
+/// actions only while it is unsatisfied, so the three-posture chooser
+/// behind it could never appear and a first-run operator was never asked.
+/// They inherited `workspace-write` — a reasonable default, and still not a
+/// decision anybody made.
+///
+/// An explicit mode in either layer settles it. The remedy names all three
+/// postures rather than recommending one, because this is an access
+/// decision and the wizard must not make it on someone's behalf.
 fn permission_step(core: &Core) -> StepState {
-    StepState::ok_from(
-        format!("{:?}", core.effective_permission_mode()),
-        route_provenance(core),
+    if permission_mode_is_chosen(core) {
+        return StepState::ok_from(
+            format!("{:?}", core.effective_permission_mode()),
+            route_provenance(core),
+        );
+    }
+    StepState::Incomplete(
+        StepFailure::new(
+            "No safety posture has been chosen for this workspace.",
+            format!(
+                "Nothing is unguarded: until you choose, vak runs at the \
+                 default ({:?}) and the sandbox still applies.",
+                core.effective_permission_mode()
+            ),
+            "Pick one: inspect only, work with approval, or unrestricted.",
+        )
+        .with_detail(
+            "No config layer sets `permission_mode`, so the effective value is \
+             the compiled default rather than a decision. Choosing writes it to \
+             the layer you pick.",
+        ),
     )
 }
 
@@ -518,6 +575,72 @@ fn has_any_session(sessions_home: &Path) -> bool {
             files.any(|f| f.is_ok_and(|f| f.path().extension().is_some_and(|e| e == "jsonl")))
         })
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod permission_step_tests {
+    use super::*;
+
+    fn workspace(mode: Option<&str>) -> tempfile::TempDir {
+        // Otherwise `global_path()` is the developer's own ~/vak-home
+        // config, and whether this test passes depends on whose machine it
+        // runs on.
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        if let Some(mode) = mode {
+            std::fs::create_dir_all(dir.path().join(".vak")).unwrap();
+            std::fs::write(
+                dir.path().join(".vak/config.toml"),
+                format!("permission_mode = \"{mode}\"\n"),
+            )
+            .unwrap();
+        }
+        dir
+    }
+
+    /// The regression this step exists to prevent: it reported `Satisfied`
+    /// unconditionally, the wizard only renders actions for an unsatisfied
+    /// step, and so the three-posture chooser could never appear.
+    #[test]
+    fn an_unchosen_posture_is_incomplete_so_the_wizard_can_offer_one() {
+        let dir = workspace(None);
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let step = permission_step(&core);
+        let failure = step.failure().expect("must be incomplete");
+        // All four fields, per doc 46's error design.
+        assert!(failure.what.contains("safety posture"));
+        assert!(!failure.preserved.is_empty());
+        assert!(!failure.repair.is_empty());
+        assert!(failure.detail.is_some());
+    }
+
+    #[test]
+    fn an_explicit_mode_settles_it() {
+        let dir = workspace(Some("read-only"));
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        assert!(permission_step(&core).is_satisfied());
+    }
+
+    /// An unchosen posture is a decision still owed, not a broken install:
+    /// the default is safe and the sandbox applies either way. Gating
+    /// readiness on it would declare every working install "not ready".
+    #[test]
+    fn an_unchosen_posture_does_not_block_readiness() {
+        let dir = workspace(None);
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let state = derive(&core, &ProbedFacts::default());
+        assert!(!state.permission.is_satisfied());
+        // `core_ready` still turns on provider/route, which this fixture has
+        // not set — the point is only that permission is not one of its terms.
+        assert!(
+            !state
+                .steps()
+                .iter()
+                .any(|(name, _)| *name == "permission" && state.core_ready),
+            "permission must not be a term of core_ready"
+        );
+    }
 }
 
 #[cfg(test)]

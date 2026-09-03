@@ -425,14 +425,25 @@ export function cancelSide(id: string): Promise<void> {
   return req(`/sessions/${id}/side/cancel`, { method: "POST" });
 }
 
+export interface ApprovalAnswer {
+  approved: boolean;
+  /// The rule that was persisted, when the answer asked not to be asked
+  /// again. Null when nothing was remembered.
+  learned_rule: string | null;
+  /// Why no rule could be derived. Never blocks the approval: some calls
+  /// (opaque shell, a one-off URL) have no shape that generalizes safely.
+  learn_error: string | null;
+}
+
 export function answerApproval(
   id: string,
   requestId: string,
   approve: boolean,
-): Promise<unknown> {
+  remember = false,
+): Promise<ApprovalAnswer> {
   return req(`/sessions/${id}/approvals/${requestId}`, {
     method: "POST",
-    body: JSON.stringify({ approve }),
+    body: JSON.stringify({ approve, remember }),
   });
 }
 
@@ -478,7 +489,19 @@ export function removeProviderKey(
   });
 }
 
-export function patchConfig(patch: { provider?: string; model?: string; max_turns?: number; permission_mode?: string; theme?: string }): Promise<void> {
+export interface ConfigPatch {
+  provider?: string;
+  model?: string;
+  max_turns?: number;
+  permission_mode?: string;
+  /// "ask" | "approve-safe" | "auto-approve". The server has accepted this
+  /// since approval modes shipped; the desktop just never sent it, so the
+  /// one control deciding how gates resolve was browser-only.
+  approval_mode?: string;
+  theme?: string;
+}
+
+export function patchConfig(patch: ConfigPatch): Promise<void> {
   return req("/config", { method: "PATCH", body: JSON.stringify(patch) });
 }
 
@@ -513,9 +536,7 @@ export function putGlobalMcpServers(servers: Record<string, McpServerDef>): Prom
   return req("/config/mcp/global", { method: "PUT", body: JSON.stringify({ servers }) });
 }
 
-export function patchGlobalConfig(
-  body: { provider?: string; model?: string; max_turns?: number; permission_mode?: string; theme?: string },
-): Promise<void> {
+export function patchGlobalConfig(body: ConfigPatch): Promise<void> {
   return req("/config/global", { method: "PATCH", body: JSON.stringify(body) });
 }
 

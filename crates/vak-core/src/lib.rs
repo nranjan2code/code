@@ -16,6 +16,34 @@ pub mod install;
 pub mod learning;
 pub mod memory;
 pub mod onboarding;
+/// The three permission rule lists, in `vak_config::Config`'s own order:
+/// `(allow, ask, deny)`.
+pub type PermissionRuleLists = (Vec<String>, Vec<String>, Vec<String>);
+
+/// Pin `VAK_HOME` to one throwaway directory for this whole test binary.
+///
+/// `global_path()` resolves to `default_workspace()/.vak/config.toml`, which
+/// on a developer's machine is their real `~/vak-home` config. A test that
+/// reads a layered setting therefore inherits whatever that operator has
+/// configured — the onboarding projection reported a posture as "chosen"
+/// because the developer running the suite had chosen one. Results must not
+/// depend on the machine the suite runs on.
+///
+/// Process-global by nature, so it is set once and leaked: `VAK_HOME` has no
+/// scope smaller than the process, and unsetting it while parallel tests run
+/// would be worse than pinning it.
+#[cfg(test)]
+pub(crate) fn pin_test_data_home() {
+    use std::sync::OnceLock;
+    static HOME: OnceLock<std::path::PathBuf> = OnceLock::new();
+    HOME.get_or_init(|| {
+        #[allow(clippy::expect_used)]
+        let path = tempfile::tempdir().expect("test data home").keep();
+        vak_config::set_override("VAK_HOME", path.to_string_lossy().to_string());
+        path
+    });
+}
+
 pub mod prompts;
 pub mod reach;
 pub mod reflection;
@@ -140,15 +168,17 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             started_at: chrono::Utc::now(),
             nodes: Default::default(),
         };
-        let permission =
-            match build_engine_with(self.core.config(), &self.core.extra_allow_snapshot()) {
-                Ok(engine) => Arc::new(engine),
-                Err(error) => {
-                    return vak_tools::ToolOutput::error(format!(
-                        "managed flow permission setup failed: {error}"
-                    ));
-                }
-            };
+        let permission = match self
+            .core
+            .build_permission_engine(&self.core.extra_allow_snapshot())
+        {
+            Ok(engine) => Arc::new(engine),
+            Err(error) => {
+                return vak_tools::ToolOutput::error(format!(
+                    "managed flow permission setup failed: {error}"
+                ));
+            }
+        };
         let deps = vak_flow::ExecutorDeps {
             provider: match self.core.provider() {
                 Ok(provider) => provider,
@@ -324,6 +354,15 @@ struct CoreInner {
     mode_override: std::sync::Mutex<Option<vak_config::PermissionMode>>,
     mode_runtime_pinned: std::sync::atomic::AtomicBool,
     approval_mode_override: std::sync::Mutex<Option<vak_config::ApprovalMode>>,
+    /// Live replacement for the config's `allow`/`ask`/`deny` lists.
+    ///
+    /// The rest of `Config` is immutable inside the `Arc`, which is why
+    /// every settable preference has an override beside it. Rules had none
+    /// — so editing them was a restart-only operation, and `PUT
+    /// /config/permissions` would have written a file the running process
+    /// kept ignoring. Ordering inside the tuple is (allow, ask, deny),
+    /// matching `vak_config::Config`.
+    rules_override: std::sync::Mutex<Option<PermissionRuleLists>>,
     theme_override: std::sync::Mutex<Option<String>>,
     theme_runtime_pinned: std::sync::atomic::AtomicBool,
     /// Live overrides for `[memory]` toggles (docs/design/23-memory.md).
@@ -703,6 +742,7 @@ impl Core {
                 mode_override: std::sync::Mutex::new(None),
                 mode_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 approval_mode_override: std::sync::Mutex::new(None),
+                rules_override: std::sync::Mutex::new(None),
                 sandbox_backend_override: std::sync::Mutex::new(None),
                 agent_network: Arc::new(std::sync::Mutex::new(
                     agent_network::AgentNetworkBroker::default(),
@@ -1011,6 +1051,49 @@ impl Core {
 
     pub fn apply_persisted_approval_mode(&self, mode: vak_config::ApprovalMode) {
         Self::write_override(&self.inner.approval_mode_override, Some(mode));
+    }
+
+    /// The effective `(allow, ask, deny)` lists — the runtime override when
+    /// one has been applied, the loaded config otherwise.
+    ///
+    /// Everything that builds a permission engine reads rules through here,
+    /// so an edit persisted by `PUT /config/permissions` takes effect on the
+    /// next turn rather than the next process.
+    pub fn effective_permission_rules(&self) -> PermissionRuleLists {
+        Self::read_override(&self.inner.rules_override).unwrap_or_else(|| {
+            (
+                self.inner.config.allow.clone(),
+                self.inner.config.ask.clone(),
+                self.inner.config.deny.clone(),
+            )
+        })
+    }
+
+    pub fn apply_persisted_permission_rules(
+        &self,
+        allow: Vec<String>,
+        ask: Vec<String>,
+        deny: Vec<String>,
+    ) {
+        Self::write_override(&self.inner.rules_override, Some((allow, ask, deny)));
+    }
+
+    /// Build a permission engine from this `Core`'s effective rules.
+    ///
+    /// The single entry point every surface uses. Callers used to reach for
+    /// `build_engine_with(core.config(), …)` directly, which read the
+    /// immutable loaded config and so could not see a runtime rule change;
+    /// routing through the `Core` is what keeps "what the engine evaluates"
+    /// and "what the operator last set" the same answer.
+    pub fn build_permission_engine(
+        &self,
+        extra: &[String],
+    ) -> Result<vak_permission::PermissionEngine, CoreError> {
+        let (allow, ask, deny) = self.effective_permission_rules();
+        vak_permission::PermissionEngine::from_rule_strings(&rule_specs_from(
+            &allow, &ask, &deny, extra,
+        ))
+        .map_err(CoreError::Rule)
     }
 
     /// Runtime sandbox-backend selection ("os", "docker", or config default
@@ -1343,7 +1426,7 @@ impl Core {
             return false;
         }
         let rules = self.channel_permission_rules();
-        let Ok(engine) = build_engine_with(&self.inner.config, &rules) else {
+        let Ok(engine) = self.build_permission_engine(&rules) else {
             return false;
         };
         let mode = match self.effective_permission_mode() {
@@ -1826,6 +1909,43 @@ impl Core {
         Ok(config.permission_mode)
     }
 
+    /// Derive a scoped allow rule from a call that was just approved, and
+    /// persist it — the "always allow this" half of an approval.
+    ///
+    /// Round-tripped before it is written: the derived spec must parse AND
+    /// must match the very call it came from. A rule that does not cover its
+    /// own triggering call would silently grant something else, and a rule
+    /// nobody can trace back to a decision is worse than no rule.
+    ///
+    /// Returns the spec that was stored, so a surface can show the operator
+    /// exactly what they just granted rather than "remembered".
+    pub fn learn_from_call(
+        &self,
+        tool: &str,
+        args: &serde_json::Value,
+    ) -> Result<String, CoreError> {
+        let Some(spec) = scoped_allow_rule(tool, args) else {
+            return Err(CoreError::Config(vak_config::ConfigError::Read {
+                path: std::path::PathBuf::from(PERMISSIONS_LOCAL_FILE),
+                source: std::io::Error::other(format!(
+                    "'{tool}' cannot be narrowed to a safe rule from this call; \
+                     approve it each time instead"
+                )),
+            }));
+        };
+        let rule = vak_permission::Rule::parse(&spec).map_err(CoreError::Rule)?;
+        if !rule.matches(tool, args) {
+            return Err(CoreError::Config(vak_config::ConfigError::Read {
+                path: std::path::PathBuf::from(PERMISSIONS_LOCAL_FILE),
+                source: std::io::Error::other(format!(
+                    "derived rule '{spec}' does not match the call it came from"
+                )),
+            }));
+        }
+        self.learn_allow_rule(&spec)?;
+        Ok(spec)
+    }
+
     /// Persists a learned allow rule to `.vak/permissions.local.toml`
     /// (and this process's in-memory engine inputs). Trusted workspaces only:
     /// an untrusted session must not be able to write grant files. Rules are
@@ -1921,10 +2041,32 @@ impl Core {
         &self.surface
     }
 
-    /// Declare whether this surface's approver can answer a gate. Cheap in
-    /// the same way [`Core::with_surface`] is, so a host can clone-and-set
-    /// per inbound message. Must agree with the `Approver` the same host
-    /// passes into `run_turn_*`; `reach::Probe` reads this one.
+    /// Stamp this turn's answerability from the approver that will actually
+    /// serve it. Cheap in the same way [`Core::with_surface`] is, so a host
+    /// can clone-and-set per inbound message.
+    ///
+    /// Takes the approver rather than a bare `bool` deliberately. The two
+    /// used to be independent — a host set the flag by hand and installed an
+    /// approver separately, with a comment asking them to agree — and the
+    /// scheduler proved what that costs: it installed an approver nobody was
+    /// subscribed to while leaving the flag at its `true` default, so every
+    /// unattended routine was told a gated capability was usable and then
+    /// blocked on a gate no one would ever answer. Deriving the flag from
+    /// the object makes that disagreement unrepresentable.
+    pub fn with_approver(mut self, approver: &dyn vak_agent::Approver) -> Self {
+        self.approver_answerable = approver.answerable();
+        self
+    }
+
+    /// The same stamp for a host that has not constructed its approver yet
+    /// but already knows which one it will build — the gateway, whose
+    /// `GatewayApprover` needs a session id that does not exist until the
+    /// turn starts, and which must freeze the prompt before then.
+    ///
+    /// Prefer [`Core::with_approver`]. Anything set here is reconciled
+    /// against the real approver when the run starts
+    /// ([`Core::reconcile_answerability`]), so a wrong value is corrected
+    /// and recorded rather than silently believed.
     pub fn with_approver_answerable(mut self, answerable: bool) -> Self {
         self.approver_answerable = answerable;
         self
@@ -1934,13 +2076,42 @@ impl Core {
         self.approver_answerable
     }
 
+    /// Last line of defence for the stamp above: compare what this turn was
+    /// told about its approver against the approver it actually got, and
+    /// take the approver's word.
+    ///
+    /// The prompt is already frozen by the time a run starts, so a
+    /// disagreement cannot be un-said to the model — but it can be recorded,
+    /// and it can be corrected for everything computed at dispatch (the
+    /// registry filter and the audit standings). An operator reading
+    /// `answerability_mismatch` in the security log is reading a real defect
+    /// in a hosting surface, not a configuration problem.
+    fn reconcile_answerability(&mut self, approver: Option<&Arc<dyn vak_agent::Approver>>) {
+        let actual = approver.map(|a| a.answerable()).unwrap_or(false);
+        if actual == self.approver_answerable {
+            return;
+        }
+        security_events::record(
+            &self.sessions_home(),
+            security_events::EventKind::ConfigChange,
+            "answerability_mismatch",
+            &format!(
+                "surface={} stamped={} installed_approver={}; using the approver",
+                self.surface.slug(),
+                self.approver_answerable,
+                actual
+            ),
+            None,
+        );
+        self.approver_answerable = actual;
+    }
+
     /// This turn's capability standings: what the composed policy actually
     /// permits, as opposed to what configuration declares. One computation,
     /// read by the prompt, the tool registry, `doctor`, and the audit log,
     /// so those four can never disagree about whether a capability works.
     pub fn capability_standings(&self) -> Vec<reach::Standing> {
-        let Ok(engine) = build_engine_with(&self.inner.config, &self.channel_permission_rules())
-        else {
+        let Ok(engine) = self.build_permission_engine(&self.channel_permission_rules()) else {
             return Vec::new();
         };
         let mode = match self.effective_permission_mode() {
@@ -3287,10 +3458,11 @@ impl Core {
         steering: Option<std::sync::Arc<vak_agent::SteeringQueues>>,
         events: tokio::sync::mpsc::Sender<AgentEvent>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
-        self.run_turn_inner(
-            session, prompt, cancel, approver, permission, steering, events, None, None,
-        )
-        .await
+        self.clone()
+            .run_turn_inner(
+                session, prompt, cancel, approver, permission, steering, events, None, None,
+            )
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3304,18 +3476,19 @@ impl Core {
         steering: Option<std::sync::Arc<vak_agent::SteeringQueues>>,
         events: tokio::sync::mpsc::Sender<AgentEvent>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
-        self.run_turn_inner(
-            session,
-            vak_llm::Message::user_text(prompt),
-            cancel,
-            approver,
-            permission,
-            steering,
-            events,
-            None,
-            None,
-        )
-        .await
+        self.clone()
+            .run_turn_inner(
+                session,
+                vak_llm::Message::user_text(prompt),
+                cancel,
+                approver,
+                permission,
+                steering,
+                events,
+                None,
+                None,
+            )
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3329,18 +3502,19 @@ impl Core {
         steering: Option<std::sync::Arc<vak_agent::SteeringQueues>>,
         events: tokio::sync::mpsc::Sender<AgentEvent>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
-        self.run_turn_inner(
-            session,
-            vak_llm::Message::user_text(prompt),
-            cancel,
-            approver,
-            permission,
-            steering,
-            events,
-            None,
-            Some(WorkMode::Managed),
-        )
-        .await
+        self.clone()
+            .run_turn_inner(
+                session,
+                vak_llm::Message::user_text(prompt),
+                cancel,
+                approver,
+                permission,
+                steering,
+                events,
+                None,
+                Some(WorkMode::Managed),
+            )
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3354,18 +3528,19 @@ impl Core {
         steering: Option<std::sync::Arc<vak_agent::SteeringQueues>>,
         events: tokio::sync::mpsc::Sender<AgentEvent>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
-        self.run_turn_inner(
-            session,
-            vak_llm::Message::user_text(prompt),
-            cancel,
-            approver,
-            permission,
-            steering,
-            events,
-            None,
-            Some(WorkMode::Auto),
-        )
-        .await
+        self.clone()
+            .run_turn_inner(
+                session,
+                vak_llm::Message::user_text(prompt),
+                cancel,
+                approver,
+                permission,
+                steering,
+                events,
+                None,
+                Some(WorkMode::Auto),
+            )
+            .await
     }
 
     /// Goal-mode turn (docs/design/42-managed-work-contracts.md): the run may only end when
@@ -3383,23 +3558,28 @@ impl Core {
         steering: Option<std::sync::Arc<vak_agent::SteeringQueues>>,
         events: tokio::sync::mpsc::Sender<AgentEvent>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
-        self.run_turn_inner(
-            session,
-            vak_llm::Message::user_text(prompt),
-            cancel,
-            approver,
-            permission,
-            steering,
-            events,
-            Some((objective.to_string(), criteria)),
-            None,
-        )
-        .await
+        self.clone()
+            .run_turn_inner(
+                session,
+                vak_llm::Message::user_text(prompt),
+                cancel,
+                approver,
+                permission,
+                steering,
+                events,
+                Some((objective.to_string(), criteria)),
+                None,
+            )
+            .await
     }
 
+    /// Takes `self` by value (an `Arc` bump plus a few small per-turn
+    /// fields) so the single reconciliation below can correct this turn's
+    /// answerability before anything reads it. Every public `run_*_with`
+    /// funnels through here, which is what makes that one place enough.
     #[allow(clippy::too_many_arguments)]
     async fn run_turn_inner(
-        &self,
+        mut self,
         mut session: SessionLog,
         prompt: vak_llm::Message,
         cancel: CancellationToken,
@@ -3410,6 +3590,10 @@ impl Core {
         goal: Option<(String, Vec<String>)>,
         work_mode: Option<WorkMode>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
+        // The approver that will actually serve this run is the authority on
+        // whether its gates reach anyone. Whatever the host stamped earlier
+        // loses to it, and a disagreement is recorded rather than believed.
+        self.reconcile_answerability(approver.as_ref());
         let live_child_sessions = session
             .header()
             .map(|header| {
@@ -3569,7 +3753,7 @@ impl Core {
         let permission_rules = self.channel_permission_rules();
         cfg.permission = Some(match permission {
             Some(p) => p,
-            None => std::sync::Arc::new(build_engine_with(&self.inner.config, &permission_rules)?),
+            None => std::sync::Arc::new(self.build_permission_engine(&permission_rules)?),
         });
         let Some(engine) = cfg.permission.clone() else {
             return Err(CoreError::MissingEngine);
@@ -4612,6 +4796,210 @@ mod channel_mcp_network_tests {
     }
 }
 
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod learned_rule_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Every derived rule must cover the call it came from. A rule that does
+    /// not is granting something the operator never looked at, which is why
+    /// `learn_from_call` round-trips before writing.
+    fn derives_and_matches(tool: &str, args: serde_json::Value, expected: &str) {
+        let spec = scoped_allow_rule(tool, &args).expect("derives a rule");
+        assert_eq!(spec, expected);
+        let rule = vak_permission::Rule::parse(&spec).expect("parses");
+        assert!(rule.matches(tool, &args), "{spec} must match its own call");
+    }
+
+    #[test]
+    fn bash_narrows_to_the_command_name() {
+        derives_and_matches(
+            "bash",
+            json!({ "command": "git status --short" }),
+            "+bash(git *)",
+        );
+    }
+
+    #[test]
+    fn file_tools_narrow_to_the_exact_path() {
+        derives_and_matches(
+            "write",
+            json!({ "path": "src/main.rs" }),
+            "+write(src/main.rs)",
+        );
+        derives_and_matches(
+            "edit",
+            json!({ "path": "src/main.rs" }),
+            "+edit(src/main.rs)",
+        );
+    }
+
+    #[test]
+    fn mcp_narrows_to_the_server() {
+        derives_and_matches(
+            "mcp",
+            json!({ "action": "call", "server": "tavily", "tool": "search" }),
+            "+mcp(tavily/*)",
+        );
+    }
+
+    #[test]
+    fn a_command_whose_effects_cannot_be_enumerated_is_never_remembered() {
+        // Each of these hides an effect from segmentation. Deriving
+        // `+bash(echo *)` from the first would grant the substitution too.
+        for command in [
+            "echo $(rm -rf /)",
+            "echo `whoami`",
+            "cat secrets > /etc/passwd",
+            "git status; rm -rf /",
+            "git commit -m \"unbalanced",
+        ] {
+            assert!(
+                scoped_allow_rule("bash", &json!({ "command": command })).is_none(),
+                "must refuse to narrow: {command}"
+            );
+        }
+    }
+
+    /// The round-trip check does real work: a path containing glob
+    /// metacharacters produces a spec that parses fine and then matches
+    /// something OTHER than the file it came from. Writing it would grant a
+    /// pattern the operator never looked at.
+    #[test]
+    fn a_path_that_is_also_a_glob_is_refused_rather_than_mis_granted() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let args = json!({ "path": "src/a[1].rs" });
+        // The spec is derivable and syntactically valid...
+        assert_eq!(
+            scoped_allow_rule("write", &args).as_deref(),
+            Some("+write(src/a[1].rs)")
+        );
+        // ...but it does not cover its own call, so nothing is written.
+        assert!(core.learn_from_call("write", &args).is_err());
+        assert!(!dir.path().join(PERMISSIONS_LOCAL_FILE).exists());
+    }
+
+    #[test]
+    fn network_tools_are_never_remembered_from_one_call() {
+        // A URL does not generalize, and a blanket `+webfetch` is a config
+        // decision rather than something that falls out of a single yes.
+        assert!(scoped_allow_rule("webfetch", &json!({ "url": "https://x" })).is_none());
+        assert!(scoped_allow_rule("browse", &json!({ "url": "https://x" })).is_none());
+    }
+
+    #[test]
+    fn learning_persists_the_rule_and_the_engine_sees_it_immediately() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let args = json!({ "command": "cargo test" });
+
+        // Before: workspace-write sends bash to an approval gate.
+        let engine = core
+            .build_permission_engine(&core.extra_allow_snapshot())
+            .unwrap();
+        assert!(matches!(
+            engine.evaluate(
+                "bash",
+                &args,
+                vak_permission::Mode::WorkspaceWrite,
+                core.cwd()
+            ),
+            vak_permission::Decision::Ask { .. }
+        ));
+
+        let spec = core.learn_from_call("bash", &args).expect("learns");
+        assert_eq!(spec, "+bash(cargo *)");
+
+        // After: the same call is allowed, with no restart.
+        let engine = core
+            .build_permission_engine(&core.extra_allow_snapshot())
+            .unwrap();
+        assert!(matches!(
+            engine.evaluate(
+                "bash",
+                &args,
+                vak_permission::Mode::WorkspaceWrite,
+                core.cwd()
+            ),
+            vak_permission::Decision::Allow
+        ));
+        assert!(dir.path().join(PERMISSIONS_LOCAL_FILE).is_file());
+    }
+
+    #[test]
+    fn a_learned_allow_never_shadows_an_explicit_deny() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".vak")).unwrap();
+        std::fs::write(
+            dir.path().join(".vak/config.toml"),
+            "deny = [\"Bash(cargo *)\"]\n",
+        )
+        .unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let args = json!({ "command": "cargo test" });
+        core.learn_from_call("bash", &args).expect("learns");
+
+        let engine = core
+            .build_permission_engine(&core.extra_allow_snapshot())
+            .unwrap();
+        assert!(
+            matches!(
+                engine.evaluate(
+                    "bash",
+                    &args,
+                    vak_permission::Mode::WorkspaceWrite,
+                    core.cwd()
+                ),
+                vak_permission::Decision::Deny { .. }
+            ),
+            "severity aggregation must keep the deny on top"
+        );
+    }
+
+    #[test]
+    fn an_untrusted_workspace_cannot_write_a_grant_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), false).unwrap();
+        assert!(
+            core.learn_from_call("bash", &json!({ "command": "git status" }))
+                .is_err()
+        );
+        assert!(!dir.path().join(PERMISSIONS_LOCAL_FILE).exists());
+    }
+
+    #[test]
+    fn runtime_rules_replace_the_loaded_ones_for_every_engine_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let args = json!({ "command": "ls -la" });
+        assert!(matches!(
+            core.build_permission_engine(&[]).unwrap().evaluate(
+                "bash",
+                &args,
+                vak_permission::Mode::WorkspaceWrite,
+                core.cwd()
+            ),
+            vak_permission::Decision::Ask { .. }
+        ));
+
+        core.apply_persisted_permission_rules(vec!["Bash(ls *)".into()], Vec::new(), Vec::new());
+        assert!(
+            matches!(
+                core.build_permission_engine(&[]).unwrap().evaluate(
+                    "bash",
+                    &args,
+                    vak_permission::Mode::WorkspaceWrite,
+                    core.cwd()
+                ),
+                vak_permission::Decision::Allow
+            ),
+            "an engine built after the override must see it"
+        );
+    }
+}
+
 pub fn build_engine(
     config: &vak_config::Config,
 ) -> Result<vak_permission::PermissionEngine, CoreError> {
@@ -4638,12 +5026,23 @@ pub fn build_engine_with(
 }
 
 fn rule_specs(config: &vak_config::Config, extra: &[String]) -> Vec<String> {
+    rule_specs_from(&config.allow, &config.ask, &config.deny, extra)
+}
+
+/// Flatten three rule lists plus learned extras into engine specs.
+///
+/// Split out from [`rule_specs`] so a `Core` holding a runtime override can
+/// reach the same flattening without synthesizing a whole `Config`. Deny is
+/// emitted first purely for readability in a dump — the engine aggregates by
+/// severity and does not depend on order.
+fn rule_specs_from(
+    allow: &[String],
+    ask: &[String],
+    deny: &[String],
+    extra: &[String],
+) -> Vec<String> {
     let mut specs: Vec<String> = Vec::new();
-    for (list, prefix) in [
-        (&config.deny, "-"),
-        (&config.ask, "?"),
-        (&config.allow, "+"),
-    ] {
+    for (list, prefix) in [(deny, "-"), (ask, "?"), (allow, "+")] {
         for s in list {
             let spec = if s.starts_with(['+', '-', '?']) {
                 s.clone()
@@ -4655,6 +5054,51 @@ fn rule_specs(config: &vak_config::Config, extra: &[String]) -> Vec<String> {
     }
     specs.extend(extra.iter().cloned());
     specs
+}
+
+/// The narrowest allow rule that still covers one approved call, or `None`
+/// when the call cannot be narrowed safely.
+///
+/// `None` is the important half. A bash command whose structure hides its
+/// effects — command substitution, a redirection to a real path, an
+/// unbalanced quote — has no first word that means anything, and writing
+/// `bash(<something> *)` for it would grant a shape the operator never
+/// inspected. Those stay session-only: approve them again next time.
+///
+/// The shapes match `vak_permission`'s own argument candidates, which is
+/// what makes the round-trip check in [`Core::learn_from_call`] meaningful
+/// rather than a tautology over a string this function invented.
+pub fn scoped_allow_rule(tool: &str, args: &serde_json::Value) -> Option<String> {
+    match tool {
+        "bash" => {
+            let command = args.get("command")?.as_str()?;
+            // Exactly one executable segment, enumerable, no hidden effects.
+            let units = vak_permission::rules::allow_coverage_units(tool, args)?;
+            if units.len() != 1 {
+                return None;
+            }
+            let first = command.split_whitespace().next()?;
+            if first.is_empty() || first.contains(['/', '$', '`', '"', '\'']) {
+                return None;
+            }
+            Some(format!("+bash({first} *)"))
+        }
+        // The exact path, not its directory: an approval for one file is not
+        // an approval for its neighbours.
+        "write" | "edit" => Some(format!("+{tool}({})", args.get("path")?.as_str()?)),
+        "mcp" => {
+            if args.get("action")?.as_str()? != "call" {
+                return None;
+            }
+            Some(format!("+mcp({}/*)", args.get("server")?.as_str()?))
+        }
+        "task" => Some(format!("+task({})", args.get("label")?.as_str()?)),
+        // Everything else — network tools included — is deliberately absent.
+        // `webfetch` takes a URL that no glob over one call generalizes
+        // safely, and a blanket `+webfetch` is a decision for the config
+        // file, made deliberately, not one to fall out of a single yes.
+        _ => None,
+    }
 }
 
 /// Tools whose reach exceeds the workspace: network-capable capabilities

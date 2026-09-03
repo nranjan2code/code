@@ -331,13 +331,49 @@ pub(crate) enum AllowlistDecision {
     StillPending,
 }
 
+/// The resolved approval policy (docs/design/22-gateway.md G2), held as one
+/// value so the three fields can never be observed mid-update.
+///
+/// This is behind a lock rather than being plain fields because the policy
+/// is now settable at runtime: it decides whether an `Ask` on a chat
+/// surface reaches a human at all, and an operator who changes it must see
+/// the next inbound message honour the change without restarting the
+/// process. `forward` without a target is not representable — the
+/// constructor and the setter both collapse that case to `deny`, which is
+/// the same rule `vak_config`'s loader applies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ApprovalPolicy {
+    pub(crate) approvals: String,
+    pub(crate) approver: Option<String>,
+    pub(crate) timeout: Duration,
+}
+
+impl ApprovalPolicy {
+    /// Build a policy, collapsing an unbacked `forward` to `deny`.
+    /// A target must carry a `<surface>:<chat>` separator to count.
+    pub(crate) fn resolve(
+        approvals: &str,
+        approver: Option<&str>,
+        timeout: Duration,
+    ) -> ApprovalPolicy {
+        let target = approver
+            .map(str::trim)
+            .filter(|t| !t.is_empty() && t.contains(':'));
+        let forward = approvals == "forward" && target.is_some();
+        ApprovalPolicy {
+            approvals: if forward { "forward" } else { "deny" }.into(),
+            approver: forward.then(|| target.unwrap_or_default().to_string()),
+            timeout,
+        }
+    }
+}
+
 pub struct GatewayState {
     pub enabled: bool,
     bindings: Mutex<HashMap<String, ChannelBinding>>,
-    /// Resolved approval policy (docs/design/22-gateway.md G2).
-    approvals: String,
-    approver: Option<String>,
-    approval_timeout: Duration,
+    /// Resolved approval policy (docs/design/22-gateway.md G2). Mutable at
+    /// runtime through [`GatewayState::set_approval_policy`].
+    approval_policy: Mutex<ApprovalPolicy>,
     /// Forwarded gates awaiting a yes/no from the approver surface,
     /// oldest first (uuidv7 keys sort by insertion time).
     pending_approvals: Mutex<std::collections::BTreeMap<String, PendingGate>>,
@@ -420,7 +456,6 @@ impl GatewayState {
             };
         }
         let gw = &core.config().gateway;
-        let forward_ok = gw.approvals == "forward" && gw.approver.is_some();
 
         // Allowlist store: authoritative once allowlist.json exists; a
         // one-time import from config.toml's `chat_allowlist` seeds it the
@@ -487,17 +522,11 @@ impl GatewayState {
             enabled: force || gw.enabled,
             bindings: Mutex::new(bindings),
             bots: Mutex::new(bots),
-            approvals: if forward_ok {
-                "forward".into()
-            } else {
-                "deny".into()
-            },
-            approver: if forward_ok {
-                gw.approver.clone()
-            } else {
-                None
-            },
-            approval_timeout: Duration::from_secs(gw.approval_timeout_secs),
+            approval_policy: Mutex::new(ApprovalPolicy::resolve(
+                &gw.approvals,
+                gw.approver.as_deref(),
+                Duration::from_secs(gw.approval_timeout_secs),
+            )),
             pending_approvals: Mutex::new(std::collections::BTreeMap::new()),
             chat_allowlist_open: gw.chat_allowlist_open,
             allowlist: Mutex::new(allowlist),
@@ -625,20 +654,86 @@ impl GatewayState {
     }
 
     /// True when forwarded gates are active.
-    pub(crate) fn forward_mode(&self) -> bool {
-        self.enabled && self.approvals == "forward" && self.approver.is_some()
+    fn approval_policy(&self) -> ApprovalPolicy {
+        self.approval_policy
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
-    pub(crate) fn approver_target(&self) -> Option<&str> {
-        self.approver.as_deref()
+    pub(crate) fn forward_mode(&self) -> bool {
+        let policy = self.approval_policy();
+        self.enabled && policy.approvals == "forward" && policy.approver.is_some()
+    }
+
+    /// The chat that answers forwarded gates. Returns an owned `String`
+    /// rather than a borrow because the policy now lives behind a lock —
+    /// handing out a reference into it would either hold the lock across
+    /// an await or dangle.
+    pub(crate) fn approver_target(&self) -> Option<String> {
+        self.approval_policy().approver
     }
 
     pub(crate) fn approval_timeout(&self) -> Duration {
-        self.approval_timeout
+        self.approval_policy().timeout
     }
 
-    pub(crate) fn approvals_mode(&self) -> &str {
-        &self.approvals
+    pub(crate) fn approvals_mode(&self) -> String {
+        self.approval_policy().approvals
+    }
+
+    /// Chats that could serve as the forwarded-approval target, as
+    /// `<surface>:<chat>` delivery addresses.
+    ///
+    /// An allowlist key may be bot-scoped (`telegram:12345:vakyartha`);
+    /// that third segment identifies the bot the message arrived through,
+    /// not a place a reply can be delivered. `deliver_to` addresses are
+    /// two-part, so the key is truncated here rather than at every reader.
+    /// Only `Allowed` entries are offered: forwarding a gate to a pending
+    /// or denied chat would announce it somewhere the operator has
+    /// explicitly not admitted.
+    pub(crate) fn approver_candidates(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .allowlist
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .filter(|entry| entry.status == AllowlistStatus::Allowed)
+            .filter_map(|entry| {
+                let mut parts = entry.key.splitn(3, ':');
+                match (parts.next(), parts.next()) {
+                    (Some(surface), Some(chat)) if !surface.is_empty() && !chat.is_empty() => {
+                        Some(format!("{surface}:{chat}"))
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Replace the live approval policy. Returns the policy actually
+    /// installed, which is [`ApprovalPolicy::resolve`]'s answer — asking
+    /// for `forward` with no usable target installs `deny`, so a caller
+    /// can compare and tell the operator their request was reduced instead
+    /// of reporting a success that did not happen.
+    ///
+    /// In-flight forwarded gates are NOT resolved here. They were raised
+    /// under the old policy and already have an announcement sitting in the
+    /// approver's chat; cancelling them would strand a run that a human is
+    /// actively about to answer. Narrowing to `deny` stops the NEXT gate,
+    /// which is the guarantee that matters (nothing new reaches a chat that
+    /// should no longer be asked).
+    pub(crate) fn set_approval_policy(&self, next: ApprovalPolicy) -> ApprovalPolicy {
+        let resolved =
+            ApprovalPolicy::resolve(&next.approvals, next.approver.as_deref(), next.timeout);
+        *self
+            .approval_policy
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = resolved.clone();
+        resolved
     }
 
     /// True when an empty `chat_allowlist` was explicitly opted into
@@ -1351,27 +1446,46 @@ impl GatewayState {
 /// What a channel's permission mode actually resolves to, for display and
 /// for the approve/patch audit trail.
 pub(crate) struct ResolvedPermission {
-    /// The target workspace's own configured mode — the ceiling.
+    /// The target workspace's own configured mode — the outermost ceiling.
     pub workspace_mode: vak_config::PermissionMode,
+    /// The bot tier's pin, when the chat inherits from a bot that has one.
+    /// `None` means no bot tier applies, not "the bot allows everything".
+    pub bot_mode: Option<vak_config::PermissionMode>,
     /// What the entry asked for, if anything.
     pub requested: Option<vak_config::PermissionMode>,
-    /// What the channel actually gets: `min(requested, workspace_mode)`,
-    /// or `workspace_mode` when nothing was requested.
+    /// What the channel actually gets, folded the same way `core_for_entry`
+    /// folds it: chat pin capped by bot pin, then capped by the workspace.
     pub effective: vak_config::PermissionMode,
 }
 
 impl ResolvedPermission {
-    /// True when an override asked for more than the workspace allows and
+    /// True when a pin asked for more than the layers above it allow and
     /// was reduced. This is the condition worth an audit-log entry.
+    ///
+    /// It covers the bot tier too: a bot pinned narrower than its chat
+    /// reduces that chat just as surely as the workspace does, and reporting
+    /// only the workspace cap is what let the console show a chat as wider
+    /// than it actually ran.
     pub fn was_capped(&self) -> bool {
         matches!(self.requested, Some(r) if r != self.effective)
+            || matches!(
+                (self.bot_mode, self.requested),
+                (Some(bot), None) if bot != self.effective
+            )
     }
 }
 
-/// Read-only mirror of the cap `CorePool::resolve_at` enforces, for the
-/// admin surface. Deliberately shares `PermissionMode::capped_by` with the
-/// pool so the number the console shows is derived the same way as the one
-/// the dispatch path actually pins — no second, drifting rule.
+/// Read-only mirror of the cap dispatch enforces, for the admin surface.
+/// Shares `PermissionMode::capped_by` with the pool so the number the
+/// console shows is derived the same way as the one dispatch pins.
+///
+/// It must fold the SAME three tiers `GatewayState::core_for_entry` folds:
+/// chat pin capped by bot pin, then capped by the workspace. Leaving the
+/// bot tier out — as this did — meant a bot pinned to `read-only` under a
+/// chat pinned to `workspace-write` ran read-only and was reported as
+/// workspace-write, and a chat with no pin under a bot that had one was
+/// reported as the workspace's mode instead of the bot's. Showing a channel
+/// as wider than it runs is the one direction of error that matters here.
 ///
 /// A workspace whose config fails to load falls back to the compiled
 /// default (`WorkspaceWrite`), matching `vak_config`'s own layering; the
@@ -1379,16 +1493,28 @@ impl ResolvedPermission {
 pub(crate) fn resolve_channel_permission(
     workspace: &std::path::Path,
     requested: Option<vak_config::PermissionMode>,
+    bot_mode: Option<vak_config::PermissionMode>,
 ) -> ResolvedPermission {
-    let workspace_mode = vak_config::load_with_trust(workspace, true)
-        .map(|c| c.permission_mode)
-        .unwrap_or_default();
-    let effective = match requested {
-        Some(r) => r.capped_by(workspace_mode),
+    // Same trust the pool will use at dispatch. Reading with `true` here
+    // while the pool read the marker store would put the console back to
+    // reporting a mode no run would get.
+    let workspace_mode =
+        vak_config::load_with_trust(workspace, vak_core::trust::is_trusted(workspace))
+            .map(|c| c.permission_mode)
+            .unwrap_or_default();
+    // Exactly `core_for_entry`'s fold, then the pool's workspace cap.
+    let pinned = match (requested, bot_mode) {
+        (Some(chat), Some(bot)) => Some(chat.capped_by(bot)),
+        (Some(chat), None) => Some(chat),
+        (None, bot) => bot,
+    };
+    let effective = match pinned {
+        Some(mode) => mode.capped_by(workspace_mode),
         None => workspace_mode,
     };
     ResolvedPermission {
         workspace_mode,
+        bot_mode,
         requested,
         effective,
     }
@@ -1633,7 +1759,7 @@ impl vak_agent::Approver for GatewayApprover {
         );
         if let Err(e) = deliver_approval_and_record(
             &self.core,
-            self.state.approver_target().unwrap_or(""),
+            self.state.approver_target().unwrap_or_default().as_str(),
             ApprovalPayload {
                 request_id: id.clone(),
                 title: format!("Approval requested [{short}]"),
@@ -1822,7 +1948,7 @@ async fn gateway_inbound(
     // input. Any non-verdict text from that chat falls through to normal
     // routing.
     if state.gateway.forward_mode()
-        && Some(key.as_str()) == state.gateway.approver_target()
+        && state.gateway.approver_target().as_deref() == Some(key.as_str())
         && let Some((verdict, gate_id)) = parse_verdict(&text)
     {
         return match state.gateway.resolve_gate(verdict, gate_id.as_deref()) {
@@ -2636,6 +2762,86 @@ fn log_gateway_reflection(outcome: vak_core::reflection::ReflectionOutcome) {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    /// The console resolved a chat's mode WITHOUT the bot tier, so a bot
+    /// pinned narrower than its chat ran narrow and displayed wide — and a
+    /// chat with no pin under a bot that had one displayed the workspace's
+    /// mode instead of the bot's. Showing a channel as wider than it runs is
+    /// the one direction of error that matters here.
+    #[test]
+    fn a_bot_pin_narrows_the_chat_and_the_console_says_so() {
+        use vak_config::PermissionMode::*;
+        let ws = tempfile::tempdir().unwrap();
+        crate::pin_test_data_home();
+        std::fs::create_dir_all(ws.path().join(".vak")).unwrap();
+        std::fs::write(
+            ws.path().join(".vak/config.toml"),
+            "permission_mode = \"full-access\"\n",
+        )
+        .unwrap();
+        vak_core::trust::record(ws.path()).unwrap();
+
+        // Chat asks for more than its bot allows: the bot wins.
+        let r = resolve_channel_permission(ws.path(), Some(FullAccess), Some(ReadOnly));
+        assert_eq!(r.effective, ReadOnly);
+        assert_eq!(r.bot_mode, Some(ReadOnly));
+        assert!(r.was_capped(), "a reduced grant must be visible");
+
+        // Chat has no pin: the bot's applies exactly. Nothing was reduced,
+        // so this is not a capping event — but the console must still show
+        // `workspace-write`, where it used to show the workspace's
+        // `full-access` because the bot tier was never consulted.
+        let r = resolve_channel_permission(ws.path(), None, Some(WorkspaceWrite));
+        assert_eq!(r.effective, WorkspaceWrite);
+        assert_eq!(r.workspace_mode, FullAccess);
+        assert!(!r.was_capped());
+
+        // A chat narrower than its bot is not "capped" — it got what it asked.
+        let r = resolve_channel_permission(ws.path(), Some(ReadOnly), Some(FullAccess));
+        assert_eq!(r.effective, ReadOnly);
+        assert!(!r.was_capped());
+    }
+
+    /// The workspace ceiling still wins over both, in either order.
+    #[test]
+    fn the_workspace_ceiling_is_never_escaped_by_a_bot_or_a_chat() {
+        use vak_config::PermissionMode::*;
+        let ws = tempfile::tempdir().unwrap();
+        crate::pin_test_data_home();
+        std::fs::create_dir_all(ws.path().join(".vak")).unwrap();
+        std::fs::write(
+            ws.path().join(".vak/config.toml"),
+            "permission_mode = \"read-only\"\n",
+        )
+        .unwrap();
+        vak_core::trust::record(ws.path()).unwrap();
+
+        for (chat, bot) in [
+            (Some(FullAccess), Some(FullAccess)),
+            (Some(FullAccess), None),
+            (None, Some(FullAccess)),
+            (None, None),
+        ] {
+            let r = resolve_channel_permission(ws.path(), chat, bot);
+            assert_eq!(r.effective, ReadOnly, "chat={chat:?} bot={bot:?}");
+        }
+    }
+
+    /// `forward` with no usable target is not representable: both the
+    /// constructor and the setter collapse it to `deny`, the same rule the
+    /// config loader applies.
+    #[test]
+    fn an_unbacked_forward_policy_resolves_to_deny() {
+        let timeout = Duration::from_secs(300);
+        for approver in [None, Some(""), Some("   "), Some("no-colon")] {
+            let policy = ApprovalPolicy::resolve("forward", approver, timeout);
+            assert_eq!(policy.approvals, "deny", "approver={approver:?}");
+            assert!(policy.approver.is_none());
+        }
+        let policy = ApprovalPolicy::resolve("forward", Some("telegram:42"), timeout);
+        assert_eq!(policy.approvals, "forward");
+        assert_eq!(policy.approver.as_deref(), Some("telegram:42"));
+    }
 
     /// Regression for the classic serde `Option<Option<T>>` trap: a plain
     /// double-`Option` field can't tell "the key was never sent" apart

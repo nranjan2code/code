@@ -133,6 +133,40 @@ export interface PermissionRules {
   deny: string[];
 }
 
+/// `GET/PUT /config/permissions`. `effective` is what the engine evaluates
+/// after every layer merges; `layer` is only what the selected scope's own
+/// file sets, so a reader can tell an inherited rule from one set here.
+export interface PermissionRulesView {
+  scope: ConfigScope;
+  effective: PermissionRules;
+  layer: PermissionRules;
+}
+
+/// `GET/PUT /gateway/approvals` — whether an `Ask` raised on a chat surface
+/// reaches a human, and which chat answers it.
+export interface GatewayApprovalPolicy {
+  mode: "deny" | "forward";
+  approver: string | null;
+  timeout_secs: number;
+  /// The gateway itself being off makes a forward policy inert.
+  enabled?: boolean;
+  gateway_enabled?: boolean;
+  /// True only when the policy is `forward`, a target is set, AND the
+  /// gateway is on — the same condition dispatch checks.
+  forwarding: boolean;
+  /// Approved chats, as `<surface>:<chat>` delivery addresses.
+  candidates?: string[];
+}
+
+/// Result of answering one gate. `learned_rule` is the spec that was
+/// persisted when the operator asked not to be asked again; `learn_error`
+/// says why no rule could be derived, which never blocks the approval.
+export interface ApprovalAnswer {
+  approved: boolean;
+  learned_rule: string | null;
+  learn_error: string | null;
+}
+
 export interface RouteInfo {
   provider: string;
   model: string;

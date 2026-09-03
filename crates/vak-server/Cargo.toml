@@ -17,6 +17,7 @@ tokio-util = { workspace = true }
 uuid = { workspace = true }
 vak-agent = { workspace = true }
 vak-config = { workspace = true }
+vak-permission = { workspace = true }
 vak-core = { workspace = true }
 vak-plugin = { workspace = true }
 vak-delivery = { workspace = true }

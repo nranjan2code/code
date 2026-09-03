@@ -22,15 +22,36 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 }
 
 /// Where the trust decision for `cwd` is recorded.
+///
+/// The path is canonicalized first. Without that, one directory has as many
+/// trust records as it has spellings — `/tmp/x` and `/private/tmp/x` are the
+/// same directory on macOS, a relative path and its absolute form are the
+/// same directory everywhere, and a decision recorded through one is
+/// invisible through the other. Callers do not agree on a spelling
+/// (`CorePool` canonicalizes its keys; the CLI passes the cwd as given), and
+/// "is this workspace trusted?" having two answers is the exact failure this
+/// module exists to end.
+///
+/// A path that cannot be canonicalized (it does not exist yet) falls back to
+/// its literal form rather than failing: recording a decision about a
+/// directory that is about to be created is legitimate.
 pub fn marker_path(cwd: &Path) -> PathBuf {
+    marker_for(&cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()))
+}
+
+fn marker_for(path: &Path) -> PathBuf {
     vak_config::paths::data_home()
         .join("trusted")
-        .join(format!("{:016x}", fnv1a(cwd.to_string_lossy().as_bytes())))
+        .join(format!("{:016x}", fnv1a(path.to_string_lossy().as_bytes())))
 }
 
 /// True when this workspace has a recorded trust decision.
+///
+/// Checks the literal spelling too, so a marker written before paths were
+/// canonicalized still counts. Decisions an operator has already made must
+/// not be silently forgotten by a change to how they are addressed.
 pub fn is_trusted(cwd: &Path) -> bool {
-    marker_path(cwd).is_file()
+    marker_path(cwd).is_file() || marker_for(cwd).is_file()
 }
 
 /// True when the workspace asks for nothing privileged, so opening it
@@ -94,6 +115,41 @@ pub fn record(cwd: &Path) -> std::io::Result<()> {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    /// One directory must have one trust record, however it is spelled.
+    /// `CorePool` canonicalizes its keys and the CLI passes the cwd as
+    /// given, so before this the same workspace could be trusted through one
+    /// path and untrusted through the other.
+    #[test]
+    fn a_decision_is_visible_through_every_spelling_of_the_same_directory() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().canonicalize().unwrap();
+        assert!(!is_trusted(dir.path()));
+
+        record(dir.path()).unwrap();
+        assert!(is_trusted(dir.path()));
+        assert!(is_trusted(&canonical), "canonical form sees it too");
+
+        // And a relative spelling of the same place.
+        let relative = dir.path().join("./");
+        assert!(is_trusted(&relative));
+    }
+
+    /// A marker written before paths were canonicalized still counts —
+    /// decisions an operator already made must not be forgotten by a change
+    /// to how they are addressed.
+    #[test]
+    fn a_legacy_uncanonicalized_marker_is_still_honoured() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        // `/var/...` on macOS canonicalizes to `/private/var/...`, so this
+        // literal-form marker is at a different hash than the current one.
+        let legacy = marker_for(dir.path());
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, dir.path().to_string_lossy().as_bytes()).unwrap();
+        assert!(is_trusted(dir.path()));
+    }
 
     #[test]
     fn a_directory_with_no_privileged_files_asks_for_nothing() {

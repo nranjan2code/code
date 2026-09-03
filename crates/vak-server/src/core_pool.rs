@@ -172,9 +172,21 @@ impl CorePool {
                 return Ok(entry.core.clone());
             }
         }
+        // Trust is read from the one marker store, not assumed. This used to
+        // pass `true` unconditionally, so a workspace whose trust prompt an
+        // operator had declined in a terminal still had its hooks, MCP
+        // servers, `permission_mode` and `.env` applied the moment a chat
+        // routed a turn into it — two answers to "is this workspace
+        // trusted?", which is exactly what `vak_core::trust` exists to end.
+        //
+        // Approving a channel's workspace in the admin console records
+        // trust (see `admin::note_workspace_trust`), so the operator-driven
+        // path this replaced still resolves to `true` — it now does so
+        // because someone decided, not because the code assumed.
+        let trusted = vak_core::trust::is_trusted(&key.0);
         // Start outside the lock: `Core::new_with_trust` does filesystem IO
         // (config load) and must not hold up every other pool lookup.
-        let core = Core::new_with_trust(key.0.clone(), true)
+        let core = Core::new_with_trust(key.0.clone(), trusted)
             .map(|c| c.with_surface(vak_core::Surface::Server))
             .map_err(|e| e.to_string())?;
         core.set_agent_network_broker(self.agent_network.clone());
@@ -235,6 +247,27 @@ impl CorePool {
         (self.default_workspace.clone(), None, String::new())
     }
 
+    /// Drop every pooled instance except the gateway's own, so the next
+    /// inbound message on each channel rebuilds against current config.
+    ///
+    /// `apply_permission_override` reads a workspace's ceiling exactly once,
+    /// when the entry is constructed. Persisting a narrower mode therefore
+    /// took effect for the console immediately and for every warm channel
+    /// only after its idle window expired — up to half an hour of chats
+    /// still running under a ceiling the operator had already revoked. The
+    /// answer is not to re-derive each entry's cap in place (that would be a
+    /// second copy of the capping rule) but to discard the entries, so the
+    /// one place that computes a ceiling runs again.
+    ///
+    /// Returns how many were dropped, for the audit line.
+    pub fn invalidate_pooled(&self) -> usize {
+        let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
+        let default = self.default_key();
+        let before = entries.len();
+        entries.retain(|key, _| *key == default);
+        before - entries.len()
+    }
+
     /// Cap enforcement: drop the least-recently-active non-default entry.
     /// The default workspace is never evicted, matching `GatewayState`'s
     /// old single-`Core` behavior for the gateway's own cwd.
@@ -289,11 +322,19 @@ mod tests {
     use std::time::Duration;
 
     fn test_core(dir: &std::path::Path) -> Core {
+        crate::pin_test_data_home();
         Core::new_with_trust(dir.to_path_buf(), true).expect("core")
     }
 
     /// Write a workspace config that fixes the workspace's own permission
-    /// mode — the ceiling every channel override is capped against.
+    /// mode — the ceiling every channel override is capped against — and
+    /// record the operator's trust decision for it.
+    ///
+    /// The trust marker is not incidental setup. `permission_mode` is a
+    /// privileged key: `load_with_trust` strips it from an untrusted
+    /// project, and the pool now reads the real marker store rather than
+    /// assuming trust. A test that skipped this would be asserting the cap
+    /// against a ceiling no run would ever see.
     fn workspace_with_mode(dir: &std::path::Path, mode: &str) {
         let vak = dir.join(".vak");
         std::fs::create_dir_all(&vak).expect("mkdir .vak");
@@ -302,6 +343,71 @@ mod tests {
             format!("permission_mode = \"{mode}\"\n"),
         )
         .expect("write config");
+        crate::pin_test_data_home();
+        vak_core::trust::record(dir).expect("record trust");
+    }
+
+    /// A narrowed mode used to reach warm channels only when their idle
+    /// window expired — up to half an hour of chats running under a ceiling
+    /// the operator had already revoked.
+    #[test]
+    fn invalidating_the_pool_drops_channel_instances_and_keeps_the_default() {
+        let default_dir = tempfile::tempdir().unwrap();
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let pool = CorePool::new(test_core(default_dir.path()), 8, Duration::from_secs(1800));
+        pool.resolve_at(a.path(), None, Instant::now()).unwrap();
+        pool.resolve_at(b.path(), None, Instant::now()).unwrap();
+        assert_eq!(pool.len(), 3);
+
+        assert_eq!(pool.invalidate_pooled(), 2);
+        assert_eq!(pool.len(), 1, "the gateway's own Core is never dropped");
+        assert!(
+            pool.resolve_at(a.path(), None, Instant::now()).is_ok(),
+            "and the next message rebuilds against current config"
+        );
+    }
+
+    /// The pool reads the one trust marker store rather than assuming trust.
+    /// A workspace nobody has vouched for gets its privileged keys stripped
+    /// here exactly as it would in a terminal.
+    #[test]
+    fn an_untrusted_workspace_does_not_get_its_privileged_keys() {
+        let default_dir = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        crate::pin_test_data_home();
+        std::fs::create_dir_all(ws.path().join(".vak")).unwrap();
+        std::fs::write(
+            ws.path().join(".vak/config.toml"),
+            "permission_mode = \"full-access\"\n",
+        )
+        .unwrap();
+        // Deliberately NOT recording trust.
+        let pool = CorePool::new(test_core(default_dir.path()), 8, Duration::from_secs(1800));
+
+        // Compared against what the SAME workspace resolves to with its
+        // project file ignored, rather than against a hardcoded default: the
+        // global layer is shared by this whole test binary, so the baseline
+        // is whatever it happens to be. The claim under test is only that
+        // the untrusted project's own `full-access` is not applied.
+        let baseline = Core::new_with_trust(ws.path().to_path_buf(), false)
+            .unwrap()
+            .effective_permission_mode();
+        let core = pool.resolve_at(ws.path(), None, Instant::now()).unwrap();
+        assert_eq!(
+            core.effective_permission_mode(),
+            baseline,
+            "an unvouched project must not configure itself into full access"
+        );
+
+        // And the marker is what makes the difference: vouch for it and the
+        // project's own mode applies.
+        vak_core::trust::record(ws.path()).unwrap();
+        let trusted = Core::new_with_trust(ws.path().to_path_buf(), true).unwrap();
+        assert_eq!(
+            trusted.effective_permission_mode(),
+            PermissionMode::FullAccess
+        );
     }
 
     #[test]

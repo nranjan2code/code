@@ -1292,6 +1292,31 @@ pub fn persist_global_preferences(
     )
 }
 
+/// Persist preferences to an explicitly chosen layer file.
+///
+/// The project and global wrappers above cover the two named scopes; this
+/// takes the path directly, for a caller that has already resolved which
+/// layer it means (`vak config set-mode --scope`).
+pub fn persist_preferences_to(
+    path: PathBuf,
+    provider: Option<&str>,
+    model: Option<&str>,
+    max_turns: Option<usize>,
+    permission_mode: Option<PermissionMode>,
+    approval_mode: Option<ApprovalMode>,
+    theme: Option<&str>,
+) -> Result<(), ConfigError> {
+    persist_preferences_at(
+        path,
+        provider,
+        model,
+        max_turns,
+        permission_mode,
+        approval_mode,
+        theme,
+    )
+}
+
 fn persist_preferences_at(
     path: PathBuf,
     provider: Option<&str>,
@@ -1499,6 +1524,175 @@ fn persist_memory_prefs_at(
         source,
     })?;
     std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
+}
+
+/// Persist `[gateway] approvals` / `approver` without disturbing unrelated
+/// config keys.
+///
+/// This is the one setting that decides whether an `Ask` raised on an
+/// unattended chat surface reaches a human at all: with `approvals =
+/// "deny"` every gate is a foregone denial, `GatewayApprover::answerable()`
+/// is false, and `vak_core::reach` correctly strips every gated capability
+/// from the turn before the prompt is composed. It had no writer on any
+/// surface — the remedy `reach` prints named an action nothing could
+/// perform — so an operator's only route was editing this file by hand.
+///
+/// `approver` is `Option<Option<String>>`: absent leaves it alone, `Some(None)`
+/// clears it back to unset, `Some(Some(t))` pins the target. The
+/// forward-requires-an-approver rule is NOT enforced here; it lives in
+/// [`load_with_trust`], which is what every reader goes through, and
+/// duplicating it would be a second contract that must agree forever.
+/// Callers that want to reject the combination up front should check it
+/// themselves and say so — writing a `forward` with no target simply
+/// resolves back to `deny` with a warning, which is safe.
+pub fn persist_gateway_approvals(
+    path: PathBuf,
+    approvals: Option<&str>,
+    approver: Option<Option<&str>>,
+    approval_timeout_secs: Option<u64>,
+) -> Result<(), ConfigError> {
+    persist_gateway_approvals_at(path, approvals, approver, approval_timeout_secs)
+}
+
+fn persist_gateway_approvals_at(
+    path: PathBuf,
+    approvals: Option<&str>,
+    approver: Option<Option<&str>>,
+    approval_timeout_secs: Option<u64>,
+) -> Result<(), ConfigError> {
+    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = WRITE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut root = if path.is_file() {
+        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
+            path: path.clone(),
+            source,
+        })?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let Some(table) = root.as_table_mut() else {
+        return Err(ConfigError::Write {
+            path,
+            source: std::io::Error::other("top-level config must be a TOML table"),
+        });
+    };
+    if approvals.is_some() || approver.is_some() || approval_timeout_secs.is_some() {
+        let gateway = table
+            .entry("gateway")
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+        let Some(gateway) = gateway.as_table_mut() else {
+            return Err(ConfigError::Write {
+                path,
+                source: std::io::Error::other("gateway config must be a TOML table"),
+            });
+        };
+        if let Some(value) = approvals {
+            gateway.insert("approvals".into(), toml::Value::String(value.into()));
+        }
+        match approver {
+            None => {}
+            Some(None) => {
+                gateway.remove("approver");
+            }
+            Some(Some(target)) => {
+                gateway.insert("approver".into(), toml::Value::String(target.into()));
+            }
+        }
+        if let Some(value) = approval_timeout_secs {
+            gateway.insert(
+                "approval_timeout_secs".into(),
+                toml::Value::Integer(value as i64),
+            );
+        }
+    }
+    write_config_atomically(&path, &root)
+}
+
+/// Shared tail of every preference writer: serialize, create the parent,
+/// write a pid-scoped temp file, rename over the target. Every client then
+/// sees either the whole old document or the whole new one.
+fn write_config_atomically(path: &Path, root: &toml::Value) -> Result<(), ConfigError> {
+    let text = toml::to_string_pretty(root).map_err(|error| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other(error.to_string()),
+    })?;
+    let parent = path.parent().ok_or_else(|| ConfigError::Write {
+        path: path.to_path_buf(),
+        source: std::io::Error::other("config has no parent directory"),
+    })?;
+    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
+    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, path).map_err(|source| ConfigError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Persist the three permission rule lists (`allow` / `ask` / `deny`) as
+/// the engine reads them, without disturbing unrelated config keys.
+///
+/// Each list is `Option`: absent leaves that list alone, `Some(vec)`
+/// replaces it wholesale (an empty vec clears it).
+///
+/// Rule SYNTAX is not validated here on purpose: the grammar lives in
+/// `vak_permission::Rule::parse`, which this crate sits below and must not
+/// depend on. Callers parse every spec before calling — a second grammar
+/// here would be two definitions of a rule that must agree forever.
+pub fn persist_permission_rules(
+    path: PathBuf,
+    allow: Option<&[String]>,
+    ask: Option<&[String]>,
+    deny: Option<&[String]>,
+) -> Result<(), ConfigError> {
+    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = WRITE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut root = if path.is_file() {
+        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
+            path: path.clone(),
+            source,
+        })?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let Some(table) = root.as_table_mut() else {
+        return Err(ConfigError::Write {
+            path,
+            source: std::io::Error::other("top-level config must be a TOML table"),
+        });
+    };
+    for (key, list) in [("allow", allow), ("ask", ask), ("deny", deny)] {
+        let Some(list) = list else { continue };
+        table.insert(
+            key.into(),
+            toml::Value::Array(
+                list.iter()
+                    .map(|spec| toml::Value::String(spec.clone()))
+                    .collect(),
+            ),
+        );
+    }
+    write_config_atomically(&path, &root)
 }
 
 /// Persist the top-level `subagents` toggle for the current project.
@@ -3084,6 +3278,84 @@ mod tests {
     /// `capped_by` is the single arithmetic the gateway's per-channel
     /// permission override rests on: it must be a true `min` over the
     /// permissiveness ranking, in both argument orders, for every pair.
+    /// The whole point of a scoped writer: it must not disturb keys it was
+    /// not asked about. This one had no writer at all, so the only way to
+    /// set it was hand-editing the file — and hand-editing is exactly what
+    /// loses the rest of the document to a typo.
+    #[test]
+    fn writing_gateway_approvals_leaves_every_other_key_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "provider = \"anthropic\"\npermission_mode = \"read-only\"\n\n             [gateway]\nenabled = true\n\n[mcp.servers.thing]\ncommand = \"sh\"\n",
+        )
+        .unwrap();
+
+        persist_gateway_approvals(
+            path.clone(),
+            Some("forward"),
+            Some(Some("telegram:42")),
+            Some(120),
+        )
+        .unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let parsed: toml::Value = toml::from_str(&text).unwrap();
+        let gw = parsed.get("gateway").unwrap();
+        assert_eq!(gw.get("approvals").unwrap().as_str(), Some("forward"));
+        assert_eq!(gw.get("approver").unwrap().as_str(), Some("telegram:42"));
+        assert_eq!(
+            gw.get("approval_timeout_secs").unwrap().as_integer(),
+            Some(120)
+        );
+        assert_eq!(gw.get("enabled").unwrap().as_bool(), Some(true));
+        assert_eq!(parsed.get("provider").unwrap().as_str(), Some("anthropic"));
+        assert!(parsed.get("mcp").is_some(), "unrelated tables survive");
+    }
+
+    /// `Some(None)` clears the target, so returning to `deny` cannot leave a
+    /// stale chat behind for a later `forward` to reuse silently.
+    #[test]
+    fn clearing_the_approver_removes_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        persist_gateway_approvals(
+            path.clone(),
+            Some("forward"),
+            Some(Some("telegram:1")),
+            None,
+        )
+        .unwrap();
+        persist_gateway_approvals(path.clone(), Some("deny"), Some(None), None).unwrap();
+
+        let parsed: toml::Value = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let gw = parsed.get("gateway").unwrap();
+        assert_eq!(gw.get("approvals").unwrap().as_str(), Some("deny"));
+        assert!(gw.get("approver").is_none());
+    }
+
+    /// Absent means "leave alone"; present replaces the list wholesale, so
+    /// an empty vec is how a list is cleared.
+    #[test]
+    fn writing_rule_lists_replaces_only_the_lists_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "allow = [\"Bash(git *)\"]\nask = [\"Edit(~/**)\"]\n").unwrap();
+
+        persist_permission_rules(path.clone(), None, None, Some(&["Bash(rm *)".to_string()]))
+            .unwrap();
+        let cfg: FileConfig = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(cfg.allow, vec!["Bash(git *)"], "untouched");
+        assert_eq!(cfg.ask, vec!["Edit(~/**)"], "untouched");
+        assert_eq!(cfg.deny, vec!["Bash(rm *)"]);
+
+        persist_permission_rules(path.clone(), Some(&[]), None, None).unwrap();
+        let cfg: FileConfig = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(cfg.allow.is_empty(), "an empty list clears");
+        assert_eq!(cfg.deny, vec!["Bash(rm *)"], "and still nothing else moved");
+    }
+
     #[test]
     fn capped_by_is_min_over_permissiveness_and_never_escalates() {
         use PermissionMode::*;

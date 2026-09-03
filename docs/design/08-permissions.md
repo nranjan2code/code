@@ -9,9 +9,34 @@ evaluate(tool, args, mode, cwd) -> Allow | Ask{reason} | Deny{reason}
 ```
 
 The agent loop gates every tool call before dispatch. `Ask` is resolved by an
-`Approver` (trait): TUI prompts y/n interactively; `exec` uses `--yes`
-(AutoApprove) or defaults to AutoDeny with the reason fed back to the model as
-an error tool result — the model can adapt instead of crashing.
+`Approver` (trait). Four implementations ship, and they are the complete set:
+
+| Approver | Surface | `answerable()` |
+|---|---|---|
+| `AutoApprove` | `vak exec --yes`, `vak plan --yes`, evals | true |
+| `AutoDeny` | CLI without `--yes`, the heartbeat, a chat gateway not in forward mode | false |
+| `HttpApprover` | desktop app, admin console, and — unattended — scheduled tasks and best-of-N | matches whether a client is watching |
+| `GatewayApprover` | a chat gateway in forward mode | true only in forward mode |
+
+There is no interactive terminal approver. `vak exec` and `vak plan` are
+one-shot: `--yes` installs `AutoApprove`, its absence installs `AutoDeny`, and
+a denied call's reason is fed back to the model as an error tool result so it
+can adapt instead of crashing.
+
+`Approver::answerable()` is the second half of the trait and matters as much
+as `approve()`: it says whether a gate raised here reaches anyone. An
+unattended surface answers `false`, and `vak_core::reach` reads it *before*
+the prompt is composed so a capability that can only ever be refused is
+removed from the turn rather than discovered one denied call at a time.
+
+A `Core` also carries `approver_answerable`, because the system prompt is
+frozen at session creation and the approver does not exist until dispatch.
+`Core::with_approver` derives it from the real approver wherever the host has
+one; `with_approver_answerable` is the escape hatch for a host that knows
+which approver it will build but cannot build it yet (the gateway). Either
+way `run_turn_inner` reconciles the stamp against the installed approver, takes
+the approver's word, and records an `answerability_mismatch` security event —
+the stamp is a prediction, never an authority.
 
 Permission mode and approval behavior are separate controls. Permission mode
 sets the maximum execution boundary (`read-only`, `workspace-write`, or
@@ -21,7 +46,11 @@ selected boundary, while broker and OS enforcement still constrain the
 resulting process.
 
 An invoking surface may also supply a run-scoped direct-write allowlist. For
-CLI this is repeatable `vak exec --write-path <path>`. It is not a model
+CLI this is repeatable `--write-path <path>` on both `vak exec` and
+`vak plan`; both also take `--permission-mode` for the run. `vak config
+permissions` prints the mode, the approval mode, the rule lists and the
+composed capability standings; `vak config set-mode` and
+`vak config set-approval` persist to a chosen layer. It is not a model
 instruction or a global setting: `write` and `edit` calls outside the declared
 paths are denied before ordinary rules or permission mode are considered. This
 is deliberately narrow: shell commands keep their normal sandbox and approval
@@ -31,7 +60,11 @@ text.
 
 ## Rules
 
-Config layers merge three lists (`deny`, `ask`, `allow`; deny wins by order):
+Config layers merge three lists (`deny`, `ask`, `allow`; deny wins by order).
+They are editable from `PUT /config/permissions` (the admin console's rule
+editor and any local trusted surface), and every spec is parsed through
+`vak_permission::Rule::parse` before anything is written — one bad rule
+rejects the whole request rather than half-applying a set nobody chose:
 
 ```toml
 permission_mode = "workspace-write"
@@ -58,7 +91,11 @@ default:
 ## Invariants
 
 - A denied call never executes; its reason becomes an `is_error` tool result.
-- Approval requests are answered exactly once (oneshot channel in the TUI).
+- Approval requests are answered exactly once: the pending map holds a
+  oneshot sender, and answering removes the entry before responding.
+- Every gate is bounded. `GatewayApprover` waits `gateway.approval_timeout_secs`
+  (default 300); `HttpApprover` waits 15 minutes. Both fail closed on expiry,
+  and both drop their pending entry first so a late reply resolves nothing.
 - The engine is pure: no I/O beyond path canonicalization.
 
 ## OS sandbox layer
@@ -121,18 +158,41 @@ constrains *what the process can touch* even when allowed.
   engine and approver before dispatching through the brokered registry. A flow
   cannot treat a model-generated command as implicitly approved.
 - Changing permission mode through the server revokes every in-flight main and
-  side run and rejects pending approvals before the new mode is reported. A
-  running agent never continues with a stale, more-permissive snapshot.
-- Learned allow rules: pressing `[p]` on an approval persists a SCOPED rule
-  derived from the call — `bash(<first-word> *)`, `<write|edit>(<path>)`,
-  `mcp(<server>/*)`, `task(<label>)` — into
-  `.vak/permissions.local.toml` (trusted workspaces only). Every spec
-  is round-trip validated (must parse AND match the triggering call) before
-  it is written. Loaded at Core startup for trusted workspaces and merged
-  into every engine build (`exec`/`plan` included); because evaluation is
+  side run, rejects pending approvals, and discards every pooled per-channel
+  `Core` before the new mode is reported. A running agent never continues with
+  a stale, more-permissive snapshot, and a warm channel never keeps a ceiling
+  computed before the change.
+- `[gateway] approvals` / `approver` decide whether an `Ask` on a chat surface
+  reaches a human at all. Settable at runtime through
+  `PUT /gateway/approvals` (persisted to the chosen config layer and applied
+  live); `deny` clears the target rather than leaving a stale one for a later
+  `forward` to reuse. `forward` with no `<surface>:<chat>` target is refused
+  by the endpoint and degraded to `deny` by the loader — it is never
+  representable in `GatewayState`.
+- A per-channel mode is folded as chat pin → capped by bot pin → capped by the
+  workspace. `gateway::resolve_channel_permission` folds the same three tiers
+  for the admin projection, so what the console reports and what dispatch pins
+  are the same computation.
+- The server reads workspace trust from `vak_core::trust`, not by assumption.
+  Approving or re-pointing a channel's workspace in the console records that
+  decision in the same marker store the CLI reads.
+- Learned allow rules: answering an approval with **"don't ask again"**
+  (`POST /sessions/{id}/approvals/{req}` with `remember: true`; "Always allow
+  this" in the desktop, "Approve, don't ask again" in the console) persists a
+  SCOPED rule derived from the call — `+bash(<first-word> *)`,
+  `+<write|edit>(<path>)`, `+mcp(<server>/*)`, `+task(<label>)` — into
+  `.vak/permissions.local.toml` (trusted workspaces only). Every spec is
+  round-trip validated (must parse AND match the triggering call) before it is
+  written. Loaded at Core startup for trusted workspaces and merged into every
+  engine build (`exec`/`plan` included); because evaluation is
   severity-aggregated, a learned Allow can never shadow an explicit Deny.
-  `[a]` remains session-only for calls that cannot be scoped safely
-  (e.g. opaque bash with command substitution).
+
+  `vak_core::scoped_allow_rule` returns `None` — approve again next time —
+  for anything that cannot be narrowed safely: bash whose effects cannot be
+  enumerated (command substitution, a redirection to a real path, an
+  unbalanced quote, more than one segment), and network tools, whose one URL
+  generalizes to nothing. A blanket `+webfetch` is a config decision made
+  deliberately, not one that falls out of a single yes.
 - Known semantics: on macOS `/tmp` resolves to `/private/tmp`, so tmp writes
   are permitted in workspace-write mode by design (output spill files rely on
   it). Everything else outside the cwd is blocked at kernel level.

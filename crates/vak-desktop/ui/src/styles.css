@@ -636,6 +636,9 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: #4
 .settings-content header p { margin: 0; color: var(--muted); }
 .settings-group { margin: 0 0 29px; }
 .settings-group > h3 { margin: 0 0 9px; color: var(--text-soft); font-size: 12px; font-weight: 620; }
+/* Explanatory line under a group heading, before its rows. Matches the
+   nav's scope copy so the two read as the same voice. */
+.settings-group-copy { margin: -3px 0 11px; color: var(--muted); font-size: 11px; line-height: 1.5; max-width: 62ch; }
 .settings-card { overflow: hidden; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-raised); }
 .setting-row { display: flex; align-items: center; gap: 24px; min-height: 70px; padding: 13px 17px; border-bottom: 1px solid var(--border-soft); }
 .setting-row:last-child { border-bottom: 0; }

@@ -500,6 +500,10 @@ pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serd
     let route = state.core.effective_route();
     let cfg = state.core.config();
     let work = state.core.effective_work();
+    // The lists the engine actually evaluates, not the ones loaded at
+    // startup: `PUT /config/permissions` changes them without a restart, and
+    // a console showing the stale set would be reporting rules no run uses.
+    let permission_rules = state.core.effective_permission_rules();
     Json(serde_json::json!({
         "provider": route.provider,
         "model": route.model,
@@ -508,6 +512,15 @@ pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serd
         "route_revision": route.revision,
         "max_turns": state.core.effective_max_turns(),
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
+        // These three were consumed by the console and never sent. The
+        // console's `ConfigInfo` declared all of them, so nothing caught it:
+        // the approval-mode picker could not show which mode was in force,
+        // "Effective sandbox" rendered its loading placeholder forever, and
+        // the sub-agents toggle rendered unchecked whatever the real value
+        // was — so the first click wrote the opposite of what was displayed.
+        "approval_mode": state.core.effective_approval_mode().as_str(),
+        "sandbox": state.core.effective_sandbox_name(),
+        "subagents": state.core.effective_subagents(),
         "theme": state.core.effective_theme(),
         "work": {
             "enabled": work.enabled,
@@ -537,9 +550,9 @@ pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serd
         // reader can see what an MCP server or a hook is permitted to do
         // rather than only that it is configured.
         "permissions": {
-            "allow": cfg.allow,
-            "ask": cfg.ask,
-            "deny": cfg.deny,
+            "allow": permission_rules.0,
+            "ask": permission_rules.1,
+            "deny": permission_rules.2,
         },
     }))
 }
@@ -968,24 +981,57 @@ pub(crate) async fn delete_gateway_binding_admin(
 
 // ---- Allowlist (docs/design/34-channel-onboarding.md) ---------------------
 
-fn allowlist_entry_json(e: &crate::gateway::AllowlistEntry) -> serde_json::Value {
+/// Resolve a chat's permission exactly as `core_for_entry` does, including
+/// the tiers the entry does not carry itself.
+///
+/// Two things were missing and both made the console read WIDER than
+/// dispatch. The bot pin was never consulted, so a bot narrowing its chats
+/// was invisible. And the whole resolution was skipped whenever the entry
+/// had no workspace of its own — the common case, since a chat inherits the
+/// gateway's workspace unless an operator pins one — which serialized
+/// `effective_permission_mode` as `null` and left the console's mode picker
+/// falling back to a hardcoded guess with no ceiling to clamp against.
+fn resolve_entry_permission(
+    state: &AppState,
+    e: &crate::gateway::AllowlistEntry,
+) -> crate::gateway::ResolvedPermission {
+    let bot = e
+        .inherit_bot_policy
+        .then_some(e.bot_id.as_deref())
+        .flatten()
+        .and_then(|id| state.gateway.bot_get(id));
+    // Same precedence `core_for_entry` uses: the chat's own workspace, else
+    // its bot's, else the gateway's default.
+    let workspace = e
+        .workspace
+        .clone()
+        .or_else(|| bot.as_ref().and_then(|b| b.workspace.clone()))
+        .unwrap_or_else(|| state.core.cwd().clone());
+    crate::gateway::resolve_channel_permission(
+        &workspace,
+        e.permission_mode,
+        bot.and_then(|b| b.permission_mode),
+    )
+}
+
+fn allowlist_entry_json(state: &AppState, e: &crate::gateway::AllowlistEntry) -> serde_json::Value {
     // Resolve the effective permission mode the same way "Effective route"
     // is surfaced: the console must show what the channel actually gets,
     // not just what was requested, so a capped override is visible rather
     // than mistaken for a live grant.
-    let resolved = e
-        .workspace
-        .as_ref()
-        .map(|w| crate::gateway::resolve_channel_permission(w, e.permission_mode));
+    let resolved = resolve_entry_permission(state, e);
     serde_json::json!({
         "key": e.key,
         "status": e.status,
         "workspace": e.workspace,
         "route": e.route,
         "permission_mode": e.permission_mode,
-        "workspace_permission_mode": resolved.as_ref().map(|r| r.workspace_mode),
-        "effective_permission_mode": resolved.as_ref().map(|r| r.effective),
-        "permission_capped": resolved.as_ref().is_some_and(|r| r.was_capped()),
+        "workspace_permission_mode": resolved.workspace_mode,
+        // The bot tier, named, so a reader can tell "the project caps this"
+        // from "the bot caps this" instead of only seeing the result.
+        "bot_permission_mode": resolved.bot_mode,
+        "effective_permission_mode": resolved.effective,
+        "permission_capped": resolved.was_capped(),
         "policy": e.policy,
         "bot_id": e.bot_id,
         "inherit_bot_policy": e.inherit_bot_policy,
@@ -1015,7 +1061,7 @@ pub(crate) async fn list_gateway_allowlist(
         .gateway
         .allowlist_snapshot()
         .iter()
-        .map(allowlist_entry_json)
+        .map(|entry| allowlist_entry_json(&state, entry))
         .collect();
     Json(serde_json::json!({ "entries": entries }))
 }
@@ -1049,20 +1095,28 @@ pub(crate) struct AllowlistApproveBody {
 /// security log immediately, not only when the channel's `Core` is first
 /// started at dispatch (where `CorePool` records the enforcement itself).
 fn record_permission_cap(state: &AppState, key: &str, entry: &crate::gateway::AllowlistEntry) {
-    let Some(workspace) = entry.workspace.as_ref() else {
-        return;
-    };
-    let resolved = crate::gateway::resolve_channel_permission(workspace, entry.permission_mode);
+    let resolved = resolve_entry_permission(state, entry);
     if !resolved.was_capped() {
         return;
     }
+    // Name the ceiling that actually did the capping. "Reduced to read-only"
+    // is not actionable on its own — an operator needs to know whether to
+    // widen the project's config or the bot's pin.
+    let ceiling = match resolved.bot_mode {
+        Some(bot) if bot.capped_by(resolved.workspace_mode) == resolved.effective => "bot",
+        _ => "workspace",
+    };
     vak_core::security_events::record(
         &state.core.sessions_home(),
         vak_core::security_events::EventKind::PermissionCapped,
         "permission_capped",
         &format!(
-            "key={key} workspace={} requested={} capped_to={}",
-            workspace.display(),
+            "key={key} workspace={} requested={} capped_to={} by={ceiling}",
+            entry
+                .workspace
+                .as_ref()
+                .unwrap_or(state.core.cwd())
+                .display(),
             resolved
                 .requested
                 .map(|m| m.as_str())
@@ -1071,6 +1125,40 @@ fn record_permission_cap(state: &AppState, key: &str, entry: &crate::gateway::Al
         ),
         None,
     );
+}
+
+/// Record the operator's trust decision for a workspace they just pointed a
+/// channel at through the console.
+///
+/// Pinning a workspace for a channel IS the decision `vak_core::trust`
+/// records: the operator is saying "run turns here, with this project's own
+/// configuration". Writing the marker keeps that decision in the one store
+/// every surface reads, so the terminal and the server agree — instead of
+/// the server assuming trust, which is what it used to do.
+///
+/// Best-effort: an unwritable data home means the workspace loads
+/// untrusted, which is the safe direction. It is never the reason an
+/// approval fails.
+fn note_workspace_trust(state: &AppState, workspace: Option<&std::path::Path>) {
+    let Some(workspace) = workspace else { return };
+    if vak_core::trust::is_trusted(workspace) {
+        return;
+    }
+    match vak_core::trust::record(workspace) {
+        Ok(()) => {
+            vak_core::security_events::record(
+                &state.core.sessions_home(),
+                vak_core::security_events::EventKind::ConfigChange,
+                "workspace_trusted",
+                &format!("workspace={} by=admin", workspace.display()),
+                None,
+            );
+        }
+        Err(error) => eprintln!(
+            "[admin] could not record trust for {}: {error}",
+            workspace.display()
+        ),
+    }
 }
 
 pub(crate) async fn approve_gateway_allowlist(
@@ -1134,11 +1222,12 @@ pub(crate) async fn approve_gateway_allowlist(
         &format!("key={key}"),
         None,
     );
+    note_workspace_trust(&state, entry.workspace.as_deref());
     record_permission_cap(&state, &key, &entry);
     state
         .hub
         .emit_config_changed("gateway_allowlist_approved", &key);
-    (StatusCode::OK, Json(allowlist_entry_json(&entry))).into_response()
+    (StatusCode::OK, Json(allowlist_entry_json(&state, &entry))).into_response()
 }
 
 pub(crate) async fn deny_gateway_allowlist(
@@ -1159,7 +1248,7 @@ pub(crate) async fn deny_gateway_allowlist(
     state
         .hub
         .emit_config_changed("gateway_allowlist_denied", &key);
-    (StatusCode::OK, Json(allowlist_entry_json(&entry))).into_response()
+    (StatusCode::OK, Json(allowlist_entry_json(&state, &entry))).into_response()
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -1314,10 +1403,11 @@ pub(crate) async fn patch_gateway_allowlist(
         ),
         None,
     );
+    note_workspace_trust(&state, entry.workspace.as_deref());
     state
         .hub
         .emit_config_changed("gateway_allowlist_patched", &key);
-    (StatusCode::OK, Json(allowlist_entry_json(&entry))).into_response()
+    (StatusCode::OK, Json(allowlist_entry_json(&state, &entry))).into_response()
 }
 
 pub(crate) async fn revoke_gateway_allowlist(
@@ -1405,6 +1495,10 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_state() -> AppState {
+        // Isolates the trust-marker store as well as the session ledger:
+        // approving a channel records a trust decision, and that write must
+        // not reach the developer's real data home.
+        crate::pin_test_data_home();
         let dir = tempfile::tempdir().unwrap();
         let cwd = dir.path().to_path_buf();
         let core = vak_core::Core::new(cwd).unwrap();
@@ -1645,6 +1739,20 @@ mod tests {
         let json = body_json(resp).await;
         assert_eq!(json["total"], 0);
         assert!(json["approvals"].is_array());
+    }
+
+    /// These three were read by the console and never sent. The console's
+    /// own `ConfigInfo` declared all of them, so nothing caught it: the
+    /// approval picker could not show what was in force, "Effective sandbox"
+    /// rendered its loading placeholder forever, and the sub-agents toggle
+    /// rendered unchecked whatever the real value was.
+    #[tokio::test]
+    async fn config_endpoint_reports_approval_mode_sandbox_and_subagents() {
+        let state = test_state();
+        let axum::Json(json) = crate::admin::get_config_admin(axum::extract::State(state)).await;
+        assert!(json["approval_mode"].is_string(), "{json}");
+        assert!(json["sandbox"].is_string(), "{json}");
+        assert!(json["subagents"].is_boolean(), "{json}");
     }
 
     #[tokio::test]

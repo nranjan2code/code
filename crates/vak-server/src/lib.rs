@@ -42,6 +42,32 @@
 //! - `POST /agent-network/messages`      → broker a bounded workspace message
 //! - `GET  /agent-network/messages`      → receive queued workspace messages
 
+/// Pin `VAK_HOME` to one throwaway directory for this whole test binary.
+///
+/// `data_home()` backs the workspace-trust marker store, and a test that
+/// approves a channel or records a trust decision writes into it. Without
+/// this pin those writes land in the developer's real
+/// `~/Library/Application Support/vak/trusted` and stay there, one orphan
+/// marker per tempdir, quietly granting trust to paths that no longer
+/// exist. `sessions_home` is already isolated per test for exactly this
+/// reason; the data home was not.
+///
+/// Process-global by nature, so it is set once and leaked: `VAK_HOME` has
+/// no scope smaller than the process, and unsetting it while parallel tests
+/// are running would be worse than pinning it.
+#[cfg(test)]
+pub(crate) fn pin_test_data_home() {
+    use std::sync::OnceLock;
+    static HOME: OnceLock<std::path::PathBuf> = OnceLock::new();
+    HOME.get_or_init(|| {
+        #[allow(clippy::expect_used)]
+        let dir = tempfile::tempdir().expect("test data home");
+        let path = dir.keep();
+        vak_config::set_override("VAK_HOME", path.to_string_lossy().to_string());
+        path
+    });
+}
+
 mod admin;
 mod admin_ui;
 mod channels;
@@ -314,17 +340,42 @@ impl ApprovalRequest {
     }
 }
 
+/// How long an HTTP-surfaced gate waits for a console or desktop client to
+/// answer before failing closed.
+///
+/// There was no bound at all, which was survivable while every run behind
+/// this approver had a human watching an SSE stream — and was not, once the
+/// scheduler started firing runs through the same path. An unanswered gate
+/// held the session handle open forever, so the routine never completed and
+/// its slot never freed. Generous, because a person may genuinely be away
+/// from the tab, but finite: a run that fails closed can be retried, and one
+/// that hangs cannot.
+const HTTP_APPROVAL_TIMEOUT: Duration = Duration::from_secs(900);
+
 struct HttpApprover {
     events_tx: broadcast::Sender<AgentEvent>,
     pending: Arc<Mutex<HashMap<String, ApprovalRequest>>>,
     /// Owning session, so admin-console surfaces can attribute gates.
     session_id: String,
     activity_buffer: Arc<Mutex<Vec<vak_session::ActivityRecord>>>,
+    /// False when this run has no client watching — a scheduled routine, a
+    /// best-of-N leg. The gate is then a foregone denial, and saying so
+    /// through `answerable()` is what lets `vak_core::reach` drop the
+    /// capability from the turn instead of letting the model discover it by
+    /// blocking on a question nobody will read.
+    answerable: bool,
 }
 
 #[async_trait::async_trait]
 impl Approver for HttpApprover {
+    fn answerable(&self) -> bool {
+        self.answerable
+    }
+
     async fn approve(&self, tool: &str, args_json: &str, reason: &str) -> bool {
+        if !self.answerable {
+            return false;
+        }
         let id = uuid::Uuid::now_v7().to_string();
         let (respond, rx) = oneshot::channel();
         self.pending
@@ -372,7 +423,21 @@ impl Approver for HttpApprover {
                 reason: reason.to_string(),
             });
         }
-        let approved = rx.await.unwrap_or(false);
+        // Bounded, and failing closed on expiry — the same contract
+        // `GatewayApprover` already had. Dropping the entry before returning
+        // means a reply that arrives after the deadline resolves nothing
+        // rather than answering a gate the run has already moved past.
+        let approved = match tokio::time::timeout(HTTP_APPROVAL_TIMEOUT, rx).await {
+            Ok(answer) => answer.unwrap_or(false),
+            Err(_) => {
+                eprintln!(
+                    "[approvals] gate {} for `{tool}` expired after {}s; denied",
+                    &id[..8.min(id.len())],
+                    HTTP_APPROVAL_TIMEOUT.as_secs()
+                );
+                false
+            }
+        };
         self.pending
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -568,6 +633,19 @@ fn router_with_state(state: AppState) -> Router {
         .route(
             "/config/key",
             put(put_provider_key).delete(delete_provider_key),
+        )
+        // The approval policy: whether an `Ask` raised on an unattended
+        // chat surface reaches a human at all. Read-only everywhere until
+        // now, which made `vak_core::reach`'s own printed remedy an action
+        // no surface could perform.
+        .route(
+            "/gateway/approvals",
+            get(get_gateway_approvals).put(put_gateway_approvals),
+        )
+        // The three permission rule lists, as the engine evaluates them.
+        .route(
+            "/config/permissions",
+            get(get_permission_rules).put(put_permission_rules),
         )
         // Multi-bot-per-surface (docs/design/34, multi-bot): a `Bot` is an
         // independent identity, so it gets its own id-addressed routes
@@ -2937,11 +3015,14 @@ async fn run_prompt(
     // Give SSE consumers a moment to attach so terminal events are seen.
     let _ = tokio::time::timeout(Duration::from_secs(2), handle.subscribed.notified()).await;
 
+    // Driven by a client that is holding the SSE stream open, so a gate
+    // raised here reaches a person.
     let approver: Arc<dyn Approver> = Arc::new(HttpApprover {
         events_tx: handle.events_tx.clone(),
         pending: handle.pending.clone(),
         session_id: handle.id.clone(),
         activity_buffer: handle.activity_buffer.clone(),
+        answerable: true,
     });
     let events = mpsc_to_broadcast(handle.events_tx.clone());
     let steering = handle.steering.clone();
@@ -3303,30 +3384,81 @@ async fn stop_subagent(
 #[derive(serde::Deserialize)]
 struct ApprovalBody {
     approve: bool,
+    /// "…and don't ask again for calls like this one". Derives the narrowest
+    /// rule that covers this call and persists it to
+    /// `.vak/permissions.local.toml`. Only meaningful alongside
+    /// `approve: true` — remembering a refusal would be a deny rule, which
+    /// is a different and much heavier decision than answering one gate.
+    #[serde(default)]
+    remember: bool,
 }
 
+/// `POST /sessions/{id}/approvals/{req_id}` — answer one gate.
+///
+/// `remember` is the mechanism `docs/design/08-permissions.md` has described
+/// since the engine shipped and nothing ever called: `Core::learn_allow_rule`
+/// existed, was tested, wrote a validated file, and had no caller on any
+/// surface, because the interactive approver its comment referred to was
+/// never built. This is that caller.
+///
+/// Remembering never blocks the answer. The gate is resolved first; a
+/// failure to derive or persist a rule is reported alongside a successful
+/// approval, because the run is already waiting and a bookkeeping problem
+/// must not become a denial.
 async fn answer_approval(
     State(state): State<AppState>,
     Path((id, req_id)): Path<(String, String)>,
     Json(body): Json<ApprovalBody>,
-) -> StatusCode {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
     // Look the request up in THIS session's pending map only: approvals
     // are never resolvable across sessions.
     let Some(handle) = state.get(&id) else {
-        return StatusCode::NOT_FOUND;
+        return StatusCode::NOT_FOUND.into_response();
     };
-    match handle
+    let Some(req) = handle
         .pending
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .remove(&req_id)
-    {
-        Some(req) => {
-            req.respond(body.approve);
-            StatusCode::OK
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let tool = req.tool.clone();
+    let args_json = req.args_json.clone();
+    req.respond(body.approve);
+
+    let mut learned: Option<String> = None;
+    let mut learn_error: Option<String> = None;
+    if body.remember && body.approve {
+        match serde_json::from_str::<serde_json::Value>(&args_json) {
+            // The gate's own core, not the server's: a learned rule belongs
+            // to the workspace whose call raised it.
+            Ok(args) => match handle.core.learn_from_call(&tool, &args) {
+                Ok(spec) => {
+                    vak_core::security_events::record(
+                        &state.core.sessions_home(),
+                        vak_core::security_events::EventKind::ConfigChange,
+                        "permission_rule_learned",
+                        &format!("session={id} rule={spec}"),
+                        None,
+                    );
+                    learned = Some(spec);
+                }
+                Err(error) => learn_error = Some(error.to_string()),
+            },
+            Err(error) => learn_error = Some(format!("unreadable tool arguments: {error}")),
         }
-        None => StatusCode::NOT_FOUND,
     }
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "approved": body.approve,
+            "learned_rule": learned,
+            "learn_error": learn_error,
+        })),
+    )
+        .into_response()
 }
 
 /// Dispatch forensics (docs/design/42-managed-work-contracts.md): the session's work
@@ -5418,6 +5550,333 @@ async fn set_permission_mode(
     }
 }
 
+// ---- Gateway approval policy ----------------------------------------------
+
+/// `GET /gateway/approvals` — the live policy plus the chats that could
+/// answer a gate.
+///
+/// The candidate list is what makes this usable: `approver` is a
+/// `<surface>:<chat>` target, and an operator has no way to type one
+/// correctly from memory. Every allowed allowlist entry is offered,
+/// normalized to the two-part shape `deliver_to` uses, because a
+/// bot-scoped three-part key is an allowlist identity and not a delivery
+/// address.
+async fn get_gateway_approvals(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "mode": state.gateway.approvals_mode(),
+        "approver": state.gateway.approver_target(),
+        "timeout_secs": state.gateway.approval_timeout().as_secs(),
+        "enabled": state.gateway.enabled,
+        "forwarding": state.gateway.forward_mode(),
+        "candidates": state.gateway.approver_candidates(),
+    }))
+}
+
+#[derive(serde::Deserialize)]
+struct GatewayApprovalsBody {
+    /// "deny" or "forward".
+    mode: String,
+    /// `<surface>:<chat>`. Required for "forward"; ignored for "deny".
+    #[serde(default)]
+    approver: Option<String>,
+    /// Seconds a forwarded gate waits before failing closed. Minimum 5,
+    /// matching `vak_config`'s own floor.
+    #[serde(default)]
+    timeout_secs: Option<u64>,
+    #[serde(default)]
+    scope: Option<ConfigScope>,
+}
+
+/// `PUT /gateway/approvals` — set the policy, live and on disk.
+///
+/// Validation happens here rather than being left to the config loader's
+/// fallback: the loader's job is to make a bad file safe (it degrades
+/// `forward` with no target to `deny` and warns), but an operator pressing
+/// a button deserves a refusal that names the problem instead of a success
+/// followed by a silently different setting.
+async fn put_gateway_approvals(
+    State(state): State<AppState>,
+    Json(body): Json<GatewayApprovalsBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let bad = |msg: &str| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": msg })),
+        )
+            .into_response()
+    };
+    let mode = body.mode.trim();
+    if !matches!(mode, "deny" | "forward") {
+        return bad("mode must be \"deny\" or \"forward\"");
+    }
+    let approver = body
+        .approver
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty());
+    if mode == "forward" {
+        match approver {
+            None => {
+                return bad(
+                    "forwarding needs an approver chat — the gate is announced there and \
+                     answered with \"yes\" or \"no\"",
+                );
+            }
+            Some(target) if !target.contains(':') => {
+                return bad("approver must be \"<surface>:<chat>\", e.g. \"telegram:12345678\"");
+            }
+            Some(_) => {}
+        }
+    }
+    if let Some(secs) = body.timeout_secs
+        && !(5..=86_400).contains(&secs)
+    {
+        return bad("timeout must be between 5 and 86400 seconds");
+    }
+
+    let scope = body.scope.unwrap_or(ConfigScope::Project);
+    let path = match scope.config_path(&state.core) {
+        Ok(path) => path,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error })),
+            )
+                .into_response();
+        }
+    };
+    // Persist first. A policy that applied live but never reached disk is
+    // exactly the "I set it and it reverted" failure this endpoint exists
+    // to end, and it is worse than one that failed loudly.
+    if let Err(error) = vak_config::persist_gateway_approvals(
+        path,
+        Some(mode),
+        // "deny" clears the target rather than leaving a stale one behind
+        // that a later "forward" would silently reuse.
+        Some(if mode == "forward" { approver } else { None }),
+        body.timeout_secs,
+    ) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response();
+    }
+
+    let previous = state.gateway.approvals_mode();
+    let installed = state
+        .gateway
+        .set_approval_policy(crate::gateway::ApprovalPolicy {
+            approvals: mode.to_string(),
+            approver: approver.map(str::to_string),
+            timeout: std::time::Duration::from_secs(
+                body.timeout_secs
+                    .unwrap_or_else(|| state.gateway.approval_timeout().as_secs()),
+            ),
+        });
+
+    if previous != installed.approvals || installed.approvals == "forward" {
+        vak_core::security_events::record(
+            &state.core.sessions_home(),
+            vak_core::security_events::EventKind::ConfigChange,
+            "gateway_approvals_changed",
+            &format!(
+                "{previous} -> {} approver={} scope={}",
+                installed.approvals,
+                installed.approver.as_deref().unwrap_or("<none>"),
+                scope.label()
+            ),
+            None,
+        );
+        state
+            .hub
+            .emit_config_changed("gateway_approvals", &installed.approvals);
+    }
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "mode": installed.approvals,
+            "approver": installed.approver,
+            "timeout_secs": installed.timeout.as_secs(),
+            "forwarding": state.gateway.forward_mode(),
+            // The gateway being off makes a forward policy inert. Say so
+            // rather than reporting a grant the next inbound turn will not
+            // honour, which is the same class of lie `reach` exists to end.
+            "gateway_enabled": state.gateway.enabled,
+        })),
+    )
+        .into_response()
+}
+
+// ---- Permission rules ------------------------------------------------------
+
+/// `GET /config/permissions` — the effective rule lists the engine
+/// evaluates, plus the selected layer's own, so a reader can tell an
+/// inherited rule from one this scope set.
+async fn get_permission_rules(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<OptionalScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let scope = q.scope.unwrap_or(ConfigScope::Project);
+    let (allow, ask, deny) = state.core.effective_permission_rules();
+    let layer = match scope
+        .config_path(&state.core)
+        .and_then(|path| read_config_layer(path.as_path()))
+    {
+        Ok(layer) => layer,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error })),
+            )
+                .into_response();
+        }
+    };
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "scope": scope.label(),
+            "effective": { "allow": allow, "ask": ask, "deny": deny },
+            "layer": {
+                "allow": layer.allow,
+                "ask": layer.ask,
+                "deny": layer.deny,
+            },
+        })),
+    )
+        .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct PermissionRulesBody {
+    /// Absent leaves that list alone; present replaces it wholesale.
+    #[serde(default)]
+    allow: Option<Vec<String>>,
+    #[serde(default)]
+    ask: Option<Vec<String>>,
+    #[serde(default)]
+    deny: Option<Vec<String>>,
+    #[serde(default)]
+    scope: Option<ConfigScope>,
+}
+
+/// `PUT /config/permissions` — replace rule lists in one layer.
+///
+/// Every spec is parsed through the real `vak_permission::Rule::parse`
+/// before anything is written, and the whole request is rejected if any
+/// one of them fails. A half-applied rule set is a permission decision
+/// nobody chose.
+async fn put_permission_rules(
+    State(state): State<AppState>,
+    Json(body): Json<PermissionRulesBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    for (list_name, list) in [
+        ("allow", &body.allow),
+        ("ask", &body.ask),
+        ("deny", &body.deny),
+    ] {
+        let Some(list) = list else { continue };
+        for spec in list {
+            if let Err(error) = vak_permission::Rule::parse(spec) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!("{list_name}: {error}"),
+                        "rule": spec,
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+    let scope = body.scope.unwrap_or(ConfigScope::Project);
+    let path = match scope.config_path(&state.core) {
+        Ok(path) => path,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error })),
+            )
+                .into_response();
+        }
+    };
+    if let Err(error) = vak_config::persist_permission_rules(
+        path,
+        body.allow.as_deref(),
+        body.ask.as_deref(),
+        body.deny.as_deref(),
+    ) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response();
+    }
+    // Re-merge both layers and pin the result as this process's effective
+    // rules. Without this the file would change and the running engine
+    // would keep evaluating the rules it loaded at startup — which is the
+    // "I set it and nothing happened" failure this endpoint exists to end.
+    let merged =
+        match vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted()) {
+            Ok(merged) => merged,
+            Err(error) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": error.to_string() })),
+                )
+                    .into_response();
+            }
+        };
+    // Reject a set that the engine cannot compile, and do it BEFORE
+    // pinning: individually valid rules are all that was checked above,
+    // and the merge brings in the other layer's rules too.
+    let (allow, ask, deny) = (
+        merged.allow.clone(),
+        merged.ask.clone(),
+        merged.deny.clone(),
+    );
+    state
+        .core
+        .apply_persisted_permission_rules(allow.clone(), ask.clone(), deny.clone());
+    if let Err(error) = state.core.build_permission_engine(&[]) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": format!("merged rule set does not compile: {error}")
+            })),
+        )
+            .into_response();
+    }
+    vak_core::security_events::record(
+        &state.core.sessions_home(),
+        vak_core::security_events::EventKind::ConfigChange,
+        "permission_rules_changed",
+        &format!(
+            "scope={} allow={} ask={} deny={}",
+            scope.label(),
+            allow.len(),
+            ask.len(),
+            deny.len()
+        ),
+        None,
+    );
+    state
+        .hub
+        .emit_config_changed("permission_rules", scope.label());
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "scope": scope.label(),
+            "effective": { "allow": allow, "ask": ask, "deny": deny },
+        })),
+    )
+        .into_response()
+}
+
 fn apply_permission_mode(state: &AppState, mode: vak_config::PermissionMode, persisted: bool) {
     if state.core.effective_permission_mode() == mode {
         return;
@@ -5426,6 +5885,21 @@ fn apply_permission_mode(state: &AppState, mode: vak_config::PermissionMode, per
         state.core.apply_persisted_permission_mode(mode);
     } else {
         state.core.set_permission_mode(mode);
+    }
+    // Warm per-channel instances captured their ceiling when they were
+    // built. Discard them so the next inbound message resolves a fresh one;
+    // without this a narrowed mode reached chats only when their idle
+    // window expired, which is up to half an hour of running under a
+    // ceiling that had already been revoked.
+    let dropped = state.gateway.core_pool.invalidate_pooled();
+    if dropped > 0 {
+        vak_core::security_events::record(
+            &state.core.sessions_home(),
+            vak_core::security_events::EventKind::ConfigChange,
+            "core_pool_invalidated",
+            &format!("permission_mode={mode:?} dropped={dropped}"),
+            None,
+        );
     }
     let handles: Vec<Arc<SessionHandle>> = state
         .sessions
@@ -5922,6 +6396,7 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
     let cfg = state.core.config();
     let work = state.core.effective_work();
     let route = state.core.effective_route();
+    let permission_rules = state.core.effective_permission_rules();
     let project_path = vak_config::project_path(state.core.cwd());
     Json(serde_json::json!({
         "provider": route.provider,
@@ -5932,6 +6407,17 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
         "max_tokens": cfg.max_tokens,
         "max_turns": state.core.effective_max_turns(),
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
+        // How an `Ask` gets resolved, and what the rules say — both were
+        // absent here, which is why the desktop app could set the permission
+        // mode but had no way to show or change the approval behaviour, and
+        // no way to show a rule at all.
+        "approval_mode": state.core.effective_approval_mode().as_str(),
+        "sandbox": state.core.effective_sandbox_name(),
+        "permissions": {
+            "allow": permission_rules.0,
+            "ask": permission_rules.1,
+            "deny": permission_rules.2,
+        },
         "subagents": state.core.effective_subagents(),
         "max_retries": cfg.max_retries,
         "retry_base_backoff_ms": cfg.retry_base_backoff_ms,
@@ -6271,18 +6757,50 @@ struct ConfigPatch {
     inherit_plugins: Option<bool>,
 }
 
-async fn patch_config(State(state): State<AppState>, Json(body): Json<ConfigPatch>) -> StatusCode {
+async fn patch_config(
+    State(state): State<AppState>,
+    Json(body): Json<ConfigPatch>,
+) -> axum::response::Response {
     patch_config_scope(state, body, false).await
 }
 
 async fn patch_global_config(
     State(state): State<AppState>,
     Json(body): Json<ConfigPatch>,
-) -> StatusCode {
+) -> axum::response::Response {
     patch_config_scope(state, body, true).await
 }
 
-async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) -> StatusCode {
+/// Which keys this write landed on disk but did NOT put into force, because
+/// a narrower layer already pins them.
+///
+/// The project layer is merged after the global one, so a project
+/// `permission_mode` wins. Writing the global value and then force-applying
+/// it as a runtime override made the live process disagree with what the
+/// files resolve to — right until the next restart, when the project pin
+/// reasserted and the operator's change appeared to have been forgotten.
+/// Persisting and then saying which keys are shadowed is honest; applying
+/// them was not.
+fn shadowed_by_project(state: &AppState, body: &ConfigPatch) -> Vec<&'static str> {
+    let path = vak_config::project_path(state.core.cwd());
+    let Ok(project) = read_config_layer(&path) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    if body.permission_mode.is_some() && project.permission_mode.is_some() {
+        out.push("permission_mode");
+    }
+    if body.approval_mode.is_some() && project.approval_mode.is_some() {
+        out.push("approval_mode");
+    }
+    out
+}
+
+async fn patch_config_scope(
+    state: AppState,
+    body: ConfigPatch,
+    global: bool,
+) -> axum::response::Response {
     if global
         && (body.inherit_mcp.is_some()
             || body.inherit_hooks.is_some()
@@ -6290,7 +6808,7 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
             || body.inherit_commands.is_some()
             || body.inherit_plugins.is_some())
     {
-        return StatusCode::BAD_REQUEST;
+        return StatusCode::BAD_REQUEST.into_response();
     }
     if body
         .provider
@@ -6333,7 +6851,7 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
             .work_max_parallel
             .is_some_and(|value| !(1..=32).contains(&value))
     {
-        return StatusCode::BAD_REQUEST;
+        return StatusCode::BAD_REQUEST.into_response();
     }
     let permission_mode = body.permission_mode.as_deref().and_then(parse_mode);
     let approval_mode = body.approval_mode.as_deref().and_then(parse_approval_mode);
@@ -6381,14 +6899,21 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
         })
         .is_err()
     {
-        return StatusCode::INTERNAL_SERVER_ERROR;
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
+    // Only a global write can be shadowed: the project layer is the last
+    // one merged, so a project write is already the winner.
+    let shadowed: Vec<&'static str> = if global {
+        shadowed_by_project(&state, &body)
+    } else {
+        Vec::new()
+    };
     let mut changes = Vec::new();
     if let (Some(provider), Some(model)) = (provider, model) {
         let effective =
             vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted());
         let Ok(effective) = effective else {
-            return StatusCode::INTERNAL_SERVER_ERROR;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         };
         state
             .core
@@ -6397,28 +6922,41 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
     }
     if let Some(max_turns) = body.max_turns {
         if !(1..=1000).contains(&max_turns) {
-            return StatusCode::BAD_REQUEST;
+            return StatusCode::BAD_REQUEST.into_response();
         }
         state.core.apply_persisted_max_turns(max_turns);
         changes.push(format!("max_turns={max_turns}"));
     }
-    if let Some(mode) = body.permission_mode {
-        let Some(mode) = parse_mode(&mode) else {
-            return StatusCode::BAD_REQUEST;
+    if let Some(mode) = &body.permission_mode {
+        let Some(mode) = parse_mode(mode) else {
+            return StatusCode::BAD_REQUEST.into_response();
         };
-        apply_permission_mode(&state, mode, true);
-        changes.push(format!("permission_mode={mode:?}"));
+        // Persisted above either way; only put into force when nothing
+        // narrower already pins it, so the live value and the files agree.
+        if shadowed.contains(&"permission_mode") {
+            changes.push(format!("permission_mode={mode:?} (persisted, shadowed)"));
+        } else {
+            apply_permission_mode(&state, mode, true);
+            changes.push(format!("permission_mode={mode:?}"));
+        }
     }
-    if let Some(raw) = body.approval_mode {
-        let Some(mode) = parse_approval_mode(&raw) else {
-            return StatusCode::BAD_REQUEST;
+    if let Some(raw) = &body.approval_mode {
+        let Some(mode) = parse_approval_mode(raw) else {
+            return StatusCode::BAD_REQUEST.into_response();
         };
-        state.core.apply_persisted_approval_mode(mode);
-        changes.push(format!("approval_mode={}", mode.as_str()));
+        if shadowed.contains(&"approval_mode") {
+            changes.push(format!(
+                "approval_mode={} (persisted, shadowed)",
+                mode.as_str()
+            ));
+        } else {
+            state.core.apply_persisted_approval_mode(mode);
+            changes.push(format!("approval_mode={}", mode.as_str()));
+        }
     }
     if let Some(theme) = body.theme {
         if !matches!(theme.as_str(), "dark" | "light" | "plain") {
-            return StatusCode::BAD_REQUEST;
+            return StatusCode::BAD_REQUEST.into_response();
         }
         changes.push(format!("theme={theme}"));
         state.core.apply_persisted_theme(theme);
@@ -6430,7 +6968,7 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
             vak_config::persist_project_subagents(state.core.cwd(), subagents)
         };
         if persisted.is_err() {
-            return StatusCode::INTERNAL_SERVER_ERROR;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
         state.core.apply_persisted_subagents(subagents);
         changes.push(format!("subagents={subagents}"));
@@ -6457,7 +6995,7 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
             )
         };
         if persisted.is_err() {
-            return StatusCode::INTERNAL_SERVER_ERROR;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
         // `apply_persisted_memory` sets all four flags at once, so fields
         // this PATCH didn't mention keep their current effective value
@@ -6493,7 +7031,7 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
             Ok(vak_config::project_path(state.core.cwd()))
         };
         let Ok(path) = path else {
-            return StatusCode::INTERNAL_SERVER_ERROR;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         };
         if vak_config::persist_work_preferences(
             path,
@@ -6506,12 +7044,12 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
         )
         .is_err()
         {
-            return StatusCode::INTERNAL_SERVER_ERROR;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
         let resolved =
             vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted());
         let Ok(resolved) = resolved else {
-            return StatusCode::INTERNAL_SERVER_ERROR;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         };
         state.core.apply_persisted_work(resolved.work);
         changes.push(format!(
@@ -6537,12 +7075,12 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
         )
         .is_err()
         {
-            return StatusCode::INTERNAL_SERVER_ERROR;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
         let Ok(resolved) =
             vak_config::load_with_trust(state.core.cwd(), state.core.project_config_trusted())
         else {
-            return StatusCode::INTERNAL_SERVER_ERROR;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         };
         state
             .core
@@ -6563,7 +7101,17 @@ async fn patch_config_scope(state: AppState, body: ConfigPatch, global: bool) ->
             .hub
             .emit_config_changed("config_patched", &changes.join(", "));
     }
-    StatusCode::OK
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "applied": changes,
+            // Named, so a client can tell the operator "saved, but this
+            // project overrides it" instead of reporting a clean success
+            // that the next restart quietly undoes.
+            "shadowed_by_project": shadowed,
+        })),
+    )
+        .into_response()
 }
 
 // ---- MCP server management --------------------------------------------------
@@ -7221,6 +7769,15 @@ struct ScopeQuery {
     scope: ConfigScope,
 }
 
+/// A scope query where omitting the parameter is legal and means "project".
+/// Kept separate from [`ScopeQuery`] so the endpoints that genuinely
+/// require an explicit scope keep rejecting a request without one.
+#[derive(serde::Deserialize)]
+struct OptionalScopeQuery {
+    #[serde(default)]
+    scope: Option<ConfigScope>,
+}
+
 #[derive(Clone, Copy)]
 struct IntegrationCatalogEntry {
     id: &'static str,
@@ -7765,6 +8322,7 @@ async fn side_chat(
         pending: handle.pending.clone(),
         session_id: handle.id.clone(),
         activity_buffer: side_activity.clone(),
+        answerable: true,
     });
     let events = mpsc_to_broadcast(side_tx.clone());
     let cancel = handle
@@ -7991,7 +8549,16 @@ async fn spawn_isolated_run(
     model_pin: Option<&str>,
 ) -> Result<String, String> {
     let child_core = vak_core::Core::new_with_trust(wt.path.clone(), true)
-        .map(|c| c.with_surface(vak_core::Surface::Background))
+        .map(|c| {
+            c.with_surface(vak_core::Surface::Background)
+                // Unattended, and stamped BEFORE `start_session` composes and
+                // freezes the prompt. Stamping afterwards would be too late:
+                // the prompt would already have advertised a gated capability
+                // that this run can only ever be refused, which is the exact
+                // mismatch `vak_core::reach` exists to remove. `begin_turn`
+                // installs the matching approver.
+                .with_approver_answerable(false)
+        })
         .map_err(|e| format!("child core failed: {e}"))?;
     child_core.set_provider_instance(provider);
     child_core.set_sessions_home(state.core.sessions_home());
@@ -8015,18 +8582,28 @@ async fn spawn_isolated_run(
         wt.path.clone(),
         state.core.clone(),
     );
-    begin_turn(&handle, &child_core, prompt);
+    begin_turn(&handle, &child_core, prompt, false);
     Ok(child_id)
 }
 
 /// Fire a single-turn agent run on a (usually fresh) session handle.
-fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str) {
+///
+/// `attended` says whether anyone is watching this run's event stream. It is
+/// not cosmetic: a scheduled routine and a best-of-N leg both arrive here,
+/// nobody is subscribed to either, and an approval gate raised on one used
+/// to emit an SSE event into the void and then block the run until the
+/// process restarted. An unattended run gets an approver that says so, and
+/// `Core::with_approver` carries that fact into the prompt so the model is
+/// never offered a capability whose gate can only ever be refused.
+fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str, attended: bool) {
     let approver: Arc<dyn Approver> = Arc::new(HttpApprover {
         events_tx: handle.events_tx.clone(),
         pending: handle.pending.clone(),
         session_id: handle.id.clone(),
         activity_buffer: handle.activity_buffer.clone(),
+        answerable: attended,
     });
+    let core = core.clone().with_approver(approver.as_ref());
     let events = mpsc_to_broadcast(handle.events_tx.clone());
     let steering = Arc::new(SteeringQueues::new());
     let cancel = handle
@@ -9622,6 +10199,453 @@ mod scheduler_pure_tests {
 mod configuration_control_tests {
     use super::*;
 
+    fn control_state(dir: &std::path::Path) -> AppState {
+        crate::pin_test_data_home();
+        let core = Core::new(dir.to_path_buf()).unwrap();
+        core.set_sessions_home(dir.join("home"));
+        AppState::new(core)
+    }
+
+    // ---- remembering an approval (finding 02) ------------------------------
+
+    /// Put a gate into a session's pending map the way `HttpApprover` does,
+    /// so the answer path can be exercised without a provider.
+    fn park_gate(handle: &Arc<SessionHandle>, tool: &str, args_json: &str) -> String {
+        let id = uuid::Uuid::now_v7().to_string();
+        let (respond, _rx) = oneshot::channel();
+        handle
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                id.clone(),
+                ApprovalRequest {
+                    id: id.clone(),
+                    tool: tool.into(),
+                    args_json: args_json.into(),
+                    reason: "needs approval".into(),
+                    requested_at: chrono::Utc::now(),
+                    respond: Arc::new(Mutex::new(Some(respond))),
+                },
+            );
+        id
+    }
+
+    async fn answer_json(
+        state: &AppState,
+        session: &str,
+        req: &str,
+        body: ApprovalBody,
+    ) -> serde_json::Value {
+        let response = answer_approval(
+            State(state.clone()),
+            axum::extract::Path((session.to_string(), req.to_string())),
+            Json(body),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    /// The mechanism `08-permissions.md` has described since the engine
+    /// shipped, and which had no caller on any surface until now.
+    #[tokio::test]
+    async fn remembering_an_approval_writes_a_scoped_rule_that_applies_at_once() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core.clone());
+        let session = core.start_session().await.unwrap();
+        let id = session.header().unwrap().session_id.clone();
+        let handle = register_handle(
+            &state,
+            id.clone(),
+            session,
+            core.cwd().clone(),
+            core.clone(),
+        );
+
+        let req = park_gate(&handle, "bash", r#"{"command":"cargo test --lib"}"#);
+        let json = answer_json(
+            &state,
+            &id,
+            &req,
+            ApprovalBody {
+                approve: true,
+                remember: true,
+            },
+        )
+        .await;
+        assert_eq!(json["approved"], true);
+        assert_eq!(json["learned_rule"], "+bash(cargo *)");
+        assert!(json["learn_error"].is_null(), "{json}");
+
+        // The next engine build sees it, with no restart.
+        let engine = core
+            .build_permission_engine(&core.extra_allow_snapshot())
+            .unwrap();
+        assert!(matches!(
+            engine.evaluate(
+                "bash",
+                &serde_json::json!({ "command": "cargo build" }),
+                vak_permission::Mode::WorkspaceWrite,
+                core.cwd()
+            ),
+            vak_permission::Decision::Allow
+        ));
+    }
+
+    /// A call that cannot be narrowed safely is still approved — the run is
+    /// waiting on it — and simply not remembered, with the reason reported.
+    #[tokio::test]
+    async fn a_call_that_cannot_be_narrowed_is_approved_but_not_remembered() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core.clone());
+        let session = core.start_session().await.unwrap();
+        let id = session.header().unwrap().session_id.clone();
+        let handle = register_handle(
+            &state,
+            id.clone(),
+            session,
+            core.cwd().clone(),
+            core.clone(),
+        );
+
+        let req = park_gate(&handle, "bash", r#"{"command":"echo $(whoami)"}"#);
+        let json = answer_json(
+            &state,
+            &id,
+            &req,
+            ApprovalBody {
+                approve: true,
+                remember: true,
+            },
+        )
+        .await;
+        assert_eq!(json["approved"], true, "the gate is still answered");
+        assert!(json["learned_rule"].is_null());
+        assert!(
+            json["learn_error"]
+                .as_str()
+                .unwrap()
+                .contains("cannot be narrowed"),
+            "{json}"
+        );
+        assert!(core.extra_allow_snapshot().is_empty());
+    }
+
+    /// Remembering a refusal would be a deny rule, which is a different and
+    /// much heavier decision than answering one gate.
+    #[tokio::test]
+    async fn a_refusal_is_never_remembered() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core.clone());
+        let session = core.start_session().await.unwrap();
+        let id = session.header().unwrap().session_id.clone();
+        let handle = register_handle(
+            &state,
+            id.clone(),
+            session,
+            core.cwd().clone(),
+            core.clone(),
+        );
+
+        let req = park_gate(&handle, "bash", r#"{"command":"rm -rf /"}"#);
+        let json = answer_json(
+            &state,
+            &id,
+            &req,
+            ApprovalBody {
+                approve: false,
+                remember: true,
+            },
+        )
+        .await;
+        assert_eq!(json["approved"], false);
+        assert!(json["learned_rule"].is_null());
+        assert!(core.extra_allow_snapshot().is_empty());
+    }
+
+    // ---- unattended runs (findings 08 and 09) ------------------------------
+
+    /// A gate raised where nobody is subscribed used to emit an SSE event
+    /// into the void and then block on `rx.await` forever, holding the
+    /// session handle open until the process restarted.
+    #[tokio::test]
+    async fn an_unattended_http_approver_refuses_instead_of_waiting() {
+        let (events_tx, _rx) = broadcast::channel(4);
+        let approver = HttpApprover {
+            events_tx,
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            session_id: "s".into(),
+            activity_buffer: Arc::new(Mutex::new(Vec::new())),
+            answerable: false,
+        };
+        assert!(!Approver::answerable(&approver));
+        // Returns immediately; without the guard this would block until the
+        // 15-minute deadline, which the test would never reach.
+        assert!(!approver.approve("bash", "{}", "needs approval").await);
+    }
+
+    /// `Core::approver_answerable` is stamped before a run and the approver
+    /// is installed at dispatch. They used to be independent, with a comment
+    /// asking hosts to keep them in step; the scheduler did not. A
+    /// disagreement is now corrected in favour of the approver and recorded.
+    #[tokio::test]
+    async fn a_stamped_answerability_loses_to_the_installed_approver() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+
+        // Default is "attended"; AutoDeny says otherwise.
+        assert!(core.approver_answerable());
+        let corrected = core.clone().with_approver(&vak_agent::AutoDeny);
+        assert!(!corrected.approver_answerable());
+
+        // And the other direction, for a surface that stamped false.
+        let stamped = core.clone().with_approver_answerable(false);
+        assert!(
+            stamped
+                .with_approver(&vak_agent::AutoApprove)
+                .approver_answerable()
+        );
+    }
+
+    // ---- gateway approval policy (finding 01) ------------------------------
+
+    /// The setting was readable on three screens and writable nowhere, which
+    /// is why every `capability_unreachable` in the audit log had a remedy
+    /// no surface could perform.
+    #[tokio::test]
+    async fn forwarding_can_be_turned_on_and_survives_a_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = control_state(dir.path());
+        assert_eq!(state.gateway.approvals_mode(), "deny");
+
+        let response = put_gateway_approvals(
+            State(state.clone()),
+            Json(GatewayApprovalsBody {
+                mode: "forward".into(),
+                approver: Some("telegram:12345".into()),
+                timeout_secs: Some(60),
+                scope: None,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Live, without a restart.
+        assert_eq!(state.gateway.approvals_mode(), "forward");
+        assert_eq!(
+            state.gateway.approver_target().as_deref(),
+            Some("telegram:12345")
+        );
+        assert_eq!(state.gateway.approval_timeout().as_secs(), 60);
+
+        // And on disk, so the next process starts the same way.
+        let reloaded = vak_config::load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(reloaded.gateway.approvals, "forward");
+        assert_eq!(reloaded.gateway.approver.as_deref(), Some("telegram:12345"));
+    }
+
+    /// The loader degrades an unbacked `forward` to `deny` with a warning,
+    /// which is right for a bad file and wrong for a button press: the
+    /// operator would see success and get the opposite setting.
+    #[tokio::test]
+    async fn forwarding_without_a_chat_is_refused_rather_than_silently_denied() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = control_state(dir.path());
+        for approver in [None, Some("not-a-chat-address".to_string())] {
+            let response = put_gateway_approvals(
+                State(state.clone()),
+                Json(GatewayApprovalsBody {
+                    mode: "forward".into(),
+                    approver,
+                    timeout_secs: None,
+                    scope: None,
+                }),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+        assert_eq!(state.gateway.approvals_mode(), "deny", "nothing changed");
+    }
+
+    /// Going back to `deny` must not leave the old target behind for a later
+    /// `forward` to pick up silently.
+    #[tokio::test]
+    async fn returning_to_deny_clears_the_approver() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = control_state(dir.path());
+        let ok = |body| put_gateway_approvals(State(state.clone()), Json(body));
+        assert_eq!(
+            ok(GatewayApprovalsBody {
+                mode: "forward".into(),
+                approver: Some("telegram:1".into()),
+                timeout_secs: None,
+                scope: None,
+            })
+            .await
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            ok(GatewayApprovalsBody {
+                mode: "deny".into(),
+                approver: None,
+                timeout_secs: None,
+                scope: None,
+            })
+            .await
+            .status(),
+            StatusCode::OK
+        );
+        assert!(state.gateway.approver_target().is_none());
+        let reloaded = vak_config::load_with_trust(dir.path(), true).unwrap();
+        assert!(reloaded.gateway.approver.is_none());
+    }
+
+    // ---- permission rules (finding 02) -------------------------------------
+
+    #[tokio::test]
+    async fn rules_are_written_validated_and_applied_to_the_next_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = control_state(dir.path());
+        let args = serde_json::json!({ "command": "rm -rf /" });
+
+        let response = put_permission_rules(
+            State(state.clone()),
+            Json(PermissionRulesBody {
+                allow: None,
+                ask: None,
+                deny: Some(vec!["Bash(rm *)".into()]),
+                scope: None,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let engine = state.core.build_permission_engine(&[]).unwrap();
+        assert!(matches!(
+            engine.evaluate(
+                "bash",
+                &args,
+                vak_permission::Mode::FullAccess,
+                state.core.cwd()
+            ),
+            vak_permission::Decision::Deny { .. }
+        ));
+    }
+
+    /// A half-applied rule set is a permission decision nobody chose, so one
+    /// bad spec rejects the whole request and writes nothing.
+    #[tokio::test]
+    async fn one_malformed_rule_rejects_the_whole_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = control_state(dir.path());
+        let response = put_permission_rules(
+            State(state.clone()),
+            Json(PermissionRulesBody {
+                allow: None,
+                ask: None,
+                deny: Some(vec!["Bash(git *)".into(), "Bash((((".into()]),
+                scope: None,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let (_, _, deny) = state.core.effective_permission_rules();
+        assert!(deny.is_empty(), "nothing may be written: {deny:?}");
+    }
+
+    // ---- global writes shadowed by a project pin (finding 07) --------------
+
+    /// The project layer merges last, so a project pin wins. Applying the
+    /// global value anyway made the running process disagree with what the
+    /// files resolve to — until a restart put it back, which read as the
+    /// operator's change being forgotten.
+    /// `VAK_HOME` has no scope smaller than the process, so the pinned test
+    /// data home — and with it `global_path()` — is shared by every test in
+    /// this binary. A test that writes the global layer must put it back, or
+    /// it silently changes the baseline every later test inherits.
+    struct GlobalLayerGuard(Option<String>);
+
+    impl GlobalLayerGuard {
+        fn take() -> Self {
+            let path = vak_config::global_path().expect("global path");
+            GlobalLayerGuard(std::fs::read_to_string(path).ok())
+        }
+    }
+
+    impl Drop for GlobalLayerGuard {
+        fn drop(&mut self) {
+            let Some(path) = vak_config::global_path() else {
+                return;
+            };
+            match &self.0 {
+                Some(text) => {
+                    let _ = std::fs::write(&path, text);
+                }
+                None => {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_global_write_under_a_project_pin_persists_without_taking_effect() {
+        crate::pin_test_data_home();
+        let _restore = GlobalLayerGuard::take();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".vak")).unwrap();
+        std::fs::write(
+            dir.path().join(".vak/config.toml"),
+            "permission_mode = \"read-only\"\n",
+        )
+        .unwrap();
+        vak_core::trust::record(dir.path()).unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core.clone());
+        assert_eq!(
+            core.effective_permission_mode(),
+            vak_config::PermissionMode::ReadOnly
+        );
+
+        let response = patch_global_config(
+            State(state.clone()),
+            Json(ConfigPatch {
+                permission_mode: Some("full-access".into()),
+                ..Default::default()
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        assert_eq!(
+            core.effective_permission_mode(),
+            vak_config::PermissionMode::ReadOnly,
+            "the project pin still decides what this process runs at"
+        );
+        let global = vak_config::load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(
+            global.permission_mode,
+            vak_config::PermissionMode::ReadOnly,
+            "and what the files resolve to agrees"
+        );
+    }
+
     #[tokio::test]
     async fn cross_process_mode_refresh_revokes_live_capability_before_apply() {
         let dir = tempfile::tempdir().unwrap();
@@ -9690,7 +10714,7 @@ mod configuration_control_tests {
         core.set_sessions_home(dir.path().join("home"));
         let state = AppState::new(core.clone());
 
-        let status = patch_config(
+        let response = patch_config(
             State(state.clone()),
             Json(ConfigPatch {
                 memory_write_enabled: Some(false),
@@ -9698,7 +10722,7 @@ mod configuration_control_tests {
             }),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::OK);
 
         assert!(
             !core.effective_memory_write_enabled(),
@@ -9728,7 +10752,7 @@ mod configuration_control_tests {
         let state = AppState::new(core.clone());
         assert!(core.effective_subagents(), "default is on");
 
-        let status = patch_config(
+        let response = patch_config(
             State(state.clone()),
             Json(ConfigPatch {
                 subagents: Some(false),
@@ -9736,7 +10760,7 @@ mod configuration_control_tests {
             }),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::OK);
         assert!(
             !core.effective_subagents(),
             "must apply live without a restart"

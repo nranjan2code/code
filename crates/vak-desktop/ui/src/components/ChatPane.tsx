@@ -220,6 +220,17 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
         <button class="btn primary" onClick={() => void approve(props.item.id, true, props.sessionId)}>
           Allow once
         </button>
+        {/* "Allow once" was the only affirmative answer, so the same
+            approval came back every turn. This writes the narrowest rule
+            covering this call into the project's own rule file; the
+            transcript reports exactly which. */}
+        <button
+          class="btn"
+          title="Allow, and stop asking for calls like this one"
+          onClick={() => void approve(props.item.id, true, props.sessionId, true)}
+        >
+          Always allow this
+        </button>
         <button class="btn danger" onClick={() => void approve(props.item.id, false, props.sessionId)}>
           Deny
         </button>

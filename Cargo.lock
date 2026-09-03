@@ -6084,6 +6084,7 @@ dependencies = [
  "vak-hooks",
  "vak-llm",
  "vak-ops",
+ "vak-permission",
  "vak-plugin",
  "vak-session",
  "vak-store",

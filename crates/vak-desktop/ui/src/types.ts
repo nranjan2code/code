@@ -262,6 +262,13 @@ export interface ConfigSnapshot {
   max_tokens: number;
   max_turns: number;
   permission_mode: "ReadOnly" | "WorkspaceWrite" | "FullAccess";
+  /// How an `Ask` decision is resolved. Separate from the permission mode:
+  /// it never widens the boundary or switches off the sandbox, it only
+  /// decides who answers the gate.
+  approval_mode: "ask" | "approve-safe" | "auto-approve";
+  sandbox: string;
+  /// The rule lists the engine evaluates, effective across all layers.
+  permissions: { allow: string[]; ask: string[]; deny: string[] };
   subagents: boolean;
   max_retries: number;
   retry_base_backoff_ms: number;

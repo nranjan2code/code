@@ -295,11 +295,20 @@ function AttentionQueue(props: {
 /// navigate to unblock it is the whole cost of the gate.
 function ApprovalGates(props: { approvals: PendingApproval[]; onAnswered: () => void }) {
   const [busyId, setBusyId] = createSignal("");
-  const answer = async (a: PendingApproval, approve: boolean) => {
+  /// `remember` persists the narrowest rule that covers this call, so the
+  /// same shape stops asking. It never blocks the answer: the run is already
+  /// waiting, and a rule that could not be derived is reported afterwards
+  /// rather than turning an approval into a refusal.
+  const answer = async (a: PendingApproval, approve: boolean, remember = false) => {
     setBusyId(a.request_id);
     try {
-      await api.answer(a.session_id, a.request_id, approve);
+      const result = await api.answer(a.session_id, a.request_id, approve, remember);
       pushToast("info", `${approve ? "Allowed" : "Refused"} — ${a.tool}`);
+      if (result.learned_rule) {
+        pushToast("info", `Won't ask again for ${result.learned_rule}`);
+      } else if (result.learn_error) {
+        pushToast("alert", `Allowed, but not remembered: ${result.learn_error}`);
+      }
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -334,6 +343,14 @@ function ApprovalGates(props: { approvals: PendingApproval[]; onAnswered: () => 
               </details>
               <div class="row-gap">
                 <button class="approve" disabled={busyId() === a.request_id} onClick={() => answer(a, true)}>Approve</button>
+                <button
+                  class="approve"
+                  disabled={busyId() === a.request_id}
+                  title="Approve, and add a rule so calls like this one stop asking"
+                  onClick={() => answer(a, true, true)}
+                >
+                  Approve, don’t ask again
+                </button>
                 <button class="danger" disabled={busyId() === a.request_id} onClick={() => answer(a, false)}>Deny</button>
                 <span class="spacer" />
                 <button class="ghost small" onClick={() => navigate(`#/sessions/${a.session_id}`)}>Read the session</button>
