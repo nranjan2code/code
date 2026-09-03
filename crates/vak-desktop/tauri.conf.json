@@ -3,7 +3,7 @@
   "productName": "Vak",
   "identifier": "dev.vak.desktop",
   "build": {
-    "frontendDist": "./ui/dist"
+    "frontendDist": "../vak-client-ui/dist"
   },
   "app": {
     "windows": [
@@ -12,8 +12,8 @@
         "visible": false,
         "width": 1440,
         "height": 900,
-        "minWidth": 940,
-        "minHeight": 600
+        "minWidth": 380,
+        "minHeight": 480
       }
     ],
     "security": {

@@ -1726,7 +1726,7 @@ fn compose_prompt(text: &str, attachments: &[InboundAttachment]) -> vak_llm::Mes
 /// `AutoDeny`. In `forward` mode the gate is announced on the approver
 /// surface and resolved by a yes/no reply; timeout or silence fails closed.
 struct GatewayApprover {
-    events_tx: tokio::sync::broadcast::Sender<AgentEvent>,
+    events_tx: crate::events::EventBus,
     state: Arc<GatewayState>,
     core: Core,
     session_id: String,

@@ -14,13 +14,18 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-/// `Ok(())` when dist/ was built from exactly the sources on disk.
+/// `Ok(())` when `dist` was built from exactly the sources on disk.
 ///
-/// A missing manifest is accepted: a checkout whose dist/ predates the
+/// `dist` is a parameter because one source tree now produces two bundles
+/// (docs/design/48-web-client.md): `dist/` for the Tauri shell and
+/// `dist-web/` for the copy `vak-server` embeds under `/app`. Both need the
+/// same staleness guard, against the same sources.
+///
+/// A missing manifest is accepted: a checkout whose bundle predates the
 /// manifest, or a vendored copy, must still build. The check tightens on its
 /// own the first time anyone runs `npm run build`.
-fn check_bundle_matches_source(ui: &Path) -> Result<(), String> {
-    let manifest_path = ui.join("dist/.src-manifest");
+fn check_bundle_matches_source(ui: &Path, dist: &str) -> Result<(), String> {
+    let manifest_path = ui.join(dist).join(".src-manifest");
     let Ok(manifest) = std::fs::read_to_string(&manifest_path) else {
         return Ok(());
     };
@@ -65,7 +70,7 @@ fn check_bundle_matches_source(ui: &Path) -> Result<(), String> {
     }
     stale.sort();
     Err(format!(
-        "dist is stale — the shipped frontend would not match its source ({})",
+        "{dist} is stale — the shipped frontend would not match its source ({})",
         stale.join(", ")
     ))
 }

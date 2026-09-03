@@ -166,6 +166,77 @@ pub struct FileConfig {
     pub heartbeat: HeartbeatSettings,
     #[serde(default)]
     pub feeds: FeedSettings,
+    #[serde(default)]
+    pub server: ServerSettings,
+}
+
+/// How the HTTP surface is exposed (docs/design/48-web-client.md §4.2).
+///
+/// PRIVILEGED, in full. Every key here either widens what the network can
+/// reach or relaxes a check that exists to stop it: `bind` decides which
+/// interface answers at all, `trusted_hosts` decides which `Host` headers
+/// are accepted (the DNS-rebinding defence), and `web.terminal` decides
+/// whether a remote caller can reach a real shell. A cloned repository
+/// setting any of these would be handing itself the machine.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct ServerSettings {
+    /// Interface to bind. Default `127.0.0.1`.
+    pub bind: Option<String>,
+    /// `Host` headers accepted besides loopback names. Exact matches only —
+    /// a wildcard here is a rebinding hole with extra steps.
+    pub trusted_hosts: Option<Vec<String>>,
+    /// Public origin when behind a TLS-terminating proxy, e.g.
+    /// `https://vak.example.com`. Enables `Secure` on the session cookie.
+    pub public_url: Option<String>,
+    /// Session cookie lifetime. Default 168 (one week); a public
+    /// deployment should shorten it considerably.
+    pub session_ttl_hours: Option<u64>,
+    /// Directories the workspace picker may browse. Default: the user's
+    /// home directory.
+    pub workspace_roots: Option<Vec<String>>,
+    #[serde(default)]
+    pub web: WebSettings,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct WebSettings {
+    /// Serve a real PTY over the web client. Default false: a shell over
+    /// HTTP is remote code execution, and unlike every other effect in this
+    /// product it is not mediated by the permission engine.
+    pub terminal: Option<bool>,
+    /// Refuse the terminal to non-loopback hosts even when it is enabled.
+    /// Default true.
+    pub terminal_requires_loopback: Option<bool>,
+}
+
+/// Resolved HTTP exposure settings.
+#[derive(Debug, Clone)]
+pub struct ServerResolved {
+    pub bind: String,
+    pub trusted_hosts: Vec<String>,
+    pub public_url: Option<String>,
+    pub session_ttl_hours: u64,
+    pub workspace_roots: Vec<std::path::PathBuf>,
+    pub web_terminal: bool,
+    pub web_terminal_requires_loopback: bool,
+}
+
+impl ServerResolved {
+    /// Whether `bind` reaches beyond this machine's loopback interface.
+    pub fn binds_publicly(&self) -> bool {
+        !matches!(self.bind.as_str(), "127.0.0.1" | "::1" | "localhost")
+    }
+
+    /// Cookies may only carry `Secure` when the browser actually reached us
+    /// over TLS; setting it on plain http makes the browser drop the cookie
+    /// and the session silently never persists.
+    pub fn cookie_is_secure(&self) -> bool {
+        self.public_url
+            .as_deref()
+            .is_some_and(|url| url.starts_with("https://"))
+    }
 }
 
 /// Cross-session recall (docs/design/23-memory.md). Read-only and
@@ -802,6 +873,7 @@ pub struct Config {
     pub tools: ToolsResolved,
     pub heartbeat: HeartbeatResolved,
     pub feeds: FeedResolved,
+    pub server: ServerResolved,
     pub warnings: Vec<String>,
 }
 
@@ -1160,6 +1232,18 @@ impl Default for Config {
                 default_check_interval: "30m".into(),
                 max_items_per_feed: 500,
                 dedup_window_days: 90,
+            },
+            server: ServerResolved {
+                // Loopback, no trusted hosts, no terminal over the web: a
+                // default install is reachable only from the machine it runs
+                // on, and every step away from that is deliberate.
+                bind: "127.0.0.1".into(),
+                trusted_hosts: Vec::new(),
+                public_url: None,
+                session_ttl_hours: 168,
+                workspace_roots: Vec::new(),
+                web_terminal: false,
+                web_terminal_requires_loopback: true,
             },
             warnings: Vec::new(),
         }
@@ -2114,7 +2198,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
 
 /// Keys a PROJECT-level config may not set when its workspace has not been
 /// marked trusted: they grant execution or redirect credentials.
-const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox, update, capabilities, intent.autonomy, intent.escalate=cloud";
+const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.escalate=cloud";
 
 pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
     let mut warnings = Vec::new();
@@ -2178,6 +2262,12 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             if fc.intent.escalate.as_deref() == Some("cloud") {
                 fc.intent.escalate = None;
             }
+            // Network exposure is not a project's decision to make. `bind`
+            // chooses which interface answers, `trusted_hosts` relaxes the
+            // DNS-rebinding defence, and `web.terminal` opens a shell to
+            // whoever can reach the port — a cloned repository that could
+            // set these would be handing itself the machine.
+            fc.server = ServerSettings::default();
             warnings.push(format!(
                 "project .vak/config.toml is not trusted for this workspace; \
                  ignored privileged keys ({PRIVILEGED_KEYS_NOTICE}). \
@@ -2572,6 +2662,51 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         .unwrap_or_else(|| "30m".into());
     cfg.feeds.max_items_per_feed = fs.max_items_per_feed.unwrap_or(500);
     cfg.feeds.dedup_window_days = fs.dedup_window_days.unwrap_or(90);
+
+    // ---- [server] (docs/design/48-web-client.md §4.2) --------------------
+    //
+    // Defaults reproduce the pre-web behaviour exactly: loopback only, no
+    // trusted hosts, no terminal over the web. Every step away from that is
+    // something an operator typed on purpose.
+    let sv = &merged.server;
+    cfg.server.bind = sv
+        .bind
+        .clone()
+        .map(|b| b.trim().to_string())
+        .filter(|b| !b.is_empty())
+        .unwrap_or_else(|| "127.0.0.1".into());
+    cfg.server.trusted_hosts = sv
+        .trusted_hosts
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|h| h.trim().to_ascii_lowercase())
+        .filter(|h| !h.is_empty())
+        .collect();
+    if cfg.server.trusted_hosts.iter().any(|h| h.contains('*')) {
+        cfg.server.trusted_hosts.retain(|h| !h.contains('*'));
+        cfg.warnings.push(
+            "server.trusted_hosts entries containing '*' were ignored: a wildcard \
+             defeats the DNS-rebinding check the list exists to enforce"
+                .into(),
+        );
+    }
+    cfg.server.public_url = sv
+        .public_url
+        .clone()
+        .map(|u| u.trim().trim_end_matches('/').to_string())
+        .filter(|u| !u.is_empty());
+    cfg.server.session_ttl_hours = sv.session_ttl_hours.filter(|h| *h > 0).unwrap_or(168);
+    cfg.server.workspace_roots = sv
+        .workspace_roots
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .collect();
+    cfg.server.web_terminal = sv.web.terminal.unwrap_or(false);
+    cfg.server.web_terminal_requires_loopback = sv.web.terminal_requires_loopback.unwrap_or(true);
     for (name, hook) in merged.gateway.outbound.webhooks {
         if hook.url.trim().is_empty() {
             cfg.warnings.push(format!(

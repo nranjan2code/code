@@ -180,7 +180,7 @@ for approvals/inbox), each with Approve (workspace + route pickers) /
 Deny. The existing binding list gains a chip showing allowlist status per
 target instead of pretending the concept doesn't exist there.
 
-**Desktop Settings** (`crates/vak-desktop/ui`, extends the Telegram
+**Desktop Settings** (`crates/vak-client-ui`, extends the Telegram
 section): once a bot token is configured, a "Chat access" subsection
 lists pending/allowed chats the same way, so a single-user desktop setup
 doesn't require opening the web admin console just to approve their own

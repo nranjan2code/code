@@ -544,6 +544,12 @@ pub enum Surface {
     Desktop,
     /// An HTTP/SSE API client driving the server directly.
     Server,
+    /// The workspace client running in a browser
+    /// (docs/design/48-web-client.md). Distinct from `Server` — that is a
+    /// program calling the API, this is a person looking at a screen, and
+    /// the difference decides delivery shape, approval routing, and what a
+    /// ledger entry means when someone asks who did this.
+    Web,
     /// A chat gateway, named by its transport (`telegram`, `discord`, ...).
     Chat { channel: String },
     /// An unattended run (heartbeat, scheduled task) with no live reader.
@@ -563,6 +569,7 @@ impl Surface {
             Surface::Cli => "cli",
             Surface::Desktop => "desktop",
             Surface::Server => "server",
+            Surface::Web => "web",
             Surface::Chat { channel } => channel,
             Surface::Background => "background",
             Surface::Subagent => "subagent",
@@ -588,6 +595,11 @@ already see for themselves."
                 .to_string(),
             Surface::Server => "HTTP API. Your reply is consumed by a client \
 program over HTTP/SSE, which may render it any way it likes, or not at all."
+                .to_string(),
+            Surface::Web => "web client. Your reply is rendered as markdown in \
+a browser, possibly on a phone and possibly far from the machine you are \
+working on. The diff, editor, and terminal panes may not be open or may not \
+exist, so do not assume the reader can already see what you changed — say it."
                 .to_string(),
             Surface::Chat { channel } => format!(
                 "chat gateway ({channel}). Your reply is read as a message in a \

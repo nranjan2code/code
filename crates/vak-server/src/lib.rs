@@ -70,8 +70,10 @@ pub(crate) fn pin_test_data_home() {
 
 mod admin;
 mod admin_ui;
+mod client_ui;
 mod channels;
 mod core_pool;
+mod embedded_ui;
 mod delivery;
 mod events;
 mod feeds;
@@ -82,6 +84,26 @@ mod projection;
 mod rate_limit;
 mod service_control;
 pub mod surfaces;
+mod web;
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+pub(crate) mod test_support {
+    /// A throwaway `AppState` rooted in a temp dir.
+    ///
+    /// `set_sessions_home` is not optional: without it `sessions_home()`
+    /// falls back to the developer's real data home, and `AppState::new`
+    /// loads (and can seed) the gateway allowlist store there.
+    pub(crate) fn state() -> crate::AppState {
+        let dir = tempfile::tempdir().unwrap();
+        let core = vak_core::Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        // The TempDir guard is deliberately leaked: these states outlive
+        // the call and a removed directory would fail reads mid-test.
+        std::mem::forget(dir);
+        crate::AppState::new(core)
+    }
+}
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -132,7 +154,9 @@ pub(crate) struct SessionHandle {
     /// Cancel for the CURRENT run only; replaced with a fresh token when a
     /// run ends so one `/cancel` doesn't poison every later run.
     pub(crate) cancel: Arc<std::sync::Mutex<CancellationToken>>,
-    pub(crate) events_tx: broadcast::Sender<AgentEvent>,
+    /// Live events for the MAIN transcript, with replay so a dropped
+    /// connection can resume rather than lose the gap (events::EventBus).
+    pub(crate) events_tx: events::EventBus,
     /// Pending approval gates scoped to THIS session — a client holding
     /// session A can never resolve session B's approvals.
     pub(crate) pending: Arc<Mutex<HashMap<String, ApprovalRequest>>>,
@@ -146,7 +170,9 @@ pub(crate) struct SessionHandle {
     pub(crate) subscribed: Arc<tokio::sync::Notify>,
     /// Side-chat stream + cancel: branched turns that read the session
     /// context but never land on the main chain.
-    pub(crate) side_events_tx: broadcast::Sender<AgentEvent>,
+    /// Live events for the `/btw` side branch. Same bus type as the
+    /// main transcript so both resume identically.
+    pub(crate) side_events_tx: events::EventBus,
     /// Last time a request resolved this handle, for idle eviction.
     pub(crate) last_touched: Mutex<std::time::Instant>,
     pub(crate) side_cancel: Arc<std::sync::Mutex<CancellationToken>>,
@@ -187,6 +213,16 @@ pub struct AppState {
     pub(crate) store: Option<vak_store::Store>,
     /// Expected auth token (login endpoint compares against it).
     pub(crate) auth_token: Arc<String>,
+    /// Workspace the browser client currently has open, when it has moved
+    /// away from the one this process started in (docs/design/48-web-client.md
+    /// §5). `None` means "the process's own workspace".
+    ///
+    /// Only *new* sessions are affected: a session freezes its `Core` at
+    /// creation (invariant 17), so switching the active workspace never
+    /// retargets work already under way — it decides where the next task
+    /// will live, which is exactly what an operator switching projects
+    /// means by it.
+    pub(crate) active_core: Arc<Mutex<Option<Core>>>,
 }
 
 #[derive(Clone)]
@@ -231,7 +267,18 @@ impl AppState {
             hub,
             store,
             auth_token,
+            active_core: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// The `Core` new work should run under: the browser's chosen
+    /// workspace if it has picked one, else this process's own.
+    pub(crate) fn active_core(&self) -> Core {
+        self.active_core
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .unwrap_or_else(|| self.core.clone())
     }
 
     /// Force-enable the gateway (`serve --gateway`) before the state is
@@ -353,7 +400,7 @@ impl ApprovalRequest {
 const HTTP_APPROVAL_TIMEOUT: Duration = Duration::from_secs(900);
 
 struct HttpApprover {
-    events_tx: broadcast::Sender<AgentEvent>,
+    events_tx: events::EventBus,
     pending: Arc<Mutex<HashMap<String, ApprovalRequest>>>,
     /// Owning session, so admin-console surfaces can attribute gates.
     session_id: String,
@@ -702,6 +749,22 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/onboarding/trust", post(onboarding_trust))
         .route("/onboarding/first-task", post(onboarding_first_task))
+        // ---- browser auth (docs/design/48-web-client.md §4.3) -----------
+        //
+        // ONE login for every browser surface — the workspace client and
+        // the operations console share this exchange and this cookie.
+        // These replace `/admin/login` and `/admin/logout`, which were
+        // removed rather than kept alongside: two endpoints against one
+        // cookie is two contracts that must agree forever (invariant 30).
+        .route("/auth/login", post(web::login))
+        .route("/auth/logout", post(web::logout))
+        .route("/auth/session", get(web::session_status))
+        // ---- the workspace client's own host surface --------------------
+        .route("/host", get(web::host_info))
+        .route("/host/events", get(web::host_events))
+        .route("/workspaces", get(web::list_workspaces))
+        .route("/workspaces/open", post(web::open_workspace))
+        .route("/fs/dirs", get(web::list_dirs))
         .route("/backup/export", post(backup_export))
         .route("/backup/import", post(backup_import))
         .route("/digest", get(digest_report))
@@ -715,6 +778,7 @@ fn router_with_state(state: AppState) -> Router {
         .merge(feeds::routes())
         .merge(admin::routes())
         .merge(admin_ui::routes())
+        .merge(client_ui::routes())
         .with_state(state)
 }
 
@@ -2147,7 +2211,11 @@ pub fn secured_router_with_port(core: Core, force_gateway: bool, port: u16) -> (
             rate_limit::rate_limit_layer,
         ))
         .layer(axum::middleware::from_fn_with_state(
-            (token.clone(), state.core.sessions_home()),
+            AuthPolicy {
+                token: token.clone(),
+                home: state.core.sessions_home(),
+                trusted_hosts: state.core.config().server.trusted_hosts.clone(),
+            },
             require_bearer,
         ))
         .layer(cors);
@@ -2263,10 +2331,24 @@ fn auth_exempt_path(path: &str) -> bool {
     path == "/health"
         || path == "/admin"
         || path == "/admin/"
-        || path == "/admin/login"
         || path == "/admin/favicon.svg"
         || path == "/admin/vak-icon.png"
         || path.starts_with("/admin/assets/")
+        // The workspace client's shell and its hashed assets carry no data
+        // and must load before a session exists — the login form is part of
+        // the bundle. Every route it then calls is authenticated.
+        || path == "/app"
+        || path == "/app/"
+        || path == "/app/vak-icon.png"
+        || path == "/app/manifest.webmanifest"
+        || path == "/app/sw.js"
+        || path.starts_with("/app/assets/")
+        // The login exchange itself, and the probe that decides whether to
+        // show it. `/auth/session` answers `{authenticated:false}` rather
+        // than 401 so an unauthenticated client can tell "no session" from
+        // "server unreachable".
+        || path == "/auth/login"
+        || path == "/auth/session"
         || path == "/favicon.ico"
         || path == "/favicon.svg"
 }
@@ -2328,13 +2410,40 @@ mod auth_exempt_path_tests {
     }
 }
 
-/// Reject requests whose `Host` is not loopback.
+/// Whether a `Host` header names this server legitimately.
 ///
-/// The listener binds 127.0.0.1, but that does not stop a page the user
-/// visits from resolving its own domain to 127.0.0.1 and becoming
-/// same-origin with this server. `SameSite=Strict` does not defend against
-/// that — after rebinding, the request is not cross-site. Pinning `Host` to
-/// loopback names is the check that does.
+/// Loopback names always pass. Anything else must be listed verbatim in
+/// `[server] trusted_hosts`, which is a privileged setting an untrusted
+/// project cannot write (docs/design/48-web-client.md §4.2).
+///
+/// This is the DNS-rebinding defence: binding 127.0.0.1 does not stop a
+/// page the user visits from resolving its *own* domain to 127.0.0.1 and
+/// becoming same-origin with this server, and `SameSite=Strict` does not
+/// help once that has happened, because the request is then not cross-site.
+/// Pinning the `Host` name is the check that does — and the reason
+/// `trusted_hosts` takes exact names rather than patterns: a wildcard here
+/// re-opens exactly the hole the list closes.
+fn host_is_trusted(host: Option<&str>, trusted: &[String]) -> bool {
+    if host_is_loopback(host) {
+        return true;
+    }
+    let Some(host) = host else { return true };
+    let name = strip_port(host).to_ascii_lowercase();
+    trusted.iter().any(|allowed| allowed == &name)
+}
+
+/// Host name without its port, leaving a bare IPv6 literal intact.
+fn strip_port(host: &str) -> &str {
+    if let Some(rest) = host.strip_prefix('[') {
+        rest.split_once(']').map_or(rest, |(name, _)| name)
+    } else if host.matches(':').count() > 1 {
+        host
+    } else {
+        host.split_once(':').map_or(host, |(name, _)| name)
+    }
+}
+
+/// Whether `Host` names this machine's own loopback interface.
 fn host_is_loopback(host: Option<&str>) -> bool {
     let Some(host) = host else {
         // Absent entirely: not a browser. Rebinding is a browser attack and
@@ -2346,32 +2455,99 @@ fn host_is_loopback(host: Option<&str>) -> bool {
     };
     // Strip the port without mangling a bare IPv6 literal, which is all
     // colons: `"::1".rsplit_once(':')` yields `"::"`.
-    let host = if let Some(rest) = host.strip_prefix('[') {
-        rest.split_once(']').map_or(rest, |(name, _)| name)
-    } else if host.matches(':').count() > 1 {
-        host
-    } else {
-        host.split_once(':').map_or(host, |(name, _)| name)
-    };
-    matches!(host, "localhost" | "127.0.0.1" | "::1" | "0:0:0:0:0:0:0:1")
+    matches!(
+        strip_port(host),
+        "localhost" | "127.0.0.1" | "::1" | "0:0:0:0:0:0:0:1"
+    )
+}
+
+/// Whether a state-changing request's `Origin` is one of ours.
+///
+/// Cookies alone are not enough to authorize a mutation: a cookie is
+/// attached by the browser to whoever asks, and `SameSite=Strict` covers
+/// the common cases but not a same-site subdomain or a rebound name. So a
+/// mutation carrying a cookie must ALSO carry an `Origin` we recognise.
+///
+/// A request with no `Origin` at all is not a browser form post — browsers
+/// always send one on cross-origin mutations — so it is allowed through
+/// here and still has to satisfy `require_bearer` with a real header
+/// token. That is what keeps curl, the CLI, and the bridges working
+/// without giving a page any new power.
+fn origin_is_trusted(origin: Option<&str>, trusted: &[String]) -> bool {
+    let Some(origin) = origin else { return true };
+    // The Tauri webview's own origins: the desktop is a first-party client
+    // and its scheme is not something an attacker can mint.
+    if matches!(
+        origin,
+        "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost"
+    ) {
+        return true;
+    }
+    let authority = origin
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(origin);
+    host_is_trusted(Some(authority), trusted)
+}
+
+/// What the auth layer needs to know about this deployment's exposure.
+#[derive(Clone)]
+pub(crate) struct AuthPolicy {
+    pub(crate) token: String,
+    pub(crate) home: std::path::PathBuf,
+    /// Non-loopback `Host` names this server answers to (`[server]
+    /// trusted_hosts`). Empty on a default install.
+    pub(crate) trusted_hosts: Vec<String>,
 }
 
 pub(crate) async fn require_bearer(
-    State((token, home)): State<(String, std::path::PathBuf)>,
+    State(policy): State<AuthPolicy>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
+    let AuthPolicy {
+        token,
+        home,
+        trusted_hosts,
+    } = policy;
     let host = req
         .headers()
         .get(axum::http::header::HOST)
         .and_then(|value| value.to_str().ok())
         .or_else(|| req.uri().host());
-    if !host_is_loopback(host) {
+    let loopback = host_is_loopback(host);
+    if !host_is_trusted(host, &trusted_hosts) {
         return (
             StatusCode::MISDIRECTED_REQUEST,
             Json(serde_json::json!({
-                "error": "this server only answers to loopback hostnames",
+                "error": "this server does not answer to that hostname; \
+                          add it to [server] trusted_hosts to allow it",
             })),
+        )
+            .into_response();
+    }
+    // Cross-origin mutations are refused before routing, whatever
+    // credential they carry. See `origin_is_trusted` for why a *missing*
+    // Origin is not treated as a failure.
+    let mutating = !matches!(
+        *req.method(),
+        axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
+    );
+    let origin = req
+        .headers()
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok());
+    if mutating && !origin_is_trusted(origin, &trusted_hosts) {
+        vak_core::security_events::record(
+            &home,
+            vak_core::security_events::EventKind::AuthFailure,
+            "cross_origin_rejected",
+            &format!("origin={} path={}", origin.unwrap_or("<none>"), req.uri().path()),
+            None,
+        );
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "cross-origin request refused" })),
         )
             .into_response();
     }
@@ -2418,19 +2594,30 @@ pub(crate) async fn require_bearer(
     // loopback-only with a token that is either ephemeral per boot or
     // pinned into a 0600 `.env`, and no other channel exists for the one
     // client that needs it.
-    let query_token = req.uri().query().and_then(|q| {
-        q.split('&').find_map(|pair| {
-            let (key, value) = pair.split_once('=')?;
-            if key != "token" {
-                return None;
-            }
-            Some(
-                percent_encoding::percent_decode_str(value)
-                    .decode_utf8_lossy()
-                    .into_owned(),
-            )
+    //
+    // Loopback ONLY. A token in a query string can reach access logs,
+    // `Referer` headers, and browser history; on a loopback server with an
+    // in-process client and no proxy between them, none of those exist.
+    // On any deployment reachable by a real hostname they all do, and the
+    // web client does not need this channel anyway — it is same-origin, so
+    // its cookie covers `EventSource` (docs/design/48-web-client.md §4.3).
+    let query_token = loopback
+        .then(|| {
+            req.uri().query().and_then(|q| {
+                q.split('&').find_map(|pair| {
+                    let (key, value) = pair.split_once('=')?;
+                    if key != "token" {
+                        return None;
+                    }
+                    Some(
+                        percent_encoding::percent_decode_str(value)
+                            .decode_utf8_lossy()
+                            .into_owned(),
+                    )
+                })
+            })
         })
-    });
+        .flatten();
     let provided = header_token.or(cookie_token).or(query_token);
     let ok = provided
         .as_deref()
@@ -2529,8 +2716,8 @@ pub(crate) fn register_handle(
     cwd: PathBuf,
     core: Core,
 ) -> Arc<SessionHandle> {
-    let (events_tx, _) = broadcast::channel(1024);
-    let (side_events_tx, _) = broadcast::channel(1024);
+    let events_tx = events::EventBus::new();
+    let side_events_tx = events::EventBus::new();
     let presentation = Arc::new(Mutex::new(crate::projection::snapshot(&id, &session)));
     let mut presentation_rx = events_tx.subscribe();
     let presentation_state = presentation.clone();
@@ -2556,7 +2743,8 @@ pub(crate) fn register_handle(
         runtime.spawn(async move {
             loop {
                 match presentation_rx.recv().await {
-                    Ok(event) => {
+                    Ok(framed) => {
+                        let event = framed.event;
                         if let Some(projected) =
                             crate::projection::live_event(&observer_id, event.clone())
                         {
@@ -2623,7 +2811,12 @@ pub(crate) fn register_handle(
 async fn create_session(State(state): State<AppState>) -> axum::response::Response {
     use axum::response::IntoResponse;
     refresh_control_plane(&state);
-    let session = match state.core.start_session().await {
+    // The workspace the client currently has open, which on the web is
+    // switchable at runtime (docs/design/48-web-client.md §5). Existing
+    // sessions keep the `Core` they froze at creation (invariant 17); this
+    // only decides where the NEXT task lives.
+    let core = state.active_core();
+    let session = match core.start_session().await {
         Ok(s) => s,
         Err(e) => {
             return (
@@ -2637,13 +2830,7 @@ async fn create_session(State(state): State<AppState>) -> axum::response::Respon
         .header()
         .map(|h| h.session_id.clone())
         .unwrap_or_default();
-    register_handle(
-        &state,
-        id.clone(),
-        session,
-        state.core.cwd().clone(),
-        state.core.clone(),
-    );
+    register_handle(&state, id.clone(), session, core.cwd().clone(), core.clone());
 
     state.hub.emit_session_created(&id, "");
     index_session_later(state.store.clone(), state.core.sessions_home(), id.clone());
@@ -2746,7 +2933,10 @@ async fn attach_session(
 
 /// Sidebar projection over the persisted store: one summary per JSONL file.
 async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), state.core.cwd());
+    // Sessions are stored per workspace, so this follows the workspace the
+    // client has open rather than the one the process started in.
+    let active = state.active_core();
+    let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), active.cwd());
     let archive_map = read_archive(&state.core);
     let deleted_map = read_deleted(&state.core);
     let mut sessions = Vec::new();
@@ -2889,7 +3079,7 @@ fn default_image_mime() -> String {
     "image/png".into()
 }
 
-pub(crate) fn mpsc_to_broadcast(tx: broadcast::Sender<AgentEvent>) -> mpsc::Sender<AgentEvent> {
+pub(crate) fn mpsc_to_broadcast(tx: events::EventBus) -> mpsc::Sender<AgentEvent> {
     let (tx_in, mut rx) = mpsc::channel::<AgentEvent>(512);
     tokio::spawn(async move {
         // Forward into the BROADCAST channel (sync send). Forwarding into
@@ -3961,29 +4151,79 @@ async fn flow_run_graph(
     }
 }
 
+/// The `Last-Event-ID` a reconnecting client sent, if any.
+///
+/// Browsers resend it automatically on their own reconnect; the client also
+/// passes it explicitly when it reopens a stream it tore down itself.
+fn resume_from(headers: &axum::http::HeaderMap) -> Option<u64> {
+    headers
+        .get("last-event-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+}
+
+/// One SSE frame carrying its sequence number, so the client's next
+/// reconnect can name where it got to.
+fn seq_frame(framed: &events::SeqEvent) -> Event {
+    Event::default()
+        .id(framed.seq.to_string())
+        .data(serde_json::to_string(&framed.event).unwrap_or_default())
+}
+
 async fn events_sse(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
     use tokio_stream::StreamExt;
     use tokio_stream::wrappers::BroadcastStream;
 
+    let resume = resume_from(&headers);
     let stream: std::pin::Pin<
         Box<dyn tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
     > = match state.get(&id) {
         Some(h) => {
-            // Subscribe BEFORE notifying so no early events are missed,
-            // then mark the stream open so clients can safely trigger a run.
+            // Subscribe BEFORE reading the replay ring, so an event
+            // published between the two is received live rather than
+            // falling into the gap between them. Duplicates are filtered
+            // below by sequence number; a gap could not be recovered.
             let mut rx = h.events_tx.subscribe();
             let _ = rx.try_recv();
+
+            // What the client missed while it was away. `None` means the
+            // ring no longer reaches back that far, and the client is told
+            // to rebuild from the durable transcript rather than being
+            // handed a stream with a hole in it that it cannot see.
+            let (replay, resync) = match resume {
+                Some(seq) => match h.events_tx.replay_after(seq) {
+                    Some(missed) => (missed, false),
+                    None => (Vec::new(), true),
+                },
+                None => (Vec::new(), false),
+            };
+            let highest_replayed = replay.last().map(|e| e.seq).unwrap_or(0);
+
             h.subscribed.notify_one();
-            let _ = h.events_tx.send(AgentEvent::StreamOpened);
-            Box::pin(BroadcastStream::new(rx).filter_map(|ev| match ev {
-                Ok(agent_event) => Some(Ok(
-                    Event::default().data(serde_json::to_string(&agent_event).unwrap_or_default()),
-                )),
+            h.events_tx.send(AgentEvent::StreamOpened);
+
+            let resync_frame = resync.then(|| {
+                Ok(Event::default()
+                    .event("resync")
+                    .data("{\"reason\":\"events older than the replay window\"}"))
+            });
+            let replayed = replay.into_iter().map(|framed| Ok(seq_frame(&framed)));
+            let live = BroadcastStream::new(rx).filter_map(move |ev| match ev {
+                // Anything at or below what the replay already delivered is
+                // a duplicate of it, not new work.
+                Ok(framed) if framed.seq <= highest_replayed => None,
+                Ok(framed) => Some(Ok(seq_frame(&framed))),
                 Err(_) => Some(Ok(Event::default().data("{\"lagged\":true}"))),
-            }))
+            });
+            Box::pin(
+                tokio_stream::iter(resync_frame)
+                    .chain(tokio_stream::iter(replayed))
+                    .chain(live),
+            )
         }
         None => Box::pin(tokio_stream::once(Ok(
             Event::default().data("{\"error\":\"unknown session\"}")
@@ -4059,7 +4299,7 @@ async fn presentation_events_sse(
             let live_id = id.clone();
             let live =
                 BroadcastStream::new(rx).filter_map(move |event| match event {
-                    Ok(event) => crate::projection::live_event(&live_id, event).map(|projected| {
+                    Ok(framed) => crate::projection::live_event(&live_id, framed.event).map(|projected| {
                         Ok(Event::default()
                             .data(serde_json::to_string(&projected).unwrap_or_default()))
                     }),
@@ -8665,11 +8905,9 @@ async fn side_events_sse(
         Some(h) => {
             let mut rx = h.side_events_tx.subscribe();
             let _ = rx.try_recv();
-            let _ = h.side_events_tx.send(AgentEvent::StreamOpened);
+            h.side_events_tx.send(AgentEvent::StreamOpened);
             Box::pin(BroadcastStream::new(rx).filter_map(|ev| match ev {
-                Ok(agent_event) => Some(Ok(
-                    Event::default().data(serde_json::to_string(&agent_event).unwrap_or_default()),
-                )),
+                Ok(framed) => Some(Ok(seq_frame(&framed))),
                 Err(_) => Some(Ok(Event::default().data("{\"lagged\":true}"))),
             }))
         }
@@ -9680,7 +9918,7 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
             use tokio_stream::wrappers::BroadcastStream;
             let mut stream = BroadcastStream::new(rx);
             while let Some(Ok(ev)) = stream.next().await {
-                if let AgentEvent::RunFinished { summary, .. } = ev {
+                if let AgentEvent::RunFinished { summary, .. } = ev.event {
                     let text =
                         last_assistant_text(&child_handle).unwrap_or_else(|| summary.clone());
                     update_tasks(&st, |map| {
@@ -10685,7 +10923,7 @@ mod configuration_control_tests {
     /// session handle open until the process restarted.
     #[tokio::test]
     async fn an_unattended_http_approver_refuses_instead_of_waiting() {
-        let (events_tx, _rx) = broadcast::channel(4);
+        let events_tx = events::EventBus::new();
         let approver = HttpApprover {
             events_tx,
             pending: Arc::new(Mutex::new(HashMap::new())),

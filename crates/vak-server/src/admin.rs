@@ -16,66 +16,6 @@ use crate::AppState;
 
 pub(crate) const SESSION_COOKIE: &str = "vak_session";
 
-// ---- Auth: POST /admin/login, POST /admin/logout ---------------------------
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct LoginBody {
-    pub token: String,
-}
-
-/// Constant-time token check → HttpOnly session cookie. Browsers need this
-/// because EventSource cannot send Authorization headers.
-///
-/// No `Secure` flag on purpose: this server is loopback-first and plain
-/// http://localhost would silently drop Secure cookies.
-pub(crate) async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Response {
-    use subtle::ConstantTimeEq;
-    let ok: bool = body
-        .token
-        .as_bytes()
-        .ct_eq(state.auth_token.as_bytes())
-        .into();
-    if !ok {
-        let ip = None;
-        vak_core::security_events::record(
-            &state.core.sessions_home(),
-            vak_core::security_events::EventKind::AuthFailure,
-            "admin_login_failed",
-            "invalid token on /admin/login",
-            ip,
-        );
-        state.hub.emit_security("AuthFailure", "admin_login_failed");
-        return (
-            axum::http::StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({
-                "error": "invalid token"
-            })),
-        )
-            .into_response();
-    }
-    (
-        [(
-            axum::http::header::SET_COOKIE,
-            format!(
-                "{}={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800",
-                SESSION_COOKIE, body.token
-            ),
-        )],
-        Json(serde_json::json!({ "ok": true })),
-    )
-        .into_response()
-}
-
-pub(crate) async fn logout() -> Response {
-    (
-        [(
-            axum::http::header::SET_COOKIE,
-            format!("{SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"),
-        )],
-        Json(serde_json::json!({ "ok": true })),
-    )
-        .into_response()
-}
 
 // ---- GET /admin/api/sessions ----------------------------------------------
 
@@ -1436,8 +1376,6 @@ pub(crate) async fn revoke_gateway_allowlist(
 pub(crate) fn routes() -> axum::Router<AppState> {
     use axum::routing::{get, patch, post};
     axum::Router::new()
-        .route("/admin/login", post(login))
-        .route("/admin/logout", post(logout))
         .route("/admin/api/sessions", get(list_sessions_admin))
         .route(
             "/admin/api/sessions/{id}/transcript",
@@ -1513,7 +1451,11 @@ mod tests {
 
     fn authed_app(state: &AppState) -> axum::Router {
         crate::router_with_state(state.clone()).layer(axum::middleware::from_fn_with_state(
-            ((*state.auth_token).clone(), state.core.sessions_home()),
+            crate::AuthPolicy {
+                token: (*state.auth_token).clone(),
+                home: state.core.sessions_home(),
+                trusted_hosts: Vec::new(),
+            },
             crate::require_bearer,
         ))
     }
@@ -1602,6 +1544,11 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 
+    /// One login for every browser surface: the operations console and
+    /// the workspace client share `/auth/login` and one cookie.
+    /// `/admin/login` was REMOVED rather than kept alongside it — two
+    /// endpoints against one cookie is two contracts that must agree
+    /// forever (invariant 30).
     #[tokio::test]
     async fn login_sets_cookie_and_it_authenticates() {
         use axum::http::header;
@@ -1614,7 +1561,7 @@ mod tests {
         // Wrong token → 401.
         let req = Request::builder()
             .method("POST")
-            .uri("/admin/login")
+            .uri("/auth/login")
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(r#"{"token":"wrong"}"#))
             .unwrap();
@@ -1624,7 +1571,7 @@ mod tests {
         // Correct token → 200 + cookie.
         let req = Request::builder()
             .method("POST")
-            .uri("/admin/login")
+            .uri("/auth/login")
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(format!(r#"{{"token":"{token}"}}"#)))
             .unwrap();
@@ -1726,7 +1673,11 @@ mod tests {
 
         let app =
             crate::router_with_state(state.clone()).layer(axum::middleware::from_fn_with_state(
-                ((*state.auth_token).clone(), state.core.sessions_home()),
+                crate::AuthPolicy {
+                    token: (*state.auth_token).clone(),
+                    home: state.core.sessions_home(),
+                    trusted_hosts: Vec::new(),
+                },
                 crate::require_bearer,
             ));
         let req = Request::builder()

@@ -16,7 +16,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-const DESKTOP: &str = "crates/vak-desktop/ui/src/styles.css";
+// One client, two hosts (docs/design/48-web-client.md): the workspace
+// client moved out of vak-desktop so the browser build could share it.
+const DESKTOP: &str = "crates/vak-client-ui/src/styles.css";
 const ADMIN: &str = "crates/vak-admin-ui/src/styles.css";
 
 /// Tokens both surfaces define and must agree on. Surface-specific additions
@@ -121,7 +123,7 @@ fn status_roles_use_one_vocabulary() {
 #[test]
 fn no_token_is_defined_and_never_used() {
     for (label, dir, css_path) in [
-        ("desktop", "crates/vak-desktop/ui/src", DESKTOP),
+        ("desktop", "crates/vak-client-ui/src", DESKTOP),
         ("admin", "crates/vak-admin-ui/src", ADMIN),
     ] {
         let defined = read(css_path);

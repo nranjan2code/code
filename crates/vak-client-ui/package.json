@@ -1,0 +1,32 @@
+{
+  "name": "vak-client-ui",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 1420 --strictPort",
+    "dev:web": "VAK_HOST=web vite --port 1420 --strictPort",
+    "build": "npm run build:tauri && npm run build:web",
+    "build:tauri": "tsc --noEmit && vite build && node scripts/stamp.mjs dist",
+    "build:web": "tsc --noEmit && VAK_HOST=web vite build && node scripts/stamp.mjs dist-web",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-notification": "^2",
+    "@xterm/addon-fit": "^0.10",
+    "@xterm/xterm": "^5",
+    "shiki": "^4.4.3",
+    "solid-js": "^1"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "vite": "^6",
+    "vite-plugin-solid": "^2"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true
+  }
+}

@@ -266,3 +266,163 @@ mod tests {
         }
     }
 }
+
+// ---- per-session replay bus (docs/design/48-web-client.md §4.4) ------------
+
+/// One agent event with the sequence number a client resumes from.
+#[derive(Debug, Clone)]
+pub struct SeqEvent {
+    pub seq: u64,
+    pub event: vak_agent::AgentEvent,
+}
+
+/// A session's live event channel, plus a bounded replay ring.
+///
+/// A bare `tokio::broadcast` gives a late or reconnecting subscriber
+/// nothing: the events it missed are gone, not delayed. On loopback that
+/// is a rare race the client papers over with a ten-second reconciliation
+/// poll. Over a WAN — a laptop lid closing, a phone changing cell, a proxy
+/// idling out a stream — it is the common case, and a run's reply can be
+/// durably logged while the UI still says "Working".
+///
+/// So every event carries a monotonic `seq`, the last `CAPACITY` of them
+/// are retained, and a reconnect with `Last-Event-ID` gets the gap. When
+/// the gap is older than the ring, the client is told to resync rather
+/// than being handed a silently incomplete stream — a missing event it
+/// does not know is missing is worse than an explicit reload.
+#[derive(Clone)]
+pub struct EventBus {
+    tx: broadcast::Sender<SeqEvent>,
+    ring: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<SeqEvent>>>,
+    next: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl EventBus {
+    const CAPACITY: usize = 1024;
+
+    pub fn new() -> Self {
+        let (tx, _) = broadcast::channel(Self::CAPACITY);
+        EventBus {
+            tx,
+            ring: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::VecDeque::with_capacity(Self::CAPACITY),
+            )),
+            next: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        }
+    }
+
+    /// Number and retain an event, then broadcast it.
+    ///
+    /// Retention happens BEFORE the broadcast so a subscriber that reads
+    /// the ring immediately after receiving a live event cannot observe a
+    /// ring that is missing it.
+    pub fn send(&self, event: vak_agent::AgentEvent) -> usize {
+        let seq = self
+            .next
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let framed = SeqEvent { seq, event };
+        {
+            let mut ring = self
+                .ring
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if ring.len() == Self::CAPACITY {
+                ring.pop_front();
+            }
+            ring.push_back(framed.clone());
+        }
+        self.tx.send(framed).unwrap_or(0)
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<SeqEvent> {
+        self.tx.subscribe()
+    }
+
+    pub fn receiver_count(&self) -> usize {
+        self.tx.receiver_count()
+    }
+
+    /// Events strictly after `seq`, oldest first.
+    ///
+    /// `None` means the ring no longer covers that point and the caller
+    /// must resync from the durable transcript instead. Note the
+    /// distinction from `Some(vec![])`, which means "you are up to date" —
+    /// conflating the two is how a client silently loses a turn.
+    pub fn replay_after(&self, seq: u64) -> Option<Vec<SeqEvent>> {
+        let ring = self
+            .ring
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match ring.front() {
+            // Nothing retained yet: only "no events at all" is consistent
+            // with any resume point, and that is exactly an empty replay.
+            None => Some(Vec::new()),
+            // The oldest retained event is already past the client's
+            // resume point, so whatever sits between them is unrecoverable.
+            Some(oldest) if oldest.seq > seq + 1 => None,
+            _ => Some(ring.iter().filter(|e| e.seq > seq).cloned().collect()),
+        }
+    }
+}
+
+impl Default for EventBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod bus_tests {
+    use super::*;
+    use vak_agent::AgentEvent;
+
+    fn note(n: u32) -> AgentEvent {
+        AgentEvent::RetryScheduled {
+            attempt: n,
+            delay_ms: 0,
+            reason: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_reconnect_receives_exactly_the_gap() {
+        let bus = EventBus::new();
+        bus.send(note(1));
+        bus.send(note(2));
+        bus.send(note(3));
+        // Resuming after the first event yields the two it missed, in order.
+        let gap = bus.replay_after(1).unwrap();
+        assert_eq!(gap.len(), 2);
+        assert_eq!(gap[0].seq, 2);
+        assert_eq!(gap[1].seq, 3);
+    }
+
+    #[test]
+    fn being_up_to_date_is_not_the_same_as_having_lost_events() {
+        let bus = EventBus::new();
+        bus.send(note(1));
+        // Caught up: an empty replay, NOT a resync.
+        assert_eq!(bus.replay_after(1).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn a_resume_point_older_than_the_ring_asks_for_a_resync() {
+        let bus = EventBus::new();
+        for i in 0..(EventBus::CAPACITY as u32 + 10) {
+            bus.send(note(i));
+        }
+        // Seq 1 fell out of the ring long ago; the caller must not be told
+        // "here is the gap" when the gap cannot be produced.
+        assert!(bus.replay_after(1).is_none());
+        // The newest events are still resumable.
+        let newest = EventBus::CAPACITY as u64 + 5;
+        assert!(bus.replay_after(newest).is_some());
+    }
+
+    #[test]
+    fn an_empty_bus_replays_nothing_rather_than_demanding_a_resync() {
+        let bus = EventBus::new();
+        assert_eq!(bus.replay_after(0).unwrap().len(), 0);
+    }
+}

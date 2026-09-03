@@ -240,7 +240,7 @@ Goal mode does not accept the agent's declaration of success on faith: determini
 The desktop client requires Node.js/npm in addition to Rust.
 
 ```bash
-cd crates/vak-desktop/ui
+cd crates/vak-client-ui
 npm ci
 npm run build
 cd ../../..

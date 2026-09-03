@@ -499,6 +499,7 @@ async fn main() {
         }) => run_eval(report, live, provider, model).await,
         Some(Command::Serve {
             port,
+            host,
             gateway,
             trust,
         }) => {
@@ -511,7 +512,7 @@ async fn main() {
             if trusted {
                 vak_config::load_env_file(&serve_cwd.join(".env"));
             }
-            run_serve(serve_cwd, port, gateway, trusted).await
+            run_serve(serve_cwd, port, host, gateway, trusted).await
         }
     };
     std::process::exit(code);
@@ -1867,7 +1868,13 @@ async fn run_eval(
     if passed == total { 0 } else { 1 }
 }
 
-async fn run_serve(cwd: PathBuf, port: u16, gateway: bool, trusted: bool) -> i32 {
+async fn run_serve(
+    cwd: PathBuf,
+    port: u16,
+    host: Option<String>,
+    gateway: bool,
+    trusted: bool,
+) -> i32 {
     // Not `Cli`: this process serves API clients and, with `--gateway`, chat
     // channels. The gateway re-stamps each inbound message with its own
     // channel (`vak-server/src/gateway.rs`); this is the fallback for a
@@ -1882,7 +1889,55 @@ async fn run_serve(cwd: PathBuf, port: u16, gateway: bool, trusted: bool) -> i32
         }
     };
     print_config_warnings(&core);
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+
+    // Where to listen. `--host` wins over `[server] bind`, and both default
+    // to loopback — so an existing install keeps behaving exactly as it did.
+    let server = core.config().server.clone();
+    let bind = host.unwrap_or_else(|| server.bind.clone());
+    let publicly = !matches!(bind.as_str(), "127.0.0.1" | "::1" | "localhost");
+
+    // Refuse, rather than warn. Binding a shell-capable agent to a
+    // reachable interface with no `trusted_hosts` means every request from
+    // the network is rejected 421 anyway — so the server would appear to
+    // start and then answer nothing, which is the worst of both outcomes.
+    // Failing here says exactly which setting is missing while the operator
+    // is still looking at the terminal.
+    if publicly && server.trusted_hosts.is_empty() {
+        eprintln!(
+            "error: refusing to bind {bind} with no [server] trusted_hosts.\n\
+             \n\
+             A non-loopback bind exposes this agent — including its tools — to\n\
+             whoever can reach the port. Name the hostnames you will actually\n\
+             use in .vak/config.toml (or the user config):\n\
+             \n\
+             [server]\n\
+             bind = \"{bind}\"\n\
+             trusted_hosts = [\"vak.example.com\"]\n\
+             public_url = \"https://vak.example.com\"   # enables Secure cookies\n\
+             \n\
+             If you only need remote access for yourself, an SSH tunnel needs\n\
+             none of this: ssh -N -L {port}:127.0.0.1:{port} <host>"
+        );
+        return 2;
+    }
+
+    let ip: std::net::IpAddr = match bind.as_str() {
+        "localhost" => std::net::IpAddr::from([127, 0, 0, 1]),
+        other => match other.parse() {
+            Ok(ip) => ip,
+            Err(_) => {
+                eprintln!("error: [server] bind is not an IP address: {other}");
+                return 2;
+            }
+        },
+    };
+    let addr = std::net::SocketAddr::new(ip, port);
+    if publicly {
+        eprintln!(
+            "listening on {addr} — reachable beyond this machine. Trusted hosts: {}",
+            server.trusted_hosts.join(", ")
+        );
+    }
     match vak_server::serve_with(core, addr, gateway).await {
         Ok(()) => 0,
         Err(e) => {

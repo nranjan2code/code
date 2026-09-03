@@ -36,7 +36,12 @@ use crate::Surface;
 pub fn intent_surface(surface: &Surface) -> IntentSurface {
     match surface {
         Surface::Cli => IntentSurface::Cli,
-        Surface::Desktop => IntentSurface::Desktop,
+        // The web client IS the desktop client, in a tab: the same panes,
+        // the same approval cards, the same person watching. Reading it as
+        // `Server` would treat an attended session as an unattended
+        // embedder and stop raising gates that someone is right there to
+        // answer (docs/design/48-web-client.md).
+        Surface::Desktop | Surface::Web => IntentSurface::Desktop,
         Surface::Server | Surface::Unknown => IntentSurface::Server,
         Surface::Chat { .. } => IntentSurface::Chat,
         Surface::Background => IntentSurface::Cron,

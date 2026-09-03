@@ -75,7 +75,7 @@ middleware (no new auth code):
 - **Gateway reply path** calls it in-process to attach a voice-note when
   a chat/bot resolves to a non-null voice.
 - **Desktop narration** calls it over the same HTTP+bearer connection the
-  webview already uses for everything else (`crates/vak-desktop/ui/src/
+  webview already uses for everything else (`crates/vak-client-ui/src/
   api.ts`) — the desktop app needed no Gemini client of its own.
 - **Admin console Preview button** calls it with an in-progress, unsaved
   config so an operator can hear a voice/persona before committing.

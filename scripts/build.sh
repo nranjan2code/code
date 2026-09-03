@@ -85,7 +85,7 @@ fi
 if [[ "$DESKTOP" == true ]]; then
     if command -v npm >/dev/null; then
         printf '\n== desktop frontend ==\n'
-        (cd "$ROOT_DIR/crates/vak-desktop/ui" && npm ci --silent && npm run build --silent)
+        (cd "$ROOT_DIR/crates/vak-client-ui" && npm ci --silent && npm run build --silent)
     else
         printf '\nnpm not found — skipping the desktop frontend\n' >&2
         DESKTOP=false

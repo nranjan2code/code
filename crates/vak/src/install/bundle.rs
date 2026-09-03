@@ -101,7 +101,7 @@ pub fn write_metadata(
 /// covering both a dev tree (`target/release/vak`) and an installed
 /// bundle (`Contents/MacOS/vak`).
 pub fn locate_frontend_assets() -> Option<std::path::PathBuf> {
-    locate_repo_relative("crates/vak-desktop/ui/dist")
+    locate_repo_relative("crates/vak-client-ui/dist")
 }
 
 /// Locate the app icon (`.icns`), same search shape as

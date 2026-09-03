@@ -111,10 +111,16 @@ pub(crate) enum Command {
         #[arg(long)]
         model: Option<String>,
     },
-    /// Serve the agent over HTTP+SSE
+    /// Serve the agent over HTTP+SSE, including the web client at /app
     Serve {
         #[arg(long, default_value_t = 8901)]
         port: u16,
+        /// Interface to bind. Defaults to loopback, and anything else
+        /// requires `[server] trusted_hosts` to be set — binding a
+        /// shell-capable agent to the network is never implicit
+        /// (docs/design/48-web-client.md §4.2).
+        #[arg(long)]
+        host: Option<String>,
         /// Enable gateway surface routing regardless of config
         /// (docs/design/22-gateway.md)
         #[arg(long)]

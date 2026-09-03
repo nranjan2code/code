@@ -9,6 +9,11 @@ Cargo.lock.orig
 dist/
 # Admin SPA: built assets ARE committed so `cargo build` needs no node.
 !crates/vak-admin-ui/dist/
+# Workspace client, web build: embedded into vak-server under /app, so it is
+# committed for the same reason — a headless box builds the server without
+# node. The Tauri build (crates/vak-client-ui/dist/) stays ignored: only
+# vak-desktop ships it, and building the desktop already needs npm.
+!crates/vak-client-ui/dist-web/
 node_modules/
 __pycache__/
 # tools belong in the session cwd

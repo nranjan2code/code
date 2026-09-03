@@ -103,7 +103,7 @@ run_bounded() {
 # The frontends are built BEFORE the gates, not after.
 #
 # `cargo clippy --all-targets` and `cargo test --workspace` both compile
-# vak-desktop, whose tauri codegen hard-fails when crates/vak-desktop/ui/dist
+# vak-desktop, whose tauri codegen hard-fails when crates/vak-client-ui/dist
 # is missing — and that directory is gitignored. Running the gates first
 # meant a release could only pass on a machine that happened to have built
 # the desktop UI earlier, which is precisely the leftover-state dependency
@@ -124,11 +124,19 @@ run_bounded() {
 #   `cargo build` fails first; this gate stays as the backstop that also
 #   catches a *committed* dist/ diff, which a local build cannot see.
 #
-#   vak-desktop/ui/dist is *not* committed (gitignored) — self install
-#   copies whatever is currently on disk into the bundle's Resources.
-#   Without an explicit rebuild here, a release could carry whatever
-#   dist/ happened to be left over from an unrelated local build, not
-#   the source this release actually gates and tags.
+#   vak-client-ui builds TWICE from one source (docs/design/48-web-client.md):
+#
+#     dist/     is *not* committed (gitignored) — `self install` copies
+#               whatever is currently on disk into the app bundle's
+#               Resources. Without an explicit rebuild here, a release
+#               could carry whatever dist/ was left over from an
+#               unrelated local build, not the source this release tags.
+#
+#     dist-web/ *is* committed, for exactly the admin bundle's reason:
+#               vak-server embeds it with include_dir! so a headless box
+#               builds the server without node. Same trap, same gate — a
+#               committed bundle that no longer matches its source is
+#               invisible to a local build and ships broken.
 command -v npm >/dev/null || {
     printf 'error: npm is required to build the admin and desktop frontends for release\n' >&2
     exit 1
@@ -144,8 +152,17 @@ if [[ -n "$(git status --porcelain -- crates/vak-admin-ui/dist)" ]]; then
     exit 1
 fi
 printf '  ✓ %-44s matches source\n' "vak-admin-ui/dist"
-( cd "$ROOT_DIR/crates/vak-desktop/ui" && npm ci --silent && npm run build --silent >/dev/null )
-printf '  ✓ %-44s rebuilt\n' "vak-desktop/ui/dist"
+( cd "$ROOT_DIR/crates/vak-client-ui" && npm ci --silent && npm run build --silent >/dev/null )
+if [[ -n "$(git status --porcelain -- crates/vak-client-ui/dist-web)" ]]; then
+    printf 'error: crates/vak-client-ui/dist-web does not match crates/vak-client-ui/src.\n' >&2
+    printf 'Rebuild locally (npm run build in crates/vak-client-ui), review the diff,\n' >&2
+    printf 'and commit dist-web/ before releasing -- otherwise the compiled server\n' >&2
+    printf 'serves a web client that does not match what this release claims to ship.\n' >&2
+    git status --short -- crates/vak-client-ui/dist-web >&2
+    exit 1
+fi
+printf '  ✓ %-44s matches source\n' "vak-client-ui/dist-web"
+printf '  ✓ %-44s rebuilt\n' "vak-client-ui/dist"
 
 if [[ "$SKIP_CHECKS" != true ]]; then
     cargo fmt --all -- --check

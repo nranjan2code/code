@@ -20,7 +20,7 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Files that must NOT carry an authoritative version stamp.
 UNSTAMPED_JSON=(
-    "crates/vak-desktop/ui/package.json"
+    "crates/vak-client-ui/package.json"
     "crates/vak-admin-ui/package.json"
 )
 

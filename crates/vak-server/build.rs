@@ -26,24 +26,38 @@
 
 include!("../../scripts/ui_bundle_check.rs");
 
-const UI: &str = "../vak-admin-ui";
+const ADMIN_UI: &str = "../vak-admin-ui";
+/// The workspace client (docs/design/48-web-client.md). This crate embeds
+/// its `dist-web/` build under `/app`; `vak-desktop` ships the `dist/` one.
+const CLIENT_UI: &str = "../vak-client-ui";
 
 fn main() {
-    println!("cargo:rerun-if-changed={UI}/dist");
-    // The source side must be watched too, or a `src` edit alone never
-    // re-runs this script and the check silently stops applying.
-    println!("cargo:rerun-if-changed={UI}/src");
-    println!("cargo:rerun-if-changed={UI}/index.html");
+    for (ui, dist, hint) in [
+        (
+            ADMIN_UI,
+            "dist",
+            "Run `npm run build` in crates/vak-admin-ui and commit dist/ (see docs/design/32-release-engineering.md).",
+        ),
+        (
+            CLIENT_UI,
+            "dist-web",
+            "Run `npm run build:web` in crates/vak-client-ui.",
+        ),
+    ] {
+        println!("cargo:rerun-if-changed={ui}/{dist}");
+        // The source side must be watched too, or a `src` edit alone never
+        // re-runs this script and the check silently stops applying.
+        println!("cargo:rerun-if-changed={ui}/src");
+        println!("cargo:rerun-if-changed={ui}/index.html");
 
-    if let Err(problem) = check_bundle_matches_source(Path::new(UI)) {
-        let problem = format!("crates/vak-admin-ui/{problem}");
-        // `cargo::error` is the supported way for a build script to fail the
-        // build with a readable message; `panic!` would bury it under a
-        // backtrace the reader does not need.
-        println!("cargo::error={problem}");
-        println!(
-            "cargo::error=Run `npm run build` in crates/vak-admin-ui and commit dist/ (see docs/design/32-release-engineering.md)."
-        );
-        std::process::exit(1);
+        if let Err(problem) = check_bundle_matches_source(Path::new(ui), dist) {
+            let crate_name = ui.trim_start_matches("../");
+            // `cargo::error` is the supported way for a build script to fail
+            // the build with a readable message; `panic!` would bury it
+            // under a backtrace the reader does not need.
+            println!("cargo::error=crates/{crate_name}/{problem}");
+            println!("cargo::error={hint}");
+            std::process::exit(1);
+        }
     }
 }

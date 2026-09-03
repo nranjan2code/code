@@ -31,7 +31,7 @@ vak's mechanism is "one core, many surfaces": a single auditable, policy-gated c
 ## Capabilities and Constraints
 
 - CLI (`vak exec`, `vak plan`, `vak config dump`, `vak intent explain`, `vak commit`, etc.) is the headless surface.
-- Tauri 2 desktop app (`crates/vak-desktop`, UI in `crates/vak-desktop/ui`): isolated worktrees, streaming chat, diff review, editor, PTY terminal, previews, side chats, best-of-N comparison.
+- Tauri 2 desktop app (`crates/vak-desktop`, UI in `crates/vak-client-ui`, shared with the browser client): isolated worktrees, streaming chat, diff review, editor, PTY terminal, previews, side chats, best-of-N comparison.
 - Admin UI (`crates/vak-admin-ui`): in scope for design work alongside the desktop app.
 - HTTP/SSE server (`crates/vak-server`) exposes the same session, run, approval, transcript, diff, and steering contracts used by the desktop app.
 - Requires a stable Rust toolchain and Git to build; desktop client additionally requires Node.js/npm.

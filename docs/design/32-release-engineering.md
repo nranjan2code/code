@@ -226,7 +226,7 @@ flags any unit still exec'ing from a build tree until it does.
 ## Frontend bundle staleness
 
 `vak-admin-ui/dist` is committed and embedded into `vak-server` by
-`include_dir!`; `vak-desktop/ui/dist` is gitignored and copied into the app
+`include_dir!`; `vak-client-ui/dist` is gitignored and copied into the app
 bundle by `self install`. Both can silently ship a frontend that no longer
 matches its source — that is how v0.8.1 shipped a blank admin console.
 
@@ -234,7 +234,7 @@ Three layers now, innermost first:
 
 1. `npm run build` writes `dist/.src-manifest`, one sha256 per source file
    (`crates/vak-admin-ui/scripts/stamp.mjs`, and the same file under
-   `crates/vak-desktop/ui/scripts/`).
+   `crates/vak-client-ui/scripts/`).
 2. Each crate's `build.rs` re-verifies that manifest and fails the build with
    `cargo::error` naming the offending file — so a plain `cargo build` or
    `cargo test` after a UI edit stops, instead of quietly embedding the
@@ -264,7 +264,7 @@ complete run. Any best-effort command in a pipeline needs `|| true`.
 
 **Build the frontends before the gates.** `cargo clippy --all-targets` and
 `cargo test --workspace` both compile `vak-desktop`, whose tauri codegen
-hard-fails without the gitignored `crates/vak-desktop/ui/dist`. Gates first
+hard-fails without the gitignored `crates/vak-client-ui/dist`. Gates first
 meant a release only passed on a machine that had built the desktop UI at
 some earlier point — the exact leftover-state dependency this document exists
 to remove.

@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "types": ["vite/client"],
+    "baseUrl": ".",
+    "paths": {
+      // Vite resolves this per build (see vite.config.ts). Typechecking
+      // picks the Tauri implementation because both satisfy `Host`, so
+      // whichever is named here types the whole tree identically — and a
+      // divergence between the two is caught by `Host` itself, not by
+      // which one this line happens to point at.
+      "#host-impl": ["./src/host/tauri.ts"]
+    }
+  },
+  "include": ["src"]
+}

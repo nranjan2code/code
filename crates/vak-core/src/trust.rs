@@ -90,6 +90,10 @@ pub fn requested_privileges(cwd: &Path) -> Vec<&'static str> {
         ("anthropic_base_url", "a redirected provider endpoint"),
         ("[sandbox]", "sandbox settings"),
         ("[gateway]", "gateway settings"),
+        // Network exposure: which interface answers, which Host headers are
+        // accepted, and whether a remote caller reaches a shell
+        // (docs/design/48-web-client.md §4.2).
+        ("[server]", "network exposure settings"),
         ("allow", "pre-granted allow rules"),
         ("[prompt", "prompt layers"),
     ] {
