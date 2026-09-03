@@ -59,6 +59,7 @@ pub mod state;
 
 pub mod gateway_token;
 pub mod tasks;
+pub mod tools_commitments;
 pub mod tools_tasks;
 pub mod transcript_md;
 pub mod trust;
@@ -2493,6 +2494,9 @@ impl Core {
         if self.effective_memory_search_enabled() {
             names.push("session_search".into());
         }
+        if self.inner.config.commitment.enabled {
+            names.push("commitments".into());
+        }
         if self.effective_memory_write_enabled() {
             names.push("remember".into());
         }
@@ -4025,6 +4029,14 @@ impl Core {
             tools.push(Arc::new(mcp_tool));
             cfg.mcp_aliases = aliases;
         }
+        // Read-only self-knowledge, next to the other recall tool: "what am I
+        // working on" reaches every surface as a capability rather than as a
+        // slash command one transport would have to reimplement.
+        if self.inner.config.commitment.enabled {
+            tools.push(Arc::new(tools_commitments::CommitmentsTool {
+                sessions_home: self.sessions_home(),
+            }));
+        }
         if self.effective_memory_search_enabled() {
             let exclude = session
                 .header()
@@ -4351,12 +4363,9 @@ impl Core {
                 .skip(receipts_before)
                 .flat_map(|receipt| {
                     let model = receipt.model.clone();
-                    receipt
-                        .attempts
-                        .iter()
-                        .filter_map(move |attempt| {
-                            attempt.usage.as_ref().map(|usage| (model.clone(), usage))
-                        })
+                    receipt.attempts.iter().filter_map(move |attempt| {
+                        attempt.usage.as_ref().map(|usage| (model.clone(), usage))
+                    })
                 })
                 .filter_map(|(model, usage)| {
                     vak_config::finops::estimate_cost_usd(&model, usage, prices)

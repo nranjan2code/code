@@ -17,8 +17,7 @@
 use std::path::Path;
 
 use vak_commit::{
-    Advancement, CommitmentLedger, CommitmentSpec, Economics, Event, EventKind, Evaluation,
-    Verdict,
+    Advancement, CommitmentLedger, CommitmentSpec, Economics, Evaluation, Event, EventKind, Verdict,
 };
 use vak_intent::{Intent, Satisfaction};
 use vak_session::types::{CriterionKind, CriterionResult, WorkCriterion};
@@ -527,8 +526,7 @@ mod tests {
             &vak_agent::TurnOutcome::Completed {
                 response: vak_llm::AssistantMessage {
                     content: vec![vak_llm::ContentBlock::Text {
-                        text: "Here is a substantive answer that reduced uncertainty a lot."
-                            .into(),
+                        text: "Here is a substantive answer that reduced uncertainty a lot.".into(),
                     }],
                     ..vak_llm::AssistantMessage::empty("test-model")
                 },
@@ -619,7 +617,9 @@ mod tests {
             .unwrap();
         assert!(sweep_expired(dir.path()).is_empty());
         let commitment = ledger.get(&handle.commitment_id).unwrap().unwrap();
-        assert!(commitment.is_over_budget() || commitment.spec.economics.lifetime_budget_usd.is_none());
+        assert!(
+            commitment.is_over_budget() || commitment.spec.economics.lifetime_budget_usd.is_none()
+        );
         assert!(!commitment.phase.is_terminal());
     }
 }

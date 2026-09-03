@@ -1,10 +1,23 @@
 # 47 — The commitment kernel
 
-Status: **phases I0–I4 and I7 (server) shipped**; I5 (envelope wiring), I6
-(episodes and the portfolio scheduler), I7 (admin/desktop/gateway/delivery),
-and I8 (evidence loop) are specified here and not yet wired. Every shipped part
-is switchable off with `[intent] enabled = false`, which reproduces the
-runtime's previous behaviour exactly.
+Status, precisely:
+
+| Phase | State |
+|---|---|
+| I0 kernel (`vak-intent`) | shipped |
+| I1 commitment ledger (`vak-commit`) | shipped |
+| I2 admission, ledger entry, config, `vak intent explain` | shipped |
+| I3 route demand, budget, prompt projection | shipped |
+| I4 capability slicing | shipped |
+| I5 envelope wiring into live dispatch | types and lattice shipped; **nothing grants an envelope yet** |
+| I6 episodes | shipped — a durable turn opens a commitment, brackets an episode, and records what it advanced |
+| I6 portfolio scheduler | ranking shipped and exercised by the CLI, admin and tool; **the heartbeat does not yet advance work from it**, and suspension/resume is not driven |
+| I7 server, admin console, desktop, `commitments` tool | shipped |
+| I7 gateway per-bot intent policy, delivery shape/cadence projection | **not wired** |
+| I8 misread signals into the evidence ledger | **not wired** |
+
+Every shipped part is switchable off with `[intent] enabled = false`, which
+reproduces the runtime's previous behaviour exactly.
 
 ## Problem
 

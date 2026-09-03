@@ -336,7 +336,17 @@ impl Engagement {
 ///
 /// An agent that cannot look at anything cannot correct a misread of its own
 /// task, so this floor is what makes slicing safe to attempt at all.
-const ORIENTATION: &[&str] = &["read", "glob", "grep", "skill", "session_search"];
+const ORIENTATION: &[&str] = &[
+    "read",
+    "glob",
+    "grep",
+    "skill",
+    "session_search",
+    // Read-only self-knowledge. "What am I already committed to" is the same
+    // category of question as "what did we decide last week", and an agent
+    // that cannot see its own obligations will cheerfully re-open one.
+    "commitments",
+];
 
 /// Names this act plausibly needs, beyond the orientation floor.
 ///

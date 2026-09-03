@@ -110,6 +110,37 @@ own append-only ledger, rather than the session being the unit of identity and
 - The verb lexicon matched only bare stems, so "before deploying to
   production" contributed no act signal at all.
 
+### Episodes and surfaces
+
+- A durable turn now opens a commitment, brackets an **episode** around the
+  work, and records what that episode achieved. `Learned` and `Stalled` are
+  deliberately different: a turn that answered substantively but moved no
+  criterion reduced uncertainty and must not count against the stall breaker,
+  while exhausting the turn budget is the textbook motion-without-progress
+  case the breaker exists to catch.
+- A weak `horizon` reading opens nothing. A stray recurrence-ish word must not
+  leave a month-long obligation behind.
+- Seeded criteria are never stronger than `asserted`. The runtime may only
+  propose what it could also check, and guessing a test command would
+  manufacture `observed` evidence out of a guess — so a commitment held to
+  `verified` stays visibly open until a checkable criterion or a human
+  attestation arrives, rather than closing itself on a placeholder.
+- **Admin console**: the commitment portfolio at `#/commitments`, built as a
+  ledger of rows rather than cards. Its signature element is the evidence
+  meter — the satisfaction lattice drawn, with the achieved level as fill and
+  the required level as a rule beneath the track, the shortfall in the accent.
+  Work closed on the model's own say-so and work closed on a check the runtime
+  ran are not the same claim, and in an ordinary status column they look
+  identical. Scheduler priority decomposes into its named components on click.
+- **Desktop**: a composer intent strip, quiet in proportion to consequence.
+  Chrome for ordinary work; only irreversible, deferred or must-ask readings
+  take the accent and state the reason without needing a click.
+- **Every surface**: a read-only `commitments` tool, so "what are you working
+  on" is answerable on Telegram, the desktop and a cron check-in alike without
+  a gateway slash-command layer that would serve one transport and add a
+  second dispatch path. It has no write verb — the model may discuss a
+  commitment and may never mark a criterion passed.
+
 ### Notes
 
 - `AGENTS.md` invariants 31 and 32 are **appended**, not inserted. Roughly
