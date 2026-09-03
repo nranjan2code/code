@@ -445,6 +445,10 @@ async fn doctor_reports_checks_facts_and_optional_ladder() {
             "provider",
             "sessions home",
             "config warnings",
+            // Configured integrations the composed policy would refuse.
+            // Belongs beside the config checks: "you set this up and it
+            // does not work" is a health fact, not a transcript detail.
+            "capability reach",
             // docs/design/34: channel state is part of the health surface,
             // not a config detail.
             "gateway channels",

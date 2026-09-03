@@ -311,6 +311,11 @@ pub struct RuntimeSections {
     pub skills: String,
     /// Configured MCP servers and their discovered tool catalogue.
     pub mcp: String,
+    /// Capabilities this workspace configures that the composed policy
+    /// will not let this turn use (`vak_core::reach`). Stated so the model
+    /// can name the gap instead of discovering it one denied call at a
+    /// time; never a grant.
+    pub standing: String,
 }
 
 /// The assembled prompt plus a record of who contributed each part.
@@ -507,7 +512,7 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
     }
 
     let mut text = text;
-    for section in [&surface, &runtime.skills, &runtime.mcp] {
+    for section in [&surface, &runtime.skills, &runtime.mcp, &runtime.standing] {
         if !section.trim().is_empty() {
             if !section.starts_with('\n') {
                 text.push('\n');

@@ -298,6 +298,44 @@ fn missing_provider_detail(core: &Core, base: &str) -> String {
     }
 }
 
+/// Configured integrations the composed policy will refuse.
+///
+/// The failure this exists to make visible is a quiet one: an operator
+/// configures an MCP server, sees it accepted, and every turn that reaches
+/// for it is denied by a layer they were not thinking about — an
+/// unattended surface with no approver, a read-only cap, a channel deny.
+/// Nothing failed loudly, so the only evidence was a tool call buried in a
+/// transcript. `doctor` is where "you configured this and it does not
+/// work" belongs.
+///
+/// No mechanical repair (AGENTS.md invariant 19): every fix here is a
+/// deliberate access decision — widen a rule, or give the surface an
+/// approver — and `--repair` must not make either on an operator's behalf.
+fn capability_reach_check(core: &Core) -> HealthCheck {
+    let standings = core.capability_standings();
+    let blocked: Vec<&crate::reach::Standing> = standings
+        .iter()
+        .filter(|standing| standing.reach.is_blocked())
+        .collect();
+    HealthCheck {
+        label: "capability reach".into(),
+        detail: if blocked.is_empty() {
+            Ok(format!("{} configured, all reachable", standings.len()))
+        } else {
+            Err(blocked
+                .iter()
+                .map(|standing| {
+                    format!(
+                        "{} unreachable ({}); fix: {}",
+                        standing.label, standing.reason, standing.remedy
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; "))
+        },
+    }
+}
+
 /// Collect everything `/doctor` reports. `session` optionally adds the
 /// frozen-ladder section for the active session. Never panics; every
 /// failure mode lands as a failed check or an empty fact.
@@ -332,6 +370,7 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
             Err(warnings.join("; "))
         },
     });
+    checks.push(capability_reach_check(core));
     checks.push(gateway_channels_check(
         &core.sessions_home(),
         core.config().gateway.pending_expiry_days,
@@ -563,6 +602,7 @@ mod tests {
                 "provider",
                 "sessions home",
                 "config warnings",
+                "capability reach",
                 "gateway channels",
                 "install layout",
                 "self version parity"

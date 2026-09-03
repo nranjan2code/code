@@ -1608,6 +1608,13 @@ struct GatewayApprover {
 
 #[async_trait::async_trait]
 impl vak_agent::Approver for GatewayApprover {
+    /// A forwarded gate reaches the configured approver chat; without
+    /// forward mode nothing is listening, and the reachability preflight
+    /// must see that before the prompt advertises a gated capability.
+    fn answerable(&self) -> bool {
+        self.state.forward_mode()
+    }
+
     async fn approve(&self, tool: &str, args_json: &str, reason: &str) -> bool {
         if !self.state.forward_mode() {
             return false;
@@ -1956,6 +1963,11 @@ async fn gateway_inbound(
         .with_surface(vak_core::Surface::Chat {
             channel: body.surface.trim().to_string(),
         })
+        // Must agree with the approver `execute_turn_chain` installs below:
+        // `GatewayApprover` in forward mode, `AutoDeny` otherwise. Stamped
+        // here, before the session's prompt is composed, so the prompt can
+        // decline to advertise a capability this chat could never use.
+        .with_approver_answerable(state.gateway.forward_mode())
         .with_prompt_overlays(state.gateway.resolve_prompt_overlays(&key));
     start_turn_chain(
         &state,

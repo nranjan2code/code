@@ -59,6 +59,46 @@ later release non-destructive.
   wording, security-event kinds, hub-event labels, path truncation, and the
   chat-surface catalog. One spelling of each, imported by every view.
 
+### Permissions and capability reach
+
+- **Configured capability is now reconciled against reachable capability.**
+  The system prompt advertised what configuration declared while dispatch
+  enforced what the composed policy permitted — permission mode, rules,
+  channel overlay, approval mode, and the hosting surface's approver — and
+  nothing compared the two. A chat-gateway turn was told it had an MCP
+  server, spent four tool calls discovering that every call to it was
+  refused by an approver that was never going to answer, and reported the
+  capability as simply missing. `vak_core::reach` runs the real permission
+  engine against each advertised capability and returns its standing;
+  unreachable capabilities leave the capability set and the tool registry,
+  and the prompt names them, says why, and gives the operator the fix. It
+  is strictly subtractive: it never grants, and unattended surfaces still
+  fail closed (invariant 15).
+- **A channel overlay can no longer escalate.** `tools_allow` and
+  `mcp_allow` were compiled into blanket `+` allow rules at two separate
+  call sites, so `tools_allow = ["bash"]` — written to *narrow* a chat to
+  one tool — handed that chat unattended shell execution with its approval
+  gate removed, and `mcp_allow` did the same for MCP. Overlays are
+  visibility narrowings, enforced by the registry filter and the MCP glob;
+  the single shared translation now emits restrictive rules only
+  (invariant 20).
+- **`approval_mode = "auto-approve"` now reaches `webfetch` and `browse`.**
+  Their restricted-mode gate was injected as a synthetic `?webfetch` rule,
+  indistinguishable from one an operator typed, and `auto_approve`
+  correctly refuses rule-sourced asks — so auto-approve silently worked for
+  every tool except those two. The classification moved into
+  `PermissionEngine`'s mode arms, where a mode default is sourced as a mode
+  default. A deliberate `?webfetch` still outranks auto-approve.
+- Collapsed `build_engine_for_mode` into `build_engine_with`. With the
+  injection gone they were identical, and two constructors for the object
+  that decides access is how these layers drifted apart.
+- An approver declares whether a gate reaches anyone (`Approver::
+  answerable`). A refusal from an unattended surface no longer reports
+  itself as "denied by user" when no user was asked.
+- `doctor` gained a **capability reach** check, and a blocked capability
+  records a `capability_unreachable` security event — previously the only
+  evidence was a denied tool call inside a session transcript.
+
 ### Documentation
 
 - Deleted eight design documents that described pre-baseline behavior or

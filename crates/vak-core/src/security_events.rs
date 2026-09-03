@@ -52,6 +52,16 @@ pub enum EventKind {
     /// grant is greppable in the audit log — it means an operator believes
     /// a channel has access it does not actually have.
     PermissionCapped,
+    /// A capability this workspace configures could not be used on a turn,
+    /// because the composed policy (mode + rules + channel overlay +
+    /// approval mode + this surface's approver) refuses every call to it.
+    ///
+    /// Its own kind because it is the audit trail for a *silent* outcome:
+    /// nothing else recorded that an operator's configured integration was
+    /// unusable, so the only evidence was a denied tool call buried in a
+    /// session transcript, and from outside it looked like the model simply
+    /// never tried.
+    CapabilityUnreachable,
 }
 
 /// Append a security event to `<home>/security-events.jsonl`.

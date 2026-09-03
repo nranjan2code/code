@@ -161,8 +161,13 @@ async fn run_heartbeat_turn(
     // here instead of mutating shared runtime overrides.
     let core = vak_core::Core::new_with_trust(state.core.cwd().clone(), true)
         // Unattended by construction: the turn's approver is `AutoDeny` and
-        // no one is reading the reply as it streams.
-        .map(|c| c.with_surface(vak_core::Surface::Background))
+        // no one is reading the reply as it streams. Both facts are stamped
+        // before `take_persistent_session` composes and freezes the prompt,
+        // so it never advertises a capability this turn cannot use.
+        .map(|c| {
+            c.with_surface(vak_core::Surface::Background)
+                .with_approver_answerable(false)
+        })
         .map_err(|e| format!("heartbeat core failed: {e}"))?;
     core.set_provider_instance(provider);
     core.set_sessions_home(state.core.sessions_home());

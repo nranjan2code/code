@@ -376,6 +376,23 @@ pub struct McpToolAlias {
 #[async_trait::async_trait]
 pub trait Approver: Send + Sync {
     async fn approve(&self, tool: &str, args_json: &str, reason: &str) -> bool;
+
+    /// Whether a gate raised here reaches somebody who can answer it.
+    ///
+    /// `false` means every `Ask` on this surface is a foregone denial —
+    /// nobody is listening, and `approve` will return `false` without
+    /// having asked anyone. That is correct behaviour (AGENTS.md invariant
+    /// 15: unattended surfaces fail closed) but it is also a *fact about
+    /// this turn's callable interface*, and it has to be knowable before
+    /// dispatch rather than only discoverable by burning a tool call on it.
+    /// `vak_core::reach` reads this to decide what the system prompt may
+    /// honestly advertise as usable.
+    ///
+    /// Defaults to `true`: an approver that does not say otherwise is one
+    /// that resolves gates.
+    fn answerable(&self) -> bool {
+        true
+    }
 }
 
 /// Errors worth surviving at run level: sustained fault windows, hung or
@@ -414,6 +431,10 @@ pub struct AutoDeny;
 #[async_trait::async_trait]
 impl Approver for AutoDeny {
     async fn approve(&self, _tool: &str, _args_json: &str, _reason: &str) -> bool {
+        false
+    }
+
+    fn answerable(&self) -> bool {
         false
     }
 }
@@ -3330,6 +3351,15 @@ async fn authorize(
                 {
                     Ok(())
                 }
+                // Say who actually refused. On an unattended surface the
+                // gate was never put to a person, and reporting it as
+                // "denied by user" sent the model looking for a different
+                // tool — and the operator looking for a user who had done
+                // nothing — instead of naming the policy that decided.
+                Some(a) if !a.answerable() => Err(format!(
+                    "unattended surface: {reason}. No approver is configured to \
+                     answer it, so this capability cannot be used on this turn"
+                )),
                 Some(_) => Err(format!("denied by user: {reason}")),
                 None => Err(format!("{reason} (no approver available)")),
             }

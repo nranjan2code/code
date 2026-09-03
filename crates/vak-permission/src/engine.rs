@@ -41,6 +41,19 @@ const WRITE_TOOLS: [&str; 2] = ["write", "edit"];
 /// (docs/design/26-learning.md): sanctioned under workspace-write, still
 /// denied by read-only's default arm below.
 const LEARNING_TOOLS: [&str; 2] = ["remember", "propose_skill"];
+/// Tools whose reach exceeds the workspace (docs/design/29-personal-os.md
+/// P4). Outside FullAccess they gate on approval rather than following the
+/// surrounding mode's arm: read-only would otherwise deny them outright,
+/// and the intent is "a human may still say yes", not "never".
+///
+/// This lives HERE, in the mode arms, rather than being injected as a
+/// synthetic `?webfetch` rule by the engine's caller. An injected rule is
+/// indistinguishable from one an operator typed, and `auto_approve`
+/// deliberately refuses to resolve rule-sourced asks on the model's behalf
+/// — so the injection silently made `approval_mode = "auto-approve"` a
+/// no-op for exactly these two tools while working for every other one.
+/// A mode default must be sourced as a mode default.
+const NETWORK_TOOLS: [&str; 2] = ["webfetch", "browse"];
 
 impl PermissionEngine {
     pub fn new(rules: Vec<Rule>) -> Self {
@@ -63,6 +76,21 @@ impl PermissionEngine {
 
     pub fn rules(&self) -> &[Rule] {
         &self.rules
+    }
+
+    /// True when some rule targets `tool` with an argument pattern.
+    ///
+    /// Reachability preflight (`vak_core::reach`) probes a capability
+    /// before its arguments exist, so a patterned rule cannot be evaluated
+    /// yet. Its existence means the probe's answer is provisional, and the
+    /// preflight degrades to "gated" rather than reporting a capability as
+    /// unreachable on evidence it does not have. Hiding a capability that
+    /// would in fact have worked is the one outcome worse than advertising
+    /// one that gates.
+    pub fn has_patterned_rule(&self, tool: &str) -> bool {
+        self.rules
+            .iter()
+            .any(|rule| rule.targets(tool) && rule.arg_glob.is_some())
     }
 
     /// Restrict direct file mutations to paths explicitly supplied by the
@@ -139,6 +167,11 @@ impl PermissionEngine {
                     && args.get("action").and_then(|a| a.as_str()) == Some("list")
                 {
                     Decision::Allow
+                } else if NETWORK_TOOLS.contains(&tool) {
+                    Decision::Ask {
+                        reason: format!("'{tool}' reaches outside the workspace"),
+                        source: AskSource::ModeDefault,
+                    }
                 } else {
                     Decision::Deny {
                         reason: format!(

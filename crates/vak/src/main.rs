@@ -244,8 +244,14 @@ fn latest_session_id(core: &Core) -> Option<String> {
 /// Every turn this binary runs is read in a terminal, so the system prompt
 /// says so (docs/design/07-prompt.md). `run_serve` is the exception and
 /// stamps its own surface.
-fn with_cli_surface(core: Core) -> Core {
+/// Stamp the CLI surface and, with it, whether this invocation's approver
+/// can answer a gate. These one-shot paths install `AutoApprove` under
+/// `--yes` and `AutoDeny` otherwise, and the prompt is composed by
+/// `start_session()` further down — so the flag has to be on the `Core`
+/// before that, or the prompt advertises capabilities the run will refuse.
+fn with_cli_surface(core: Core, approver_answerable: bool) -> Core {
     core.with_surface(vak_core::Surface::Cli)
+        .with_approver_answerable(approver_answerable)
 }
 
 #[tokio::main]
@@ -734,7 +740,7 @@ async fn run_flow_exec(
     model_flag: Option<String>,
     trusted: bool,
 ) -> i32 {
-    let core = match Core::new_with_trust(cwd.clone(), trusted).map(with_cli_surface) {
+    let core = match Core::new_with_trust(cwd.clone(), trusted).map(|c| with_cli_surface(c, yes)) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");
@@ -1012,7 +1018,9 @@ async fn run_exec(
             }
         }
     }
-    let core = match Core::new_with_trust(effective_cwd.clone(), trusted).map(with_cli_surface) {
+    let core = match Core::new_with_trust(effective_cwd.clone(), trusted)
+        .map(|c| with_cli_surface(c, yes))
+    {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");
@@ -1419,7 +1427,9 @@ async fn run_plan(cwd: PathBuf, task: String, yes: bool, worktree: bool, trusted
             }
         }
     }
-    let core = match Core::new_with_trust(effective_cwd.clone(), trusted).map(with_cli_surface) {
+    let core = match Core::new_with_trust(effective_cwd.clone(), trusted)
+        .map(|c| with_cli_surface(c, yes))
+    {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");

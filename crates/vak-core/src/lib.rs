@@ -17,6 +17,7 @@ pub mod learning;
 pub mod memory;
 pub mod onboarding;
 pub mod prompts;
+pub mod reach;
 pub mod reflection;
 pub mod routing;
 pub mod sandbox_docker;
@@ -460,6 +461,21 @@ pub struct Core {
     /// gateway's bot and chat tiers. `Arc` because `Core` is cloned per
     /// turn and this is almost always empty.
     prompt_overlays: Arc<Vec<prompts::LayerInput>>,
+    /// Whether an approval gate raised on this surface reaches someone who
+    /// can answer it — the `Approver::answerable()` of the approver this
+    /// surface installs, known here *before* a run starts.
+    ///
+    /// It lives beside `surface` rather than being read off the per-run
+    /// approver because the thing that needs it is the system prompt, and
+    /// the prompt is composed and frozen at session creation. A capability
+    /// that gates on an approval nobody will answer is not part of this
+    /// turn's callable interface, and the prompt has to be able to say so
+    /// without waiting for a run to exist.
+    ///
+    /// Defaults to `true`: a surface that does not say otherwise is
+    /// attended. Unattended surfaces (the gateway without forward mode,
+    /// the heartbeat) set it false, matching the `AutoDeny` they install.
+    approver_answerable: bool,
 }
 
 /// Which product surface a turn is running on.
@@ -675,6 +691,7 @@ impl Core {
             surface: Surface::Unknown,
             prompt_role: None,
             prompt_overlays: Arc::new(Vec::new()),
+            approver_answerable: true,
             inner: Arc::new(CoreInner {
                 config,
                 cwd,
@@ -1272,42 +1289,61 @@ impl Core {
             .is_none_or(|policy| Self::allowed_by(&policy.tools_allow, &policy.tools_deny, tool))
     }
 
+    /// Compile this turn's channel overlay into permission rules.
+    ///
+    /// **Restrictive only** (AGENTS.md invariant 20), and that is the whole
+    /// point of it living in one place. An overlay's `_allow` list is a
+    /// *visibility* narrowing — "this chat may reach these and nothing
+    /// else" — already enforced by dropping everything unlisted from the
+    /// tool registry (`channel_tool_allowed`) and, for MCP, by `McpTool`'s
+    /// own `server/tool` glob at call time.
+    ///
+    /// It must never become `+` allow rules. Both call sites used to do
+    /// exactly that, and a blanket `+bash` / `+mcp` outranks the mode
+    /// default that would otherwise have raised an approval gate — so
+    /// `tools_allow = ["bash"]`, written to *narrow* a chat to one tool,
+    /// silently handed that chat unattended shell execution, and
+    /// `mcp_allow = ["tavily/tavily_search"]` removed the approval gate
+    /// from every MCP call the glob still admitted. Adding a restriction
+    /// must never remove one.
+    fn channel_permission_rules(&self) -> Vec<String> {
+        let mut rules = self.extra_allow_snapshot();
+        let Some(policy) = self.channel_policy() else {
+            return rules;
+        };
+        // `Some([])` is "block this category outright"; `Some([..])` is a
+        // narrowing enforced by visibility, and contributes no rule here.
+        if policy.tools_allow.as_ref().is_some_and(|a| a.is_empty()) {
+            rules.extend(
+                CHANNEL_BLOCKABLE_TOOLS
+                    .iter()
+                    .map(|tool| format!("-{tool}")),
+            );
+        }
+        rules.extend(
+            policy
+                .tools_deny
+                .iter()
+                .map(|pattern| format!("-{pattern}")),
+        );
+        if policy.mcp_allow.as_ref().is_some_and(|a| a.is_empty()) {
+            rules.push("-mcp".into());
+        }
+        rules.extend(
+            policy
+                .mcp_deny
+                .iter()
+                .map(|pattern| format!("-mcp({pattern})")),
+        );
+        rules
+    }
+
     pub fn memory_write_allowed(&self) -> bool {
         if !self.channel_tool_allowed("remember") {
             return false;
         }
-        let mut rules = self.extra_allow_snapshot();
-        if let Some(policy) = self.channel_policy() {
-            if let Some(allow) = policy.tools_allow {
-                if allow.is_empty() {
-                    rules.extend(
-                        [
-                            "read",
-                            "write",
-                            "edit",
-                            "bash",
-                            "glob",
-                            "grep",
-                            "remember",
-                            "propose_skill",
-                        ]
-                        .into_iter()
-                        .map(|tool| format!("-{tool}")),
-                    );
-                } else {
-                    rules.extend(allow.into_iter().map(|pattern| format!("+{pattern}")));
-                }
-            }
-            rules.extend(
-                policy
-                    .tools_deny
-                    .into_iter()
-                    .map(|pattern| format!("-{pattern}")),
-            );
-        }
-        let Ok(engine) =
-            build_engine_for_mode(&self.inner.config, &rules, self.effective_permission_mode())
-        else {
+        let rules = self.channel_permission_rules();
+        let Ok(engine) = build_engine_with(&self.inner.config, &rules) else {
             return false;
         };
         let mode = match self.effective_permission_mode() {
@@ -1885,6 +1921,58 @@ impl Core {
         &self.surface
     }
 
+    /// Declare whether this surface's approver can answer a gate. Cheap in
+    /// the same way [`Core::with_surface`] is, so a host can clone-and-set
+    /// per inbound message. Must agree with the `Approver` the same host
+    /// passes into `run_turn_*`; `reach::Probe` reads this one.
+    pub fn with_approver_answerable(mut self, answerable: bool) -> Self {
+        self.approver_answerable = answerable;
+        self
+    }
+
+    pub fn approver_answerable(&self) -> bool {
+        self.approver_answerable
+    }
+
+    /// This turn's capability standings: what the composed policy actually
+    /// permits, as opposed to what configuration declares. One computation,
+    /// read by the prompt, the tool registry, `doctor`, and the audit log,
+    /// so those four can never disagree about whether a capability works.
+    pub fn capability_standings(&self) -> Vec<reach::Standing> {
+        let Ok(engine) = build_engine_with(&self.inner.config, &self.channel_permission_rules())
+        else {
+            return Vec::new();
+        };
+        let mode = match self.effective_permission_mode() {
+            vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
+            vak_config::PermissionMode::WorkspaceWrite => vak_permission::Mode::WorkspaceWrite,
+            vak_config::PermissionMode::FullAccess => vak_permission::Mode::FullAccess,
+        };
+        let approval_mode = match self.effective_approval_mode() {
+            vak_config::ApprovalMode::Ask => vak_agent::ApprovalMode::Ask,
+            vak_config::ApprovalMode::ApproveSafe => vak_agent::ApprovalMode::ApproveSafe,
+            vak_config::ApprovalMode::AutoApprove => vak_agent::ApprovalMode::AutoApprove,
+        };
+        let mut servers: Vec<String> = self.effective_mcp().servers.into_keys().collect();
+        servers.sort();
+        let registered = self.tool_names();
+        let network: Vec<String> = NETWORK_TOOLS
+            .iter()
+            .filter(|tool| registered.iter().any(|name| name == *tool))
+            .map(|tool| (*tool).to_string())
+            .collect();
+        reach::standings(&reach::Probe {
+            engine: &engine,
+            mode,
+            approval_mode,
+            sandboxed: self.build_sandbox().is_some(),
+            cwd: &self.inner.cwd,
+            approver_answerable: self.approver_answerable,
+            mcp_servers: &servers,
+            network_tools: &network,
+        })
+    }
+
     /// Select a named `prompts/agents/<name>` layer for this turn.
     pub fn with_prompt_role(mut self, role: Option<String>) -> Self {
         self.prompt_role = role.filter(|r| !r.trim().is_empty());
@@ -1973,11 +2061,23 @@ impl Core {
             .collect::<Vec<_>>();
         let inventory = self.cached_mcp_inventory();
         let (seed, capability_contract) = prompts::seed(APP_VERSION);
+        // Advertise only what the composed policy will actually run. A
+        // server listed here that dispatch refuses is the exact mismatch
+        // this reconciliation exists to remove, so blocked servers move out
+        // of the "use these" catalogue and into the standing section, which
+        // says why and how to fix it.
+        let standings = self.capability_standings();
+        let blocked_servers = reach::blocked_mcp_servers(&standings);
+        let servers = servers
+            .into_iter()
+            .filter(|server| !blocked_servers.contains(server))
+            .collect::<Vec<_>>();
         let runtime = prompts::RuntimeSections {
             capability_contract,
             surface: self.surface.prompt_section(),
             skills: skills::prompt_section_from_capabilities(capabilities),
             mcp: mcp_config_section(&servers, inventory.as_ref()),
+            standing: reach::prompt_section(&standings),
         };
         prompts::resolve(&self.prompt_layers(seed), &runtime)
     }
@@ -2324,6 +2424,30 @@ impl Core {
                 configuration: serde_json::json!({"template": command.template}),
             });
         }
+        // One definition of "what this turn can do".
+        //
+        // The capability contract in the system prompt promises that the
+        // attached schemas ARE the callable interface. Leaving a capability
+        // in this set that the composed policy refuses every time breaks
+        // that promise at the only place a model can check it, so the
+        // reconciliation is applied to the descriptors themselves rather
+        // than only to the tool vector further downstream — the contract,
+        // the prompt, the registry, and `doctor` then cannot disagree.
+        //
+        // Strictly subtractive: `reach` never returns a capability that
+        // configuration did not already grant.
+        let standings = self.capability_standings();
+        let unreachable_tools = reach::fully_blocked_tools(&standings);
+        let unreachable_servers = reach::blocked_mcp_servers(&standings);
+        out.retain(|capability| match capability.kind {
+            CapabilityKind::Tool => !unreachable_tools
+                .iter()
+                .any(|name| name == &capability.name),
+            CapabilityKind::McpServer => !unreachable_servers
+                .iter()
+                .any(|name| name == &capability.name),
+            _ => true,
+        });
         out.sort_by(|a, b| {
             format!("{:?}:{}", a.kind, a.name).cmp(&format!("{:?}:{}", b.kind, b.name))
         });
@@ -3442,46 +3566,10 @@ impl Core {
             vak_config::PermissionMode::WorkspaceWrite => vak_permission::Mode::WorkspaceWrite,
             vak_config::PermissionMode::FullAccess => vak_permission::Mode::FullAccess,
         };
-        let mut permission_rules = self.extra_allow_snapshot();
-        if let Some(policy) = self.channel_policy() {
-            if let Some(allow) = policy.tools_allow {
-                if allow.is_empty() {
-                    permission_rules.extend(
-                        ["read", "write", "edit", "bash", "glob", "grep"]
-                            .into_iter()
-                            .map(|tool| format!("-{tool}")),
-                    );
-                } else {
-                    permission_rules.extend(allow.into_iter().map(|pattern| format!("+{pattern}")));
-                }
-            }
-            permission_rules.extend(
-                policy
-                    .tools_deny
-                    .into_iter()
-                    .map(|pattern| format!("-{pattern}")),
-            );
-            if let Some(allow) = policy.mcp_allow {
-                if allow.is_empty() {
-                    permission_rules.push("-mcp".into());
-                } else {
-                    permission_rules.push("+mcp".into());
-                }
-            }
-            permission_rules.extend(
-                policy
-                    .mcp_deny
-                    .into_iter()
-                    .map(|pattern| format!("-mcp({pattern})")),
-            );
-        }
+        let permission_rules = self.channel_permission_rules();
         cfg.permission = Some(match permission {
             Some(p) => p,
-            None => std::sync::Arc::new(build_engine_for_mode(
-                &self.inner.config,
-                &permission_rules,
-                self.effective_permission_mode(),
-            )?),
+            None => std::sync::Arc::new(build_engine_with(&self.inner.config, &permission_rules)?),
         });
         let Some(engine) = cfg.permission.clone() else {
             return Err(CoreError::MissingEngine);
@@ -3693,6 +3781,27 @@ impl Core {
         // only the initial built-in vector would leak capabilities through an
         // explicit channel allowlist.
         tools.retain(|tool| self.channel_tool_allowed(tool.name()));
+        // Then drop what the composed policy will refuse every time. The
+        // capability contract in the system prompt promises that the
+        // attached schemas ARE the callable interface; a tool whose every
+        // use is a foregone denial makes that promise false, and the model
+        // pays for it in wasted turns before reporting a capability it was
+        // told it had as simply missing. `reach` never adds a tool — this
+        // can only ever shorten the list.
+        let turn_standings = self.capability_standings();
+        let unreachable = reach::fully_blocked_tools(&turn_standings);
+        if !unreachable.is_empty() {
+            tools.retain(|tool| !unreachable.iter().any(|name| name == tool.name()));
+            for detail in reach::audit_details(&turn_standings) {
+                security_events::record(
+                    &self.sessions_home(),
+                    security_events::EventKind::CapabilityUnreachable,
+                    "capability_unreachable",
+                    &detail,
+                    None,
+                );
+            }
+        }
         if let Some(contract) = &session_contract {
             tools.retain(|tool| {
                 contract.capabilities.iter().any(|capability| {
@@ -4511,6 +4620,15 @@ pub fn build_engine(
 
 /// `extra` carries learned rules from permissions.local.toml; the engine
 /// aggregates by severity, so they can never shadow explicit denies.
+/// The one permission-engine constructor.
+///
+/// There used to be a second, `build_engine_for_mode`, which existed only
+/// to inject synthetic `?webfetch` / `?browse` rules outside FullAccess.
+/// That injection is gone — `PermissionEngine`'s own mode arms classify
+/// network tools now — and with it the reason for a second constructor.
+/// Two ways to build the object that decides access is precisely how the
+/// layers drifted apart in the first place: the mode-aware one silently
+/// disagreed with this one about whether `auto-approve` applied.
 pub fn build_engine_with(
     config: &vak_config::Config,
     extra: &[String],
@@ -4543,42 +4661,22 @@ fn rule_specs(config: &vak_config::Config, extra: &[String]) -> Vec<String> {
 /// registered next to built-ins (docs/design/29-personal-os.md P4).
 pub const NETWORK_TOOLS: [&str; 2] = ["webfetch", "browse"];
 
-/// True when a BLANKET (patternless) rule spec targets `tool`. Only
-/// blanket rules govern the injection decision: patterned rules cannot
-/// match webfetch requests today (`arg_candidates` has no webfetch family),
-/// so suppressing the Ask default on their behalf would widen access on
-/// arguments the rule can never see — restricted modes keep asking.
-fn has_blanket_rule_for(specs: &[String], tool: &str) -> bool {
-    specs.iter().any(|spec| {
-        let rest = spec.trim();
-        let rest = rest.strip_prefix(['+', '-', '?']).unwrap_or(rest);
-        let rest = rest.trim();
-        !rest.contains('(') && rest.eq_ignore_ascii_case(tool)
-    })
-}
-
-/// Mode-aware engine construction — the seam where network-capable tools
-/// are permission-classified (docs/design/29-personal-os.md P4): outside
-/// FullAccess every network tool gains an implicit Ask default; under
-/// FullAccess the mode's allow-by-default applies untouched. Injection is
-/// skipped when a blanket webfetch rule exists in any layer, because
-/// severity aggregation would otherwise rank an injected Ask over a
-/// deliberate Allow/Deny; deny always outranks ask regardless of layer.
-pub fn build_engine_for_mode(
-    config: &vak_config::Config,
-    extra: &[String],
-    mode: vak_config::PermissionMode,
-) -> Result<vak_permission::PermissionEngine, CoreError> {
-    let mut specs = rule_specs(config, extra);
-    if mode != vak_config::PermissionMode::FullAccess {
-        for tool in NETWORK_TOOLS {
-            if !has_blanket_rule_for(&specs, tool) {
-                specs.push(format!("?{tool}"));
-            }
-        }
-    }
-    vak_permission::PermissionEngine::from_rule_strings(&specs).map_err(CoreError::Rule)
-}
+/// What a channel overlay's `tools_allow = []` ("block this category")
+/// denies at the rule layer. Visibility filtering already removes these
+/// from the registry; the rules are the second, execution-scoped half, so
+/// a path that assembles its own tool list cannot reintroduce one.
+const CHANNEL_BLOCKABLE_TOOLS: [&str; 10] = [
+    "read",
+    "write",
+    "edit",
+    "bash",
+    "glob",
+    "grep",
+    "remember",
+    "propose_skill",
+    "webfetch",
+    "browse",
+];
 
 trait KebabLower {
     fn to_kebab_lowercase(&self) -> String;
@@ -5201,7 +5299,7 @@ mod plugin_runtime_tests {
 
 #[cfg(test)]
 mod webfetch_classification_tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
 
     use vak_config::PermissionMode;
@@ -5214,8 +5312,7 @@ mod webfetch_classification_tests {
         tool: &str,
     ) -> Decision {
         let dir = tempfile::tempdir().unwrap();
-        let engine: PermissionEngine =
-            build_engine_for_mode(cfg, extra, mode).expect("engine builds");
+        let engine: PermissionEngine = build_engine_with(cfg, extra).expect("engine builds");
         engine.evaluate(tool, &serde_json::json!({}), to_mode(mode), dir.path())
     }
 
@@ -5347,7 +5444,7 @@ mod webfetch_classification_tests {
         cfg.allow.push("webfetch".into());
         cfg.deny.push("-webfetch".into());
         let dir = tempfile::tempdir().unwrap();
-        let e = build_engine_for_mode(&cfg, &[], PermissionMode::WorkspaceWrite).unwrap();
+        let e = build_engine_with(&cfg, &[]).unwrap();
         let d = e.evaluate(
             "webfetch",
             &serde_json::json!({}),
@@ -5366,7 +5463,7 @@ mod webfetch_classification_tests {
         let mut cfg = vak_config::Config::default();
         cfg.allow.push("webfetch(example.com/*)".into());
         let dir = tempfile::tempdir().unwrap();
-        let e = build_engine_for_mode(&cfg, &[], PermissionMode::WorkspaceWrite).unwrap();
+        let e = build_engine_with(&cfg, &[]).unwrap();
         for url in ["other.org/x", "example.com/x"] {
             let d = e.evaluate(
                 "webfetch",
@@ -5383,12 +5480,7 @@ mod webfetch_classification_tests {
         // The seam must not widen: bash still asks under workspace-write,
         // session_search stays a read tool, remember stays sanctioned.
         let dir = tempfile::tempdir().unwrap();
-        let e = build_engine_for_mode(
-            &vak_config::Config::default(),
-            &[],
-            PermissionMode::WorkspaceWrite,
-        )
-        .unwrap();
+        let e = build_engine_with(&vak_config::Config::default(), &[]).unwrap();
         let bash = e.evaluate(
             "bash",
             &serde_json::json!({"command": "ls"}),
@@ -5407,18 +5499,336 @@ mod webfetch_classification_tests {
         }
     }
 
+    /// The regression the synthetic `?webfetch` injection caused: a network
+    /// tool's restricted-mode gate must be a MODE default, so that
+    /// `approval_mode = "auto-approve"` reaches it exactly as it reaches
+    /// bash and every other mode-gated tool. When the gate was an injected
+    /// rule, `auto_approve` refused it — the desktop kept prompting for
+    /// webfetch with auto-approve on, and only for webfetch.
     #[test]
-    fn has_rule_for_matches_only_blanket_specs() {
-        assert!(has_blanket_rule_for(&["webfetch".into()], "webfetch"));
-        assert!(has_blanket_rule_for(&["+webfetch".into()], "webfetch"));
-        assert!(has_blanket_rule_for(&["?WEBFETCH".into()], "webfetch"));
-        assert!(!has_blanket_rule_for(&["webfetch(x)".into()], "webfetch"));
-        assert!(!has_blanket_rule_for(&["webfetchy".into()], "webfetch"));
-        assert!(!has_blanket_rule_for(&["bash".into()], "webfetch"));
-        assert!(has_blanket_rule_for(&["browse".into()], "browse"));
-        assert!(has_blanket_rule_for(&["+BROWSE".into()], "browse"));
-        assert!(!has_blanket_rule_for(&["browse(x)".into()], "browse"));
-        assert!(!has_blanket_rule_for(&["browser".into()], "browse"));
+    fn network_tools_gate_as_a_mode_default_so_auto_approve_reaches_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = vak_config::Config::default();
+        for mode in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
+            let engine = build_engine_with(&cfg, &[]).unwrap();
+            for tool in NETWORK_TOOLS {
+                let decision =
+                    engine.evaluate(tool, &serde_json::json!({}), to_mode(mode), dir.path());
+                let Decision::Ask { source, .. } = decision else {
+                    panic!("{tool} in {mode:?} must Ask, got {decision:?}");
+                };
+                assert_eq!(
+                    source,
+                    vak_permission::AskSource::ModeDefault,
+                    "{tool} in {mode:?} must ask as a mode default, not as a rule"
+                );
+                assert!(
+                    vak_agent::auto_approve(
+                        vak_agent::ApprovalMode::AutoApprove,
+                        source,
+                        tool,
+                        &serde_json::json!({}),
+                        to_mode(mode),
+                        false,
+                        dir.path(),
+                    ),
+                    "{tool} in {mode:?} must be reachable under auto-approve"
+                );
+            }
+        }
+    }
+
+    /// An operator's own `?webfetch` is still a rule, and still outranks
+    /// auto-approve. Removing the injection must not remove that.
+    #[test]
+    fn a_deliberate_ask_rule_still_outranks_auto_approve() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = vak_config::Config::default();
+        cfg.ask.push("?webfetch".into());
+        let engine = build_engine_with(&cfg, &[]).unwrap();
+        let decision = engine.evaluate(
+            "webfetch",
+            &serde_json::json!({}),
+            Mode::WorkspaceWrite,
+            dir.path(),
+        );
+        let Decision::Ask { source, .. } = decision else {
+            panic!("expected Ask, got {decision:?}");
+        };
+        assert_eq!(source, vak_permission::AskSource::Rule);
+        assert!(!vak_agent::auto_approve(
+            vak_agent::ApprovalMode::AutoApprove,
+            source,
+            "webfetch",
+            &serde_json::json!({}),
+            Mode::WorkspaceWrite,
+            false,
+            dir.path(),
+        ));
+    }
+}
+
+/// Configured capability reconciled against reachable capability.
+///
+/// The scenario every test here is built from is a real one: a Telegram
+/// turn, `permission_mode = "workspace-write"`, one MCP server (`tavily`)
+/// configured with a valid key, and `gateway.approvals` left at its `deny`
+/// default. Discovery worked perfectly — the model listed the catalogue and
+/// called `tavily_search` with correct arguments on its first attempt — and
+/// every call was refused by an approver that was never going to say yes.
+/// It burned four tool calls, then told the user it had no way to search
+/// the web. Nothing was broken. Nothing was logged. The prompt had promised
+/// a capability the composed policy would never permit.
+#[cfg(test)]
+mod capability_reach_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use crate::reach::Reach;
+    use vak_permission::{Decision, Mode};
+
+    /// A workspace with one MCP server and an explicit permission mode.
+    fn workspace(extra: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let vak = dir.path().join(".vak");
+        std::fs::create_dir_all(&vak).unwrap();
+        std::fs::write(
+            vak.join("config.toml"),
+            format!(
+                "permission_mode = \"workspace-write\"\n\
+                 {extra}\n\
+                 [mcp.servers.tavily]\n\
+                 command = \"npx\"\n\
+                 args = [\"-y\", \"tavily-mcp@latest\"]\n\
+                 network = true\n"
+            ),
+        )
+        .unwrap();
+        dir
+    }
+
+    fn core_for(dir: &tempfile::TempDir, answerable: bool) -> Core {
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true)
+            .unwrap()
+            .with_approver_answerable(answerable);
+        core.set_sessions_home(dir.path().join("home"));
+        core
+    }
+
+    fn standing_for<'a>(standings: &'a [reach::Standing], label: &str) -> &'a reach::Standing {
+        standings
+            .iter()
+            .find(|standing| standing.label == label)
+            .unwrap_or_else(|| panic!("no standing for {label} in {standings:?}"))
+    }
+
+    /// The bug, stated as a test: an unattended surface must not be told it
+    /// has a capability whose every use it will refuse.
+    #[test]
+    fn an_unattended_surface_does_not_advertise_a_capability_it_will_refuse() {
+        let dir = workspace("");
+        let core = core_for(&dir, false);
+
+        let standings = core.capability_standings();
+        assert_eq!(
+            standing_for(&standings, "mcp server `tavily`").reach,
+            Reach::Blocked
+        );
+
+        let prompt = core.system_prompt();
+        // It is no longer offered as usable...
+        assert!(
+            !prompt.contains("Configured MCP servers: tavily"),
+            "unreachable server still advertised as usable:\n{prompt}"
+        );
+        // ...but it is not silently erased either: the model is told it
+        // exists, that it cannot be used, and what would fix it, so it can
+        // answer the user instead of hunting for a substitute tool.
+        assert!(prompt.contains("Configured but NOT usable on this turn"));
+        assert!(prompt.contains("mcp server `tavily`"));
+        assert!(prompt.contains("no approver to answer it"));
+        assert!(prompt.contains("approvals = \"forward\""));
+    }
+
+    /// The same workspace on an attended surface is unchanged: a gate
+    /// somebody can answer is a working capability, and still advertised.
+    #[test]
+    fn an_attended_surface_still_advertises_a_gated_capability() {
+        let dir = workspace("");
+        let core = core_for(&dir, true);
+
+        assert_eq!(
+            standing_for(&core.capability_standings(), "mcp server `tavily`").reach,
+            Reach::Gated
+        );
+        let prompt = core.system_prompt();
+        assert!(prompt.contains("Configured MCP servers: tavily"));
+        assert!(!prompt.contains("Configured but NOT usable"));
+    }
+
+    /// And the operator's actual fix works: allowing the tool outright
+    /// removes the gate, so even the unattended surface can use it.
+    ///
+    /// Note what stays blocked. `webfetch` and `browse` still gate on an
+    /// approval this surface cannot answer, so they are still reported —
+    /// which is correct, and is the second half of the same transcript:
+    /// after the MCP denials the model fell back to `webfetch` and was
+    /// refused there too. Reachability is per capability, not per turn.
+    #[test]
+    fn allowing_the_tool_makes_it_reachable_unattended() {
+        let dir = workspace("allow = [\"mcp\"]");
+        let core = core_for(&dir, false);
+
+        let standings = core.capability_standings();
+        assert_eq!(
+            standing_for(&standings, "mcp server `tavily`").reach,
+            Reach::Open
+        );
+        let prompt = core.system_prompt();
+        assert!(prompt.contains("Configured MCP servers: tavily"));
+        assert!(
+            !reach::prompt_section(&standings).contains("tavily"),
+            "a reachable server must not be listed as unusable"
+        );
+        // The network tools are a separate capability and still gated.
+        assert_eq!(standing_for(&standings, "`webfetch`").reach, Reach::Blocked);
+    }
+
+    /// A deny is unreachable on every surface — no approver can answer a
+    /// `Deny`, so an attended surface must report it exactly as bluntly.
+    #[test]
+    fn a_denied_capability_is_unreachable_even_when_attended() {
+        let dir = workspace("deny = [\"-mcp\"]");
+        let core = core_for(&dir, true);
+
+        let standings = core.capability_standings();
+        let standing = standing_for(&standings, "mcp server `tavily`");
+        assert_eq!(standing.reach, Reach::Blocked);
+        assert!(standing.reason.contains("denied by rule"));
+        assert!(
+            !core
+                .system_prompt()
+                .contains("Configured MCP servers: tavily")
+        );
+    }
+
+    /// Uncertainty must degrade to `Gated`, never to `Blocked`. The probe
+    /// runs before a tool name exists, so a patterned rule cannot be
+    /// evaluated — and hiding a capability that would in fact have worked
+    /// is worse than advertising one that gates.
+    #[test]
+    fn a_patterned_rule_keeps_the_capability_advertised() {
+        let dir = workspace("allow = [\"mcp(tavily/tavily_search)\"]");
+        let core = core_for(&dir, false);
+
+        assert_eq!(
+            standing_for(&core.capability_standings(), "mcp server `tavily`").reach,
+            Reach::Gated
+        );
+        assert!(
+            core.system_prompt()
+                .contains("Configured MCP servers: tavily")
+        );
+    }
+
+    /// AGENTS.md invariant 20: a channel overlay is restrictive. Both call
+    /// sites used to compile `tools_allow` into blanket `+` allow rules, so
+    /// narrowing a chat to one tool handed that chat the tool with its
+    /// approval gate removed — an escalation performed by adding a
+    /// restriction.
+    #[test]
+    fn a_narrowing_channel_overlay_never_removes_an_approval_gate() {
+        let dir = workspace("");
+        let core = core_for(&dir, true);
+        let cwd = core.cwd().clone();
+
+        let baseline = build_engine_with(core.config(), &core.channel_permission_rules()).unwrap();
+        assert!(matches!(
+            baseline.evaluate(
+                "bash",
+                &serde_json::json!({"command": "ls"}),
+                Mode::WorkspaceWrite,
+                &cwd,
+            ),
+            Decision::Ask { .. }
+        ));
+
+        core.apply_channel_policy(vak_config::ChannelPolicy {
+            tools_allow: Some(vec!["bash".into()]),
+            mcp_allow: Some(vec!["tavily/tavily_search".into()]),
+            ..Default::default()
+        });
+        let narrowed = build_engine_with(core.config(), &core.channel_permission_rules()).unwrap();
+
+        for (tool, args) in [
+            ("bash", serde_json::json!({"command": "ls"})),
+            (
+                "mcp",
+                serde_json::json!({"action": "call", "server": "tavily", "tool": "tavily_search"}),
+            ),
+        ] {
+            let decision = narrowed.evaluate(tool, &args, Mode::WorkspaceWrite, &cwd);
+            assert!(
+                !matches!(decision, Decision::Allow),
+                "narrowing overlay granted {tool} an unattended Allow: {decision:?}"
+            );
+        }
+    }
+
+    /// `Some([])` still means "block this category outright".
+    #[test]
+    fn an_empty_channel_allowlist_still_denies_the_category() {
+        let dir = workspace("");
+        let core = core_for(&dir, true);
+        let cwd = core.cwd().clone();
+        core.apply_channel_policy(vak_config::ChannelPolicy {
+            tools_allow: Some(Vec::new()),
+            mcp_allow: Some(Vec::new()),
+            ..Default::default()
+        });
+        let engine = build_engine_with(core.config(), &core.channel_permission_rules()).unwrap();
+        for tool in ["bash", "read", "webfetch", "browse", "mcp"] {
+            let decision =
+                engine.evaluate(tool, &serde_json::json!({}), Mode::WorkspaceWrite, &cwd);
+            assert!(
+                matches!(decision, Decision::Deny { .. }),
+                "{tool} survived an empty channel allowlist: {decision:?}"
+            );
+        }
+    }
+
+    /// One blocked MCP server must not take the broker down with it, and a
+    /// tool with no reachable use left must not stay in the registry.
+    #[test]
+    fn only_fully_blocked_tools_are_dropped() {
+        let open = |tool: &str, label: &str| reach::Standing {
+            tool: tool.into(),
+            label: label.into(),
+            reach: Reach::Open,
+            reason: String::new(),
+            remedy: String::new(),
+        };
+        let blocked = |tool: &str, label: &str| reach::Standing {
+            tool: tool.into(),
+            label: label.into(),
+            reach: Reach::Blocked,
+            reason: "nope".into(),
+            remedy: "fix".into(),
+        };
+
+        let mixed = vec![
+            blocked("mcp", "mcp server `a`"),
+            open("mcp", "mcp server `b`"),
+            blocked("webfetch", "`webfetch`"),
+        ];
+        assert_eq!(reach::fully_blocked_tools(&mixed), vec!["webfetch"]);
+        assert_eq!(reach::blocked_mcp_servers(&mixed), vec!["a"]);
+
+        let all = vec![
+            blocked("mcp", "mcp server `a`"),
+            blocked("mcp", "mcp server `b`"),
+        ];
+        assert_eq!(reach::fully_blocked_tools(&all), vec!["mcp"]);
     }
 }
 
