@@ -105,17 +105,20 @@ async fn gateway_inbound_carries_images_to_the_model() {
     {
         let requests = seen.lock().unwrap();
         assert_eq!(requests.len(), 1);
-        let user_msg = requests[0]
-            .messages
-            .iter()
-            .find(|m| m.role == vak_llm::Role::User)
-            .unwrap();
+        // Checked across every user message rather than the first one: the
+        // projection also emits runtime control blocks in the user role (the
+        // work-contract summary, and this turn's intent note), so "the first
+        // user message" is not necessarily the user's.
         assert!(
-            user_msg.content.iter().any(|b| matches!(
-                b,
-                ContentBlock::Image { source }
-                    if source.data == PNG_B64 && source.media_type == "image/png"
-            )),
+            requests[0]
+                .messages
+                .iter()
+                .filter(|m| m.role == vak_llm::Role::User)
+                .any(|m| m.content.iter().any(|b| matches!(
+                    b,
+                    ContentBlock::Image { source }
+                        if source.data == PNG_B64 && source.media_type == "image/png"
+                ))),
             "image block reached the request"
         );
     }

@@ -7,6 +7,7 @@ import {
 } from "./display";
 import { Home } from "./Home";
 import { OperationsCenter } from "./OperationsCenter";
+import { Commitments } from "./Commitments";
 import { PromptsSection } from "./Prompts";
 import { clock, shortId, timeAgo } from "./time";
 import {
@@ -6029,6 +6030,7 @@ const NAV: NavItem[] = [
   { group: "Home", hash: "#/setup", label: "Setup", icon: ICONS.overview },
   { group: "Home", hash: "#/overview", label: "Home", icon: ICONS.overview },
   { group: "Work", hash: "#/sessions", label: "Sessions", icon: ICONS.sessions },
+  { group: "Work", hash: "#/commitments", label: "Commitments", icon: ICONS.commitments },
   { group: "Work", hash: "#/inbox", label: "Approvals", icon: ICONS.inbox, badge: () => unread().toString() || "" },
   {
     group: "Operations",
@@ -6797,6 +6799,7 @@ export default function App() {
               <Match when={currentRoute() === "#/setup"}><SetupWizard /></Match>
               <Match when={currentRoute() === "#/overview"}><Home /></Match>
               <Match when={currentRoute() === "#/sessions"}><Sessions /></Match>
+              <Match when={currentRoute() === "#/commitments"}><Commitments /></Match>
               <Match when={currentRoute() === "#/operations"}><OperationsCenter section={operationsSection()} /></Match>
               <Match when={currentRoute() === "transcript"}>
                 <Transcript sessionId={route().slice("#/sessions/".length)} />

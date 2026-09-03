@@ -7,6 +7,13 @@ advertisement, tool visibility, dispatch, subagent inheritance, and audit
 surfaces. Each live agent snapshots the definitions of that admitted tool set
 once for all provider requests in its run.
 
+Admission is a **ceiling**, not a floor. Three layers narrow it per turn and
+none of them may add: channel visibility, `reach` (which drops a capability
+whose every use is a foregone denial), and the intent kernel's capability
+slice (`docs/design/47-commitment-kernel.md`). The packet in the header is
+unchanged by any of them, so a turn narrowed today is restored tomorrow
+without a new session.
+
 ## Kinds and invocation
 
 | Kind | Invocation | Runtime boundary |
@@ -53,6 +60,13 @@ execution path.
 7. A host may add run-scoped direct-write paths. They are evaluated before a
    `write` or `edit` tool is dispatched and never depend on model compliance
    with a natural-language scope instruction.
+8. Per-turn narrowing is a subset operation, never a set operation. A slice
+   naming a capability that was never admitted is ignored rather than
+   conjuring it, and only `Tool` entries are sliced: a skill is already
+   progressively disclosed by its loader and an MCP server is already lazy,
+   so slicing those would spend risk for no context saving. When a slice
+   removes a tool the turn actually needed, the model asks for it and that
+   escalation is recorded as a *measured* misread rather than a guess.
 
 ## Why the previous design failed
 

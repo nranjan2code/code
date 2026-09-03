@@ -153,6 +153,10 @@ pub struct FileConfig {
     #[serde(default)]
     pub route: RouteSettings,
     #[serde(default)]
+    pub intent: IntentSettings,
+    #[serde(default)]
+    pub commitment: CommitmentSettings,
+    #[serde(default)]
     pub automation: AutomationSettings,
     #[serde(default)]
     pub update: UpdateSettings,
@@ -356,6 +360,62 @@ pub struct RouteSettings {
     pub quality_hints: Vec<String>,
 }
 
+/// Intent kernel (docs/design/47-commitment-kernel.md).
+///
+/// PARTLY PRIVILEGED. Most of this section only ever narrows what a turn may
+/// do, and a repository choosing to give itself fewer tools is harmless. Two
+/// keys are different and are stripped for an untrusted project by
+/// `load_with_trust`:
+///
+/// * `autonomy` — `delegated` and `autonomous` suppress approval gates the
+///   agent would otherwise raise. That is execution power, and a cloned
+///   repository must not be able to grant it to itself.
+/// * `escalate = "cloud"` — spends the user's credentials on a classification
+///   dispatch before the run they actually asked for.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct IntentSettings {
+    /// Master switch. `false` resolves every turn to the general engagement,
+    /// which is vak's behaviour before the kernel existed. Default true.
+    pub enabled: Option<bool>,
+    /// Confidence at or above which a reading may narrow capability.
+    pub accept_confidence: Option<f64>,
+    /// Confidence at or above which a reading may raise risk posture but not
+    /// remove tools.
+    pub provisional_confidence: Option<f64>,
+    /// Allow progressive disclosure of the capability packet. Default true.
+    pub slice_capabilities: Option<bool>,
+    /// Allow stakes to raise the approval floor. Default true.
+    pub posture: Option<bool>,
+    /// How far the cascade may escalate: "none" | "local" | "cloud".
+    pub escalate: Option<String>,
+    /// Model id for the classification tier; empty picks the cheapest leg on
+    /// the already-frozen ladder.
+    pub classify_model: Option<String>,
+    /// Hard ceiling on one classification dispatch.
+    pub max_classify_usd: Option<f64>,
+    /// Standing delegation: "manual" | "assisted" | "delegated" | "autonomous".
+    pub autonomy: Option<String>,
+}
+
+/// Durable commitments (docs/design/47-commitment-kernel.md). NOT privileged:
+/// every key here bounds long-running work rather than enabling it.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct CommitmentSettings {
+    /// Open durable commitments for session-or-longer work. Default true.
+    pub enabled: Option<bool>,
+    /// Lifetime spend cap per commitment. None inherits the FinOps caps only.
+    pub lifetime_budget_usd: Option<f64>,
+    /// Consecutive stalled episodes before the stall breaker trips.
+    pub stall_limit: Option<u32>,
+    /// Surface a commitment for human review after this long untouched.
+    pub review_every_hours: Option<u32>,
+    /// Default relevance window. A commitment past it closes `expired`
+    /// explicitly rather than lingering.
+    pub default_ttl_days: Option<u32>,
+}
+
 /// Scheduled-task behavior (docs/design/29-personal-os.md P2). NOT
 /// privileged: catch-up only widens when an already-configured task may run.
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -506,9 +566,52 @@ pub struct ChannelPolicy {
     /// only take network access away from a server it can already reach,
     /// never grant it to one the server config itself denies.
     pub mcp_network_deny: Vec<String>,
+    /// Autonomy ceiling for this channel (docs/design/47-commitment-kernel.md).
+    ///
+    /// **Restrictive only**, like everything else on this type: a channel may
+    /// cap delegation below what the workspace granted, never raise it. That
+    /// asymmetry is the point — a Telegram chat should be able to say "propose
+    /// only, in here", and must never be able to say "act freely" on a
+    /// workspace whose operator did not.
+    ///
+    /// `None` inherits. Values: `manual` | `assisted` | `delegated` |
+    /// `autonomous`.
+    pub autonomy_ceiling: Option<String>,
+}
+
+/// Rank an autonomy name, mirroring `vak_intent::Autonomy::rank`.
+///
+/// Duplicated rather than imported because `vak-config` deliberately does not
+/// depend on the intent kernel; the ranking is asserted equal by a test in
+/// `vak-core`, which sees both.
+fn autonomy_rank(name: &str) -> u8 {
+    match name {
+        "manual" => 0,
+        "assisted" => 1,
+        "delegated" => 2,
+        "autonomous" => 3,
+        _ => 1,
+    }
 }
 
 impl ChannelPolicy {
+    /// The least-delegated of two autonomy ceilings. `None` on either side
+    /// means "says nothing", not "allows everything".
+    pub fn cap_autonomy(lower: Option<&str>, higher: Option<&str>) -> Option<String> {
+        match (lower, higher) {
+            (None, None) => None,
+            (Some(one), None) | (None, Some(one)) => Some(one.to_string()),
+            (Some(a), Some(b)) => Some(
+                if autonomy_rank(b) < autonomy_rank(a) {
+                    b
+                } else {
+                    a
+                }
+                .to_string(),
+            ),
+        }
+    }
+
     /// Fold a lower tier (e.g. bot) and a higher tier (e.g. chat) into the
     /// single effective policy applied at dispatch. Restrictive-only: an
     /// `_allow` list from the higher tier wins outright when present (it is
@@ -543,6 +646,10 @@ impl ChannelPolicy {
             hooks_allow: merge_allow(&lower.hooks_allow, &higher.hooks_allow),
             hooks_deny: merge_deny(&lower.hooks_deny, &higher.hooks_deny),
             mcp_network_deny: merge_deny(&lower.mcp_network_deny, &higher.mcp_network_deny),
+            autonomy_ceiling: Self::cap_autonomy(
+                lower.autonomy_ceiling.as_deref(),
+                higher.autonomy_ceiling.as_deref(),
+            ),
         }
     }
 }
@@ -688,6 +795,8 @@ pub struct Config {
     pub goal: GoalResolved,
     pub work: WorkResolved,
     pub route: RouteResolved,
+    pub intent: IntentResolved,
+    pub commitment: CommitmentResolved,
     pub automation: AutomationResolved,
     pub update: UpdateResolved,
     pub tools: ToolsResolved,
@@ -789,6 +898,32 @@ pub struct RouteResolved {
     pub max_fallbacks: usize,
     /// Frontier-tier model-id substrings (lowercased for matching).
     pub quality_hints: Vec<String>,
+}
+
+/// Resolved intent-kernel policy.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntentResolved {
+    pub enabled: bool,
+    pub accept_confidence: f64,
+    pub provisional_confidence: f64,
+    pub slice_capabilities: bool,
+    pub posture: bool,
+    /// "none" | "local" | "cloud".
+    pub escalate: String,
+    pub classify_model: Option<String>,
+    pub max_classify_usd: f64,
+    /// Standing delegation for this workspace.
+    pub autonomy: String,
+}
+
+/// Resolved durable-commitment policy.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommitmentResolved {
+    pub enabled: bool,
+    pub lifetime_budget_usd: Option<f64>,
+    pub stall_limit: u32,
+    pub review_every_hours: Option<u32>,
+    pub default_ttl_days: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -955,6 +1090,27 @@ impl Default for Config {
                 fallback_models: Vec::new(),
                 max_fallbacks: 4,
                 quality_hints: Vec::new(),
+            },
+            intent: IntentResolved {
+                enabled: true,
+                accept_confidence: 0.75,
+                provisional_confidence: 0.45,
+                slice_capabilities: true,
+                posture: true,
+                // Deterministic tiers only by default. A paid classification
+                // before the run the user actually asked for is a real cost
+                // and a real latency, so it is opt-in.
+                escalate: "none".into(),
+                classify_model: None,
+                max_classify_usd: 0.01,
+                autonomy: "assisted".into(),
+            },
+            commitment: CommitmentResolved {
+                enabled: true,
+                lifetime_budget_usd: None,
+                stall_limit: 3,
+                review_every_hours: None,
+                default_ttl_days: None,
             },
             automation: AutomationResolved {
                 catch_up_missed: true,
@@ -1958,7 +2114,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
 
 /// Keys a PROJECT-level config may not set when its workspace has not been
 /// marked trusted: they grant execution or redirect credentials.
-const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox, update, capabilities";
+const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox, update, capabilities, intent.autonomy, intent.escalate=cloud";
 
 pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
     let mut warnings = Vec::new();
@@ -2011,6 +2167,17 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             // user's own hooks and MCP servers — disabling a protection is
             // as privileged as adding a capability.
             fc.capabilities = CapabilityInheritanceSettings::default();
+            // `delegated` and `autonomous` suppress approval gates, and a
+            // cloud classification tier spends the user's credentials before
+            // the run they asked for. Both are execution power; a cloned
+            // repository must not grant them to itself. The rest of [intent]
+            // only ever narrows, so it survives untrusted.
+            if fc.intent.autonomy.is_some() {
+                fc.intent.autonomy = None;
+            }
+            if fc.intent.escalate.as_deref() == Some("cloud") {
+                fc.intent.escalate = None;
+            }
             warnings.push(format!(
                 "project .vak/config.toml is not trusted for this workspace; \
                  ignored privileged keys ({PRIVILEGED_KEYS_NOTICE}). \
@@ -2222,6 +2389,72 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         .iter()
         .map(|h| h.to_ascii_lowercase())
         .collect();
+
+    // --- intent kernel (docs/design/47-commitment-kernel.md) ---
+    cfg.intent.enabled = merged.intent.enabled.unwrap_or(true);
+    // Clamped rather than rejected: a nonsensical threshold should not stop
+    // the runtime, and the clamp keeps the ordering invariant that
+    // `provisional <= accept` even if an operator inverts them.
+    cfg.intent.accept_confidence = merged
+        .intent
+        .accept_confidence
+        .unwrap_or(0.75)
+        .clamp(0.0, 1.0);
+    cfg.intent.provisional_confidence = merged
+        .intent
+        .provisional_confidence
+        .unwrap_or(0.45)
+        .clamp(0.0, cfg.intent.accept_confidence);
+    cfg.intent.slice_capabilities = merged.intent.slice_capabilities.unwrap_or(true);
+    cfg.intent.posture = merged.intent.posture.unwrap_or(true);
+    cfg.intent.escalate = match merged.intent.escalate.as_deref() {
+        Some("none") | None => "none".into(),
+        Some("local") => "local".into(),
+        Some("cloud") => "cloud".into(),
+        Some(other) => {
+            cfg.warnings.push(format!(
+                "unknown intent.escalate '{other}'; using 'none' \
+                 (valid: none, local, cloud)"
+            ));
+            "none".into()
+        }
+    };
+    cfg.intent.classify_model = merged
+        .intent
+        .classify_model
+        .clone()
+        .filter(|model| !model.trim().is_empty());
+    cfg.intent.max_classify_usd = merged
+        .intent
+        .max_classify_usd
+        .unwrap_or(0.01)
+        .clamp(0.0, 1.0);
+    cfg.intent.autonomy = match merged.intent.autonomy.as_deref() {
+        Some("manual") => "manual".into(),
+        Some("assisted") | None => "assisted".into(),
+        Some("delegated") => "delegated".into(),
+        Some("autonomous") => "autonomous".into(),
+        Some(other) => {
+            cfg.warnings.push(format!(
+                "unknown intent.autonomy '{other}'; using 'assisted' \
+                 (valid: manual, assisted, delegated, autonomous)"
+            ));
+            "assisted".into()
+        }
+    };
+
+    // --- durable commitments ---
+    cfg.commitment.enabled = merged.commitment.enabled.unwrap_or(true);
+    cfg.commitment.lifetime_budget_usd = merged
+        .commitment
+        .lifetime_budget_usd
+        .filter(|budget| *budget > 0.0);
+    cfg.commitment.stall_limit = merged.commitment.stall_limit.unwrap_or(3).clamp(1, 100);
+    cfg.commitment.review_every_hours = merged
+        .commitment
+        .review_every_hours
+        .filter(|hours| *hours > 0);
+    cfg.commitment.default_ttl_days = merged.commitment.default_ttl_days.filter(|days| *days > 0);
 
     cfg.gateway.enabled = merged.gateway.enabled.unwrap_or(false);
     cfg.gateway.approvals = match merged.gateway.approvals.as_deref() {
@@ -2999,6 +3232,48 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     if over.route.max_fallbacks.is_some() {
         base.route.max_fallbacks = over.route.max_fallbacks;
     }
+    if over.intent.enabled.is_some() {
+        base.intent.enabled = over.intent.enabled;
+    }
+    if over.intent.accept_confidence.is_some() {
+        base.intent.accept_confidence = over.intent.accept_confidence;
+    }
+    if over.intent.provisional_confidence.is_some() {
+        base.intent.provisional_confidence = over.intent.provisional_confidence;
+    }
+    if over.intent.slice_capabilities.is_some() {
+        base.intent.slice_capabilities = over.intent.slice_capabilities;
+    }
+    if over.intent.posture.is_some() {
+        base.intent.posture = over.intent.posture;
+    }
+    if over.intent.escalate.is_some() {
+        base.intent.escalate = over.intent.escalate;
+    }
+    if over.intent.classify_model.is_some() {
+        base.intent.classify_model = over.intent.classify_model;
+    }
+    if over.intent.max_classify_usd.is_some() {
+        base.intent.max_classify_usd = over.intent.max_classify_usd;
+    }
+    if over.intent.autonomy.is_some() {
+        base.intent.autonomy = over.intent.autonomy;
+    }
+    if over.commitment.enabled.is_some() {
+        base.commitment.enabled = over.commitment.enabled;
+    }
+    if over.commitment.lifetime_budget_usd.is_some() {
+        base.commitment.lifetime_budget_usd = over.commitment.lifetime_budget_usd;
+    }
+    if over.commitment.stall_limit.is_some() {
+        base.commitment.stall_limit = over.commitment.stall_limit;
+    }
+    if over.commitment.review_every_hours.is_some() {
+        base.commitment.review_every_hours = over.commitment.review_every_hours;
+    }
+    if over.commitment.default_ttl_days.is_some() {
+        base.commitment.default_ttl_days = over.commitment.default_ttl_days;
+    }
     for h in over.route.quality_hints {
         if !base.route.quality_hints.contains(&h) {
             base.route.quality_hints.push(h);
@@ -3471,6 +3746,94 @@ mod tests {
     }
 
     #[test]
+    fn intent_section_parses_and_clamps() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "[intent]\nenabled = true\naccept_confidence = 0.9\n\
+             provisional_confidence = 0.99\nslice_capabilities = false\n\
+             escalate = \"local\"\nautonomy = \"delegated\"\n",
+        );
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert!(cfg.intent.enabled);
+        assert_eq!(cfg.intent.accept_confidence, 0.9);
+        // Inverted thresholds clamp rather than break the ordering invariant.
+        assert!(cfg.intent.provisional_confidence <= cfg.intent.accept_confidence);
+        assert!(!cfg.intent.slice_capabilities);
+        assert_eq!(cfg.intent.escalate, "local");
+        assert_eq!(cfg.intent.autonomy, "delegated");
+    }
+
+    #[test]
+    fn unknown_intent_values_warn_and_fall_back_to_the_safe_default() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "[intent]\nescalate = \"telepathy\"\nautonomy = \"unlimited\"\n",
+        );
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.intent.escalate, "none");
+        assert_eq!(cfg.intent.autonomy, "assisted");
+        assert!(cfg.warnings.iter().any(|w| w.contains("intent.escalate")));
+        assert!(cfg.warnings.iter().any(|w| w.contains("intent.autonomy")));
+    }
+
+    /// A cloned repository must not be able to grant itself the right to act
+    /// without asking, nor to spend the user's credentials classifying.
+    #[test]
+    fn an_untrusted_project_cannot_grant_itself_autonomy_or_a_paid_classifier() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "[intent]\nautonomy = \"autonomous\"\nescalate = \"cloud\"\n\
+             slice_capabilities = false\n",
+        );
+        let cfg = load_with_trust(dir.path(), false).unwrap();
+        assert_eq!(cfg.intent.autonomy, "assisted");
+        assert_eq!(cfg.intent.escalate, "none");
+        // The non-privileged half of the section still applies: choosing to
+        // see more of your own tools grants nothing.
+        assert!(!cfg.intent.slice_capabilities);
+
+        // And with trust, the same file does take effect.
+        let trusted = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(trusted.intent.autonomy, "autonomous");
+        assert_eq!(trusted.intent.escalate, "cloud");
+    }
+
+    #[test]
+    fn an_untrusted_project_may_still_restrict_itself_to_a_local_classifier() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "[intent]\nescalate = \"local\"\n");
+        let cfg = load_with_trust(dir.path(), false).unwrap();
+        assert_eq!(cfg.intent.escalate, "local");
+    }
+
+    #[test]
+    fn commitment_section_parses() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "[commitment]\nlifetime_budget_usd = 25.0\nstall_limit = 5\n\
+             review_every_hours = 24\ndefault_ttl_days = 30\n",
+        );
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.commitment.lifetime_budget_usd, Some(25.0));
+        assert_eq!(cfg.commitment.stall_limit, 5);
+        assert_eq!(cfg.commitment.review_every_hours, Some(24));
+        assert_eq!(cfg.commitment.default_ttl_days, Some(30));
+    }
+
+    /// The kernel must be switchable off entirely, because "reproduce the old
+    /// behaviour exactly" has to remain one line of config.
+    #[test]
+    fn the_intent_kernel_can_be_switched_off() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "[intent]\nenabled = false\n");
+        assert!(!load_with_trust(dir.path(), true).unwrap().intent.enabled);
+    }
+
+    #[test]
     fn automation_catch_up_missed_parses() {
         let dir = tempfile::tempdir().unwrap();
         write_project_config(dir.path(), "[automation]\ncatch_up_missed = false\n");
@@ -3754,5 +4117,60 @@ mod tests {
         let (fc, _warnings) = parse_file(&dir.path().join(".vak/config.toml")).unwrap();
         assert_eq!(fc.hooks.len(), 1);
         assert!(fc.hooks[0].enabled);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod channel_autonomy_tests {
+    use super::*;
+
+    fn policy(ceiling: Option<&str>) -> ChannelPolicy {
+        ChannelPolicy {
+            autonomy_ceiling: ceiling.map(str::to_string),
+            ..ChannelPolicy::default()
+        }
+    }
+
+    /// Restrictive only, like every other key on this type. A chat may say
+    /// "propose only, in here"; it may never say "act freely" on a workspace
+    /// whose operator did not.
+    #[test]
+    fn a_channel_can_only_lower_autonomy_never_raise_it() {
+        let composed = ChannelPolicy::merge(&policy(Some("delegated")), &policy(Some("manual")));
+        assert_eq!(composed.autonomy_ceiling.as_deref(), Some("manual"));
+
+        // The narrower tier asking for MORE does not get it.
+        let composed = ChannelPolicy::merge(&policy(Some("manual")), &policy(Some("autonomous")));
+        assert_eq!(composed.autonomy_ceiling.as_deref(), Some("manual"));
+    }
+
+    #[test]
+    fn silence_on_one_tier_inherits_rather_than_permitting_everything() {
+        assert_eq!(
+            ChannelPolicy::merge(&policy(Some("assisted")), &policy(None))
+                .autonomy_ceiling
+                .as_deref(),
+            Some("assisted")
+        );
+        assert_eq!(
+            ChannelPolicy::merge(&policy(None), &policy(Some("manual")))
+                .autonomy_ceiling
+                .as_deref(),
+            Some("manual")
+        );
+        assert!(
+            ChannelPolicy::merge(&policy(None), &policy(None))
+                .autonomy_ceiling
+                .is_none()
+        );
+    }
+
+    /// An unparseable ceiling must not read as maximum delegation.
+    #[test]
+    fn an_unknown_ceiling_is_treated_as_assisted_not_autonomous() {
+        let composed = ChannelPolicy::merge(&policy(Some("banana")), &policy(Some("autonomous")));
+        assert_eq!(composed.autonomy_ceiling.as_deref(), Some("banana"));
+        assert!(autonomy_rank("banana") < autonomy_rank("autonomous"));
     }
 }

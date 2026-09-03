@@ -97,6 +97,22 @@ default:
   (default 300); `HttpApprover` waits 15 minutes. Both fail closed on expiry,
   and both drop their pending entry first so a late reply resolves nothing.
 - The engine is pure: no I/O beyond path canonicalization.
+- **Intent never gates the engine** (`docs/design/47-commitment-kernel.md`).
+  A resolved engagement supplies a *ceiling* on approval permissiveness, and
+  the effective mode is the stricter of that and the configured
+  `ApprovalMode`. So an irreversible turn reaches a human even under
+  `auto-approve`, and nothing the intent kernel concludes can skip a gate the
+  operator asked for or turn a `Deny` into an `Ask`. A resolution bug can make
+  vak more cautious; it cannot authorize anything.
+- An **envelope** is pre-authorization *within* existing authority, never a
+  grant of new authority: its `permission_ceiling` composes through the same
+  `PermissionMode::capped_by` a gateway channel override uses, so it can only
+  lower the effective mode. Revocation follows invariant 11.
+- A gate nobody can answer still fails closed on a one-shot turn. Durable
+  work instead **defers**: the commitment suspends on a `Human` wake
+  condition and the question lands in the inbox. Nothing happens without the
+  answer, but the work survives — a hard denial destroys month-long work that
+  merely needed to wait.
 
 ## OS sandbox layer
 

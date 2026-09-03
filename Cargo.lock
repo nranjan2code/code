@@ -5812,11 +5812,13 @@ dependencies = [
  "tokio-util",
  "uuid",
  "vak-agent",
+ "vak-commit",
  "vak-config",
  "vak-core",
  "vak-delivery",
  "vak-eval",
  "vak-flow",
+ "vak-intent",
  "vak-llm",
  "vak-ops",
  "vak-permission",
@@ -5845,6 +5847,21 @@ dependencies = [
  "vak-permission",
  "vak-session",
  "vak-tools",
+]
+
+[[package]]
+name = "vak-commit"
+version = "2.0.1"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "uuid",
+ "vak-intent",
+ "vak-session",
 ]
 
 [[package]]
@@ -5877,9 +5894,11 @@ dependencies = [
  "toml 0.8.2",
  "uuid",
  "vak-agent",
+ "vak-commit",
  "vak-config",
  "vak-flow",
  "vak-hooks",
+ "vak-intent",
  "vak-llm",
  "vak-mcp",
  "vak-permission",
@@ -5980,6 +5999,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vak-intent"
+version = "2.0.1"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "vak-llm"
 version = "2.0.1"
 dependencies = [
@@ -6077,11 +6106,13 @@ dependencies = [
  "tower-http",
  "uuid",
  "vak-agent",
+ "vak-commit",
  "vak-config",
  "vak-core",
  "vak-delivery",
  "vak-flow",
  "vak-hooks",
+ "vak-intent",
  "vak-llm",
  "vak-ops",
  "vak-permission",
@@ -6103,6 +6134,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "uuid",
+ "vak-intent",
  "vak-llm",
 ]
 

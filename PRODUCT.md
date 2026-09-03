@@ -23,18 +23,19 @@ vak's mechanism is "one core, many surfaces": a single auditable, policy-gated c
 - Runs locally against the user's own machine, workspace, and connected tools; provider credentials come from a gitignored project `.env`, a user secret store, or the environment.
 - Sessions are append-only JSONL ledgers; branching and compaction append rather than rewrite history.
 - Agent turns, tools, subagents, flows, plans, evals, server runs, and desktop runs all pass through the same permission/policy engine before any effect.
+- Every turn is resolved into a typed, recorded "intent": a reading on seven behavioural axes, and an engagement derived from it that can only *narrow* what the run may do. Work that outlives a session becomes a durable commitment whose completion the runtime verifies against the world rather than accepting from the model.
 - Supports multiple model providers (Anthropic, OpenAI, OpenRouter, OpenCode Zen, Gemini, Ollama for local use).
 - Extensibility (skills, hooks, MCP servers, custom commands, flows) is additive and does not bloat the core.
 - Can run as a durable background service (macOS LaunchAgent / Linux systemd user service) via the server, in addition to interactive CLI/desktop use.
 
 ## Capabilities and Constraints
 
-- CLI (`vak exec`, `vak plan`, `vak config dump`, etc.) is the headless surface.
+- CLI (`vak exec`, `vak plan`, `vak config dump`, `vak intent explain`, `vak commit`, etc.) is the headless surface.
 - Tauri 2 desktop app (`crates/vak-desktop`, UI in `crates/vak-desktop/ui`): isolated worktrees, streaming chat, diff review, editor, PTY terminal, previews, side chats, best-of-N comparison.
 - Admin UI (`crates/vak-admin-ui`): in scope for design work alongside the desktop app.
 - HTTP/SSE server (`crates/vak-server`) exposes the same session, run, approval, transcript, diff, and steering contracts used by the desktop app.
 - Requires a stable Rust toolchain and Git to build; desktop client additionally requires Node.js/npm.
-- Terminology: "receipts" (auditable record of provider dispatch), "ledger" (append-only session record), "surfaces" (CLI/desktop/server/gateways sharing one core).
+- Terminology: "receipts" (auditable record of provider dispatch), "ledger" (append-only session record), "surfaces" (CLI/desktop/server/gateways sharing one core), "reading" (what a request is, on seven axes), "engagement" (what the runtime will therefore do — narrowing only), "commitment" (a durable obligation with a verifiable done-condition).
 
 ## Brand Commitments
 
@@ -47,7 +48,7 @@ vak's mechanism is "one core, many surfaces": a single auditable, policy-gated c
 - README.md documents quick start, architecture ("one core, many surfaces"), and a features/documentation index.
 - `docs/design/` contains architecture design docs (e.g. `20-tauri-desktop.md`, `24-agent-security.md`, `00-roadmap.md`).
 - No testimonials, customer names, benchmarks, or pricing exist; future work must not fabricate them.
-- Current version: 0.8.0 (per README badge and CHANGELOG), actively developed.
+- Current version: 2.0.1 (per README badge and CHANGELOG), actively developed.
 
 ## Product Principles
 

@@ -333,6 +333,33 @@ E2E proof: app boots, embedded server answers on the ephemeral port,
 `/fs/*`, `/side/*`, `/bestofn`, `/pr`, `/tasks`, `/launch` rejected with 401;
 workspace fmt+clippy(-D warnings)+230 tests green.
 
+## Composer intent strip
+
+Above the composer box sits a read-out of how vak has read what you are about
+to send (`docs/design/47-commitment-kernel.md`): the act, whether it opens a
+commitment, how many tools it will see, whether it will ask before acting.
+Expanding it gives the axes, the narrowing list, and every contributing signal
+with the weight it carried — the same evidence `vak intent explain` prints.
+
+The design constraint is that this element sits between the user and *every*
+message they send, so its failure mode is not "unclear", it is "in the way".
+A strip that announced itself on every keystroke would be ignored within a
+day, and an ignored safety signal is worse than none, because the one time it
+says something important nobody is looking. So it is quiet in proportion to
+consequence:
+
+- ordinary work reads as chrome — micro-label type, `--faint`, no border;
+- work that opens a commitment or owes evidence steps up to `--muted` with a
+  filled mark;
+- irreversible, deferred, or must-ask readings take the accent **and state
+  the reason inline without needing a click**, because a warning behind a
+  disclosure is a warning nobody reads.
+
+Resolution runs the free deterministic tiers only, so it costs nothing and
+dispatches nothing. It is debounced, abortable, silent on error, and never
+blocks sending: an optional read-out that could delay a turn would be a worse
+trade than not having it.
+
 ## Settings workspace
 
 The desktop includes a native-feeling, searchable settings workspace available

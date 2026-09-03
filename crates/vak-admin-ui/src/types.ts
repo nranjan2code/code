@@ -866,3 +866,194 @@ export interface OnboardingState {
   core_ready: boolean;
   unattended_ready: boolean;
 }
+
+// --- Intent kernel + commitments (docs/design/47-commitment-kernel.md) ------
+
+export type Act =
+  | "converse" | "answer" | "locate" | "analyze" | "author"
+  | "modify" | "operate" | "verify" | "orchestrate" | "govern";
+export type Horizon = "immediate" | "turn" | "session" | "durable";
+export type Stakes = "inert" | "reversible" | "costly" | "irreversible";
+export type EvidenceAxis = "none" | "cited" | "verified" | "audited";
+export type Clarity = "clear" | "underspecified" | "ambiguous";
+export type Attendance = "interactive" | "supervised" | "unattended";
+/** Ordered weakest to strongest; the whole "is it done" question lives here. */
+export type Satisfaction = "asserted" | "cited" | "observed" | "attested";
+export type Verdict =
+  | "fulfilled" | "partial" | "failed"
+  | "abandoned" | "superseded" | "expired" | "unknown";
+export type Phase =
+  | "proposed" | "active" | "suspended" | "blocked" | "satisfying" | "closed";
+
+export interface Confidences {
+  act: number;
+  horizon: number;
+  stakes: number;
+  evidence: number;
+}
+
+export interface Reading {
+  act: Act;
+  horizon: Horizon;
+  stakes: Stakes;
+  evidence: EvidenceAxis;
+  clarity: Clarity;
+  attendance: Attendance;
+  domains: string[];
+  alternate_acts?: Act[];
+  confidence: number;
+  axis_confidence: Confidences;
+}
+
+export interface IntentSignal {
+  kind: string;
+  name: string;
+  weight: number;
+  detail: string;
+}
+
+export interface Provenance {
+  tier: "declared" | "signals" | "local-model" | "cloud-model" | "general";
+  resolver_version: number;
+  signals: IntentSignal[];
+  model?: string | null;
+  prompt_digest?: string | null;
+  /** False means a model decided it; never claim replay fidelity you lack. */
+  reproducible: boolean;
+  escalation_note?: string | null;
+}
+
+export interface Posture {
+  managed: boolean;
+  open_commitment: boolean;
+  checkpoint_before_effect: boolean;
+  hil: "interrupt" | "envelope" | "review" | "defer";
+  gate_fallback: "deny" | "defer";
+  clarify: "proceed" | "state-assumption" | "ask";
+  delivery: {
+    shape: string;
+    cadence: "live" | "on-completion" | "digest";
+    urgency: "interrupt" | "notify" | "quiet";
+  };
+  demand: {
+    reasoning_required: boolean;
+    evidence_required: boolean;
+    structured_output: boolean;
+  };
+  stop: "message" | "inspection" | "effect" | "verification";
+  context: "minimal" | "recall" | "working" | "full";
+  note?: string | null;
+}
+
+export interface Engagement {
+  limits: {
+    capabilities: { kind: "all" } | { kind: "only"; names: string[] };
+    ladder_limit?: number | null;
+    required_modalities: string[];
+    spend_ceiling_usd?: number | null;
+    approval_ceiling: "ask" | "approve-safe" | "auto-approve";
+    permission_ceiling: "read-only" | "workspace-write" | "full-access";
+    subagent_budget?: number | null;
+    max_turns?: number | null;
+    min_satisfaction: Satisfaction;
+  };
+  posture: Posture;
+}
+
+export interface IntentExplain {
+  reading: Reading;
+  engagement: Engagement;
+  provenance: Provenance;
+  /** Human-readable list of what this narrows versus doing nothing. */
+  narrows: string[];
+  escalation_recommended?: string | null;
+  model_visible?: string | null;
+}
+
+export interface IntentPolicy {
+  intent: {
+    enabled: boolean;
+    accept_confidence: number;
+    provisional_confidence: number;
+    slice_capabilities: boolean;
+    posture: boolean;
+    escalate: string;
+    max_classify_usd: number;
+    autonomy: string;
+  };
+  commitment: {
+    enabled: boolean;
+    lifetime_budget_usd?: number | null;
+    stall_limit: number;
+    review_every_hours?: number | null;
+    default_ttl_days?: number | null;
+  };
+}
+
+export interface CriterionState {
+  criterion_id: string;
+  statement: string;
+  required: boolean;
+  result?:
+    | { kind: "passed"; evidence: string }
+    | { kind: "failed"; reason: string }
+    | { kind: "unknown"; reason: string }
+    | null;
+  strength?: Satisfaction | null;
+  evaluated_at?: string | null;
+}
+
+export interface CommitmentEpisode {
+  episode_id: string;
+  session_id: string;
+  started_at: string;
+  ended_at?: string | null;
+  advancement?: { kind: "advanced" | "learned" | "blocked" | "stalled" } | null;
+  spend_usd: number;
+}
+
+export interface Commitment {
+  commitment_id: string;
+  opened_at: string;
+  spec: {
+    objective: string;
+    reading: Reading;
+    min_satisfaction: Satisfaction;
+    economics: {
+      lifetime_budget_usd?: number | null;
+      expires_at?: string | null;
+      review_every_hours?: number | null;
+      stall_limit: number;
+    };
+  };
+  phase: Phase;
+  criteria: CriterionState[];
+  episodes: CommitmentEpisode[];
+  suspension?: { kind: string } | null;
+  blocker?: string | null;
+  closure?: {
+    verdict: Verdict;
+    strength: Satisfaction;
+    closed_at: string;
+    note: string;
+  } | null;
+  superseded_by?: string | null;
+  spend_usd: number;
+  consecutive_stalls: number;
+  drift: string[];
+  updated_at: string;
+}
+
+/** Why the scheduler ranked a commitment where it did. */
+export interface CommitmentPriority {
+  commitment_id: string;
+  score: number;
+  components: [string, number][];
+  /** Present when the commitment cannot be worked now, with the reason. */
+  withheld?: string | null;
+}
+
+export interface CommitmentList {
+  commitments: Commitment[];
+  priorities: CommitmentPriority[];
+}

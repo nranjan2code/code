@@ -144,6 +144,44 @@ scripts/vak.sh build
 - Goal mode with acceptance criteria, brokered verification, and regression obligations
 - Static flow DAGs plus a bounded, fail-closed dynamic planner
 
+### An agent that knows what it was asked
+
+Every turn is read on seven behavioural axes — what kind of work, how long it
+lives, what it can break, what standard of proof it owes, how clear it is,
+what modalities it needs, and whether anyone is watching. That reading then
+*narrows* the run: fewer tools when fewer will do, a shorter route ladder for
+trivial work, and a higher approval floor for anything irreversible.
+
+- It only ever narrows. A misreading can make vak more cautious or less
+  capable; it can never grant a tool, widen a budget, or skip a gate.
+- It explains itself. `vak intent explain "<prompt>"` prints every signal with
+  the weight it carried and exactly what the run would narrow — for free,
+  without dispatching anything.
+- Uncertainty falls back to doing nothing special, so being unsure never
+  silently takes a capability away.
+
+```bash
+vak intent explain "deploy the billing service to production"
+```
+
+### Work that outlives a conversation
+
+Work spanning sessions, restarts, or months becomes a durable **commitment**
+with its own append-only ledger, rather than a note in a transcript.
+
+- **Reality decides when it is done.** A commitment closes `fulfilled` only
+  when the runtime has checked its criteria against the world at the strength
+  the work demands. The model may propose criteria; it may never mark one
+  passed.
+- **Waiting is not failing.** Unattended work that needs a human suspends and
+  queues the question instead of failing closed.
+- **Nothing evaporates.** Every commitment closes with an explicit verdict and
+  its evidence — including an honest `unknown` when the runtime lost track.
+
+```bash
+vak commit list        # the portfolio, in the order it would be worked
+```
+
 ### Safety that is architectural
 
 - Three permission modes: `read-only`, `workspace-write`, and explicit `full-access`
@@ -430,6 +468,7 @@ Read [AGENTS.md](AGENTS.md) before changing the agent loop, tool boundary, sessi
 | [Gateway](docs/design/22-gateway.md) | Chat routing, approvals, transports, and unattended safety |
 | [Memory](docs/design/23-memory.md) | Cross-session recall and model-visible search |
 | [Learning loop](docs/design/26-learning.md) | Durable notes and human-reviewed skill proposals |
+| [Commitment kernel](docs/design/47-commitment-kernel.md) | How a request is read, how that narrows the run, and how "done" is proven |
 | [Hosting](docs/hosting.md) | Durable local or VPS deployment |
 
 ---

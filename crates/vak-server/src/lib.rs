@@ -685,6 +685,11 @@ fn router_with_state(state: AppState) -> Router {
             "/memory/{note_id}",
             axum::routing::patch(amend_memory_note).delete(forget_memory_note),
         )
+        .route("/intent/explain", get(intent_explain))
+        .route("/intent/policy", get(intent_policy))
+        .route("/commitments", get(list_commitments))
+        .route("/commitments/{id}", get(get_commitment))
+        .route("/commitments/{id}/close", post(close_commitment))
         .route("/doctor", get(doctor_report))
         .route("/onboarding", get(onboarding_state))
         // The composition layer setup needs, and nothing more: every other
@@ -2839,6 +2844,7 @@ fn summarize_jsonl(
                         vak_session::EntryPayload::Goal(_) => {}
                         vak_session::EntryPayload::Activity(_) => {}
                         vak_session::EntryPayload::Work(_) => {}
+                        vak_session::EntryPayload::Intent(_) => {}
                     }
                 }
                 if title.is_some() && entries > 400 {
@@ -4615,6 +4621,249 @@ async fn digest_report(
 ) -> Json<vak_core::digest::DigestReport> {
     let days = q.days.unwrap_or(7).clamp(1, 90);
     Json(vak_core::digest::digest(&state.core.sessions_home(), days))
+}
+
+// ---- Intent kernel + commitments (docs/design/47-commitment-kernel.md) -----
+
+#[derive(serde::Deserialize)]
+struct IntentExplainQuery {
+    prompt: String,
+    #[serde(default)]
+    surface: Option<String>,
+    #[serde(default)]
+    act: Option<String>,
+    #[serde(default)]
+    horizon: Option<String>,
+    #[serde(default)]
+    stakes: Option<String>,
+    #[serde(default)]
+    evidence: Option<String>,
+}
+
+/// Resolve a prompt without running it.
+///
+/// The same free tiers the runtime uses, so what this returns is what that
+/// prompt would actually get. Costs nothing and dispatches nothing, which is
+/// what makes it safe to call from a composer as the user types.
+async fn intent_explain(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<IntentExplainQuery>,
+) -> axum::response::Response {
+    let mut declared = vak_intent::Declared::default();
+    let mut bad = Vec::new();
+    if let Some(raw) = &q.act {
+        match vak_intent::Act::parse(raw) {
+            Some(value) => declared.act = Some(value),
+            None => bad.push(format!("act '{raw}'")),
+        }
+    }
+    if let Some(raw) = &q.horizon {
+        match vak_intent::Horizon::parse(raw) {
+            Some(value) => declared.horizon = Some(value),
+            None => bad.push(format!("horizon '{raw}'")),
+        }
+    }
+    if let Some(raw) = &q.stakes {
+        match vak_intent::Stakes::parse(raw) {
+            Some(value) => declared.stakes = Some(value),
+            None => bad.push(format!("stakes '{raw}'")),
+        }
+    }
+    if let Some(raw) = &q.evidence {
+        match vak_intent::Evidence::parse(raw) {
+            Some(value) => declared.evidence = Some(value),
+            None => bad.push(format!("evidence '{raw}'")),
+        }
+    }
+    if !bad.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": format!("unknown {}", bad.join(", ")) })),
+        )
+            .into_response();
+    }
+
+    let surface = match q.surface.as_deref() {
+        None => state.core.surface().clone(),
+        Some(raw) => match vak_intent::Surface::parse(raw) {
+            Some(vak_intent::Surface::Cli) => vak_core::Surface::Cli,
+            Some(vak_intent::Surface::Desktop) => vak_core::Surface::Desktop,
+            Some(vak_intent::Surface::Server) => vak_core::Surface::Server,
+            Some(vak_intent::Surface::Chat) => vak_core::Surface::Chat {
+                channel: "chat".into(),
+            },
+            Some(vak_intent::Surface::Cron | vak_intent::Surface::Heartbeat) => {
+                vak_core::Surface::Background
+            }
+            Some(vak_intent::Surface::Subagent) => vak_core::Surface::Subagent,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": format!("unknown surface '{raw}'") })),
+                )
+                    .into_response();
+            }
+        },
+    };
+
+    let resolution = vak_core::intent::resolve_turn(
+        &q.prompt,
+        &surface,
+        &[],
+        vak_core::intent::workspace_facts(state.core.cwd()),
+        vak_intent::HistoryFacts::default(),
+        &declared,
+        &state.core.turn_authority_for(&surface),
+        &vak_core::intent::resolver_config(state.core.config()),
+    );
+    let escalation = match &resolution {
+        vak_intent::Resolution::Escalate { reason, .. } => Some(reason.clone()),
+        vak_intent::Resolution::Settled(_) => None,
+    };
+    let intent = resolution.intent();
+    Json(serde_json::json!({
+        "reading": intent.reading,
+        "engagement": intent.engagement,
+        "provenance": intent.provenance,
+        "narrows": intent
+            .engagement
+            .limits
+            .diff_from(&vak_intent::Limits::unrestricted()),
+        "escalation_recommended": escalation,
+        "model_visible": intent.model_visible(),
+    }))
+    .into_response()
+}
+
+/// The resolved intent and commitment policy for this workspace.
+async fn intent_policy(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let config = state.core.config();
+    Json(serde_json::json!({
+        "intent": {
+            "enabled": config.intent.enabled,
+            "accept_confidence": config.intent.accept_confidence,
+            "provisional_confidence": config.intent.provisional_confidence,
+            "slice_capabilities": config.intent.slice_capabilities,
+            "posture": config.intent.posture,
+            "escalate": config.intent.escalate,
+            "max_classify_usd": config.intent.max_classify_usd,
+            "autonomy": config.intent.autonomy,
+        },
+        "commitment": {
+            "enabled": config.commitment.enabled,
+            "lifetime_budget_usd": config.commitment.lifetime_budget_usd,
+            "stall_limit": config.commitment.stall_limit,
+            "review_every_hours": config.commitment.review_every_hours,
+            "default_ttl_days": config.commitment.default_ttl_days,
+        },
+    }))
+}
+
+#[derive(serde::Deserialize)]
+struct CommitmentQuery {
+    /// Include closed commitments.
+    #[serde(default)]
+    all: bool,
+}
+
+/// The portfolio, in the order the scheduler would work it.
+async fn list_commitments(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<CommitmentQuery>,
+) -> Json<serde_json::Value> {
+    let ledger = vak_commit::CommitmentLedger::new(&state.core.sessions_home());
+    let commitments = if q.all { ledger.all() } else { ledger.open() };
+    let ranked = vak_commit::rank(&commitments, &vak_commit::SchedulerContext::default());
+    Json(serde_json::json!({
+        "commitments": commitments,
+        // Priorities ride alongside rather than being baked into the rows:
+        // the ordering is a scheduling opinion, and a UI should be able to
+        // show why as well as what.
+        "priorities": ranked,
+    }))
+}
+
+async fn get_commitment(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> axum::response::Response {
+    let ledger = vak_commit::CommitmentLedger::new(&state.core.sessions_home());
+    match ledger.get(&id) {
+        Ok(Some(commitment)) => Json(serde_json::json!({
+            "commitment": commitment,
+            "events": ledger.events_for(&id),
+        }))
+        .into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "no such commitment" })),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct CloseCommitmentBody {
+    verdict: String,
+    #[serde(default)]
+    note: String,
+}
+
+async fn close_commitment(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<CloseCommitmentBody>,
+) -> axum::response::Response {
+    let ledger = vak_commit::CommitmentLedger::new(&state.core.sessions_home());
+    let Ok(Some(commitment)) = ledger.get(&id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "no such commitment" })),
+        )
+            .into_response();
+    };
+    let verdict = match body.verdict.as_str() {
+        "fulfilled" => vak_commit::Verdict::Fulfilled,
+        "partial" => vak_commit::Verdict::Partial,
+        "failed" => vak_commit::Verdict::Failed,
+        "abandoned" => vak_commit::Verdict::Abandoned,
+        "expired" => vak_commit::Verdict::Expired,
+        "unknown" => vak_commit::Verdict::Unknown,
+        other => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("unknown verdict '{other}'") })),
+            )
+                .into_response();
+        }
+    };
+    let strength = commitment.achieved_strength();
+    match ledger.append(&vak_commit::Event::new(
+        &commitment.commitment_id,
+        vak_commit::EventKind::Closed {
+            verdict,
+            strength,
+            evidence: Vec::new(),
+            note: body.note,
+        },
+    )) {
+        Ok(()) => {
+            Json(serde_json::json!({ "ok": true, "verdict": verdict.as_str() })).into_response()
+        }
+        // A refused closure is a 409, not a 500: the request was well-formed
+        // and the server is fine — the evidence simply does not support the
+        // claim. The message says which evidence was missing.
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 // ---- Inbox (durable attention layer, docs/design/29-personal-os.md P6) ------
@@ -9767,7 +10016,51 @@ pub fn start_scheduler(state: &AppState) {
             }
         });
     }
+
+    // Commitment upkeep runs on its own timer, deliberately NOT gated on
+    // `heartbeat.enabled` (docs/design/47-commitment-kernel.md). Heartbeat is
+    // an opt-in model pass that costs tokens; this is clock and filesystem
+    // work that costs none. Tying durable work's upkeep to an opt-in prober
+    // would mean a commitment stopped being durable the moment somebody
+    // switched the prober off — and a suspended commitment nobody wakes is
+    // indistinguishable from lost work.
+    if state.core.config().commitment.enabled {
+        let st = state.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(COMMITMENT_TICK);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tick.tick().await;
+                let report =
+                    vak_core::commitments::maintain(&st.core.sessions_home(), st.core.cwd()).await;
+                if report.is_empty() {
+                    continue;
+                }
+                // A commitment waking, lapsing, or being abandoned by policy
+                // is a thing that happened without anybody asking for it, so
+                // it lands in the attention layer rather than only in a log.
+                for id in report.expired.iter().chain(report.escalated.iter()) {
+                    let _ = vak_core::inbox::record(
+                        &st.core.sessions_home(),
+                        vak_core::inbox::Kind::TaskSummary,
+                        "Commitment closed without you",
+                        &format!("{id} reached the end of its window or escalation policy."),
+                        None,
+                        None,
+                    );
+                }
+                for id in report.resumed.iter().chain(report.satisfied.iter()) {
+                    eprintln!("[commit] {id} resumed");
+                }
+            }
+        });
+    }
 }
+
+/// Commitment upkeep cadence. Slower than the heartbeat tick because nothing
+/// here is latency-sensitive: a scheduled wake a minute late is fine, and a
+/// tighter loop would just re-read the ledger for nothing.
+const COMMITMENT_TICK: std::time::Duration = std::time::Duration::from_secs(60);
 
 // ---- Budget alerts (docs/design/29-personal-os.md P2) -----------------------
 

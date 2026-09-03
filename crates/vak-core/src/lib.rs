@@ -6,6 +6,7 @@ pub mod agent_network;
 pub mod backup;
 pub mod baseline;
 pub mod checkpoints;
+pub mod commitments;
 pub mod custom_commands;
 pub mod digest;
 pub mod files;
@@ -13,8 +14,10 @@ pub mod finops;
 pub mod health;
 pub mod inbox;
 pub mod install;
+pub mod intent;
 pub mod learning;
 pub mod memory;
+pub mod misread;
 pub mod onboarding;
 /// The three permission rule lists, in `vak_config::Config`'s own order:
 /// `(allow, ask, deny)`.
@@ -57,6 +60,7 @@ pub mod state;
 
 pub mod gateway_token;
 pub mod tasks;
+pub mod tools_commitments;
 pub mod tools_tasks;
 pub mod transcript_md;
 pub mod trust;
@@ -2491,6 +2495,9 @@ impl Core {
         if self.effective_memory_search_enabled() {
             names.push("session_search".into());
         }
+        if self.inner.config.commitment.enabled {
+            names.push("commitments".into());
+        }
         if self.effective_memory_write_enabled() {
             names.push("remember".into());
         }
@@ -3271,7 +3278,17 @@ impl Core {
     /// evidence ledger, session beliefs, config, and tool count. No
     /// network, no invented model ids. The operator-selected primary is
     /// pinned to the head; v2 ordering decides only the FALLBACK order.
-    fn plan_route_ladder(&self, primary: vak_llm::RouteLeg) -> routing::RoutePlan {
+    /// Order the frozen ladder for a session.
+    ///
+    /// `demand` is what the first turn's reading concluded about this work.
+    /// It is optional because a session can be opened before anyone has said
+    /// what it is for; when absent the demand facts fall back to the
+    /// conservative defaults below rather than being fabricated.
+    fn plan_route_ladder(
+        &self,
+        primary: vak_llm::RouteLeg,
+        demand: Option<vak_intent::DemandHint>,
+    ) -> routing::RoutePlan {
         let mut candidates = vec![primary.clone()];
 
         // Same-model legs on other keyed providers (legacy Phase B set).
@@ -3324,15 +3341,24 @@ impl Core {
         candidates.sort();
         candidates.dedup();
 
-        // Demand scoring from facts available at admission. Unknown
-        // context reads as moderate -- never zero, never fabricated.
+        // Demand scoring from facts available at admission. Unknown context
+        // still reads as moderate -- never zero, never fabricated -- but the
+        // three behavioural facts now come from the turn's reading instead of
+        // being hardcoded `false`. Passing constants here is why every session
+        // scored identical demand and the objective was effectively fixed,
+        // leaving the ordering function inert.
+        let hint = demand.unwrap_or(vak_intent::DemandHint {
+            reasoning_required: false,
+            evidence_required: false,
+            structured_output: false,
+        });
         let demand = vak_llm::score_demand(vak_llm::DemandInput {
             estimated_input_tokens: 0,
             output_budget_tokens: u64::from(self.inner.config.max_tokens),
             tool_count: self.tool_names().len(),
-            structured_output: false,
-            reasoning_required: false,
-            evidence_required: false,
+            structured_output: hint.structured_output,
+            reasoning_required: hint.reasoning_required,
+            evidence_required: hint.evidence_required,
         });
         let objective = vak_llm::QualityObjective::resolve(
             (route_cfg.objective != "auto").then_some(route_cfg.objective.as_str()),
@@ -3384,6 +3410,42 @@ impl Core {
         provider: String,
         model: String,
     ) -> Result<SessionLog, CoreError> {
+        self.start_session_with_route_for(provider, model, None)
+            .await
+    }
+
+    /// Open a session whose route ladder is ordered for a known first request.
+    ///
+    /// Surfaces that have the opening prompt in hand should use this: the
+    /// ladder is frozen once at admission, so the demand facts available at
+    /// that moment are the only ones that can ever influence its ordering.
+    pub async fn start_session_for_prompt(
+        &self,
+        provider: String,
+        model: String,
+        prompt: &str,
+    ) -> Result<SessionLog, CoreError> {
+        let resolution = intent::resolve_turn(
+            prompt,
+            self.surface(),
+            &[],
+            intent::workspace_facts(&self.inner.cwd),
+            vak_intent::HistoryFacts::default(),
+            &vak_intent::Declared::default(),
+            &self.turn_authority(),
+            &intent::resolver_config(&self.inner.config),
+        );
+        let demand = resolution.peek().engagement.posture.demand;
+        self.start_session_with_route_for(provider, model, Some(demand))
+            .await
+    }
+
+    async fn start_session_with_route_for(
+        &self,
+        provider: String,
+        model: String,
+        demand: Option<vak_intent::DemandHint>,
+    ) -> Result<SessionLog, CoreError> {
         let session_id = uuid_like();
         let path = vak_session::SessionPath::new_session_file(
             &self.sessions_home(),
@@ -3394,11 +3456,14 @@ impl Core {
             .provider_auth_for_leg(&provider, None)
             .ok()
             .and_then(|auth| auth.credential_id);
-        let plan = self.plan_route_ladder(vak_llm::RouteLeg {
-            provider: provider.clone(),
-            model: model.clone(),
-            credential_id: primary_credential_id,
-        });
+        let plan = self.plan_route_ladder(
+            vak_llm::RouteLeg {
+                provider: provider.clone(),
+                model: model.clone(),
+                credential_id: primary_credential_id,
+            },
+            demand,
+        );
         let capabilities = self.capability_descriptors();
         let resolution = self.resolve_prompt(&capabilities);
         let system_prompt = resolution.text;
@@ -3573,6 +3638,139 @@ impl Core {
             .await
     }
 
+    /// The standing authority for this workspace and surface.
+    ///
+    /// Autonomy is *granted* (configuration, and only from a trusted project);
+    /// attendance is *observed* (which surface this is, and whether the
+    /// installed approver can actually answer). Keeping them separate is what
+    /// stops vak nagging when you wanted autonomy and barrelling ahead when
+    /// nobody is watching.
+    pub fn turn_authority(&self) -> vak_intent::Authority {
+        self.turn_authority_for(self.surface())
+    }
+
+    /// The authority that would apply on a named surface.
+    ///
+    /// Separate from [`Core::turn_authority`] because `vak intent explain
+    /// --surface cron` asks "what would happen there", and deriving attendance
+    /// from *this* process's surface would answer a different question — it
+    /// reported a cron run as interactive.
+    pub fn turn_authority_for(&self, surface: &Surface) -> vak_intent::Authority {
+        let surface = intent::intent_surface(surface);
+        // An approver that cannot answer makes the surface unattended
+        // whatever it claims to be — the same fact `reach` already uses to
+        // stop advertising capabilities nobody can approve.
+        let attendance = if self.approver_answerable() {
+            surface.implied_attendance()
+        } else {
+            vak_intent::Attendance::Unattended
+        };
+        // A channel may cap delegation below what the workspace granted and
+        // may never raise it, exactly like every other key on ChannelPolicy.
+        // A Telegram chat gets to say "propose only, in here"; it does not
+        // get to say "act freely" on a workspace whose operator did not.
+        let mut autonomy = intent::configured_autonomy(&self.inner.config);
+        if let Some(policy) = self.channel_policy()
+            && let Some(ceiling) = policy
+                .autonomy_ceiling
+                .as_deref()
+                .and_then(vak_intent::Autonomy::parse)
+        {
+            autonomy = autonomy.capped_by(ceiling);
+        }
+        vak_intent::Authority {
+            autonomy,
+            attendance,
+            envelope: None,
+        }
+    }
+
+    /// Authority for a turn serving `commitment_id`, including any live grant.
+    ///
+    /// The grant is read fresh rather than cached: revocation must take effect
+    /// at the next authority check rather than at the next session, which is
+    /// invariant 11 applied to delegation. A revoked or expired envelope
+    /// narrows nothing further and grants nothing at all.
+    pub fn turn_authority_for_commitment(
+        &self,
+        surface: &Surface,
+        commitment_id: Option<&str>,
+    ) -> vak_intent::Authority {
+        let mut authority = self.turn_authority_for(surface);
+        if !self.inner.config.commitment.enabled {
+            return authority;
+        }
+        if let Some(id) = commitment_id
+            && let Ok(Some(commitment)) =
+                vak_commit::CommitmentLedger::new(&self.sessions_home()).get(id)
+            && let Some(envelope) = commitment.envelope
+            && envelope.is_live(chrono::Utc::now())
+        {
+            authority.envelope = Some(envelope);
+        }
+        authority
+    }
+
+    /// Resolve this turn's intent from the prompt and the session so far.
+    ///
+    /// Free tiers only. A paid classification is a provider dispatch and
+    /// belongs on the dispatch path with a receipt, a spend-gate admission and
+    /// a watchdog; when the cascade recommends escalation this returns the
+    /// partial, which is never worse than the general engagement.
+    pub fn resolve_turn_intent(
+        &self,
+        session: &SessionLog,
+        prompt: &vak_llm::Message,
+    ) -> vak_intent::Intent {
+        let text = prompt.text_content();
+        let attachments: Vec<vak_intent::Attachment> = prompt
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                vak_llm::ContentBlock::Image { .. } => Some(vak_intent::Attachment {
+                    modality: vak_intent::Modality::Image,
+                    name: "attachment".into(),
+                }),
+                _ => None,
+            })
+            .collect();
+
+        let chain = session.chain_to_root();
+        let previous_act = chain.iter().rev().find_map(|entry| match &entry.payload {
+            vak_session::EntryPayload::Intent(record) => Some(record.reading.act),
+            _ => None,
+        });
+        let turn_index = chain
+            .iter()
+            .filter(|entry| matches!(entry.payload, vak_session::EntryPayload::Message(_)))
+            .count();
+        let history = vak_intent::HistoryFacts {
+            previous_act,
+            turn_index,
+            commitment_open: session
+                .header()
+                .and_then(|header| header.contract_id.as_ref())
+                .is_some(),
+        };
+
+        let resolution = intent::resolve_turn(
+            &text,
+            self.surface(),
+            &attachments,
+            intent::workspace_facts(&self.inner.cwd),
+            history,
+            &vak_intent::Declared::default(),
+            &self.turn_authority_for_commitment(
+                self.surface(),
+                session
+                    .header()
+                    .and_then(|header| header.contract_id.as_deref()),
+            ),
+            &intent::resolver_config(&self.inner.config),
+        );
+        resolution.intent()
+    }
+
     /// Takes `self` by value (an `Arc` bump plus a few small per-turn
     /// fields) so the single reconciliation below can correct this turn's
     /// answerability before anything reads it. Every public `run_*_with`
@@ -3636,14 +3834,33 @@ impl Core {
             .map(|contract| contract.system_prompt.clone())
             .unwrap_or_else(|| self.system_prompt());
         let mut cfg = AgentConfig::new(frozen_system_prompt.clone());
+
+        // ---- intent resolution (docs/design/47-commitment-kernel.md) ----
+        // Runs before anything reads a knob it governs. Everything derived
+        // from it narrows: the projections in `crate::intent` take a baseline
+        // and return something no wider, so a misread can make this turn less
+        // capable or more cautious and never the reverse.
+        let resolved_intent = self.resolve_turn_intent(&session, &prompt);
+        let engagement = resolved_intent.engagement.clone();
+        debug_assert!(
+            intent::projection_is_narrowing(&engagement.limits),
+            "a derived engagement widened the baseline"
+        );
+
         let work_config = self.effective_work();
-        cfg.work_mode = work_mode.unwrap_or_else(|| match work_config.default_mode.as_str() {
+        // Managed-ness follows from the reading's horizon rather than from a
+        // keyword scan. The old `is_managed_work_request` fired on any two of
+        // `and`/`then`/`first`, so "explain what this and that mean" read as
+        // durable multi-step work; `Horizon` is derived from recurrence and
+        // enumeration instead. An explicit run-scoped mode still wins.
+        let default_work_mode = match work_config.default_mode.as_str() {
             "managed" => WorkMode::Managed,
-            "auto" if is_managed_work_request(&prompt.text_content()) => WorkMode::Managed,
+            "auto" if engagement.posture.managed => WorkMode::Managed,
             _ => WorkMode::Direct,
-        });
+        };
+        cfg.work_mode = work_mode.unwrap_or(default_work_mode);
         if cfg.work_mode == WorkMode::Auto {
-            cfg.work_mode = if is_managed_work_request(&prompt.text_content()) {
+            cfg.work_mode = if engagement.posture.managed {
                 WorkMode::Managed
             } else {
                 WorkMode::Direct
@@ -3713,7 +3930,15 @@ impl Core {
         cfg.handoff_reset = self.inner.config.goal.handoff_reset;
         cfg.max_audit_blocks = self.inner.config.goal.max_audit_blocks;
         cfg.approver = approver.clone();
-        cfg.approval_mode = match self.effective_approval_mode() {
+        // The engagement supplies a CEILING on approval permissiveness, never
+        // a floor: `approval_mode` takes the stricter of it and configuration,
+        // so an irreversible turn reaches a human even under auto-approve, and
+        // nothing here can skip a gate the operator asked for.
+        cfg.approval_mode = match intent::approval_mode(
+            self.effective_approval_mode(),
+            engagement.limits.approval_ceiling,
+            self.inner.config.intent.posture,
+        ) {
             vak_config::ApprovalMode::Ask => vak_agent::ApprovalMode::Ask,
             vak_config::ApprovalMode::ApproveSafe => vak_agent::ApprovalMode::ApproveSafe,
             vak_config::ApprovalMode::AutoApprove => vak_agent::ApprovalMode::AutoApprove,
@@ -3848,6 +4073,14 @@ impl Core {
             }));
             tools.push(Arc::new(mcp_tool));
             cfg.mcp_aliases = aliases;
+        }
+        // Read-only self-knowledge, next to the other recall tool: "what am I
+        // working on" reaches every surface as a capability rather than as a
+        // slash command one transport would have to reimplement.
+        if self.inner.config.commitment.enabled {
+            tools.push(Arc::new(tools_commitments::CommitmentsTool {
+                sessions_home: self.sessions_home(),
+            }));
         }
         if self.effective_memory_search_enabled() {
             let exclude = session
@@ -3993,6 +4226,26 @@ impl Core {
                 })
             });
         }
+        // Finally, progressive disclosure: show this turn only the tools its
+        // reading plausibly needs. Sits here deliberately, beside `reach` and
+        // the frozen-contract filter, because it has the same shape — a
+        // `retain` over an already-admitted list that can only shorten it.
+        //
+        // Published measurements put tool-selection accuracy near 94% at 50
+        // tools and 14% at 741; a greeting that carries the whole toolbox pays
+        // for it in both context and wrong calls. Slicing only happens when
+        // the reading cleared the acceptance threshold, so an uncertain turn
+        // keeps everything.
+        if self.inner.config.intent.enabled
+            && !matches!(
+                engagement.limits.capabilities,
+                vak_intent::CapabilitySlice::All
+            )
+        {
+            let before = tools.len();
+            tools.retain(|tool| engagement.limits.capabilities.allows(tool.name()));
+            debug_assert!(tools.len() <= before, "the intent slice added a tool");
+        }
         cfg.tool_definitions = Some(vak_tools::definitions(&tools));
         cfg.tools = tools;
         let hook_configs = session_contract
@@ -4073,6 +4326,46 @@ impl Core {
             }
         }
 
+        // Record the intent before the turn dispatches. The entry carries the
+        // exact note the engagement contributes, so the projection the model
+        // sees comes from the ledger rather than from a derivation that might
+        // read differently on replay (invariant 1: model-visible means
+        // logged). A write failure is not fatal — losing the audit row must
+        // not lose the user's turn — but it does mean the note does not reach
+        // the model either, because both come from the same entry.
+        let mut session = session;
+
+        // Durable work earns a commitment of its own before the turn runs, so
+        // the episode brackets the work rather than being reconstructed from
+        // it afterwards. A ledger failure is logged and dropped: losing the
+        // audit row must never cost the user their turn.
+        let episode = session.header().and_then(|header| {
+            commitments::begin_episode(
+                &self.sessions_home(),
+                &self.inner.config,
+                &resolved_intent,
+                &prompt.text_content(),
+                &header.session_id,
+                &self.inner.cwd,
+                header.contract_id.as_deref(),
+            )
+        });
+
+        if self.inner.config.intent.enabled {
+            let record = vak_session::types::IntentRecord {
+                reading: resolved_intent.reading.clone(),
+                engagement: resolved_intent.engagement.clone(),
+                provenance: resolved_intent.provenance.clone(),
+                model_visible: resolved_intent.model_visible(),
+                commitment_id: episode
+                    .as_ref()
+                    .map(|episode| episode.commitment_id.clone()),
+            };
+            if let Err(error) = session.append_intent(record) {
+                eprintln!("[intent] could not record this turn's intent: {error}");
+            }
+        }
+
         let steering = match steering {
             Some(s) => s,
             None => std::sync::Arc::new(vak_agent::SteeringQueues::new()),
@@ -4087,6 +4380,87 @@ impl Core {
         };
         let outcome = agent.run_message(prompt, &steering, cancel, events).await;
         let session = agent.into_session().await;
+
+        // Was the reading right? The strongest answer is measured, not
+        // guessed: if the engagement withheld a tool and the model then asked
+        // for that exact tool, the reading was wrong and we know which lexicon
+        // entry to change. Slicing is what makes this observable at all.
+        if self.inner.config.intent.enabled
+            && resolved_intent.provenance.tier != vak_intent::Tier::General
+        {
+            let attempted: Vec<String> = session
+                .chain_to_root()
+                .iter()
+                .flat_map(|entry| match &entry.payload {
+                    vak_session::EntryPayload::Message(record) => record
+                        .message
+                        .content
+                        .iter()
+                        .filter_map(|block| match block {
+                            vak_llm::ContentBlock::ToolUse { name, .. } => Some(name.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                })
+                .collect();
+            let wanted = misread::escalated_capability(&engagement, &attempted);
+            let outcome = match (&wanted, &outcome) {
+                (Some(_), _) => misread::Outcome::Escalated,
+                (None, TurnOutcome::Aborted { .. }) => misread::Outcome::Abandoned,
+                _ => misread::Outcome::Held,
+            };
+            misread::MisreadLedger::new(&self.sessions_home()).record(
+                &resolved_intent.reading,
+                resolved_intent.provenance.tier,
+                resolved_intent.provenance.resolver_version,
+                outcome,
+                wanted,
+            );
+        }
+
+        // Close the episode with what it actually achieved. `Learned` and
+        // `Stalled` are deliberately different: a turn that answered
+        // substantively but moved no criterion reduced uncertainty and must
+        // not count against the stall breaker.
+        if let Some(episode) = &episode {
+            let tool_calls = session
+                .chain_to_root()
+                .iter()
+                .filter(|entry| match &entry.payload {
+                    vak_session::EntryPayload::Message(record) => record
+                        .message
+                        .content
+                        .iter()
+                        .any(|block| matches!(block, vak_llm::ContentBlock::ToolUse { .. })),
+                    _ => false,
+                })
+                .count();
+            // Reuses the shared estimator rather than multiplying tokens by a
+            // rate here: it already handles the cache-creation and cache-read
+            // tiers, and a second cost formula would drift from the ledger's.
+            let prices = &self.inner.config.finops.price_overrides;
+            let spend = session
+                .receipts()
+                .iter()
+                .skip(receipts_before)
+                .flat_map(|receipt| {
+                    let model = receipt.model.clone();
+                    receipt.attempts.iter().filter_map(move |attempt| {
+                        attempt.usage.as_ref().map(|usage| (model.clone(), usage))
+                    })
+                })
+                .filter_map(|(model, usage)| {
+                    vak_config::finops::estimate_cost_usd(&model, usage, prices)
+                })
+                .sum::<f64>();
+            commitments::end_episode(
+                &self.sessions_home(),
+                episode,
+                commitments::classify(&outcome, tool_calls, Vec::new()),
+                spend,
+            );
+        }
 
         // Phase B: fold this run's dispatches into the routing evidence
         // ledger (success / failure / unknown by settlement).
@@ -4357,42 +4731,6 @@ impl Core {
             None => "off".to_string(),
         }
     }
-}
-
-/// Select managed admission for requests whose wording indicates durable,
-/// multi-step work. This is intentionally deterministic and explainable: an
-/// operator can reproduce the decision from the prompt without an extra model
-/// call, and an explicit run-scoped mode still overrides it.
-fn is_managed_work_request(prompt: &str) -> bool {
-    let normalized = prompt.to_ascii_lowercase();
-    let action = [
-        "build",
-        "implement",
-        "fix",
-        "refactor",
-        "migrate",
-        "deploy",
-        "research",
-        "analyze",
-        "investigate",
-        "create",
-        "update",
-        "integrate",
-        "test",
-    ]
-    .iter()
-    .any(|word| {
-        normalized
-            .split(|c: char| !c.is_ascii_alphanumeric())
-            .any(|part| part == *word)
-    });
-    let multi_step = normalized.len() >= 400
-        || [" and ", " then ", "first", "second", "finally", "step "]
-            .iter()
-            .filter(|marker| normalized.contains(**marker))
-            .count()
-            >= 2;
-    action && multi_step
 }
 
 /// Point unit tests at a private, empty home so they never read the

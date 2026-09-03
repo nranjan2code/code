@@ -281,6 +281,7 @@ async fn receipts_round_trip_through_disk() {
             EntryPayload::Goal(_) => "goal",
             EntryPayload::Activity(_) => "activity",
             EntryPayload::Work(_) => "work",
+            EntryPayload::Intent(_) => "intent",
         })
         .collect();
     assert_eq!(

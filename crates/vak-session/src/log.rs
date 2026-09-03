@@ -193,6 +193,19 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::Activity(activity)))
     }
 
+    /// Record this turn's resolved intent.
+    ///
+    /// Appended before the turn dispatches, so the note it carries is in the
+    /// projection the model actually sees — the entry *is* the record of what
+    /// was said, not a description of it (invariant 1).
+    pub fn append_intent(
+        &mut self,
+        record: crate::types::IntentRecord,
+    ) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(parent, EntryPayload::Intent(Box::new(record))))
+    }
+
     pub fn append_work(&mut self, event: WorkEvent) -> Result<Entry, SessionError> {
         let parent = self.tail_id.clone();
         let candidate = Entry::new(parent, EntryPayload::Work(event));
@@ -546,6 +559,19 @@ impl SessionLog {
     /// sides of a partition (they were settled by earlier compactions).
     fn derive_keyed_tagged(&self) -> Vec<(String, Message, bool, bool)> {
         let mut out: Vec<(String, Message, bool, bool)> = Vec::new();
+        // Only the newest intent note applies. It is emitted in its own
+        // position in the chain — immediately before the turn it belongs to —
+        // rather than prepended, because per-turn operating guidance stranded
+        // at the top of a long conversation is guidance the model has stopped
+        // paying attention to by the time it matters.
+        let latest_intent = self
+            .chain_to_root()
+            .iter()
+            .rev()
+            .find(|entry| {
+                matches!(&entry.payload, EntryPayload::Intent(record) if record.model_visible.is_some())
+            })
+            .map(|entry| entry.id.clone());
         for entry in self.chain_to_root() {
             match &entry.payload {
                 EntryPayload::Message(record) => {
@@ -567,6 +593,22 @@ impl SessionLog {
                         c.summary
                     ));
                     out.insert(0, (entry.id.clone(), summary_msg, true, false));
+                }
+                EntryPayload::Intent(record) => {
+                    // Superseded intent notes contribute nothing: replaying
+                    // five of them wastes context and lets a stale instruction
+                    // argue with the current one.
+                    if latest_intent.as_deref() != Some(entry.id.as_str()) {
+                        continue;
+                    }
+                    if let Some(note) = &record.model_visible {
+                        let mut block = format!("<intent>\n{note}\n</intent>");
+                        block.truncate(4_000);
+                        // Tagged as control: it is runtime-generated guidance
+                        // for the turn in flight, not conversation to be
+                        // summarized into a compaction packet.
+                        out.push((entry.id.clone(), Message::user_text(block), false, true));
+                    }
                 }
                 // Receipts and goal entries are audit, not model-visible input.
                 EntryPayload::Header(_)
@@ -613,6 +655,7 @@ impl SessionLog {
                 .unwrap_or_else(|| work.contract.contract_id.clone());
             out.insert(0, (work_entry_id, Message::user_text(context), false, true));
         }
+
         out
     }
 

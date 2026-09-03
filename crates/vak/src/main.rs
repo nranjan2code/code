@@ -15,6 +15,7 @@ mod doctor;
 mod format;
 mod inbox;
 mod install;
+mod intent;
 mod memory;
 mod plugins;
 mod prompts;
@@ -404,6 +405,29 @@ async fn main() {
         Some(Command::SkillsReview { action }) => run_skills_review(cwd, action),
         Some(Command::Skills { action }) => run_skills(cwd, action),
         Some(Command::Plugins { action }) => plugins::run_plugins(cwd, action),
+        Some(Command::Intent { action }) => intent::run_intent(cwd, action),
+        Some(Command::Commit { action }) => intent::run_commit(cwd, action),
+        Some(Command::Grant {
+            id,
+            paths,
+            tools,
+            spend_usd,
+            hours,
+            permission,
+            on_silence,
+            after_hours,
+        }) => intent::run_grant(
+            cwd,
+            id,
+            paths,
+            tools,
+            spend_usd,
+            hours,
+            permission,
+            on_silence,
+            after_hours,
+        ),
+        Some(Command::Revoke { id }) => intent::run_revoke(cwd, id),
         Some(Command::Checkpoints { action }) => run_checkpoints(cwd, action).await,
         Some(Command::Telegram {
             server,

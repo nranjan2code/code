@@ -147,6 +147,15 @@ Initial rollout requirements:
 - `Auto` is initially disabled or equivalent to `Direct`;
 - automatic activation is enabled only after the evaluation gate passes.
 
+**Superseded for `Auto` (docs/design/47-commitment-kernel.md).** `Auto` no
+longer evaluates a keyword heuristic. Managed admission is now a consequence
+of the intent kernel's `horizon` axis: `session` and above run managed. The
+`is_managed_work_request` scan this document's rollout depended on — thirteen
+English verbs plus two conjunctions — is deleted; it read "explain what this
+and that mean" as durable multi-step work. `Direct` and an explicit
+`work_mode: "managed"` are unchanged, and an explicit run-scoped mode still
+overrides the reading.
+
 ## Durable model
 
 Add work types to `crates/vak-session/src/types.rs` or a focused

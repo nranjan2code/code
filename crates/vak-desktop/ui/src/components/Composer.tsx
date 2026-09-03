@@ -6,6 +6,7 @@ import { loadHealth, sendPrompt, stopRun, switchProject } from "../App";
 import * as api from "../api";
 import type { SkillInfo } from "../types";
 import Icon from "./Icon";
+import { IntentStrip } from "./IntentStrip";
 
 /** Context-window gauge; sits with the run controls in the composer. */
 function Ring(props: { pct: number; label: string }): JSX.Element {
@@ -390,6 +391,10 @@ export default function Composer(props: { cwd: string }) {
           </For>
         </div>
       </Show>
+      {/* Above the box, not inside it: this is a read-out about what you are
+          about to send, and putting it inside the field would make it look
+          like part of the message. */}
+      <IntentStrip prompt={text()} disabled={isRunning(activeId())} />
       <div
         class="composer-box"
         classList={{ running: isRunning(activeId()), "drag-over": dragOver() }}

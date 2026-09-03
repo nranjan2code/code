@@ -34,6 +34,7 @@ pub enum EntryKind {
     Goal,
     Activity,
     Work,
+    Intent,
 }
 
 impl EntryKind {
@@ -46,6 +47,7 @@ impl EntryKind {
             Self::Goal => "goal",
             Self::Activity => "activity",
             Self::Work => "work",
+            Self::Intent => "intent",
         }
     }
 
@@ -57,6 +59,7 @@ impl EntryKind {
             "receipt" => Some(Self::Receipt),
             "goal" => Some(Self::Goal),
             "activity" => Some(Self::Activity),
+            "intent" => Some(Self::Intent),
             "work" => Some(Self::Work),
             _ => None,
         }
@@ -255,6 +258,7 @@ impl Store {
             EntryPayload::Goal(_) => EntryKind::Goal,
             EntryPayload::Activity(_) => EntryKind::Activity,
             EntryPayload::Work(_) => EntryKind::Work,
+            EntryPayload::Intent(_) => EntryKind::Intent,
         };
 
         match &entry.payload {
@@ -369,6 +373,33 @@ impl Store {
                 model: None,
                 tool_name: None,
                 content_text: serde_json::to_string(&work.kind).unwrap_or_default(),
+                is_error: false,
+            }),
+            // Indexed on the reading rather than the note, so "every
+            // irreversible thing this agent did in March" is a search rather
+            // than a ledger crawl. That query is the whole point of recording
+            // the axes next to the decision.
+            EntryPayload::Intent(record) => Some(IndexedEntry {
+                entry_id: entry.id.clone(),
+                session_id: session_id.to_string(),
+                project_hash: String::new(),
+                parent_id: entry.parent_id.clone(),
+                ts: entry.ts.to_rfc3339(),
+                kind,
+                role: Some("system".into()),
+                provider: None,
+                model: record.provenance.model.clone(),
+                tool_name: None,
+                content_text: format!(
+                    "{} {} {} {} {} {} {}",
+                    record.reading.act.as_str(),
+                    record.reading.horizon.as_str(),
+                    record.reading.stakes.as_str(),
+                    record.reading.evidence.as_str(),
+                    record.reading.attendance.as_str(),
+                    record.provenance.tier.as_str(),
+                    record.model_visible.as_deref().unwrap_or_default()
+                ),
                 is_error: false,
             }),
         }

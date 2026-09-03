@@ -1343,3 +1343,190 @@ mod tests {
         assert!(response.contains("invalid delivery worker request"));
     }
 }
+
+// ---- engagement posture (docs/design/47-commitment-kernel.md) --------------
+
+/// When a delivery should reach its reader, and how hard it may push.
+///
+/// The one behaviour worth having: an unattended overnight run must not send
+/// forty notifications nobody reads. Nothing about the *content* changes — the
+/// semantic contract, the renderer, and the outbox are untouched — this only
+/// decides whether a packet goes out now, waits for the unit of work to
+/// finish, or rolls into the next digest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Cadence {
+    /// Stream as it happens. Somebody is watching.
+    Live,
+    /// One delivery when the unit of work finishes.
+    OnCompletion,
+    /// Roll up into the next digest.
+    Digest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Urgency {
+    /// Break through whatever the cadence says. Reserved for things a person
+    /// would want woken for.
+    Interrupt,
+    Notify,
+    Quiet,
+}
+
+/// How a turn's engagement wants its output delivered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeliveryPosture {
+    pub cadence: Cadence,
+    pub urgency: Urgency,
+}
+
+impl Default for DeliveryPosture {
+    fn default() -> Self {
+        // The pre-kernel behaviour: everything goes out immediately.
+        DeliveryPosture {
+            cadence: Cadence::Live,
+            urgency: Urgency::Notify,
+        }
+    }
+}
+
+/// What to do with one packet under a posture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Disposition {
+    /// Send now.
+    Send,
+    /// Hold until the unit of work completes.
+    HoldUntilComplete,
+    /// Hold for the next digest.
+    HoldForDigest,
+}
+
+impl DeliveryPosture {
+    /// Decide one packet's fate.
+    ///
+    /// Two rules override the cadence, and both are about not losing something
+    /// that matters:
+    ///
+    /// * an `Interrupt` urgency always sends — an irreversible step's
+    ///   confirmation must not sit in a digest until morning;
+    /// * anything that needs a person *now* (an approval gate) always sends,
+    ///   because a held gate is a stopped run, and batching it would turn a
+    ///   question into a hang.
+    pub fn disposition(&self, kind: DeliveryKind) -> Disposition {
+        if self.urgency == Urgency::Interrupt || needs_a_person_now(kind) {
+            return Disposition::Send;
+        }
+        match self.cadence {
+            Cadence::Live => Disposition::Send,
+            Cadence::OnCompletion => match kind {
+                // Progress and tool chatter are the noise; the answer itself
+                // is the thing that was waited for.
+                DeliveryKind::Progress | DeliveryKind::ToolResult | DeliveryKind::ToolCall => {
+                    Disposition::HoldUntilComplete
+                }
+                _ => Disposition::Send,
+            },
+            Cadence::Digest => match kind {
+                DeliveryKind::Alert => Disposition::Send,
+                _ => Disposition::HoldForDigest,
+            },
+        }
+    }
+}
+
+/// Deliveries that stop a run until somebody answers. Never batched.
+fn needs_a_person_now(kind: DeliveryKind) -> bool {
+    matches!(kind, DeliveryKind::Approval)
+}
+
+#[cfg(test)]
+mod posture_tests {
+    use super::*;
+
+    fn posture(cadence: Cadence, urgency: Urgency) -> DeliveryPosture {
+        DeliveryPosture { cadence, urgency }
+    }
+
+    /// The behaviour this exists for: overnight work sends a roll-up, not a
+    /// stream of progress nobody is awake to read.
+    #[test]
+    fn an_unattended_run_holds_its_chatter_for_the_digest() {
+        let quiet = posture(Cadence::Digest, Urgency::Quiet);
+        assert_eq!(
+            quiet.disposition(DeliveryKind::Progress),
+            Disposition::HoldForDigest
+        );
+        assert_eq!(
+            quiet.disposition(DeliveryKind::Assistant),
+            Disposition::HoldForDigest
+        );
+    }
+
+    /// A held approval gate is a stopped run. Batching it would turn a
+    /// question into a hang, so it always goes out.
+    #[test]
+    fn an_approval_always_goes_out_whatever_the_cadence() {
+        for cadence in [Cadence::Live, Cadence::OnCompletion, Cadence::Digest] {
+            for urgency in [Urgency::Interrupt, Urgency::Notify, Urgency::Quiet] {
+                assert_eq!(
+                    posture(cadence, urgency).disposition(DeliveryKind::Approval),
+                    Disposition::Send,
+                    "{cadence:?}/{urgency:?} batched an approval"
+                );
+            }
+        }
+    }
+
+    /// An irreversible step's confirmation must not wait until morning.
+    #[test]
+    fn interrupt_urgency_overrides_every_cadence() {
+        let urgent = posture(Cadence::Digest, Urgency::Interrupt);
+        assert_eq!(
+            urgent.disposition(DeliveryKind::Assistant),
+            Disposition::Send
+        );
+        assert_eq!(
+            urgent.disposition(DeliveryKind::Progress),
+            Disposition::Send
+        );
+    }
+
+    /// Alerts are already the exception path; a digest must not swallow one.
+    #[test]
+    fn an_alert_is_never_held_for_a_digest() {
+        assert_eq!(
+            posture(Cadence::Digest, Urgency::Quiet).disposition(DeliveryKind::Alert),
+            Disposition::Send
+        );
+    }
+
+    /// On-completion holds the chatter and sends the answer.
+    #[test]
+    fn on_completion_holds_progress_but_not_the_result() {
+        let posture = posture(Cadence::OnCompletion, Urgency::Notify);
+        assert_eq!(
+            posture.disposition(DeliveryKind::Progress),
+            Disposition::HoldUntilComplete
+        );
+        assert_eq!(
+            posture.disposition(DeliveryKind::Assistant),
+            Disposition::Send
+        );
+    }
+
+    /// The default reproduces the behaviour before any of this existed.
+    #[test]
+    fn the_default_posture_sends_everything() {
+        let default = DeliveryPosture::default();
+        for kind in [
+            DeliveryKind::Assistant,
+            DeliveryKind::Progress,
+            DeliveryKind::Alert,
+            DeliveryKind::Approval,
+            DeliveryKind::ToolResult,
+        ] {
+            assert_eq!(default.disposition(kind), Disposition::Send);
+        }
+    }
+}
