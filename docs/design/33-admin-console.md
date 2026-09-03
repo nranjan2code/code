@@ -225,6 +225,30 @@ and workspace-scope enforcement as desktop and gateway clients.
   stops at the raw transcript, receipt, manager probe, or outbox record rather
   than inventing a summary. Resolved incidents remain visible as history;
   operation mutations show their durable receipt and verification state.
+- **Commitments** — the portfolio (`docs/design/47-commitment-kernel.md`).
+  Four questions in the order an operator asks them: what does this agent owe,
+  what will it work next and why, what is stuck and on what, and can I believe
+  the ones it says are finished. Rows rather than cards, because this is a
+  ledger: the operator scans a column and compares across rows, and cards
+  would let four commitments fill a screen that should hold thirty.
+  - **Evidence meter** — the signature element, and the one fact no other
+    agent surface shows. The satisfaction lattice is drawn: four segments
+    filled to the level actually achieved, a rule beneath the segment for the
+    level this work is *held* to, and the shortfall in the accent, because a
+    gap blocking a closure is exactly what the single accent colour is
+    reserved for. Work closed on the model's own say-so and work closed on a
+    check the runtime ran look identical in an ordinary status column and are
+    not the same claim. Colour is never the only channel: fill differs too,
+    and the component carries an `aria-label` naming both levels in words.
+  - **Priority** — the scheduler's arithmetic, decomposed into its named
+    components on click, and its withholding reason in words when a
+    commitment cannot be worked. In a product whose thesis is auditability,
+    "why did it pick that one" must not be the single unanswerable question.
+  - **Close** — a refused closure answers 409 and the message names the
+    evidence that was missing, surfaced verbatim. The operator learns the
+    closure invariant by hitting it rather than by reading about it.
+  - Comparison columns drop progressively as width runs out; evidence goes
+    last, because it is the column that carries the idea.
 - **Sessions** — filterable catalog; "+ New session"; per-row Archive/
   Unarchive, Delete (archived only, soft — the ledger file is kept), and
   Export `.md`, plus a bulk "Delete all archived". A **workspace** column

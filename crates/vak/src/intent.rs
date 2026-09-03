@@ -545,3 +545,140 @@ fn resolve_id(ledger: &CommitmentLedger, id: &str) -> Option<vak_commit::Commitm
     }
     Some(first)
 }
+
+// -------------------------------------------------------------- grants ---
+
+/// Delegate authority to one commitment.
+///
+/// An envelope is **pre-authorization within existing authority**, never a
+/// grant of new authority: its permission ceiling can only lower the mode
+/// already in force, and irreversible work still reaches a human whatever was
+/// delegated. What it buys is silence on the ordinary case — a `delegated`
+/// agent stops asking about the things you already said yes to, inside the
+/// boundary you drew.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_grant(
+    cwd: std::path::PathBuf,
+    id: String,
+    paths: Vec<String>,
+    tools: Vec<String>,
+    spend_usd: Option<f64>,
+    hours: Option<i64>,
+    permission: String,
+    on_silence: String,
+    after_hours: u32,
+) -> i32 {
+    let core = match Core::new(cwd) {
+        Ok(core) => core,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 2;
+        }
+    };
+    let ledger = CommitmentLedger::new(&core.sessions_home());
+    let Some(commitment) = resolve_id(&ledger, &id) else {
+        eprintln!("error: no commitment matching '{id}'");
+        return 2;
+    };
+    let Some(ceiling) = vak_intent::PermissionCeiling::parse(&permission) else {
+        eprintln!(
+            "error: unknown permission '{permission}' \
+             (read-only, workspace-write, full-access)"
+        );
+        return 2;
+    };
+    let escalation = match on_silence.as_str() {
+        "wait" => vak_intent::Escalation::WaitIndefinitely,
+        "assume" => vak_intent::Escalation::AssumeConservative { after_hours },
+        "abandon" => vak_intent::Escalation::AbandonAfter { after_hours },
+        other => {
+            eprintln!("error: unknown --on-silence '{other}' (wait, assume, abandon)");
+            return 2;
+        }
+    };
+    // Assuming a default for an irreversible action because nobody replied is
+    // the exact autonomy this system exists to prevent, so the refusal is
+    // enforced rather than documented.
+    if !escalation.permitted_for(commitment.spec.reading.stakes) {
+        eprintln!(
+            "error: --on-silence assume is not available for {} work; \
+             a default nobody confirmed cannot stand in for consent here",
+            commitment.spec.reading.stakes.as_str()
+        );
+        return 2;
+    }
+
+    let envelope = vak_intent::Envelope {
+        envelope_id: format!("env-{}", chrono::Utc::now().timestamp_millis()),
+        granted_by: std::env::var("USER").unwrap_or_else(|_| "operator".into()),
+        granted_at: chrono::Utc::now(),
+        expires_at: hours.map(|h| chrono::Utc::now() + chrono::Duration::hours(h)),
+        spend_limit_usd: spend_usd,
+        path_scope: paths,
+        tool_scope: tools,
+        permission_ceiling: ceiling,
+        escalation,
+        revoked_at: None,
+    };
+    let envelope_id = envelope.envelope_id.clone();
+    match ledger.append(&vak_commit::Event::new(
+        &commitment.commitment_id,
+        vak_commit::EventKind::EnvelopeGranted {
+            envelope: Box::new(envelope),
+        },
+    )) {
+        Ok(()) => {
+            println!("granted {envelope_id} on {}", commitment.spec.objective);
+            println!(
+                "  this narrows, it does not widen: the permission mode is capped at \
+                 {permission} and irreversible steps still ask."
+            );
+            0
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            2
+        }
+    }
+}
+
+/// Withdraw a grant.
+///
+/// Revocation takes effect on read rather than being remembered: a revoked
+/// envelope narrows nothing further and grants nothing at all, so an in-flight
+/// run loses the delegation at its next authority check (`AGENTS.md`
+/// invariant 11).
+pub(crate) fn run_revoke(cwd: std::path::PathBuf, id: String) -> i32 {
+    let core = match Core::new(cwd) {
+        Ok(core) => core,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 2;
+        }
+    };
+    let ledger = CommitmentLedger::new(&core.sessions_home());
+    let Some(commitment) = resolve_id(&ledger, &id) else {
+        eprintln!("error: no commitment matching '{id}'");
+        return 2;
+    };
+    let Some(envelope) = commitment.envelope.as_ref() else {
+        eprintln!("error: that commitment has no grant to revoke");
+        return 2;
+    };
+    match ledger.append(&vak_commit::Event::new(
+        &commitment.commitment_id,
+        vak_commit::EventKind::EnvelopeRevoked {
+            envelope_id: envelope.envelope_id.clone(),
+            by: std::env::var("USER").unwrap_or_else(|_| "operator".into()),
+        },
+    )) {
+        Ok(()) => {
+            println!("revoked {}", envelope.envelope_id);
+            0
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            2
+        }
+    }
+}

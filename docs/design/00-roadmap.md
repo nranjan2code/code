@@ -66,7 +66,7 @@ applies to every item.
 | Discord and Slack real-time transports (gateway websocket, Socket Mode) | deferred; both bridges poll configured channel ids today |
 | Interactive approval components on Discord and Slack | deferred; typed yes/no fallback ships |
 | Skill intent-discovery | **subsumed** by the intent kernel (doc 47): skills are selected through the admitted capability slice rather than a separate discovery path |
-| Commitment kernel phases I5-I8 (envelope wiring, episodes + portfolio scheduler, admin/desktop/gateway/delivery surfaces, misread evidence loop) | specified in doc 47; not yet wired |
+| Commitment kernel | shipped end to end (doc 47) |
 | Windows platform support | S11 |
 
 ## Decisions locked during research

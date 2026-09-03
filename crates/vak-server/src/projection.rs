@@ -9,14 +9,18 @@ use vak_delivery::{
 use vak_llm::{ContentBlock, Role};
 use vak_session::{ActivityKind, ActivityStatus, EntryPayload, SessionLog};
 
+/// One tool call as the timeline needs it: name, input, result text, and
+/// whether the result was an error. Named because the inline tuple was wide
+/// enough that a reader had to count commas to find the error flag.
+type TurnTool = (String, serde_json::Value, Option<String>, bool);
+
 pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline {
     let chain = session.chain_to_root();
     let mut tool_results: HashMap<String, (String, bool)> = HashMap::new();
     let mut tool_inputs: HashMap<String, (String, serde_json::Value)> = HashMap::new();
     let mut successful_runs = std::collections::HashSet::new();
     let mut scan_turn = 0usize;
-    let mut turn_tools: HashMap<usize, Vec<(String, serde_json::Value, Option<String>, bool)>> =
-        HashMap::new();
+    let mut turn_tools: HashMap<usize, Vec<TurnTool>> = HashMap::new();
     for entry in &chain {
         match &entry.payload {
             EntryPayload::Message(record) => {

@@ -16,6 +16,7 @@
 
 use std::path::Path;
 
+use vak_commit::CriterionEvaluator;
 use vak_commit::{
     Advancement, CommitmentLedger, CommitmentSpec, Economics, Evaluation, Event, EventKind, Verdict,
 };
@@ -293,6 +294,163 @@ pub fn sweep_expired(sessions_home: &Path) -> Vec<String> {
     closed
 }
 
+/// One maintenance pass over the portfolio.
+///
+/// Runs on the server's ordinary tick, independently of whether the heartbeat
+/// is enabled: heartbeat is an opt-in *model* pass and costs tokens, while
+/// everything here is filesystem and clock work that costs none. Tying durable
+/// work's upkeep to an opt-in prober would mean a commitment stopped being
+/// durable the moment someone turned the prober off.
+///
+/// Everything it does is either a state transition the ledger already
+/// authorises or an evaluation the runtime performs itself. It never
+/// dispatches a model and never closes work as fulfilled.
+#[derive(Debug, Default, PartialEq)]
+pub struct Maintenance {
+    /// Closed `Expired` because their relevance window passed.
+    pub expired: Vec<String>,
+    /// Woken because a scheduled time arrived.
+    pub resumed: Vec<String>,
+    /// Woken because a predicate the runtime can check became true.
+    pub satisfied: Vec<String>,
+    /// Deferred questions whose escalation policy came due.
+    pub escalated: Vec<String>,
+}
+
+impl Maintenance {
+    pub fn is_empty(&self) -> bool {
+        self.expired.is_empty()
+            && self.resumed.is_empty()
+            && self.satisfied.is_empty()
+            && self.escalated.is_empty()
+    }
+}
+
+/// Advance whatever the clock and the workspace now permit.
+pub async fn maintain(sessions_home: &Path, cwd: &Path) -> Maintenance {
+    let ledger = CommitmentLedger::new(sessions_home);
+    let now = chrono::Utc::now();
+    let mut report = Maintenance {
+        expired: sweep_expired(sessions_home),
+        ..Maintenance::default()
+    };
+
+    for commitment in ledger.open() {
+        let Some(suspension) = commitment.suspension.clone() else {
+            continue;
+        };
+        match suspension {
+            vak_commit::Suspension::Schedule { at: Some(at), .. } if now >= at => {
+                if ledger
+                    .append(&Event::new(
+                        &commitment.commitment_id,
+                        EventKind::Resumed {
+                            reason: "scheduled time reached".into(),
+                        },
+                    ))
+                    .is_ok()
+                {
+                    report.resumed.push(commitment.commitment_id.clone());
+                }
+            }
+            // A predicate is checked by the runtime for free. This is the
+            // path that lets "watch X and tell me when Y" cost nothing at all
+            // while Y stays false.
+            vak_commit::Suspension::Predicate { criterion } => {
+                let evaluation = WorkspaceEvaluator { cwd }.evaluate(&criterion).await;
+                if evaluation.passed()
+                    && record_evaluation(sessions_home, &commitment.commitment_id, &evaluation)
+                        .is_ok()
+                    && ledger
+                        .append(&Event::new(
+                            &commitment.commitment_id,
+                            EventKind::Resumed {
+                                reason: format!("condition met: {}", criterion.statement),
+                            },
+                        ))
+                        .is_ok()
+                {
+                    report.satisfied.push(commitment.commitment_id.clone());
+                }
+            }
+            vak_commit::Suspension::Human {
+                question_id,
+                escalation,
+                ..
+            } => {
+                if let Some(id) =
+                    escalate_if_due(&ledger, &commitment, &question_id, &escalation, now)
+                {
+                    report.escalated.push(id);
+                }
+            }
+            _ => {}
+        }
+    }
+    report
+}
+
+/// Apply a deferred question's escalation policy once its deadline passes.
+///
+/// A question with no policy waits forever by design; that is a decision, not
+/// a leak. What must never happen is a silent default standing in for consent
+/// on work that cannot be undone, so `AssumeConservative` is refused there
+/// even if a grant somehow carried it.
+fn escalate_if_due(
+    ledger: &CommitmentLedger,
+    commitment: &vak_commit::Commitment,
+    question_id: &str,
+    escalation: &vak_intent::Escalation,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<String> {
+    let waited_hours = (now - commitment.updated_at).num_minutes() as f64 / 60.0;
+    let (after, verdict, note): (u32, Option<Verdict>, &str) = match escalation {
+        vak_intent::Escalation::WaitIndefinitely => return None,
+        vak_intent::Escalation::AssumeConservative { after_hours } => {
+            if !escalation.permitted_for(commitment.spec.reading.stakes) {
+                return None;
+            }
+            (
+                *after_hours,
+                None,
+                "no answer; taking the conservative branch",
+            )
+        }
+        vak_intent::Escalation::AbandonAfter { after_hours } => (
+            *after_hours,
+            Some(Verdict::Abandoned),
+            "no answer within the agreed window",
+        ),
+        vak_intent::Escalation::Reassign { after_hours, .. } => {
+            (*after_hours, None, "reassigned after no answer")
+        }
+    };
+    if waited_hours < f64::from(after) {
+        return None;
+    }
+    let event = match verdict {
+        Some(verdict) => Event::new(
+            &commitment.commitment_id,
+            EventKind::Closed {
+                verdict,
+                strength: commitment.achieved_strength(),
+                evidence: Vec::new(),
+                note: format!("{note} (question {question_id})"),
+            },
+        ),
+        None => Event::new(
+            &commitment.commitment_id,
+            EventKind::Resumed {
+                reason: format!("{note} (question {question_id})"),
+            },
+        ),
+    };
+    ledger
+        .append(&event)
+        .ok()
+        .map(|()| commitment.commitment_id.clone())
+}
+
 /// A criterion evaluator backed by the workspace filesystem.
 ///
 /// Only the checks that need no permission gate live here: file existence and
@@ -358,7 +516,7 @@ impl vak_commit::CriterionEvaluator for WorkspaceEvaluator<'_> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use vak_commit::CriterionEvaluator;
@@ -581,6 +739,132 @@ mod tests {
             .await;
         assert!(!shell.passed());
         assert!(matches!(shell.result, CriterionResult::Unknown { .. }));
+    }
+
+    #[tokio::test]
+    async fn a_predicate_suspension_wakes_when_the_condition_becomes_true() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = CommitmentLedger::new(dir.path());
+        let handle = begin_episode(
+            dir.path(),
+            &config(),
+            &intent_with(Evidence::None, Horizon::Durable, 0.9),
+            "tell me when the report lands, every day",
+            "s1",
+            dir.path(),
+            None,
+        )
+        .unwrap();
+        let criterion = WorkCriterion {
+            criterion_id: "landed".into(),
+            statement: "report.csv exists".into(),
+            kind: CriterionKind::FileExists {
+                path: "report.csv".into(),
+            },
+            required: true,
+        };
+        ledger
+            .append(&Event::new(
+                &handle.commitment_id,
+                EventKind::Suspended {
+                    suspension: vak_commit::Suspension::Predicate {
+                        criterion: criterion.clone(),
+                    },
+                },
+            ))
+            .unwrap();
+
+        // While the condition is false the pass costs nothing and changes
+        // nothing — this is the zero-token watch path.
+        let report = maintain(dir.path(), dir.path()).await;
+        assert!(report.satisfied.is_empty());
+        assert_eq!(
+            ledger.get(&handle.commitment_id).unwrap().unwrap().phase,
+            vak_commit::Phase::Suspended
+        );
+
+        std::fs::write(dir.path().join("report.csv"), "done").unwrap();
+        let report = maintain(dir.path(), dir.path()).await;
+        assert_eq!(report.satisfied, vec![handle.commitment_id.clone()]);
+        assert_ne!(
+            ledger.get(&handle.commitment_id).unwrap().unwrap().phase,
+            vak_commit::Phase::Suspended
+        );
+    }
+
+    #[tokio::test]
+    async fn a_scheduled_suspension_wakes_once_its_time_arrives() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = CommitmentLedger::new(dir.path());
+        let handle = begin_episode(
+            dir.path(),
+            &config(),
+            &intent_with(Evidence::None, Horizon::Durable, 0.9),
+            "check the bill every day",
+            "s1",
+            dir.path(),
+            None,
+        )
+        .unwrap();
+        ledger
+            .append(&Event::new(
+                &handle.commitment_id,
+                EventKind::Suspended {
+                    suspension: vak_commit::Suspension::Schedule {
+                        at: Some(chrono::Utc::now() + chrono::Duration::hours(2)),
+                        cron: None,
+                    },
+                },
+            ))
+            .unwrap();
+        assert!(maintain(dir.path(), dir.path()).await.resumed.is_empty());
+
+        ledger
+            .append(&Event::new(
+                &handle.commitment_id,
+                EventKind::Suspended {
+                    suspension: vak_commit::Suspension::Schedule {
+                        at: Some(chrono::Utc::now() - chrono::Duration::minutes(1)),
+                        cron: None,
+                    },
+                },
+            ))
+            .unwrap();
+        assert_eq!(
+            maintain(dir.path(), dir.path()).await.resumed,
+            vec![handle.commitment_id]
+        );
+    }
+
+    /// A question with no policy waits forever by design. That is a decision,
+    /// not a leak — and it must not quietly become an assumption.
+    #[tokio::test]
+    async fn an_unanswered_question_waits_unless_a_policy_says_otherwise() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = CommitmentLedger::new(dir.path());
+        let handle = begin_episode(
+            dir.path(),
+            &config(),
+            &intent_with(Evidence::None, Horizon::Durable, 0.9),
+            "migrate the schema every night",
+            "s1",
+            dir.path(),
+            None,
+        )
+        .unwrap();
+        defer_for_human(
+            dir.path(),
+            &handle.commitment_id,
+            "which database?",
+            None,
+            vak_intent::Escalation::WaitIndefinitely,
+        )
+        .unwrap();
+        assert!(maintain(dir.path(), dir.path()).await.escalated.is_empty());
+        assert_eq!(
+            ledger.get(&handle.commitment_id).unwrap().unwrap().phase,
+            vak_commit::Phase::Suspended
+        );
     }
 
     #[test]

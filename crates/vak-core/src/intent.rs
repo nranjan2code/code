@@ -305,7 +305,7 @@ pub fn projection_is_narrowing(limits: &Limits) -> bool {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use vak_session::types::{CapabilityInvocation, CapabilityKind};

@@ -17,6 +17,7 @@ pub mod install;
 pub mod intent;
 pub mod learning;
 pub mod memory;
+pub mod misread;
 pub mod onboarding;
 /// The three permission rule lists, in `vak_config::Config`'s own order:
 /// `(allow, ask, deny)`.
@@ -3664,11 +3665,50 @@ impl Core {
         } else {
             vak_intent::Attendance::Unattended
         };
+        // A channel may cap delegation below what the workspace granted and
+        // may never raise it, exactly like every other key on ChannelPolicy.
+        // A Telegram chat gets to say "propose only, in here"; it does not
+        // get to say "act freely" on a workspace whose operator did not.
+        let mut autonomy = intent::configured_autonomy(&self.inner.config);
+        if let Some(policy) = self.channel_policy()
+            && let Some(ceiling) = policy
+                .autonomy_ceiling
+                .as_deref()
+                .and_then(vak_intent::Autonomy::parse)
+        {
+            autonomy = autonomy.capped_by(ceiling);
+        }
         vak_intent::Authority {
-            autonomy: intent::configured_autonomy(&self.inner.config),
+            autonomy,
             attendance,
             envelope: None,
         }
+    }
+
+    /// Authority for a turn serving `commitment_id`, including any live grant.
+    ///
+    /// The grant is read fresh rather than cached: revocation must take effect
+    /// at the next authority check rather than at the next session, which is
+    /// invariant 11 applied to delegation. A revoked or expired envelope
+    /// narrows nothing further and grants nothing at all.
+    pub fn turn_authority_for_commitment(
+        &self,
+        surface: &Surface,
+        commitment_id: Option<&str>,
+    ) -> vak_intent::Authority {
+        let mut authority = self.turn_authority_for(surface);
+        if !self.inner.config.commitment.enabled {
+            return authority;
+        }
+        if let Some(id) = commitment_id
+            && let Ok(Some(commitment)) =
+                vak_commit::CommitmentLedger::new(&self.sessions_home()).get(id)
+            && let Some(envelope) = commitment.envelope
+            && envelope.is_live(chrono::Utc::now())
+        {
+            authority.envelope = Some(envelope);
+        }
+        authority
     }
 
     /// Resolve this turn's intent from the prompt and the session so far.
@@ -3720,7 +3760,12 @@ impl Core {
             intent::workspace_facts(&self.inner.cwd),
             history,
             &vak_intent::Declared::default(),
-            &self.turn_authority(),
+            &self.turn_authority_for_commitment(
+                self.surface(),
+                session
+                    .header()
+                    .and_then(|header| header.contract_id.as_deref()),
+            ),
             &intent::resolver_config(&self.inner.config),
         );
         resolution.intent()
@@ -4335,6 +4380,44 @@ impl Core {
         };
         let outcome = agent.run_message(prompt, &steering, cancel, events).await;
         let session = agent.into_session().await;
+
+        // Was the reading right? The strongest answer is measured, not
+        // guessed: if the engagement withheld a tool and the model then asked
+        // for that exact tool, the reading was wrong and we know which lexicon
+        // entry to change. Slicing is what makes this observable at all.
+        if self.inner.config.intent.enabled
+            && resolved_intent.provenance.tier != vak_intent::Tier::General
+        {
+            let attempted: Vec<String> = session
+                .chain_to_root()
+                .iter()
+                .flat_map(|entry| match &entry.payload {
+                    vak_session::EntryPayload::Message(record) => record
+                        .message
+                        .content
+                        .iter()
+                        .filter_map(|block| match block {
+                            vak_llm::ContentBlock::ToolUse { name, .. } => Some(name.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                })
+                .collect();
+            let wanted = misread::escalated_capability(&engagement, &attempted);
+            let outcome = match (&wanted, &outcome) {
+                (Some(_), _) => misread::Outcome::Escalated,
+                (None, TurnOutcome::Aborted { .. }) => misread::Outcome::Abandoned,
+                _ => misread::Outcome::Held,
+            };
+            misread::MisreadLedger::new(&self.sessions_home()).record(
+                &resolved_intent.reading,
+                resolved_intent.provenance.tier,
+                resolved_intent.provenance.resolver_version,
+                outcome,
+                wanted,
+            );
+        }
 
         // Close the episode with what it actually achieved. `Learned` and
         // `Stalled` are deliberately different: a turn that answered

@@ -219,6 +219,38 @@ A recurring 6px `.dot` communicates run state across both surfaces: neutral `--f
 
 **Color is never the only carrier.** The states being encoded — running, awaiting approval, denied — are the ones this product exists to make visible, and for roughly 8% of men a green dot and a red dot are the same dot. Every status signal pairs its hue with a second channel: a fill difference on the dot (hollow at rest, solid when running, ringed when it needs a person), and an `aria-label` or visually-hidden label so the state is announced, not just shown. An earlier version of this document praised these signals as "legible by color alone", which is precisely the WCAG 1.4.1 failure to avoid.
 
+### Evidence Meter (signature component)
+A four-segment track rendering the satisfaction lattice — `asserted < cited <
+observed < attested` — wherever the product has to say how strongly a claim of
+"done" is backed. Segments are solid up to the level actually achieved and
+hollow past it; a 2px rule sits beneath the segment for the level the work is
+*held* to; and when achieved falls short of required, the intervening segments
+take a dashed Burnt Terracotta border.
+
+That accent use is deliberate and consistent with The One Accent Rule: a
+shortfall is a live gap blocking a closure, which is precisely "this needs
+you", not decoration.
+
+**Color is never the only carrier**, as everywhere else in this system. The
+fill difference (solid vs hollow) is a second channel, the required-level rule
+is a third, and the component carries an `aria-label` naming both the achieved
+and required levels in words.
+
+An earlier revision marked the required level with a 1px tick *above* a 13px
+segment. It was invisible at real sizes, and it is the half of the meter that
+says how demanding the work is — the rule below the track replaced it because
+there is room there and it never collides with the fill state.
+
+### Intent Strip (desktop composer)
+A per-turn read-out with three tones — `quiet`, `notice`, `warn` — chosen by
+consequence rather than by novelty. `quiet` is `--faint` micro-label type with
+no border and reads as chrome; `warn` takes an accent border, the accent wash,
+and states its sentence inline rather than behind a disclosure.
+
+The rule this encodes: **an element that appears before every action must earn
+its escalation.** If it shouts routinely it will be tuned out, and the one
+time it matters nobody will be looking. Escalation is rare so that it lands.
+
 ## Do's and Don'ts
 
 ### Do:

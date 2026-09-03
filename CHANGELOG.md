@@ -141,6 +141,41 @@ own append-only ledger, rather than the session being the unit of identity and
   second dispatch path. It has no write verb — the model may discuss a
   commitment and may never mark a criterion passed.
 
+### Authority, upkeep, and the loop closing
+
+- **Envelopes are live.** `vak grant` delegates authority to one commitment
+  for a bounded time and scope; `vak revoke` withdraws it. A grant reaches the
+  running turn's authority, and revocation is honoured on read rather than
+  remembered, so it lands at the next authority check rather than the next
+  session. No grant, at any autonomy level, lets an irreversible action past
+  without a human — proven exhaustively.
+- `--on-silence assume` is refused for irreversible work. A default nobody
+  confirmed cannot stand in for consent there.
+- **Commitment upkeep runs on its own tick**, deliberately not gated on
+  `heartbeat.enabled`: heartbeat is an opt-in model pass that costs tokens,
+  this is clock and filesystem work that costs none, and tying durable work's
+  upkeep to an opt-in prober would mean a commitment stopped being durable the
+  moment somebody switched the prober off. It wakes scheduled commitments,
+  evaluates predicate suspensions for free (so "watch X, tell me when Y" costs
+  nothing at all while Y stays false), applies escalation policies, and closes
+  lapsed work as `expired`. A question with no policy waits forever by design.
+- **Per-channel autonomy ceiling** joins the existing restrictive-only
+  `ChannelPolicy` chain: a chat may cap delegation below what the workspace
+  granted and may never raise it.
+- **Delivery posture** decides when a packet goes out, never what it says. An
+  unattended overnight run rolls its chatter into a digest instead of sending
+  forty notifications; an approval and an interrupt-urgency packet are never
+  batched, because a held gate is a stopped run and batching it would turn a
+  question into a hang.
+- **The loop closes.** When an engagement withholds a capability and the model
+  then asks for that exact tool, the reading was *measurably* wrong — and the
+  row names the capability to put back. Slicing does not merely improve the
+  turn; it is what makes misclassification observable at all. Per-cell
+  accuracy uses the routing ledger's epistemics: held / contradicted /
+  unknown, Laplace-shrunk, 30-day TTL, absence a neutral prior. Abandonment
+  deliberately does not count against a reading — a user who walked away told
+  us the turn ended, not that it was misread.
+
 ### Notes
 
 - `AGENTS.md` invariants 31 and 32 are **appended**, not inserted. Roughly

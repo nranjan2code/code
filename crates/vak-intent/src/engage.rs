@@ -650,7 +650,7 @@ pub fn required_modalities(reading: &Reading) -> BTreeSet<Modality> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use crate::axes::{Act, Attendance, Clarity, Evidence, Horizon, Stakes};

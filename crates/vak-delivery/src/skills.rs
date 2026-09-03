@@ -699,6 +699,8 @@ fn validate_payload(semantic_type: &str, payload: &Value) -> Result<(), SkillErr
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+
     use super::*;
 
     #[test]

@@ -470,6 +470,11 @@ crates/vak-store     SQLite FTS5 rebuildable index over session JSONL:
                      `src/telegram.rs` in their own crate and read as
                      duplication until you opened both.
 crates/vak-delivery  schema-v2 channel-neutral semantic output contract,
+                     delivery posture (cadence x urgency) deciding WHEN a
+                     packet goes out and never what it says; an approval and
+                     an interrupt-urgency packet are never batched, because a
+                     held gate is a stopped run
+                     (docs/design/47-commitment-kernel.md),
                      closed AST/compiler, capability projection, safe templates,
                      exact Markdown fallback, ordered chunks, Telegram HTML,
                      isolated renderer worker, and append-only retry outbox
@@ -527,6 +532,18 @@ crates/vak-config    layered TOML config + atomic persisted workspace
                      preferences (docs/design/42-managed-work-contracts.mdPhases D+H+R) +
                      [automation]/[update]/[tools] (docs/design/29)
 crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
+                     intent.rs (the seam: gathers facts, runs the cascade,
+                     projects the engagement onto runtime knobs -- every
+                     function takes a baseline and returns something no
+                     wider), commitments.rs (opens a commitment for a durable
+                     turn, brackets an episode, classifies what it achieved,
+                     evaluates workspace criteria, and runs the zero-token
+                     upkeep pass: schedule wakes, predicate wakes, escalation
+                     policies, explicit expiry), tools_commitments.rs (the
+                     read-only `commitments` capability), misread.rs (intent
+                     evidence: a capability the slice withheld that the model
+                     then asked for is a MEASURED misread, not a suspected
+                     one -- slicing is what makes the loop closeable),
                      session_search injection w/ profile tier, memory/
                      skill-proposal tools + duplicate screening
                      (docs/design/26-learning.md, 29 P5), sandbox
@@ -572,7 +589,11 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      controls, and the evidence-backed Operations Center
                      (`/ops/center`, durable incidents, action receipts, and
                      bookmarkable resource drill-downs)
-crates/vak-admin-ui  SolidJS + Vite admin console source; built dist is
+crates/vak-admin-ui  SolidJS + Vite admin console source; the commitment
+                     portfolio (#/commitments) with the evidence meter --
+                     the satisfaction lattice drawn, achieved as fill and
+                     required as a rule beneath, shortfall in the accent
+                     (docs/design/47-commitment-kernel.md, DESIGN.md); built dist is
                      committed so cargo builds need no node — observation,
                      operation, and interaction views per docs/design/
                      33-admin-console.md, including the six-area navigation,

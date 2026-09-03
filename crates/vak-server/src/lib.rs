@@ -10016,7 +10016,51 @@ pub fn start_scheduler(state: &AppState) {
             }
         });
     }
+
+    // Commitment upkeep runs on its own timer, deliberately NOT gated on
+    // `heartbeat.enabled` (docs/design/47-commitment-kernel.md). Heartbeat is
+    // an opt-in model pass that costs tokens; this is clock and filesystem
+    // work that costs none. Tying durable work's upkeep to an opt-in prober
+    // would mean a commitment stopped being durable the moment somebody
+    // switched the prober off — and a suspended commitment nobody wakes is
+    // indistinguishable from lost work.
+    if state.core.config().commitment.enabled {
+        let st = state.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(COMMITMENT_TICK);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tick.tick().await;
+                let report =
+                    vak_core::commitments::maintain(&st.core.sessions_home(), st.core.cwd()).await;
+                if report.is_empty() {
+                    continue;
+                }
+                // A commitment waking, lapsing, or being abandoned by policy
+                // is a thing that happened without anybody asking for it, so
+                // it lands in the attention layer rather than only in a log.
+                for id in report.expired.iter().chain(report.escalated.iter()) {
+                    let _ = vak_core::inbox::record(
+                        &st.core.sessions_home(),
+                        vak_core::inbox::Kind::TaskSummary,
+                        "Commitment closed without you",
+                        &format!("{id} reached the end of its window or escalation policy."),
+                        None,
+                        None,
+                    );
+                }
+                for id in report.resumed.iter().chain(report.satisfied.iter()) {
+                    eprintln!("[commit] {id} resumed");
+                }
+            }
+        });
+    }
 }
+
+/// Commitment upkeep cadence. Slower than the heartbeat tick because nothing
+/// here is latency-sensitive: a scheduled wake a minute late is fine, and a
+/// tighter loop would just re-read the ledger for nothing.
+const COMMITMENT_TICK: std::time::Duration = std::time::Duration::from_secs(60);
 
 // ---- Budget alerts (docs/design/29-personal-os.md P2) -----------------------
 

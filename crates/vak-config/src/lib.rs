@@ -566,9 +566,52 @@ pub struct ChannelPolicy {
     /// only take network access away from a server it can already reach,
     /// never grant it to one the server config itself denies.
     pub mcp_network_deny: Vec<String>,
+    /// Autonomy ceiling for this channel (docs/design/47-commitment-kernel.md).
+    ///
+    /// **Restrictive only**, like everything else on this type: a channel may
+    /// cap delegation below what the workspace granted, never raise it. That
+    /// asymmetry is the point — a Telegram chat should be able to say "propose
+    /// only, in here", and must never be able to say "act freely" on a
+    /// workspace whose operator did not.
+    ///
+    /// `None` inherits. Values: `manual` | `assisted` | `delegated` |
+    /// `autonomous`.
+    pub autonomy_ceiling: Option<String>,
+}
+
+/// Rank an autonomy name, mirroring `vak_intent::Autonomy::rank`.
+///
+/// Duplicated rather than imported because `vak-config` deliberately does not
+/// depend on the intent kernel; the ranking is asserted equal by a test in
+/// `vak-core`, which sees both.
+fn autonomy_rank(name: &str) -> u8 {
+    match name {
+        "manual" => 0,
+        "assisted" => 1,
+        "delegated" => 2,
+        "autonomous" => 3,
+        _ => 1,
+    }
 }
 
 impl ChannelPolicy {
+    /// The least-delegated of two autonomy ceilings. `None` on either side
+    /// means "says nothing", not "allows everything".
+    pub fn cap_autonomy(lower: Option<&str>, higher: Option<&str>) -> Option<String> {
+        match (lower, higher) {
+            (None, None) => None,
+            (Some(one), None) | (None, Some(one)) => Some(one.to_string()),
+            (Some(a), Some(b)) => Some(
+                if autonomy_rank(b) < autonomy_rank(a) {
+                    b
+                } else {
+                    a
+                }
+                .to_string(),
+            ),
+        }
+    }
+
     /// Fold a lower tier (e.g. bot) and a higher tier (e.g. chat) into the
     /// single effective policy applied at dispatch. Restrictive-only: an
     /// `_allow` list from the higher tier wins outright when present (it is
@@ -603,6 +646,10 @@ impl ChannelPolicy {
             hooks_allow: merge_allow(&lower.hooks_allow, &higher.hooks_allow),
             hooks_deny: merge_deny(&lower.hooks_deny, &higher.hooks_deny),
             mcp_network_deny: merge_deny(&lower.mcp_network_deny, &higher.mcp_network_deny),
+            autonomy_ceiling: Self::cap_autonomy(
+                lower.autonomy_ceiling.as_deref(),
+                higher.autonomy_ceiling.as_deref(),
+            ),
         }
     }
 }
@@ -4070,5 +4117,60 @@ mod tests {
         let (fc, _warnings) = parse_file(&dir.path().join(".vak/config.toml")).unwrap();
         assert_eq!(fc.hooks.len(), 1);
         assert!(fc.hooks[0].enabled);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod channel_autonomy_tests {
+    use super::*;
+
+    fn policy(ceiling: Option<&str>) -> ChannelPolicy {
+        ChannelPolicy {
+            autonomy_ceiling: ceiling.map(str::to_string),
+            ..ChannelPolicy::default()
+        }
+    }
+
+    /// Restrictive only, like every other key on this type. A chat may say
+    /// "propose only, in here"; it may never say "act freely" on a workspace
+    /// whose operator did not.
+    #[test]
+    fn a_channel_can_only_lower_autonomy_never_raise_it() {
+        let composed = ChannelPolicy::merge(&policy(Some("delegated")), &policy(Some("manual")));
+        assert_eq!(composed.autonomy_ceiling.as_deref(), Some("manual"));
+
+        // The narrower tier asking for MORE does not get it.
+        let composed = ChannelPolicy::merge(&policy(Some("manual")), &policy(Some("autonomous")));
+        assert_eq!(composed.autonomy_ceiling.as_deref(), Some("manual"));
+    }
+
+    #[test]
+    fn silence_on_one_tier_inherits_rather_than_permitting_everything() {
+        assert_eq!(
+            ChannelPolicy::merge(&policy(Some("assisted")), &policy(None))
+                .autonomy_ceiling
+                .as_deref(),
+            Some("assisted")
+        );
+        assert_eq!(
+            ChannelPolicy::merge(&policy(None), &policy(Some("manual")))
+                .autonomy_ceiling
+                .as_deref(),
+            Some("manual")
+        );
+        assert!(
+            ChannelPolicy::merge(&policy(None), &policy(None))
+                .autonomy_ceiling
+                .is_none()
+        );
+    }
+
+    /// An unparseable ceiling must not read as maximum delegation.
+    #[test]
+    fn an_unknown_ceiling_is_treated_as_assisted_not_autonomous() {
+        let composed = ChannelPolicy::merge(&policy(Some("banana")), &policy(Some("autonomous")));
+        assert_eq!(composed.autonomy_ceiling.as_deref(), Some("banana"));
+        assert!(autonomy_rank("banana") < autonomy_rank("autonomous"));
     }
 }

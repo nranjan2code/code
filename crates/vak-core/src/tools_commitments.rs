@@ -180,7 +180,7 @@ fn detail(commitment: &vak_commit::Commitment) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use vak_commit::{Economics, Event, EventKind};

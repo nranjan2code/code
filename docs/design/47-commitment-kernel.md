@@ -1,23 +1,22 @@
 # 47 — The commitment kernel
 
-Status, precisely:
+Status: **all phases shipped**.
 
-| Phase | State |
+| Phase | Delivers |
 |---|---|
-| I0 kernel (`vak-intent`) | shipped |
-| I1 commitment ledger (`vak-commit`) | shipped |
-| I2 admission, ledger entry, config, `vak intent explain` | shipped |
-| I3 route demand, budget, prompt projection | shipped |
-| I4 capability slicing | shipped |
-| I5 envelope wiring into live dispatch | types and lattice shipped; **nothing grants an envelope yet** |
-| I6 episodes | shipped — a durable turn opens a commitment, brackets an episode, and records what it advanced |
-| I6 portfolio scheduler | ranking shipped and exercised by the CLI, admin and tool; **the heartbeat does not yet advance work from it**, and suspension/resume is not driven |
-| I7 server, admin console, desktop, `commitments` tool | shipped |
-| I7 gateway per-bot intent policy, delivery shape/cadence projection | **not wired** |
-| I8 misread signals into the evidence ledger | **not wired** |
+| I0 | kernel (`vak-intent`): seven axes, cascade, authority, narrowing lattice |
+| I1 | commitment ledger (`vak-commit`): lifecycle, satisfaction lattice, projection, portfolio scheduler |
+| I2 | admission, intent ledger entry, `[intent]`/`[commitment]` config, `vak intent explain` |
+| I3 | route demand, per-commitment budget, prompt projection |
+| I4 | capability slicing (progressive disclosure) |
+| I5 | envelopes: `vak grant` / `vak revoke`, live grant reaching the turn's authority, revocation honoured on read |
+| I6 | episodes bracketing durable turns; commitment upkeep on its own tick — schedule wakes, zero-token predicate wakes, escalation policies, explicit expiry |
+| I7 | server endpoints, admin portfolio, desktop composer strip, the `commitments` capability, per-channel autonomy ceiling, delivery cadence/urgency |
+| I8 | misread evidence: escalation-as-measurement, per-cell accuracy with routing-ledger epistemics |
 
-Every shipped part is switchable off with `[intent] enabled = false`, which
-reproduces the runtime's previous behaviour exactly.
+Every part is switchable off with `[intent] enabled = false` and
+`[commitment] enabled = false`, which together reproduce the runtime's
+pre-kernel behaviour exactly.
 
 ## Problem
 
@@ -280,6 +279,25 @@ is rewiring rather than new infrastructure:
   that dominates every computed factor. Every priority decomposes into named
   components. An opaque scheduler in a system whose thesis is auditability
   would be the one place you could not ask "why did it do that".
+
+### Delivery posture
+
+`DeliveryPosture` decides *when* a packet goes out, never what it says: the
+semantic contract, the renderer and the outbox are untouched. Two rules
+override the cadence, and both are about not losing something that matters —
+an `Interrupt` urgency always sends, because an irreversible step's
+confirmation must not sit in a digest until morning; and an approval always
+sends, because a held gate is a stopped run and batching it would turn a
+question into a hang.
+
+### Per-channel autonomy
+
+`ChannelPolicy.autonomy_ceiling` joins the existing restrictive-only chain. A
+chat may cap delegation below what the workspace granted and may never raise
+it: a Telegram chat gets to say "propose only, in here", and never "act
+freely" on a workspace whose operator did not. `vak-config` ranks the names
+without depending on the kernel; a test in `vak-core`, which sees both, pins
+the two rankings equal.
 
 ### Did we read it right?
 

@@ -134,6 +134,38 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: CommitAction,
     },
+    /// Delegate authority to a commitment for a bounded time and scope
+    Grant {
+        /// Commitment id or unique prefix.
+        id: String,
+        /// Workspace-relative path globs the grant covers (repeatable).
+        #[arg(long = "path")]
+        paths: Vec<String>,
+        /// Tool names the grant covers (repeatable).
+        #[arg(long = "tool")]
+        tools: Vec<String>,
+        /// Lifetime spend the grant permits without asking again.
+        #[arg(long)]
+        spend_usd: Option<f64>,
+        /// Hours until the grant lapses. Omit for no expiry.
+        #[arg(long)]
+        hours: Option<i64>,
+        /// Cap the permission mode while the grant is live. Never raises it.
+        #[arg(long, default_value = "workspace-write")]
+        permission: String,
+        /// What happens to a deferred question nobody answers:
+        /// wait | assume | abandon.
+        #[arg(long, default_value = "wait")]
+        on_silence: String,
+        /// Hours before `on_silence` applies.
+        #[arg(long, default_value_t = 24)]
+        after_hours: u32,
+    },
+    /// Withdraw a grant. Takes effect immediately.
+    Revoke {
+        /// Commitment id or unique prefix.
+        id: String,
+    },
     /// Workspace checkpoints: list or restore
     Checkpoints {
         #[command(subcommand)]
