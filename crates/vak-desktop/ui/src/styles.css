@@ -24,8 +24,24 @@
   --rose-bright: #fb7185;
   --text-main: var(--text);
   --text-muted: var(--muted);
+  /* Aliases kept theme-aware (never a bare hex) so a component reaching
+     for one of these names stays correct across warm/dark/contrast
+     instead of quietly falling back to the browser's `unset` (no color,
+     no border, no outline — see DESIGN.md audit notes on this). */
+  --dim: var(--faint);
+  --text-dim: var(--faint);
+  --line: var(--border-soft);
+  --border-focus: var(--accent);
+  --cyan: var(--blue);
+  /* Derived from the theme's own accent rather than a fixed warm hex, so
+     the focus ring and selection color track `--accent`/`--accent-bright`
+     across warm/dark/contrast instead of staying terracotta in themes
+     that picked a different accent. */
+  --accent-ring: color-mix(in srgb, var(--accent-bright) 75%, transparent);
+  --accent-selection: color-mix(in srgb, var(--accent) 30%, transparent);
   --mono: "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+  --font-mono: var(--mono);
   --radius-sm: 7px;
   --radius: 10px;
   --radius-lg: 14px;
@@ -58,7 +74,7 @@ button, input, textarea, select { font: inherit; }
 button { color: inherit; background: none; border: 0; cursor: pointer; }
 button:disabled { opacity: 0.38; cursor: default; }
 code, pre, kbd { font-family: var(--mono); }
-::selection { background: rgba(223, 121, 95, 0.3); }
+::selection { background: var(--accent-selection); }
 .icon { display: block; flex: none; }
 
 .app {
@@ -74,7 +90,7 @@ code, pre, kbd { font-family: var(--mono); }
 .app.sidebar-collapsed .sidebar { visibility: hidden; pointer-events: none; }
 
 :where(button, input, textarea, select, summary):focus-visible {
-  outline: 2px solid rgba(238, 146, 120, .75);
+  outline: 2px solid var(--accent-ring);
   outline-offset: 2px;
 }
 
@@ -192,6 +208,13 @@ code, pre, kbd { font-family: var(--mono); }
   border-radius: 9px; text-align: left; color: var(--text-soft);
 }
 .sb-item:hover { background: var(--surface-hover); }
+/* The row's own click/activate target — everything but the trailing view
+   and archive buttons, which are siblings so all three stay independently
+   focusable (see Sidebar.tsx for why the row can't be one button). */
+.sb-item-main {
+  display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0;
+  text-align: left; color: inherit;
+}
 .sb-item.active { color: var(--text); }
 .session-icon { display: grid; place-items: center; width: 18px; height: 18px; color: var(--faint); }
 .sb-item.active .session-icon { color: var(--accent-bright); }
@@ -2606,3 +2629,101 @@ body.is-resizing .split-divider {
 @media (prefers-reduced-motion: reduce) {
   .intent-strip, .intent-chev { transition: none; }
 }
+
+/* ---- commitments panel (dock tab) -----------------------------------
+   docs/design/47-commitment-kernel.md. The evidence meter (.ev*) mirrors
+   crates/vak-admin-ui/src/Commitments.tsx's component verbatim — same
+   read model, same signature component, same tokens — per DESIGN.md
+   "keep the desktop and admin surfaces on the same token set". */
+.commit-panel { overflow-y: auto; display: flex; flex-direction: column; }
+.commit-list { display: flex; flex-direction: column; padding: 6px; gap: 4px; }
+.commit-section-label { margin: 10px 4px 2px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.commit-row { border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.commit-row.closed { opacity: 0.72; }
+.commit-row-head {
+  width: 100%; display: flex; align-items: center; gap: 9px; padding: 9px 11px;
+  text-align: left; color: var(--text);
+}
+.commit-row-head:hover { background: var(--surface-hover); }
+.commit-obj { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 540; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.commit-phase {
+  flex: none; font-size: 10.5px; font-weight: 550; text-transform: uppercase;
+  letter-spacing: 0.03em; color: var(--muted); padding: 2px 7px; border-radius: 999px;
+  border: 1px solid var(--border-soft);
+}
+.commit-phase.phase-active { color: var(--green); border-color: var(--green); }
+.commit-phase.phase-blocked { color: var(--red); border-color: var(--red); }
+.commit-phase.phase-suspended { color: var(--yellow); border-color: var(--yellow); }
+.commit-phase.phase-satisfying { color: var(--blue); border-color: var(--blue); }
+.commit-outstanding { flex: none; font-size: 10.5px; color: var(--faint); }
+.commit-detail { padding: 4px 11px 12px; display: flex; flex-direction: column; gap: 7px; border-top: 1px solid var(--border-soft); }
+.commit-criterion { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-soft); }
+.commit-criterion.passed { color: var(--text); }
+.commit-criterion.passed .icon { color: var(--green); }
+.commit-criterion.failed .icon { color: var(--red); }
+.commit-criterion .icon { color: var(--faint); flex: none; }
+.commit-criterion-text { flex: 1; min-width: 0; }
+.commit-blocker { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--yellow); }
+.commit-closure { font-size: 11.5px; color: var(--faint); }
+.commit-close-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.commit-close-form input {
+  flex: 1; min-width: 140px; background: var(--surface-active); border: 1px solid transparent;
+  border-radius: var(--radius-sm); padding: 5px 9px; color: var(--text); font-size: 12px;
+}
+.commit-close-form input:focus { border-color: #4b4b44; }
+.commit-error { font-size: 11.5px; color: var(--red); }
+
+.ev { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ev-track { display: flex; align-items: flex-end; gap: 2px; padding-bottom: 6px; }
+.ev-seg {
+  width: 11px; height: 4px; border-radius: 1px; border: 1px solid var(--border-strong);
+  background: transparent; position: relative; transition: background-color 140ms ease, border-color 140ms ease;
+}
+.ev-filled { background: var(--text-soft); border-color: var(--text-soft); }
+.ev-deficit { border-color: var(--accent); border-style: dashed; }
+.ev-required::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -4px; height: 2px;
+  border-radius: 1px; background: var(--muted);
+}
+.ev-short .ev-required::after { background: var(--accent); }
+.ev-label { font-size: 10.5px; font-weight: 540; color: var(--muted); white-space: nowrap; }
+.ev-label-short { color: var(--accent); }
+
+/* ---- chat empty state (ChatPane) -----------------------------------
+   DESIGN.md names this as the canonical use of the headline scale
+   (22px/620/-0.02em); it previously rendered nothing at all. */
+.chat-empty {
+  max-width: 380px; margin: 15vh auto 0; padding: 0 20px;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  text-align: center;
+}
+.chat-empty-mark {
+  display: grid; place-items: center; width: 44px; height: 44px;
+  border-radius: var(--radius-lg); background: var(--accent-wash);
+  color: var(--accent);
+}
+.chat-empty-headline {
+  margin: 4px 0 0; font-size: 22px; font-weight: 620; line-height: 1.2;
+  letter-spacing: -0.02em; color: var(--text);
+}
+.chat-empty-hint { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
+
+/* ---- app-level crash screen (AppErrorBoundary) -------------------- */
+.app-crash {
+  display: grid; place-items: center; height: 100%; padding: 24px;
+  background: var(--bg); color: var(--text);
+}
+.app-crash-card {
+  max-width: 460px; padding: 28px 30px; border-radius: var(--radius-lg);
+  background: var(--surface); border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+}
+.app-crash-card h1 { margin: 0 0 8px; font-size: 16px; font-weight: 620; }
+.app-crash-card p { margin: 0 0 14px; font-size: 13px; color: var(--text-soft); line-height: 1.5; }
+.app-crash-detail {
+  margin: 0 0 18px; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--surface-raised); border: 1px solid var(--border-soft);
+  color: var(--faint); font-size: 11.5px; white-space: pre-wrap; word-break: break-word;
+  max-height: 160px; overflow: auto;
+}
+.app-crash-actions { display: flex; gap: 8px; }

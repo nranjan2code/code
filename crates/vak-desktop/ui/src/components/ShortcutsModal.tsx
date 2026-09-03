@@ -1,3 +1,4 @@
+import { trapFocus } from "../focusTrap";
 import { setShowShortcuts } from "../store";
 
 const SHORTCUTS: [string, string][] = [
@@ -22,7 +23,7 @@ const SHORTCUTS: [string, string][] = [
 export default function ShortcutsModal() {
   return (
     <div class="modal-back" onClick={() => setShowShortcuts(false)}>
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title" onClick={(e) => e.stopPropagation()}>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title" onClick={(e) => e.stopPropagation()} use:trapFocus>
         <h3 id="shortcuts-title">Keyboard shortcuts</h3>
         <table>
           <tbody>

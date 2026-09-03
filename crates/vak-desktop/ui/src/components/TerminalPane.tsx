@@ -97,6 +97,11 @@ export default function TerminalPane(props: { sessionId: string | null }) {
         void unExitPromise.then((f) => f());
         term.dispose();
         live.delete(sid);
+        // Ends the shell and drops its map entry server-side. Without
+        // this the pty outlived the pane indefinitely — switching
+        // sessions with the terminal open spawned a new shell process
+        // (and reader thread) every time and never freed the old one.
+        void invoke("pty_close", { id: ptyId }).catch(() => {});
       };
       live.set(sid, { ptyId, term, dispose });
       onCleanup(dispose);

@@ -68,12 +68,11 @@ import {
   setSplitRatio,
   paneSessions,
   registerVoiceAudioElement,
+  setArmedGoal,
+  goalAppliesTo,
 } from "./store";
 import type { SessionSummary } from "./types";
 import * as api from "./api";
-
-// Armed goal consumed by the next prompt (docs/design/27 Phase H).
-let armedGoal: { objective: string; criteria: string[]; sessionId: string } | null = null;
 import Sidebar from "./components/Sidebar";
 import ChatPane from "./components/ChatPane";
 import Composer from "./components/Composer";
@@ -91,6 +90,7 @@ import ReceiptsModal from "./components/ReceiptsModal";
 import WorkModal from "./components/WorkModal";
 import PreviewPane from "./components/PreviewPane";
 import SubagentsPanel from "./components/SubagentsPanel";
+import CommitmentsPanel from "./components/CommitmentsPanel";
 import WorkspaceGate from "./components/WorkspaceGate";
 import WorkspaceHeader from "./components/WorkspaceHeader";
 import Icon, { type IconName } from "./components/Icon";
@@ -343,26 +343,38 @@ export async function sendPrompt(
   text: string,
   goal?: { objective: string; criteria: string[] },
   attachments?: { mime: string; data: string }[],
+  // Send to a specific session instead of the focused one — e.g. a diff
+  // pane bound to a best-of-N child via `diffTarget`, which is not
+  // necessarily `activeId()`. Without this, DiffPane's "review" always
+  // reviewed the *focused* session's diff copy regardless of which
+  // session's changes were actually on screen.
+  targetId?: string | null,
 ) {
   if (!text.trim() && !(attachments && attachments.length)) return;
-  // Typing into the empty state is the natural way to start: create the task
-  // rather than silently dropping the prompt because nothing is selected.
-  let id = activeId();
+  let id = targetId ?? activeId();
   if (!id) {
+    // Typing into the empty state is the natural way to start: create the
+    // task rather than silently dropping the prompt because nothing is
+    // selected. Only applies to the focused-session path — a caller
+    // naming an explicit `targetId` means an existing session.
     await newSession();
     id = activeId();
     if (!id) return; // newSession already surfaced why
   }
   // Goal mode (docs/design/27 Phase H): /goal arms, bare /goal shows
-  // status, /goal off disarms — mirroring the TUI.
+  // status, /goal off disarms — mirroring the TUI. Shares one signal
+  // (store.ts `armedGoal`) with the composer's own goal-mode form, so
+  // arming it here and arming it from the sparkle button are the same
+  // state, not two.
   if (text.trim().startsWith("/goal")) {
     const arg = text.trim().slice(5).trim();
+    const current = goalAppliesTo(id);
     if (!arg) {
-      appendSystem(id, armedGoal?.sessionId === id ? `🎯 armed: ${armedGoal.objective} (${armedGoal.criteria.length} criteria)` : "no goal armed · usage: /goal <objective> -- c1; c2");
+      appendSystem(id, current ? `🎯 armed: ${current.objective} (${current.criteria.length} criteria)` : "no goal armed · usage: /goal <objective> -- c1; c2");
       return;
     }
     if (arg === "off") {
-      if (armedGoal?.sessionId === id) armedGoal = null;
+      if (current) setArmedGoal(null);
       appendSystem(id, "goal disarmed");
       return;
     }
@@ -376,13 +388,13 @@ export async function sendPrompt(
       appendSystem(id, "goal needs criteria: /goal <objective> -- c1; c2");
       return;
     }
-    armedGoal = { objective, criteria, sessionId: id };
+    setArmedGoal({ objective, criteria, sessionId: id });
     appendSystem(id, `🎯 goal armed (${criteria.length} criteria) — next prompt will be audited`);
     return;
   }
 
-  const thisGoal = armedGoal?.sessionId === id ? armedGoal : null;
-  armedGoal = null;
+  const thisGoal = goalAppliesTo(id);
+  setArmedGoal(null);
   appendUser(id, text);
   try {
     if (isRunning(id)) {
@@ -863,6 +875,7 @@ export default function App() {
                     ["pr", "Pull request", "git"],
                     ["agents", "Subagents", "grid"],
                     ["feeds", "Feeds", "bell"],
+                    ["commitments", "Commitments", "shield"],
                   ] as const}>
                     {([id, label, icon]) => (
                       <button
@@ -904,6 +917,9 @@ export default function App() {
                 </Show>
                 <Show when={tab() === "feeds"}>
                   <FeedsPanel />
+                </Show>
+                <Show when={tab() === "commitments"}>
+                  <CommitmentsPanel />
                 </Show>
               </div>
               </>

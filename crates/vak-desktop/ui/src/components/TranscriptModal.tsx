@@ -1,3 +1,4 @@
+import { trapFocus } from "../focusTrap";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { sessions, setTranscriptViewId, transcriptToItems, transcriptViewId, type Item } from "../store";
 import * as api from "../api";
@@ -52,6 +53,7 @@ export default function TranscriptModal() {
         aria-modal="true"
         aria-labelledby="transcript-title"
         onClick={(e) => e.stopPropagation()}
+        use:trapFocus
       >
         <div class="transcript-head">
           <Icon name="history" size={15} />

@@ -8,11 +8,19 @@ use std::sync::Mutex;
 
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 pub struct PtyEntry {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
+    /// A killer cloned off the child *before* the child itself was moved
+    /// into the reaper thread below — `portable_pty::Child::clone_killer`
+    /// exists precisely so a shell can be killed from a thread that does
+    /// not own the `Child` (whose `wait()` the reaper thread is blocked
+    /// in). Used by `pty_close` so closing a pane actually ends its shell
+    /// rather than relying on dropping the master to deliver a hangup the
+    /// shell may or may not honor.
+    killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
 }
 
 #[derive(Default)]
@@ -48,6 +56,7 @@ pub fn spawn_pty(
         .spawn_command(cmd)
         .map_err(|e| format!("shell spawn failed: {e}"))?;
     drop(pair.slave); // our copy is not needed once the child holds its side
+    let killer = child.clone_killer();
 
     let mut reader = pair
         .master
@@ -66,10 +75,18 @@ pub fn spawn_pty(
             PtyEntry {
                 writer,
                 master: pair.master,
+                killer,
             },
         );
 
     // Reader thread: forward raw bytes to the webview until EOF.
+    //
+    // EOF here means the shell side of the pty is gone — either the user
+    // typed `exit`, or `pty_close` tore it down. Either way the map entry
+    // must go too: previously nothing ever removed it, so every pty this
+    // process ever opened (one per session per terminal-pane mount) stayed
+    // in `PtyMap` — and its writer/master fds open — for the life of the
+    // app.
     let exit_app = app.clone();
     let exit_id = id.clone();
     std::thread::spawn(move || {
@@ -84,6 +101,12 @@ pub fn spawn_pty(
                 }
                 Err(_) => break,
             }
+        }
+        if let Some(map) = exit_app.try_state::<PtyMap>() {
+            map.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&exit_id);
         }
         let _ = exit_app.emit("pty-exit", &exit_id);
     });
@@ -107,6 +130,25 @@ pub fn pty_write(map: State<'_, PtyMap>, id: String, data: Vec<u8>) -> Result<()
         return Err("unknown pty".into());
     };
     entry.writer.write_all(&data).map_err(|e| e.to_string())
+}
+
+/// End one pty: kill its shell and drop its writer/master (closing the fds
+/// and, once the reader thread observes EOF, removing this same entry a
+/// second time — a no-op, since `HashMap::remove` on an absent key is
+/// harmless). Called when a terminal pane unmounts (session switch, dock
+/// close) so a pty's lifetime is scoped to the pane that opened it instead
+/// of to the whole app process.
+#[tauri::command]
+pub fn pty_close(map: State<'_, PtyMap>, id: String) -> Result<(), String> {
+    let entry = map
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&id);
+    if let Some(mut entry) = entry {
+        let _ = entry.killer.kill();
+    }
+    Ok(())
 }
 
 #[tauri::command]

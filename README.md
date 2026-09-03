@@ -469,6 +469,7 @@ Read [AGENTS.md](AGENTS.md) before changing the agent loop, tool boundary, sessi
 | [Memory](docs/design/23-memory.md) | Cross-session recall and model-visible search |
 | [Learning loop](docs/design/26-learning.md) | Durable notes and human-reviewed skill proposals |
 | [Commitment kernel](docs/design/47-commitment-kernel.md) | How a request is read, how that narrows the run, and how "done" is proven |
+| [Web client](docs/design/48-web-client.md) | One workspace client for the desktop shell, a browser, and a headless host |
 | [Hosting](docs/hosting.md) | Durable local or VPS deployment |
 
 ---

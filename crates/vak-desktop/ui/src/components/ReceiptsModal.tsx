@@ -1,3 +1,4 @@
+import { trapFocus } from "../focusTrap";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { activeId, receiptsOpen, setReceiptsOpen } from "../store";
 import * as api from "../api";
@@ -83,6 +84,7 @@ export default function ReceiptsModal() {
           aria-modal="true"
           aria-labelledby="receipts-title"
           onClick={(e) => e.stopPropagation()}
+          use:trapFocus
         >
           <h3 id="receipts-title">Dispatch forensics</h3>
           <p class="history-sub">

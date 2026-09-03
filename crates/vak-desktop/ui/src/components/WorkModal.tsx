@@ -1,3 +1,4 @@
+import { trapFocus } from "../focusTrap";
 import { For, Show, createResource } from "solid-js";
 import * as api from "../api";
 import { activeId, setWorkOpen, workOpen } from "../store";
@@ -15,7 +16,7 @@ export default function WorkModal() {
   };
   return <Show when={workOpen()}>
     <div class="modal-backdrop" role="presentation" onClick={() => setWorkOpen(false)}>
-      <section class="modal work-modal" role="dialog" aria-modal="true" aria-labelledby="work-title" onClick={(event) => event.stopPropagation()}>
+      <section class="modal work-modal" role="dialog" aria-modal="true" aria-labelledby="work-title" onClick={(event) => event.stopPropagation()} use:trapFocus>
         <header class="modal-header"><h3 id="work-title">Managed work</h3><button class="icon-button subtle" aria-label="Close managed work" onClick={() => setWorkOpen(false)}>×</button></header>
         <Show when={!work.loading} fallback={<div class="empty">Reading work ledger…</div>}>
           <Show when={work()} fallback={<div class="empty">This session has no managed work contract.</div>}>

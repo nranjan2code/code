@@ -1082,3 +1082,92 @@ export function explainIntent(
   const params = new URLSearchParams({ prompt, surface: "desktop" });
   return req<IntentExplain>(`/intent/explain?${params}`, { signal });
 }
+
+// ---- commitments (docs/design/47-commitment-kernel.md) -----------------------
+//
+// The portfolio previously lived only in the admin console
+// (crates/vak-admin-ui/src/Commitments.tsx) — a durable obligation the
+// runtime will verify is workspace information, and the workspace client
+// had no way to see or close one. This is the same read model, scoped to
+// the active workspace client-side (the server itself is not
+// workspace-scoped: `spec.cwd` names the workspace a commitment belongs
+// to, exactly like a session's own `cwd`).
+
+export type Verdict =
+  | "fulfilled" | "partial" | "failed"
+  | "abandoned" | "superseded" | "expired" | "unknown";
+export type CommitmentPhase =
+  | "proposed" | "active" | "suspended" | "blocked" | "satisfying" | "closed";
+
+export interface CriterionState {
+  criterion_id: string;
+  statement: string;
+  required: boolean;
+  result?:
+    | { kind: "passed"; evidence: string }
+    | { kind: "failed"; reason: string }
+    | { kind: "unknown"; reason: string }
+    | null;
+  strength?: Satisfaction | null;
+  evaluated_at?: string | null;
+}
+
+export interface CommitmentEpisode {
+  episode_id: string;
+  session_id: string;
+  started_at: string;
+  ended_at?: string | null;
+  advancement?: { kind: "advanced" | "learned" | "blocked" | "stalled" } | null;
+  spend_usd: number;
+}
+
+export interface Commitment {
+  commitment_id: string;
+  opened_at: string;
+  spec: {
+    objective: string;
+    reading: IntentReading;
+    min_satisfaction: Satisfaction;
+    cwd: string;
+    economics: {
+      lifetime_budget_usd?: number | null;
+      expires_at?: string | null;
+      review_every_hours?: number | null;
+      stall_limit: number;
+    };
+  };
+  phase: CommitmentPhase;
+  criteria: CriterionState[];
+  episodes: CommitmentEpisode[];
+  suspension?: { kind: string } | null;
+  blocker?: string | null;
+  closure?: {
+    verdict: Verdict;
+    strength: Satisfaction;
+    closed_at: string;
+    note: string;
+  } | null;
+  superseded_by?: string | null;
+  spend_usd: number;
+  consecutive_stalls: number;
+  drift: string[];
+  updated_at: string;
+}
+
+export interface CommitmentPriority {
+  commitment_id: string;
+  score: number;
+  components: [string, number][];
+  withheld?: string | null;
+}
+
+export function listCommitments(all = false): Promise<{ commitments: Commitment[]; priorities: CommitmentPriority[] }> {
+  return req(`/commitments?all=${all}`);
+}
+
+export function closeCommitment(id: string, verdict: Verdict, note = ""): Promise<unknown> {
+  return req(`/commitments/${encodeURIComponent(id)}/close`, {
+    method: "POST",
+    body: JSON.stringify({ verdict, note }),
+  });
+}

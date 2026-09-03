@@ -1,3 +1,4 @@
+import { trapFocus } from "../focusTrap";
 import { createSignal, For, Show } from "solid-js";
 import { feedsOpen, setFeedsOpen } from "../store";
 import * as api from "../api";
@@ -36,7 +37,7 @@ export default function FeedsModal() {
     <Show when={feedsOpen()}>
       <div class="modal-back" onClick={() => setFeedsOpen(false)}>
         <div class="modal search-modal" role="dialog" aria-modal="true" aria-labelledby="feeds-modal-title"
-             onClick={(e) => e.stopPropagation()}>
+             onClick={(e) => e.stopPropagation()} use:trapFocus>
           <h3 id="feeds-modal-title">Search Feeds</h3>
           <form class="task-add-row" onSubmit={(e) => { e.preventDefault(); void search(); }}>
             <input class="search-input" placeholder="Search feed items..."
