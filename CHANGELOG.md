@@ -5,6 +5,17 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 2.0.1 — 2026-09-03
+
+Universal output engineering, tool-provenance signal engine, and desktop presentation suite.
+
+### Presentation and UI
+
+- **Universal recipe catalog and tool-provenance signal engine:** Expanded built-in presentation recipes across common life and work domains (`research.synthesis`, `coding.diff_inspector`, `coding.change_summary`, `coding.test_report`, `terminal.session`, `data.multi_chart`, `data.spreadsheet_grid`, `lifestyle.culinary_recipe`). Introduced `SignalContext` and `signals_from_context()`, allowing tool names (`bash`, `write`, `edit`, `websearch`), CLI commands, exit codes, and output patterns to drive presentation recipe selection without manual user tagging.
+- **Desktop presentation canvas suite:** Added 7 native, outcome-first renderers embedded in the continuous chat stream without external navigation (`ResearchCards`, `DiffInspector`, `TestMatrix`, `UniversalChart`, `DataGrid`, `TerminalConsole`, `RecipeCard`).
+- **AST routing & promotion:** Wired `PresentationRenderer` to route diff blocks to `DiffInspector`, promote markdown tables with $\ge 3$ rows to interactive `DataGrid`, and dispatch specialized recipes.
+- **Theme tokens and responsive layout:** Normalized `:root` color tokens (`--emerald-bright`, `--rose-bright`, `--text-main`, `--text-muted`) to dynamically cascade with theme changes, and added responsive stacking for compact split panes and mobile viewports.
+
 ## 2.0.0 — 2026-09-03
 
 The runtime was finished before anyone outside the project could install it.
