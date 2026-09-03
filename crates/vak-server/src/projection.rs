@@ -9,14 +9,21 @@ use vak_delivery::{
 use vak_llm::{ContentBlock, Role};
 use vak_session::{ActivityKind, ActivityStatus, EntryPayload, SessionLog};
 
+#[derive(Debug, Clone)]
+struct ToolProvenanceRecord {
+    name: String,
+    input: serde_json::Value,
+    output: Option<String>,
+    is_error: bool,
+}
+
 pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline {
     let chain = session.chain_to_root();
     let mut tool_results: HashMap<String, (String, bool)> = HashMap::new();
     let mut tool_inputs: HashMap<String, (String, serde_json::Value)> = HashMap::new();
     let mut successful_runs = std::collections::HashSet::new();
     let mut scan_turn = 0usize;
-    let mut turn_tools: HashMap<usize, Vec<(String, serde_json::Value, Option<String>, bool)>> =
-        HashMap::new();
+    let mut turn_tools: HashMap<usize, Vec<ToolProvenanceRecord>> = HashMap::new();
     for entry in &chain {
         match &entry.payload {
             EntryPayload::Message(record) => {
@@ -41,12 +48,12 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                         } => {
                             tool_results.insert(tool_use_id.clone(), (content.clone(), *is_error));
                             if let Some((name, input)) = tool_inputs.get(tool_use_id) {
-                                turn_tools.entry(scan_turn).or_default().push((
-                                    name.clone(),
-                                    input.clone(),
-                                    Some(content.clone()),
-                                    *is_error,
-                                ));
+                                turn_tools.entry(scan_turn).or_default().push(ToolProvenanceRecord {
+                                    name: name.clone(),
+                                    input: input.clone(),
+                                    output: Some(content.clone()),
+                                    is_error: *is_error,
+                                });
                             }
                         }
                         _ => {}
@@ -96,9 +103,7 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                             let (tool_name, tool_input, tool_output, is_error) = turn_tools
                                 .get(&turn)
                                 .and_then(|tools| tools.last())
-                                .map(|(name, input, output, err)| {
-                                    (Some(name.as_str()), Some(input), output.as_deref(), *err)
-                                })
+                                .map(|t| (Some(t.name.as_str()), Some(&t.input), t.output.as_deref(), t.is_error))
                                 .unwrap_or((None, None, None, false));
                             let ctx = SignalContext {
                                 text,

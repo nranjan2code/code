@@ -829,26 +829,29 @@ mod tests {
         // 1. Research synthesis
         let research_text = "Key takeaways from our findings:\n1. Rust is fast.\nSources:\nhttps://example.com/rust";
         let sigs = signals_from_text(research_text);
-        let decision = catalog
-            .choose(&sigs, "desktop")
-            .expect("research synthesis decision");
-        assert_eq!(decision.recipe_id, "research.synthesis");
+        let decision = catalog.choose(&sigs, "desktop");
+        assert!(decision.is_some());
+        if let Some(decision) = decision {
+            assert_eq!(decision.recipe_id, "research.synthesis");
+        }
 
         // 2. Diff inspector
         let diff_text = "Files changed:\n```diff\n@@ -1,2 +1,3 @@\n+added\n```";
         let sigs = signals_from_text(diff_text);
-        let decision = catalog
-            .choose(&sigs, "desktop")
-            .expect("diff inspector decision");
-        assert_eq!(decision.recipe_id, "coding.diff_inspector");
+        let decision = catalog.choose(&sigs, "desktop");
+        assert!(decision.is_some());
+        if let Some(decision) = decision {
+            assert_eq!(decision.recipe_id, "coding.diff_inspector");
+        }
 
         // 3. Test report
         let test_text = "Test suite executed: 42 passed, 0 failures.";
         let sigs = signals_from_text(test_text);
-        let decision = catalog
-            .choose(&sigs, "desktop")
-            .expect("test report decision");
-        assert_eq!(decision.recipe_id, "coding.test_report");
+        let decision = catalog.choose(&sigs, "desktop");
+        assert!(decision.is_some());
+        if let Some(decision) = decision {
+            assert_eq!(decision.recipe_id, "coding.test_report");
+        }
 
         // 4. Terminal session from bash tool context
         let cmd = serde_json::json!({"command": "docker ps -a"});
@@ -860,27 +863,39 @@ mod tests {
             is_error: false,
         };
         let sigs = signals_from_context(&ctx);
-        let decision = catalog.choose(&sigs, "desktop").expect("terminal decision");
-        assert_eq!(decision.recipe_id, "terminal.session");
+        let decision = catalog.choose(&sigs, "desktop");
+        assert!(decision.is_some());
+        if let Some(decision) = decision {
+            assert_eq!(decision.recipe_id, "terminal.session");
+        }
 
         // 5. Culinary recipe
         let recipe_text =
             "Recipe for Salmon:\nPrep time: 10m\nIngredients:\n- 2 fillets\n- 2 tbsp olive oil";
         let sigs = signals_from_text(recipe_text);
-        let decision = catalog.choose(&sigs, "desktop").expect("recipe decision");
-        assert_eq!(decision.recipe_id, "lifestyle.culinary_recipe");
+        let decision = catalog.choose(&sigs, "desktop");
+        assert!(decision.is_some());
+        if let Some(decision) = decision {
+            assert_eq!(decision.recipe_id, "lifestyle.culinary_recipe");
+        }
 
         // 6. Data spreadsheet grid
         let table_text = "Dataset breakdown:\n| MRR | Growth |\n| --- | --- |\n| $10k | +20% |";
         let sigs = signals_from_text(table_text);
-        let decision = catalog.choose(&sigs, "desktop").expect("grid decision");
-        assert_eq!(decision.recipe_id, "data.spreadsheet_grid");
+        let decision = catalog.choose(&sigs, "desktop");
+        assert!(decision.is_some());
+        if let Some(decision) = decision {
+            assert_eq!(decision.recipe_id, "data.spreadsheet_grid");
+        }
 
         // 7. Multi chart
         let chart_text =
             "Telemetry metrics chart showing p99 latency trend and req/sec throughput.";
         let sigs = signals_from_text(chart_text);
-        let decision = catalog.choose(&sigs, "desktop").expect("chart decision");
-        assert_eq!(decision.recipe_id, "data.multi_chart");
+        let decision = catalog.choose(&sigs, "desktop");
+        assert!(decision.is_some());
+        if let Some(decision) = decision {
+            assert_eq!(decision.recipe_id, "data.multi_chart");
+        }
     }
 }
