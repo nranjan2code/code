@@ -19,6 +19,14 @@ One JSONL file per session at
   Audit only — `derive_messages()` skips it (`docs/design/42-managed-work-contracts.md`).
 - `goal` — objective/criteria lifecycle statuses (Active/Done{audited}/
   Unverified). Audit only — skipped by projection (`docs/design/42-managed-work-contracts.md`).
+- `intent` — this turn's resolved reading, engagement, and provenance
+  (`docs/design/47-commitment-kernel.md`). Unlike `receipt` and `goal` this
+  one **is** model-visible: it carries `model_visible`, the exact text the
+  engagement contributed, and the projection emits those recorded bytes
+  rather than re-deriving them — so a replay reproduces the prompt even if
+  the derivation rules have since changed. Only the newest intent entry is
+  projected, immediately before the turn it governs, and it is tagged as
+  control so it stays out of compaction packets.
 
 ## Invariants
 

@@ -450,6 +450,30 @@ pub enum ActivityStatus {
     Partial,
 }
 
+/// One turn's resolved intent (docs/design/47-commitment-kernel.md).
+///
+/// Model-visible **and** audit in one entry, deliberately. `model_visible`
+/// holds the exact text the engagement contributed to the model's context, so
+/// invariant 1 holds by construction: replaying the ledger reproduces the
+/// prompt byte-for-byte rather than regenerating it from a derivation that may
+/// have changed in the meantime.
+///
+/// The `reading`/`engagement`/`provenance` fields alongside it are what make
+/// the decision auditable — including whether it was reproducible at all.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntentRecord {
+    pub reading: vak_intent::Reading,
+    pub engagement: vak_intent::Engagement,
+    pub provenance: vak_intent::Provenance,
+    /// Exactly what the model was told, if anything. `None` when the
+    /// engagement had nothing worth spending tokens to say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_visible: Option<String>,
+    /// The durable commitment this turn serves, when one is open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commitment_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EntryPayload {
@@ -466,6 +490,8 @@ pub enum EntryPayload {
     /// Durable managed-work lifecycle event. The projector is the source of
     /// current work state; events are never rewritten.
     Work(WorkEvent),
+    /// This turn's resolved intent. Model-visible via `model_visible`.
+    Intent(Box<IntentRecord>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

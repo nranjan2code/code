@@ -123,6 +123,17 @@ pub(crate) enum Command {
         #[arg(long)]
         trust: bool,
     },
+    /// Explain how a request would be read, and what the runtime would do
+    /// about it (docs/design/47-commitment-kernel.md)
+    Intent {
+        #[command(subcommand)]
+        action: IntentAction,
+    },
+    /// Durable commitments: what this agent owes, and what closed it
+    Commit {
+        #[command(subcommand)]
+        action: CommitAction,
+    },
     /// Workspace checkpoints: list or restore
     Checkpoints {
         #[command(subcommand)]
@@ -1082,4 +1093,79 @@ mod tests {
             other => panic!("unexpected: {other:?}"),
         }
     }
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum IntentAction {
+    /// Resolve a prompt and print the reading, every contributing signal, and
+    /// the engagement diff against the unrestricted baseline. Costs nothing
+    /// and dispatches nothing.
+    Explain {
+        prompt: String,
+        /// Pretend the request arrived on this surface: cli, desktop, server,
+        /// chat, cron, heartbeat, subagent.
+        #[arg(long)]
+        surface: Option<String>,
+        /// Override the reading's act.
+        #[arg(long)]
+        act: Option<String>,
+        /// Override the reading's horizon.
+        #[arg(long)]
+        horizon: Option<String>,
+        /// Override the reading's stakes.
+        #[arg(long)]
+        stakes: Option<String>,
+        /// Override the reading's evidence standard.
+        #[arg(long)]
+        evidence: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the resolved intent policy for this workspace.
+    Show,
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum CommitAction {
+    /// List commitments, scheduling order first.
+    List {
+        /// Include closed commitments.
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one commitment: criteria, episodes, evidence, and closure.
+    Show {
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Close a commitment with an explicit verdict. A `fulfilled` claim is
+    /// refused unless the recorded evidence actually supports it.
+    Close {
+        id: String,
+        /// fulfilled | partial | failed | abandoned | expired | unknown
+        #[arg(long, default_value = "abandoned")]
+        verdict: String,
+        #[arg(long, default_value = "")]
+        note: String,
+    },
+    /// Replace one commitment with another, recording the lineage.
+    Supersede {
+        id: String,
+        #[arg(long)]
+        by: String,
+        #[arg(long, default_value = "")]
+        reason: String,
+    },
+    /// Record a human attestation against a criterion. The only way, other
+    /// than an external receipt, to reach `attested` evidence.
+    Attest {
+        id: String,
+        #[arg(long)]
+        criterion: String,
+        #[arg(long, default_value = "")]
+        note: String,
+    },
 }

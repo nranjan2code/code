@@ -31,8 +31,11 @@ loop-engineering kernel ✅, frozen-ladder routing ✅, router-grade
 ordering over that ladder (demand objectives, cross-model fallbacks,
 beliefs) ✅ via the vakrouter study Phase R, runs→flows
 adopt/diff ✅, run-graph projection ✅, checkpoint-delta auditing ✅;
-remaining (parked): skill intent-discovery, release supply-chain
-hardening (SBOM/signing), capacity-exhaustion Ask type — all three
+remaining (parked): release supply-chain
+hardening (SBOM/signing), capacity-exhaustion Ask type — skill
+intent-discovery is subsumed by the intent kernel
+(`docs/design/47-commitment-kernel.md`), which selects skills through the
+admitted capability slice rather than a separate discovery path; all three
 original parked items (scenario-harness, planner done-contracts,
 typed tool outputs) have landed). The personal-use completion pass —
 tiered memory (USER.md profile + forget/amend), indexed + cross-project
@@ -383,6 +386,32 @@ assuming a document describes shipped behaviour rather than a proposal.
     "Kept for compatibility" is not a justification a review accepts.
     Removing the older path is part of shipping the newer one, including
     the tests that pinned it and the doc paragraphs that described it.
+31. **Intent narrows, never widens** (docs/design/47-commitment-kernel.md).
+    A resolved engagement may subtract a capability, shorten the frozen ladder
+    to a prefix, lower a budget, or *raise* an approval floor. It may never
+    grant a tool, extend or reorder a ladder, raise a cap, or lower a floor.
+    This is a property of the types rather than a rule to remember: `Limits`
+    is a meet semilattice whose top element reproduces pre-kernel behaviour,
+    `Limits::meet` is the only composition operator offered, `is_at_most`
+    states the invariant as a predicate, and there is deliberately no `join`
+    to reach for by accident. Intent never gates the permission engine —
+    permission is evaluated exactly as before and intent may only add a
+    requirement on top, so a resolution bug cannot authorize anything. An
+    uncertain reading resolves to the general engagement, byte-for-byte the
+    behaviour before the kernel existed: being unsure must never silently
+    remove a tool. An envelope is pre-authorization *within* existing
+    authority, never a grant of new authority, and irreversible work reaches
+    a human whatever was delegated.
+32. **The runtime evaluates satisfaction; the model never does.** The model
+    may propose criteria; it may not mark one passed. A criterion's
+    evidentiary strength comes from how it was established — a command the
+    runtime ran is `Observed`, an external receipt is `Attested`, the model's
+    own judgement is `Asserted` however emphatically phrased. A commitment
+    may not close `fulfilled` below the strength its `evidence` axis demands,
+    and the ledger refuses the event at append time: a ledger that can record
+    a lie is not an audit trail. Failure verdicts are deliberately
+    unconstrained, so the record can always tell the truth about work that
+    went wrong.
 
 ## Code rules
 
@@ -463,6 +492,19 @@ crates/vak-plugin    plugin packages: manifest parsing, capability
                      rollback, invocation records, Ed25519 catalog-signature
                      verification with key revocation
                      (docs/design/39-plugin-ecosystem.md)
+crates/vak-intent    the decision layer (docs/design/47-commitment-kernel.md):
+                     seven behavioural axes, deterministic signal extraction,
+                     the resolution cascade, the autonomy/envelope model, and
+                     the narrowing lattice. NO vak dependencies -- a pure
+                     decision layer, unit-testable without a network, a model,
+                     or a config file. `Limits` is a meet semilattice whose top
+                     element reproduces pre-kernel behaviour; `meet` is the only
+                     composition operator and there is deliberately no `join`.
+crates/vak-commit    durable commitments (docs/design/47): lifecycle, the
+                     satisfaction lattice, the append-only ledger + projection,
+                     and the deterministic portfolio scheduler. Reuses
+                     vak-session's CriterionKind/EvidenceRef/WorkOwner rather
+                     than defining a second vocabulary for the same idea.
 crates/vak-hooks     lifecycle hooks: pre/post-tool-use, stop, session-start
 crates/vak-mcp       MCP stdio client behind a lazy meta-tool
 crates/vak-agent     loop, steering queues (full user messages: text +
@@ -561,7 +603,9 @@ crates/vak           binary: exec / plan / flow / serve [--gateway] /
                      telegram|discord|slack [--bot-id <id>] / eval /
                      checkpoints / config dump / sessions / skills /
                      skills-review / plugins / doctor / backup / digest /
-                     tasks / memory / inbox / user / workspace / self
+                     tasks / memory / inbox / intent (explain, show) /
+                     commit (list, show, close, supersede, attest) /
+                     user / workspace / self
                      (install, update, services-sync) (+ first-run wizard,
                      opt-in update check). There is no `tui` subcommand: the
                      inline TUI shipped in v0.1.x and was withdrawn in favour

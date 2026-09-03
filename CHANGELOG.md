@@ -5,6 +5,121 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## Unreleased
+
+The commitment kernel: vak learns what it was asked, and what "done" means.
+
+### The intent kernel (`docs/design/47-commitment-kernel.md`)
+
+vak decided a great deal before a turn ran — provider, permission mode,
+capability packet, budget — and made every one of those decisions without any
+model of what the user was trying to do. Three consequences, all now fixed:
+
+- **The only intent classifier was a keyword hack.** `is_managed_work_request`
+  looked for one of thirteen English verbs plus two conjunctions, so "explain
+  what this and that mean" read as durable multi-step work. It is **deleted**;
+  managed admission now follows from the reading's `horizon` axis. An explicit
+  run-scoped `work_mode` still overrides it.
+- **Demand-driven routing was wired but fed zeros.** `plan_route_ladder`
+  passed `reasoning_required: false, evidence_required: false,
+  structured_output: false, estimated_input_tokens: 0`, so every session
+  scored identical demand and `order_ladder_v2` never actually varied. Those
+  facts now come from the turn's reading.
+- **Every tool was advertised on every turn.** A greeting carried the whole
+  toolbox. Capability slicing narrows the admitted packet to what the reading
+  plausibly needs — `vak exec "hi"` now sees zero tools and one ladder leg.
+
+New `crates/vak-intent`: seven behavioural axes (`act`, `horizon`, `stakes`,
+`evidence`, `clarity`, `modality`, `attendance`), deterministic signal
+extraction, a cheap-first resolution cascade, the autonomy/envelope model, and
+a narrowing lattice. No dependencies on other vak crates — a pure decision
+layer, testable without a network, a model, or a config file.
+
+- **It only ever narrows** (`AGENTS.md` invariant 31). `Limits` is a meet
+  semilattice whose top element reproduces the previous behaviour exactly;
+  `meet` is the only composition operator and there is deliberately no `join`.
+  A property test proves no engagement derived from any reading in the
+  reachable space widens the baseline.
+- **Intent never gates the permission engine.** It supplies a *ceiling* on
+  approval permissiveness, so an irreversible turn reaches a human even under
+  `auto-approve` — and nothing it concludes can skip a gate the operator
+  wanted. A resolution bug can make vak more cautious; it cannot authorize.
+- **Uncertainty resolves to the general engagement**, byte-for-byte the
+  behaviour before the kernel existed. Being unsure never removes a tool.
+- Confidence is **per-axis**: capability slicing gates on `act`, commitment
+  promotion on `horizon`. A single scalar let an unsignalled horizon suppress
+  slicing the act reading was certain about.
+- Ordered axes (`stakes`, `horizon`, `evidence`) take the highest supported
+  level rather than an argmax over rivals. A lower level *corroborates* a
+  higher one; scoring them as competitors made a dirty working tree's
+  `reversible` vote argue against a request's own `irreversible`.
+
+### Durable commitments
+
+New `crates/vak-commit`: work outliving a session becomes a commitment in its
+own append-only ledger, rather than the session being the unit of identity and
+"the model stopped talking" being the completion signal.
+
+- **The satisfaction lattice** — `asserted < cited < observed < attested`.
+  Strength comes from *how* a criterion was established: a command the runtime
+  ran is `observed`, an external receipt is `attested`, the model's own
+  judgement is `asserted` however emphatically phrased.
+- **The closure invariant** (`AGENTS.md` invariant 32). A commitment cannot
+  close `fulfilled` below the strength its `evidence` axis demands, and the
+  ledger refuses the event at append time. Failure verdicts are deliberately
+  unconstrained, so the record can always tell the truth about work that went
+  wrong — including an honest `unknown`.
+- **Waiting is not failing.** Unattended durable work that needs a human
+  suspends on a `Human` wake condition and queues the question, where a
+  one-shot turn still fails closed. Every deferred question carries an
+  escalation policy, and `assume-conservative` is refused above `costly`.
+- **Progress versus motion.** Episodes end with `advanced`, `learned`,
+  `blocked`, or `stalled`; consecutive stalls trip a breaker. `learned` exists
+  so genuine exploration is not punished.
+- **Lifetime economics.** Budget exhaustion *holds* a commitment rather than
+  failing it, and expiry produces an explicit `expired` verdict — never a
+  silent deletion. Supersession records lineage instead of orphaning work.
+- A deterministic, inspectable portfolio scheduler: every priority decomposes
+  into named components, and a user pin dominates all of them.
+
+### Surfaces
+
+- `vak intent explain "<prompt>"` — the reading, every signal with the weight
+  it carried, the engagement diff against doing nothing, and the exact text
+  the model would additionally be told. Costs nothing, dispatches nothing.
+- `vak intent show`, and `vak commit list|show|close|supersede|attest`.
+- `GET /intent/explain`, `GET /intent/policy`, `GET /commitments`,
+  `GET /commitments/{id}`, `POST /commitments/{id}/close` (409 on a refused
+  closure — the request was fine; the evidence does not support the claim).
+- New session entry type `intent`, carrying the exact model-visible text so a
+  replay reproduces the prompt rather than re-deriving it (invariant 1). Only
+  the newest applies, emitted immediately before the turn it governs.
+- `[intent]` and `[commitment]` config. `intent.autonomy` and
+  `intent.escalate = "cloud"` are privileged and stripped for an untrusted
+  project: a cloned repository must not grant itself the right to act without
+  asking, nor spend the user's credentials classifying.
+
+### Fixed
+
+- `Economics::default()` produced `stall_limit: 0`, so every commitment was
+  born already stalled — `#[serde(default = "…")]` does not feed
+  `Default::default()`.
+- `vak intent explain --surface cron` derived attendance from the calling
+  process's surface rather than the one being asked about, reporting an
+  unattended cron run as interactive.
+- The verb lexicon matched only bare stems, so "before deploying to
+  production" contributed no act signal at all.
+
+### Notes
+
+- `AGENTS.md` invariants 31 and 32 are **appended**, not inserted. Roughly
+  twenty code comments cite invariants by number; inserting in the middle
+  would have silently invalidated every one of them.
+- Phases I5–I8 (envelope wiring into live dispatch, episodes and the portfolio
+  scheduler against the real scheduler, admin/desktop/gateway/delivery
+  surfaces, and the misread evidence loop) are specified in doc 47 and not yet
+  wired. The doc's `Status:` line says so.
+
 ## 2.0.1 — 2026-09-03
 
 Universal output engineering, tool-provenance signal engine, and desktop presentation suite.

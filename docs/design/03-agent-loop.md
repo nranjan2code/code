@@ -59,6 +59,24 @@ an exact user steering message such as `done` or `stop` releases it. The
 configured `max_turns` remains a hard safety ceiling; reaching it returns
 `MaxTurnsReached`, never `Completed`.
 
+## Where completion authority actually lives
+
+The stop gate above guards *this turn*. It is a heuristic over the
+transcript, and it was for a long time the only thing standing between "the
+model stopped talking" and "the work is done" — which is why it needed
+marker and verify sub-gates at all.
+
+With the intent kernel (`docs/design/47-commitment-kernel.md`) that is no
+longer the authoritative signal for durable work. A commitment closes only
+when the **runtime** has evaluated its criteria against the world at the
+strength its `evidence` axis demands; the model may propose criteria and may
+never mark one passed. The stop gate's job narrows accordingly, to "did this
+episode terminate cleanly" rather than "is the objective met".
+
+The turn's reading also supplies a `stop` profile — `message`, `inspection`,
+`effect`, or `verification`. An act that changes something and produced no
+effect did not finish, whatever the final message says.
+
 ## Later phases
 
 All three former items shipped (permission gate, `task` subagents, resource-

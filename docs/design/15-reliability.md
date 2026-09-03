@@ -104,6 +104,15 @@ Phase R (vakrouter adoption) upgrades the ordering machinery:
   picks utility/balanced/quality-critical ordering; `[route].objective`
   overrides; `[route].quality_hints` replaces hardcoded model-name bands
   (invariant 9). v1 stays only for replaying old contracts.
+  The difficulty facts themselves come from the intent kernel
+  (`docs/design/47-commitment-kernel.md`): `reasoning_required`,
+  `evidence_required` and `structured_output` are derived from the turn's
+  reading. Until that landed, `plan_route_ladder` passed all three as
+  `false` with `estimated_input_tokens: 0`, so every session scored
+  identical demand and this ordering function never actually varied.
+  A turn may also restrict the frozen ladder to a **prefix** — never
+  reordering, never extending — which keeps dispatch inside the committed
+  contract and leaves replay exact.
 - **Cross-model fallbacks are opt-in**: `[route].fallback_models` allowlist
   ∩ warm discovery; the user's primary never loses the head position.
 - **Diversity caps + annotations**: ⌈max_total/3⌉ seats per provider;

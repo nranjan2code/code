@@ -58,6 +58,11 @@ consumers.
 | GET | `/digest?days=N` | usage rollup from the cost ledger + memory/skill deltas (1–90) |
 | POST | `/backup/export` `{dest_dir,include_secrets?}` / `/backup/import` `{src_dir,conflict?}` | home backup round-trip; secrets excluded by default; 400 when source/target equals the home itself |
 | GET | `/skills/proposals` (+ promote/reject) | learned-skill review queue; proposals carry a `duplicate-of:` screening tag where applicable |
+| GET | `/intent/explain?prompt=&surface=&act=&horizon=&stakes=&evidence=` | resolve a prompt without running it: reading, engagement, every contributing signal, and the diff against the unrestricted baseline. Free tiers only, so it costs nothing and dispatches nothing — safe to call from a composer as the user types (`docs/design/47-commitment-kernel.md`) |
+| GET | `/intent/policy` | resolved `[intent]` + `[commitment]` policy for this workspace |
+| GET | `/commitments?all=` | the portfolio plus `priorities`, in the order the scheduler would work it. Priorities ride alongside the rows rather than being baked in: the ordering is an opinion, and a UI should be able to show *why* as well as *what* |
+| GET | `/commitments/:id` | one commitment's projected state plus its raw event stream |
+| POST | `/commitments/:id/close` `{verdict,note?}` | 409 when the closure invariant refuses the claim — the request was well-formed and the server is fine; the recorded evidence simply does not support `fulfilled`. The message names the missing evidence |
 
 ## Personal-OS scheduler semantics (docs/design/29)
 

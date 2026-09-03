@@ -18,7 +18,9 @@ uuid = { workspace = true }
 vak-agent = { workspace = true }
 vak-config = { workspace = true }
 vak-permission = { workspace = true }
+vak-commit = { workspace = true }
 vak-core = { workspace = true }
+vak-intent = { workspace = true }
 vak-plugin = { workspace = true }
 vak-delivery = { workspace = true }
 vak-llm = { workspace = true }

@@ -27,6 +27,7 @@ that owns its contract.
 | Work receipts, FinOps admission, dispatch forensics | `docs/design/42-managed-work-contracts.md` |
 | Layered configuration and scoped capabilities | `docs/design/05-config.md` |
 | Layered, editable prompt | `docs/design/45-prompt-layers.md` |
+| Intent kernel: behavioural reading, narrowing engagement, durable commitments | `docs/design/47-commitment-kernel.md` |
 | Service control plane, Operations Center | `docs/design/28-operations.md` |
 | Installed lifecycle: install, verify, status, update, uninstall | `docs/design/32-release-engineering.md` |
 
@@ -64,7 +65,8 @@ applies to every item.
 | Managed work contracts — hardening | in progress; direct mode unchanged |
 | Discord and Slack real-time transports (gateway websocket, Socket Mode) | deferred; both bridges poll configured channel ids today |
 | Interactive approval components on Discord and Slack | deferred; typed yes/no fallback ships |
-| Skill intent-discovery | parked |
+| Skill intent-discovery | **subsumed** by the intent kernel (doc 47): skills are selected through the admitted capability slice rather than a separate discovery path |
+| Commitment kernel phases I5-I8 (envelope wiring, episodes + portfolio scheduler, admin/desktop/gateway/delivery surfaces, misread evidence loop) | specified in doc 47; not yet wired |
 | Windows platform support | S11 |
 
 ## Decisions locked during research

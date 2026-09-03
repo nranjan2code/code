@@ -63,7 +63,8 @@ The supported surface is discoverable through `vak config dump`:
 `profiles.*`, `[route]`, retry/watchdog/circuit-breaker controls,
 `allow`/`ask`/`deny`, `[sandbox]`, `[tools]`, `[ui]`, `[hooks]`,
 `[mcp.servers]`, `[finops]`, `[goal]`, `[memory]`, `[learning]`,
-`[gateway]`, `[automation]`, and `[update]`.
+`[gateway]`, `[automation]`, `[update]`, `[intent]`, and `[commitment]`
+(`docs/design/47-commitment-kernel.md`).
 
 ## Storage
 
@@ -173,3 +174,10 @@ shadow, add, or disable categories at their own scope.
 - Each catalog entry has a real command and persists exactly as advertised.
 - An untrusted project's privileged keys are demoted; its `deny`/`ask` and
   guardrails still apply.
+- `[intent]` is **partly** privileged, which is unusual and deliberate. Most
+  of the section can only narrow what a turn may do, and a repository
+  choosing to give itself fewer tools is harmless, so it survives untrusted.
+  Two keys are execution power and are stripped: `autonomy` (`delegated` and
+  `autonomous` suppress approval gates) and `escalate = "cloud"` (spends the
+  user's credentials on a classification dispatch before the run they asked
+  for). A cloned repository must not grant itself either.

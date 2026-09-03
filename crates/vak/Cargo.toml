@@ -11,7 +11,9 @@ path = "src/main.rs"
 [dependencies]
 vak-agent = { workspace = true }
 vak-config = { workspace = true }
+vak-commit = { workspace = true }
 vak-core = { workspace = true }
+vak-intent = { workspace = true }
 vak-delivery = { workspace = true }
 vak-eval = { workspace = true }
 vak-flow = { workspace = true }

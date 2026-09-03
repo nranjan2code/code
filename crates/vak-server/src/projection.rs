@@ -97,12 +97,7 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                                 .get(&turn)
                                 .and_then(|tools| tools.last())
                                 .map(|(name, input, output, err)| {
-                                    (
-                                        Some(name.as_str()),
-                                        Some(input),
-                                        output.as_deref(),
-                                        *err,
-                                    )
+                                    (Some(name.as_str()), Some(input), output.as_deref(), *err)
                                 })
                                 .unwrap_or((None, None, None, false));
                             let ctx = SignalContext {
