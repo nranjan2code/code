@@ -48,12 +48,14 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                         } => {
                             tool_results.insert(tool_use_id.clone(), (content.clone(), *is_error));
                             if let Some((name, input)) = tool_inputs.get(tool_use_id) {
-                                turn_tools.entry(scan_turn).or_default().push(ToolProvenanceRecord {
-                                    name: name.clone(),
-                                    input: input.clone(),
-                                    output: Some(content.clone()),
-                                    is_error: *is_error,
-                                });
+                                turn_tools.entry(scan_turn).or_default().push(
+                                    ToolProvenanceRecord {
+                                        name: name.clone(),
+                                        input: input.clone(),
+                                        output: Some(content.clone()),
+                                        is_error: *is_error,
+                                    },
+                                );
                             }
                         }
                         _ => {}
@@ -103,7 +105,14 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                             let (tool_name, tool_input, tool_output, is_error) = turn_tools
                                 .get(&turn)
                                 .and_then(|tools| tools.last())
-                                .map(|t| (Some(t.name.as_str()), Some(&t.input), t.output.as_deref(), t.is_error))
+                                .map(|t| {
+                                    (
+                                        Some(t.name.as_str()),
+                                        Some(&t.input),
+                                        t.output.as_deref(),
+                                        t.is_error,
+                                    )
+                                })
                                 .unwrap_or((None, None, None, false));
                             let ctx = SignalContext {
                                 text,
