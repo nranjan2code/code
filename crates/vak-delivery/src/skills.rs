@@ -173,6 +173,12 @@ pub fn built_in_recipes() -> RecipeCatalog {
             vec!["desktop", "terminal"],
         ),
         (
+            "research.synthesis",
+            vec!["research", "synthesis", "takeaways"],
+            vec!["research.card", "citations"],
+            vec!["desktop", "terminal"],
+        ),
+        (
             "weather.forecast",
             vec!["temperature", "forecast"],
             vec!["metric.group", "chart.line"],
@@ -180,8 +186,14 @@ pub fn built_in_recipes() -> RecipeCatalog {
         ),
         (
             "coding.change_summary",
-            vec!["diff", "files_changed"],
+            vec!["files_changed"],
             vec!["outcome", "artifact.collection"],
+            vec!["desktop", "terminal"],
+        ),
+        (
+            "coding.diff_inspector",
+            vec!["diff", "files_changed"],
+            vec!["coding.diff", "artifact.collection"],
             vec!["desktop", "terminal"],
         ),
         (
@@ -189,6 +201,30 @@ pub fn built_in_recipes() -> RecipeCatalog {
             vec!["tests", "pass_fail"],
             vec!["status", "table"],
             vec!["desktop", "terminal", "telegram"],
+        ),
+        (
+            "terminal.session",
+            vec!["terminal", "command_exec"],
+            vec!["terminal.view"],
+            vec!["desktop", "terminal"],
+        ),
+        (
+            "data.multi_chart",
+            vec!["chart", "telemetry"],
+            vec!["chart", "metric.group"],
+            vec!["desktop", "terminal"],
+        ),
+        (
+            "data.spreadsheet_grid",
+            vec!["table_data", "tabular"],
+            vec!["data.grid", "table"],
+            vec!["desktop", "terminal"],
+        ),
+        (
+            "lifestyle.culinary_recipe",
+            vec!["recipe", "ingredients"],
+            vec!["recipe.card", "timer"],
+            vec!["desktop"],
         ),
         (
             "workflow.approval",
@@ -258,6 +294,12 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             "media.image",
             "media.video",
             "media.audio",
+            "research.synthesis",
+            "coding.diff",
+            "test.report",
+            "terminal.view",
+            "data.grid",
+            "recipe.card",
         ]
         .into_iter()
         .map(String::from)
@@ -278,6 +320,18 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
             "multiple_sources",
             &["sources:", "according to", "references"][..],
         ),
+        (
+            "research",
+            &["research", "key takeaways", "findings", "research synthesis", "verified sources"][..],
+        ),
+        (
+            "synthesis",
+            &["synthesis", "key takeaways", "findings", "verified sources"][..],
+        ),
+        (
+            "takeaways",
+            &["key takeaways", "takeaways", "findings", "research synthesis"][..],
+        ),
         ("temperature", &["temperature", "°c", "°f"][..]),
         ("forecast", &["forecast", "humidity", "wind speed"][..]),
         ("diff", &["diff --", "```diff", "@@ "][..]),
@@ -287,9 +341,40 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
         ),
         ("tests", &["tests", "test suite", "test report"][..]),
         ("pass_fail", &["passed", "failed", "failures"][..]),
+        (
+            "benchmark",
+            &["benchmark", "req/sec", "req/s", "p99", "throughput", "concurrency"][..],
+        ),
+        ("chart", &["chart", "plot", "graph", "trend", "time series"][..]),
+        ("telemetry", &["telemetry", "metrics", "kpi", "latency", "req/sec", "req/s", "p99", "throughput"][..]),
+        (
+            "table_data",
+            &["table", "dataset", "mrr", "active orgs", "revenue breakdown"][..],
+        ),
+        ("tabular", &["| ---", "|---", "| :---", "|:---", "\t"][..]),
+        (
+            "recipe",
+            &[
+                "recipe",
+                "servings",
+                "cook time",
+                "prep time",
+                "baste",
+            ][..],
+        ),
+        (
+            "ingredients",
+            &["ingredients", "tbsp", "tsp", "fillet", "tablespoon", "teaspoon", "cups"][..],
+        ),
         ("artifact", &["artifact", "download", "generated file"][..]),
         ("approval", &["approval", "approve", "permission"][..]),
         ("action", &["allow once", "deny", "run this"][..]),
+        (
+            "terminal",
+            &["docker ps", "kubectl", "exit 0", "exit 1", "command line"][..],
+        ),
+        ("command_exec", &["$ ", "user@", "exit 0", "exit 1", "stdout:", "stderr:"][..]),
+        ("docker", &["docker", "container", "microservices", "ports"][..]),
     ];
     checks
         .iter()
@@ -300,6 +385,80 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
                 .then_some((*signal).into())
         })
         .collect()
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SignalContext<'a> {
+    pub text: &'a str,
+    pub tool_name: Option<&'a str>,
+    pub tool_input: Option<&'a serde_json::Value>,
+    pub tool_output: Option<&'a str>,
+    pub is_error: bool,
+}
+
+pub fn signals_from_context(ctx: &SignalContext<'_>) -> Vec<String> {
+    let mut signals = signals_from_text(ctx.text);
+    if let Some(tool) = ctx.tool_name {
+        match tool {
+            "bash" => {
+                signals.push("terminal".into());
+                signals.push("command_exec".into());
+                if let Some(input) = ctx.tool_input {
+                    let cmd = input
+                        .get("command")
+                        .or_else(|| input.get("cmd"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let lower = cmd.to_ascii_lowercase();
+                    if lower.contains("test")
+                        || lower.contains("pytest")
+                        || lower.contains("cargo test")
+                        || lower.contains("npm test")
+                    {
+                        signals.push("tests".into());
+                        signals.push("pass_fail".into());
+                    }
+                    if lower.contains("docker") || lower.contains("kubectl") {
+                        signals.push("docker".into());
+                        signals.push("terminal".into());
+                    }
+                    if lower.contains("diff") || lower.contains("git diff") {
+                        signals.push("diff".into());
+                        signals.push("files_changed".into());
+                    }
+                }
+            }
+            "edit" | "write" | "apply_patch" => {
+                signals.push("diff".into());
+                signals.push("files_changed".into());
+            }
+            "websearch" | "tavily" => {
+                signals.push("citations".into());
+                signals.push("multiple_sources".into());
+                signals.push("research".into());
+                signals.push("synthesis".into());
+                signals.push("takeaways".into());
+            }
+            _ => {}
+        }
+    }
+    if let Some(output) = ctx.tool_output {
+        let lower = output.to_ascii_lowercase();
+        if lower.contains("test result:")
+            || lower.contains("tests passed")
+            || lower.contains("failures:")
+        {
+            signals.push("tests".into());
+            signals.push("pass_fail".into());
+        }
+        if lower.contains("diff --git") || lower.contains("@@ ") {
+            signals.push("diff".into());
+            signals.push("files_changed".into());
+        }
+    }
+    signals.sort();
+    signals.dedup();
+    signals
 }
 
 pub fn link_previews_from_text(text: &str) -> Vec<StructuredOutput> {
@@ -614,5 +773,59 @@ mod tests {
         );
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].semantic_type, "link.preview");
+    }
+
+    #[test]
+    fn universal_recipes_selection_from_signals_and_context() {
+        let catalog = built_in_recipes();
+
+        // 1. Research synthesis
+        let research_text = "Key takeaways from our findings:\n1. Rust is fast.\nSources:\nhttps://example.com/rust";
+        let sigs = signals_from_text(research_text);
+        let decision = catalog.choose(&sigs, "desktop").expect("research synthesis decision");
+        assert_eq!(decision.recipe_id, "research.synthesis");
+
+        // 2. Diff inspector
+        let diff_text = "Files changed:\n```diff\n@@ -1,2 +1,3 @@\n+added\n```";
+        let sigs = signals_from_text(diff_text);
+        let decision = catalog.choose(&sigs, "desktop").expect("diff inspector decision");
+        assert_eq!(decision.recipe_id, "coding.diff_inspector");
+
+        // 3. Test report
+        let test_text = "Test suite executed: 42 passed, 0 failures.";
+        let sigs = signals_from_text(test_text);
+        let decision = catalog.choose(&sigs, "desktop").expect("test report decision");
+        assert_eq!(decision.recipe_id, "coding.test_report");
+
+        // 4. Terminal session from bash tool context
+        let cmd = serde_json::json!({"command": "docker ps -a"});
+        let ctx = SignalContext {
+            text: "Container status: exit 0",
+            tool_name: Some("bash"),
+            tool_input: Some(&cmd),
+            tool_output: Some("CONTAINER ID IMAGE STATUS"),
+            is_error: false,
+        };
+        let sigs = signals_from_context(&ctx);
+        let decision = catalog.choose(&sigs, "desktop").expect("terminal decision");
+        assert_eq!(decision.recipe_id, "terminal.session");
+
+        // 5. Culinary recipe
+        let recipe_text = "Recipe for Salmon:\nPrep time: 10m\nIngredients:\n- 2 fillets\n- 2 tbsp olive oil";
+        let sigs = signals_from_text(recipe_text);
+        let decision = catalog.choose(&sigs, "desktop").expect("recipe decision");
+        assert_eq!(decision.recipe_id, "lifestyle.culinary_recipe");
+
+        // 6. Data spreadsheet grid
+        let table_text = "Dataset breakdown:\n| MRR | Growth |\n| --- | --- |\n| $10k | +20% |";
+        let sigs = signals_from_text(table_text);
+        let decision = catalog.choose(&sigs, "desktop").expect("grid decision");
+        assert_eq!(decision.recipe_id, "data.spreadsheet_grid");
+
+        // 7. Multi chart
+        let chart_text = "Telemetry metrics chart showing p99 latency trend and req/sec throughput.";
+        let sigs = signals_from_text(chart_text);
+        let decision = catalog.choose(&sigs, "desktop").expect("chart decision");
+        assert_eq!(decision.recipe_id, "data.multi_chart");
     }
 }

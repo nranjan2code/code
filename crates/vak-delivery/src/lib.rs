@@ -28,8 +28,8 @@ pub use skills::{
     ChartOutput, ChartPoint, ChartSeries, DecisionDisposition, LinkPreview, MediaOutput, Metric,
     PRESENTATION_SKILL_API, PlanDiagnostic, PresentationDecision, PresentationPlan,
     PresentationPlanner, PresentationRecipe, PresentationSkillManifest, RecipeCatalog,
-    RendererBinding, SkillError, SkillRegistry, StructuredOutput, built_in_recipes,
-    built_in_skill_registry, link_previews_from_text, signals_from_text,
+    RendererBinding, SignalContext, SkillError, SkillRegistry, StructuredOutput, built_in_recipes,
+    built_in_skill_registry, link_previews_from_text, signals_from_context, signals_from_text,
 };
 
 pub const DELIVERY_SCHEMA_VERSION: u16 = 2;

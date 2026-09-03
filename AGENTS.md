@@ -43,8 +43,13 @@ skill proposals, inbox attention layer (P6), heartbeat proactive
 check-ins (P7) — is ✅ per `docs/design/29-personal-os.md`
 (enterprise deferred). Channel delivery projection now has a typed contract,
 isolated renderer, templates, semantic adapter envelope, ordered chunks, and
-durable retry outbox per `docs/design/30-output-engineering.md`; native
-desktop/TUI block widgets remain presentation-layer extensions.
+durable retry outbox per `docs/design/30-output-engineering.md`; the desktop
+presentation layer provides universal outcome-first renderers across coding
+(diff inspector, test matrix), research synthesis (takeaway citations,
+verified sources), telemetry/analytics (interactive SVG crosshair charts,
+sortable data grids), terminal sessions, and lifestyle recipes (dynamic
+servings scaler, step timers) within a single continuous chat canvas; TUI block
+widgets remain presentation-layer extensions.
 The web admin console follows `docs/design/33-admin-console.md`:
 vak-store FTS5 index (rebuildable, JSONL stays source of truth), global
 event hub + SSE, cookie login on the secured router, and an embedded

@@ -13,6 +13,13 @@ import Icon from "./Icon";
 import MarkdownView from "./MarkdownView";
 import { safeUrl } from "../safeUrl";
 import { highlight, languageForFence } from "../highlight";
+import ResearchCards from "./presentation/ResearchCards";
+import DiffInspector from "./presentation/DiffInspector";
+import TestMatrix from "./presentation/TestMatrix";
+import UniversalChart from "./presentation/UniversalChart";
+import DataGrid from "./presentation/DataGrid";
+import TerminalConsole from "./presentation/TerminalConsole";
+import RecipeCard from "./presentation/RecipeCard";
 
 function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
   return (
@@ -119,7 +126,18 @@ function CodeBlock(props: { language?: string | null; filename?: string | null; 
   );
 }
 
-function Blocks(props: { blocks: DocumentBlock[] }): JSX.Element {
+function inlineToText(nodes: InlineNode[]): string {
+  return nodes
+    .map((n) => {
+      if (n.type === "text") return n.text;
+      if ("content" in n && Array.isArray((n as any).content)) return inlineToText((n as any).content);
+      if ("code" in n && typeof (n as any).code === "string") return (n as any).code;
+      return "";
+    })
+    .join("");
+}
+
+function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Element {
   return (
     <For each={props.blocks}>
       {(block) => {
@@ -129,10 +147,25 @@ function Blocks(props: { blocks: DocumentBlock[] }): JSX.Element {
           case "paragraph":
             return <p class="semantic-paragraph"><InlineSequence nodes={block.content} /></p>;
           case "list": {
-            const items = () => <For each={block.items}>{(item) => <li><Blocks blocks={item} /></li>}</For>;
+            const items = () => <For each={block.items}>{(item) => <li><Blocks blocks={item} recipeId={props.recipeId} /></li>}</For>;
             return block.ordered ? <ol class="semantic-list" start={block.start ?? undefined}>{items()}</ol> : <ul class="semantic-list">{items()}</ul>;
           }
-          case "table":
+          case "table": {
+            if (props.recipeId === "data.spreadsheet_grid" || block.rows.length >= 3) {
+              const columns = block.header.map((cell, idx) => ({
+                key: `col_${idx}`,
+                label: inlineToText(cell) || `Col ${idx + 1}`,
+                isNumeric: block.alignments[idx] === "right",
+              }));
+              const rows = block.rows.map((row) => {
+                const record: Record<string, any> = {};
+                row.forEach((cell, idx) => {
+                  record[`col_${idx}`] = inlineToText(cell);
+                });
+                return record;
+              });
+              return <DataGrid data={{ columns, rows }} />;
+            }
             return (
               <div class="semantic-table-wrap">
                 <table class="semantic-table">
@@ -141,14 +174,21 @@ function Blocks(props: { blocks: DocumentBlock[] }): JSX.Element {
                 </table>
               </div>
             );
+          }
           case "quote":
-            return <blockquote class="semantic-quote"><Blocks blocks={block.blocks} /></blockquote>;
+            return <blockquote class="semantic-quote"><Blocks blocks={block.blocks} recipeId={props.recipeId} /></blockquote>;
           case "code":
+            if (block.language === "diff") {
+              return <DiffInspector rawDiff={block.content} filename={block.filename ?? undefined} />;
+            }
+            if (props.recipeId === "terminal.session" && (block.language === "bash" || block.language === "sh" || block.language === "shell")) {
+              return <TerminalConsole data={{ command: block.content.split("\n")[0], output: block.content, exit_code: 0 }} />;
+            }
             return <CodeBlock language={block.language} filename={block.filename} content={block.content} />;
           case "diff":
-            return <CodeBlock language="diff" content={block.content} diff />;
+            return <DiffInspector rawDiff={block.content} />;
           case "callout":
-            return <section class={`semantic-callout ${block.tone}`}><Show when={block.title}><strong>{block.title}</strong></Show><Blocks blocks={block.blocks} /></section>;
+            return <section class={`semantic-callout ${block.tone}`}><Show when={block.title}><strong>{block.title}</strong></Show><Blocks blocks={block.blocks} recipeId={props.recipeId} /></section>;
           case "citations":
             return <ol class="semantic-citations"><For each={block.items}>{(citation) => <li><Show when={safeUrl(citation.url)} fallback={<span>{citation.label}</span>}><a href={citation.url} target="_blank" rel="noreferrer noopener">{citation.label}</a></Show></li>}</For></ol>;
           case "media":
@@ -166,13 +206,14 @@ function Blocks(props: { blocks: DocumentBlock[] }): JSX.Element {
 }
 
 export function PresentationDocumentView(props: { document: PresentationDocument }) {
+  const recipeId = () => props.document.metadata.recipe_id;
   const plain = () => props.document.blocks.every((block) => ["heading", "paragraph", "list", "quote", "rule"].includes(block.type));
-  if (plain() && props.document.source_markdown.trim()) {
+  if (!recipeId() && plain() && props.document.source_markdown.trim()) {
     return <><MarkdownView text={props.document.source_markdown} /><RenderAudit document={props.document} /></>;
   }
   return (
     <div class="semantic-document">
-      <Blocks blocks={props.document.blocks} />
+      <Blocks blocks={props.document.blocks} recipeId={recipeId()} />
       <For each={props.document.diagnostics}>{(diagnostic) => <div class="semantic-diagnostic">{diagnostic}</div>}</For>
       <RenderAudit document={props.document} />
     </div>
@@ -247,7 +288,28 @@ function StructuredView(props: { output: import("../types").StructuredOutput }) 
   if (!uiPreferences.richPreviews) {
     return <div class="rich-unsupported"><strong>{props.output.semantic_type}</strong><span>Rich rendering is disabled in Appearance settings.</span></div>;
   }
-  const payload = props.output.payload;
+  const payload = props.output.payload as any;
+  if (props.output.semantic_type === "research.synthesis") {
+    return <ResearchCards data={payload} />;
+  }
+  if (props.output.semantic_type === "coding.diff") {
+    return <DiffInspector data={payload} />;
+  }
+  if (props.output.semantic_type === "test.report") {
+    return <TestMatrix data={payload} />;
+  }
+  if (props.output.semantic_type === "terminal.view") {
+    return <TerminalConsole data={payload} />;
+  }
+  if (props.output.semantic_type === "data.grid") {
+    return <DataGrid data={payload} />;
+  }
+  if (props.output.semantic_type === "recipe.card") {
+    return <RecipeCard data={payload} />;
+  }
+  if (props.output.semantic_type === "chart" && Array.isArray(payload.series)) {
+    return <UniversalChart data={payload} />;
+  }
   if (props.output.semantic_type === "link.preview" && typeof payload.url === "string") {
     return <a class="rich-link-card" href={safeUrl(payload.url) ? payload.url : undefined} target="_blank" rel="noreferrer noopener">
       <Show when={typeof payload.image_url === "string" && safeUrl(payload.image_url, true)}><img src={payload.image_url as string} alt="" /></Show>
@@ -256,26 +318,6 @@ function StructuredView(props: { output: import("../types").StructuredOutput }) 
   }
   if (props.output.semantic_type === "metric") {
     return <div class="rich-metric"><small>{String(payload.label ?? "Metric")}</small><strong>{String(payload.value ?? "—")}{payload.unit ? ` ${String(payload.unit)}` : ""}</strong></div>;
-  }
-  if (props.output.semantic_type === "chart" && Array.isArray(payload.series)) {
-    const series = (payload.series as { name?: string; points?: { x?: unknown; y?: number }[] }[]).filter((item) => Array.isArray(item.points));
-    const points = series[0]?.points ?? [];
-    const values = points.map((point) => Number(point.y)).filter(Number.isFinite);
-    const max = Math.max(...values, 1);
-    const min = Math.min(...values, 0);
-    const range = Math.max(max - min, 1);
-    const width = 640;
-    const height = 220;
-    const path = values.map((value, index) => `${index ? "L" : "M"}${(index / Math.max(values.length - 1, 1)) * width},${height - ((value - min) / range) * (height - 24)}`).join(" ");
-    return <figure class="rich-chart" aria-label={String(payload.accessible_summary ?? payload.title ?? "Chart")}>
-      <Show when={payload.title}><figcaption>{String(payload.title)}</figcaption></Show>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-hidden="true" preserveAspectRatio="none">
-        <path d={`M0 ${height - 1}H${width}`} class="rich-chart-axis" />
-        <Show when={values.length > 1}><path d={path} class="rich-chart-line" /></Show>
-        <For each={values}>{(value, index) => <circle cx={(index() / Math.max(values.length - 1, 1)) * width} cy={height - ((value - min) / range) * (height - 24)} r="3.5" class="rich-chart-point"><title>{`${String(points[index()]?.x ?? index())}: ${value}`}</title></circle>}</For>
-      </svg>
-      <small>{String(payload.accessible_summary ?? "")}</small>
-    </figure>;
   }
   if (props.output.semantic_type.startsWith("media.") && uiPreferences.externalMedia && typeof payload.source === "string" && safeUrl(payload.source, true)) {
     return payload.media_type === "image" || String(payload.media_type).startsWith("image/")

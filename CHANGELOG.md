@@ -99,6 +99,41 @@ later release non-destructive.
   records a `capability_unreachable` security event — previously the only
   evidence was a denied tool call inside a session transcript.
 
+### Universal presentation and output engineering
+
+- **Universal recipe catalog and tool-provenance signal engine.**
+  Expanded built-in presentation recipes across common life and work domains:
+  `research.synthesis`, `coding.diff_inspector`, `coding.change_summary`,
+  `coding.test_report`, `terminal.session`, `data.multi_chart`,
+  `data.spreadsheet_grid`, and `lifestyle.culinary_recipe`. Added
+  `SignalContext` and `signals_from_context()`, allowing tool names (`bash`,
+  `write`, `edit`, `websearch`), CLI commands, exit codes, and output patterns
+  to drive presentation recipe selection without manual user tagging.
+- **Desktop presentation canvas suite.** Added 7 native, outcome-first
+  renderers embedded in the continuous chat stream without external navigation:
+  - `ResearchCards`: numbered takeaway rows, superscript citation chips with
+    hover popovers displaying quoted snippets and source tags, and verified
+    source link tiles.
+  - `DiffInspector`: multi-file drawer with additions/deletions counts,
+    unified vs. side-by-side mode toggle, line gutter numbering, and
+    one-click host editor opening.
+  - `TestMatrix`: SVG circular pass-rate ring, filter chips (`All` vs `Failed
+    Only`), and collapsible traceback drawers.
+  - `UniversalChart`: KPI metric pods with delta trends, multi-series SVG
+    curves with area gradients, live mouse-tracking crosshair line with data
+    bubble, and one-click CSV export.
+  - `DataGrid`: interactive table with numeric-aware column sorting, real-time
+    search filtering, and CSV export. Standard markdown tables with $\ge 3$
+    rows automatically promote to this grid.
+  - `TerminalConsole`: dark terminal container with command prompt, exit code
+    badge, execution duration, and formatted monospace output.
+  - `RecipeCard`: dynamic servings stepper (`-` 2 `+`) that recalculates
+    ingredient measurements, paired with live countdown step timers.
+- **Theme tokens and responsive layout.** Normalized `:root` color tokens
+  (`--emerald-bright`, `--rose-bright`, `--text-main`, `--text-muted`) to
+  dynamically cascade with theme changes, and added responsive stacking for
+  compact split panes and mobile viewports.
+
 ### Documentation
 
 - Deleted eight design documents that described pre-baseline behavior or

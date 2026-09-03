@@ -1,8 +1,12 @@
 # 30 — Output engineering and channel delivery
 
 Status: schema-v2 semantic timeline, deterministic CommonMark compiler,
-desktop native renderer, snapshot/SSE projection, isolated worker, trusted
-templates, Telegram/Slack/Discord projections, semantic webhook envelope,
+universal recipe catalog (research, coding diffs/tests, telemetry charts,
+spreadsheet grids, terminal sessions, culinary recipes) and tool-provenance signal
+engine, desktop native presentation suite (ResearchCards, DiffInspector,
+TestMatrix, UniversalChart, DataGrid, TerminalConsole, RecipeCard),
+snapshot/SSE projection, isolated worker, trusted templates,
+Telegram/Slack/Discord projections, semantic webhook envelope,
 adapter registry, ordered multi-message output, and durable retry outbox
 implemented. TUI remains follow-up work.
 
@@ -159,6 +163,29 @@ turn settles, hydration replaces it with the ledger-derived AST. Unknown nodes
 fall back visibly, links are scheme-checked, raw HTML is inert, and artifact
 and approval actions route through existing desktop commands.
 
+The desktop client provides a universal presentation suite embedded in the
+continuous chat canvas:
+- **`ResearchCards`**: Key takeaway rows with numbered badges, superscript
+  citation tags (`[1]`, `[2]`), hover popovers displaying quoted snippets and
+  source badges, and verified source link tiles with domain favicons.
+- **`DiffInspector`**: Zed/Cursor-grade diff viewer with file drawer, delta
+  counters (`+` / `-`), unified vs. side-by-side mode toggle, gutter line
+  numbering, and one-click `openInEditor` host integration.
+- **`TestMatrix`**: Test suite dashboard featuring an SVG circular pass-rate
+  progress ring, filter chips (`All` vs `Failed Only`), and collapsible
+  assertion traceback drawers.
+- **`UniversalChart`**: Telemetry and benchmark stage with KPI pods,
+  multi-series SVG curves with gradient area fills, live mouse-tracking
+  crosshair line with floating glass data bubble, and one-click CSV export.
+- **`DataGrid`**: Interactive tabular grid with numeric-aware column sorting,
+  real-time client-side search filtering, tabular alignment, and CSV export.
+  Standard markdown tables with $\ge 3$ rows automatically promote to this
+  grid.
+- **`TerminalConsole`**: Authentic dark terminal container with prompt line,
+  exit code status pill (`Exit 0`), execution duration, and formatted output.
+- **`RecipeCard`**: Dynamic servings scaler (`-` 2 `+`) that recalculates
+  ingredient weights and measurements, paired with live countdown step timers.
+
 ## Channel-specific markup projections
 
 `Markup` has one variant per target dialect, not one generic "Markdown" for
@@ -260,26 +287,41 @@ Primary references:
 
 Presentation is extensible through the versioned `presentation.v1` skill
 contract. A skill registers typed semantic outputs (for example
-`link.preview`, `metric`, `chart`, or `media.image`) and a capability-scoped
-renderer binding. Skills contribute data and metadata only; they cannot ship
-executable UI code or mount raw HTML. The trusted renderer registry validates
-the closed payload schema, checks the target surface capabilities, and records
-the selected renderer or an explicit fallback diagnostic.
+`link.preview`, `metric`, `chart`, `research.synthesis`, `coding.diff`,
+`test.report`, `terminal.view`, `data.grid`, `recipe.card`, or `media.image`)
+and a capability-scoped renderer binding. Skills contribute data and metadata
+only; they cannot ship executable UI code or mount raw HTML. The trusted renderer
+registry validates the closed payload schema, checks the target surface
+capabilities, and records the selected renderer or an explicit fallback diagnostic.
 
-The planner first extracts deterministic signals from the completed timeline,
-then selects the highest-specificity built-in recipe. Recipes are ordinary
-versioned data and are intentionally small: research, weather, coding change
-and test reports, approvals, and artifact collections are provided out of the
-box, while domain skills may register narrower recipes. If no recipe matches,
-`answer.basic` is used. The decision (recipe id/version, matched signals,
+The planner first extracts deterministic signals from the completed timeline
+and tool provenance via `SignalContext` (inspecting tool names, CLI commands,
+exit codes, and output patterns), then selects the highest-specificity built-in
+recipe using `RecipeCatalog::choose`. Built-in recipes span universal life and
+work scenarios:
+- `research.synthesis` (`["research", "synthesis", "takeaways"]`)
+- `coding.diff_inspector` (`["diff", "files_changed"]`)
+- `coding.change_summary` (`["files_changed"]`)
+- `coding.test_report` (`["tests", "pass_fail"]`)
+- `terminal.session` (`["terminal", "command_exec"]`)
+- `data.multi_chart` (`["chart", "telemetry"]`)
+- `data.spreadsheet_grid` (`["table_data", "tabular"]`)
+- `lifestyle.culinary_recipe` (`["recipe", "ingredients"]`)
+- `weather.forecast` (`["temperature", "forecast"]`)
+- `workflow.approval` (`["approval", "action"]`)
+- `artifact.collection` (`["artifact"]`)
+
+If no specific recipe matches, `answer.basic` is used as the deterministic
+last-resort composition. The decision (recipe id/version, matched signals,
 renderer, and rejected candidates) is persisted in presentation metadata so a
 user can inspect “Why this rendering?” and an operator can reproduce it.
 
-Rich cards are therefore a projection, not a second transcript. Desktop may
-render trusted link previews, metrics, charts, and media; terminal and chat
-surfaces receive deterministic compact text or links when their capabilities
-do not include the richer component. The exact source Markdown remains the
-export and emergency fallback for every projection.
+Rich cards are therefore a projection, not a second transcript. Desktop renders
+trusted link previews, metrics, universal multi-series SVG charts, test matrices,
+diff inspectors, terminal consoles, and culinary recipe cards with countdown
+timers; terminal and chat surfaces receive deterministic compact text or links
+when their capabilities do not include the richer component. The exact source
+Markdown remains the export and emergency fallback for every projection.
 
 ## Integration status
 
@@ -290,8 +332,11 @@ export and emergency fallback for every projection.
 4. Semantic webhook envelope plus `text` fallback: complete.
 5. Stable semantic packet returned to sidecars and available to native clients:
    complete.
-6. Desktop outcome-first semantic renderer and reconnectable projection:
-   complete.
+6. Desktop universal presentation suite embedded in continuous chat canvas
+   (ResearchCards with citation popovers, Zed-grade DiffInspector, TestMatrix with
+   pass-rate ring, UniversalChart with mouse crosshair tracking and KPI pods, DataGrid
+   with column sorting and search, TerminalConsole with exit codes, RecipeCard with
+   scaling and timers): complete.
 7. TUI projector: planned.
 8. Golden fixtures cover parser losslessness, nested structures, tables, code,
    diffs, unsafe links/HTML, artifacts, lifecycle states, legacy drafts, and
