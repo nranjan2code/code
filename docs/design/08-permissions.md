@@ -206,6 +206,11 @@ constrains *what the process can touch* even when allowed.
 See `24-agent-security.md` for the adversarial threat model, comparative
 research, residual risks, and the containment roadmap.
 
+See `../audits/permission-propagation-audit-2026-09-03.md` for how the
+settings above became reachable from a surface. The engine described here was
+correct throughout; what that audit repaired is the other half of the contract
+— the controls that write a policy and the projections that report it.
+
 ## Diff note — severity aggregation + opaque commands (this change)
 
 `evaluate` aggregates matching rules by severity (Deny > Ask > Allow) instead

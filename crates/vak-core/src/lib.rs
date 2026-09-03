@@ -6032,7 +6032,16 @@ mod capability_reach_tests {
     use vak_permission::{Decision, Mode};
 
     /// A workspace with one MCP server and an explicit permission mode.
+    ///
+    /// The data home is pinned first. `global_path()` resolves to
+    /// `default_workspace()/.vak/config.toml` — a developer's real
+    /// `~/vak-home` config — and it merges UNDER this tempdir's project
+    /// layer. Without the pin, an operator who sets `full-access` on their
+    /// own install turns every `Gated`/`Blocked` expectation here into
+    /// `Open`, and the suite fails on their machine only. That is exactly
+    /// what happened.
     fn workspace(extra: &str) -> tempfile::TempDir {
+        crate::pin_test_data_home();
         let dir = tempfile::tempdir().unwrap();
         let vak = dir.path().join(".vak");
         std::fs::create_dir_all(&vak).unwrap();
