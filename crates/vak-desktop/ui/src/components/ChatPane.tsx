@@ -6,17 +6,44 @@ import Icon from "./Icon";
 import PresentationTimelineView from "./PresentationRenderer";
 import MarkdownView from "./MarkdownView";
 
-function EmptyChat() {
-  return null;
+/**
+ * A new task's chat pane before anything has happened, and an existing
+ * task with nothing rendered at the current density. Previously both
+ * rendered `null` — a void with no headline, hint, or affordance —
+ * despite DESIGN.md naming "the chat empty state" as the canonical use
+ * of the headline type scale (22px/620/-0.02em) it defines.
+ */
+function EmptyChat(props: { hasSession: boolean }) {
+  return (
+    <div class="chat-empty">
+      <div class="chat-empty-mark">
+        <Icon name="chat" size={22} />
+      </div>
+      <h2 class="chat-empty-headline">
+        {props.hasSession ? "Nothing here yet" : "Start a task"}
+      </h2>
+      <p class="chat-empty-hint">
+        {props.hasSession
+          ? "This task has no visible activity at the current transcript detail. Switch to \"balanced\" or \"audit\" in the composer to see more."
+          : "Ask Vak to build, fix, or explain something — it starts a task with this project's files and history."}
+      </p>
+    </div>
+  );
 }
 
-/** True while a turn is running but nothing currently on screen shows its
- * own activity (no streaming assistant text, no in-flight tool card) —
- * i.e. the model is between tokens/tool calls with literally nothing
- * animating. This is the gap that otherwise reads as a dead, stuck UI. */
+/** True while a turn is running but nothing currently *visible at this
+ * density* shows its own activity — the model is between tokens/tool
+ * calls (or, in "outcome" density, thinking/working on a tool that
+ * density hides) with literally nothing animating on screen. This is
+ * the gap that otherwise reads as a dead, stuck UI.
+ *
+ * Checked against the density-filtered list, not the raw item list:
+ * "outcome" hides thinking and completed tool cards, so a raw-list check
+ * could see a live thinking item and suppress the indicator while the
+ * screen itself shows nothing at all. */
 function awaitingNextOutput(id: string | null): boolean {
   if (!isRunning(id)) return false;
-  const list = itemsOf(id);
+  const list = visibleItems(itemsOf(id));
   const last = list[list.length - 1];
   if (!last) return true;
   if (last.kind === "assistant" && last.streaming) return false;
@@ -50,9 +77,21 @@ function TranscriptSkeleton() {
 function visibleItems(list: Item[]): Item[] {
   const d = density();
   if (d === "outcome") {
-    return list.filter(
-      (it) => it.kind === "user" || (it.kind === "assistant" && !it.streaming && it.text) || it.kind === "system" || (it.kind === "approval" && !it.resolved),
-    );
+    // "Outcome" hides the working (thinking, tool-call) detail once it's
+    // done — but a run in progress must still show *something* live, or
+    // the pane reads as frozen for the entire stretch between the last
+    // settled turn and this one's reply. A streaming assistant reply
+    // (the outcome, forming) and the single most recent in-flight tool
+    // call are the two forms "current activity" can take here; both
+    // disappear from this density the moment they settle, exactly as
+    // before.
+    return list.filter((it, i) => {
+      if (it.kind === "user" || it.kind === "system") return true;
+      if (it.kind === "approval" && !it.resolved) return true;
+      if (it.kind === "assistant" && it.text) return true;
+      if (it.kind === "tool" && !it.done && i === list.length - 1) return true;
+      return false;
+    });
   }
   return list;
 }
@@ -366,10 +405,10 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   return (
     <div class="chat-shell">
       <div class="chat" ref={scroller} onScroll={onScroll}>
-        <Show when={sid()} fallback={<EmptyChat />}>
+        <Show when={sid()} fallback={<EmptyChat hasSession={false} />}>
           <Show when={hydratingId() !== sid()} fallback={<TranscriptSkeleton />}>
             <Show when={!isRunning(sid()) && hasSettledOutcome(sid())} fallback={
-              <Show when={visibleItems(itemsOf(sid())).length || awaitingNextOutput(sid())} fallback={<EmptyChat />}>
+              <Show when={visibleItems(itemsOf(sid())).length || awaitingNextOutput(sid())} fallback={<EmptyChat hasSession={true} />}>
                 <For each={visibleItems(itemsOf(sid()))}>
                   {(it) => <ItemView item={it} sessionId={sid()} />}
                 </For>

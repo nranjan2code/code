@@ -193,8 +193,11 @@ export default function UniversalChart(props: { data: ChartData }) {
           <svg viewBox="0 0 700 200" preserveAspectRatio="none">
             <defs>
               <linearGradient id="chartGradient1" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#6366f1" stop-opacity="0.3" />
-                <stop offset="100%" stop-color="#6366f1" stop-opacity="0.0" />
+                {/* Matches the primary series' own stroke (var(--accent-bright))
+                    rather than an unrelated fixed indigo, so the fill reads
+                    as "under this line" instead of a second, off-palette hue. */}
+                <stop offset="0%" stop-color="var(--accent-bright)" stop-opacity="0.3" />
+                <stop offset="100%" stop-color="var(--accent-bright)" stop-opacity="0.0" />
               </linearGradient>
             </defs>
             <line x1="0" y1="40" x2="700" y2="40" stroke="rgba(255,255,255,0.04)" />
@@ -221,7 +224,7 @@ export default function UniversalChart(props: { data: ChartData }) {
             </For>
 
             <line ref={lineRef} x1="350" y1="0" x2="350" y2="200" class="chart-crosshair-line" />
-            <circle ref={ptRef} cx="350" cy="100" r="5" fill="#0c0f17" stroke="var(--accent-bright)" stroke-width="3" />
+            <circle ref={ptRef} cx="350" cy="100" r="5" fill="var(--bg)" stroke="var(--accent-bright)" stroke-width="3" />
           </svg>
         </div>
 

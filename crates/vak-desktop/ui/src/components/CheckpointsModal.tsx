@@ -1,3 +1,4 @@
+import { trapFocus } from "../focusTrap";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { activeId, historyOpen, isRunning, setHistoryOpen, setNotice } from "../store";
 import * as api from "../api";
@@ -52,7 +53,7 @@ export default function CheckpointsModal() {
   return (
     <Show when={historyOpen()}>
       <div class="modal-back" onClick={() => setHistoryOpen(false)}>
-        <div class="modal checkpoints-modal" role="dialog" aria-modal="true" aria-labelledby="history-title" onClick={(e) => e.stopPropagation()}>
+        <div class="modal checkpoints-modal" role="dialog" aria-modal="true" aria-labelledby="history-title" onClick={(e) => e.stopPropagation()} use:trapFocus>
           <h3 id="history-title">Time travel — workspace snapshots</h3>
           <p class="history-sub">
             Every turn starts with a full snapshot of the workspace. Restoring rewrites files to

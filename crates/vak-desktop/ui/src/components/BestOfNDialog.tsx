@@ -1,3 +1,4 @@
+import { trapFocus } from "../focusTrap";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   activeId,
@@ -125,7 +126,7 @@ export default function BestOfNDialog() {
 
   return (
     <div class="modal-back" onClick={close}>
-      <div class="modal bo-modal" role="dialog" aria-modal="true" aria-labelledby="compare-title" onClick={(e) => e.stopPropagation()}>
+      <div class="modal bo-modal" role="dialog" aria-modal="true" aria-labelledby="compare-title" onClick={(e) => e.stopPropagation()} use:trapFocus>
         <h3 id="compare-title">Compare approaches — isolated worktrees</h3>
         <Show
           when={runs()}

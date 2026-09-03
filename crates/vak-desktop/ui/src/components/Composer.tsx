@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
-import { activeId, density, health, isRunning, itemsOf, setDensity, usageOf, workspaceSwitching } from "../store";
+import { activeId, armedGoal, density, health, isRunning, itemsOf, setArmedGoal, setDensity, usageOf, workspaceSwitching } from "../store";
 import type { Density } from "../store";
 import { loadHealth, sendPrompt, stopRun, switchProject } from "../App";
 import * as api from "../api";
@@ -13,11 +13,14 @@ function Ring(props: { pct: number; label: string }): JSX.Element {
   const r = 9;
   const c = 2 * Math.PI * r;
   const clamped = () => Math.max(0, Math.min(1, props.pct));
-  const color = () => (clamped() > 0.85 ? "#d86f72" : clamped() > 0.6 ? "#d4a85d" : "#df795f");
+  // Fixed status colors (never the accent) so the ring's meaning — normal,
+  // approaching the limit, over it — reads the same in every theme,
+  // instead of pinning to warm terracotta regardless of the active accent.
+  const color = () => (clamped() > 0.85 ? "var(--red)" : clamped() > 0.6 ? "var(--yellow)" : "var(--accent)");
   return (
     <div class="ring" title={props.label}>
       <svg width="24" height="24" viewBox="0 0 24 24">
-        <circle cx="12" cy="12" r={r} fill="none" stroke="#34342f" stroke-width="3" />
+        <circle cx="12" cy="12" r={r} fill="none" stroke="var(--border)" stroke-width="3" />
         <circle
           cx="12"
           cy="12"
@@ -68,7 +71,8 @@ export default function Composer(props: { cwd: string }) {
   const [goalFormOpen, setGoalFormOpen] = createSignal(false);
   const [goalObjective, setGoalObjective] = createSignal("");
   const [goalCriteria, setGoalCriteria] = createSignal("");
-  const [goalArmed, setGoalArmed] = createSignal<{ objective: string; criteria: string[] } | null>(null);
+  // Goal arming itself lives in store.ts (`armedGoal`), shared with the
+  // `/goal` slash command in App.tsx — one piece of state, not two.
   const [skillPicked, setSkillPicked] = createSignal(0);
   // Image attachments: picked or pasted, sent as base64 vision blocks.
   const [pendingFiles, setPendingFiles] = createSignal<{ name: string; mime: string; data: string }[]>([]);
@@ -246,7 +250,7 @@ export default function Composer(props: { cwd: string }) {
     const files = pendingFiles();
     // No active task is fine: sendPrompt creates one.
     if (!t && files.length === 0) return;
-    if (files.length > 0 && goalArmed()) {
+    if (files.length > 0 && armedGoal()) {
       setComposerError("goal runs cannot carry images — disarm the goal or remove the attachments");
       return;
     }
@@ -255,8 +259,9 @@ export default function Composer(props: { cwd: string }) {
     setPendingFiles([]);
     setComposerError(null);
     queueMicrotask(grow);
-    void sendPrompt(t, goalArmed() ?? undefined, files.length ? files : undefined);
-    setGoalArmed(null); // consumed by this run (TUI parity)
+    // No need to pass or clear the goal here: sendPrompt consumes
+    // `armedGoal` itself (store.ts), for whichever session it resolves.
+    void sendPrompt(t, undefined, files.length ? files : undefined);
   };
 
   const armGoal = () => {
@@ -266,7 +271,10 @@ export default function Composer(props: { cwd: string }) {
       .map((c) => c.trim())
       .filter(Boolean);
     if (!objective || criteria.length === 0) return;
-    setGoalArmed({ objective, criteria });
+    // Unscoped (sessionId: null): armed from the button before a
+    // particular run, applies to whichever session the next prompt
+    // resolves to — matching this form's previous behavior exactly.
+    setArmedGoal({ objective, criteria, sessionId: null });
     setGoalFormOpen(false);
   };
 
@@ -489,16 +497,16 @@ export default function Composer(props: { cwd: string }) {
               <Icon name="add" size={14} />
             </button>
           </div>
-          <Show when={goalArmed()}>
+          <Show when={armedGoal()}>
             <div class="goal-chip" title="Goal mode armed (docs/design/27 Phase H) — completion will be audited against the criteria">
               <Icon name="spark" size={13} />
-              <span>{goalArmed()!.objective.slice(0, 60)}</span>
+              <span>{armedGoal()!.objective.slice(0, 60)}</span>
               {" · "}
-              {goalArmed()!.criteria.length} criteria
+              {armedGoal()!.criteria.length} criteria
               <button
                 class="goal-disarm"
                 title="Disarm goal"
-                onClick={() => setGoalArmed(null)}
+                onClick={() => setArmedGoal(null)}
               >
                 ✕
               </button>

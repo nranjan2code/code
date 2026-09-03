@@ -1,3 +1,4 @@
+import { trapFocus } from "../focusTrap";
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
@@ -765,7 +766,7 @@ export default function Settings() {
   };
 
   return (
-    <div class="settings-shell" role="dialog" aria-modal="true" aria-label="Settings">
+    <div class="settings-shell" role="dialog" aria-modal="true" aria-label="Settings" use:trapFocus>
       <aside class="settings-nav">
         <button class="settings-back" onClick={() => setSettingsOpen(false)}><Icon name="chevron" /><span>Back to Vak</span></button>
         <div class="settings-search"><Icon name="search" /><input aria-label="Search settings" placeholder="Search settings…" value={query()} onInput={(event) => setQuery(event.currentTarget.value)} /></div>

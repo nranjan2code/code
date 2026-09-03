@@ -62,7 +62,12 @@ export default function Sidebar() {
       }
     }
     for (const session of visible()) {
-      const cwd = backend().cwd || session.cwd || "";
+      // A session's OWN recorded cwd decides its group, not whichever
+      // project happens to be open right now — the reverse (as this used
+      // to read) put every session, including every one from every other
+      // project, under the current workspace, so every *other* project
+      // group always rendered as "No tasks" whether or not it had any.
+      const cwd = session.cwd || backend().cwd || "";
       const items = grouped.get(cwd) ?? [];
       items.push(session);
       grouped.set(cwd, items);
@@ -168,27 +173,36 @@ export default function Sidebar() {
                 </button>
                 <For each={group.sessions}>
                   {(session: SessionSummary) => (
-                    <button class="sb-item" classList={{ active: activeId() === session.session_id }} onClick={() => void activate(session.session_id)}>
-                      <span class="session-icon"><Icon name="chat" size={14} /></span>
-                      <span class="sb-item-copy">
-                        <span class="sb-title">{session.title || "Untitled task"}</span>
-                        <span class="sb-item-meta">
-                          <Show when={!session.archived} fallback={<span>archived</span>}>
-                            <span class="dot" classList={{ run: session.running || isRunning(session.session_id) }}
-                              role="img"
-                              aria-label={session.running || isRunning(session.session_id) ? "Running" : "Idle"} />
-                            {session.running || isRunning(session.session_id) ? "Working" : `${session.entries ?? 0} events`}
-                          </Show>
+                    // A single interactive element cannot nest others — the
+                    // whole row used to be one <button> with two more
+                    // <span role="button"> inside it, which is invalid HTML
+                    // and made "view transcript"/"archive" unreachable by
+                    // keyboard (no tabindex, no key handler; a click was
+                    // the only way in). This is a plain row with three
+                    // sibling controls instead.
+                    <div class="sb-item" classList={{ active: activeId() === session.session_id }}>
+                      <button class="sb-item-main" onClick={() => void activate(session.session_id)}>
+                        <span class="session-icon"><Icon name="chat" size={14} /></span>
+                        <span class="sb-item-copy">
+                          <span class="sb-title">{session.title || "Untitled task"}</span>
+                          <span class="sb-item-meta">
+                            <Show when={!session.archived} fallback={<span>archived</span>}>
+                              <span class="dot" classList={{ run: session.running || isRunning(session.session_id) }}
+                                role="img"
+                                aria-label={session.running || isRunning(session.session_id) ? "Running" : "Idle"} />
+                              {session.running || isRunning(session.session_id) ? "Working" : `${session.entries ?? 0} events`}
+                            </Show>
+                          </span>
                         </span>
-                      </span>
-                      <span role="button" class="sb-view has-tooltip" data-tooltip="Read-only history" aria-label={`View transcript of ${session.title || "untitled task"}`} onClick={(e) => { e.stopPropagation(); setTranscriptViewId(session.session_id); }}>
+                      </button>
+                      <button class="sb-view has-tooltip" data-tooltip="Read-only history" aria-label={`View transcript of ${session.title || "untitled task"}`} onClick={(e) => { e.stopPropagation(); setTranscriptViewId(session.session_id); }}>
                         <Icon name="history" size={13} />
-                      </span>
-                      <span role="button" class="sb-archive has-tooltip" data-tooltip={session.archived ? "Restore task" : "Archive task"} aria-label={session.archived ? "Restore task" : "Archive task"} onClick={(e) => { e.stopPropagation(); void toggleArchive(session, !session.archived); }}>
+                      </button>
+                      <button class="sb-archive has-tooltip" data-tooltip={session.archived ? "Restore task" : "Archive task"} aria-label={session.archived ? "Restore task" : "Archive task"} onClick={(e) => { e.stopPropagation(); void toggleArchive(session, !session.archived); }}>
                         <Icon name={session.archived ? "restore" : "archive"} size={13} />
-                      </span>
+                      </button>
                       <span class="sb-time">{relTime(session.updated_at)}</span>
-                    </button>
+                    </div>
                   )}
                 </For>
                 <Show when={!group.sessions.length}>

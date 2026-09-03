@@ -77,9 +77,16 @@ export default function DiffPane(props: { sessionId: string | null }) {
 
   // One-shot high-signal review of the working tree (design doc D3).
   const reviewChanges = () => {
-    if (isRunning(props.sessionId) || !entries().length) return;
+    const id = props.sessionId ?? activeId();
+    if (isRunning(id) || !entries().length) return;
+    // Explicitly targets this pane's own bound session — not necessarily
+    // the focused one (a best-of-N child viewed via `diffTarget`) — so
+    // "review" always reviews the diff actually on screen.
     void sendPrompt(
       "Review the current uncommitted changes. Report only logic and security findings with specific file:line references — no style nitpicks. End with a verdict: safe to keep, or what must change first.",
+      undefined,
+      undefined,
+      id,
     );
   };
 
@@ -109,7 +116,7 @@ export default function DiffPane(props: { sessionId: string | null }) {
             <button
               class="chip sm"
               title="Ask Vak to review these changes (logic + security)"
-              disabled={isRunning(props.sessionId) || !entries().length}
+              disabled={isRunning(props.sessionId ?? activeId()) || !entries().length}
               onClick={reviewChanges}
             >
               review

@@ -56,7 +56,35 @@ export function setDensity(value: Density) {
   setDensitySignal(value);
   localStorage.setItem("vak.density", value);
 }
-export const [dockTab, setDockTab] = createSignal<"preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | "feeds" | null>(null);
+export const [dockTab, setDockTab] = createSignal<"preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | "feeds" | "commitments" | null>(null);
+
+/**
+ * Goal mode (docs/design/27 Phase H): an objective + criteria armed for the
+ * *next* prompt, consumed once and cleared. `sessionId: null` means armed
+ * before any specific run — the composer's goal button, or `/goal` typed
+ * with no active task — and applies to whichever session the next prompt
+ * resolves to; a non-null `sessionId` (set by `/goal`, which always has a
+ * resolved session by the time it runs) scopes it to that one task.
+ *
+ * This is the ONE place goal state lives. It used to be two: a
+ * module-level variable in App.tsx for the `/goal` slash command and a
+ * separate signal local to Composer for the sparkle-button form — the same
+ * concept, armed and consumed independently, which is exactly the "two
+ * ways to do one thing" AGENTS.md invariant 30 rules out.
+ */
+export interface ArmedGoal {
+  objective: string;
+  criteria: string[];
+  sessionId: string | null;
+}
+export const [armedGoal, setArmedGoal] = createSignal<ArmedGoal | null>(null);
+/** Whether `armedGoal()` currently applies to session `id` (its own
+ * scope, or unscoped-and-therefore-universal). */
+export function goalAppliesTo(id: string | null): ArmedGoal | null {
+  const current = armedGoal();
+  if (!current) return null;
+  return current.sessionId === null || current.sessionId === id ? current : null;
+}
 export const [showShortcuts, setShowShortcuts] = createSignal(false);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 /** Left navigation manages user-wide defaults; the workspace header manages
@@ -565,17 +593,24 @@ export function applyEvent(
   if ("TurnStart" in ev) {
     markRunning(id, true, b);
     cueTurnStart();
+    noteRetry(id, null);
   } else if ("Stream" in ev) {
     const s = ev.Stream;
     if ("TextDelta" in s) {
+      noteRetry(id, null);
       ensureStreamingAssistant(b, id);
       appendToLast(b, id, "assistant", s.TextDelta.delta);
     } else if ("ThinkingDelta" in s) {
+      noteRetry(id, null);
       appendToLast(b, id, "thinking", s.ThinkingDelta.delta);
-    } else if ("End" in s) {
-      finalizeStream(b, id);
     }
+    // "End" (Stream.End) is deliberately not handled here: a stream end
+    // does not by itself mean the turn is done (a tool call can follow),
+    // and closing streaming state early would let a subsequent delta
+    // reopen a "settled" bubble mid-turn. Closing happens on RunFinished,
+    // or implicitly when the next user turn starts a fresh assistant item.
   } else if ("ToolCallStart" in ev) {
+    noteRetry(id, null);
     pushItem(b, id, {
       kind: "tool",
       id: ev.ToolCallStart.id,
@@ -685,6 +720,7 @@ export function applyEvent(
     setUsageBySession(id, ev.TurnEnd.usage);
   } else if ("RunFinished" in ev) {
     markRunning(id, false, b);
+    noteRetry(id, null);
     // Close every in-flight item. A finished run cannot still have a tool
     // executing or an approval pending, so anything left open means its
     // end event was missed (a dropped stream, a failed re-attach). Leaving
@@ -721,11 +757,6 @@ export function applyEvent(
   }
 }
 
-function finalizeStream(bucket: Bucket, id: string) {
-  // The final snapshot may still be mid-flight deltas; closing streaming
-  // state happens on RunFinished or when the next user turn starts.
-}
-
 // ---- imperative helpers used by App ---------------------------------------
 
 export function appendUser(id: string, text: string, bucket: Bucket = "main") {
@@ -738,6 +769,10 @@ export function appendSystem(id: string, text: string, bucket: Bucket = "main") 
 
 export function markRunning(id: string, on: boolean, bucket: Bucket = "main") {
   setRunningMap(K(bucket, id), on);
+  // A session that just stopped running (cancelled, or reconciled against
+  // the server's own truth in refreshSessions) must not keep showing a
+  // stale "Retrying" state from whatever it was last doing.
+  if (!on) noteRetry(id, null);
 }
 
 export function resolveApproval(id: string, requestId: string, verdict: "allowed" | "denied") {
