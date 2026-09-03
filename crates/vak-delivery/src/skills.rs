@@ -322,7 +322,13 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
         ),
         (
             "research",
-            &["research", "key takeaways", "findings", "research synthesis", "verified sources"][..],
+            &[
+                "research",
+                "key takeaways",
+                "findings",
+                "research synthesis",
+                "verified sources",
+            ][..],
         ),
         (
             "synthesis",
@@ -330,7 +336,12 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
         ),
         (
             "takeaways",
-            &["key takeaways", "takeaways", "findings", "research synthesis"][..],
+            &[
+                "key takeaways",
+                "takeaways",
+                "findings",
+                "research synthesis",
+            ][..],
         ),
         ("temperature", &["temperature", "°c", "°f"][..]),
         ("forecast", &["forecast", "humidity", "wind speed"][..]),
@@ -343,28 +354,58 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
         ("pass_fail", &["passed", "failed", "failures"][..]),
         (
             "benchmark",
-            &["benchmark", "req/sec", "req/s", "p99", "throughput", "concurrency"][..],
+            &[
+                "benchmark",
+                "req/sec",
+                "req/s",
+                "p99",
+                "throughput",
+                "concurrency",
+            ][..],
         ),
-        ("chart", &["chart", "plot", "graph", "trend", "time series"][..]),
-        ("telemetry", &["telemetry", "metrics", "kpi", "latency", "req/sec", "req/s", "p99", "throughput"][..]),
+        (
+            "chart",
+            &["chart", "plot", "graph", "trend", "time series"][..],
+        ),
+        (
+            "telemetry",
+            &[
+                "telemetry",
+                "metrics",
+                "kpi",
+                "latency",
+                "req/sec",
+                "req/s",
+                "p99",
+                "throughput",
+            ][..],
+        ),
         (
             "table_data",
-            &["table", "dataset", "mrr", "active orgs", "revenue breakdown"][..],
+            &[
+                "table",
+                "dataset",
+                "mrr",
+                "active orgs",
+                "revenue breakdown",
+            ][..],
         ),
         ("tabular", &["| ---", "|---", "| :---", "|:---", "\t"][..]),
         (
             "recipe",
-            &[
-                "recipe",
-                "servings",
-                "cook time",
-                "prep time",
-                "baste",
-            ][..],
+            &["recipe", "servings", "cook time", "prep time", "baste"][..],
         ),
         (
             "ingredients",
-            &["ingredients", "tbsp", "tsp", "fillet", "tablespoon", "teaspoon", "cups"][..],
+            &[
+                "ingredients",
+                "tbsp",
+                "tsp",
+                "fillet",
+                "tablespoon",
+                "teaspoon",
+                "cups",
+            ][..],
         ),
         ("artifact", &["artifact", "download", "generated file"][..]),
         ("approval", &["approval", "approve", "permission"][..]),
@@ -373,8 +414,14 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
             "terminal",
             &["docker ps", "kubectl", "exit 0", "exit 1", "command line"][..],
         ),
-        ("command_exec", &["$ ", "user@", "exit 0", "exit 1", "stdout:", "stderr:"][..]),
-        ("docker", &["docker", "container", "microservices", "ports"][..]),
+        (
+            "command_exec",
+            &["$ ", "user@", "exit 0", "exit 1", "stdout:", "stderr:"][..],
+        ),
+        (
+            "docker",
+            &["docker", "container", "microservices", "ports"][..],
+        ),
     ];
     checks
         .iter()
@@ -782,19 +829,25 @@ mod tests {
         // 1. Research synthesis
         let research_text = "Key takeaways from our findings:\n1. Rust is fast.\nSources:\nhttps://example.com/rust";
         let sigs = signals_from_text(research_text);
-        let decision = catalog.choose(&sigs, "desktop").expect("research synthesis decision");
+        let decision = catalog
+            .choose(&sigs, "desktop")
+            .expect("research synthesis decision");
         assert_eq!(decision.recipe_id, "research.synthesis");
 
         // 2. Diff inspector
         let diff_text = "Files changed:\n```diff\n@@ -1,2 +1,3 @@\n+added\n```";
         let sigs = signals_from_text(diff_text);
-        let decision = catalog.choose(&sigs, "desktop").expect("diff inspector decision");
+        let decision = catalog
+            .choose(&sigs, "desktop")
+            .expect("diff inspector decision");
         assert_eq!(decision.recipe_id, "coding.diff_inspector");
 
         // 3. Test report
         let test_text = "Test suite executed: 42 passed, 0 failures.";
         let sigs = signals_from_text(test_text);
-        let decision = catalog.choose(&sigs, "desktop").expect("test report decision");
+        let decision = catalog
+            .choose(&sigs, "desktop")
+            .expect("test report decision");
         assert_eq!(decision.recipe_id, "coding.test_report");
 
         // 4. Terminal session from bash tool context
@@ -811,7 +864,8 @@ mod tests {
         assert_eq!(decision.recipe_id, "terminal.session");
 
         // 5. Culinary recipe
-        let recipe_text = "Recipe for Salmon:\nPrep time: 10m\nIngredients:\n- 2 fillets\n- 2 tbsp olive oil";
+        let recipe_text =
+            "Recipe for Salmon:\nPrep time: 10m\nIngredients:\n- 2 fillets\n- 2 tbsp olive oil";
         let sigs = signals_from_text(recipe_text);
         let decision = catalog.choose(&sigs, "desktop").expect("recipe decision");
         assert_eq!(decision.recipe_id, "lifestyle.culinary_recipe");
@@ -823,7 +877,8 @@ mod tests {
         assert_eq!(decision.recipe_id, "data.spreadsheet_grid");
 
         // 7. Multi chart
-        let chart_text = "Telemetry metrics chart showing p99 latency trend and req/sec throughput.";
+        let chart_text =
+            "Telemetry metrics chart showing p99 latency trend and req/sec throughput.";
         let sigs = signals_from_text(chart_text);
         let decision = catalog.choose(&sigs, "desktop").expect("chart decision");
         assert_eq!(decision.recipe_id, "data.multi_chart");
