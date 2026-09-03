@@ -2506,3 +2506,103 @@ body.is-resizing .split-divider {
 }
 .setup-banner-text strong { font-weight: 600; }
 .setup-banner-text .dim { font-size: 0.85rem; }
+
+/* ---- intent strip (docs/design/47-commitment-kernel.md) ----
+   Quiet in proportion to consequence. At rest this is chrome: micro-label
+   type, --faint, no border, no accent. It escalates only for readings that
+   genuinely deserve a person's attention, which is what keeps the escalation
+   worth noticing. A strip that shouted on every keystroke would be ignored
+   within a day, and an ignored safety signal is worse than none. */
+.intent-strip {
+  margin: 0 0 6px;
+  border-radius: var(--radius-sm, 7px);
+  border: 1px solid transparent;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+.intent-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 7px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 540;
+  border-radius: inherit;
+}
+.intent-line:hover { color: var(--text-soft); background: var(--surface-hover); }
+.intent-line:focus-visible { outline: 2px solid var(--border-focus, var(--accent)); outline-offset: 1px; }
+.intent-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The mark is the second channel: a hollow ring at rest, a filled dot when
+   the reading is consequential. Tone never rides on hue alone. */
+.intent-mark {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  box-sizing: border-box;
+}
+.intent-notice .intent-line { color: var(--muted); }
+.intent-notice .intent-mark { background: currentColor; }
+.intent-warn { border-color: var(--accent); background: var(--accent-wash, rgba(223, 121, 95, 0.09)); }
+.intent-warn .intent-line { color: var(--accent-bright, #ee9278); }
+.intent-warn .intent-mark { background: currentColor; }
+
+.intent-inferred {
+  flex: none;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--yellow, #d4a85d);
+}
+.intent-chev { display: inline-flex; flex: none; transition: transform 160ms ease; }
+.intent-chev-open { transform: rotate(180deg); }
+
+/* Shown without expanding: the whole point of the warn tone is that it must
+   not need a click to be read. */
+.intent-note {
+  margin: 0;
+  padding: 0 8px 7px 21px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-soft);
+  max-width: 70ch;
+}
+
+.intent-detail {
+  padding: 8px 9px 9px;
+  border-top: 1px solid var(--border-soft, #2a2a26);
+}
+.intent-axes { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 9px; }
+.intent-axes > div { display: flex; flex-direction: column; gap: 1px; }
+.intent-axes dt { font-size: 9.5px; font-weight: 600; color: var(--faint); }
+.intent-axes dd { margin: 0; font-size: 11.5px; font-weight: 540; color: var(--text-soft); }
+
+.intent-narrows { margin: 0; padding: 0 0 0 15px; display: grid; gap: 3px; }
+.intent-narrows li { font-size: 11.5px; color: var(--muted); }
+.intent-empty { margin: 0; font-size: 11.5px; color: var(--faint); }
+
+.intent-signals { margin-top: 9px; }
+.intent-signals summary {
+  cursor: pointer;
+  font-size: 10.5px;
+  color: var(--faint);
+  list-style-position: outside;
+}
+.intent-signals summary:hover { color: var(--muted); }
+.intent-signals ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; }
+.intent-signals li { display: flex; gap: 8px; align-items: baseline; font-size: 10.5px; color: var(--muted); }
+.sig-kind { flex: none; width: 68px; color: var(--faint); }
+.sig-weight { flex: none; width: 30px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-soft); }
+.sig-detail { min-width: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .intent-strip, .intent-chev { transition: none; }
+}

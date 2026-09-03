@@ -36,7 +36,12 @@ import type {
   SecurityEvent,
   SessionCheckpoint,
   SessionDiff,
+  Commitment,
+  CommitmentList,
+  IntentExplain,
+  IntentPolicy,
   SessionListItem,
+  Verdict,
   SkillItem,
   SkillProposal,
   PluginItem,
@@ -887,4 +892,34 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     }).then((r) => handleBlob(r)),
+
+  // --- Intent kernel + commitments (docs/design/47-commitment-kernel.md) ---
+
+  /** Resolve a prompt without running it. Free tiers only, so this is safe
+   * to call as the user types — it costs nothing and dispatches nothing. */
+  explainIntent: (prompt: string, surface?: string): Promise<IntentExplain> => {
+    const params = new URLSearchParams({ prompt });
+    if (surface) params.set("surface", surface);
+    return fetch(`/intent/explain?${params}`).then((r) => handle<IntentExplain>(r));
+  },
+
+  intentPolicy: (): Promise<IntentPolicy> =>
+    fetch("/intent/policy").then((r) => handle<IntentPolicy>(r)),
+
+  commitments: (all = false): Promise<CommitmentList> =>
+    fetch(`/commitments?all=${all}`).then((r) => handle<CommitmentList>(r)),
+
+  commitment: (id: string): Promise<{ commitment: Commitment; events: unknown[] }> =>
+    fetch(`/commitments/${encodeURIComponent(id)}`).then((r) =>
+      handle<{ commitment: Commitment; events: unknown[] }>(r),
+    ),
+
+  /** A refused closure answers 409 with the missing evidence named; `handle`
+   * surfaces that message verbatim rather than a bare status. */
+  closeCommitment: (id: string, verdict: Verdict, note: string): Promise<void> =>
+    fetch(`/commitments/${encodeURIComponent(id)}/close`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ verdict, note }),
+    }).then((r) => handle<void>(r)),
 };

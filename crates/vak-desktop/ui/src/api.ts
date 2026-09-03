@@ -1017,3 +1017,68 @@ import type { OnboardingState } from "./types";
 export function onboarding(): Promise<OnboardingState> {
   return req<OnboardingState>("/onboarding");
 }
+
+// ---- intent kernel (docs/design/47-commitment-kernel.md) ---------------------
+
+export type Satisfaction = "asserted" | "cited" | "observed" | "attested";
+
+export interface IntentReading {
+  act: string;
+  horizon: string;
+  stakes: string;
+  evidence: string;
+  clarity: string;
+  attendance: string;
+  domains: string[];
+  confidence: number;
+  axis_confidence: { act: number; horizon: number; stakes: number; evidence: number };
+}
+
+export interface IntentSignal {
+  kind: string;
+  name: string;
+  weight: number;
+  detail: string;
+}
+
+export interface IntentExplain {
+  reading: IntentReading;
+  engagement: {
+    limits: {
+      capabilities: { kind: "all" } | { kind: "only"; names: string[] };
+      approval_ceiling: "ask" | "approve-safe" | "auto-approve";
+      min_satisfaction: Satisfaction;
+      ladder_limit?: number | null;
+      max_turns?: number | null;
+    };
+    posture: {
+      managed: boolean;
+      open_commitment: boolean;
+      checkpoint_before_effect: boolean;
+      hil: "interrupt" | "envelope" | "review" | "defer";
+      clarify: "proceed" | "state-assumption" | "ask";
+      stop: string;
+      context: string;
+      delivery: { shape: string; cadence: string; urgency: string };
+      note?: string | null;
+    };
+  };
+  provenance: {
+    tier: string;
+    reproducible: boolean;
+    signals: IntentSignal[];
+    escalation_note?: string | null;
+  };
+  narrows: string[];
+  model_visible?: string | null;
+}
+
+/** Resolve a prompt without running it. Free tiers only: this costs nothing
+ * and dispatches nothing, which is what makes it safe to call while typing. */
+export function explainIntent(
+  prompt: string,
+  signal?: AbortSignal,
+): Promise<IntentExplain> {
+  const params = new URLSearchParams({ prompt, surface: "desktop" });
+  return req<IntentExplain>(`/intent/explain?${params}`, { signal });
+}

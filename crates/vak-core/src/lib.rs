@@ -6,6 +6,7 @@ pub mod agent_network;
 pub mod backup;
 pub mod baseline;
 pub mod checkpoints;
+pub mod commitments;
 pub mod custom_commands;
 pub mod digest;
 pub mod files;
@@ -4276,13 +4277,32 @@ impl Core {
         // not lose the user's turn — but it does mean the note does not reach
         // the model either, because both come from the same entry.
         let mut session = session;
+
+        // Durable work earns a commitment of its own before the turn runs, so
+        // the episode brackets the work rather than being reconstructed from
+        // it afterwards. A ledger failure is logged and dropped: losing the
+        // audit row must never cost the user their turn.
+        let episode = session.header().and_then(|header| {
+            commitments::begin_episode(
+                &self.sessions_home(),
+                &self.inner.config,
+                &resolved_intent,
+                &prompt.text_content(),
+                &header.session_id,
+                &self.inner.cwd,
+                header.contract_id.as_deref(),
+            )
+        });
+
         if self.inner.config.intent.enabled {
             let record = vak_session::types::IntentRecord {
                 reading: resolved_intent.reading.clone(),
                 engagement: resolved_intent.engagement.clone(),
                 provenance: resolved_intent.provenance.clone(),
                 model_visible: resolved_intent.model_visible(),
-                commitment_id: None,
+                commitment_id: episode
+                    .as_ref()
+                    .map(|episode| episode.commitment_id.clone()),
             };
             if let Err(error) = session.append_intent(record) {
                 eprintln!("[intent] could not record this turn's intent: {error}");
@@ -4303,6 +4323,52 @@ impl Core {
         };
         let outcome = agent.run_message(prompt, &steering, cancel, events).await;
         let session = agent.into_session().await;
+
+        // Close the episode with what it actually achieved. `Learned` and
+        // `Stalled` are deliberately different: a turn that answered
+        // substantively but moved no criterion reduced uncertainty and must
+        // not count against the stall breaker.
+        if let Some(episode) = &episode {
+            let tool_calls = session
+                .chain_to_root()
+                .iter()
+                .filter(|entry| match &entry.payload {
+                    vak_session::EntryPayload::Message(record) => record
+                        .message
+                        .content
+                        .iter()
+                        .any(|block| matches!(block, vak_llm::ContentBlock::ToolUse { .. })),
+                    _ => false,
+                })
+                .count();
+            // Reuses the shared estimator rather than multiplying tokens by a
+            // rate here: it already handles the cache-creation and cache-read
+            // tiers, and a second cost formula would drift from the ledger's.
+            let prices = &self.inner.config.finops.price_overrides;
+            let spend = session
+                .receipts()
+                .iter()
+                .skip(receipts_before)
+                .flat_map(|receipt| {
+                    let model = receipt.model.clone();
+                    receipt
+                        .attempts
+                        .iter()
+                        .filter_map(move |attempt| {
+                            attempt.usage.as_ref().map(|usage| (model.clone(), usage))
+                        })
+                })
+                .filter_map(|(model, usage)| {
+                    vak_config::finops::estimate_cost_usd(&model, usage, prices)
+                })
+                .sum::<f64>();
+            commitments::end_episode(
+                &self.sessions_home(),
+                episode,
+                commitments::classify(&outcome, tool_calls, Vec::new()),
+                spend,
+            );
+        }
 
         // Phase B: fold this run's dispatches into the routing evidence
         // ledger (success / failure / unknown by settlement).
