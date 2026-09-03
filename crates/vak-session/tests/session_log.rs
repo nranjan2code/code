@@ -434,6 +434,51 @@ fn second_compaction_summarizes_the_prior_summary() {
     );
 }
 
+#[test]
+fn proactive_retrieval_finds_relevant_older_entries() {
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
+
+    log.append_message(user_msg("discuss Kubernetes cluster deployment"))
+        .unwrap();
+    log.append_message(MessageRecord {
+        message: Message::assistant(vec![ContentBlock::text(
+            "the Kubernetes cluster uses Docker containers",
+        )]),
+        meta: None,
+    })
+    .unwrap();
+    log.append_message(user_msg("how to configure PostgreSQL database settings"))
+        .unwrap();
+    log.append_message(MessageRecord {
+        message: Message::assistant(vec![ContentBlock::text(
+            "PostgreSQL needs shared_buffers tuning",
+        )]),
+        meta: None,
+    })
+    .unwrap();
+    log.append_message(user_msg("tell me about network firewalls"))
+        .unwrap();
+
+    // Retrieve the most relevant entries for a Kubernetes query.
+    let retrieved = log.retrieve_relevant_entries(
+        "Kubernetes deployment",
+        5,
+        0, // don't exclude any tail for this test
+    );
+    assert!(
+        retrieved.len() >= 2,
+        "should retrieve at least Kubernetes-related entries"
+    );
+
+    // The first retrieved entry should be about Kubernetes.
+    let first_text = retrieved[0].1.text_content();
+    assert!(
+        first_text.contains("Kubernetes") || first_text.contains("kubernetes"),
+        "first retrieved should be Kubernetes-related, got: {first_text}"
+    );
+}
+
 fn serde_like_contains(msgs: &[vak_llm::Message], needle: &str) -> bool {
     msgs.iter().any(|m| m.text_content().contains(needle))
 }

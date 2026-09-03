@@ -190,6 +190,11 @@ pub enum AgentEvent {
     ContextCompacting {
         estimated_tokens: u64,
     },
+    /// Proactive retrieval surfaced N relevant older turns before compaction.
+    ContextRetrieved {
+        retrieved_count: usize,
+        cap: usize,
+    },
     ContextCompacted {
         before_tokens: u64,
         after_tokens: u64,
@@ -766,6 +771,11 @@ impl Agent {
             // => fail closed. The lock is taken only for short read /
             // plan / apply phases and is NEVER held across the summarizer
             // network call below.
+            //
+            // `retrieved_messages` holds proactive retrieval results across
+            // compaction iterations — they get prepended to the final request
+            // after compaction shrinks the projection.
+            let mut retrieved_messages: Vec<vak_llm::Message> = Vec::new();
             enum CompactionNeed {
                 None,
                 Plan(vak_session::types::CompactionPlan, u64),
@@ -825,14 +835,61 @@ impl Agent {
                     };
                 }
                 CompactionNeed::Plan(plan, tokens_before) => {
-                    let transcript = context::render_transcript(&plan.older);
+                    // Proactive retrieval (from vakyartha simulation):
+                    // Before compaction summarizes older turns, retrieve the
+                    // most relevant ones and keep them verbatim in the
+                    // retained region. Only the non-retrieved older turns get
+                    // summarized.
+                    let history_budget = self
+                        .config
+                        .context_policy
+                        .input_budget()
+                        .saturating_sub(tokens_before);
+                    let retrieval_cap = self
+                        .config
+                        .context_policy
+                        .dynamic_retrieval_cap(history_budget);
+                    let retrieved = {
+                        let session = self.session.lock().await;
+                        session.retrieve_relevant_entries(
+                            &prompt_owned,
+                            retrieval_cap,
+                            self.config.context_policy.keep_recent,
+                        )
+                    };
+                    // Store messages for later re-insertion into the final
+                    // request after compaction.
+                    for (_, msg) in &retrieved {
+                        retrieved_messages.push(msg.clone());
+                    }
+                    if !retrieved.is_empty() {
+                        let _ = events
+                            .send(AgentEvent::ContextRetrieved {
+                                retrieved_count: retrieved.len(),
+                                cap: retrieval_cap,
+                            })
+                            .await;
+                    }
+
+                    // Build the summary transcript EXCLUDING retrieved
+                    // entries — they will be kept verbatim after compaction.
+                    // We match by text content since plan.older carries no
+                    // entry IDs.
+                    let filtered_older: Vec<vak_llm::Message> = plan
+                        .older
+                        .iter()
+                        .filter(|m| {
+                            let text = m.text_content();
+                            !retrieved.iter().any(|(_, rm)| rm.text_content() == text)
+                        })
+                        .cloned()
+                        .collect();
+                    let transcript = context::render_transcript(&filtered_older);
                     let _ = events
                         .send(AgentEvent::ContextCompacting {
                             estimated_tokens: tokens_before,
                         })
                         .await;
-
-                    // Network call runs with no session lock held.
                     let req = context::compaction_request(&model, &transcript);
                     let mut ledger = StepLedger::new(
                         WorkPurpose::Summarize,
@@ -915,7 +972,7 @@ impl Agent {
                         .send(AgentEvent::ContextCompacted {
                             before_tokens: tokens_before,
                             after_tokens: est,
-                            summarized_messages: plan.older.len(),
+                            summarized_messages: filtered_older.len(),
                             selected_messages: plan.partition.selected_entry_ids.len(),
                             dropped_messages: plan.partition.dropped_entry_ids.len(),
                         })
@@ -972,10 +1029,15 @@ impl Agent {
             );
             let base_request = {
                 let session = self.session.lock().await;
+                // Proactive retrieval results: relevant older turns that were
+                // dropped during compaction are re-inserted here as verbatim
+                // context, prepended before the projected (compacted) messages.
+                let mut messages = retrieved_messages.clone();
+                messages.extend(session.derive_messages());
                 ChatRequest {
                     model,
                     system: Some(self.config.system_prompt.clone()),
-                    messages: session.derive_messages(),
+                    messages,
                     tools: self.tool_definitions(),
                     max_tokens: self.config.context_policy.max_output as u32,
                     temperature: None,

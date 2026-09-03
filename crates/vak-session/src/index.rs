@@ -14,7 +14,7 @@ use chrono::{DateTime, Utc};
 use vak_llm::Role;
 
 use crate::SearchError;
-use crate::search::normalize;
+use crate::search::normalize_impl;
 use crate::types::{Entry, EntryPayload};
 
 /// Bounded work: at most the trailing N message lines of a ledger are
@@ -138,7 +138,7 @@ fn scan(path: &Path) -> Result<Vec<CachedMessage>, SearchError> {
             continue;
         }
         messages.push(CachedMessage {
-            normalized: normalize(&text),
+            normalized: normalize_impl(&text),
             text,
             role,
             entry_id: entry.id,

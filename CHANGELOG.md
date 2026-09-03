@@ -5,7 +5,7 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
-## Unreleased — 2.0.0
+## 2.0.0 — 2026-09-03
 
 The runtime was finished before anyone outside the project could install it.
 2.0.0 closes exactly that, and establishes the contract that keeps every

@@ -720,6 +720,69 @@ impl SessionLog {
         }
         total
     }
+
+    /// Proactive retrieval: find the most relevant older entries from the
+    /// projected history, returning their entry IDs and messages.
+    ///
+    /// This is a projection-only operation — it returns entries that are
+    /// already in the projection. No ledger mutation, no new entries.
+    ///
+    /// Scoring uses the same BM25+entity-bonus approach as cross-session
+    /// search, but scored against the current query over the in-memory
+    /// projection. The result is capped at `cap` entries and excludes the
+    /// `exclude_tail` verbatim tail (e.g. `keep_recent`).
+    pub fn retrieve_relevant_entries(
+        &self,
+        query: &str,
+        cap: usize,
+        exclude_tail: usize,
+    ) -> Vec<(String, vak_llm::Message)> {
+        if query.trim().is_empty() || cap == 0 {
+            return Vec::new();
+        }
+        let tagged = self.derive_keyed_tagged();
+        if tagged.is_empty() {
+            return Vec::new();
+        }
+
+        let terms: Vec<String> = crate::search::tokenize_impl(query);
+        let phrase = crate::search::normalize_impl(query);
+        if terms.is_empty() || phrase.is_empty() {
+            return Vec::new();
+        }
+
+        let candidates: Vec<_> = if tagged.len() > exclude_tail {
+            tagged[..tagged.len() - exclude_tail]
+                .iter()
+                .filter(|(_, _, is_summary, is_control)| !*is_summary && !*is_control)
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+
+        let mut scored: Vec<(f32, &String, &vak_llm::Message)> = Vec::new();
+        for (id, msg, _, _) in &candidates {
+            let text = msg.text_content();
+            let entities = crate::search::extract_entities(&text);
+            let normalized = crate::search::normalize_impl(&text);
+            let score = crate::search::score_normalized(&normalized, &terms, &phrase, &entities);
+            if score > 0.0 {
+                scored.push((score, id, msg));
+            }
+        }
+
+        // Sort by score descending, take the top `cap`.
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        scored
+            .into_iter()
+            .take(cap)
+            .map(|(_, id, m)| (id.clone(), m.clone()))
+            .collect()
+    }
 }
 
 pub struct SessionPath;
