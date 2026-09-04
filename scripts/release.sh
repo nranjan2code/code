@@ -56,7 +56,33 @@ cleanup_release_target() {
 }
 trap cleanup_release_target EXIT HUP INT TERM
 export CARGO_TARGET_DIR="$RELEASE_TARGET_DIR"
-ARTIFACT_BIN_DIR="$ROOT_DIR/target/release"
+# Deliberately empty until a build sets it.
+#
+# This used to default to the developer's own `target/release`, and was only
+# reassigned INSIDE the `--no-build` == false branch — so `--no-build`
+# collected whatever binaries happened to be lying around in the working
+# tree, entirely unrelated to the gates that had just passed. That is the
+# "release shipped a stale binary" failure, and it was the default behaviour
+# of the flag. `--no-build` now reuses the staging directory and fails if
+# there is nothing in it.
+ARTIFACT_BIN_DIR=""
+
+# The platform key for the machine running this script, in the same
+# `<os>/<arch>` shape the feed and `scripts/install.sh` use. One definition,
+# because the provenance gate and the feed must agree on what "this host" is.
+host_platform_key() {
+    local platform arch
+    platform="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    case "$platform" in
+        darwin) platform="macos" ;;
+    esac
+    arch="$(uname -m)"
+    case "$arch" in
+        arm64) arch="aarch64" ;;
+        amd64) arch="x86_64" ;;
+    esac
+    printf '%s/%s' "$platform" "$arch"
+}
 
 MIN_FREE_GB="${VAK_RELEASE_MIN_FREE_GB:-15}"
 if [[ ! "$MIN_FREE_GB" =~ ^[0-9]+$ ]]; then
@@ -141,6 +167,25 @@ command -v npm >/dev/null || {
     printf 'error: npm is required to build the admin and desktop frontends for release\n' >&2
     exit 1
 }
+# `scripts/ui_bundle_check.rs` accepts a MISSING `.src-manifest` — a
+# checkout whose bundle predates the manifest must still build. That is the
+# right call for a local build and the wrong one for a release: deleting the
+# manifest would silently disarm every staleness guard at once. A release
+# requires all three to be present before it trusts any of them.
+printf '\n== bundle manifests ==\n'
+for manifest in \
+    crates/vak-admin-ui/dist/.src-manifest \
+    crates/vak-client-ui/dist-web/.src-manifest \
+    crates/vak-server/site/dist/.src-manifest; do
+    if [[ ! -s "$ROOT_DIR/$manifest" ]]; then
+        printf 'error: %s is missing or empty.\n' "$manifest" >&2
+        printf '       The build-time staleness guard treats an absent manifest as "fine",\n' >&2
+        printf '       so without this check a deleted manifest disarms it silently.\n' >&2
+        exit 1
+    fi
+    printf '  ✓ %-44s present\n' "$manifest"
+done
+
 printf '\n== frontends ==\n'
 ( cd "$ROOT_DIR/crates/vak-admin-ui" && npm ci --silent && npm run build --silent >/dev/null )
 if [[ -n "$(git status --porcelain -- crates/vak-admin-ui/dist)" ]]; then
@@ -183,10 +228,10 @@ printf '  ✓ %-44s matches source\n' "vak-server/site/dist"
 if [[ "$SKIP_CHECKS" != true ]]; then
     cargo fmt --all -- --check
     printf '  ✓ %-44s clean\n' "cargo fmt"
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --locked --workspace --all-targets -- -D warnings
     printf '  ✓ %-44s clean\n' "cargo clippy"
     run_bounded "$TEST_TIMEOUT" "cargo test --workspace" \
-        cargo test --workspace --quiet
+        cargo test --locked --workspace --quiet
     printf '  ✓ %-44s passing\n' "cargo test"
 fi
 
@@ -206,11 +251,26 @@ printf '  ✓ %-44s %s\n' "commit" "$GIT_SHA"
 # A tag that already exists means this version was released before;
 # re-releasing it silently would leave two different binaries claiming
 # the same version.
-if git rev-parse "v$VERSION" >/dev/null 2>&1; then
-    printf 'error: tag v%s already exists — bump the version first\n' "$VERSION" >&2
-    exit 1
+#
+# Unless the tag IS this commit. `.github/workflows/release.yml` fires on
+# `push: tags: v*` and `actions/checkout` materialises that tag, so a
+# gate that refuses every existing tag refuses the exact tag it was asked
+# to build — the automated release path could never succeed, and every
+# tag push failed here. The real defect is a tag pointing somewhere else,
+# which means this version already shipped from different code.
+if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null 2>&1; then
+    tagged="$(git rev-parse "v$VERSION^{commit}")"
+    head_commit="$(git rev-parse "HEAD^{commit}")"
+    if [[ "$tagged" != "$head_commit" ]]; then
+        printf 'error: tag v%s already exists and points at %s, not this commit (%s).\n' \
+            "$VERSION" "$(git rev-parse --short "$tagged")" "$(git rev-parse --short "$head_commit")" >&2
+        printf '       That version already shipped from different code — bump the version.\n' >&2
+        exit 1
+    fi
+    printf '  ✓ %-44s this commit\n' "tag v$VERSION"
+else
+    printf '  ✓ %-44s free\n' "tag v$VERSION"
 fi
-printf '  ✓ %-44s free\n' "tag v$VERSION"
 
 # ---- build ----------------------------------------------------------
 OUT="$ROOT_DIR/dist/$VERSION"
@@ -218,11 +278,29 @@ if [[ "$BUILD" == true ]]; then
     printf '\n== build ==\n'
     # The binary stamps this into its own manifest, so an installed
     # build can be traced back to a commit.
-    VAK_GIT_SHA="$GIT_SHA" cargo build --release \
+    # `--locked` so a release can never resolve a dependency graph other
+    # than the one Cargo.lock records and the gates above just tested.
+    # Without it the released binaries and the Docker image (which has
+    # always used --locked) could be built from different dependency
+    # versions, with nothing anywhere to say so.
+    VAK_GIT_SHA="$GIT_SHA" cargo build --locked --release \
         --package vak --package vak-desktop --package vak-delivery
     ARTIFACT_BIN_DIR="$RELEASE_TARGET_DIR/release"
 else
     printf '\n== build skipped ==\n'
+    # The staging directory is fresh per run (and removed on exit), so
+    # `--no-build` only makes sense with an explicit override pointing at a
+    # tree the caller vouches for. Anything else would collect binaries this
+    # run never produced and never checked.
+    ARTIFACT_BIN_DIR="${VAK_RELEASE_BIN_DIR:-}"
+    if [[ -z "$ARTIFACT_BIN_DIR" ]]; then
+        printf 'error: --no-build needs VAK_RELEASE_BIN_DIR pointing at the binaries to publish.\n' >&2
+        printf '       Without it this would collect whatever is in the working tree, which is\n' >&2
+        printf '       how a release ships a binary nobody built for it.\n' >&2
+        exit 1
+    fi
+    printf '  · publishing pre-built binaries from %s\n' "$ARTIFACT_BIN_DIR"
+    printf '  · the provenance gate below still applies\n'
 fi
 
 rm -rf "$OUT"
@@ -253,6 +331,47 @@ for name in "${OPTIONAL[@]}"; do
     fi
 done
 
+# ---- provenance ------------------------------------------------------
+# Prove the artifact IS the build this run gated.
+#
+# Everything above verifies the *tree*: versions agree, bundles match their
+# sources, tests pass. Nothing verified the *binary*, so `release.json` could
+# assert a version the binary had never been asked about, and did — a stale
+# or mismatched binary produced a feed that confidently named the wrong
+# build, which is worse than no feed at all because `self update` trusts it.
+#
+# The binary is asked directly. `vak --version` prints "<version> (<sha>)"
+# when VAK_GIT_SHA was stamped (crates/vak/build.rs), so this catches a
+# binary built from another commit as well as one built from another version.
+printf '\n== provenance ==\n'
+if [[ -n "$PLATFORM_KEY" && "$PLATFORM_KEY" != "$(host_platform_key)" ]]; then
+    # A cross-built artifact cannot run here. Every leg of the release
+    # matrix builds natively, so this is only reachable when someone
+    # deliberately cross-publishes.
+    printf '  · %s is not this host — cannot execute the artifact to verify it\n' "$PLATFORM_KEY" >&2
+    printf '  · publishing unverified; build natively to get this gate\n' >&2
+else
+    reported="$("$OUT/vak" --version 2>/dev/null | head -1 || true)"
+    if [[ -z "$reported" ]]; then
+        printf 'error: the collected vak binary does not run on this host.\n' >&2
+        printf '       A release must never publish a binary it could not execute once.\n' >&2
+        exit 1
+    fi
+    if [[ "$reported" != *"$VERSION"* ]]; then
+        printf 'error: the collected binary reports %q but this release claims %s.\n' \
+            "$reported" "$VERSION" >&2
+        printf '       The artifact is not the build this run gated.\n' >&2
+        exit 1
+    fi
+    if [[ "$GIT_SHA" != unknown && "$reported" != *"$GIT_SHA"* ]]; then
+        printf 'error: the collected binary reports %q, which does not carry this commit (%s).\n' \
+            "$reported" "$GIT_SHA" >&2
+        printf '       A stale binary in the staging tree is the usual cause.\n' >&2
+        exit 1
+    fi
+    printf '  ✓ %-44s %s\n' "vak --version" "$reported"
+fi
+
 # ---- checksums + feed ----------------------------------------------
 printf '\n== artifacts ==\n'
 ( cd "$OUT" && shasum -a 256 "${collected[@]%%:*}" > SHA256SUMS )
@@ -260,19 +379,7 @@ printf '\n== artifacts ==\n'
 # A release is a matrix build: each leg declares what it produced rather
 # than inferring it from the machine that happened to run the script, which
 # is why a laptop release could only ever describe one platform.
-if [[ -n "$PLATFORM_KEY" ]]; then
-    KEY="$PLATFORM_KEY"
-else
-    PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
-    case "$PLATFORM" in
-        darwin) PLATFORM="macos" ;;
-    esac
-    ARCH="$(uname -m)"
-    case "$ARCH" in
-        arm64) ARCH="aarch64" ;;
-    esac
-    KEY="$PLATFORM/$ARCH"
-fi
+KEY="${PLATFORM_KEY:-$(host_platform_key)}"
 
 if [[ -z "$BASE_URL" ]]; then
     BASE_URL="http://127.0.0.1:8899"

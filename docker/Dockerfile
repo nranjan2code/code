@@ -87,7 +87,7 @@ EXPOSE 8901
 
 # Loopback inside the container is not reachable from outside it, so the
 # image binds all interfaces — and `[server] trusted_hosts` is what governs
-# who may actually talk to it (invariant 33). The container boundary IS the
+# who may actually talk to it (invariant 34). The container boundary IS the
 # firewall here; publish the port deliberately.
 ENV VAK_CONTAINER=1
 

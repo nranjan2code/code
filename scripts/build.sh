@@ -113,10 +113,10 @@ if [[ "$DESKTOP" == true ]]; then
     packages+=(--package vak-desktop)
 fi
 if [[ "$PROFILE" == release ]]; then
-    VAK_GIT_SHA="$GIT_SHA" cargo build --release "${packages[@]}"
+    VAK_GIT_SHA="$GIT_SHA" cargo build --locked --release "${packages[@]}"
     BIN_DIR="$ROOT_DIR/target/release"
 else
-    VAK_GIT_SHA="$GIT_SHA" cargo build "${packages[@]}"
+    VAK_GIT_SHA="$GIT_SHA" cargo build --locked "${packages[@]}"
     BIN_DIR="$ROOT_DIR/target/debug"
 fi
 mkdir -p "$ROOT_DIR/target"

@@ -480,8 +480,7 @@ pub(crate) enum SelfAction {
         #[arg(long)]
         verify: Option<std::path::PathBuf>,
     },
-    /// Copy release binaries into the managed prefix + manifest
-    /// Place this build into the managed prefix
+    /// Place this build into the managed prefix, with a manifest
     Install {
         /// Managed prefix (default: platform application location)
         #[arg(long)]

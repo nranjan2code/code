@@ -88,6 +88,15 @@ fi
 
 PARSED="$(parse)" || fail "$PARSED"
 VERSION="$(printf '%s\n' "$PARSED" | head -1)"
+
+# VAK_VERSION pins the install to a known-good release. This was documented
+# in the header from the start and never implemented, so an operator asking
+# for a specific version silently got whatever the feed was serving — the
+# worst outcome for the one flag whose entire purpose is not moving.
+if [ -n "${VAK_VERSION:-}" ] && [ "$VAK_VERSION" != "$VERSION" ]; then
+    fail "the feed at $FEED_URL serves $VERSION, but VAK_VERSION asked for $VAK_VERSION.
+       Point VAK_FEED_URL at that version's own release.json to install it."
+fi
 say "installing $VERSION"
 
 # --- download and verify ------------------------------------------------
