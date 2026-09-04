@@ -781,9 +781,26 @@ fn router_with_state(state: AppState) -> Router {
         .merge(gateway::routes())
         .merge(feeds::routes())
         .merge(admin::routes())
-        .merge(admin_ui::routes())
-        .merge(client_ui::routes())
-        .merge(site::routes())
+        // Compression is scoped to the three STATIC bundles and nowhere
+        // else. These are the big, highly compressible responses — a site
+        // page is ~78 KB of inlined CSS and markup, the vendored motion
+        // build is 141 KB, and the SPA bundles are larger still — and this
+        // product is explicitly built to be reached over a tunnel, where
+        // that is the whole first-visit cost.
+        //
+        // It is NOT applied to the API. `/sessions/:id/events` is
+        // server-sent events: a compressor sits between the writer and the
+        // socket, and a live transcript that arrives in buffer-sized
+        // batches instead of per frame is a worse product than an
+        // uncompressed one. Scoping it here rather than at the root is the
+        // difference between a smaller page and a laggy agent.
+        .merge(
+            axum::Router::new()
+                .merge(admin_ui::routes())
+                .merge(client_ui::routes())
+                .merge(site::routes())
+                .layer(tower_http::compression::CompressionLayer::new().gzip(true)),
+        )
         .with_state(state)
 }
 

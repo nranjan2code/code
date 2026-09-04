@@ -368,3 +368,52 @@ async fn the_host_descriptor_hands_out_no_credentials() {
     assert!(body.get("base_url").is_none());
     assert_eq!(body["terminal"], false);
 }
+
+/// The static bundles are compressed; the API is not.
+///
+/// `/sessions/:id/events` is server-sent events. A compressor sits between
+/// the writer and the socket, so a live transcript would arrive in
+/// buffer-sized batches rather than per frame — a laggy agent in exchange
+/// for a smaller JSON body nobody was waiting on. The layer is therefore
+/// scoped to the three static routers rather than applied at the root, and
+/// this is the test that keeps it there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compression_covers_the_static_bundles_and_not_the_api() {
+    let (addr, _token) = spawn().await;
+    let client = reqwest::Client::builder()
+        // Ask for gzip without letting reqwest transparently strip the
+        // header we are asserting on.
+        .no_gzip()
+        .build()
+        .unwrap();
+
+    let page = client
+        .get(format!("http://{addr}/"))
+        .header(reqwest::header::ACCEPT_ENCODING, "gzip")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        page.headers()
+            .get(reqwest::header::CONTENT_ENCODING)
+            .map(|v| v.to_str().unwrap()),
+        Some("gzip"),
+        "the front door is ~78 KB of inlined CSS and markup and must compress"
+    );
+
+    for path in ["/version", "/health"] {
+        let api = client
+            .get(format!("http://{addr}{path}"))
+            .header(reqwest::header::ACCEPT_ENCODING, "gzip")
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            api.headers()
+                .get(reqwest::header::CONTENT_ENCODING)
+                .is_none(),
+            "{path} must not be compressed — the layer belongs to the static bundles only, \
+             because the same layer at the root would buffer server-sent events"
+        );
+    }
+}

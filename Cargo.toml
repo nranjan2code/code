@@ -56,7 +56,7 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 axum = { version = "0.8", features = ["json", "ws"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 # CORS so browser/webview surfaces (tauri://localhost, vite dev) can reach it
-tower-http = { version = "0.6", features = ["cors"] }
+tower-http = { version = "0.6", features = ["cors", "compression-gzip"] }
 
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }

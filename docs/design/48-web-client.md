@@ -356,6 +356,22 @@ even more than for a local one.
 
 ---
 
+### 4.5a Compression, and where it must not go
+
+The three static bundles — `/admin`, `/app` and the site — are served
+through a `tower_http` gzip layer. They are the big, highly compressible
+responses (a site page is ~78 KB of inlined CSS and markup, the vendored
+motion build is 141 KB, the SPA bundles larger still), and this surface
+exists to be reached over a tunnel, where that is the entire first-visit
+cost. Measured: 78 KB → 20 KB for a page, 141 KB → 47 KB for motion.
+
+The layer is **scoped to those routers**, not applied at the root.
+`/sessions/:id/events` is server-sent events, and a compressor between the
+writer and the socket delivers a live transcript in buffer-sized batches
+rather than per frame. A smaller JSON body nobody is waiting on is not
+worth a laggy agent. `compression_covers_the_static_bundles_and_not_the_api`
+keeps it scoped.
+
 ### 4.6 The front door at `/`
 
 `/` used to answer a bare 401 with an empty body: someone opening
