@@ -82,7 +82,12 @@ pub fn run_install(prefix: Option<PathBuf>, force: bool) -> i32 {
             for c in &m.components {
                 println!("  {:<22} {}", c.name, c.path.display());
             }
-            report_next_steps(&root);
+            let stale = m
+                .cli_path()
+                .ok()
+                .map(|cli| report_stale_services(&cli))
+                .unwrap_or(false);
+            report_next_steps(&root, stale);
             0
         }
         Err(e) => {
@@ -253,7 +258,7 @@ fn suggested_link_dir() -> Option<PathBuf> {
         .find(|dir| dir.is_dir() && on_path.contains(dir))
 }
 
-fn report_next_steps(root: &InstallRoot) {
+fn report_next_steps(root: &InstallRoot, stale_services: bool) {
     let cli = root.bin_dir().join("vak");
     let on_path = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).any(|d| d == root.bin_dir()))
@@ -279,7 +284,84 @@ fn report_next_steps(root: &InstallRoot) {
         }
     }
     println!();
-    println!("next: vak setup   (choose a workspace, connect a model, activate services)");
+    if stale_services {
+        // The fresh-machine advice is wrong and actively misleading on a
+        // machine that already has services: `setup` does not restart them.
+        println!("next: vak self services-sync   (restart them onto this build)");
+    } else {
+        println!("next: vak setup   (choose a workspace, connect a model, activate services)");
+    }
+}
+
+/// Every service unit this install is responsible for, with its live state.
+///
+/// Shared by `self status` and the post-install report below, so the two
+/// can never disagree about what "stale" means.
+fn service_rows(cli: &Path) -> Vec<vak_ops::services::ServiceRow> {
+    let data_home = vak_config::paths::data_home();
+    let names = vak_ops::services::default_service_names(cli);
+    let mut specs: Vec<_> = vak_ops::services::resolve_specs(cli, &names)
+        .into_iter()
+        .flatten()
+        .collect();
+    specs.extend(vak_ops::services::configured_bot_service_specs(
+        cli,
+        &data_home,
+        &vak_ops::OpsConfig::detect().base_url(),
+    ));
+    vak_ops::services::status_specs(
+        &specs,
+        &vak_ops::services::Paths::default(),
+        &vak_ops::services::SystemRunner,
+    )
+}
+
+/// Services still running the build this install just replaced.
+///
+/// `self install` swaps binaries on disk and deliberately does not restart
+/// anything — one writer, and killing a running agent mid-turn in order to
+/// place a file is not a trade an installer gets to make by itself.
+///
+/// Saying nothing, however, is worse than either. That exact sequence has
+/// happened here: the app on disk was current, `self verify` was clean, the
+/// install printed "next: vak setup" — and every browser surface served the
+/// previous build for hours, because launchd was still running the old
+/// inode and nothing anywhere said so. An install that leaves the running
+/// system on the old build has not finished, and has to be the one to
+/// mention it.
+///
+/// Returns true when something is stale, so the caller can make the closing
+/// line the command that fixes it rather than the one for a fresh machine.
+fn report_stale_services(cli: &Path) -> bool {
+    let rows = service_rows(cli);
+    let stale: Vec<_> = rows
+        .iter()
+        .filter(|r| r.unit_present && (!r.unit_points_at_installed || r.binary_stale))
+        .collect();
+    if stale.is_empty() {
+        return false;
+    }
+    println!();
+    println!(
+        "{} service{} still running the build this replaced:",
+        stale.len(),
+        if stale.len() == 1 { " is" } else { "s are" }
+    );
+    for r in &stale {
+        let why = if !r.unit_points_at_installed {
+            "execs outside the managed prefix"
+        } else {
+            "still on the previous binary"
+        };
+        let state = match r.running_pid {
+            Some(pid) => format!("pid {pid}"),
+            None => "down".to_string(),
+        };
+        println!("  {:<28} {state} — {why}", r.name);
+    }
+    println!();
+    println!("Until they restart, every surface they serve is the OLD build.");
+    true
 }
 
 /// Whether this process could create a file in `dir`.
@@ -378,22 +460,7 @@ pub fn run_status(prefix: Option<PathBuf>) -> i32 {
             return 1;
         }
     };
-    let data_home = vak_config::paths::data_home();
-    let names = vak_ops::services::default_service_names(&cli);
-    let mut specs: Vec<_> = vak_ops::services::resolve_specs(&cli, &names)
-        .into_iter()
-        .flatten()
-        .collect();
-    specs.extend(vak_ops::services::configured_bot_service_specs(
-        &cli,
-        &data_home,
-        &vak_ops::OpsConfig::detect().base_url(),
-    ));
-    let rows = vak_ops::services::status_specs(
-        &specs,
-        &vak_ops::services::Paths::default(),
-        &vak_ops::services::SystemRunner,
-    );
+    let rows = service_rows(&cli);
     for r in &rows {
         let state = match r.running_pid {
             Some(pid) => format!("running (pid {pid})"),

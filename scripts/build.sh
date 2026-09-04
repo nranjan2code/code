@@ -9,8 +9,8 @@
 # that — on a case-insensitive volume — was the same directory the
 # installer used. Reinstall and uninstall could not work. One writer only.
 #
-# Usage: scripts/build.sh [--no-install] [--no-desktop] [--clean]
-#                         [--prefix DIR] [--release|--debug]
+# Usage: scripts/build.sh [--no-install] [--no-desktop] [--no-services]
+#                         [--clean] [--prefix DIR] [--release|--debug]
 
 set -Eeuo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,6 +19,7 @@ source "$ROOT_DIR/scripts/version.sh"
 
 INSTALL=true
 DESKTOP=true
+SERVICES=true
 CLEAN=false
 PROFILE=release
 PREFIX=""
@@ -27,6 +28,7 @@ while (($# > 0)); do
     case "$1" in
         --no-install) INSTALL=false ;;
         --no-desktop) DESKTOP=false ;;
+        --no-services) SERVICES=false ;;
         --clean) CLEAN=true ;;
         --debug) PROFILE=debug ;;
         --release) PROFILE=release ;;
@@ -142,6 +144,31 @@ printf '\n== verify ==\n'
 verify_args=(self verify)
 [[ -n "$PREFIX" ]] && verify_args+=(--prefix "$PREFIX")
 "$BIN_DIR/vak" "${verify_args[@]}"
+
+# Placing the binary is not the same as running it.
+#
+# launchd and systemd keep executing the inode they started with, so an
+# install onto a machine that already runs vak as a service leaves every
+# surface serving the PREVIOUS build — with a clean `verify`, a current
+# app on disk, and nothing anywhere to say so. That shipped: the front
+# door served a six-hour-old bundle while everything reported healthy.
+#
+# Only when units already exist. A developer's first `build.sh` should not
+# silently activate always-on services; `vak setup` is where that is asked
+# for.
+if [[ "$SERVICES" == true ]]; then
+    printf '\n== services ==\n'
+    status_args=(self status)
+    [[ -n "$PREFIX" ]] && status_args+=(--prefix "$PREFIX")
+    if "$BIN_DIR/vak" "${status_args[@]}" 2>/dev/null | grep -q '^service '; then
+        sync_args=(self services-sync)
+        [[ -n "$PREFIX" ]] && sync_args+=(--prefix "$PREFIX")
+        "$BIN_DIR/vak" "${sync_args[@]}"
+    else
+        printf 'no services registered — nothing to restart\n'
+        printf '(`vak setup` activates them; `--no-services` skips this check)\n'
+    fi
+fi
 
 printf '\n== disk usage ==\n'
 du -sh "$ROOT_DIR/target" 2>/dev/null || true
