@@ -5,6 +5,87 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 2.2.0 — 2026-09-04
+
+Capabilities become a live subsystem, and the release pipeline starts proving
+what it ships.
+
+### One capability registry, no restarts, no rotation (`docs/design/41-capability-registry.md`)
+
+vak was running a **process-per-session lifetime model inside a daemon**.
+Every mechanism in the capability subsystem was edge-triggered — discovery
+warmed once, a prompt frozen once, a connection opened once, a catalog cached
+once, with a retry guard written so that caching a *failure* counted as
+success. There was no loop behind any of it, so a missed edge was permanent
+and uptime turned small races into dead integrations.
+
+The visible symptom: a configured, connected search server was unreachable
+for an ordinary question about the weather. Nothing errored. The agent
+answered from memory and sounded certain, and `doctor` stayed green
+throughout, because the diagnostics that explained the failure were rendered
+only into the system prompt — the model was told, and the person who could
+repair the configuration was not.
+
+All five kinds (tool, skill, MCP server, hook, command) now share one
+registry, one reconcile loop, and one projection:
+
+- **Capabilities declare what they serve.** A `serves` vocabulary
+  (`live-data`, `web`, `filesystem`, …) replaces the static table that mapped
+  each act to built-in *tool names* — a shape that could never mention a
+  capability the operator had installed, so every integration needed a
+  harness edit and only got one after somebody reported a wrong answer.
+  Adding an integration now edits nothing. Undeclared capabilities are never
+  narrowed away, and domains are never guessed from tool names.
+- **Usability is a state machine, not data.** A failed probe carries a
+  reason, a remedy and a `retry_at` with exponential backoff. It is never a
+  catalog entry — the old code stored it as a tool literally named `error` —
+  and never blocks its own retry, so a server that was down at boot rejoins
+  on its own.
+- **One level-triggered reconcile loop** replaces every warm, cache and
+  per-turn filesystem walk. Hints (filesystem, config, an MCP
+  `notifications/tools/list_changed` that the transport used to discard) make
+  it run sooner; a ticker makes it run anyway. A dropped hint costs one tick
+  of latency and never costs correctness.
+- **Turn-atomic epochs replace session rotation.** The registry publishes
+  immutable versioned snapshots and a *turn* binds one for its whole
+  duration, so a session alive for weeks picks up a skill added today at its
+  next turn — with no restart and no rotation. Audit strengthens: every turn
+  records the epoch it ran at.
+- **Additions land at the next turn boundary; revocations land immediately**
+  and fail closed. Dispatch checks availability against the bound epoch and
+  authorization against current policy.
+- **One report** behind the model's standing section, `doctor`'s new
+  `capability health` check, and the console. `doctor`'s extension counts move
+  from raw config to the effective set, so plugin-contributed hooks and
+  servers stop being invisible to the operator.
+
+MCP transport also pools connections behind a liveness check with an idle
+TTL, and probes concurrently under a 10s budget so N unreachable servers cost
+the max rather than the sum.
+
+### The release pipeline proves its own artifacts
+
+Every gate verified the *tree* and nothing verified the *binary*.
+
+- **The tag-triggered release workflow could never succeed.** It fires on
+  `push: tags: v*`, checkout materialises that tag, and `release.sh` then
+  refused to build because the tag existed — the exact tag it was asked to
+  build. It now refuses only a tag pointing at a *different* commit.
+- **A release now runs what it is about to publish.** `vak --version` must
+  report this version and this commit, or nothing ships. This is the
+  permanent answer to a release bundling a stale binary.
+- **`--no-build` collected from the developer's `target/release`**, entirely
+  unrelated to the gates that had just passed. It now requires an explicit
+  directory and still faces the provenance gate.
+- **Nothing was built `--locked` except the Docker image**, so the released
+  binaries and the container could resolve different dependency graphs than
+  `Cargo.lock` records.
+- **The Docker image was never built or tested anywhere.** CI now builds it,
+  serves it, and checks `/health` and `/app` — which is what proves the
+  committed bundles actually reached the binary.
+- `install.sh` documented `VAK_VERSION` from the start and never implemented
+  it, so pinning a version silently installed whatever the feed served.
+
 ## 2.1.0 — 2026-09-04
 
 The web client: the workspace surface stops being desktop-only.
