@@ -6,34 +6,35 @@
 <title>vak — an agent you can inspect, constrain, and extend</title>
 <meta name="description" content="vak is a local-first Rust harness for running serious general-purpose agents without giving up the receipts. Append-only ledgers, permission before every effect, a receipt for every dispatch." />
 <meta property="og:title" content="vak — an agent you can inspect, constrain, and extend" />
-<meta property="og:description" content="A local-first Rust harness for running serious agents without giving up the receipts." />
+<meta property="og:description" content="vak is a local-first Rust harness for running serious general-purpose agents without giving up the receipts. Append-only ledgers, permission before every effect, a receipt for every dispatch." />
 <meta property="og:type" content="website" />
 <meta name="color-scheme" content="dark light" />
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f1ea" />
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171714" />
 <link rel="icon" type="image/png" href="/app/vak-icon.png" />
 <script>
-  // Before first paint: adopt the stored theme so the page never flashes
-  // the wrong ground, and mark that script is available so the reveal
-  // styles may hide what they are about to animate. Without this class
-  // every section renders visible — the no-JS default is the finished
-  // page, not an empty one.
+  // Before first paint: adopt the stored theme so the page never flashes the
+  // wrong ground, and mark that script is available so the reveal styles may
+  // hide what they are about to animate. Without this class every section
+  // renders visible — the no-JS default is the finished page, not an empty one.
   try {
     var t = localStorage.getItem("vak-theme");
     if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
   } catch (e) {}
   document.documentElement.className += " js";
 </script>
-<style>
-/* ==========================================================================
-   The Auditor's Desk (DESIGN.md), reproduced inline.
+<style>/* ==========================================================================
+   The Auditor's Desk (DESIGN.md), for the public site.
 
-   Inline because this page must render before, and independently of, any
-   bundle — it is the front door, and a front door that needs the building
-   to already be open is not a door. The token VALUES are the same ones
-   :root and html[data-theme="light"] carry in the client; the sizes are a
-   marketing surface's, not app chrome's, while the weights stay on the
-   system's odd scale.
+   Inlined into every page by build.py rather than linked: the front door
+   has to render before, and independently of, anything else being up, and
+   a theme that resolves in a second request flashes the wrong ground.
+
+   The token VALUES are the same ones :root and html[data-theme="light"]
+   carry in the client. The SIZES are a marketing surface's, not app
+   chrome's — recorded in DESIGN.md under "the landing surface's ramp" —
+   while the weights stay on the system's odd scale and the one-accent rule
+   is unchanged.
    ========================================================================== */
 
 :root {
@@ -547,14 +548,215 @@ html.js .reveal.in {
   .dot.run { animation: none; }
   .btn, .door, .rail, .rail-nav a, .modes button { transition: none; }
 }
+
+/* ==========================================================================
+   Site chrome added when the front door became four pages.
+   ========================================================================== */
+
+/* ---- scroll progress on the rail ----------------------------------------
+   A 2px accent rule that fills as the page is read. It is scroll-linked
+   through Motion's `scroll()` when that is available and simply stays at
+   zero width when it is not — this is decoration in the strict sense, so
+   it is the one thing allowed to be absent. */
+.rail-progress {
+  position: absolute; left: 0; bottom: -1px; height: 2px; width: 100%;
+  transform: scaleX(0); transform-origin: 0 50%;
+  background: var(--accent); opacity: .85;
+}
+.rail { position: sticky; }
+
+/* ---- page head ----------------------------------------------------------
+   Every page but the home page opens with one of these instead of a hero. */
+.page-head { padding: 72px 0 0; }
+.page-head h1 {
+  font-size: clamp(31px, 4.6vw, 47px); font-weight: 620;
+  letter-spacing: -.032em; line-height: 1.06; max-width: 17ch;
+}
+.page-head .lead { margin-top: 18px; max-width: 62ch; }
+.page-toc {
+  margin-top: 30px; display: flex; flex-wrap: wrap; gap: 8px;
+  padding-top: 22px; border-top: 1px solid var(--border-soft);
+}
+.page-toc a {
+  padding: 5px 12px; border: 1px solid var(--border); border-radius: 999px;
+  color: var(--muted); text-decoration: none; font-size: 12.5px; font-weight: 540;
+  transition: color 130ms ease, background 130ms ease, border-color 130ms ease;
+}
+.page-toc a:hover { color: var(--text); background: var(--surface-hover); border-color: var(--surface-active); }
+
+/* ---- surface switcher (one session, three renderings) ------------------- */
+.switch { margin-top: 44px; }
+.switch-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.switch-tabs button {
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  border-radius: var(--radius-sm); cursor: pointer;
+  font-family: inherit; font-size: 13px; font-weight: 550; padding: 7px 14px;
+  transition: background 130ms ease, color 130ms ease, border-color 130ms ease;
+}
+.switch-tabs button:hover { background: var(--surface-hover); color: var(--text-soft); }
+.switch-tabs button[aria-selected="true"] {
+  background: var(--surface-active); color: var(--text); border-color: var(--surface-active);
+}
+.switch-stage {
+  margin-top: 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--surface); overflow: hidden;
+}
+.switch-panel { padding: 0; }
+.switch-panel[hidden] { display: none; }
+.switch-note { margin-top: 14px; color: var(--muted); font-size: 13px; max-width: 74ch; }
+
+/* A terminal rendering. Same session, no chrome but a prompt. */
+.term {
+  padding: 18px 20px; font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
+  color: var(--text-soft); font-variant-numeric: tabular-nums; overflow-x: auto;
+}
+.term .p { color: var(--accent); }
+.term .cmd { color: var(--text); }
+.term .ok { color: var(--green); }
+.term .warn { color: var(--yellow); }
+.term .no { color: var(--red); }
+.term .dim { color: var(--faint); }
+
+/* A chat rendering. */
+.chat { padding: 18px 20px; display: grid; gap: 12px; }
+.bubble {
+  max-width: 78%; padding: 11px 14px; border-radius: var(--radius);
+  border: 1px solid var(--border-soft); background: var(--surface-raised);
+  font-size: 13.5px;
+}
+.bubble.them { justify-self: start; }
+.bubble.you { justify-self: end; background: var(--accent-wash); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
+.bubble .who { display: block; font-size: 11px; font-weight: 550; color: var(--muted); margin-bottom: 5px; }
+/* Tinting a ground invalidates the contrast calibration of every token
+   measured against the untinted one (DESIGN.md, Approval Gate). --muted on
+   the accent-washed bubble lands at 4.33:1, so it steps up one level here
+   exactly as it does on the gate card. */
+.bubble.you .who { color: var(--text-soft); }
+.bubble .approve-row { margin-top: 10px; display: flex; gap: 8px; }
+.bubble code { font-family: var(--mono); font-size: 12px; color: var(--text); }
+
+/* ---- gate simulator ------------------------------------------------------
+   The security page's centrepiece: pick a mode, pick an action, and the
+   page runs the same precedence the engine runs. */
+.sim { margin-top: 42px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 34px; align-items: start; }
+.sim-field { display: grid; gap: 9px; }
+.sim-field > .label { font-size: 12px; font-weight: 550; color: var(--muted); }
+.sim-actions { display: grid; gap: 7px; }
+.sim-actions button {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text-soft); cursor: pointer;
+  font-family: var(--mono); font-size: 12.5px; padding: 9px 12px;
+  transition: background 130ms ease, border-color 130ms ease, color 130ms ease;
+}
+.sim-actions button:hover { background: var(--surface-hover); color: var(--text); }
+.sim-actions button[aria-pressed="true"] { background: var(--surface-active); color: var(--text); border-color: var(--surface-active); }
+.sim-verdict {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); padding: 20px 22px; min-height: 232px;
+}
+.sim-verdict .v-word {
+  display: inline-flex; align-items: center; gap: 9px;
+  font-family: var(--mono); font-size: 21px; font-weight: 560; letter-spacing: -.01em;
+}
+.sim-verdict.allow .v-word { color: var(--green); }
+.sim-verdict.ask   .v-word { color: var(--yellow); }
+.sim-verdict.deny  .v-word { color: var(--red); }
+.sim-verdict .v-why { margin-top: 12px; color: var(--text-soft); font-size: 14px; max-width: 46ch; }
+.sim-trace { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border-soft); }
+.sim-trace li {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 10px;
+  font-family: var(--mono); font-size: 12px; color: var(--faint); padding: 3px 0;
+}
+.sim-trace li.hit { color: var(--text-soft); }
+.sim-trace .mark { color: var(--faint); }
+.sim-trace li.hit .mark { color: var(--accent); }
+
+/* ---- fact table ---------------------------------------------------------- */
+.facts { margin-top: 34px; border: 1px solid var(--border-soft); border-radius: var(--radius); overflow: hidden; }
+.facts-row {
+  display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 20px;
+  padding: 15px 18px; background: var(--surface);
+  border-top: 1px solid var(--border-soft);
+}
+.facts-row:first-child { border-top: 0; }
+.facts-row dt, .facts-row .k { font-size: 13.5px; font-weight: 570; }
+.facts-row dd, .facts-row .v { margin: 0; color: var(--muted); font-size: 13.5px; }
+.facts-row code { font-family: var(--mono); font-size: 12.5px; color: var(--text-soft); }
+
+/* ---- prose blocks -------------------------------------------------------- */
+.prose { margin-top: 26px; max-width: 68ch; }
+.prose p { color: var(--text-soft); font-size: 15.5px; }
+.prose p + p { margin-top: 14px; }
+.prose h3 { margin-top: 30px; font-size: 18px; font-weight: 600; letter-spacing: -.015em; }
+.prose ul { margin-top: 12px; display: grid; gap: 9px; }
+.prose li { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 10px; color: var(--text-soft); font-size: 15px; }
+.prose li::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--faint); margin-top: 9px; }
+.prose code { font-family: var(--mono); font-size: 13px; color: var(--text); }
+
+/* ---- next page ----------------------------------------------------------- */
+.next {
+  margin-top: 84px; padding-top: 30px; border-top: 1px solid var(--border-soft);
+  display: flex; flex-wrap: wrap; gap: 14px; align-items: baseline;
+}
+.next .lbl { color: var(--faint); font-size: 12.5px; }
+.next a {
+  font-size: 19px; font-weight: 600; letter-spacing: -.015em;
+  color: var(--text); text-decoration: none;
+}
+.next a:hover { color: var(--accent); }
+.next a::after { content: " →"; color: var(--accent); }
+
+@media (max-width: 1000px) {
+  .sim { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .facts-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+}
+@media (max-width: 720px) {
+  .page-head { padding: 44px 0 0; }
+  .bubble { max-width: 92%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .switch-tabs button, .sim-actions button, .page-toc a { transition: none; }
+}
 </style>
 </head>
-<body>
+<body class="">
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="rail" id="rail">
+  <div class="wrap">
+    <a class="brand" href="/">
+      <span class="brand-mark"><img src="/app/vak-icon.png" alt="" /></span>
+      <span class="brand-name">vak</span>
+    </a>
+    <nav class="rail-nav" id="railnav" aria-label="Pages">
+      <a href="/" class="on" aria-current="page">Home</a>
+      <a href="/surfaces">Surfaces</a>
+      <a href="/security">Security</a>
+      <a href="/install">Install</a>
+    </nav>
+    <div class="rail-actions">
+      <button class="btn icon" id="theme" type="button" aria-label="Switch theme">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4.2"/>
+          <path d="M12 2.6v2.2M12 19.2v2.2M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M2.6 12h2.2M19.2 12h2.2M4.2 19.8l1.6-1.6M18.2 5.8l1.6-1.6"/>
+        </svg>
+      </button>
+      <a class="btn wide-only" href="/admin">Operations</a>
+      <a class="btn primary" href="/app">Open workspace</a>
+    </div>
+  </div>
+  <div class="rail-progress" id="railprogress" aria-hidden="true"></div>
+</header>
+
+<main id="main">
 <!--
   DIRECTION CONTRACT — surface concept seed bdd3f44f
 
   THESIS: A runtime you can audit proves it in the first viewport, not in a
-  feature list. This page refuses the screenshot-and-three-cards landing:
+  feature list. This site refuses the screenshot-and-three-cards landing:
   the hero is the instrument itself, and the visitor works its controls.
 
   OWN-WORLD: The Auditor's Desk. Warm near-black, one burnt-terracotta
@@ -578,35 +780,6 @@ html.js .reveal.in {
   the finish review, the verdict, DESIGN.md, and every shipping raster
   carrying its provenance.
 -->
-<a class="skip" href="#main">Skip to content</a>
-
-<header class="rail" id="rail">
-  <div class="wrap">
-    <a class="brand" href="#top">
-      <span class="brand-mark"><img src="/app/vak-icon.png" alt="" /></span>
-      <span class="brand-name">vak</span>
-    </a>
-    <nav class="rail-nav" id="railnav" aria-label="Sections">
-      <a href="#run">The run</a>
-      <a href="#surfaces">Surfaces</a>
-      <a href="#posture">Posture</a>
-      <a href="#start">Start</a>
-    </nav>
-    <div class="rail-actions">
-      <button class="btn icon" id="theme" type="button" aria-label="Switch theme">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-             stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="4.2"/>
-          <path d="M12 2.6v2.2M12 19.2v2.2M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M2.6 12h2.2M19.2 12h2.2M4.2 19.8l1.6-1.6M18.2 5.8l1.6-1.6"/>
-        </svg>
-      </button>
-      <a class="btn wide-only" href="/admin">Operations</a>
-      <a class="btn primary" href="/app">Open workspace</a>
-    </div>
-  </div>
-</header>
-
-<main id="main">
 <div id="top"></div>
 
 <!-- ================= hero: the instrument ================= -->
@@ -816,7 +989,7 @@ html.js .reveal.in {
             takes precedence. Changing the policy cancels work already in flight
             and rejects approvals granted under the old one.
           </p>
-          <p class="cmd">read-only · workspace-write · full-access</p>
+          <p class="cmd"><a href="/security">Try the gate yourself →</a></p>
         </div>
       </article>
 
@@ -913,68 +1086,8 @@ html.js .reveal.in {
       <p class="bus-note">
         Where a host genuinely cannot do something — a native file dialog, a real
         shell — the capability is absent rather than broken.
+        <a href="/surfaces">See one session in three of them →</a>
       </p>
-    </div>
-  </div>
-</section>
-
-<!-- ================= posture ================= -->
-<section id="posture" aria-labelledby="posture-h">
-  <div class="wrap">
-    <div class="section-head">
-      <h2 id="posture-h" class="reveal">Safety that is architectural</h2>
-      <p class="section-lead reveal" style="--d:60ms">
-        The posture is a setting, not a promise. Pick how much the agent may do,
-        and the containment underneath it is the same either way.
-      </p>
-    </div>
-
-    <div class="posture">
-      <div class="reveal" style="--d:120ms">
-        <div class="modes" role="tablist" aria-label="Permission mode">
-          <button role="tab" type="button" id="tab-ro" aria-selected="true" aria-controls="mode-body" data-mode="ro">read-only</button>
-          <button role="tab" type="button" id="tab-ww" aria-selected="false" aria-controls="mode-body" data-mode="ww">workspace-write</button>
-          <button role="tab" type="button" id="tab-fa" aria-selected="false" aria-controls="mode-body" data-mode="fa">full-access</button>
-        </div>
-        <div class="mode-body" id="mode-body" role="tabpanel" tabindex="0" aria-live="polite">
-          <h3 id="mode-title">Read what is there, change nothing</h3>
-          <p id="mode-text">
-            The agent may read the workspace and answer about it. Writes and
-            shell commands are denied outright — not queued for approval,
-            denied. Use it on a repository you have not decided to trust yet.
-          </p>
-          <div class="readout mode-rules" id="mode-rules">
-            <span class="verb a">allow</span> read(<span class="hit">&lt;workspace&gt;/**</span>)<br />
-            <span class="verb d">deny</span> read(<span class="hit">outside the workspace</span>)<br />
-            <span class="verb k">ask</span> anything that reaches the network<br />
-            <span class="verb d">deny</span> write · bash · everything else<hr />
-            <span class="dim">your own rules are evaluated first, and deny still wins</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="guards reveal" style="--d:180ms">
-        <div class="guard">
-          <b>Sandboxed at the operating system</b>
-          <span>Seatbelt on macOS, Landlock on Linux, and an opt-in Docker backend for Bash with no network at all.</span>
-        </div>
-        <div class="guard">
-          <b>Restricted tools run across a broker boundary</b>
-          <span>Built-in tool workers are disposable and MCP servers are sandboxed separately again, so a tool cannot reach the process that called it.</span>
-        </div>
-        <div class="guard">
-          <b>The workspace is a real boundary</b>
-          <span>Canonical path confinement with symlink-escape protection, so “inside the project” means inside the project.</span>
-        </div>
-        <div class="guard">
-          <b>Secrets stay out of the agent’s air</b>
-          <span>Never forwarded as ambient shell or MCP subprocess state, and a project <code>.env</code> loads only after you have trusted that workspace.</span>
-        </div>
-        <div class="guard">
-          <b>A policy change stops work already running</b>
-          <span>Tightening the rules cancels in-flight effects and rejects approvals granted under the old policy, rather than letting them land.</span>
-        </div>
-      </div>
     </div>
   </div>
 </section>
@@ -1045,9 +1158,16 @@ html.js .reveal.in {
       loopback by default; reaching it by a real hostname is an explicit opt-in
       (<code>[server] trusted_hosts</code>) that it refuses to start without, and
       from there a browser signs in once with the access token the server printed.
+      <a href="/install">The full install, service and update path →</a>
     </p>
+
+    <div class="next">
+      <span class="lbl">Next</span>
+      <a href="/surfaces">One session, three surfaces</a>
+    </div>
   </div>
 </section>
+
 </main>
 
 <footer>
@@ -1062,73 +1182,131 @@ html.js .reveal.in {
   </div>
 </footer>
 
-<script>
+<script src="/site/motion.48f39ffb.js" defer></script>
+<script>/* Shared behaviour for every page of the public site.
+ *
+ * Motion (motion.dev, vendored at src/vendor/motion.js) is loaded `defer`,
+ * so it has executed by the time DOMContentLoaded fires — but it is never
+ * required. Everything here has a path for `window.Motion` being absent:
+ * the CSS transitions in styles.css are the floor, and a reader with no
+ * JavaScript at all gets the finished page immediately, because `.reveal`
+ * only hides anything once the inline head script has added `html.js`.
+ *
+ * The order that matters: nothing in this file may leave content invisible
+ * if a later step throws. Reveal work therefore runs first and defensively.
+ */
 (function () {
   "use strict";
-  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
+
   var $ = function (id) { return document.getElementById(id); };
+  var $$ = function (sel, root) {
+    return Array.prototype.slice.call((root || document).querySelectorAll(sel));
+  };
+  var reduceQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+  var EASE = [0.16, 1, 0.3, 1];
 
-  /* ---- build stamp -------------------------------------------------------
-     Fetched rather than templated in, so this file stays a static asset with
-     no server-side rendering. If it fails, the readout simply never appears. */
-  fetch("/version", { credentials: "same-origin" })
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (v) {
-      if (!v || !v.version) return;
-      var sha = v.git_sha && v.git_sha !== "unknown" ? v.git_sha : null;
-      $("bv").textContent = v.version;
-      $("bc").textContent = sha || "—";
-      $("buildcard").hidden = false;
-      $("stamp").textContent = "vak " + v.version + (sha ? " · " + sha : "");
-    })
-    .catch(function () {});
-
-  /* ---- theme -------------------------------------------------------------
-     Three states, the same as the app: system (no attribute), light, dark. */
-  var order = ["system", "light", "dark"];
-  var stored = "system";
-  try { stored = localStorage.getItem("vak-theme") || "system"; } catch (e) {}
-  var themeBtn = $("theme");
-  function applyTheme(next) {
-    if (next === "system") delete document.documentElement.dataset.theme;
-    else document.documentElement.dataset.theme = next;
-    try { localStorage.setItem("vak-theme", next); } catch (e) {}
-    themeBtn.setAttribute("aria-label", "Theme: " + next + ". Switch theme.");
-    themeBtn.title = "Theme: " + next;
+  function ready(fn) {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", fn, { once: true });
+    } else {
+      fn();
+    }
   }
-  applyTheme(order.indexOf(stored) >= 0 ? stored : "system");
-  themeBtn.addEventListener("click", function () {
-    var now = document.documentElement.dataset.theme || "system";
-    applyTheme(order[(order.indexOf(now) + 1) % order.length]);
-  });
 
-  /* ---- rail ------------------------------------------------------------- */
-  var rail = $("rail");
-  var onScroll = function () { rail.classList.toggle("scrolled", window.scrollY > 8); };
-  onScroll();
-  window.addEventListener("scroll", onScroll, { passive: true });
+  // --- build stamp ---------------------------------------------------------
+  // Fetched rather than templated in, so these stay static files with no
+  // server-side rendering. If it fails, the readout simply never appears.
+  function buildStamp() {
+    fetch("/version", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (v) {
+        if (!v || !v.version) return;
+        var sha = v.git_sha && v.git_sha !== "unknown" ? v.git_sha : null;
+        var stamp = $("stamp");
+        if (stamp) stamp.textContent = "vak " + v.version + (sha ? " · " + sha : "");
+        if ($("bv")) {
+          $("bv").textContent = v.version;
+          $("bc").textContent = sha || "—";
+          $("buildcard").hidden = false;
+        }
+      })
+      .catch(function () {});
+  }
 
-  var links = Array.prototype.slice.call(document.querySelectorAll("#railnav a"));
-  var sections = links
-    .map(function (a) { return document.querySelector(a.getAttribute("href")); })
-    .filter(Boolean);
-  if ("IntersectionObserver" in window && sections.length) {
-    var spy = new IntersectionObserver(function (entries) {
-      entries.forEach(function (e) {
-        if (!e.isIntersecting) return;
-        links.forEach(function (a) {
-          a.classList.toggle("on", a.getAttribute("href") === "#" + e.target.id);
-        });
+  // --- theme ---------------------------------------------------------------
+  // Three states, the same as the app: system (no attribute), light, dark.
+  function theme() {
+    var btn = $("theme");
+    if (!btn) return;
+    var order = ["system", "light", "dark"];
+    var stored = "system";
+    try { stored = localStorage.getItem("vak-theme") || "system"; } catch (e) {}
+
+    function apply(next) {
+      if (next === "system") delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = next;
+      try { localStorage.setItem("vak-theme", next); } catch (e) {}
+      btn.setAttribute("aria-label", "Theme: " + next + ". Switch theme.");
+      btn.title = "Theme: " + next;
+    }
+    apply(order.indexOf(stored) >= 0 ? stored : "system");
+    btn.addEventListener("click", function () {
+      var now = document.documentElement.dataset.theme || "system";
+      apply(order[(order.indexOf(now) + 1) % order.length]);
+    });
+  }
+
+  // --- rail ----------------------------------------------------------------
+  function rail(M, reduce) {
+    var el = $("rail");
+    if (!el) return;
+    var onScroll = function () { el.classList.toggle("scrolled", window.scrollY > 8); };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+
+    // The progress rule is scroll-linked, not time-based, so it is honest
+    // about position rather than animating on its own. Strictly decoration:
+    // with no Motion it simply stays at zero and nothing else changes.
+    var bar = $("railprogress");
+    if (!bar || !M || !M.scroll || reduce) return;
+    try {
+      M.scroll(M.animate(bar, { transform: ["scaleX(0)", "scaleX(1)"] }, { ease: "linear" }));
+    } catch (e) {}
+  }
+
+  // --- reveals -------------------------------------------------------------
+  // Two paths to the same end state. Whichever runs, an element that has
+  // entered the viewport is visible; nothing here can leave one hidden.
+  function reveals(M, reduce) {
+    var items = $$(".reveal");
+    if (!items.length) return;
+
+    var showAll = function () { items.forEach(function (el) { el.classList.add("in"); }); };
+    if (reduce || !("IntersectionObserver" in window)) { showAll(); return; }
+
+    if (M && M.inView && M.animate) {
+      items.forEach(function (el) {
+        var delay = (parseFloat(el.style.getPropertyValue("--d")) || 0) / 1000;
+        M.inView(
+          el,
+          function () {
+            // `.in` first: if the animation throws for any reason, the CSS
+            // transition has already been armed to finish the job.
+            el.classList.add("in");
+            try {
+              M.animate(
+                el,
+                { opacity: [0, 1], transform: ["translateY(14px)", "translateY(0px)"] },
+                { duration: 0.72, delay: delay, ease: EASE }
+              );
+            } catch (e) {}
+          },
+          { amount: 0.12, margin: "0px 0px -8% 0px" }
+        );
       });
-    }, { rootMargin: "-45% 0px -50% 0px" });
-    sections.forEach(function (s) { spy.observe(s); });
-  }
+      return;
+    }
 
-  /* ---- reveal ----------------------------------------------------------- */
-  var revealables = document.querySelectorAll(".reveal");
-  if (reduce.matches || !("IntersectionObserver" in window)) {
-    Array.prototype.forEach.call(revealables, function (el) { el.classList.add("in"); });
-  } else {
     var io = new IntersectionObserver(function (entries, obs) {
       entries.forEach(function (e) {
         if (!e.isIntersecting) return;
@@ -1136,169 +1314,351 @@ html.js .reveal.in {
         obs.unobserve(e.target);
       });
     }, { rootMargin: "0px 0px -12% 0px", threshold: 0.08 });
-    Array.prototype.forEach.call(revealables, function (el) { io.observe(el); });
+    items.forEach(function (el) { io.observe(el); });
   }
 
-  /* ---- the console -------------------------------------------------------
-     The page's one authored moment. Rows never leave the flow — they only
-     fade — so playing the tape cannot reflow anything below it. */
-  var tape = $("tape");
-  var steps = Array.prototype.slice.call(tape.querySelectorAll(".step"));
-  var outcome = $("outcome");
-  var approved = $("approved");
-  var denied = $("denied");
-  var gateActions = $("gateactions");
-  var gateVerdict = $("gateverdict");
-  var runword = $("runword");
-  var runstate = $("runstate");
-  var footnote = $("footnote");
-  var timers = [];
-  var settled = false;
+  // --- the session console (home) -----------------------------------------
+  // The page's one authored moment. Rows never leave the flow — they only
+  // fade — so playing the tape cannot reflow anything below it.
+  function console_(M, reduce) {
+    var tape = $("tape");
+    if (!tape) return;
+    var steps = $$(".step", tape);
+    var approved = $("approved");
+    var denied = $("denied");
+    var gateActions = $("gateactions");
+    var gateVerdict = $("gateverdict");
+    var runword = $("runword");
+    var runstate = $("runstate");
+    var footnote = $("footnote");
+    var timers = [];
+    var settled = false;
 
-  function dot(kind, word) {
-    runstate.firstElementChild.className = "dot " + kind;
-    runword.textContent = word;
-  }
-  function clearTimers() { timers.forEach(clearTimeout); timers = []; }
-
-  function show(el) { el.classList.add("shown"); }
-  function hideOutcomes() {
-    approved.classList.remove("shown");
-    denied.classList.remove("shown");
-  }
-
-  function resolve(choice) {
-    if (settled) return;
-    settled = true;
-    hideOutcomes();
-    if (choice === "allow") {
-      gateVerdict.textContent = "allow";
-      gateVerdict.className = "verdict allow";
-      gateActions.innerHTML =
-        '<span class="gate-resolved">approved by you · 14:02:21 · recorded in the ledger</span>';
-      show(approved);
-      dot("done", "finished");
-      footnote.textContent = "Approved. The command ran, and the approval is an entry like any other.";
-    } else {
-      gateVerdict.textContent = "deny";
-      gateVerdict.className = "verdict deny";
-      gateActions.innerHTML =
-        '<span class="gate-resolved">denied by you · 14:02:31 · recorded in the ledger</span>';
-      show(denied);
-      dot("stop", "stopped");
-      footnote.textContent = "Denied. The run stops, the work it had already done is kept, and the denial is recorded.";
+    function dot(kind, word) {
+      runstate.firstElementChild.className = "dot " + kind;
+      runword.textContent = word;
     }
-  }
-
-  function bindGate() {
-    var a = $("approve");
-    var d = $("deny");
-    if (a) a.addEventListener("click", function () { resolve("allow"); });
-    if (d) d.addEventListener("click", function () { resolve("deny"); });
-  }
-
-  function play(instant) {
-    clearTimers();
-    settled = false;
-    hideOutcomes();
-    gateVerdict.textContent = "ask";
-    gateVerdict.className = "verdict ask";
-    gateActions.innerHTML =
-      '<button class="btn primary" type="button" id="approve">Approve</button>' +
-      '<button class="btn danger" type="button" id="deny">Deny</button>' +
-      '<span class="gate-hint">Nothing has run yet.</span>';
-    bindGate();
-    footnote.textContent = "A real session, replayed. The gate is yours to answer.";
-
-    if (instant) {
-      steps.forEach(function (s) { s.classList.add("played"); });
-      dot("wait", "awaiting you");
-      return;
+    function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+    function hideOutcomes() {
+      approved.classList.remove("shown");
+      denied.classList.remove("shown");
     }
-    steps.forEach(function (s) { s.classList.remove("played"); });
-    dot("run", "running");
-    steps.forEach(function (s, i) {
-      timers.push(setTimeout(function () {
-        s.classList.add("played");
-        if (i === steps.length - 1) dot("wait", "awaiting you");
-      }, 220 + i * 320));
-    });
-  }
+    function play(el) {
+      el.classList.add("played");
+      if (!M || !M.animate || reduce) return;
+      try {
+        M.animate(el, { opacity: [0, 1], transform: ["translateY(4px)", "translateY(0px)"] },
+          { duration: 0.34, ease: EASE });
+      } catch (e) {}
+    }
 
-  bindGate();
-  if (reduce.matches) {
-    play(true);
-  } else if ("IntersectionObserver" in window) {
-    var once = new IntersectionObserver(function (entries, obs) {
-      entries.forEach(function (e) {
-        if (!e.isIntersecting) return;
-        obs.disconnect();
-        play(false);
-      });
-    }, { threshold: 0.25 });
-    once.observe(tape);
-  } else {
-    play(true);
-  }
-  $("replay").addEventListener("click", function () { play(reduce.matches); });
-
-  /* ---- permission modes -------------------------------------------------- */
-  var A = '<span class="verb a">allow</span> ';
-  var K = '<span class="verb k">ask</span> ';
-  var D = '<span class="verb d">deny</span> ';
-  var TAIL = '<hr /><span class="dim">your own rules are evaluated first, and deny still wins</span>';
-  var copy = {
-    ro: ["Read what is there, change nothing",
-      "The agent may read the workspace and answer about it. Writes and shell commands are denied outright — not queued for approval, denied. Use it on a repository you have not decided to trust yet.",
-      A + 'read(<span class="hit">&lt;workspace&gt;/**</span>)<br />' +
-      D + 'read(<span class="hit">outside the workspace</span>)<br />' +
-      K + 'anything that reaches the network<br />' +
-      D + 'write · bash · everything else' + TAIL],
-    ww: ["Change this workspace, ask before anything else",
-      "The default. Reads and writes inside the canonical workspace path go through; a shell command, or a path outside the boundary, stops and asks — the gate you answered above. A symlink pointing out of the workspace does not count as inside it.",
-      A + 'read · write(<span class="hit">&lt;workspace&gt;/**</span>)<br />' +
-      K + 'write(<span class="hit">outside the workspace</span>)<br />' +
-      K + 'bash(<span class="hit">*</span>)<br />' +
-      K + 'everything else, by default' + TAIL],
-    fa: ["Everything, and you said so out loud",
-      "No implicit boundary — which is why it cannot be reached by accident. It is named explicitly, and your own rules still sit on top of it, so this is the mode’s default and not the last word.",
-      A + 'every tool, on every path<br />' +
-      D + '<span class="hit">your deny rules</span>, which still win<br />' +
-      K + '<span class="hit">your ask rules</span>, which still stop the run<br />' +
-      '<span class="dim">and a policy change still cancels work in flight</span>' + TAIL]
-  };
-  var tabs = Array.prototype.slice.call(document.querySelectorAll(".modes button"));
-  tabs.forEach(function (t, i) {
-    t.addEventListener("click", function () {
-      tabs.forEach(function (o) { o.setAttribute("aria-selected", String(o === t)); });
-      var c = copy[t.dataset.mode];
-      $("mode-title").textContent = c[0];
-      $("mode-text").textContent = c[1];
-      $("mode-rules").innerHTML = c[2];
-    });
-    t.addEventListener("keydown", function (e) {
-      var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
-      if (!d) return;
-      e.preventDefault();
-      var next = tabs[(i + d + tabs.length) % tabs.length];
-      next.focus();
-      next.click();
-    });
-  });
-
-  /* ---- copy buttons ------------------------------------------------------ */
-  Array.prototype.forEach.call(document.querySelectorAll(".copy"), function (b) {
-    b.addEventListener("click", function () {
-      var text = $(b.dataset.copy).textContent;
-      var done = function () {
-        var was = b.textContent;
-        b.textContent = "Copied";
-        setTimeout(function () { b.textContent = was; }, 1400);
-      };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done, function () {});
+    function resolve(choice) {
+      if (settled) return;
+      settled = true;
+      hideOutcomes();
+      var shown;
+      if (choice === "allow") {
+        gateVerdict.textContent = "allow";
+        gateVerdict.className = "verdict allow";
+        gateActions.innerHTML =
+          '<span class="gate-resolved">approved by you · 14:02:21 · recorded in the ledger</span>';
+        shown = approved;
+        dot("done", "finished");
+        footnote.textContent = "Approved. The command ran, and the approval is an entry like any other.";
+      } else {
+        gateVerdict.textContent = "deny";
+        gateVerdict.className = "verdict deny";
+        gateActions.innerHTML =
+          '<span class="gate-resolved">denied by you · 14:02:31 · recorded in the ledger</span>';
+        shown = denied;
+        dot("stop", "stopped");
+        footnote.textContent = "Denied. The run stops, the work it had already done is kept, and the denial is recorded.";
       }
+      shown.classList.add("shown");
+      if (M && M.animate && !reduce) {
+        try {
+          M.animate($$(".row", shown), { opacity: [0, 1], transform: ["translateY(6px)", "translateY(0px)"] },
+            { duration: 0.4, delay: M.stagger ? M.stagger(0.07) : 0, ease: EASE });
+        } catch (e) {}
+      }
+    }
+
+    function bindGate() {
+      var a = $("approve");
+      var d = $("deny");
+      if (a) a.addEventListener("click", function () { resolve("allow"); });
+      if (d) d.addEventListener("click", function () { resolve("deny"); });
+    }
+
+    function start(instant) {
+      clearTimers();
+      settled = false;
+      hideOutcomes();
+      gateVerdict.textContent = "ask";
+      gateVerdict.className = "verdict ask";
+      gateActions.innerHTML =
+        '<button class="btn primary" type="button" id="approve">Approve</button>' +
+        '<button class="btn danger" type="button" id="deny">Deny</button>' +
+        '<span class="gate-hint">Nothing has run yet.</span>';
+      bindGate();
+      footnote.textContent = "A real session, replayed. The gate is yours to answer.";
+
+      if (instant) {
+        steps.forEach(function (s) { s.classList.add("played"); });
+        dot("wait", "awaiting you");
+        return;
+      }
+      steps.forEach(function (s) { s.classList.remove("played"); });
+      dot("run", "running");
+      steps.forEach(function (s, i) {
+        timers.push(setTimeout(function () {
+          play(s);
+          if (i === steps.length - 1) dot("wait", "awaiting you");
+        }, 220 + i * 320));
+      });
+    }
+
+    bindGate();
+    if (reduce) {
+      start(true);
+    } else if (M && M.inView) {
+      var stop = M.inView(tape, function () { if (stop) stop(); start(false); }, { amount: 0.25 });
+    } else if ("IntersectionObserver" in window) {
+      var once = new IntersectionObserver(function (entries, obs) {
+        entries.forEach(function (e) {
+          if (!e.isIntersecting) return;
+          obs.disconnect();
+          start(false);
+        });
+      }, { threshold: 0.25 });
+      once.observe(tape);
+    } else {
+      start(true);
+    }
+    var replay = $("replay");
+    if (replay) replay.addEventListener("click", function () { start(reduce); });
+  }
+
+  // --- permission modes (home) --------------------------------------------
+  function modes() {
+    var body = $("mode-body");
+    if (!body) return;
+    var A = '<span class="verb a">allow</span> ';
+    var K = '<span class="verb k">ask</span> ';
+    var D = '<span class="verb d">deny</span> ';
+    var TAIL = '<hr /><span class="dim">your own rules are evaluated first, and deny still wins</span>';
+    var copy = {
+      ro: ["Read what is there, change nothing",
+        "The agent may read the workspace and answer about it. Writes and shell commands are denied outright — not queued for approval, denied. Use it on a repository you have not decided to trust yet.",
+        A + 'read(<span class="hit">&lt;workspace&gt;/**</span>)<br />' +
+        D + 'read(<span class="hit">outside the workspace</span>)<br />' +
+        K + 'anything that reaches the network<br />' +
+        D + 'write · bash · everything else' + TAIL],
+      ww: ["Change this workspace, ask before anything else",
+        "The default. Reads and writes inside the canonical workspace path go through; a shell command, or a path outside the boundary, stops and asks — the gate you answered above. A symlink pointing out of the workspace does not count as inside it.",
+        A + 'read · write(<span class="hit">&lt;workspace&gt;/**</span>)<br />' +
+        K + 'write(<span class="hit">outside the workspace</span>)<br />' +
+        K + 'bash(<span class="hit">*</span>)<br />' +
+        K + 'everything else, by default' + TAIL],
+      fa: ["Everything, and you said so out loud",
+        "No implicit boundary — which is why it cannot be reached by accident. It is named explicitly, and your own rules still sit on top of it, so this is the mode’s default and not the last word.",
+        A + 'every tool, on every path<br />' +
+        D + '<span class="hit">your deny rules</span>, which still win<br />' +
+        K + '<span class="hit">your ask rules</span>, which still stop the run<br />' +
+        '<span class="dim">and a policy change still cancels work in flight</span>' + TAIL]
+    };
+    var tabs = $$(".modes button");
+    tabs.forEach(function (t, i) {
+      t.addEventListener("click", function () {
+        tabs.forEach(function (o) { o.setAttribute("aria-selected", String(o === t)); });
+        var c = copy[t.dataset.mode];
+        $("mode-title").textContent = c[0];
+        $("mode-text").textContent = c[1];
+        $("mode-rules").innerHTML = c[2];
+      });
+      t.addEventListener("keydown", function (e) {
+        var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+        if (!d) return;
+        e.preventDefault();
+        var next = tabs[(i + d + tabs.length) % tabs.length];
+        next.focus();
+        next.click();
+      });
     });
+  }
+
+  // --- surface switcher (surfaces page) ------------------------------------
+  function switcher(M, reduce) {
+    $$(".switch").forEach(function (root) {
+      var tabs = $$(".switch-tabs button", root);
+      var panels = $$(".switch-panel", root);
+      tabs.forEach(function (t, i) {
+        t.addEventListener("click", function () {
+          tabs.forEach(function (o) { o.setAttribute("aria-selected", String(o === t)); });
+          panels.forEach(function (p) { p.hidden = p.dataset.panel !== t.dataset.panel; });
+          var shown = panels.filter(function (p) { return !p.hidden; })[0];
+          if (!shown || !M || !M.animate || reduce) return;
+          try {
+            M.animate(shown, { opacity: [0, 1], transform: ["translateY(8px)", "translateY(0px)"] },
+              { duration: 0.4, ease: EASE });
+          } catch (e) {}
+        });
+        t.addEventListener("keydown", function (e) {
+          var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+          if (!d) return;
+          e.preventDefault();
+          var next = tabs[(i + d + tabs.length) % tabs.length];
+          next.focus();
+          next.click();
+        });
+      });
+    });
+  }
+
+  // --- gate simulator (security page) --------------------------------------
+  // Runs the same precedence the engine runs: an explicit deny rule, then an
+  // explicit ask rule, then an explicit allow rule, then the mode's own
+  // default. Getting that order wrong on a page about a policy engine would
+  // be worse than not having the page.
+  function simulator(M, reduce) {
+    var root = $("sim");
+    if (!root) return;
+    var verdictBox = $("sim-verdict");
+    var word = $("sim-word");
+    var why = $("sim-why");
+    var trace = $("sim-trace");
+
+    // The illustrative ruleset shown alongside; keep in step with the markup.
+    var RULES = [
+      { decision: "deny", match: function (a) { return a.tool === "bash" && /rm\s+-rf/.test(a.arg); }, label: "deny bash(rm -rf *)" },
+      { decision: "deny", match: function (a) { return a.tool === "write" && /\.env$/.test(a.arg); }, label: "deny write(**/.env)" }
+    ];
+
+    var MODE_DEFAULT = {
+      ro: function (a) {
+        if (a.tool === "read") {
+          return a.outside
+            ? ["deny", "read-only allows reads, but only inside the workspace."]
+            : ["allow", "Reading inside the workspace is what this mode is for."];
+        }
+        if (a.tool === "fetch") return ["ask", "It reaches outside the workspace, so it stops and asks."];
+        return ["deny", "read-only denies " + a.tool + " outright. Switch modes or add a rule."];
+      },
+      ww: function (a) {
+        if (a.tool === "read") {
+          return a.outside
+            ? ["deny", "Reads are confined to the workspace here too; the path is outside it."]
+            : ["allow", "Reading inside the workspace needs no approval."];
+        }
+        if (a.tool === "write") {
+          return a.outside
+            ? ["ask", "The path is outside the workspace boundary, so it needs you."]
+            : ["allow", "Writing inside the canonical workspace path is what this mode grants."];
+        }
+        return ["ask", "A shell command or an outward call always needs approval in this mode."];
+      },
+      fa: function (a) {
+        return ["allow", "full-access has no implicit boundary — which is why it has to be named explicitly."];
+      }
+    };
+
+    var state = { mode: "ww", action: null };
+
+    function evaluate() {
+      var a = state.action;
+      if (!a) return null;
+      for (var i = 0; i < RULES.length; i++) {
+        if (RULES[i].decision === "deny" && RULES[i].match(a)) {
+          return { verdict: "deny", why: "An explicit deny rule matched, and deny always wins — before the mode is even consulted.", step: "rule-deny" };
+        }
+      }
+      var d = MODE_DEFAULT[state.mode](a);
+      return { verdict: d[0], why: d[1], step: "mode" };
+    }
+
+    var STEPS = [
+      ["rule-deny", "deny rules"],
+      ["rule-ask", "ask rules"],
+      ["rule-allow", "allow rules"],
+      ["mode", "the mode’s own default"]
+    ];
+
+    function render() {
+      var r = evaluate();
+      if (!r) {
+        verdictBox.className = "sim-verdict";
+        word.textContent = "—";
+        why.textContent = "Pick an action to see what the engine would answer.";
+        trace.innerHTML = "";
+        return;
+      }
+      verdictBox.className = "sim-verdict " + r.verdict;
+      word.textContent = r.verdict;
+      why.textContent = r.why;
+      trace.innerHTML = STEPS.map(function (s) {
+        var reached = STEPS.findIndex(function (x) { return x[0] === r.step; }) >= STEPS.findIndex(function (x) { return x[0] === s[0]; });
+        var hit = s[0] === r.step;
+        return '<li class="' + (hit ? "hit" : "") + '"><span class="mark">' +
+          (hit ? "→" : reached ? "·" : " ") + "</span><span>" + s[1] +
+          (hit ? " — decided here" : reached ? " — no match" : " — not reached") + "</span></li>";
+      }).join("");
+      if (!M || !M.animate || reduce) return;
+      try {
+        M.animate(word, { opacity: [0, 1], transform: ["translateY(6px)", "translateY(0px)"] }, { duration: 0.3, ease: EASE });
+        M.animate($$("li", trace), { opacity: [0, 1] }, { duration: 0.28, delay: M.stagger ? M.stagger(0.05) : 0 });
+      } catch (e) {}
+    }
+
+    $$(".sim-mode button", root).forEach(function (b) {
+      b.addEventListener("click", function () {
+        state.mode = b.dataset.mode;
+        $$(".sim-mode button", root).forEach(function (o) { o.setAttribute("aria-selected", String(o === b)); });
+        render();
+      });
+    });
+    $$(".sim-actions button", root).forEach(function (b) {
+      b.addEventListener("click", function () {
+        state.action = { tool: b.dataset.tool, arg: b.dataset.arg || "", outside: b.dataset.outside === "1" };
+        $$(".sim-actions button", root).forEach(function (o) { o.setAttribute("aria-pressed", String(o === b)); });
+        render();
+      });
+    });
+    render();
+  }
+
+  // --- copy buttons ---------------------------------------------------------
+  function copyButtons() {
+    $$(".copy").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var target = $(b.dataset.copy);
+        if (!target) return;
+        var text = target.textContent;
+        var done = function () {
+          var was = b.textContent;
+          b.textContent = "Copied";
+          setTimeout(function () { b.textContent = was; }, 1400);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, function () {});
+        }
+      });
+    });
+  }
+
+  ready(function () {
+    var M = window.Motion;
+    var reduce = reduceQuery.matches;
+    // Reveals first and on their own: a throw in any later feature must not
+    // be able to leave the page's content at opacity 0.
+    try { reveals(M, reduce); } catch (e) { $$(".reveal").forEach(function (el) { el.classList.add("in"); }); }
+    try { theme(); } catch (e) {}
+    try { buildStamp(); } catch (e) {}
+    try { rail(M, reduce); } catch (e) {}
+    try { console_(M, reduce); } catch (e) {}
+    try { modes(); } catch (e) {}
+    try { switcher(M, reduce); } catch (e) {}
+    try { simulator(M, reduce); } catch (e) {}
+    try { copyButtons(); } catch (e) {}
   });
 })();
 </script>

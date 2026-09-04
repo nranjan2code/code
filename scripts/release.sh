@@ -164,6 +164,22 @@ fi
 printf '  ✓ %-44s matches source\n' "vak-client-ui/dist-web"
 printf '  ✓ %-44s rebuilt\n' "vak-client-ui/dist"
 
+# The public site at `/` is the third embedded bundle, and the only one
+# that needs no npm — which is why it is checked here rather than inside
+# the frontend block above. Same trap as the other two: site/dist is
+# committed and embedded with include_dir!, so a src/ edit that was never
+# rebuilt ships the previous pages, invisibly.
+( cd "$ROOT_DIR" && python3 crates/vak-server/site/build.py >/dev/null )
+if [[ -n "$(git status --porcelain -- crates/vak-server/site/dist)" ]]; then
+    printf 'error: crates/vak-server/site/dist does not match crates/vak-server/site/src.\n' >&2
+    printf 'Rebuild locally (python3 crates/vak-server/site/build.py), review the diff,\n' >&2
+    printf 'and commit site/dist/ before releasing -- otherwise the compiled server\n' >&2
+    printf 'serves a public site that does not match what this release claims to ship.\n' >&2
+    git status --short -- crates/vak-server/site/dist >&2
+    exit 1
+fi
+printf '  ✓ %-44s matches source\n' "vak-server/site/dist"
+
 if [[ "$SKIP_CHECKS" != true ]]; then
     cargo fmt --all -- --check
     printf '  ✓ %-44s clean\n' "cargo fmt"

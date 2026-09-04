@@ -153,9 +153,7 @@ pub(crate) async fn session_status(
     // what `[server] loopback_auto_login` describes — loopback only, off if
     // an operator says so, and never reachable from a real hostname.
     let cfg = state.core.config();
-    let host = headers
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok());
+    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
     if cfg.server.loopback_auto_login && crate::host_is_loopback(host) {
         let attributes = cookie_attributes(&state, forwarded_proto(&headers));
         return (
@@ -171,27 +169,13 @@ pub(crate) async fn session_status(
 }
 
 // ---- the front door --------------------------------------------------------
+//
+// `/` and its sub-pages moved to `site.rs` when the landing page grew from
+// one hand-written file into a four-page site built from one source
+// (docs/design/48-web-client.md §4.6). Only the build stamp those pages
+// read stayed here.
 
-/// The landing page at `/`.
-///
-/// `/` used to answer a bare **401 with an empty body**: someone opening
-/// `http://box:8901/` learned nothing — not that the product has two
-/// surfaces, not where they are, not even that anything was listening.
-/// This is a signpost to `/app` and `/admin`, and deliberately nothing
-/// more: it is auth-exempt, so it must not disclose workspace names,
-/// session counts, or configuration to an unauthenticated visitor.
-pub(crate) async fn landing() -> Response {
-    (
-        [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-cache"),
-        ],
-        include_str!("../assets/landing.html"),
-    )
-        .into_response()
-}
-
-/// Build identity, for the landing page's footer.
+/// Build identity, for the public site's footer and build readout.
 ///
 /// Version and commit only. `/health` already answers unauthenticated (it
 /// is a liveness probe) but reports provider, model, sandbox and permission

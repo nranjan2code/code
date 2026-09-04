@@ -80,25 +80,38 @@ async fn the_client_shell_loads_without_a_session_but_data_does_not() {
     assert_eq!(sessions.status(), reqwest::StatusCode::UNAUTHORIZED);
 }
 
-/// `/auth/session` must distinguish "no session yet" from "unreachable".
-/// A 401 conflates them, and the client cannot then tell whether to show
-/// the login form or an error.
+/// `/auth/session` must distinguish "no session yet" from "unreachable",
+/// and on loopback it must hand over the session rather than ask for it.
+///
+/// A 401 conflates the first two, and the client cannot then tell whether
+/// to show the login form or an error. The second half is the whole point
+/// of `[server] loopback_auto_login`: anything that can reach loopback can
+/// already read the token off disk, so prompting for it to reach the
+/// machine you are sitting at buys nothing and cost every local user a
+/// token hunt. `host_policy.rs` covers the other side — a request arriving
+/// with a real hostname is refused before this handler ever runs.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn session_status_answers_rather_than_rejecting() {
     let (addr, token) = spawn().await;
     let client = reqwest::Client::new();
 
-    let before: serde_json::Value = client
+    let response = client
         .get(format!("http://{addr}/auth/session"))
         .send()
         .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .json()
-        .await
         .unwrap();
-    assert_eq!(before["authenticated"], false);
+    // Answered, not rejected: the distinction the client needs.
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert!(
+        response
+            .headers()
+            .get(reqwest::header::SET_COOKIE)
+            .is_some(),
+        "the loopback probe must hand over the session, not merely report it"
+    );
+    let before: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(before["authenticated"], true);
+    assert_eq!(before["granted"], "loopback");
 
     let cookie = login(&client, addr, &token).await;
 

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>{{TITLE}}</title>
+<meta name="description" content="{{DESCRIPTION}}" />
+<meta property="og:title" content="{{TITLE}}" />
+<meta property="og:description" content="{{DESCRIPTION}}" />
+<meta property="og:type" content="website" />
+<meta name="color-scheme" content="dark light" />
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f1ea" />
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171714" />
+<link rel="icon" type="image/png" href="/app/vak-icon.png" />
+<script>
+  // Before first paint: adopt the stored theme so the page never flashes the
+  // wrong ground, and mark that script is available so the reveal styles may
+  // hide what they are about to animate. Without this class every section
+  // renders visible — the no-JS default is the finished page, not an empty one.
+  try {
+    var t = localStorage.getItem("vak-theme");
+    if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+  } catch (e) {}
+  document.documentElement.className += " js";
+</script>
+<style>{{STYLES}}</style>
+</head>
+<body class="{{BODY_CLASS}}">
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="rail" id="rail">
+  <div class="wrap">
+    <a class="brand" href="/">
+      <span class="brand-mark"><img src="/app/vak-icon.png" alt="" /></span>
+      <span class="brand-name">vak</span>
+    </a>
+    <nav class="rail-nav" id="railnav" aria-label="Pages">
+      {{NAV}}
+    </nav>
+    <div class="rail-actions">
+      <button class="btn icon" id="theme" type="button" aria-label="Switch theme">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4.2"/>
+          <path d="M12 2.6v2.2M12 19.2v2.2M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M2.6 12h2.2M19.2 12h2.2M4.2 19.8l1.6-1.6M18.2 5.8l1.6-1.6"/>
+        </svg>
+      </button>
+      <a class="btn wide-only" href="/admin">Operations</a>
+      <a class="btn primary" href="/app">Open workspace</a>
+    </div>
+  </div>
+  <div class="rail-progress" id="railprogress" aria-hidden="true"></div>
+</header>
+
+<main id="main">
+{{BODY}}
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <span class="stamp" id="stamp">vak</span>
+    <nav aria-label="Elsewhere">
+      <a href="/app">Workspace</a>
+      <a href="/admin">Operations</a>
+      <a href="/health">Health</a>
+      <a href="/version">Build</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="{{MOTION_SRC}}" defer></script>
+<script>{{SCRIPT}}</script>
+</body>
+</html>

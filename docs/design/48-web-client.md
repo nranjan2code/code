@@ -361,10 +361,16 @@ even more than for a local one.
 `/` used to answer a bare 401 with an empty body: someone opening
 `http://box:8901/` learned nothing — not that the product had two
 surfaces, not where they were, not even that anything was listening. It is
-now a public page (`crates/vak-server/assets/landing.html`), auth-exempt,
-`include_str!`-embedded, with its CSS and JS inline and no bundle: the
-front door must render before, and independently of, anything else being
-up.
+now a four-page public site (`crates/vak-server/site/`), auth-exempt and
+embedded with `include_dir!` like the two UI bundles, with each page's CSS
+and script inline and only one shared, deferred asset: the front door must
+render before, and independently of, anything else being up.
+
+`site/build.py` renders `site/src` into the committed `site/dist`, and
+`site/dist/.src-manifest` is the same format `scripts/ui_bundle_check.rs`
+verifies — so a `src` edit that was never rebuilt fails `cargo build`
+rather than shipping the previous pages. `crates/vak-server/site/README.md`
+is the whole procedure.
 
 What it may say is bounded by being auth-exempt. It shows the product, the
 mechanism, and `/version` — version and commit, which that endpoint

@@ -83,6 +83,7 @@ mod operations;
 mod projection;
 mod rate_limit;
 mod service_control;
+mod site;
 pub mod surfaces;
 mod web;
 
@@ -767,7 +768,6 @@ fn router_with_state(state: AppState) -> Router {
         .route("/workspaces/forget", post(web::forget_workspace))
         .route("/fs/dirs", get(web::list_dirs))
         .route("/pty", get(web::pty_socket))
-        .route("/", get(web::landing))
         .route("/version", get(web::version))
         .route("/backup/export", post(backup_export))
         .route("/backup/import", post(backup_import))
@@ -783,6 +783,7 @@ fn router_with_state(state: AppState) -> Router {
         .merge(admin::routes())
         .merge(admin_ui::routes())
         .merge(client_ui::routes())
+        .merge(site::routes())
         .with_state(state)
 }
 
@@ -2353,10 +2354,14 @@ fn auth_exempt_path(path: &str) -> bool {
         // "server unreachable".
         || path == "/auth/login"
         || path == "/auth/session"
-        // The front door and its build stamp: a signpost to /app and
-        // /admin, carrying nothing an unauthenticated visitor should not
-        // see. A blank 401 here told a visitor nothing at all.
-        || path == "/"
+        // The public site and its build stamp. Every page answers an
+        // unauthenticated stranger by design — a blank 401 at `/` told a
+        // visitor nothing at all, not even that anything was listening —
+        // and `site.rs` owns what those pages may say.
+        || site::ROUTES.iter().any(|(uri, _)| {
+            *uri == path || (*uri != "/" && path.len() == uri.len() + 1 && path.starts_with(uri) && path.ends_with('/'))
+        })
+        || path.starts_with("/site/")
         || path == "/version"
         || path == "/favicon.ico"
         || path == "/favicon.svg"

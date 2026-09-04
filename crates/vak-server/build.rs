@@ -30,6 +30,12 @@ const ADMIN_UI: &str = "../vak-admin-ui";
 /// The workspace client (docs/design/48-web-client.md). This crate embeds
 /// its `dist-web/` build under `/app`; `vak-desktop` ships the `dist/` one.
 const CLIENT_UI: &str = "../vak-client-ui";
+/// The public site at `/` (docs/design/48-web-client.md §4.6). Not an npm
+/// bundle, but exactly the same trap: `site/dist` is committed and embedded
+/// with `include_dir!`, so editing `site/src` and running `cargo build`
+/// without re-running the builder ships the previous pages with nothing
+/// anywhere to say so.
+const SITE: &str = "site";
 
 fn main() {
     for (ui, dist, hint) in [
@@ -43,6 +49,11 @@ fn main() {
             "dist-web",
             "Run `npm run build:web` in crates/vak-client-ui.",
         ),
+        (
+            SITE,
+            "dist",
+            "Run `python3 crates/vak-server/site/build.py` and commit site/dist/.",
+        ),
     ] {
         println!("cargo:rerun-if-changed={ui}/{dist}");
         // The source side must be watched too, or a `src` edit alone never
@@ -51,7 +62,11 @@ fn main() {
         println!("cargo:rerun-if-changed={ui}/index.html");
 
         if let Err(problem) = check_bundle_matches_source(Path::new(ui), dist) {
-            let crate_name = ui.trim_start_matches("../");
+            // `site` lives inside this crate; the two UI trees are siblings.
+            let crate_name = match ui.strip_prefix("../") {
+                Some(sibling) => sibling.to_string(),
+                None => format!("vak-server/{ui}"),
+            };
             // `cargo::error` is the supported way for a build script to fail
             // the build with a readable message; `panic!` would bury it
             // under a backtrace the reader does not need.

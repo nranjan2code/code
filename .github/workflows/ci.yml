@@ -63,12 +63,21 @@ jobs:
       # crates/vak-client-ui/dist/ is deliberately NOT checked: it is
       # gitignored, because only vak-desktop ships it and building the
       # desktop already requires npm.
+      # The public site at `/` is the third embedded bundle and has exactly
+      # the same trap, minus npm: `site/dist` is committed and embedded, so
+      # editing `site/src` without re-running the builder ships the previous
+      # pages. `--check` rebuilds in memory and diffs, so it also catches a
+      # dist/ edited by hand.
+      - name: build site
+        run: python3 crates/vak-server/site/build.py --check
       - name: committed bundles match source
         run: |
-          for bundle in crates/vak-admin-ui/dist crates/vak-client-ui/dist-web; do
+          for bundle in crates/vak-admin-ui/dist crates/vak-client-ui/dist-web crates/vak-server/site/dist; do
             if [ -n "$(git status --porcelain -- "$bundle")" ]; then
               echo "::error::$bundle does not match its source." >&2
-              echo "Rebuild locally (npm run build in that crate) and commit it." >&2
+              echo "Rebuild locally and commit it:" >&2
+              echo "  UI bundles: npm run build in that crate" >&2
+              echo "  site:       python3 crates/vak-server/site/build.py" >&2
               git status --short -- "$bundle" >&2
               exit 1
             fi

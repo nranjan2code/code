@@ -1,0 +1,415 @@
+<!--
+  DIRECTION CONTRACT — surface concept seed bdd3f44f
+
+  THESIS: A runtime you can audit proves it in the first viewport, not in a
+  feature list. This site refuses the screenshot-and-three-cards landing:
+  the hero is the instrument itself, and the visitor works its controls.
+
+  OWN-WORLD: The Auditor's Desk. Warm near-black, one burnt-terracotta
+  accent spent only on primary and active, fixed green/yellow/red status
+  roles, flat surfaces layered by tone, 1px rules, system sans on odd
+  weights against SF Mono readouts.
+
+  STORY: Every effect is gated, every dispatch leaves a receipt, every
+  session replays from an append-only ledger — and the same core drives
+  every surface. The visitor opens the workspace or installs it.
+
+  FIRST VIEWPORT: Tagline left at 60px/620 with the live build readout
+  right; beneath it a full-width session console that plays itself and
+  stops on a real approval gate the visitor must answer — Approve or Deny,
+  each with its honest consequence. Primary action sits under the console.
+
+  FORM: The instrument panel — fifth of seven derived structures, dealt
+  lead, locked by the user with no steer.
+
+  FINISH: unreviewed and undocumented is unfinished; this build ends with
+  the finish review, the verdict, DESIGN.md, and every shipping raster
+  carrying its provenance.
+-->
+<div id="top"></div>
+
+<!-- ================= hero: the instrument ================= -->
+<div class="hero">
+  <div class="wrap">
+    <div class="hero-top">
+      <div>
+        <h1>An agent you can inspect, constrain,<span class="soft"> and extend.</span></h1>
+        <p class="lead">
+          vak is a local-first Rust harness for running serious general-purpose
+          agents without giving up the receipts. Every session replays from an
+          append-only ledger, every effect passes one policy gate before it
+          happens, and every model dispatch leaves a receipt.
+        </p>
+      </div>
+      <aside class="build-card" id="buildcard" hidden aria-label="This build">
+        <p class="head">This build</p>
+        <dl>
+          <dt>version</dt><dd id="bv">—</dd>
+          <dt>commit</dt><dd id="bc">—</dd>
+          <dt>surfaces</dt><dd>/app · /admin</dd>
+          <dt>status</dt><dd><span class="state"><span class="dot done" aria-hidden="true"></span>responding</span></dd>
+        </dl>
+      </aside>
+    </div>
+
+    <!-- The console. Rendered complete; script rewinds and plays it. -->
+    <section class="panel" id="run" aria-label="A vak session, replayed">
+      <div class="panel-head">
+        <span class="sid">session&nbsp; s_01K7Q4WCE2</span>
+        <span class="state" id="runstate">
+          <span class="dot run" aria-hidden="true"></span>
+          <span id="runword">running</span>
+        </span>
+        <span class="mode">workspace-write</span>
+      </div>
+
+      <div class="tape" id="tape">
+        <div class="row step" data-step="1">
+          <span class="t">14:02:11</span><span class="k k-turn">turn</span>
+          <span class="v">“fix the failing parser test”</span><span class="m">from /app</span>
+        </div>
+        <div class="row step" data-step="2">
+          <span class="t"></span><span class="k k-reading">reading</span>
+          <span class="v">engineering · session-scoped · reversible · proof: cited</span>
+          <span class="m">narrows to 6 tools</span>
+        </div>
+        <div class="row step" data-step="3">
+          <span class="t">14:02:11</span><span class="k k-gate">gate</span>
+          <span class="v">read <span class="path">crates/vak-parser/src/lib.rs</span></span>
+          <span class="m"><span class="verdict allow">allow</span></span>
+        </div>
+        <div class="row step" data-step="4">
+          <span class="t">14:02:12</span><span class="k k-tool">tool</span>
+          <span class="v">read <span class="path">crates/vak-parser/src/lib.rs</span></span>
+          <span class="m">2.1 KiB</span>
+        </div>
+        <div class="row step" data-step="5">
+          <span class="t">14:02:19</span><span class="k k-gate">gate</span>
+          <span class="v">edit <span class="path">crates/vak-parser/src/lib.rs</span></span>
+          <span class="m"><span class="verdict allow">allow</span></span>
+        </div>
+        <div class="row step" data-step="6">
+          <span class="t">14:02:19</span><span class="k k-tool">tool</span>
+          <span class="v">edit <span class="path">crates/vak-parser/src/lib.rs</span></span>
+          <span class="m">+6 −2</span>
+        </div>
+        <div class="row step" data-step="7">
+          <span class="t">14:02:20</span><span class="k k-gate">gate</span>
+          <span class="v">bash <span class="path">cargo test -p vak-parser</span></span>
+          <span class="m"><span class="verdict ask" id="gateverdict">ask</span></span>
+        </div>
+
+        <div class="gate step" data-step="8" id="gatecard">
+          <p class="gate-title">This run has stopped and is waiting on you.</p>
+          <div class="gate-facts">
+            <span><b>bash</b> cargo test -p vak-parser</span>
+            <span><b>mode</b> workspace-write</span>
+            <span><b>network</b> none</span>
+            <span><b>reversible</b> yes</span>
+          </div>
+          <div class="gate-actions" id="gateactions">
+            <button class="btn primary" type="button" id="approve">Approve</button>
+            <button class="btn danger" type="button" id="deny">Deny</button>
+            <span class="gate-hint">Nothing has run yet.</span>
+          </div>
+        </div>
+
+        <div class="outcome" id="outcome">
+          <div id="approved">
+            <div class="row">
+              <span class="t">14:02:41</span><span class="k k-tool">tool</span>
+              <span class="v">bash <span class="path">cargo test -p vak-parser</span></span>
+              <span class="m"><span class="verdict allow">27 passed</span></span>
+            </div>
+            <div class="row">
+              <span class="t">14:02:42</span><span class="k k-receipt">receipt</span>
+              <span class="v">anthropic · purpose: turn · settled</span>
+              <span class="m">6 118 in / 412 out</span>
+            </div>
+            <div class="row">
+              <span class="t">14:02:42</span><span class="k k-ledger">ledger</span>
+              <span class="v">12 entries appended · nothing rewritten</span>
+              <span class="m">replayable</span>
+            </div>
+          </div>
+          <div id="denied">
+            <div class="row">
+              <span class="t">14:02:31</span><span class="k k-gate">gate</span>
+              <span class="v">bash <span class="path">cargo test -p vak-parser</span></span>
+              <span class="m"><span class="verdict deny">denied by you</span></span>
+            </div>
+            <div class="row">
+              <span class="t">14:02:31</span><span class="k k-run">run</span>
+              <span class="v">stopped · the edit it had already made is kept</span>
+              <span class="m">partial work preserved</span>
+            </div>
+            <div class="row">
+              <span class="t">14:02:31</span><span class="k k-ledger">ledger</span>
+              <span class="v">10 entries appended · the denial is one of them</span>
+              <span class="m">replayable</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-foot">
+        <span id="footnote">A real session, replayed. The gate is yours to answer.</span>
+        <span class="grow"></span>
+        <button class="btn sm" type="button" id="replay">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 2.6-6.4"/><path d="M3 4.5V10h5.5"/>
+          </svg>
+          Replay
+        </button>
+      </div>
+    </section>
+
+    <div class="hero-actions">
+      <a class="btn primary lg" href="/app">Open the workspace</a>
+      <a class="btn lg" href="/admin">Operations console</a>
+    </div>
+    <p class="hero-note">
+      Both open directly on this machine. Reaching them from another device is
+      an explicit opt-in — see <code>Start</code>, below.
+    </p>
+  </div>
+</div>
+
+<!-- ================= instruments ================= -->
+<section aria-labelledby="reads">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="reads" class="reveal">Four readings, on every surface</h2>
+      <p class="section-lead reveal" style="--d:60ms">
+        The console above is not a viewer bolted onto an agent. It is the record
+        the runtime keeps anyway, rendered. These are the four things it always
+        has to say, whether the run came from a terminal, a browser, or a chat
+        message.
+      </p>
+    </div>
+
+    <div class="instruments">
+      <article class="instrument reveal">
+        <div class="readout">
+          <span class="dim">sessions/…/ledger.jsonl</span><hr />
+          <span class="key">0009</span> {"kind":"tool_call","name":<span class="hit">"edit"</span>,…}<br />
+          <span class="key">0010</span> {"kind":"gate","verdict":<span class="warn">"ask"</span>,…}<br />
+          <span class="key">0011</span> {"kind":"gate","verdict":<span class="ok">"allow"</span>,"by":"user"}<br />
+          <span class="key">0012</span> {"kind":"receipt","settlement":<span class="ok">"settled"</span>,…}<hr />
+          <span class="strike">rewrite entry 0010</span> &nbsp;<span class="dim">— there is no such verb</span>
+        </div>
+        <div>
+          <h3>The ledger is append-only</h3>
+          <p>
+            Every session is a JSONL tree on disk, written as it happens. Anything
+            the model could see can be reconstructed from it, in order.
+          </p>
+          <p>
+            Branching and compaction <em>append</em> — they create entries rather
+            than editing them, so history has no writable past. A record you can
+            quietly correct is not evidence.
+          </p>
+          <p class="cmd">~/…/sessions/&lt;id&gt;/ledger.jsonl</p>
+        </div>
+      </article>
+
+      <article class="instrument reveal">
+        <div class="readout">
+          <span class="dim">effective policy</span><hr />
+          <span class="no">deny</span>&nbsp;&nbsp; bash(<span class="hit">rm -rf *</span>)<br />
+          <span class="no">deny</span>&nbsp;&nbsp; write(<span class="hit">**/.env</span>)<br />
+          <span class="warn">ask</span>&nbsp;&nbsp;&nbsp; bash(<span class="hit">*</span>)<br />
+          <span class="ok">allow</span>&nbsp; read(<span class="hit">&lt;workspace&gt;/**</span>)<hr />
+          <span class="dim">deny wins · then ask · then allow · then the mode</span>
+        </div>
+        <div>
+          <h3>Permission comes before dispatch</h3>
+          <p>
+            Agent turns, tools, subagents, flows, plans, evals, server runs and
+            desktop runs all pass through the same policy engine before anything
+            happens. There is no second path that skips it.
+          </p>
+          <p>
+            Rules compose as <b>allow</b>, <b>ask</b> and <b>deny</b>, and deny
+            takes precedence. Changing the policy cancels work already in flight
+            and rejects approvals granted under the old one.
+          </p>
+          <p class="cmd"><a href="/security">Try the gate yourself →</a></p>
+        </div>
+      </article>
+
+      <article class="instrument reveal">
+        <div class="readout">
+          <div class="kv">
+            <span class="key">purpose</span><span>turn</span>
+            <span class="key">provider</span><span>anthropic</span>
+            <span class="key">model</span><span class="hit">claude-…</span>
+            <span class="key">failure domain</span><span>provider</span>
+            <span class="key">settlement</span><span class="ok">settled</span>
+            <span class="key">usage</span><span>6 118 in / 412 out</span>
+          </div>
+        </div>
+        <div>
+          <h3>Every dispatch leaves a receipt</h3>
+          <p>
+            A receipt records what a call to a model was <em>for</em>, which model
+            answered, where a failure would belong, whether the exchange settled,
+            and what it cost.
+          </p>
+          <p>
+            It is written for the dispatch that failed as readily as the one that
+            worked — typed errors, bounded retries and preserved partial output
+            are part of the contract, not an edge case to hide.
+          </p>
+          <p class="cmd">purpose · model · failure domain · settlement · usage</p>
+        </div>
+      </article>
+
+      <article class="instrument reveal">
+        <div class="readout">
+          <div class="axes">
+            <div class="axis"><span class="name">kind</span><span class="track"><i class="seg fill"></i><i class="seg fill"></i><i class="seg"></i><i class="seg"></i></span><span class="val">engineering</span></div>
+            <div class="axis"><span class="name">horizon</span><span class="track"><i class="seg fill"></i><i class="seg"></i><i class="seg"></i><i class="seg"></i></span><span class="val">session</span></div>
+            <div class="axis"><span class="name">blast radius</span><span class="track"><i class="seg fill"></i><i class="seg fill"></i><i class="seg"></i><i class="seg"></i></span><span class="val">reversible</span></div>
+            <div class="axis"><span class="name">proof owed</span><span class="track"><i class="seg fill"></i><i class="seg fill"></i><i class="seg"></i><i class="seg"></i></span><span class="val">cited</span></div>
+            <div class="axis"><span class="name">clarity</span><span class="track"><i class="seg fill"></i><i class="seg fill"></i><i class="seg fill"></i><i class="seg"></i></span><span class="val">clear</span></div>
+            <div class="axis"><span class="name">modality</span><span class="track"><i class="seg fill"></i><i class="seg"></i><i class="seg"></i><i class="seg"></i></span><span class="val">text</span></div>
+            <div class="axis"><span class="name">attendance</span><span class="track"><i class="seg fill"></i><i class="seg fill"></i><i class="seg fill"></i><i class="seg fill"></i></span><span class="val">watched</span></div>
+          </div>
+        </div>
+        <div>
+          <h3>The run knows what it was asked</h3>
+          <p>
+            Every turn is read on seven behavioural axes — what kind of work, how
+            long it lives, what it can break, what standard of proof it owes, how
+            clear it is, what it needs, and whether anyone is watching.
+          </p>
+          <p>
+            That reading only ever <em>narrows</em> the run: fewer tools when fewer
+            will do, a higher approval floor for anything irreversible. A misreading
+            can make vak more cautious; it can never grant a tool or skip a gate.
+          </p>
+          <p class="cmd">vak intent explain "deploy the billing service"</p>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ================= surfaces ================= -->
+<section id="surfaces" aria-labelledby="surfaces-h">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="surfaces-h" class="reveal">One core, many surfaces</h2>
+      <p class="section-lead reveal" style="--d:60ms">
+        The surface you happen to be using is a way in, not a different product.
+        Each speaks the same session contract to the same core, so behaviour and
+        auditability do not change when you switch.
+      </p>
+    </div>
+
+    <div class="bus reveal" style="--d:120ms">
+      <ul class="taps">
+        <li class="tap"><span class="tap-name">CLI</span><span class="tap-desc"><code>exec</code>, <code>plan</code>, goal mode — for scripts and CI.</span></li>
+        <li class="tap"><span class="tap-name">Desktop</span><span class="tap-desc">Tauri 2 app: worktrees, diffs, editor, terminal.</span></li>
+        <li class="tap"><span class="tap-name">Browser</span><span class="tap-desc">The same client at <code>/app</code>, against a headless box.</span></li>
+        <li class="tap"><span class="tap-name">Server</span><span class="tap-desc">HTTP + SSE for clients of your own.</span></li>
+        <li class="tap"><span class="tap-name">Gateways</span><span class="tap-desc">Telegram, Discord, Slack, outbound webhooks.</span></li>
+      </ul>
+      <div class="bus-line" aria-hidden="true"></div>
+      <div class="bus-drop" aria-hidden="true"></div>
+      <div class="core">
+        <p class="core-title">One core</p>
+        <div class="core-parts">
+          <span>append-only ledger</span>
+          <span>policy gate</span>
+          <span>receipts</span>
+          <span>intent reading</span>
+          <span>commitments</span>
+        </div>
+      </div>
+      <p class="bus-note">
+        Where a host genuinely cannot do something — a native file dialog, a real
+        shell — the capability is absent rather than broken.
+        <a href="/surfaces">See one session in three of them →</a>
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= start ================= -->
+<section id="start" aria-labelledby="start-h">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="start-h" class="reveal">Start in three commands</h2>
+      <p class="section-lead reveal" style="--d:60ms">
+        macOS and Linux. No toolchain to install, nothing to compile, and setup
+        runs once — afterwards it shows a review rather than a wizard.
+      </p>
+    </div>
+
+    <ol class="steps reveal" style="--d:120ms">
+      <li class="step-row">
+        <span class="step-n">1</span>
+        <span class="step-what"><b>Install</b><span>Download and place the release. Re-running it is an update.</span></span>
+        <code class="step-cmd" id="cmd1">curl -fsSL https://get.vak.dev/install.sh | sh</code>
+        <button class="btn sm copy" type="button" data-copy="cmd1">Copy</button>
+      </li>
+      <li class="step-row">
+        <span class="step-n">2</span>
+        <span class="step-what"><b>Set up</b><span>Pick a workspace, connect a provider, verify a model, choose a posture.</span></span>
+        <code class="step-cmd" id="cmd2">vak setup</code>
+        <button class="btn sm copy" type="button" data-copy="cmd2">Copy</button>
+      </li>
+      <li class="step-row">
+        <span class="step-n">3</span>
+        <span class="step-what"><b>Work</b><span>Or open the workspace below and type it there instead.</span></span>
+        <code class="step-cmd" id="cmd3">vak exec "fix the failing test"</code>
+        <button class="btn sm copy" type="button" data-copy="cmd3">Copy</button>
+      </li>
+    </ol>
+
+    <nav class="doors" aria-label="Surfaces on this server">
+      <a class="door" href="/app">
+        <span class="door-top">
+          <span class="door-icon" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 15a3 3 0 0 1-3 3H9l-5 3v-6a3 3 0 0 1-1-2V7a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3Z"/>
+            </svg>
+          </span>
+          <span class="door-name">Workspace</span>
+        </span>
+        <span class="door-desc">Run tasks, review diffs, answer approvals, steer a run.</span>
+        <span class="door-go">/app</span>
+      </a>
+      <a class="door" href="/admin">
+        <span class="door-top">
+          <span class="door-icon" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6Z"/>
+            </svg>
+          </span>
+          <span class="door-name">Operations</span>
+        </span>
+        <span class="door-desc">Sessions, receipts, commitments, services, incidents.</span>
+        <span class="door-go">/admin</span>
+      </a>
+    </nav>
+
+    <p class="start-note">
+      On this machine both surfaces open without a prompt. The server binds
+      loopback by default; reaching it by a real hostname is an explicit opt-in
+      (<code>[server] trusted_hosts</code>) that it refuses to start without, and
+      from there a browser signs in once with the access token the server printed.
+      <a href="/install">The full install, service and update path →</a>
+    </p>
+
+    <div class="next">
+      <span class="lbl">Next</span>
+      <a href="/surfaces">One session, three surfaces</a>
+    </div>
+  </div>
+</section>

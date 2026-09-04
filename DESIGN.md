@@ -203,7 +203,7 @@ once needs a first viewport that reads across a room.
 Everything else is unchanged: the same token set, the same odd weights, the
 same one-accent rule, the same flat-by-default surfaces. Only the sizes
 scale, and only on this one file. A design-system scan of
-`crates/vak-server/assets/landing.html` therefore reports type-ramp drift
+`crates/vak-server/site/src/styles.css` therefore reports type-ramp drift
 by construction; that is this paragraph, not a defect.
 
 ### Named Rules

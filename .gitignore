@@ -14,6 +14,11 @@ dist/
 # node. The Tauri build (crates/vak-client-ui/dist/) stays ignored: only
 # vak-desktop ships it, and building the desktop already needs npm.
 !crates/vak-client-ui/dist-web/
+# The public site at `/`: built by site/build.py (no node, no npm) and
+# embedded into vak-server with include_dir!, so it is committed for the
+# same reason as the two above — a clone must build the server without
+# Python either.
+!crates/vak-server/site/dist/
 node_modules/
 __pycache__/
 # tools belong in the session cwd

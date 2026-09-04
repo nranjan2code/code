@@ -1,0 +1,259 @@
+<div class="page-head">
+  <div class="wrap">
+    <h1>Nothing acts without permission</h1>
+    <p class="lead">
+      Not "the agent is careful". Every effect — a tool, a subagent, a flow, a
+      plan, an eval, a server run, a desktop run — is evaluated by one policy
+      engine <em>before</em> it happens, and there is no second path that skips
+      it. Below is that engine's actual order of decision, and you can run it.
+    </p>
+    <nav class="page-toc" aria-label="On this page">
+      <a href="#gate">Run the gate</a>
+      <a href="#modes">The three modes</a>
+      <a href="#containment">What contains a tool</a>
+      <a href="#secrets">Secrets and trust</a>
+      <a href="#network">Reaching it over a network</a>
+      <a href="#failure">When something fails</a>
+    </nav>
+  </div>
+</div>
+
+<section id="gate" aria-labelledby="gate-h">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="gate-h" class="reveal">Run the gate</h2>
+      <p class="section-lead reveal" style="--d:60ms">
+        Pick a permission mode and an action. The verdict below is produced by
+        the same precedence the engine uses: explicit deny rules, then explicit
+        ask rules, then explicit allow rules, and only then the mode's own
+        default.
+      </p>
+    </div>
+
+    <div class="sim reveal" id="sim" style="--d:100ms">
+      <div>
+        <div class="sim-field">
+          <span class="label">Permission mode</span>
+          <div class="modes sim-mode" role="tablist" aria-label="Permission mode">
+            <button role="tab" type="button" data-mode="ro" aria-selected="false">read-only</button>
+            <button role="tab" type="button" data-mode="ww" aria-selected="true">workspace-write</button>
+            <button role="tab" type="button" data-mode="fa" aria-selected="false">full-access</button>
+          </div>
+        </div>
+
+        <div class="sim-field" style="margin-top:22px">
+          <span class="label">Action the agent wants to take</span>
+          <div class="sim-actions">
+            <button type="button" aria-pressed="false" data-tool="read" data-arg="src/lib.rs">read &nbsp;src/lib.rs</button>
+            <button type="button" aria-pressed="false" data-tool="read" data-arg="/etc/passwd" data-outside="1">read &nbsp;/etc/passwd</button>
+            <button type="button" aria-pressed="false" data-tool="write" data-arg="src/lib.rs">write &nbsp;src/lib.rs</button>
+            <button type="button" aria-pressed="false" data-tool="write" data-arg="~/.ssh/config" data-outside="1">write &nbsp;~/.ssh/config</button>
+            <button type="button" aria-pressed="false" data-tool="write" data-arg=".env">write &nbsp;.env</button>
+            <button type="button" aria-pressed="false" data-tool="bash" data-arg="cargo test">bash &nbsp;cargo test</button>
+            <button type="button" aria-pressed="false" data-tool="bash" data-arg="rm -rf /">bash &nbsp;rm -rf /</button>
+            <button type="button" aria-pressed="false" data-tool="fetch" data-arg="https://example.com" data-outside="1">fetch &nbsp;https://example.com</button>
+          </div>
+        </div>
+
+        <div class="readout" style="margin-top:22px">
+          <span class="dim">the two rules in force for this demonstration</span><hr />
+          <span class="no">deny</span>&nbsp;&nbsp; bash(<span class="hit">rm -rf *</span>)<br />
+          <span class="no">deny</span>&nbsp;&nbsp; write(<span class="hit">**/.env</span>)
+        </div>
+      </div>
+
+      <div class="sim-verdict" id="sim-verdict" aria-live="polite">
+        <span class="v-word" id="sim-word">—</span>
+        <p class="v-why" id="sim-why">Pick an action to see what the engine would answer.</p>
+        <ol class="sim-trace" id="sim-trace"></ol>
+      </div>
+    </div>
+
+    <p class="switch-note">
+      Deny wins outright: a matching deny rule settles the question before the
+      mode is consulted at all, which is why a mode can never be widened into
+      one. An <b>ask</b> is not a warning — the run stops, and the work it has
+      already done is kept while it waits.
+    </p>
+  </div>
+</section>
+
+<section id="modes" aria-labelledby="modes-h">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="modes-h" class="reveal">The three modes</h2>
+      <p class="section-lead reveal" style="--d:60ms">
+        A mode is a default, not a cage: your own allow, ask and deny rules
+        compose on top of it, and deny always wins.
+      </p>
+    </div>
+    <div class="facts reveal" style="--d:100ms">
+      <div class="facts-row">
+        <span class="k"><code>read-only</code></span>
+        <span class="v">
+          Reads inside the workspace are allowed; reads outside it are denied.
+          Anything that reaches the network asks. Writes, shell commands and
+          everything else are <b>denied outright</b> — not queued for approval.
+          Use it on a repository you have not decided to trust yet.
+        </span>
+      </div>
+      <div class="facts-row">
+        <span class="k"><code>workspace-write</code></span>
+        <span class="v">
+          The default. Reads and writes inside the canonical workspace path go
+          through. A write outside the boundary asks; a shell command asks;
+          anything else asks. A symlink pointing out of the workspace does not
+          count as inside it.
+        </span>
+      </div>
+      <div class="facts-row">
+        <span class="k"><code>full-access</code></span>
+        <span class="v">
+          No implicit boundary — which is why it cannot be reached by accident
+          and has to be named explicitly. Your rules still sit on top of it, so
+          this is the mode's default and not the last word.
+        </span>
+      </div>
+      <div class="facts-row">
+        <span class="k">Changing the mode</span>
+        <span class="v">
+          Tightening the policy <b>cancels work already in flight</b> and rejects
+          approvals granted under the old policy, rather than letting them land.
+        </span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="containment" aria-labelledby="containment-h">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="containment-h" class="reveal">What contains a tool</h2>
+      <p class="section-lead reveal" style="--d:60ms">
+        The gate decides whether an effect may happen. These decide how much a
+        tool can reach even once it has been allowed.
+      </p>
+    </div>
+    <div class="guards reveal" style="--d:100ms">
+      <div class="guard">
+        <b>Sandboxed at the operating system</b>
+        <span>Seatbelt on macOS, Landlock on Linux, and an opt-in Docker backend for Bash with no network at all.</span>
+      </div>
+      <div class="guard">
+        <b>Restricted tools run across a broker boundary</b>
+        <span>Built-in tool workers are disposable and MCP servers are sandboxed separately again, so a tool cannot reach the process that called it.</span>
+      </div>
+      <div class="guard">
+        <b>The workspace is a real boundary</b>
+        <span>Canonical path confinement with symlink-escape protection, so “inside the project” means inside the project.</span>
+      </div>
+      <div class="guard">
+        <b>Extensions stay extensions</b>
+        <span>Skills, hooks, MCP servers, custom commands and flows add capability without widening the kernel, and every one of them passes the same gate.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="secrets" aria-labelledby="secrets-h">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="secrets-h" class="reveal">Secrets, and trusting a workspace</h2>
+      <p class="section-lead reveal" style="--d:60ms">
+        Opening a folder is not the same as trusting what is in it.
+      </p>
+    </div>
+    <div class="prose reveal" style="--d:100ms">
+      <p>
+        Configuration resolves from broadest to narrowest — shared defaults, then
+        per-project overrides, then per-session pins — and secrets stay out of
+        TOML entirely. Real environment variables take precedence over any
+        <code>.env</code>.
+      </p>
+      <p>
+        A project's own <code>.vak/config.toml</code>, its <code>.env</code>, and
+        its privileged settings load <strong>only after you have trusted that
+        workspace</strong>. Until then a cloned repository cannot raise its own
+        permission mode, register its own hooks, or point the agent at its own
+        model endpoint by shipping a config file.
+      </p>
+      <p>
+        Secrets are never forwarded as ambient Bash or MCP subprocess state, so a
+        tool that runs does not automatically inherit your provider keys.
+      </p>
+    </div>
+    <div class="facts reveal" style="--d:140ms">
+      <div class="facts-row"><span class="k">Shared configuration</span><span class="v"><code>~/vak-home/.vak/config.toml</code></span></div>
+      <div class="facts-row"><span class="k">Shared secrets</span><span class="v"><code>~/vak-home/.env</code></span></div>
+      <div class="facts-row"><span class="k">Project overrides</span><span class="v"><code>&lt;workspace&gt;/.vak/config.toml</code> — after trust</span></div>
+      <div class="facts-row"><span class="k">Project secrets</span><span class="v"><code>&lt;workspace&gt;/.env</code> — after trust</span></div>
+      <div class="facts-row"><span class="k">Sessions and ledgers</span><span class="v">the platform data home</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="network" aria-labelledby="network-h">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="network-h" class="reveal">Reaching it over a network</h2>
+      <p class="section-lead reveal" style="--d:60ms">
+        Binding a shell-capable agent to an interface is never implicit.
+      </p>
+    </div>
+    <div class="prose reveal" style="--d:100ms">
+      <p>
+        The server binds loopback by default. Binding anything else requires
+        <code>[server] trusted_hosts</code> to be set, and the server
+        <em>refuses to start</em> without it rather than coming up quietly on
+        <code>0.0.0.0</code>.
+      </p>
+      <p>
+        Browsers sign in once, with the token the server printed, and receive an
+        <code>HttpOnly</code>, <code>SameSite=Strict</code> cookie — the only
+        channel that covers both <code>fetch</code> and server-sent events, since
+        <code>EventSource</code> cannot set headers. <code>Secure</code> is set
+        whenever the deployment is actually https, and deliberately not before:
+        a browser silently discards a <code>Secure</code> cookie over plain
+        http, which would make every login appear to succeed and never persist.
+      </p>
+      <p>
+        On loopback there is no prompt at all. Anything that can reach loopback
+        can already read the token off disk, so asking you to go and find one to
+        reach the machine you are sitting at buys nothing. A request arriving
+        with a hostname that is not in <code>trusted_hosts</code> is rejected
+        before it is routed.
+      </p>
+      <p>
+        The browser terminal is off by default over a network, and can be
+        required to be loopback-only. A shell reached from a tab is a different
+        question from a shell on your own desk, and it is answered separately.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section id="failure" aria-labelledby="failure-h">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="failure-h" class="reveal">Failure is part of the contract</h2>
+      <p class="section-lead reveal" style="--d:60ms">
+        The interesting question about a safety system is what it does on a bad
+        day, not a good one.
+      </p>
+    </div>
+    <div class="prose reveal" style="--d:100ms">
+      <ul>
+        <li>Typed errors, bounded retries, watchdogs, circuit breakers and frozen route ladders, rather than an unbounded loop that eventually gives up.</li>
+        <li>Cancelling a run preserves the partial work it had already done, and says so.</li>
+        <li>Unattended work that needs a person <em>suspends and queues the question</em> instead of failing closed and losing the thread.</li>
+        <li>A commitment closes <code>fulfilled</code> only when the runtime has checked its criteria against the world; the model may propose criteria, and may never mark one passed.</li>
+        <li>Every commitment closes with an explicit verdict and its evidence — including an honest <code>unknown</code> when the runtime lost track.</li>
+      </ul>
+    </div>
+
+    <div class="next">
+      <span class="lbl">Next</span>
+      <a href="/install">Install it and run it</a>
+    </div>
+  </div>
+</section>
