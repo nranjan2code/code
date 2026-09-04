@@ -343,6 +343,17 @@ pub struct CapabilityDiagnostic {
     pub source: Option<String>,
     /// What the operator can do to fix it.
     pub remedy: String,
+    /// Whether this state was *chosen* rather than broken.
+    ///
+    /// A hook with `enabled = false`, a skill excluded by channel policy, and
+    /// a capability `reach` blocks are all "configured but not usable", and
+    /// none of them is a fault — the operator asked for exactly that. A
+    /// server that will not connect or a skill that will not parse is a
+    /// different thing. Without the split, `doctor` shows a failed check for
+    /// a deliberate configuration choice, and a check that cries wolf is one
+    /// people learn to scroll past — which is the precise failure this
+    /// diagnostic exists to prevent.
+    pub deliberate: bool,
 }
 
 impl Core {
@@ -2867,6 +2878,8 @@ impl Core {
                 remedy: "fix the SKILL.md frontmatter (name must be lowercase kebab-case, \
                          description must be present and non-empty)"
                     .into(),
+                // A skill that will not parse is broken, not chosen.
+                deliberate: false,
             });
         }
 
@@ -2886,6 +2899,11 @@ impl Core {
                     reason: standing.reason.clone(),
                     source: None,
                     remedy: standing.remedy.clone(),
+                    // Reach follows from permission mode, approval posture
+                    // and channel policy — all chosen. The dedicated
+                    // `capability reach` check already reports these, so
+                    // this also stops `capability health` double-reporting.
+                    deliberate: true,
                 });
             }
         }
@@ -2905,6 +2923,8 @@ impl Core {
                         remedy: "adjust the channel's skills_allow/skills_deny in the \
                                  gateway allowlist"
                             .into(),
+                        // The channel allowlist is a policy the operator set.
+                        deliberate: true,
                     });
                 }
             }
@@ -2922,6 +2942,8 @@ impl Core {
                 reason: "hook is disabled (enabled = false)".into(),
                 source: None,
                 remedy: "set enabled = true in .vak/config.toml or the admin console".into(),
+                // `enabled = false` is the operator saying so.
+                deliberate: true,
             });
         }
 
@@ -2943,6 +2965,8 @@ impl Core {
                 remedy: format!(
                     "check the `{server}` entry under [mcp.servers] — command, args, and any required env"
                 ),
+                // A server that will not answer is broken, not chosen.
+                deliberate: false,
             });
         }
 

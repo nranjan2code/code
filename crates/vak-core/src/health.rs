@@ -351,22 +351,33 @@ fn capability_reach_check(core: &Core) -> HealthCheck {
 /// operator decisions — start a server, correct a command, grant an env var.
 fn capability_health_check(core: &Core) -> HealthCheck {
     let diagnostics = core.capability_diagnostics();
+    // Only genuine breakage fails the check. A hook the operator disabled and
+    // a skill a channel policy excludes are deliberate, and reporting them as
+    // failures trains people to scroll past this check — which would cost far
+    // more than the noise saves, since a silently unreachable MCP server is
+    // exactly what this exists to surface. Deliberate states are still
+    // counted, so they are visible without being alarming.
+    let (broken, chosen): (Vec<_>, Vec<_>) = diagnostics.iter().partition(|d| !d.deliberate);
+    let describe = |d: &&crate::CapabilityDiagnostic| {
+        let mut line = format!("{} `{}`: {}", d.kind, d.name, d.reason);
+        if !d.remedy.is_empty() {
+            line.push_str(&format!("; fix: {}", d.remedy));
+        }
+        line
+    };
     HealthCheck {
         label: "capability health".into(),
-        detail: if diagnostics.is_empty() {
-            Ok("all configured capabilities usable".into())
+        detail: if broken.is_empty() {
+            Ok(if chosen.is_empty() {
+                "all configured capabilities usable".into()
+            } else {
+                format!(
+                    "all configured capabilities usable ({} deliberately off)",
+                    chosen.len()
+                )
+            })
         } else {
-            Err(diagnostics
-                .iter()
-                .map(|d| {
-                    let mut line = format!("{} `{}`: {}", d.kind, d.name, d.reason);
-                    if !d.remedy.is_empty() {
-                        line.push_str(&format!("; fix: {}", d.remedy));
-                    }
-                    line
-                })
-                .collect::<Vec<_>>()
-                .join("; "))
+            Err(broken.iter().map(describe).collect::<Vec<_>>().join("; "))
         },
     }
 }
