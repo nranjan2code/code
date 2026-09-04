@@ -163,8 +163,9 @@ assuming a document describes shipped behaviour rather than a proposal.
     resolution as a local `vak` run in that workspace — pooling never
     grants a channel more access than approval already gated it into.
 16. **Every execution path authorizes before dispatch.** Agent turns, task
-    children, static flows, dynamic plans, evals, server runs, and desktop runs
-    must use the same permission decision and brokered registry. A direct flow
+    children, static flows, dynamic plans, evals, server runs, desktop runs,
+    and browser-driven runs must use the same permission decision and
+    brokered registry. A direct flow
     node or convenience SDK path may not call an effectful tool before
     evaluating `PermissionEngine` and resolving `Ask` through its approver.
 17. **Configuration has one contract across every surface.** Persistent
@@ -412,6 +413,24 @@ assuming a document describes shipped behaviour rather than a proposal.
     a lie is not an audit trail. Failure verdicts are deliberately
     unconstrained, so the record can always tell the truth about work that
     went wrong.
+33. **Network exposure is explicit, never inferred**
+    (docs/design/48-web-client.md). The server binds loopback and pins the
+    `Host` header to loopback names; reaching it by a real hostname requires
+    that name in `[server] trusted_hosts`, and a non-loopback `bind` with an
+    empty list REFUSES TO START rather than booting and then rejecting every
+    request with a 421 nobody can diagnose. `trusted_hosts` takes exact
+    names — a wildcard there is a DNS-rebinding hole with extra steps, and
+    entries containing one are dropped with a warning. `[server]` is
+    privileged in full: an untrusted project cannot choose an interface,
+    relax the host check, or open a shell. A cookie alone never authorizes a
+    mutation — a state-changing request carrying one must also carry an
+    `Origin` we recognise, while a request with no `Origin` at all (curl, the
+    CLI, a bridge) must carry a real header token. `?token=` is
+    loopback-only: it exists for the one client that cannot set a header on
+    an in-process connection, and on anything reachable by a hostname it is
+    just a credential in an access log. The web terminal is off by default
+    and loopback-pinned when on, because every other effect the client can
+    reach is permission-gated and a shell is not.
 
 ## Code rules
 
@@ -438,6 +457,12 @@ assuming a document describes shipped behaviour rather than a proposal.
 - Config keys unknown to this version are ignored with a warning, never fatal.
 
 ## Layout
+
+Every path in the left column is verified by
+`python3 scripts/check_doc_paths.py`, so a crate rename that misses this map
+fails CI rather than leaving the contract doc quietly wrong. Keep the column
+format: the checker parses it (path, spaces, prose), which is why these are
+not backticked.
 
 ```
 crates/vak-llm       unified provider API (anthropic / openai-responses /
@@ -530,7 +555,11 @@ crates/vak-config    layered TOML config + atomic persisted workspace
                      logs_dir) + [finops]
                      caps/pricing + [goal] policy + [route] ladder
                      preferences (docs/design/42-managed-work-contracts.mdPhases D+H+R) +
-                     [automation]/[update]/[tools] (docs/design/29)
+                     [automation]/[update]/[tools] (docs/design/29) +
+                     [server] bind/trusted_hosts/public_url/
+                     session_ttl_hours/workspace_roots/[server.web] --
+                     network exposure, PRIVILEGED in full
+                     (docs/design/48-web-client.md)
 crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      intent.rs (the seam: gathers facts, runs the cascade,
                      projects the engagement onto runtime knobs -- every
@@ -581,14 +610,46 @@ crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      override riding the same inheritance chain and
                      `inherit_bot_policy` switch as route/permission_mode,
                      POST /voice/speak (docs/design/38-voice-personality.md) +
-                     admin console: global event hub + SSE, cookie login
-                     (HttpOnly SameSite=Strict) alongside bearer auth,
+                     admin console: global event hub + SSE,
                      /admin/api/* data plane, embedded SolidJS SPA at
                      /admin (docs/design/33-admin-console.md), including
                      memory CRUD/cleanup, live parent-scoped subagent
                      controls, and the evidence-backed Operations Center
                      (`/ops/center`, durable incidents, action receipts, and
-                     bookmarkable resource drill-downs)
+                     bookmarkable resource drill-downs) +
+                     the BROWSER SURFACE (web.rs, docs/design/48-web-client.md):
+                     ONE login for every browser client
+                     (/auth/login|logout|session, HttpOnly SameSite=Strict,
+                     Secure only behind real TLS -- a Secure cookie over
+                     plain http is silently discarded and the session then
+                     never persists); /host + /host/events standing in for
+                     the desktop shell's backend_info; /workspaces{,/open}
+                     over CorePool; /fs/dirs (folder names only, rooted at
+                     [server] workspace_roots); WS /pty, off by default and
+                     loopback-pinned when on. Host-header pinning is
+                     `host_is_trusted` (loopback + exact [server]
+                     trusted_hosts; wildcards refused), cross-origin
+                     mutations are rejected before routing, and ?token= is
+                     loopback-only. events.rs adds EventBus: every session
+                     event carries a seq, the last 1024 are retained, and a
+                     Last-Event-ID reconnect gets exactly the gap -- or an
+                     explicit `resync` frame when the gap is wider than the
+                     ring. embedded_ui.rs holds the ONE asset-serving path
+                     shared by /admin and /app (recursive registration; the
+                     non-recursive version shipped broken three times)
+crates/vak-client-ui SolidJS + Vite WORKSPACE client, shared by the Tauri
+                     shell and the browser (docs/design/48-web-client.md).
+                     src/host/ is the seam: a `Host` port with a Tauri and a
+                     web implementation, selected by a BUILD-TIME alias
+                     (#host-impl, vite.config.ts) so the web bundle never
+                     carries the Tauri IPC layer. No component imports
+                     @tauri-apps or sniffs for window.__TAURI__; they ask
+                     host.can(...) and render DIFFERENTLY, not brokenly -- an
+                     absent capability is a design decision, not an error
+                     state. Builds twice from one source: dist/ (base "./",
+                     shipped by vak-desktop, gitignored) and dist-web/ (base
+                     "/app/", embedded by vak-server, COMMITTED so a headless
+                     box builds the server without node)
 crates/vak-admin-ui  SolidJS + Vite admin console source; the commitment
                      portfolio (#/commitments) with the evidence meter --
                      the satisfaction lattice drawn, achieved as fill and
@@ -601,8 +662,13 @@ crates/vak-admin-ui  SolidJS + Vite admin console source; the commitment
                      drill-downs, plus a VoiceConfigEditor
                      (inherit-toggle + live Preview button) on the per-bot
                      and per-chat panels (docs/design/38-voice-personality.md)
-crates/vak-desktop   Tauri 2 desktop app over an embedded secured_router —
-                     SolidJS SPA with schema-v2 outcome-first semantic
+crates/vak-desktop   Tauri 2 SHELL over an embedded secured_router. The UI
+                     itself lives in crates/vak-client-ui (above); this crate
+                     is the native half -- window/tray lifecycle,
+                     single-instance handover, workspace trust gate, PTY
+                     commands (spawn/write/resize/CLOSE -- the close is what
+                     scopes a shell's life to its pane), and the native save
+                     dialog. Renders the schema-v2 outcome-first semantic
                      timeline/AST registry: sessions, split view, approvals, diff
                      review, subagents tab, MCP manager, image attachments,
                      best-of-N, tasks (cron/script/pin), side chats,
@@ -620,7 +686,7 @@ crates/vak-ops       service-control layer over launchd/systemd — status,
 crates/vak-tray      menu-bar controller: colour-coded service dot,
                      start/stop/restart/install/uninstall, logs, watchdog
                      with auto-restart + notifications
-crates/vak           binary: exec / plan / flow / serve [--gateway] /
+crates/vak           binary: exec / plan / flow / serve [--host] [--gateway] /
                      telegram|discord|slack [--bot-id <id>] / eval /
                      checkpoints / config dump / sessions / skills /
                      skills-review / plugins / doctor / backup / digest /
@@ -642,6 +708,22 @@ scripts/             dev utilities (mock servers, PTY/HTTP smoke drivers)
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 scripts/check-version.sh && python3 scripts/check_doc_paths.py
 ```
+
+**Touched a frontend? Rebuild it, or the binary ships the previous one.**
+
+```
+cd crates/vak-client-ui && npm run build   # BOTH bundles: dist/ + dist-web/
+cd crates/vak-admin-ui  && npm run build
+```
+
+`vak-client-ui` builds twice from one source — `dist/` for the Tauri shell
+and `dist-web/` for the copy `vak-server` embeds at `/app` — and only
+`dist-web/` and the admin bundle are committed, because a headless box must
+build the server without node. Both build scripts refuse to compile against
+a bundle whose `.src-manifest` no longer matches `src/`, so this is a build
+error rather than a silently stale UI; `scripts/release.sh` and CI
+additionally fail on a committed-bundle diff, which a local build cannot
+see.
 
 **A test that builds a `Core` must isolate its home first.** Call
 `vak_config::paths::isolate_home_for_tests()` (or pin a specific one with
