@@ -13,7 +13,7 @@
 //!
 //! Strictly read-only. Opening, advancing and closing a commitment are effects
 //! the runtime performs; the model may propose criteria but never marks one
-//! passed (`AGENTS.md` invariant 32), so there is deliberately no write verb
+//! passed (`AGENTS.md` invariant 33), so there is deliberately no write verb
 //! here for it to reach for.
 
 use serde_json::{Value, json};

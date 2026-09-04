@@ -1,13 +1,12 @@
 //! Projection invariants: nothing the intent kernel derives may widen what a
-//! turn is allowed to do (`AGENTS.md` invariant 31), and a grant may only
+//! turn is allowed to do (`AGENTS.md` invariant 32), and a grant may only
 //! narrow (invariant 3 in docs/design/47).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use vak_core::intent;
 use vak_intent::{
-    ApprovalCeiling, Authority, Autonomy, CapabilitySlice, Envelope, Escalation, PermissionCeiling,
-    Stakes,
+    ApprovalCeiling, Authority, Autonomy, Envelope, Escalation, PermissionCeiling, Stakes,
 };
 
 fn envelope(ceiling: PermissionCeiling) -> Envelope {
@@ -86,12 +85,11 @@ fn approval_composition_never_loosens_configuration() {
     }
 }
 
-/// A slice intersects the admitted packet; naming an unadmitted tool cannot
-/// conjure it into existence.
+/// A slice intersects the admitted packet and can only ever subtract.
 #[test]
 fn a_capability_slice_only_ever_subtracts() {
     use vak_session::types::{CapabilityDescriptor, CapabilityInvocation, CapabilityKind};
-    let admitted: Vec<CapabilityDescriptor> = ["read", "grep"]
+    let admitted: Vec<CapabilityDescriptor> = ["bash", "grep"]
         .into_iter()
         .map(|name| CapabilityDescriptor {
             name: name.into(),
@@ -104,12 +102,21 @@ fn a_capability_slice_only_ever_subtracts() {
             configuration: serde_json::Value::Null,
         })
         .collect();
-    let sliced = intent::slice_capabilities(
-        &admitted,
-        &CapabilitySlice::only(["read", "bash", "deploy_to_prod"]),
-    );
+    let required: std::collections::BTreeSet<String> =
+        ["code-exec"].into_iter().map(str::to_string).collect();
+    let declared: std::collections::BTreeMap<String, Vec<String>> = [
+        ("bash".to_string(), vec!["code-exec".to_string()]),
+        ("deploy_to_prod".to_string(), vec!["code-exec".to_string()]),
+    ]
+    .into_iter()
+    .collect();
+    let sliced = intent::slice_capabilities(&admitted, &required, &declared);
     let names: Vec<&str> = sliced.iter().map(|c| c.name.as_str()).collect();
-    assert_eq!(names, vec!["read"]);
+    // `grep` is in the orientation floor and survives by name; the unadmitted
+    // `deploy_to_prod` is not conjured into existence by being declared.
+    assert!(names.contains(&"bash"));
+    assert!(!names.contains(&"deploy_to_prod"));
+    assert!(sliced.len() <= admitted.len());
 }
 
 /// A revoked grant stops narrowing and does not leave a remembered widening

@@ -1,14 +1,52 @@
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use vak_tools::sandbox::Sandbox;
+
+/// A server-initiated message that changes what the server offers.
+///
+/// MCP servers announce catalog changes rather than expecting the client to
+/// poll (`notifications/tools/list_changed`). Dropping these at the transport
+/// is what forced the old design to warm a catalog once and never notice a
+/// change; routing them out gives the capability registry a hint channel and
+/// costs one `match`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum McpNotification {
+    ToolsListChanged,
+    PromptsListChanged,
+    ResourcesListChanged,
+    /// Anything else the server sent. Kept rather than discarded so an
+    /// unknown-but-present signal is visible in diagnostics.
+    Other(String),
+}
+
+impl McpNotification {
+    fn from_method(method: &str) -> Self {
+        match method {
+            "notifications/tools/list_changed" => McpNotification::ToolsListChanged,
+            "notifications/prompts/list_changed" => McpNotification::PromptsListChanged,
+            "notifications/resources/list_changed" => McpNotification::ResourcesListChanged,
+            other => McpNotification::Other(other.to_string()),
+        }
+    }
+
+    /// Whether this invalidates the tool catalog the registry holds.
+    pub fn invalidates_tools(&self) -> bool {
+        matches!(self, McpNotification::ToolsListChanged)
+    }
+}
+
+/// Where a client posts server-initiated notifications, tagged with the
+/// server they came from. Unbounded because the producer is a server we do
+/// not control and blocking its reader task would stall responses too.
+pub type NotificationSink = mpsc::UnboundedSender<(String, McpNotification)>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum McpError {
@@ -47,6 +85,15 @@ pub struct McpClient {
     child: Mutex<Child>,
     pending: Pending,
     next_id: AtomicU64,
+    /// Set by the reader task when stdout ends, which is the earliest and
+    /// most reliable signal that this connection is dead. Checked before a
+    /// pooled client is handed out, so a caller never dispatches into a
+    /// corpse and gets a timeout instead of an actionable error.
+    closed: Arc<AtomicBool>,
+    /// What the server said it supports in its `initialize` result. Used to
+    /// report whether a stale catalog is the server's fault (no
+    /// `listChanged`, so we must poll) or ours.
+    server_capabilities: Value,
 }
 
 impl McpClient {
@@ -55,6 +102,16 @@ impl McpClient {
         config: &ServerConfig,
         cwd: &std::path::Path,
         sandbox: Option<&Arc<dyn Sandbox>>,
+    ) -> Result<Self, McpError> {
+        Self::connect_with_notifications(server_name, config, cwd, sandbox, None).await
+    }
+
+    pub async fn connect_with_notifications(
+        server_name: &str,
+        config: &ServerConfig,
+        cwd: &std::path::Path,
+        sandbox: Option<&Arc<dyn Sandbox>>,
+        notifications: Option<NotificationSink>,
     ) -> Result<Self, McpError> {
         // A network-egress server is a deliberate trust decision from
         // privileged config; the OS command wrapper would deny its sockets,
@@ -131,11 +188,16 @@ impl McpClient {
             .ok_or_else(|| McpError::Spawn("no stdout".into()))?;
 
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let closed = Arc::new(AtomicBool::new(false));
 
-        // Reader: route responses by id; drop notifications and
-        // server-initiated requests (v1 does not serve sampling/roots).
+        // Reader: route responses by id and notifications to the sink.
+        // Server-initiated *requests* (those carry both an id and a method)
+        // are still unanswered — v1 does not serve sampling/roots — but a
+        // notification is a catalog-change signal the registry needs, so it
+        // is forwarded rather than dropped.
         {
             let pending = pending.clone();
+            let closed = closed.clone();
             let server = server_name.to_string();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
@@ -146,9 +208,23 @@ impl McpClient {
                             let Ok(v) = serde_json::from_str::<Value>(&line) else {
                                 continue;
                             };
+                            let method = v.get("method").and_then(|m| m.as_str());
                             let Some(id) = v.get("id").and_then(|i| i.as_u64()) else {
+                                // No id: a notification. Forward it.
+                                if let (Some(method), Some(sink)) = (method, notifications.as_ref())
+                                {
+                                    let _ = sink.send((
+                                        server.clone(),
+                                        McpNotification::from_method(method),
+                                    ));
+                                }
                                 continue;
                             };
+                            if method.is_some() {
+                                // id + method: a server-initiated request.
+                                // Not served in v1; never matched to pending.
+                                continue;
+                            }
                             let responder = pending.lock().await.remove(&id);
                             if let Some(tx) = responder {
                                 let result = match v.get("error") {
@@ -164,11 +240,14 @@ impl McpClient {
                             }
                         }
                         _ => {
+                            // stdout ended: this connection is dead. Mark it
+                            // before waking waiters so a racing `get()` sees
+                            // the flag rather than handing out this client.
+                            closed.store(true, Ordering::Release);
                             let mut map = pending.lock().await;
                             for (_, tx) in map.drain() {
                                 let _ = tx.send(Err(McpError::Closed));
                             }
-                            let _ = server;
                             return;
                         }
                     }
@@ -176,15 +255,17 @@ impl McpClient {
             });
         }
 
-        let client = McpClient {
+        let mut client = McpClient {
             server_name: server_name.to_string(),
             stdin: Mutex::new(stdin),
             child: Mutex::new(child),
             pending,
             next_id: AtomicU64::new(1),
+            closed,
+            server_capabilities: Value::Null,
         };
 
-        client
+        let initialized = client
             .request(
                 "initialize",
                 serde_json::json!({
@@ -194,6 +275,10 @@ impl McpClient {
                 }),
             )
             .await?;
+        client.server_capabilities = initialized
+            .get("capabilities")
+            .cloned()
+            .unwrap_or(Value::Null);
         client
             .notify("notifications/initialized", serde_json::json!({}))
             .await;
@@ -202,6 +287,32 @@ impl McpClient {
 
     pub fn server_name(&self) -> &str {
         &self.server_name
+    }
+
+    /// False once stdout has ended or the child has exited. Cheap and
+    /// non-blocking: the pool checks this before reusing a client so a dead
+    /// server is replaced rather than dispatched into.
+    pub fn is_alive(&self) -> bool {
+        if self.closed.load(Ordering::Acquire) {
+            return false;
+        }
+        // `try_lock` because this runs on the hot path of every dispatch and
+        // a contended child lock means someone is mid-shutdown anyway.
+        match self.child.try_lock() {
+            Ok(mut child) => !matches!(child.try_wait(), Ok(Some(_))),
+            Err(_) => true,
+        }
+    }
+
+    /// Whether the server promised to announce tool-catalog changes. When
+    /// false the registry must fall back to periodic re-probing for this
+    /// server rather than trusting that silence means unchanged.
+    pub fn announces_tool_changes(&self) -> bool {
+        self.server_capabilities
+            .get("tools")
+            .and_then(|t| t.get("listChanged"))
+            .and_then(|l| l.as_bool())
+            .unwrap_or(false)
     }
 
     pub async fn shutdown(&self) {

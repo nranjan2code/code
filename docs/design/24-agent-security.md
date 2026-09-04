@@ -21,7 +21,7 @@ opted into, a page the user merely *visits* becomes a participant. Two
 attacks that do not exist for a local-only server therefore have standing
 defences: DNS rebinding (a visited page resolving its own domain to
 127.0.0.1 to become same-origin) and cross-site request forgery (a cookie
-the browser attaches to whoever asks). See invariant 33.
+the browser attaches to whoever asks). See invariant 34.
 
 ## Lessons from other harnesses
 

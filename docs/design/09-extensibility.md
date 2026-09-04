@@ -12,6 +12,22 @@ path line enters the system prompt; the model reads the file with `read`
 when relevant — progressive disclosure, Claude Code-skill compatible.
 Discovered skills are recorded in the frozen contract.
 
+Optional frontmatter `serves:` declares what the skill is for, against the
+domain vocabulary in `docs/design/41-capability-registry.md`:
+
+```yaml
+---
+name: quarterly-report
+description: Assemble the quarterly report from the finance export
+serves: documents, live-data
+---
+```
+
+Accepts `a, b` or `[a, b]`. Omitting it leaves the skill *undeclared*, which
+is never narrowed away by the per-turn capability slice — skills are already
+progressively disclosed by their loader, so this is advisory context rather
+than a gate.
+
 `vak skills validate [PATH]` validates every `SKILL.md` below the supplied
 file or directory; without a path it validates both project and user roots.
 `allowed-tools` is advisory only and never grants authorization.
@@ -113,10 +129,30 @@ dependencies). Config:
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-github"]
 env = { GITHUB_TOKEN = "…" }
+# Optional. What this server is for, so the per-turn capability slice can
+# match it (docs/design/41-capability-registry.md). Omitting it leaves the
+# server *undeclared*, which is never narrowed away — declaring domains only
+# ever makes the slice tighter, so this is a context optimisation you opt
+# into, never a requirement for the server to work.
+serves = ["vcs", "documents"]
 ```
 
 Design choices:
 - **Lazy connect**: servers spawn on first use; nothing runs when unused.
+- **Pooled with a liveness check and an idle TTL**: a cached connection is
+  validated before reuse, so a server whose child has exited is replaced
+  rather than dispatched into, and one left idle is shut down and respawned
+  on demand instead of held for the life of the daemon.
+- **Catalog changes are observed, not polled blindly**:
+  `notifications/tools/list_changed` is routed into the capability reconcile
+  loop. A server that does not declare `tools.listChanged` is re-probed on a
+  short rhythm instead, because silence carries no information.
+- **A failed probe is a state, never a catalog**: it carries a reason, a
+  remedy, and a `retry_at` with exponential backoff, so a server that was
+  down at boot rejoins on its own with no restart. It never becomes a
+  callable tool and never blocks its own retry.
+- **Probes are concurrent** under a 10s per-server budget, so the cost of N
+  unreachable servers is the max of that budget rather than the sum.
 - **One meta-tool** (`mcp`) instead of per-server tool dumps: `action=list`
   returns compact server/tool names with truncated descriptions; `action=call`
   invokes `{server, tool, arguments}`. Context cost stays ~50 tokens instead
@@ -125,8 +161,9 @@ Design choices:
   results the model can react to.
 - Relative commands resolve against the workspace cwd; PATH inherited for
   npx/uvx-style launchers.
-- v1 limits: no sampling/roots/elicitation; server-initiated requests are
-  ignored; 60s request timeout.
+- v1 limits: no sampling/roots/elicitation; server-initiated *requests* are
+  ignored (notifications are not); 60s request timeout for calls, 10s for
+  discovery probes.
 
 ## Custom commands (shipped)
 

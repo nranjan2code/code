@@ -336,6 +336,41 @@ fn capability_reach_check(core: &Core) -> HealthCheck {
     }
 }
 
+/// Every capability that is configured but cannot currently be used, with
+/// the reason and the fix.
+///
+/// This closes the gap that hid the original defect. `capability_diagnostics`
+/// already knew a server was unreachable, but it was rendered only into the
+/// system prompt — so the model was told, and the person who could actually
+/// repair the configuration was not. An agent answering "I do not have
+/// access to real-time weather" while a misconfigured search server sat in
+/// `[mcp.servers]` produced no error, no failing check, and nothing in
+/// `doctor`. Now the same diagnostics reach both audiences.
+///
+/// No mechanical repair (AGENTS.md invariant 19): the fixes here are
+/// operator decisions — start a server, correct a command, grant an env var.
+fn capability_health_check(core: &Core) -> HealthCheck {
+    let diagnostics = core.capability_diagnostics();
+    HealthCheck {
+        label: "capability health".into(),
+        detail: if diagnostics.is_empty() {
+            Ok("all configured capabilities usable".into())
+        } else {
+            Err(diagnostics
+                .iter()
+                .map(|d| {
+                    let mut line = format!("{} `{}`: {}", d.kind, d.name, d.reason);
+                    if !d.remedy.is_empty() {
+                        line.push_str(&format!("; fix: {}", d.remedy));
+                    }
+                    line
+                })
+                .collect::<Vec<_>>()
+                .join("; "))
+        },
+    }
+}
+
 /// Collect everything `/doctor` reports. `session` optionally adds the
 /// frozen-ladder section for the active session. Never panics; every
 /// failure mode lands as a failed check or an empty fact.
@@ -371,6 +406,7 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
         },
     });
     checks.push(capability_reach_check(core));
+    checks.push(capability_health_check(core));
     checks.push(gateway_channels_check(
         &core.sessions_home(),
         core.config().gateway.pending_expiry_days,
@@ -394,11 +430,20 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
             core.config().max_retries,
             core.config().run_retry_attempts,
         ),
+        // Counted from the *effective* set, not raw config.
+        //
+        // These three used to disagree: skills came from `core.skills()`
+        // (effective, so plugin contributions counted) while hooks and MCP
+        // servers came from `core.config()` (raw, so plugin contributions
+        // and every runtime override were invisible). An operator reading
+        // `doctor` saw a different world from the one the model was told
+        // about, which is precisely how a broken integration stayed
+        // invisible.
         format!(
             "extensions: {} skills · {} hooks · {} mcp servers · subagents {}",
             core.skills().len(),
-            core.config().hooks.len(),
-            core.config().mcp.servers.len(),
+            core.effective_hooks().iter().filter(|h| h.enabled).count(),
+            core.effective_mcp().servers.len(),
             if core.config().subagents { "on" } else { "off" },
         ),
     ];
@@ -603,6 +648,7 @@ mod tests {
                 "sessions home",
                 "config warnings",
                 "capability reach",
+                "capability health",
                 "gateway channels",
                 "install layout",
                 "self version parity"

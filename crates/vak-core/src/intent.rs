@@ -20,9 +20,8 @@
 use std::collections::BTreeSet;
 
 use vak_intent::{
-    ApprovalCeiling, Authority, Autonomy, CapabilitySlice, Declared, Engagement, Intent, Limits,
-    PermissionCeiling, Request, Resolution, ResolverConfig, Surface as IntentSurface,
-    WorkspaceFacts,
+    ApprovalCeiling, Authority, Autonomy, Declared, Engagement, Intent, Limits, PermissionCeiling,
+    Request, Resolution, ResolverConfig, Surface as IntentSurface, WorkspaceFacts,
 };
 use vak_session::types::CapabilityDescriptor;
 
@@ -124,25 +123,37 @@ pub fn resolve_turn(
 
 // --------------------------------------------------------- projections ---
 
-/// Narrow an admitted capability packet to the engagement's slice.
+/// Narrow an admitted capability packet to what this turn plausibly needs.
 ///
-/// Intersection only: a name in the slice that was never admitted is ignored,
-/// so a slice can never introduce a capability. The frozen packet in the
-/// session header is untouched — this narrows *advertisement and dispatch* for
-/// one turn, which is why a wider reading on the next turn restores the full
-/// set without needing a new session.
+/// Subtractive only: a slice can never introduce a capability, and the frozen
+/// packet is untouched — this narrows *advertisement and dispatch* for one
+/// turn, which is why a wider reading on the next turn restores the full set
+/// without needing a new session.
+///
+/// Matching is by declared domain, not by tool name. The old shape compared
+/// against a static list of built-in names, so a capability the user had
+/// installed could never be matched — every integration needed a harness
+/// edit, and only got one after somebody reported a confidently wrong answer.
+/// Here a capability that declares `serves` is kept when it serves something
+/// the turn needs, and one that declares nothing is always kept: slicing
+/// saves context, it does not enforce policy, so failing open is correct.
 pub fn slice_capabilities(
     admitted: &[CapabilityDescriptor],
-    slice: &CapabilitySlice,
+    required_domains: &std::collections::BTreeSet<String>,
+    declared_serves: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> Vec<CapabilityDescriptor> {
-    let narrowed: Vec<CapabilityDescriptor> = match slice {
-        CapabilitySlice::All => admitted.to_vec(),
-        CapabilitySlice::Only { .. } => admitted
-            .iter()
-            .filter(|capability| keep_capability(capability, slice))
-            .cloned()
-            .collect(),
-    };
+    if required_domains.is_empty() {
+        return admitted.to_vec();
+    }
+    let required: std::collections::BTreeSet<crate::capability::Domain> = required_domains
+        .iter()
+        .map(|name| crate::capability::Domain::parse(name))
+        .collect();
+    let narrowed: Vec<CapabilityDescriptor> = admitted
+        .iter()
+        .filter(|capability| keep_capability(capability, &required, declared_serves))
+        .cloned()
+        .collect();
     debug_assert!(
         narrowed.len() <= admitted.len(),
         "capability slice grew the admitted packet"
@@ -157,11 +168,28 @@ pub fn slice_capabilities(
 /// MCP server is already lazy, and hooks fire on lifecycle events that have
 /// nothing to do with what the user asked for. Slicing those would spend risk
 /// for no context saving.
-fn keep_capability(capability: &CapabilityDescriptor, slice: &CapabilitySlice) -> bool {
+fn keep_capability(
+    capability: &CapabilityDescriptor,
+    required: &std::collections::BTreeSet<crate::capability::Domain>,
+    declared_serves: &std::collections::BTreeMap<String, Vec<String>>,
+) -> bool {
     use vak_session::types::CapabilityKind;
-    match capability.kind {
-        CapabilityKind::Tool => slice.allows(&capability.name),
-        _ => true,
+    if capability.kind != CapabilityKind::Tool {
+        return true;
+    }
+    // The orientation floor: vak's own tools for looking at what is in front
+    // of it. Kept by name because it must hold even for acts whose domains
+    // would exclude them, and it never grows when a user installs something.
+    if vak_intent::ORIENTATION_FLOOR.contains(&capability.name.as_str()) {
+        return true;
+    }
+    match declared_serves.get(&capability.name) {
+        // Undeclared fails open.
+        None => true,
+        Some(serves) => {
+            let mine = crate::capability::Domain::parse_list(serves);
+            mine.intersection(required).next().is_some()
+        }
     }
 }
 
@@ -336,13 +364,28 @@ mod tests {
         }
     }
 
-    /// A slice can only ever remove. Naming an unadmitted tool must not
-    /// conjure it into the packet.
+    fn domains(values: &[&str]) -> std::collections::BTreeSet<String> {
+        values.iter().map(|v| v.to_string()).collect()
+    }
+
+    fn serves(pairs: &[(&str, &[&str])]) -> std::collections::BTreeMap<String, Vec<String>> {
+        pairs
+            .iter()
+            .map(|(name, ds)| {
+                (
+                    name.to_string(),
+                    ds.iter().map(|d| d.to_string()).collect::<Vec<_>>(),
+                )
+            })
+            .collect()
+    }
+
+    /// A slice can only ever remove.
     #[test]
     fn a_slice_never_introduces_a_capability() {
         let admitted = vec![tool("read"), tool("bash")];
-        let slice = CapabilitySlice::only(["read", "write", "deploy_to_prod"]);
-        let narrowed = slice_capabilities(&admitted, &slice);
+        let declared = serves(&[("read", &["filesystem"]), ("bash", &["code-exec"])]);
+        let narrowed = slice_capabilities(&admitted, &domains(&["filesystem"]), &declared);
         let names: Vec<&str> = narrowed.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["read"]);
     }
@@ -350,17 +393,68 @@ mod tests {
     #[test]
     fn slicing_leaves_skills_and_servers_alone() {
         let admitted = vec![tool("read"), tool("bash"), skill("review")];
-        let narrowed = slice_capabilities(&admitted, &CapabilitySlice::only(["read"]));
+        let declared = serves(&[("read", &["filesystem"]), ("bash", &["code-exec"])]);
+        let narrowed = slice_capabilities(&admitted, &domains(&["filesystem"]), &declared);
         assert!(narrowed.iter().any(|c| c.name == "review"));
         assert!(!narrowed.iter().any(|c| c.name == "bash"));
     }
 
     #[test]
-    fn the_all_slice_is_the_identity() {
+    fn no_required_domains_is_the_identity() {
         let admitted = vec![tool("read"), skill("review")];
         assert_eq!(
-            slice_capabilities(&admitted, &CapabilitySlice::All).len(),
+            slice_capabilities(
+                &admitted,
+                &std::collections::BTreeSet::new(),
+                &std::collections::BTreeMap::new()
+            )
+            .len(),
             admitted.len()
+        );
+    }
+
+    /// The defect this whole mechanism was rebuilt around: a capability the
+    /// operator installed must be reachable without a harness edit.
+    #[test]
+    fn an_undeclared_tool_is_never_sliced_away() {
+        // `bash` declares code-exec and is out; the unclassified tool has no
+        // declaration and must survive, because a capability the operator
+        // installed can never appear in a harness-side list.
+        let admitted = vec![tool("bash"), tool("some_installed_thing")];
+        let declared = serves(&[("bash", &["code-exec"])]);
+        let narrowed = slice_capabilities(&admitted, &domains(&["live-data"]), &declared);
+        let names: Vec<&str> = narrowed.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["some_installed_thing"],
+            "undeclared must fail open"
+        );
+    }
+
+    #[test]
+    fn the_orientation_floor_survives_any_slice() {
+        let admitted = vec![tool("read"), tool("glob"), tool("bash")];
+        let declared = serves(&[
+            ("read", &["filesystem"]),
+            ("glob", &["filesystem"]),
+            ("bash", &["code-exec"]),
+        ]);
+        let narrowed = slice_capabilities(&admitted, &domains(&["live-data"]), &declared);
+        let names: Vec<&str> = narrowed.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"read"), "orientation floor kept by name");
+        assert!(names.contains(&"glob"));
+        assert!(!names.contains(&"bash"));
+    }
+
+    /// The weather case, end to end at this layer.
+    #[test]
+    fn a_live_data_turn_keeps_the_mcp_broker() {
+        let admitted = vec![tool("mcp"), tool("bash")];
+        let declared = serves(&[("mcp", &["live-data", "web"]), ("bash", &["code-exec"])]);
+        let narrowed = slice_capabilities(&admitted, &domains(&["live-data"]), &declared);
+        assert!(
+            narrowed.iter().any(|c| c.name == "mcp"),
+            "a configured search server is unreachable without this"
         );
     }
 

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::authority::{Authority, Autonomy, GateFallback};
 use crate::axes::{Act, Attendance, Clarity, Evidence, Horizon, Modality, Stakes};
-use crate::limits::{CapabilitySlice, Limits};
+use crate::limits::Limits;
 use crate::reading::Reading;
 
 /// How a human is kept in the loop for this work.
@@ -336,7 +336,16 @@ impl Engagement {
 ///
 /// An agent that cannot look at anything cannot correct a misread of its own
 /// task, so this floor is what makes slicing safe to attempt at all.
-const ORIENTATION: &[&str] = &[
+/// Built-in tools that survive every slice by name, whatever the domains.
+///
+/// A name floor rather than a domain floor because these are the tools that
+/// let a turn *look at what is in front of it* and correct a misread of its
+/// own task — and that has to hold even for acts whose domains would exclude
+/// them (`skill` serves documents and orchestration, but a greeting must
+/// still be able to load one). This list is vak's own built-ins and never
+/// grows when a user installs something, so it does not reintroduce the
+/// coupling `act_domains` exists to remove.
+pub const ORIENTATION_FLOOR: &[&str] = &[
     "read",
     "glob",
     "grep",
@@ -348,51 +357,59 @@ const ORIENTATION: &[&str] = &[
     "commitments",
 ];
 
-/// Names this act plausibly needs, beyond the orientation floor.
+/// Kinds of work this act plausibly needs, as domain names.
 ///
-/// The result is intersected with the session's admitted packet, so naming
-/// something unadmitted is harmless. Slices are deliberately generous: a
-/// missing tool costs a failed task, while an extra one costs a little context.
-fn act_capabilities(act: Act) -> Vec<&'static str> {
-    let extra: &[&str] = match act {
-        // A greeting needs nothing at all. This is the case where slicing
-        // pays for itself most obviously.
+/// This replaces a table that listed built-in *tool names* per act
+/// (`Act::Answer => ["webfetch", "mcp"]`). That shape could not answer the
+/// only question that matters — which of the capabilities this user actually
+/// installed could serve this request — because installed capabilities were
+/// never in it. Its failure mode was silent: "how is the weather in noida"
+/// read as `Answer`, sliced to six file tools, and came back "I do not have
+/// access to real-time weather information" with a configured, connected
+/// search server sitting right there. Naming the server in the next turn did
+/// not help either, because `Locate` had no way to reach one.
+///
+/// Domains are matched against what each capability declares it serves, so
+/// adding an integration never edits this function. A capability that
+/// declares nothing is never narrowed away, which keeps the common case
+/// working with no configuration at all.
+fn act_domains(act: Act) -> &'static [&'static str] {
+    match act {
+        // A greeting needs nothing beyond the orientation floor. This is
+        // where slicing pays for itself most obviously.
         Act::Converse => &[],
-        // An ordinary question is the act most likely to need a fact the
-        // model does not carry — today's weather, today's market, anything
-        // past the training cut. Slicing lookup away here does not make the
-        // agent careful, it makes it confidently stale: the turn cannot
-        // reach a source, so it answers from memory or apologises. Lookup
-        // is read-only and costs a little context, which is exactly the
-        // trade this table says it wants to make.
-        Act::Answer => &["webfetch", "mcp"],
-        // Locating something is a search, and a configured search provider
-        // (Tavily, an internal index) arrives as an MCP server, never as a
-        // built-in. `webfetch` alone can only follow a URL the turn already
-        // knows, which is not what "find me" asks for.
-        Act::Locate => &["webfetch", "browse", "mcp"],
-        Act::Analyze => &["webfetch", "browse", "bash", "mcp"],
-        Act::Author => &["write", "edit", "webfetch"],
-        Act::Modify => &["write", "edit", "bash"],
+        // The acts that exist to produce a fact must be able to go and get
+        // one. Lookup is read-only, and a missing capability costs a failed
+        // task while an extra one costs a little context — so this trade is
+        // the one this table has always claimed to want to make.
+        Act::Answer => &["live-data", "web"],
+        Act::Locate => &["live-data", "web", "vcs"],
+        Act::Analyze => &["live-data", "web", "code-exec", "vcs"],
+        Act::Author => &["documents", "web"],
+        Act::Modify => &["documents", "code-exec", "vcs"],
         // Operating reaches outside the workspace and legitimately needs the
         // broad set; the narrowing that matters for this act is the approval
         // floor, not the toolbox.
         Act::Operate => &[
-            "write", "edit", "bash", "browse", "webfetch", "mcp", "tasks",
+            "code-exec",
+            "web",
+            "live-data",
+            "messaging",
+            "documents",
+            "orchestration",
         ],
-        Act::Verify => &["bash"],
-        Act::Orchestrate => &["task", "flow", "tasks", "bash"],
-        Act::Govern => &["remember", "propose_skill", "tasks", "write", "edit"],
-    };
-    if act == Act::Converse {
-        return Vec::new();
+        Act::Verify => &["code-exec", "observability"],
+        Act::Orchestrate => &["orchestration", "code-exec"],
+        Act::Govern => &["memory", "orchestration", "documents", "observability"],
     }
-    ORIENTATION
-        .iter()
-        .copied()
-        .chain(extra.iter().copied())
-        .collect()
 }
+
+/// The domains every turn gets regardless of act: enough to look at what is
+/// in front of it and recall what it already knows.
+///
+/// An agent that cannot look at anything cannot correct a misread of its own
+/// task, so this floor is what makes slicing safe to attempt at all.
+const FLOOR_DOMAINS: &[&str] = &["filesystem", "memory"];
 
 // ----------------------------------------------------------- derivation ---
 
@@ -412,11 +429,23 @@ pub fn derive(reading: &Reading, authority: &Authority, slice_capabilities: bool
         // genuinely both a modification and a verification needs both
         // toolsets, and resolving the tie by argmax would silently remove
         // half of what it needs.
-        let mut names: BTreeSet<&'static str> = BTreeSet::new();
+        let mut domains: BTreeSet<String> = FLOOR_DOMAINS
+            .iter()
+            .map(|domain| (*domain).to_string())
+            .collect();
         for act in reading.acts() {
-            names.extend(act_capabilities(act));
+            domains.extend(act_domains(act).iter().map(|d| (*d).to_string()));
         }
-        limits.capabilities = CapabilitySlice::only(names);
+        // Evidence the reading demands has to come from somewhere. A turn
+        // required to cite cannot satisfy that from memory, so requiring
+        // citation implies the ability to reach a source — whatever the act
+        // was read as. This is the general form of the weather failure: it
+        // was never specific to `Answer`.
+        if reading.evidence.rank() >= Evidence::Cited.rank() {
+            domains.insert("live-data".into());
+            domains.insert("web".into());
+        }
+        limits.required_domains = domains;
     }
 
     // --- modality ------------------------------------------------------
@@ -725,9 +754,14 @@ mod tests {
             Evidence::None,
         );
         let engagement = derive(&r, &Authority::default(), true);
+        // A greeting asks for nothing beyond the floor that lets it look at
+        // what is in front of it.
         assert_eq!(
-            engagement.limits.capabilities,
-            CapabilitySlice::only(Vec::<String>::new())
+            engagement.limits.required_domains,
+            FLOOR_DOMAINS
+                .iter()
+                .map(|d| (*d).to_string())
+                .collect::<BTreeSet<_>>()
         );
         assert_eq!(engagement.limits.ladder_limit, Some(1));
         assert_eq!(engagement.posture.context, ContextProfile::Minimal);
@@ -736,17 +770,17 @@ mod tests {
     }
 
     #[test]
-    fn every_non_conversational_act_keeps_the_orientation_floor() {
+    fn every_act_keeps_the_orientation_floor() {
         for act in Act::ALL {
-            if act == Act::Converse {
-                continue;
-            }
             let r = reading(act, Horizon::Turn, Stakes::Reversible, Evidence::None);
             let engagement = derive(&r, &Authority::default(), true);
-            for tool in ORIENTATION {
+            for domain in FLOOR_DOMAINS {
                 assert!(
-                    engagement.limits.capabilities.allows(tool),
-                    "{act:?} lost `{tool}` and cannot orient itself"
+                    engagement
+                        .limits
+                        .required_domains
+                        .contains(*domain),
+                    "{act:?} lost `{domain}` and cannot orient itself"
                 );
             }
         }
@@ -763,13 +797,55 @@ mod tests {
         for act in [Act::Answer, Act::Locate] {
             let r = reading(act, Horizon::Turn, Stakes::Inert, Evidence::None);
             let engagement = derive(&r, &Authority::default(), true);
-            for tool in ["webfetch", "mcp"] {
-                assert!(
-                    engagement.limits.capabilities.allows(tool),
-                    "{act:?} cannot reach a live source: `{tool}` sliced away"
-                );
-            }
+            assert!(
+                engagement
+                    .limits
+                    .required_domains
+                    .contains("live-data"),
+                "{act:?} cannot reach a live source"
+            );
         }
+    }
+
+    #[test]
+    fn required_citation_implies_reaching_a_source_whatever_the_act() {
+        // The general form of the weather failure: it was never specific to
+        // `Answer`. A turn obliged to cite cannot satisfy that from memory.
+        let r = reading(Act::Verify, Horizon::Turn, Stakes::Inert, Evidence::Cited);
+        let engagement = derive(&r, &Authority::default(), true);
+        assert!(
+            engagement
+                .limits
+                .required_domains
+                .contains("live-data")
+        );
+    }
+
+    #[test]
+    fn domain_requirements_narrow_by_intersection() {
+        // More domains admits more capabilities, so composing two limits
+        // must take the intersection or `meet` would widen.
+        let wide = Limits {
+            required_domains: ["web", "live-data", "code-exec"]
+                .iter()
+                .map(|d| d.to_string())
+                .collect(),
+            ..Limits::unrestricted()
+        };
+        let narrow = Limits {
+            required_domains: ["web"].iter().map(|d| d.to_string()).collect(),
+            ..Limits::unrestricted()
+        };
+        let met = wide.meet(&narrow);
+        assert_eq!(
+            met.required_domains,
+            ["web"]
+                .iter()
+                .map(|d| d.to_string())
+                .collect::<BTreeSet<_>>()
+        );
+        assert!(met.is_at_most(&wide));
+        assert!(!wide.is_at_most(&narrow), "widening must not validate");
     }
 
     #[test]

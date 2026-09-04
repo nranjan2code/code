@@ -5947,6 +5947,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
+ "futures",
  "globset",
  "semver",
  "serde",
@@ -6096,6 +6097,7 @@ name = "vak-mcp"
 version = "2.1.0"
 dependencies = [
  "async-trait",
+ "futures",
  "globset",
  "serde",
  "serde_json",

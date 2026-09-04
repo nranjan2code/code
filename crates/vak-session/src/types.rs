@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use vak_llm::{Message, Usage};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CapabilityKind {
     Tool,

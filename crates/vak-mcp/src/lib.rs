@@ -6,8 +6,10 @@ pub mod client;
 pub mod manager;
 pub mod tool;
 
-pub use client::{McpClient, McpError, McpToolInfo, ServerConfig};
-pub use manager::McpManager;
+pub use client::{
+    McpClient, McpError, McpNotification, McpToolInfo, NotificationSink, ServerConfig,
+};
+pub use manager::{IDLE_TTL, McpManager, PROBE_TIMEOUT, ProbeOutcome};
 pub use tool::McpTool;
 
 mod validate;

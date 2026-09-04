@@ -5,6 +5,7 @@
 pub mod agent_network;
 pub mod backup;
 pub mod baseline;
+pub mod capability;
 pub mod checkpoints;
 pub mod commitments;
 pub mod custom_commands;
@@ -439,6 +440,16 @@ struct CoreInner {
     /// best-effort background warm-up and read by `system_prompt()`; a
     /// turn never blocks on it — see `mcp_manager()` / `cached_mcp_inventory()`.
     mcp_cache: std::sync::Mutex<Option<McpCache>>,
+    /// The capability registry and its reconcile loop
+    /// (docs/design/41-capability-registry.md). Created on first use and
+    /// shared for the life of the process: it publishes immutable versioned
+    /// snapshots that turns bind to, which is what lets a session that has
+    /// been alive for weeks pick up a skill added today without a restart
+    /// and without being rotated.
+    capability_registry: std::sync::OnceLock<Arc<capability::CapabilityRegistry>>,
+    /// Signals the reconcile loop to stop. Held so a dropped Core does not
+    /// leave the loop running against a dead provider.
+    capability_shutdown: std::sync::Mutex<Option<tokio::sync::watch::Sender<bool>>>,
     /// Runtime hook override (desktop/TUI management surface).
     hooks_override: std::sync::Mutex<Option<Vec<vak_config::HookConfig>>>,
     hooks_runtime_pinned: std::sync::atomic::AtomicBool,
@@ -827,6 +838,8 @@ impl Core {
                 spend_gates: std::sync::Mutex::new(HashMap::new()),
                 day_budget: Arc::new(std::sync::Mutex::new(finops::DayBudget::new())),
                 mcp_cache: std::sync::Mutex::new(None),
+                capability_registry: std::sync::OnceLock::new(),
+                capability_shutdown: std::sync::Mutex::new(None),
             }),
         })
     }
@@ -1372,6 +1385,10 @@ impl Core {
                                 args,
                                 env,
                                 network: false,
+                                // Plugin-contributed servers declare nothing
+                                // by default, which keeps them reachable:
+                                // undeclared is never sliced away.
+                                serves: Vec::new(),
                             });
                     }
                 }
@@ -1604,11 +1621,43 @@ impl Core {
                 return Some(c.manager.clone());
             }
         }
-        let manager = Arc::new(vak_mcp::McpManager::new_sandboxed(
-            servers.into_iter().collect(),
-            self.inner.cwd.clone(),
-            self.build_sandbox(),
-        ));
+        // Route server-initiated notifications into the reconcile loop.
+        //
+        // MCP servers announce catalog changes with
+        // `notifications/tools/list_changed`; the transport used to drop
+        // every notification, so the protocol's own answer to hot-swap was
+        // discarded one layer below where it was useful. Forwarding it as a
+        // hint means a server that gains a tool is picked up in one debounce
+        // window rather than at the next catalog TTL — and because the loop
+        // is level-triggered, losing this signal only costs latency.
+        let manager = {
+            let mut manager = vak_mcp::McpManager::new_sandboxed(
+                servers.into_iter().collect(),
+                self.inner.cwd.clone(),
+                self.build_sandbox(),
+            );
+            if tokio::runtime::Handle::try_current().is_ok() {
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                manager = manager.with_notifications(tx);
+                let core = self.clone();
+                tokio::spawn(async move {
+                    while let Some((server, notification)) = rx.recv().await {
+                        if notification.invalidates_tools() {
+                            // Clear the cached catalog so the next pass
+                            // re-probes rather than trusting a stale one.
+                            if let Ok(mut cache) = core.inner.mcp_cache.lock()
+                                && let Some(c) = cache.as_mut()
+                            {
+                                c.inventory = None;
+                            }
+                            core.capability_registry()
+                                .hint(capability::Hint::ServerAnnounced(server));
+                        }
+                    }
+                });
+            }
+            Arc::new(manager)
+        };
         {
             let mut cache = self
                 .inner
@@ -1622,15 +1671,28 @@ impl Core {
                 warming: false,
             });
         }
-        self.spawn_mcp_inventory_warm(fp, manager.clone());
+        // Only when a reactor exists: `spawn_mcp_inventory_warm` uses
+        // `tokio::spawn`, and `mcp_manager()` is reached from synchronous
+        // paths (prompt assembly in tests and one-shot tooling) that have no
+        // runtime. Without a reactor there is nothing to warm and the
+        // name-only section is the correct answer.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            self.spawn_mcp_inventory_warm(fp, manager.clone());
+        }
         Some(manager)
     }
 
-    /// Kick a background discovery pass for `system_prompt()`'s rich MCP
-    /// section, if one for this exact server set (`fp`) isn't already
-    /// running or done. Best-effort: a slow or failing server degrades to
-    /// a per-server error line inside the inventory (see
-    /// `McpManager::inventory`), never to a panic or a blocked turn.
+    /// Kick a discovery pass for this server set, if one is not already in
+    /// flight.
+    ///
+    /// Failures no longer poison the cache. The old shape stored a failed
+    /// probe as `Some(inventory)` containing a synthesised tool named
+    /// `error`, and the re-entry guard (`inventory.is_none()`) then saw
+    /// `Some(_)` and refused to try again for the life of the process —
+    /// which, under "never restart", meant never. Here a failure leaves the
+    /// catalog absent and clears `warming`, so the next pass retries, and
+    /// `capability_registry()`'s loop drives those passes on a rhythm with
+    /// proper backoff.
     fn spawn_mcp_inventory_warm(&self, fp: u64, manager: Arc<vak_mcp::McpManager>) {
         {
             let mut cache = self
@@ -1639,7 +1701,7 @@ impl Core {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             match cache.as_mut() {
-                Some(c) if c.fingerprint == fp && !c.warming && c.inventory.is_none() => {
+                Some(c) if c.fingerprint == fp && !c.warming => {
                     c.warming = true;
                 }
                 _ => return,
@@ -1647,7 +1709,7 @@ impl Core {
         }
         let core = self.clone();
         tokio::spawn(async move {
-            let inventory = manager.inventory().await;
+            let probed = manager.inventory().await;
             let mut cache = core
                 .inner
                 .mcp_cache
@@ -1656,23 +1718,51 @@ impl Core {
             if let Some(c) = cache.as_mut()
                 && c.fingerprint == fp
             {
-                c.inventory = Some(inventory);
+                c.inventory = Some(probed);
                 c.warming = false;
             }
         });
     }
 
-    /// Whatever the background warm-up has landed so far, for
-    /// `system_prompt()`. `None` means "not ready yet" (or discovery
-    /// hasn't been triggered this session) — callers fall back to the
-    /// name-only `mcp_config_section`, never block waiting for this.
+    /// The catalogs of servers that answered, for the prompt's MCP section.
+    ///
+    /// Only successful probes appear. A server that failed is deliberately
+    /// absent rather than present-with-an-error-tool: the prompt must never
+    /// advertise something dispatch will refuse, and the failure is reported
+    /// through the standing section instead, where it carries a remedy.
     fn cached_mcp_inventory(&self) -> Option<McpInventory> {
-        self.inner
+        let probed = self
+            .inner
             .mcp_cache
             .lock()
             .ok()?
             .as_ref()
-            .and_then(|c| c.inventory.clone())
+            .and_then(|c| c.inventory.clone())?;
+        let usable: McpInventory = probed
+            .into_iter()
+            .filter_map(|(server, outcome)| outcome.ok().map(|tools| (server, tools)))
+            .collect();
+        (!usable.is_empty()).then_some(usable)
+    }
+
+    /// Servers that were probed and failed, with the reason — the
+    /// counterpart of `cached_mcp_inventory`. Feeds the standing section and
+    /// the operator report from the same probe result, so the model and
+    /// `doctor` cannot disagree about which servers are down.
+    fn failed_mcp_servers(&self) -> Vec<(String, String)> {
+        let Some(probed) = self
+            .inner
+            .mcp_cache
+            .lock()
+            .ok()
+            .and_then(|c| c.as_ref().and_then(|c| c.inventory.clone()))
+        else {
+            return Vec::new();
+        };
+        probed
+            .into_iter()
+            .filter_map(|(server, outcome)| outcome.err().map(|reason| (server, reason)))
+            .collect()
     }
 
     /// Replace lifecycle hooks for subsequent turns without restarting the
@@ -2308,6 +2398,25 @@ impl Core {
             .filter(|capability| capability.kind == CapabilityKind::McpServer)
             .map(|capability| capability.name.clone())
             .collect::<Vec<_>>();
+        // Trigger discovery here, not at agent-build time.
+        //
+        // This call is the whole of defect D1. `cached_mcp_inventory()` only
+        // *reads* the cache; the only thing that ever started a discovery
+        // pass was `mcp_manager()`, and the first call to that happened when
+        // the agent was built — after this prompt had already been frozen
+        // into the session contract. A session born before the catalog
+        // landed therefore kept a name-only MCP section for its entire life,
+        // and under "never restart, never rotate" that meant forever. The
+        // doc comment on `warm_mcp` claimed `system_prompt()` triggered this
+        // lazily; it did not, until now.
+        //
+        // Still non-blocking: `mcp_manager()` performs no I/O — it
+        // constructs the manager and fires a background pass. The worst case
+        // is the same name-only section this always fell back to, for one
+        // turn, and the reconcile loop then repairs it without a restart.
+        if !servers.is_empty() {
+            self.mcp_manager();
+        }
         let inventory = self.cached_mcp_inventory();
         let (seed, capability_contract) = prompts::seed(APP_VERSION);
         // Advertise only what the composed policy will actually run. A
@@ -2819,6 +2928,27 @@ impl Core {
                 reason: "hook is disabled (enabled = false)".into(),
                 source: None,
                 remedy: "set enabled = true in .vak/config.toml or the admin console".into(),
+            });
+        }
+
+        // 5. MCP servers that were probed and failed.
+        //
+        // Previously invisible in every surface: a failed probe was stored
+        // as a *successful* catalog holding a tool named `error`, so the
+        // prompt advertised a dead server as usable and nothing ever said
+        // otherwise. Reporting it here puts the failure and its remedy in
+        // front of the model and — through `health::collect` — in front of
+        // the operator, from the same probe result, so the two cannot
+        // disagree about which servers are down.
+        for (server, reason) in self.failed_mcp_servers() {
+            out.push(CapabilityDiagnostic {
+                kind: "mcp-server".into(),
+                name: server.clone(),
+                reason,
+                source: Some("[mcp.servers]".into()),
+                remedy: format!(
+                    "check the `{server}` entry under [mcp.servers] — command, args, and any required env"
+                ),
             });
         }
 
@@ -4429,14 +4559,33 @@ impl Core {
         // for it in both context and wrong calls. Slicing only happens when
         // the reading cleared the acceptance threshold, so an uncertain turn
         // keeps everything.
-        if self.inner.config.intent.enabled
-            && !matches!(
-                engagement.limits.capabilities,
-                vak_intent::CapabilitySlice::All
-            )
-        {
+        //
+        // Matching is by *declared domain*, never by a list of tool names.
+        // The name-list shape is what produced the original defect: a static
+        // table said `Act::Answer` meant `["webfetch", "mcp"]`, so a
+        // capability the operator had installed could not be matched at all
+        // and every integration needed a harness edit — granted only after
+        // someone reported a confidently wrong answer. A tool that declares
+        // nothing is never sliced away, because slicing saves context and
+        // does not enforce policy; `reach` and the permission engine do that.
+        if self.inner.config.intent.enabled && !engagement.limits.required_domains.is_empty() {
+            let declared_serves = self.declared_tool_domains();
             let before = tools.len();
-            tools.retain(|tool| engagement.limits.capabilities.allows(tool.name()));
+            let required: std::collections::BTreeSet<capability::Domain> = engagement
+                .limits
+                .required_domains
+                .iter()
+                .map(|name| capability::Domain::parse(name))
+                .collect();
+            tools.retain(|tool| {
+                if vak_intent::ORIENTATION_FLOOR.contains(&tool.name()) {
+                    return true;
+                }
+                match declared_serves.get(tool.name()) {
+                    None => true,
+                    Some(serves) => serves.intersection(&required).next().is_some(),
+                }
+            });
             debug_assert!(tools.len() <= before, "the intent slice added a tool");
         }
         cfg.tool_definitions = Some(vak_tools::definitions(&tools));
@@ -6009,10 +6158,14 @@ fn interpolate_env_var_with(
 /// `McpManager::inventory()`.
 type McpInventory = Vec<(String, Vec<vak_mcp::McpToolInfo>)>;
 
+/// A whole discovery pass: every configured server with the outcome of its
+/// probe. A failure is `Err(reason)` and never a synthesised catalog entry.
+type McpProbes = Vec<(String, vak_mcp::ProbeOutcome)>;
+
 struct McpCache {
     fingerprint: u64,
     manager: Arc<vak_mcp::McpManager>,
-    inventory: Option<McpInventory>,
+    inventory: Option<McpProbes>,
     /// True while a `spawn_mcp_inventory_warm` task for this fingerprint
     /// is in flight, so a burst of turns doesn't each fire their own
     /// discovery pass against the same server set.

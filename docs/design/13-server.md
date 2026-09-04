@@ -108,7 +108,7 @@ console at `/admin`, from one asset-serving path (`embedded_ui.rs`).
 | GET | `/pty` (WS) | a real shell. Off unless `[server.web] terminal`, loopback-pinned unless `terminal_requires_loopback = false`. The socket IS the shell's lifetime |
 
 Exposure is governed by `[server]` — privileged in full, so an untrusted
-project cannot widen it — and by invariant 33: `Host` pinned to loopback
+project cannot widen it — and by invariant 34: `Host` pinned to loopback
 plus `trusted_hosts`, cross-origin mutations refused, `?token=` loopback-only.
 
 ## Desktop extensions (docs/design/20)

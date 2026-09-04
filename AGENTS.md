@@ -387,7 +387,21 @@ assuming a document describes shipped behaviour rather than a proposal.
     "Kept for compatibility" is not a justification a review accepts.
     Removing the older path is part of shipping the newer one, including
     the tests that pinned it and the doc paragraphs that described it.
-31. **Intent narrows, never widens** (docs/design/47-commitment-kernel.md).
+31. **Capability changes never require a restart or a session rotation**
+    (docs/design/41-capability-registry.md). vak is a daemon with sessions
+    that live for weeks, so every capability mechanism must be
+    *level-triggered*: one idempotent reconcile loop moves observed state
+    toward desired state, and events are hints that make it run sooner, never
+    the source of truth. A dropped hint costs one tick of latency and never
+    costs correctness. Additions take effect at the next turn boundary of
+    every live session via a published epoch; revocations take effect
+    immediately and fail closed. Two corollaries a review enforces: a probe
+    failure is a *state* carrying a reason and a retry, never data — it must
+    never introduce a callable name and never prevent its own retry — and a
+    capability the operator installed must be reachable without editing the
+    harness, which means the host defines a vocabulary and capabilities are
+    data classified against it, never a table of instance names.
+32. **Intent narrows, never widens** (docs/design/47-commitment-kernel.md).
     A resolved engagement may subtract a capability, shorten the frozen ladder
     to a prefix, lower a budget, or *raise* an approval floor. It may never
     grant a tool, extend or reorder a ladder, raise a cap, or lower a floor.
@@ -403,7 +417,7 @@ assuming a document describes shipped behaviour rather than a proposal.
     remove a tool. An envelope is pre-authorization *within* existing
     authority, never a grant of new authority, and irreversible work reaches
     a human whatever was delegated.
-32. **The runtime evaluates satisfaction; the model never does.** The model
+33. **The runtime evaluates satisfaction; the model never does.** The model
     may propose criteria; it may not mark one passed. A criterion's
     evidentiary strength comes from how it was established — a command the
     runtime ran is `Observed`, an external receipt is `Attested`, the model's
@@ -413,7 +427,7 @@ assuming a document describes shipped behaviour rather than a proposal.
     a lie is not an audit trail. Failure verdicts are deliberately
     unconstrained, so the record can always tell the truth about work that
     went wrong.
-33. **Network exposure is explicit, never inferred**
+34. **Network exposure is explicit, never inferred**
     (docs/design/48-web-client.md). The server binds loopback and pins the
     `Host` header to loopback names; reaching it by a real hostname requires
     that name in `[server] trusted_hosts`, and a non-loopback `bind` with an
@@ -561,6 +575,17 @@ crates/vak-config    layered TOML config + atomic persisted workspace
                      network exposure, PRIVILEGED in full
                      (docs/design/48-web-client.md)
 crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
+                     capability/ (the registry for all five extension kinds:
+                     domain.rs is the vocabulary capabilities classify
+                     themselves against so the harness never enumerates
+                     instances, resolution.rs makes usability a state machine
+                     with backoff so a failure is never cached as data,
+                     snapshot.rs publishes immutable epochs a *turn* binds,
+                     registry.rs is the level-triggered reconcile loop plus
+                     the immediate revocation channel, provider.rs turns
+                     Core's five discovery paths into one declaration set,
+                     report.rs is the single projection the model, doctor and
+                     the console all render),
                      intent.rs (the seam: gathers facts, runs the cascade,
                      projects the engagement onto runtime knobs -- every
                      function takes a baseline and returns something no

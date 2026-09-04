@@ -16,6 +16,11 @@ pub struct Skill {
     pub path: PathBuf,
     pub provenance: Option<String>,
     pub shadowed: bool,
+    /// Optional `serves:` frontmatter — what this skill is for, in its own
+    /// words (`serves: documents, live-data`). `None` means undeclared,
+    /// which is never narrowed away by the per-turn capability slice. See
+    /// `crate::capability::domain`.
+    pub serves: Option<Vec<String>>,
 }
 
 /// A skill candidate that was found on disk but failed to parse.
@@ -326,6 +331,7 @@ pub fn validate(path: &Path) -> Result<(Skill, Vec<String>), String> {
     let mut name = None;
     let mut description = None;
     let mut compatibility = None;
+    let mut serves = None;
     let mut warnings = Vec::new();
     for line in frontmatter.lines() {
         let line = line.trim();
@@ -335,6 +341,21 @@ pub fn validate(path: &Path) -> Result<(Skill, Vec<String>), String> {
             description = Some(v.trim().trim_matches('"').to_string());
         } else if let Some(v) = line.strip_prefix("compatibility:") {
             compatibility = Some(v.trim().trim_matches('"').to_string());
+        } else if let Some(v) = line.strip_prefix("serves:") {
+            // Accept `a, b` and `[a, b]`; an empty value is "declared
+            // nothing", which is different from not declaring at all only
+            // in that it is a mistake worth not silently honouring — so an
+            // empty list stays `None` (undeclared) rather than becoming a
+            // slice that matches nothing.
+            let raw = v.trim().trim_matches(['[', ']'].as_slice());
+            let parsed: Vec<String> = raw
+                .split(',')
+                .map(|part| part.trim().trim_matches('"').to_string())
+                .filter(|part| !part.is_empty())
+                .collect();
+            if !parsed.is_empty() {
+                serves = Some(parsed);
+            }
         } else if line.starts_with("allowed-tools:") {
             warnings.push("allowed-tools is advisory and never grants authorization".into());
         }
@@ -362,6 +383,7 @@ pub fn validate(path: &Path) -> Result<(Skill, Vec<String>), String> {
             path: path.to_path_buf(),
             provenance: None,
             shadowed: false,
+            serves,
         },
         warnings,
     ))
@@ -490,6 +512,7 @@ mod tests {
             path: std::path::PathBuf::from("/workspace/.vak/skills/code-task/SKILL.md"),
             provenance: None,
             shadowed: false,
+            serves: None,
         };
         let prompt = prompt_section(&[skill]);
         assert!(prompt.contains("`skill` tool using the exact name"));

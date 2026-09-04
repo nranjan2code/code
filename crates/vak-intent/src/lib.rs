@@ -68,6 +68,7 @@ pub use authority::{
     ApprovalCeiling, Authority, Autonomy, Envelope, Escalation, GateFallback, PermissionCeiling,
 };
 pub use axes::{Act, Attendance, Clarity, Evidence, Horizon, Modality, Satisfaction, Stakes};
+pub use engage::ORIENTATION_FLOOR;
 pub use engage::{
     Cadence, ClarifyPolicy, ContextProfile, DeliveryPosture, DemandHint, Engagement, HilMode,
     OutputShape, Posture, StopProfile, Urgency, derive,

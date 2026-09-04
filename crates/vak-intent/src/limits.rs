@@ -82,6 +82,34 @@ impl CapabilitySlice {
     }
 }
 
+/// Intersect two domain requirements, treating empty as "unconstrained".
+///
+/// Empty is the top element here, not the bottom: a turn that names no
+/// domains admits everything. Intersecting with it must therefore leave the
+/// other side alone rather than collapsing to nothing.
+fn meet_domains(a: &BTreeSet<String>, b: &BTreeSet<String>) -> BTreeSet<String> {
+    if a.is_empty() {
+        return b.clone();
+    }
+    if b.is_empty() {
+        return a.clone();
+    }
+    a.intersection(b).cloned().collect()
+}
+
+/// Whether `self` admits nothing `baseline` forbids.
+fn domains_at_most(mine: &BTreeSet<String>, baseline: &BTreeSet<String>) -> bool {
+    if baseline.is_empty() {
+        // Baseline admits everything, so any requirement is at most that.
+        return true;
+    }
+    if mine.is_empty() {
+        // Unconstrained against a constrained baseline is a widening.
+        return false;
+    }
+    mine.is_subset(baseline)
+}
+
 /// Take the smaller of two optional caps, treating `None` as "no cap".
 fn meet_cap<T: PartialOrd + Copy>(a: Option<T>, b: Option<T>) -> Option<T> {
     match (a, b) {
@@ -116,6 +144,21 @@ pub struct Limits {
     /// of legs that may serve, so union is the narrowing direction.
     #[serde(default)]
     pub required_modalities: BTreeSet<Modality>,
+    /// Kinds of work this turn plausibly needs, as domain names a capability
+    /// can declare itself against (`crate::capability::domain` in vak-core).
+    ///
+    /// Empty means "unconstrained", the top element — every capability
+    /// survives. Listing *more* domains admits *more* capabilities, so this
+    /// narrows in the opposite direction to `required_modalities`: the meet
+    /// is intersection.
+    ///
+    /// Domains rather than tool names is the whole point. The previous
+    /// design held a static table mapping each act to built-in tool names,
+    /// which could never mention a capability the user installed, so every
+    /// new integration needed a harness edit and only got one after somebody
+    /// reported a confidently wrong answer.
+    #[serde(default)]
+    pub required_domains: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spend_ceiling_usd: Option<f64>,
     #[serde(default)]
@@ -148,6 +191,7 @@ impl Limits {
             capabilities: CapabilitySlice::All,
             ladder_limit: None,
             required_modalities: BTreeSet::new(),
+            required_domains: BTreeSet::new(),
             spend_ceiling_usd: None,
             approval_ceiling: ApprovalCeiling::AutoApprove,
             permission_ceiling: PermissionCeiling::FullAccess,
@@ -166,6 +210,7 @@ impl Limits {
         Limits {
             capabilities: self.capabilities.meet(&other.capabilities),
             ladder_limit: meet_cap(self.ladder_limit, other.ladder_limit),
+            required_domains: meet_domains(&self.required_domains, &other.required_domains),
             required_modalities: self
                 .required_modalities
                 .union(&other.required_modalities)
@@ -195,6 +240,7 @@ impl Limits {
             && baseline
                 .required_modalities
                 .is_subset(&self.required_modalities)
+            && domains_at_most(&self.required_domains, &baseline.required_domains)
             && cap_is_at_most(self.spend_ceiling_usd, baseline.spend_ceiling_usd)
             && self.approval_ceiling.rank() <= baseline.approval_ceiling.rank()
             && self.permission_ceiling.rank() <= baseline.permission_ceiling.rank()
@@ -351,6 +397,7 @@ mod tests {
     #[test]
     fn widening_any_field_is_rejected() {
         let narrow = Limits {
+            required_domains: BTreeSet::new(),
             capabilities: CapabilitySlice::only(["read"]),
             ladder_limit: Some(1),
             spend_ceiling_usd: Some(0.5),

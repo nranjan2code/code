@@ -1882,7 +1882,7 @@ async fn run_eval(
 /// the address bar.
 ///
 /// LOOPBACK ONLY, and not by convention: the server refuses `?token=` from
-/// any non-loopback host (invariant 33), so this URL authenticates nothing
+/// any non-loopback host (invariant 34), so this URL authenticates nothing
 /// if it leaves the machine. That is why the convenience is safe to offer
 /// at all.
 fn run_open(surface: cli::OpenSurface, port: Option<u16>, print_only: bool) -> i32 {
@@ -1985,7 +1985,7 @@ async fn run_serve(
     // needs `trusted_hosts` before it can serve its own published port, so
     // the guard would be worked around rather than obeyed.
     //
-    // What does NOT relax is the `Host` check itself (invariant 33): DNS
+    // What does NOT relax is the `Host` check itself (invariant 34): DNS
     // rebinding is defended identically inside a container, because that
     // attack does not care where the process runs.
     if publicly && server.trusted_hosts.is_empty() && in_container() {

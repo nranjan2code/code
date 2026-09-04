@@ -610,6 +610,21 @@ pub struct McpServerConfig {
     /// is stripped from untrusted projects).
     #[serde(default)]
     pub network: bool,
+    /// What this server is for, in its own words: `serves = ["live-data"]`.
+    ///
+    /// Optional, and deliberately so. An empty list means *undeclared*,
+    /// which is never narrowed away by the per-turn capability slice — the
+    /// alternative, guessing a domain from the server's tool names, would
+    /// put a keyword table back in the harness and reintroduce the coupling
+    /// this field exists to remove. Declaring domains only ever makes the
+    /// slice tighter, so it is a context optimisation an operator opts into,
+    /// never a requirement for the server to work.
+    ///
+    /// Skipped when empty so the config file and the management API keep
+    /// exactly the shape they had before this field existed — a server that
+    /// declares nothing should look no different from one written last year.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub serves: Vec<String>,
 }
 
 /// Project-layer switches for severing one inherited capability category.

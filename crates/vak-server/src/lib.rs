@@ -8252,6 +8252,11 @@ fn mcp_config_from_input(
                         args: server.args.clone(),
                         env: server.env.clone(),
                         network: server.network,
+                        // Undeclared: the per-turn slice never narrows a
+                        // capability that has not classified itself, so a
+                        // server configured through the API stays reachable
+                        // without the operator having to know about domains.
+                        serves: Vec::new(),
                     },
                 )
             })
@@ -8405,6 +8410,10 @@ fn catalog_server(entry: IntegrationCatalogEntry) -> vak_config::McpServerConfig
             })
             .unwrap_or_default(),
         network: true,
+        // Catalog entries stay undeclared for the same reason: a server the
+        // operator just installed must be reachable immediately, and
+        // declaring domains only ever narrows.
+        serves: Vec::new(),
     }
 }
 

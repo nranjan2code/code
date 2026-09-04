@@ -124,7 +124,7 @@ to the security-events log AND emit to the hub (live alerting).
 Rate limiting applies to all POSTs including `/auth/login` — brute force
 is bounded by `[gateway.rate_limit]`.
 
-Beyond the token, two checks gate every request (invariant 33): the `Host`
+Beyond the token, two checks gate every request (invariant 34): the `Host`
 header must be loopback or listed in `[server] trusted_hosts`, and a
 state-changing request carrying a cookie must also carry an `Origin` we
 recognise. A request with no `Origin` at all is not a browser mutation

@@ -9,6 +9,7 @@ semver = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 chrono = { workspace = true }
+futures = { workspace = true }
 globset = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }

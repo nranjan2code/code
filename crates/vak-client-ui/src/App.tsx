@@ -621,7 +621,7 @@ export async function refreshBackend(knownInfo?: import("./types").BackendInfo):
  * `Referer` of every subsequent request, and whatever is sharing the screen.
  *
  * Loopback only in practice: the server refuses `?token=` from any
- * non-loopback host (invariant 33), so a link like this pasted at a remote
+ * non-loopback host (invariant 34), so a link like this pasted at a remote
  * deployment authenticates nothing.
  */
 async function consumeTokenFromUrl(): Promise<void> {

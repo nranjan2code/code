@@ -762,9 +762,9 @@ mod tests {
             &config,
         );
         assert_eq!(
-            resolution.peek().engagement.limits.capabilities,
-            crate::CapabilitySlice::All,
-            "a provisional reading must not remove tools"
+            resolution.peek().engagement.limits.required_domains,
+            std::collections::BTreeSet::new(),
+            "a provisional reading must not narrow what the turn can reach"
         );
     }
 
@@ -777,9 +777,14 @@ mod tests {
             &Authority::default(),
             &ResolverConfig::default(),
         );
-        assert_ne!(
-            resolution.peek().engagement.limits.capabilities,
-            crate::CapabilitySlice::All
+        assert!(
+            !resolution
+                .peek()
+                .engagement
+                .limits
+                .required_domains
+                .is_empty(),
+            "a confident reading must express what the turn needs"
         );
     }
 }
