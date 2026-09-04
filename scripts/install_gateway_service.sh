@@ -22,7 +22,7 @@ BIN_DIR="$PWD/target/release"
 
 # --- build -------------------------------------------------------------------
 echo "→ building release binary"
-cargo build --release -p vak
+cargo build --locked --release -p vak
 
 # --- ensure pinned gateway token ---------------------------------------------
 mkdir -p "$(dirname "$ENV_FILE")"

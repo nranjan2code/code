@@ -126,7 +126,7 @@ cd /src
 apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq socat >/dev/null 2>&1
 
 echo "--- build ---"
-cargo build --release --package vak
+cargo build --locked --release --package vak
 
 VAK=/tmp/target/release/vak
 PREFIX=/opt/vak

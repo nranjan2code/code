@@ -21,7 +21,7 @@ fi
 BIN="${BIN:-target/debug/vak}"
 if [[ ! -x "$BIN" ]]; then
   echo "building..."
-  cargo build -p vak
+  cargo build --locked -p vak
 fi
 
 cleanup() {

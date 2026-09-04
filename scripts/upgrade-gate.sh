@@ -40,7 +40,7 @@ fail() { printf '\n✗ %s\n' "$*" >&2; exit 1; }
 step() { printf '\n== %s ==\n' "$*"; }
 
 step "build this revision"
-cargo build --release --package vak >/dev/null
+cargo build --locked --release --package vak >/dev/null
 HEAD_BIN="$ROOT_DIR/target/release/vak"
 [[ -x "$HEAD_BIN" ]] || fail "no vak binary at $HEAD_BIN"
 

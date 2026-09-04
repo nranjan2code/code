@@ -65,7 +65,7 @@ printf 'isolated home:   %s\n' "$VAK_HOME"
 printf 'isolated prefix: %s\n' "$PREFIX"
 
 step "build"
-cargo build --release --package vak >/dev/null
+cargo build --locked --release --package vak >/dev/null
 BUILT="$ROOT_DIR/target/release/vak"
 [[ -x "$BUILT" ]] || fail "no binary at $BUILT"
 ok "built"

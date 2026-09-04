@@ -65,7 +65,7 @@ docker run --rm \
     -v "$SRC:/src" -v "$STAGE/out:/out" -w /src \
     -e CARGO_TARGET_DIR=/tmp/target \
     rust:1-bookworm \
-    bash -c 'cargo build --release --package vak >/dev/null && cp /tmp/target/release/vak /out/vak'
+    bash -c 'cargo build --locked --release --package vak >/dev/null && cp /tmp/target/release/vak /out/vak'
 [[ -x "$STAGE/out/vak" ]] || fail "the Linux build produced no binary"
 ok "built from $(git -C "$ROOT_DIR" rev-parse --short HEAD)"
 

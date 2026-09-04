@@ -71,8 +71,8 @@ echo "--- build ---"
 # A container has no committed desktop frontend, so build only the CLI:
 # the desktop shell is a macOS-first surface and its absence is normal on
 # a headless Linux box (`self install` treats it as an optional component).
-cargo build --release --package vak --offline 2>/dev/null \
-    || cargo build --release --package vak
+cargo build --locked --release --package vak --offline 2>/dev/null \
+    || cargo build --locked --release --package vak
 
 VAK=/tmp/target/release/vak
 export VAK_HOME=/tmp/vak-home
@@ -302,7 +302,7 @@ set -eu
 cd /src
 apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq socat >/dev/null 2>&1
 
-cargo build --release --package vak
+cargo build --locked --release --package vak
 
 VAK=/tmp/target/release/vak
 export VAK_HOME=/tmp/vak-home

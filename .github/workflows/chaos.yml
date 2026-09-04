@@ -22,7 +22,7 @@ jobs:
       - name: Install test deps
         run: python3 -m pip install pytest
       - name: Build
-        run: cargo build -p vak
+        run: cargo build --locked -p vak
       - name: Start fault proxy
         run: |
           printf 'pass' > /tmp/fault_mode
