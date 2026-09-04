@@ -2262,12 +2262,15 @@ pub fn secured_router_with_port(core: Core, force_gateway: bool, port: u16) -> (
     // Local routines: fires due scheduled tasks while this server lives.
     start_scheduler(&state);
     delivery::start_replay(&state.core);
-    // Start MCP tool discovery now, not at the first session's first turn:
-    // a process sits idle through real human seconds before any message
-    // arrives, so this spends that idle time on the same background
-    // warm-up `system_prompt()` would otherwise trigger far too late to
-    // matter for a single-turn task (see `Core::warm_mcp`).
-    state.core.warm_mcp();
+    // Capability discovery is NOT started here.
+    //
+    // It used to be, and the CLI did its own bounded wait, and the desktop
+    // did neither — three surfaces answering "when may a prompt be frozen?"
+    // three different ways, which is how an admitted, working MCP server
+    // still produced a session that had never seen its catalog.
+    // `Core::admitted_capabilities` owns that decision now, so every surface
+    // gets the same packet whether it was reached from a terminal, this
+    // server, or the desktop app.
     // Background index sync: keeps the admin console populated from the
     // very first boot. Idempotent; never blocks request handling.
     if let Some(store) = state.store.clone() {

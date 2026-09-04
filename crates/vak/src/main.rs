@@ -25,17 +25,6 @@ mod update_check;
 
 use cli::{CheckpointAction, Cli, Command, FlowAction, SkillsAction, SkillsReviewAction};
 
-/// How long a one-shot CLI turn (`vak exec`, `vak flow exec`, `vak plan`)
-/// waits for MCP tool discovery before giving up and running with the
-/// name-only fallback. These commands have no boot-to-first-message idle
-/// window to spend the way a long-lived server/desktop process does (see
-/// `Core::warm_mcp` / `Core::warm_mcp_bounded`), so this is a deliberate,
-/// bounded exception to "never block turn admission on an optional
-/// integration" — long enough to cover a warm (already-installed)
-/// `npx`/`uvx`-style launcher, short enough not to read as a hang for a
-/// CLI invocation that's otherwise instant.
-const MCP_EXEC_WARM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
-
 fn run_skills_review(cwd: PathBuf, action: SkillsReviewAction) -> i32 {
     let Some(core) = Core::new(cwd).ok() else {
         return 2;
@@ -841,7 +830,6 @@ async fn run_flow_exec(
         }
     };
 
-    core.warm_mcp_bounded(MCP_EXEC_WARM_TIMEOUT).await;
     let session = match core.start_session().await {
         Ok(s) => s,
         Err(e) => {
@@ -1106,11 +1094,6 @@ async fn run_exec(
         }
     }
 
-    // One-shot: no boot-to-first-message idle window to spend (see
-    // Core::warm_mcp_bounded), so wait briefly here instead of leaving MCP
-    // discovery to a background pass that would land after this process
-    // has already exited.
-    core.warm_mcp_bounded(MCP_EXEC_WARM_TIMEOUT).await;
     let session = match resume_session {
         Some(sid) => match core.open_session(&sid).await {
             Ok(s) => {
@@ -1642,7 +1625,6 @@ async fn run_plan(
             return 2;
         }
     };
-    core.warm_mcp_bounded(MCP_EXEC_WARM_TIMEOUT).await;
     let session = match core.start_session().await {
         Ok(s) => s,
         Err(e) => {

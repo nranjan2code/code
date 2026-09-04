@@ -84,9 +84,7 @@ type TaskSandboxMap =
     std::sync::Mutex<HashMap<String, (String, Arc<dyn vak_tools::sandbox::Sandbox>)>>;
 type ModelCache = std::sync::Mutex<HashMap<(String, String), (std::time::Instant, Vec<String>)>>;
 use vak_session::SessionLog;
-use vak_session::types::{
-    CapabilityDescriptor, CapabilityInvocation, CapabilityKind, FrozenContract, SessionHeader,
-};
+use vak_session::types::{CapabilityDescriptor, CapabilityKind, FrozenContract, SessionHeader};
 use vak_tools::sandbox::SandboxMode;
 
 struct CoreFlowDispatcher {
@@ -1243,6 +1241,83 @@ impl Core {
         }
     }
 
+    /// How long admission may wait for the capability registry before it
+    /// gives up and freezes what it has. Bounded, because an optional
+    /// integration must never block a turn indefinitely; generous enough
+    /// that a cold `npx <mcp-server>` usually lands inside it.
+    pub const ADMISSION_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
+    /// **The** capability packet for a turn, for every surface.
+    ///
+    /// This is the one place anything waits for capability discovery, and it
+    /// exists because the wait used to live in each surface's startup code
+    /// and they all answered it differently: the CLI called
+    /// `warm_mcp_bounded` and waited two seconds, `vak serve` called
+    /// `warm_mcp` and never waited at all, and the desktop called nothing.
+    /// The same question therefore produced a different packet depending on
+    /// where it was asked — and on the desktop it was not even a race, it was
+    /// deterministic: nothing warmed, so every session froze an MCP section
+    /// naming servers with no catalog behind them. A model given a server
+    /// name and no tools concludes it cannot reach anything, which is how an
+    /// admitted, working search server still produced "I do not have a tool
+    /// that can provide real-time weather information".
+    ///
+    /// One canonical way (AGENTS.md invariant 30): surfaces do not decide
+    /// this, admission does. The registry reconciles once if it has never
+    /// published, bounded by [`Self::ADMISSION_BUDGET`]; a timeout is not an
+    /// error, it just means this turn is admitted with whatever resolved in
+    /// time and the reconcile loop repairs it for the next one — with no
+    /// restart and no session rotation (invariant 31).
+    pub async fn admitted_capabilities(&self) -> Vec<CapabilityDescriptor> {
+        let registry = self.capability_registry();
+        if registry.current().await.epoch == 0 {
+            let _ = tokio::time::timeout(Self::ADMISSION_BUDGET, registry.reconcile()).await;
+        }
+        let published = registry.current().await;
+        if published.epoch == 0 {
+            // The registry never got to publish. Fall back to the direct
+            // descriptors so a turn is never capability-less because
+            // discovery was slow.
+            return self.capability_descriptors();
+        }
+        published.descriptors()
+    }
+
+    /// A live session's admitted set, re-rendered against the current
+    /// registry.
+    ///
+    /// **Admission is unchanged**: the contract still decides what may be
+    /// called, and a capability the registry has since gained does not
+    /// appear here. What is refreshed is the *description* of something the
+    /// contract already admits — most visibly an MCP server's discovered
+    /// catalog, but equally a skill's summary or a command's template.
+    ///
+    /// This is the epoch re-bind from doc 41 invariant 6: capability changes
+    /// take effect at the next turn boundary of every live session, with no
+    /// restart and no rotation. Without it a session admitted while
+    /// discovery was still in flight carries the name-only MCP line for its
+    /// entire life, and under those two constraints "its entire life" has no
+    /// end. Matching is on the typed `(kind, name)` identity rather than on
+    /// rendered text, so it holds for every kind rather than the one whose
+    /// wording someone thought to grep for.
+    async fn rebound_capabilities(
+        &self,
+        contract: &vak_session::types::FrozenContract,
+    ) -> Vec<CapabilityDescriptor> {
+        let current = self.admitted_capabilities().await;
+        contract
+            .capabilities
+            .iter()
+            .map(|frozen| {
+                current
+                    .iter()
+                    .find(|live| live.kind == frozen.kind && live.name == frozen.name)
+                    .cloned()
+                    .unwrap_or_else(|| frozen.clone())
+            })
+            .collect()
+    }
+
     pub fn effective_mcp(&self) -> vak_config::McpConfig {
         let mut config = self
             .inner
@@ -2393,31 +2468,16 @@ impl Core {
     /// The full composition, with the per-layer descriptors the ledger and
     /// the editing surfaces need (docs/design/45-prompt-layers.md).
     pub fn resolve_prompt(&self, capabilities: &[CapabilityDescriptor]) -> prompts::Resolution {
-        let servers = capabilities
+        let server_caps = capabilities
             .iter()
             .filter(|capability| capability.kind == CapabilityKind::McpServer)
-            .map(|capability| capability.name.clone())
             .collect::<Vec<_>>();
-        // Trigger discovery here, not at agent-build time.
+        // No discovery is triggered here, and none is waited for.
         //
-        // This call is the whole of defect D1. `cached_mcp_inventory()` only
-        // *reads* the cache; the only thing that ever started a discovery
-        // pass was `mcp_manager()`, and the first call to that happened when
-        // the agent was built — after this prompt had already been frozen
-        // into the session contract. A session born before the catalog
-        // landed therefore kept a name-only MCP section for its entire life,
-        // and under "never restart, never rotate" that meant forever. The
-        // doc comment on `warm_mcp` claimed `system_prompt()` triggered this
-        // lazily; it did not, until now.
-        //
-        // Still non-blocking: `mcp_manager()` performs no I/O — it
-        // constructs the manager and fires a background pass. The worst case
-        // is the same name-only section this always fell back to, for one
-        // turn, and the reconcile loop then repairs it without a restart.
-        if !servers.is_empty() {
-            self.mcp_manager();
-        }
-        let inventory = self.cached_mcp_inventory();
+        // Admission owns that decision now — `Core::admitted_capabilities`
+        // is the single place any surface waits for the registry, so the
+        // packet handed to this function is already as resolved as it is
+        // going to get. Rendering is pure: same packet in, same prompt out.
         let (seed, capability_contract) = prompts::seed(APP_VERSION);
         // Advertise only what the composed policy will actually run. A
         // server listed here that dispatch refuses is the exact mismatch
@@ -2426,9 +2486,9 @@ impl Core {
         // says why and how to fix it.
         let standings = self.capability_standings();
         let blocked_servers = reach::blocked_mcp_servers(&standings);
-        let servers = servers
+        let server_caps = server_caps
             .into_iter()
-            .filter(|server| !blocked_servers.contains(server))
+            .filter(|capability| !blocked_servers.contains(&capability.name))
             .collect::<Vec<_>>();
         let mut standing = reach::prompt_section(&standings);
         let extra_diags: Vec<_> = self
@@ -2461,7 +2521,7 @@ impl Core {
             capability_contract,
             surface: self.surface.prompt_section(),
             skills: skills::prompt_section_from_capabilities(capabilities),
-            mcp: mcp_config_section(&servers, inventory.as_ref()),
+            mcp: mcp_config_section(&server_caps),
             standing,
         };
         prompts::resolve(&self.prompt_layers(seed), &runtime)
@@ -2720,108 +2780,42 @@ impl Core {
             .collect()
     }
 
+    /// The capability packet, derived from the same declarations the
+    /// registry uses.
+    ///
+    /// This used to build descriptors a second time, by hand, and the two
+    /// constructions drifted: the same built-in tool came out stamped
+    /// `provenance: "vak-core"` here and `"builtin"` through the registry,
+    /// so which spelling a session recorded depended on which path admitted
+    /// it. That is the parallel-representation defect doc 41 exists to
+    /// remove, reintroduced one layer down.
+    ///
+    /// There is one construction now. `CapabilityProvider::declare` is the
+    /// single description of what exists, and both this and the registry
+    /// project from it. Note this is the *unresolved* view — anything that
+    /// needs probing is described but not yet proven usable — which is why
+    /// admission goes through [`Self::admitted_capabilities`] instead and
+    /// this remains only the synchronous fallback.
     pub fn capability_descriptors(&self) -> Vec<CapabilityDescriptor> {
-        let mut out = Vec::new();
-        for name in self.tool_names() {
-            out.push(CapabilityDescriptor {
-                name,
-                kind: CapabilityKind::Tool,
-                invocation: CapabilityInvocation::ModelTool,
-                description: String::new(),
-                source: None,
-                digest: None,
-                provenance: Some("vak-core".into()),
-                configuration: serde_json::Value::Null,
-            });
-        }
-        if self.channel_tool_allowed("flow") {
-            out.push(CapabilityDescriptor {
-                name: "flow".into(),
-                kind: CapabilityKind::Tool,
-                invocation: CapabilityInvocation::ModelTool,
-                description: "Managed static-flow dispatcher".into(),
-                source: None,
-                digest: None,
-                provenance: Some("vak-core".into()),
-                configuration: serde_json::Value::Null,
-            });
-        }
-        for skill in self.skills() {
-            let Ok(digest) = skill.digest() else {
-                continue;
-            };
-            out.push(CapabilityDescriptor {
-                name: skill.name,
-                kind: CapabilityKind::Skill,
-                invocation: CapabilityInvocation::SkillLoader,
-                description: skill.description,
-                source: Some(skill.path),
-                digest: Some(digest),
-                provenance: skill.provenance,
-                configuration: serde_json::Value::Null,
-            });
-        }
-        for server in self.effective_mcp().servers.into_keys() {
-            let provenance = if server.starts_with("plugin.") {
-                "plugin"
-            } else {
-                "workspace-config"
-            };
-            out.push(CapabilityDescriptor {
-                name: server,
-                kind: CapabilityKind::McpServer,
-                invocation: CapabilityInvocation::ModelTool,
-                description: "MCP server discovered through the brokered mcp tool".into(),
-                source: None,
-                digest: None,
-                provenance: Some(provenance.into()),
-                configuration: serde_json::Value::Null,
-            });
-        }
-        for hook in self
-            .effective_hooks()
+        use crate::capability::registry::CapabilityProvider;
+        let mut out: Vec<CapabilityDescriptor> = self
+            .declare()
             .into_iter()
-            .filter(|hook| hook.enabled)
-        {
-            out.push(CapabilityDescriptor {
-                name: format!("{}/{}", hook.event, hook.command),
-                kind: CapabilityKind::Hook,
-                invocation: CapabilityInvocation::Automatic,
-                description: hook.matcher.clone().unwrap_or_default(),
-                source: None,
-                digest: None,
-                provenance: Some("workspace-or-plugin".into()),
-                configuration: serde_json::json!({
-                    "event": hook.event,
-                    "matcher": hook.matcher,
-                    "command": hook.command,
-                    "timeout_ms": hook.timeout_ms,
-                    "failure_mode": hook.failure_mode,
-                }),
-            });
-        }
-        for command in self.custom_commands() {
-            out.push(CapabilityDescriptor {
-                name: command.name,
-                kind: CapabilityKind::Command,
-                invocation: CapabilityInvocation::UserCommand,
-                description: command.description,
-                source: None,
-                digest: None,
-                provenance: Some(command.source),
-                configuration: serde_json::json!({"template": command.template}),
-            });
-        }
-        // One definition of "what this turn can do".
-        //
-        // The capability contract in the system prompt promises that the
-        // attached schemas ARE the callable interface. Leaving a capability
-        // in this set that the composed policy refuses every time breaks
-        // that promise at the only place a model can check it, so the
-        // reconciliation is applied to the descriptors themselves rather
-        // than only to the tool vector further downstream — the contract,
-        // the prompt, the registry, and `doctor` then cannot disagree.
-        //
+            .map(|declaration| capability::Capability {
+                id: declaration.id,
+                origin: declaration.origin,
+                summary: declaration.summary,
+                serves: declaration.serves,
+                digest: declaration.digest,
+                source: declaration.source,
+                // Unprobed: `Static` describes it without claiming a probe
+                // succeeded. Admission is what proves the rest.
+                resolution: capability::Resolution::Static,
+                configuration: declaration.configuration,
+            })
+            .map(|capability| capability.to_descriptor())
+            .collect();
+
         // Strictly subtractive: `reach` never returns a capability that
         // configuration did not already grant.
         let standings = self.capability_standings();
@@ -3787,7 +3781,7 @@ impl Core {
             },
             demand,
         );
-        let capabilities = self.capability_descriptors();
+        let capabilities = self.admitted_capabilities().await;
         let resolution = self.resolve_prompt(&capabilities);
         let system_prompt = resolution.text;
         let header = SessionHeader {
@@ -4152,10 +4146,21 @@ impl Core {
             }
             None => (self.provider()?, self.effective_model()),
         };
-        let frozen_system_prompt = session_contract
-            .as_ref()
-            .map(|contract| contract.system_prompt.clone())
-            .unwrap_or_else(|| self.system_prompt());
+        // Rendered from the re-bound packet, not from the frozen string.
+        //
+        // The contract's admitted set is still the authority; only the
+        // rendering of what it already admits is refreshed. See
+        // `rebound_capabilities`.
+        let frozen_system_prompt = match session_contract.as_ref() {
+            Some(contract) => {
+                let rebound = self.rebound_capabilities(contract).await;
+                self.resolve_prompt(&rebound).text
+            }
+            None => {
+                let admitted = self.admitted_capabilities().await;
+                self.resolve_prompt(&admitted).text
+            }
+        };
         let mut cfg = AgentConfig::new(frozen_system_prompt.clone());
 
         // ---- intent resolution (docs/design/47-commitment-kernel.md) ----
@@ -5087,6 +5092,7 @@ fn isolate_global_config() {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod capability_contract_tests {
     use super::*;
+    use vak_session::types::CapabilityInvocation;
 
     #[tokio::test]
     async fn admission_freezes_one_typed_capability_packet() {
@@ -6199,25 +6205,69 @@ fn mcp_fingerprint(servers: &[(String, vak_mcp::ServerConfig)]) -> u64 {
 /// Model-visible fallback for configured MCP servers when live discovery is
 /// unavailable. This belongs in the frozen session contract as well as the
 /// live prompt so a transient launcher failure cannot hide a capability.
-fn mcp_config_section(servers: &[String], inventory: Option<&McpInventory>) -> String {
+/// The MCP section of the prompt, rendered from the admitted capability
+/// packet itself.
+///
+/// The catalog used to come from a second place — `Core::mcp_cache`'s
+/// inventory — while the server *names* came from the packet. Two sources
+/// for one fact, and they disagreed exactly when it mattered: a session
+/// admitted before discovery landed froze the name-only line while the cache
+/// filled in moments later, and nothing ever reconciled the two. A model
+/// handed "these servers exist, go call `list` yourself" and no catalog
+/// reasonably concludes it has nothing to reach, which is how a working,
+/// admitted search server produced "I do not have a tool that can provide
+/// real-time weather information".
+///
+/// Now there is one source. `CapabilityKind::McpServer` descriptors carry
+/// their discovered catalog in `configuration.tools` (filled by the
+/// registry's probe), so whatever the packet admits is exactly what the
+/// prompt describes.
+fn mcp_config_section(servers: &[&CapabilityDescriptor]) -> String {
     if servers.is_empty() {
         return String::new();
     }
+    let names = servers
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
     let mut section = format!(
-        "\nConfigured MCP servers: {}. Use the `mcp` tool with action \"list\" first; it returns exact tool names and input schemas. Then use action \"call\" with the exact name and schema-valid arguments.\n",
-        servers.join(", ")
+        "\nConfigured MCP servers: {names}. Use the `mcp` tool with action \"list\" first; it returns exact tool names and input schemas. Then use action \"call\" with the exact name and schema-valid arguments.\n"
     );
-    if let Some(inventory) = inventory {
-        section.push_str("Discovered MCP catalog (do not invent tool names or argument fields):\n");
-        for (server, tools) in inventory {
-            section.push_str(&format!("- {server}:\n"));
-            for tool in tools {
-                section.push_str(&format!(
-                    "  - {} — {}; inputSchema: {}\n",
-                    tool.name, tool.description, tool.input_schema
-                ));
-            }
+    let mut catalog = String::new();
+    for capability in servers {
+        let Some(tools) = capability
+            .configuration
+            .get("tools")
+            .and_then(|t| t.as_array())
+        else {
+            continue;
+        };
+        if tools.is_empty() {
+            continue;
         }
+        catalog.push_str(&format!("- {}:\n", capability.name));
+        for tool in tools {
+            let name = tool
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or_default();
+            let description = tool
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or_default();
+            let schema = tool
+                .get("inputSchema")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            catalog.push_str(&format!(
+                "  - {name} — {description}; inputSchema: {schema}\n"
+            ));
+        }
+    }
+    if !catalog.is_empty() {
+        section.push_str("Discovered MCP catalog (do not invent tool names or argument fields):\n");
+        section.push_str(&catalog);
     }
     section
 }
@@ -6305,32 +6355,66 @@ impl vak_agent::WorkspaceDelta for CheckpointDelta {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod mcp_section_tests {
-    use super::{McpInventory, mcp_config_section};
+    use super::mcp_config_section;
+    use vak_session::types::{CapabilityDescriptor, CapabilityInvocation, CapabilityKind};
 
-    #[test]
-    fn configured_servers_remain_visible_without_inventory() {
-        let section = mcp_config_section(&["tavily".to_string()], None);
-        assert!(section.contains("tavily"));
-        assert!(section.contains("`mcp`"));
-        assert!(section.contains("action \"list\""));
+    fn server(name: &str, configuration: serde_json::Value) -> CapabilityDescriptor {
+        CapabilityDescriptor {
+            name: name.into(),
+            kind: CapabilityKind::McpServer,
+            invocation: CapabilityInvocation::ModelTool,
+            description: String::new(),
+            source: None,
+            digest: None,
+            provenance: None,
+            configuration,
+        }
     }
 
     #[test]
-    fn discovered_catalog_exposes_exact_names_and_input_schemas() {
-        let inventory: McpInventory = vec![(
-            "tavily".into(),
-            vec![vak_mcp::McpToolInfo {
-                name: "tavily_search".into(),
-                description: "Search the web".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {"query": {"type": "string"}},
-                    "required": ["query"]
-                }),
-            }],
+    fn configured_servers_remain_visible_without_a_catalog() {
+        let caps = [server("tavily", serde_json::Value::Null)];
+        let refs: Vec<_> = caps.iter().collect();
+        let section = mcp_config_section(&refs);
+        assert!(section.contains("tavily"));
+        assert!(section.contains("`mcp`"));
+        assert!(section.contains("action \"list\""));
+        assert!(
+            !section.contains("Discovered MCP catalog"),
+            "an empty catalog must not be announced as one"
+        );
+    }
+
+    /// The catalog is read from the admitted packet, not a second cache.
+    ///
+    /// This is the defect that reached a user: the packet admitted `tavily`
+    /// and the prompt named it, but the catalog lived in `Core::mcp_cache`
+    /// and had not landed when the session froze. The model saw a server
+    /// name with no tools behind it and answered "I do not have a tool that
+    /// can provide real-time weather information" — with a connected,
+    /// admitted search server attached. One source means the two can no
+    /// longer disagree.
+    #[test]
+    fn the_catalog_comes_from_the_packet_with_exact_names_and_schemas() {
+        let caps = [server(
+            "tavily",
+            serde_json::json!({
+                "tools": [{
+                    "name": "tavily_search",
+                    "description": "Search the web",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"]
+                    }
+                }]
+            }),
         )];
-        let section = mcp_config_section(&["tavily".to_string()], Some(&inventory));
+        let refs: Vec<_> = caps.iter().collect();
+        let section = mcp_config_section(&refs);
+        assert!(section.contains("Discovered MCP catalog"));
         assert!(section.contains("tavily_search"));
         assert!(section.contains("inputSchema"));
         assert!(section.contains("query"));
