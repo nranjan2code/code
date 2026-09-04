@@ -7,6 +7,88 @@ for those releases were removed from this file; `git log` holds them.
 
 ## Unreleased
 
+The web client: the workspace surface stops being desktop-only.
+
+### One client, three hosts (`docs/design/48-web-client.md`)
+
+`vak serve` now serves the **full workspace client at `/app`** — the same
+client the desktop app ships, in a browser. A headless Linux box is a place
+to *use* vak, not only to host it.
+
+It is one source tree, not a second client. The workspace UI moved out of
+`crates/vak-desktop` into `crates/vak-client-ui` and sits behind a small
+`Host` port with a Tauri and a
+web implementation, chosen by a build-time alias so the web bundle never
+carries the Tauri IPC layer. No component knows which host it got; they ask
+`host.can(...)`, and a capability the host cannot provide is **absent rather
+than broken** — there is no Terminal tab on a host without a terminal, rather
+than a disabled one that cannot explain itself.
+
+Three things blocked this and are fixed:
+
+- **The server answered only to loopback hostnames.** `[server]
+  trusted_hosts` now names the hostnames it will accept, keeping the
+  DNS-rebinding defence that pinning provided. Wildcards are refused: one
+  there reopens exactly the hole the list closes.
+- **`vak serve --host` did not exist**, though `docs/hosting.md` had
+  documented it for releases. It exists, and **refuses to start** on a
+  non-loopback bind with no `trusted_hosts` — naming the setting, and
+  offering the SSH tunnel that needs none of it — rather than starting and
+  then rejecting every request with a 421 nobody can diagnose.
+- **A dropped event stream lost the gap permanently.** Events now carry a
+  sequence number, the last 1024 are retained, and a reconnect replays
+  exactly what was missed — or says `resync` when the gap is wider than the
+  ring, so a client is never handed a stream with a hole it cannot see. A
+  phone that slept, or a closed laptop lid, is now survivable.
+
+Auth is one login for every browser surface: `/auth/login|logout|session`
+replace `/admin/login|logout`, which were **removed**, not kept alongside —
+two endpoints against one cookie is two contracts that must agree forever.
+The cookie is `HttpOnly; SameSite=Strict`, and `Secure` only behind real TLS,
+because a `Secure` cookie over plain http is silently discarded and the
+session then never persists. Cross-origin mutations are refused even holding
+a valid cookie, and `?token=` is now loopback-only.
+
+The terminal is a real shell, so it is **off by default** (`[server.web]
+terminal`) and loopback-pinned even when on: every other effect the client
+can reach is permission-gated, and a shell is not.
+
+### The surface earns a phone
+
+- A **light theme**, and `system` as the new default. All three previous
+  themes were dark. Light is built warm rather than inverted, and its accent
+  *darkens* — Burnt Terracotta is 2.4:1 on white and unreadable as a button
+  label. Contrast is now measured in CI for every theme, not asserted.
+- **Responsive to 375px.** Below 900px the sidebar and dock become overlays;
+  below 600px it is a single column. The narrow target is deliberate: read,
+  review, **answer an approval**, steer. An approval is a run that has
+  stopped and is waiting on a person, which is the one thing that cannot
+  wait for someone to reach a laptop — so it notifies, and the notification
+  deep-links to the card rather than to the app.
+- A **connection indicator** with four states, because "Working" over a
+  network is a claim about a round trip that may not have happened.
+- Installable as a PWA.
+
+### Also
+
+- **The commitment portfolio reached the workspace client.** The kernel
+  shipped it in the admin console only; a durable obligation the runtime
+  verifies is workspace information, and there was no way to see or close one
+  without leaving to a second application.
+- A **second, cold palette** across the presentation components (indigo,
+  emerald, rose, amber, sky, slate on near-black grounds) is gone, along with
+  ~90 one-off literals. Everything resolves to a token or a `color-mix` of
+  tokens.
+- Desktop fixes worth naming on their own: the default transcript density
+  rendered **nothing at all** while a run was working; the header could say
+  "Retrying" forever after one transient failure; seven CSS custom properties
+  were used and never defined (removing a focus outline, a border, and a
+  chart series); the integrated terminal **leaked a shell process per session
+  switch**; sidebar row actions were mouse-only; no modal trapped focus; and
+  one render exception blanked the entire application.
+
+## Previously unreleased
+
 The commitment kernel: vak learns what it was asked, and what "done" means.
 
 ### The intent kernel (`docs/design/47-commitment-kernel.md`)

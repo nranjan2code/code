@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! Guards the design system's own rule: "keep the desktop and admin surfaces
 //! on the same token set — the admin UI is explicitly built to match
@@ -207,6 +207,120 @@ fn faint_clears_wcag_aa_on_every_surface_it_sits_on() {
     }
 }
 
+/// Tokens declared inside one `html[data-theme="<name>"]` block.
+fn theme_tokens(css: &str, theme: &str) -> BTreeMap<String, String> {
+    let marker = format!("html[data-theme=\"{theme}\"]");
+    let start = css
+        .find(&marker)
+        .unwrap_or_else(|| panic!("no {marker} block"));
+    let body = &css[start..];
+    let end = body.find('}').expect("closing brace");
+    let mut out = BTreeMap::new();
+    // Comments first: a `/* ... */` explaining a token can easily contain a
+    // colon (`:root`, `3.0:1`), and `split_once(':')` would then read the
+    // comment as the declaration and silently skip the real token — a test
+    // that misses a value looks exactly like a test that passed.
+    let body = strip_comments(&body[..end]);
+    // Theme blocks pack several declarations per line, unlike `:root`.
+    for declaration in body.split(';') {
+        let Some((name, value)) = declaration.split_once(':') else {
+            continue;
+        };
+        let Some(name) = name.trim().strip_prefix("--") else {
+            continue;
+        };
+        out.insert(name.to_string(), value.trim().to_string());
+    }
+    out
+}
+
+/// CSS `/* ... */` comments removed.
+fn strip_comments(css: &str) -> String {
+    let mut out = String::with_capacity(css.len());
+    let mut rest = css;
+    while let Some(start) = rest.find("/*") {
+        out.push_str(&rest[..start]);
+        match rest[start..].find("*/") {
+            Some(end) => rest = &rest[start + end + 2..],
+            None => return out, // unterminated: nothing after it is a token
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Every theme is a real ground, so every theme's text must be readable on
+/// it — not just the default one.
+///
+/// The light palette makes this load-bearing rather than pro-forma: it is
+/// the one place where a token inherited from the dark scale would be
+/// catastrophic rather than merely off. Burnt Terracotta at `#df795f` is
+/// 2.4:1 on white, so light DARKENS the accent instead of brightening it,
+/// and this is what keeps that true (docs/design/48-web-client.md §7.1).
+#[test]
+fn every_theme_clears_wcag_aa_for_body_text() {
+    let css = std::fs::read_to_string(root().join(DESKTOP)).expect(DESKTOP);
+    let base = base_tokens(&css);
+
+    for theme in ["light", "dark", "contrast"] {
+        let overrides = theme_tokens(&css, theme);
+        // A theme need only redefine what it changes; the rest is `:root`.
+        let token = |name: &str| -> String {
+            overrides
+                .get(name)
+                .or_else(|| base.get(name))
+                .unwrap_or_else(|| panic!("{theme}: no --{name}"))
+                .clone()
+        };
+        let surface = token("surface");
+        for name in ["text", "text-soft", "muted", "faint"] {
+            let value = token(name);
+            let ratio = contrast(&value, &surface);
+            assert!(
+                ratio >= 4.5,
+                "{theme}: --{name} {value} on --surface {surface} is {ratio:.2}:1, \
+                 below WCAG AA (4.5:1)"
+            );
+        }
+    }
+}
+
+/// Text drawn ON the accent fill (primary buttons) has to be readable too,
+/// and it is the one place the palette uses a fixed near-black in every
+/// theme rather than a per-theme token.
+#[test]
+fn primary_button_text_is_readable_on_every_accent() {
+    let css = std::fs::read_to_string(root().join(DESKTOP)).expect(DESKTOP);
+    let base = base_tokens(&css);
+
+    for theme in ["", "light", "dark", "contrast"] {
+        // BOTH sides can be overridden per theme. Reading `--on-accent`
+        // only from `:root` was the first version of this, and it reported
+        // light as failing after light had already been fixed.
+        let overrides = if theme.is_empty() {
+            BTreeMap::new()
+        } else {
+            theme_tokens(&css, theme)
+        };
+        let resolve = |name: &str, fallback: &BTreeMap<String, String>| {
+            overrides
+                .get(name)
+                .or_else(|| fallback.get(name))
+                .unwrap_or_else(|| panic!("no --{name}"))
+                .clone()
+        };
+        let accent = resolve("accent", &base);
+        let on_accent = resolve("on-accent", &base);
+        let ratio = contrast(&on_accent, &accent);
+        let label = if theme.is_empty() { "warm" } else { theme };
+        assert!(
+            ratio >= 4.5,
+            "{label}: --on-accent {on_accent} on --accent {accent} is {ratio:.2}:1, \
+             below WCAG AA (4.5:1)"
+        );
+    }
+}
+
 fn channel(value: f64) -> f64 {
     let value = value / 255.0;
     if value <= 0.04045 {
@@ -218,6 +332,14 @@ fn channel(value: f64) -> f64 {
 
 fn luminance(hex: &str) -> f64 {
     let hex = hex.trim().trim_start_matches('#');
+    // `#fff` is as valid as `#ffffff` and the contrast theme uses it, so a
+    // 6-digit-only reader does not measure that palette — it panics on it.
+    let hex: String = if hex.len() == 3 {
+        hex.chars().flat_map(|c| [c, c]).collect()
+    } else {
+        hex.to_string()
+    };
+    assert!(hex.len() == 6, "not a hex colour: {hex}");
     let parse = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex pair") as f64;
     0.2126 * channel(parse(0)) + 0.7152 * channel(parse(2)) + 0.0722 * channel(parse(4))
 }

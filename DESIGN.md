@@ -110,7 +110,7 @@ vak's UI is a quiet, focused workspace for someone reviewing serious work — th
 The system deliberately rejects the generic flat-blue enterprise SaaS look, and it rejects skeuomorphism, heavy gradients, or glassmorphic chrome. Nothing is decorative. Every visual choice — a border color, a radius, a font-weight — is there to make dense, high-stakes information (diffs, approvals, receipts, permission state) scannable at speed without shouting.
 
 **Key Characteristics:**
-- Dark-first, warm near-black surfaces with tonal (not shadow-based) depth at rest
+- Dark-first, warm near-black surfaces with tonal (not shadow-based) depth at rest — and a warm *light* palette that is a genuine second ground, not an inversion (see Colors)
 - One accent color, spent sparingly, so it always means something
 - A dense, odd-weight type scale tuned in single-digit increments, not round steps
 - Flat by default; box-shadow appears only on things that float (modals, toasts, popovers)
@@ -143,8 +143,38 @@ The palette is a warm, near-monochrome dark scale (off-black through warm off-wh
 - **Red** (`#d86f72`): danger, destructive actions, errors.
 - **Blue** (`#7c9fc9`): informational accent; also doubles as the accent color in the alternate `data-theme="dark"` palette.
 
+### Light (`data-theme="light"`, and the default `system` resolves here)
+
+Warm paper, not an inversion. Inverting a warm dark palette produces a cold
+light one — the greys go blue and it stops reading as the same product — so
+light is built from the same hue family on paper rather than ink:
+`--bg #f4f1ea`, `--surface #faf8f3`, `--text #23211c`.
+
+**The accent DARKENS here** (`--accent #a8462a`) rather than brightening.
+Burnt Terracotta at `#df795f` is 2.4:1 on white: unreadable as text, and a
+button label on it fails outright. Every status color darkens for the same
+reason. Every text token clears WCAG AA against `--surface`, and `--faint`
+— the quietest, mandated for *all* placeholder text — is again the value
+that decides how far the palette can be pushed. Do not lighten it.
+
+The **default is `system`**, resolved in JS to a concrete `data-theme` so
+one attribute always names the palette actually in force. Anything reading
+a token out of the DOM (the terminal hands its computed values to xterm,
+which cannot read CSS variables) then sees the same answer as the
+stylesheet, instead of half the app tracking a media query and half not.
+
 ### Named Rules
 **The One Accent Rule.** Burnt Terracotta is the only color used to mean "this is the primary thing" or "this is active." It never doubles as decoration; if a new element needs emphasis, reach for a status color (if it's stateful) or a tonal layer (if it's structural) before reaching for the accent again.
+
+**The No-Second-Palette Rule.** Every color in the app resolves to a token
+or a `color-mix()` of tokens. Literal hex belongs in exactly two places: a
+theme's own token block, and the theme *previews* in Settings — which must
+depict their palette rather than the active one. This is a rule because it
+was broken at scale: the presentation components carried a whole second,
+cold palette (indigo, emerald, rose, amber, sky, slate on near-black
+grounds) that read as a different product and had to be removed wholesale.
+A fallback naming a different color (`var(--accent, #7c5cff)`) is the same
+violation waiting for one bad load order.
 
 ## Typography
 
@@ -166,7 +196,15 @@ The palette is a warm, near-monochrome dark scale (off-black through warm off-wh
 
 ## Layout
 
-A three-region CSS grid app shell: `sidebar` (fixed ~278px, collapsible to 0) / `main` (flexible, `minmax(420px, 1fr)`) / `dock` (auto-width side panel), with a full-width `status` bar (30px) beneath. The main workspace itself stacks a fixed-height header (64px) over scrollable content. Density is high: sidebar items are 34–36px tall, buttons 30px (25px for `.sm`), section rows ~29px. Spacing is tight and consistent — 6–9px internal padding is the norm for interactive rows, 13–22px for panel/modal padding. The admin UI reuses the same grid and spacing rhythm so the two surfaces read as one product.
+A three-region CSS grid app shell: `sidebar` (fixed ~278px, collapsible to 0) / `main` (flexible, `minmax(420px, 1fr)`) / `dock` (auto-width side panel), with a full-width `banner` row and a `status` bar (30px) beneath. The banner row is `auto`, so it collapses to nothing when no banner is rendered and reserves exactly its own height when one is — a floating banner cannot reserve space, and guessing a padding for it fails at the first width where its text wraps.
+
+**Anything placed directly in the app grid must name its area.** A child with no `grid-area` is auto-placed into the *dock track*: the setup banner did this and rendered a ~540px column that squeezed the whole workspace, visible only before setup was finished — the one time a new user is looking.
+
+### Below 900px, columns become overlays
+
+The sidebar and dock leave the flow and float; the resize handles go. Below 600px it is a single column, the header keeps only the controls that answer "what is happening / stop it", and the editor and terminal are **not** rendered at all. The narrow target is deliberate: read the transcript, read a diff, **answer an approval**, steer a run. An approval is a run that has stopped and is waiting on a person — the one thing that genuinely cannot wait for someone to reach a laptop — so it gets the only mobile-specific layout: full-width target, full-width buttons, nothing truncated.
+
+One breakpoint owns one layout. Two overlapping small-screen treatments is how the sidebar ended up "opening" at `display: none`. The main workspace itself stacks a fixed-height header (64px) over scrollable content. Density is high: sidebar items are 34–36px tall, buttons 30px (25px for `.sm`), section rows ~29px. Spacing is tight and consistent — 6–9px internal padding is the norm for interactive rows, 13–22px for panel/modal padding. The admin UI reuses the same grid and spacing rhythm so the two surfaces read as one product.
 
 ## Elevation & Depth
 
@@ -240,6 +278,18 @@ An earlier revision marked the required level with a 1px tick *above* a 13px
 segment. It was invisible at real sizes, and it is the half of the meter that
 says how demanding the work is — the rule below the track replaced it because
 there is room there and it never collides with the fill state.
+
+### Connection State (status bar)
+
+Four states — `live`, `reconnecting`, `resyncing`, `offline` — because over
+a network "Working" is a claim about a round trip that may not have
+happened. `resyncing` is deliberately its own state and not a flavour of
+reconnecting: it means events were *lost* and the transcript is being
+rebuilt, which is a different thing to tell a reader.
+
+Colour is never the only carrier, as everywhere else: each state carries
+its own word and its own dot fill (solid when live, hollow-ringed when
+offline), so it survives greyscale and colour blindness alike.
 
 ### Intent Strip (desktop composer)
 A per-turn read-out with three tones — `quiet`, `notice`, `warn` — chosen by

@@ -32,6 +32,9 @@ checks; it is not a second source of operational truth.
 
 ```
 crates/vak-admin-ui     SolidJS + Vite + TS SPA (built dist committed)
+crates/vak-client-ui    the WORKSPACE client, served at /app by the same
+                        process (docs/design/48-web-client.md); a separate
+                        surface with a different job, sharing this auth
 crates/vak-store        rusqlite FTS5 rebuildable index (new crate)
 crates/vak-server/src/events.rs    global hub (tokio::broadcast)
 crates/vak-server/src/admin.rs     /admin/api/* data plane
@@ -98,18 +101,34 @@ with placeholders.
 Same token, two channels:
 
 1. `Authorization: Bearer <token>` — CLI/desktop/service clients.
-2. Cookie `vak_session` — browser flows. `POST /admin/login` validates the
+2. Cookie `vak_session` — browser flows. `POST /auth/login` validates the
    token with `subtle::ConstantTimeEq` and sets an HttpOnly SameSite=Strict
-   cookie (7-day Max-Age; no `Secure` flag by design — this server is
-   loopback/LAN-first and plain http would silently drop Secure cookies).
-   `POST /admin/logout` clears it.
+   cookie (lifetime from `[server] session_ttl_hours`, default 168h).
+   `Secure` is set only behind real TLS (`[server] public_url` is https, or
+   a proxy sends `X-Forwarded-Proto: https`) — a `Secure` cookie delivered
+   over plain http is silently discarded by the browser, so setting it
+   unconditionally would make every loopback login appear to succeed and
+   then never persist. `POST /auth/logout` clears it; `GET /auth/session`
+   reports whether one exists.
+
+**This login is shared with the workspace client at `/app`**
+(docs/design/48-web-client.md). It used to live at `/admin/login`, which was
+*removed* when `/auth/*` replaced it rather than kept alongside: two
+endpoints against one cookie is two contracts that must agree forever
+(AGENTS.md invariant 30).
 
 Auth-exempt paths: `/health`, the static SPA shell + assets (no data),
-`POST /admin/login`. Every data route requires the token. Failures append
+`POST /auth/login`, `GET /auth/session`, and the `/app` shell. Every data route requires the token. Failures append
 to the security-events log AND emit to the hub (live alerting).
 
-Rate limiting applies to all POSTs including `/admin/login` — brute force
+Rate limiting applies to all POSTs including `/auth/login` — brute force
 is bounded by `[gateway.rate_limit]`.
+
+Beyond the token, two checks gate every request (invariant 33): the `Host`
+header must be loopback or listed in `[server] trusted_hosts`, and a
+state-changing request carrying a cookie must also carry an `Origin` we
+recognise. A request with no `Origin` at all is not a browser mutation
+(curl, the CLI, a bridge) and must satisfy the bearer check instead.
 
 ## API surface (`/admin/api/*`)
 

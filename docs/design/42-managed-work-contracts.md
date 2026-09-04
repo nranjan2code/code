@@ -346,8 +346,10 @@ reported as dropped nor duplicated across repeated compactions.
 ## Contract authoring
 
 For managed mode, author a contract through a dedicated structured provider
-dispatch in `vak-agent/src/work_contract.rs` or an equivalent focused module.
-Record it with `WorkPurpose::Plan` and the normal work receipt machinery.
+dispatch. **As built**, that dispatch lives in `crates/vak-agent/src/lib.rs`
+rather than the separate `work_contract.rs` this doc originally proposed —
+it is recorded with `WorkPurpose::Plan` through the normal work-receipt
+machinery, which is the part that mattered.
 
 The authoring prompt must request strict JSON containing:
 

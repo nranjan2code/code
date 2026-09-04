@@ -19,7 +19,7 @@ that owns its contract.
 | Skills, subagents, hooks, MCP, plugins, custom commands | `docs/design/09-extensibility.md`, `docs/design/39-plugin-ecosystem.md` |
 | Static flows, dynamic planner, run-graph projection | `docs/design/10-flows.md`, `docs/design/11-planner.md` |
 | Eval harness, checkpoints/rewind, worktree isolation | `docs/design/12-evals.md`, `docs/design/14-checkpoints.md` |
-| HTTP+SSE server and the desktop shell over it | `docs/design/13-server.md`, `docs/design/20-tauri-desktop.md` |
+| HTTP+SSE server, and one workspace client over it in three hosts — Tauri shell, browser on loopback, browser against a headless box | `docs/design/13-server.md`, `docs/design/20-tauri-desktop.md`, `docs/design/48-web-client.md` |
 | Gateway, chat surfaces, channel governance, multi-bot identity | `docs/design/22-gateway.md`, `docs/design/34-channel-onboarding.md` |
 | Web admin console | `docs/design/33-admin-console.md` |
 | Memory, cross-session search, learning loop | `docs/design/23-memory.md`, `docs/design/26-learning.md` |
@@ -67,6 +67,8 @@ applies to every item.
 | Interactive approval components on Discord and Slack | deferred; typed yes/no fallback ships |
 | Skill intent-discovery | **subsumed** by the intent kernel (doc 47): skills are selected through the admitted capability slice rather than a separate discovery path |
 | Commitment kernel | shipped end to end (doc 47) |
+| Web client — the workspace surface in a browser, and a headless box you can *use* | shipped, Phases 0–4 (doc 48) |
+| Multi-user cloud (per-principal data homes, pooled Cores, quotas) | **explicitly out of scope** (doc 48 §8 E). A deployment is one operator's vak, and the token is a password to the whole box; the route shapes leave the seams open, nothing more |
 | Windows platform support | S11 |
 
 ## Decisions locked during research

@@ -14,6 +14,15 @@ Vak's policy and session control plane, network identities, external
 services, and host availability. Restricted modes must remain safe when the
 model deliberately tries to escape them.
 
+**Serving a browser widens the attacker set from "the model" to "anyone who
+can reach the port"** (docs/design/48-web-client.md). The default remains
+loopback-only, so nothing changes unless an operator opts in; but once it is
+opted into, a page the user merely *visits* becomes a participant. Two
+attacks that do not exist for a local-only server therefore have standing
+defences: DNS rebinding (a visited page resolving its own domain to
+127.0.0.1 to become same-origin) and cross-site request forgery (a cookie
+the browser attaches to whoever asks). See invariant 33.
+
 ## Lessons from other harnesses
 
 Primary-source review on 2026-08-23 found recurring failure classes:
@@ -102,6 +111,23 @@ Primary-source review on 2026-08-23 found recurring failure classes:
   Task only creates governed child agents whose effectful tools are brokered;
   session search only queries the append-only session index. Workers do not
   receive the session store or orchestration handles.
+- Network exposure is opt-in and refuses to be implicit. The listener binds
+  loopback and the `Host` header is pinned to loopback names plus exactly
+  what `[server] trusted_hosts` lists — exact names only, since a wildcard
+  there is a rebinding hole with extra steps. A non-loopback `bind` with an
+  empty list is a startup error, not a warning: it would otherwise boot and
+  reject every request with a 421 nobody can diagnose. State-changing
+  requests carrying a session cookie must also carry a recognised `Origin`;
+  requests with no `Origin` (curl, the CLI, bridges) must carry a bearer
+  token instead, so the relaxation is not a bypass. `?token=` is accepted
+  only from loopback — it exists for the one in-process client that cannot
+  set a header, and anywhere reachable by hostname it is a credential in an
+  access log. `[server]` is privileged in full, so an untrusted repository
+  cannot choose an interface, relax the host check, or open a shell.
+- The web terminal is a real PTY and therefore not permission-gated like
+  every other effect the client can reach. It is off by default, and
+  loopback-pinned even when enabled, so turning it on for local convenience
+  does not silently expose a shell to whatever hostname the server answers.
 - The opt-in Docker backend contains Bash with no network, a read-only root in
   read-only mode, a disposable writable root in workspace-write mode, bounded
   tmpfs, CPU/memory/PID ceilings, dropped capabilities, and

@@ -1,5 +1,13 @@
 # 20 — Tauri desktop app: competitive research & architecture
 
+> **Since this was written, the UI moved.** The client itself now lives in
+> `crates/vak-client-ui` and is shared with the browser
+> (docs/design/48-web-client.md); `crates/vak-desktop` is the native half —
+> window and tray lifecycle, single-instance handover, the workspace trust
+> gate, PTY commands, and the native save dialog. Everything below about
+> *what the client does* still holds; where it says "the desktop app has X",
+> read "the workspace client has X, on every host that can provide it."
+
 Goal: a native desktop orchestrator for vak in **Tauri 2**, built by
 unapologetically copying the best features of Claude Code Desktop, OpenAI's
 Codex desktop app, and Cursor 3's Agents Window — then beating them where our

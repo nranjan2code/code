@@ -14,7 +14,7 @@ consumers.
 | POST | `/sessions/:id/run` `{prompt}` | 202; events stream on SSE |
 | POST | `/sessions/:id/steering` `{text}` | queue mid-run input |
 | POST | `/sessions/:id/approvals/:rid` `{approve}` | resolve a permission gate |
-| GET | `/sessions/:id/events` | SSE stream of `AgentEvent` JSON |
+| GET | `/sessions/:id/events` | SSE stream of `AgentEvent` JSON. Every frame carries `id: <seq>`; a reconnect with `Last-Event-ID` is replayed the gap, or gets an `event: resync` frame when the gap is wider than the 1024-frame ring (docs/design/48-web-client.md §4.4) |
 | GET | `/sessions/:id/presentation` | reconnectable schema-v2 `OutputTimeline` snapshot; deterministic projection of the ledger and live state |
 | GET | `/sessions/:id/presentation/events` | SSE stream of semantic presentation events (`Snapshot`, `ItemStarted`, `TextDelta`, `ItemReplaced`, `ItemCompleted`) |
 | GET | `/sessions/:id/transcript` | derived messages + usage; historical (non-attached) sessions fall back to opening the ledger from disk — error bodies stay 200-wrapped for wire compatibility |
@@ -88,6 +88,28 @@ consumers.
 - **Session ledger returns** after each run (`run_turn_with` now yields
   `(TurnOutcome, SessionLog)`), so transcripts stay queryable between runs.
 - Second concurrent `/run` on a live session → `409 Conflict`.
+
+## Browser surface (docs/design/48-web-client.md)
+
+The same process serves the workspace client at `/app` and the operations
+console at `/admin`, from one asset-serving path (`embedded_ui.rs`).
+
+| method | path | purpose |
+|---|---|---|
+| GET | `/app`, `/app/*` | the workspace client shell (auth-exempt: the login form is part of the bundle) |
+| POST | `/auth/login` `{token}` | token → `vak_session` cookie; shared by `/app` and `/admin` |
+| POST | `/auth/logout` | clear it |
+| GET | `/auth/session` | `{authenticated}` — deliberately not a 401, so "no session" is distinguishable from "unreachable" |
+| GET | `/host` | what `backend_info` is on the desktop; carries no base URL or token, which is how the client knows it is same-origin and cookie-authenticated |
+| GET | `/host/events` | SSE, on change only |
+| GET | `/workspaces` | known workspaces, active first |
+| POST | `/workspaces/open` `{path, trust?}` | resolve through `CorePool` and make it active for NEW sessions (a session freezes its `Core` at creation, invariant 17) |
+| GET | `/fs/dirs?path=` | folder names only, rooted at `[server] workspace_roots` |
+| GET | `/pty` (WS) | a real shell. Off unless `[server.web] terminal`, loopback-pinned unless `terminal_requires_loopback = false`. The socket IS the shell's lifetime |
+
+Exposure is governed by `[server]` — privileged in full, so an untrusted
+project cannot widen it — and by invariant 33: `Host` pinned to loopback
+plus `trusted_hosts`, cross-origin mutations refused, `?token=` loopback-only.
 
 ## Desktop extensions (docs/design/20)
 

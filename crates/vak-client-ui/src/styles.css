@@ -89,6 +89,10 @@ html[data-theme="light"] {
   --blue: #2f5580;
   --emerald-bright: #1f7a4d;
   --rose-bright: #b02a44;
+  /* Light's accent is DARK, so what sits on it must be light. The
+     near-black `:root` value reads 3.0:1 here — below AA, on the primary
+     button label of all things. */
+  --on-accent: #faf8f3;
   --shadow-lg: 0 24px 70px rgba(60, 50, 35, 0.16), 0 2px 10px rgba(60, 50, 35, 0.08);
 }
 

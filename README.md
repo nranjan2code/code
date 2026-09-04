@@ -237,7 +237,9 @@ Goal mode does not accept the agent's declaration of success on faith: determini
 
 ### Desktop app
 
-The desktop client requires Node.js/npm in addition to Rust.
+The desktop client requires Node.js/npm in addition to Rust. `npm run build`
+produces both bundles — `dist/` for this shell and `dist-web/` for the copy
+the server serves at `/app`.
 
 ```bash
 cd crates/vak-client-ui
@@ -329,16 +331,29 @@ vak serve --port 8901
 vak serve --gateway --trust
 ```
 
-The server exposes the same session, run, approval, transcript, diff, and steering contracts used by the desktop app. For a durable macOS LaunchAgent or Linux systemd user service, follow the [hosting guide](docs/hosting.md).
+The server exposes the same session, run, approval, transcript, diff, and steering contracts used by the desktop app — and serves the **workspace client itself at `/app`**, so a headless box is a place to *use* vak, not only to host it:
+
+```bash
+vak serve --port 8901          # then open http://127.0.0.1:8901/app
+```
+
+It binds loopback and answers only to loopback hostnames unless you say
+otherwise. For a remote box, an SSH tunnel needs no configuration at all
+(`ssh -N -L 8901:127.0.0.1:8901 you@box`); serving a real hostname needs
+`[server] trusted_hosts` and is refused without it. For a durable macOS
+LaunchAgent or Linux systemd user service, and the full remote-access
+posture, follow the [hosting guide](docs/hosting.md).
 
 ## One core, many surfaces
 
 ![A flat editorial diagram showing a shared auditable vak core connected to terminal, desktop, server, and chat interfaces](docs/assets/vak-surfaces.webp)
 
 ```text
-vak CLI              Tauri desktop        HTTP + SSE / gateway
-         \                    |                    /
-          └──────────────── vak-core ─────────────┘
+vak CLI       Tauri desktop ─┬─ browser        HTTP + SSE / gateway
+         \                   |                          /
+          \        one workspace client, two hosts     /
+           \        (crates/vak-client-ui)            /
+            └──────────────── vak-core ──────────────┘
                                |
             ┌──────────────────┼──────────────────┐
             |                  |                  |
@@ -354,6 +369,12 @@ vak CLI              Tauri desktop        HTTP + SSE / gateway
 ```
 
 The interfaces do not implement their own privileged shortcuts. They compose the same core, permission engine, brokered registry, and session ledger. Read the [architecture roadmap](docs/design/00-roadmap.md) for the full crate map and phase history.
+
+The desktop app and the browser client are not two clients: they are one
+source tree (`crates/vak-client-ui`) behind a small host port, built twice.
+What differs between them — native dialogs, a PTY, where a saved file goes —
+is answered by the host, and a capability it cannot provide is *absent*
+rather than broken. See [the web client](docs/design/48-web-client.md).
 
 ## Permission model
 

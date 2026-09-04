@@ -4,6 +4,12 @@
 **Date:** 2026-08-29
 **Scope:** 34 components, store.ts, api.ts, types.ts, styles.css, App.tsx, Tauri backend
 
+> **Historical record.** Paths below are as they were on 2026-08-29. The
+> workspace client has since moved from `crates/vak-desktop/ui/` to
+> `crates/vak-client-ui/`, where it is shared with the browser client
+> (docs/design/48-web-client.md) — substitute that prefix when following
+> any file reference here.
+
 ---
 
 ## Summary

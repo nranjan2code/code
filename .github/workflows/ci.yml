@@ -37,26 +37,42 @@ jobs:
           cache-dependency-path: crates/vak-admin-ui/package-lock.json
       - working-directory: crates/vak-admin-ui
         run: npm ci
-      - name: typecheck
+      - name: typecheck admin
         working-directory: crates/vak-admin-ui
         run: npm run check
-      - name: build
+      - name: build admin
         working-directory: crates/vak-admin-ui
         run: npm run build
-      # crates/vak-admin-ui/dist is committed and embedded into vak-server
-      # at compile time (admin_ui.rs, include_dir!) — only what's on disk in
-      # dist/ ships. v0.8.1 shipped a blank admin console because src/ had a
-      # real fix that dist/ was never rebuilt from, and nothing caught the
-      # mismatch before release (see scripts/release.sh). This makes that
-      # drift fail on every push, not just at release time.
-      - name: dist matches source
+      - working-directory: crates/vak-client-ui
+        run: npm ci
+      - name: typecheck client
+        working-directory: crates/vak-client-ui
+        run: npm run typecheck
+      # Builds BOTH bundles: dist/ for the Tauri shell and dist-web/ for the
+      # copy vak-server embeds at /app (docs/design/48-web-client.md).
+      - name: build client
+        working-directory: crates/vak-client-ui
+        run: npm run build
+      # Both committed bundles are embedded into vak-server at compile time
+      # (include_dir!) — only what is on disk ships. v0.8.1 shipped a blank
+      # admin console because src/ had a real fix that dist/ was never
+      # rebuilt from, and nothing caught the mismatch before release (see
+      # scripts/release.sh). This makes that drift fail on every push, not
+      # just at release time.
+      #
+      # crates/vak-client-ui/dist/ is deliberately NOT checked: it is
+      # gitignored, because only vak-desktop ships it and building the
+      # desktop already requires npm.
+      - name: committed bundles match source
         run: |
-          if [ -n "$(git status --porcelain -- crates/vak-admin-ui/dist)" ]; then
-            echo "::error::crates/vak-admin-ui/dist does not match crates/vak-admin-ui/src." >&2
-            echo "Rebuild locally (npm run build in crates/vak-admin-ui) and commit dist/." >&2
-            git status --short -- crates/vak-admin-ui/dist >&2
-            exit 1
-          fi
+          for bundle in crates/vak-admin-ui/dist crates/vak-client-ui/dist-web; do
+            if [ -n "$(git status --porcelain -- "$bundle")" ]; then
+              echo "::error::$bundle does not match its source." >&2
+              echo "Rebuild locally (npm run build in that crate) and commit it." >&2
+              git status --short -- "$bundle" >&2
+              exit 1
+            fi
+          done
 
   linux:
     runs-on: ubuntu-latest

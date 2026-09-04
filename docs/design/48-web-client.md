@@ -22,11 +22,11 @@ onboarding), 47-commitment-kernel (intent/commitments).
 ## 1. Thesis
 
 vak already claims "one core, many surfaces" (PRODUCT.md). The claim is
-true of the *core* and false of the *client*: there are two hand-written
-SolidJS applications against one HTTP contract —
-`crates/vak-desktop/ui` (14.4k lines, the workspace) and
-`crates/vak-admin-ui` (14.9k lines, operations) — and neither can be
-opened in a browser as the workspace client. A headless install today
+true of the *core* and false of the *client*: there were two hand-written
+SolidJS applications against one HTTP contract — the workspace UI, then
+living inside `vak-desktop` (14.4k lines), and `crates/vak-admin-ui`
+(14.9k lines, operations) — and neither could be opened in a browser as
+the workspace client. A headless install today
 gets the operations console and a chat bridge; it does not get the
 product.
 
@@ -580,9 +580,10 @@ single-operator assumption into route shapes.
 
 ## 9. Build and packaging
 
-- `crates/vak-desktop/ui` moves to `crates/vak-client-ui`. Git history is
-  preserved with `git mv`; the desktop's `tauri.conf.json` points
-  `frontendDist` at `../vak-client-ui/dist`.
+- The workspace UI moved out of `vak-desktop` into
+  `crates/vak-client-ui`. Git history is preserved with `git mv`; the
+  desktop's `tauri.conf.json` points `frontendDist` at
+  `../vak-client-ui/dist`.
 - `vak-server` embeds the same `dist/` with `include_dir!`, served under
   `/app` by the same recursive-registration code `admin_ui.rs` already
   has — including its two regression tests, which exist because
