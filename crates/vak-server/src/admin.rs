@@ -1610,7 +1610,7 @@ mod tests {
     }
 
     /// `EventSource` cannot set request headers, and the desktop app
-    /// never performs the `/admin/login` cookie exchange -- that is the
+    /// never performs the `/auth/login` cookie exchange -- that is the
     /// browser console's flow. `?token=` is the only channel its SSE
     /// streams can authenticate on, and `openEventStream` /
     /// `openSideStream` have always used it. The middleware accepted

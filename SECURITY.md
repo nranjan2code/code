@@ -78,7 +78,7 @@ HTTP inbound requests are rate-limited per source IP:
 | `POST /gateway/inbound`     | 30 req/min    |
 | `POST /sessions`            | 5 req/min     |
 | `POST /sessions/{id}/run`   | 10 req/min    |
-| `POST /admin/login`         | 20 req/min    |
+| `POST /auth/login`          | 20 req/min    |
 | All other POST endpoints    | 20 req/min    |
 
 Limits are configurable via `[gateway.rate_limit]` in TOML config.
@@ -97,12 +97,31 @@ Exceeded limits return `429 Too Many Requests` with `Retry-After`.
   is set to `"forward"` with a configured approver surface.
 - Constant-time token comparison prevents timing attacks on bearer tokens.
 - Token values are masked in stderr (only first/last 4 characters shown).
-- Browser surfaces authenticate once via `POST /admin/login`, which sets an
-  HttpOnly, SameSite=Strict session cookie; the same constant-time check
-  applies. No `Secure` flag by design (loopback/LAN-first server); do not
-  expose the port to untrusted networks without a TLS-terminating proxy.
-- The `/admin` SPA shell and static assets are auth-exempt but carry no
-  data; every `/admin/api/*` route requires the token or cookie.
+- Browser surfaces authenticate once via `POST /auth/login` — **one**
+  exchange for the operations console and the workspace client alike, which
+  sets an HttpOnly, SameSite=Strict session cookie; the same constant-time
+  check applies. (`/admin/login` and `/admin/logout` were removed: two
+  endpoints against one cookie is two contracts that must agree forever.)
+- `Secure` is **conditional, and must be**: a browser silently discards a
+  `Secure` cookie delivered over plain http, so setting it unconditionally
+  would make every loopback login appear to succeed and never persist. It
+  is set when `[server] public_url` is https, or a terminating proxy says
+  so via `X-Forwarded-Proto`. Do not expose the port to an untrusted
+  network without TLS.
+- `GET /auth/session` reports whether a session exists — a 401 would
+  conflate "not signed in" with "server unreachable" — and, on loopback
+  only, hands one over rather than prompting. Anything that can reach
+  loopback can already read the token off disk, so the prompt bought
+  nothing. Scoped by `[server] loopback_auto_login` (default on) and
+  refused outright for any request whose `Host` is not loopback.
+- The `/admin` and `/app` SPA shells and their static assets are
+  auth-exempt but carry no data — the login form is part of the bundle, so
+  a browser has to be able to load the page in order to be asked. Every
+  route they then call requires the token or cookie.
+- The public site at `/`, `/surfaces`, `/security` and `/install` is
+  auth-exempt by design. The only server data any of its pages reads is
+  `/version` (version and commit); a test enforces that. `/health` reports
+  provider, model, sandbox and permission mode, and is not for strangers.
 - Mutating admin operations are POST-only so crawlers/prefetchers cannot
   trigger them via GET.
 

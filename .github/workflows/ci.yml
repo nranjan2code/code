@@ -53,7 +53,7 @@ jobs:
       - name: build client
         working-directory: crates/vak-client-ui
         run: npm run build
-      # Both committed bundles are embedded into vak-server at compile time
+      # All three committed bundles are embedded into vak-server at compile time
       # (include_dir!) — only what is on disk ships. v0.8.1 shipped a blank
       # admin console because src/ had a real fix that dist/ was never
       # rebuilt from, and nothing caught the mismatch before release (see

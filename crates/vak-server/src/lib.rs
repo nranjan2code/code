@@ -2596,7 +2596,7 @@ pub(crate) async fn require_bearer(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(String::from);
-    // Browser surfaces authenticate once via /admin/login which sets an
+    // Browser surfaces authenticate once via /auth/login which sets an
     // HttpOnly cookie; EventSource cannot send Authorization headers, so
     // the cookie is the only workable channel for SSE.
     let cookie_token = req
@@ -2611,8 +2611,8 @@ pub(crate) async fn require_bearer(
             })
         });
     // `EventSource` cannot set request headers, and the desktop app never
-    // performs the `/admin/login` cookie exchange -- that is the admin
-    // console's browser flow, not the desktop's. The query parameter is
+    // performs the `/auth/login` cookie exchange -- that is the browser
+    // surfaces' flow, not the desktop's. The query parameter is
     // therefore the ONLY channel the desktop's SSE streams can
     // authenticate on, and `openEventStream`/`openSideStream` have always
     // used it. It was never accepted here, so every desktop event stream
