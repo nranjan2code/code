@@ -3,10 +3,26 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
-#[command(name = "Vak", version, about = "An agent harness")]
+// `VAK_VERSION` is composed by build.rs: the release, plus the commit it was
+// built from when one was supplied. The commit used to be recorded ONLY in
+// install.json — the right place for it, and not the place anyone looks.
+// "Which build is this?" is answered by `--version`, and a bare `2.0.1`
+// cannot tell two binaries on the same release line apart, which is exactly
+// the question that matters when asking whether a fix is in the thing you
+// are running.
+#[command(name = "Vak", version = env!("VAK_VERSION"), about = "An agent harness")]
 pub(crate) struct Cli {
     #[command(subcommand)]
     pub(crate) command: Option<Command>,
+}
+
+/// Which web surface `vak open` targets.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OpenSurface {
+    /// The workspace client: run tasks, review diffs, answer approvals.
+    App,
+    /// The operations console: sessions, receipts, services, incidents.
+    Admin,
 }
 
 #[derive(Subcommand, Debug)]
@@ -128,6 +144,18 @@ pub(crate) enum Command {
         /// Trust this workspace's project config and .env
         #[arg(long)]
         trust: bool,
+    },
+    /// Open a running server's web surface in a browser, already signed in
+    Open {
+        /// Which surface: `app` (the workspace) or `admin` (operations).
+        #[arg(value_enum, default_value_t = OpenSurface::App)]
+        surface: OpenSurface,
+        /// Port the server is listening on. Defaults to the configured one.
+        #[arg(long)]
+        port: Option<u16>,
+        /// Print the URL instead of opening a browser.
+        #[arg(long)]
+        print: bool,
     },
     /// Explain how a request would be read, and what the runtime would do
     /// about it (docs/design/47-commitment-kernel.md)

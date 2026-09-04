@@ -55,7 +55,7 @@ const PROMPT_BLOCKS: { id: api.PromptBlock; label: string; help: string }[] = [
 const PROMPT_LAYER_LABELS: Record<api.PromptLayerDescriptor["layer"], string> = {
   seed: "shipped default",
   shared: "Shared",
-  project: "This project",
+  workspace: "This workspace",
   surface: "surface",
   bot: "bot",
   chat: "chat",
@@ -209,7 +209,7 @@ export default function Settings() {
       setNoteTag("");
       setAddingNote(false);
       await refreshLearning();
-      setNotice({ kind: "info", text: tier() === "profile" ? "Profile note saved — recalled in every project." : "Workspace note saved." });
+      setNotice({ kind: "info", text: tier() === "profile" ? "Profile note saved — recalled in every workspace." : "Workspace note saved." });
     } catch (e) {
       setNotice({ kind: "error", text: `Could not append note: ${e instanceof Error ? e.message : String(e)}` });
     }
@@ -373,7 +373,7 @@ export default function Settings() {
       if (scope() === "user") await api.putGlobalHooks(hooks());
       else await api.putHooks(hooks());
       setHooksDirty(false);
-      setNotice({ kind: "info", text: scope() === "user" ? `Saved ${hooks().length} shared hook${hooks().length === 1 ? "" : "s"} — inherited by projects` : `Saved ${hooks().length} project hook${hooks().length === 1 ? "" : "s"} — active for new turns` });
+      setNotice({ kind: "info", text: scope() === "user" ? `Saved ${hooks().length} shared hook${hooks().length === 1 ? "" : "s"} — inherited by workspaces` : `Saved ${hooks().length} workspace hook${hooks().length === 1 ? "" : "s"} — active for new turns` });
     } catch (e) {
       setNotice({ kind: "error", text: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -752,7 +752,7 @@ export default function Settings() {
     }
   };
 
-  const openProjectConfig = async () => {
+  const openWorkspaceConfig = async () => {
     const relative = ".vak/config.toml";
     try {
       await api.readFile(relative);
@@ -772,9 +772,9 @@ export default function Settings() {
         <div class="settings-nav-label">Settings scope</div>
         <div class="settings-scope-toggle" role="group" aria-label="Settings scope">
           <button aria-pressed={scope() === "user"} classList={{ active: scope() === "user" }} onClick={() => setSettingsScope("user")}>Shared</button>
-          <button aria-pressed={scope() === "project"} classList={{ active: scope() === "project" }} onClick={() => setSettingsScope("project")}>This project</button>
+          <button aria-pressed={scope() === "workspace"} classList={{ active: scope() === "workspace" }} onClick={() => setSettingsScope("workspace")}>This workspace</button>
         </div>
-        <p class="settings-scope-copy">Shared is your default. This project only changes what belongs to this folder.</p>
+        <p class="settings-scope-copy">Shared is your default. This workspace only changes what belongs to this folder.</p>
         <nav>
           <For each={visiblePages()} fallback={<div class="settings-no-results">No matching settings</div>}>
             {(item) => <button classList={{ active: page() === item.id }} onClick={() => { setPage(item.id); setQuery(""); }}><Icon name={item.icon} /><span>{item.label}</span></button>}
@@ -793,7 +793,7 @@ export default function Settings() {
         <div class="settings-content">
           <Show when={!loading()} fallback={<div class="settings-loading"><span /><span /><span /></div>}>
             <Show when={page() === "general"}>
-              <header><h1>{scope() === "user" ? "User settings" : "Project settings"}</h1><p>{scope() === "user" ? "Shared defaults and capabilities inherited by your projects." : "Overrides for this folder. Unchanged settings inherit your user defaults."}</p></header>
+              <header><h1>{scope() === "user" ? "User settings" : "Workspace settings"}</h1><p>{scope() === "user" ? "Shared defaults and capabilities inherited by your workspaces." : "Overrides for this folder. Unchanged settings inherit your user defaults."}</p></header>
               <Group title="Experience">
                 <Row title="Desktop notifications" description="Notify when the active task finishes while Vak is in the background."><Switch label="Desktop notifications" checked={uiPreferences.notifications} onChange={(value) => updateUiPreference("notifications", value)} /></Row>
                 <Row title="Sound cues" description="Short chime when a task starts working and when it finishes."><Switch label="Sound cues" checked={uiPreferences.soundCues} onChange={(value) => updateUiPreference("soundCues", value)} /></Row>
@@ -808,9 +808,9 @@ export default function Settings() {
                   <Row title="Persona" description="Optional style directive for how narration sounds."><input value={uiPreferences.voicePersona} placeholder="e.g. calm and concise" onInput={(event) => updateUiPreference("voicePersona", event.currentTarget.value)} /></Row>
                 </Show>
               </Group>
-              <Group title={scope() === "user" ? "Desktop" : "Project"}>
-                <Row title={scope() === "user" ? "Inheritance" : "Current workspace"} description={scope() === "user" ? "Projects inherit this scope unless their project settings override a value." : (config()?.paths.cwd ?? "")}><span class="settings-value">{scope() === "user" ? "Shared" : "Local"}</span></Row>
-                <Show when={scope() === "project"}><Row title="Project configuration" description="Persistent agent and tool settings for this repository."><button class="settings-button" onClick={() => void openProjectConfig()}>Open config</button></Row></Show>
+              <Group title={scope() === "user" ? "Desktop" : "Workspace"}>
+                <Row title={scope() === "user" ? "Inheritance" : "Current workspace"} description={scope() === "user" ? "Workspaces inherit this scope unless their own settings override a value." : (config()?.paths.cwd ?? "")}><span class="settings-value">{scope() === "user" ? "Shared" : "Local"}</span></Row>
+                <Show when={scope() === "workspace"}><Row title="Workspace configuration" description="Persistent agent and tool settings for this repository."><button class="settings-button" onClick={() => void openWorkspaceConfig()}>Open config</button></Row></Show>
               </Group>
             </Show>
 
@@ -947,7 +947,7 @@ export default function Settings() {
               </Group>
               <div class="settings-actions">
                 <button class="btn primary" disabled={saving() || !agentDirty() || !provider().trim() || !model().trim()} onClick={() => void applyAgent()}>{saving() ? "Applying…" : "Apply changes"}</button>
-                <button class="settings-button" onClick={() => void openProjectConfig()}>Edit persistent config</button>
+                <button class="settings-button" onClick={() => void openWorkspaceConfig()}>Edit persistent config</button>
                 {/* Selecting in the dropdowns changes nothing until this is
                     pressed; without a marker that reads as a silent no-op. */}
                 <Show when={agentDirty()} fallback={<span class="settings-status good">Saved</span>}>
@@ -958,7 +958,7 @@ export default function Settings() {
 
             <Show when={page() === "permissions"}>
               <header><h1>Permissions</h1><p>Set the trust boundary for tool calls in this workspace.</p></header>
-              <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Read only", text: "Inspect files and search the workspace without making changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Workspace write", text: "Edit files inside this project and ask before sensitive actions.", icon: "code" as IconName }, { id: "FullAccess", title: "Full access", text: "Run unrestricted commands and access files outside the workspace.", icon: "shield" as IconName }] as const}>{(mode) => <button classList={{ active: config()?.permission_mode === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={config()?.permission_mode === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
+              <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Read only", text: "Inspect files and search the workspace without making changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Workspace write", text: "Edit files inside this workspace and ask before sensitive actions.", icon: "code" as IconName }, { id: "FullAccess", title: "Full access", text: "Run unrestricted commands and access files outside the workspace.", icon: "shield" as IconName }] as const}>{(mode) => <button classList={{ active: config()?.permission_mode === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={config()?.permission_mode === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
               <Group title="Approvals">
                 <p class="settings-group-copy">
                   When something needs your say-so, this decides who answers. It cannot widen the
@@ -969,7 +969,7 @@ export default function Settings() {
                     each={
                       [
                         { id: "ask", title: "Ask me every time", text: "Pause and wait for you before anything that needs approval.", icon: "shield" as IconName },
-                        { id: "approve-safe", title: "Approve safe actions", text: "Reads and edits inside this project go ahead; the web and outside access still ask.", icon: "check" as IconName },
+                        { id: "approve-safe", title: "Approve safe actions", text: "Reads and edits inside this workspace go ahead; the web and outside access still ask.", icon: "check" as IconName },
                         { id: "auto-approve", title: "Approve automatically", text: "Ordinary requests go ahead. Your own rules and the circuit breaker still stop and ask.", icon: "code" as IconName },
                       ] as const
                     }
@@ -990,7 +990,7 @@ export default function Settings() {
                 </div>
               </Group>
               <Group title="Sandbox">
-                <Row title="Workspace boundary" description="File tools are confined to the selected project and symlinks are resolved before access."><span class="settings-status good">Protected</span></Row>
+                <Row title="Workspace boundary" description="File tools are confined to the selected workspace and symlinks are resolved before access."><span class="settings-status good">Protected</span></Row>
                 <Row title="Containment" description="How tool processes are confined on this machine."><span class="settings-status good">{config()?.sandbox ?? "…"}</span></Row>
               </Group>
               <Group title="Rules">
@@ -1016,7 +1016,7 @@ export default function Settings() {
                     </Row>
                   )}
                 </For>
-                <Row title="Permission rules" description="Add or remove allow, ask, and deny patterns in the project configuration."><button class="settings-button" onClick={() => void openProjectConfig()}>Edit rules</button></Row>
+                <Row title="Permission rules" description="Add or remove allow, ask, and deny patterns in the workspace configuration."><button class="settings-button" onClick={() => void openWorkspaceConfig()}>Edit rules</button></Row>
               </Group>
             </Show>
 
@@ -1038,13 +1038,13 @@ export default function Settings() {
                   title="Cross-model fallbacks"
                   description={config()?.route.fallback_models.length
                     ? `Allowed models, admitted only when discovery reaches them: ${config()!.route.fallback_models.join(", ")}.`
-                    : "Same model on other providers only. Add route.fallback_models in project config to allow named alternates."}
+                    : "Same model on other providers only. Add route.fallback_models in workspace config to allow named alternates."}
                 >
                   <span class="metric">{config()?.route.fallback_models.length ?? 0}</span>
                 </Row>
                 <Row title="Ladder length cap" description="Maximum frozen legs per session, including your primary choice — the primary never loses its head position."><span class="metric">{config()?.route.max_fallbacks}</span></Row>
               </Group>
-              <button class="settings-button" onClick={() => void openProjectConfig()}>Tune in project config</button>
+              <button class="settings-button" onClick={() => void openWorkspaceConfig()}>Tune in workspace config</button>
             </Show>
 
             <Show when={page() === "services"}>
@@ -1104,7 +1104,7 @@ export default function Settings() {
               </nav>
               <Group title={tier() === "profile" ? "Profile memories (USER.md)" : "Workspace memories (MEMORY.md)"}>
                 <Show when={tier() === "profile"}>
-                  <p class="settings-hint memory-hint">Global tier — these notes are recalled in every project.</p>
+                  <p class="settings-hint memory-hint">Global tier — these notes are recalled in every workspace.</p>
                 </Show>
                 <Show
                   when={!addingNote()}
@@ -1114,7 +1114,7 @@ export default function Settings() {
                         <label>Kind<input value={noteKind()} aria-label="Note kind" onInput={(e) => setNoteKind(e.currentTarget.value)} /></label>
                         <label>Tag <span class="label-hint">optional</span><input value={noteTag()} aria-label="Note tag" onInput={(e) => setNoteTag(e.currentTarget.value)} /></label>
                       </div>
-                      <textarea rows={2} placeholder={tier() === "profile" ? "Something that should hold across every project…" : "Something that should hold in this workspace…"} aria-label="Note text" value={noteText()} onInput={(e) => setNoteText(e.currentTarget.value)} />
+                      <textarea rows={2} placeholder={tier() === "profile" ? "Something that should hold across every workspace…" : "Something that should hold in this workspace…"} aria-label="Note text" value={noteText()} onInput={(e) => setNoteText(e.currentTarget.value)} />
                       <div class="task-add-row">
                         <button class="btn primary" disabled={!noteText().trim() || !noteKind().trim()} onClick={() => void addMemoryNote()}>Append note</button>
                         <button class="btn" onClick={() => setAddingNote(false)}>Cancel</button>
@@ -1172,8 +1172,8 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "integrations"}>
-              <header><h1>Capabilities</h1><p>{scope() === "user" ? "Shared capabilities are available to every project. A project may add its own capability or override a same-named MCP server." : "Edit only this folder’s capabilities. Shared capabilities remain available unless this project deliberately replaces a same-named MCP server."}</p></header>
-              <div class="settings-callout scope-callout"><Icon name={scope() === "user" ? "layers" : "folder"} /><div><strong>{scope() === "user" ? "Shared defaults apply everywhere." : "You are changing this project only."}</strong><span>{scope() === "user" ? "Project-specific changes never rewrite these shared settings." : "Use Shared above to change your defaults for every project."}</span></div></div>
+              <header><h1>Capabilities</h1><p>{scope() === "user" ? "Shared capabilities are available to every workspace. A workspace may add its own capability or override a same-named MCP server." : "Edit only this folder’s capabilities. Shared capabilities remain available unless this workspace deliberately replaces a same-named MCP server."}</p></header>
+              <div class="settings-callout scope-callout"><Icon name={scope() === "user" ? "layers" : "folder"} /><div><strong>{scope() === "user" ? "Shared defaults apply everywhere." : "You are changing this workspace only."}</strong><span>{scope() === "user" ? "Workspace-specific changes never rewrite these shared settings." : "Use Shared above to change your defaults for every workspace."}</span></div></div>
               <nav class="capability-tabs" aria-label="Capability types">
                 <button classList={{ active: capabilityTab() === "mcp" }} onClick={() => setCapabilityTab("mcp")}><Icon name="plug" /><span>MCP servers</span><em>{totalMcpCount()}</em></button>
                 <button classList={{ active: capabilityTab() === "skills" }} onClick={() => setCapabilityTab("skills")}><Icon name="spark" /><span>Skills</span><em>{visibleSkills().length}</em></button>
@@ -1193,13 +1193,13 @@ export default function Settings() {
                     <div class="settings-actions"><button class="btn" onClick={addServer}><Icon name="add" /> Add server</button><button class="btn primary" disabled={!mcpDirty() || mcpSaving()} onClick={() => void saveMcp()}>{mcpSaving() ? "Saving…" : "Save & apply"}</button><Show when={mcpDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
                     <p class="settings-hint">{scope() === "user" ? "These are your shared server definitions. Projects inherit them. Secrets are referenced by name and never shown here." : "A same-named project server replaces the shared one for this folder only. Network is off until you turn it on; secrets stay user-owned."}</p>
 
-                    <Show when={scope() === "project" && Object.keys(inheritedMcpServers()).length > 0}>
+                    <Show when={scope() === "workspace" && Object.keys(inheritedMcpServers()).length > 0}>
                       <div class="inherited-capabilities-group">
                         <div class="inherited-capabilities-head">
                           <Icon name="layers" />
                           <div>
                             <strong>Shared MCP servers ({Object.keys(inheritedMcpServers()).length})</strong>
-                            <span>Inherited from your global settings. Available in every task in this project unless replaced by a same-named server above.</span>
+                            <span>Inherited from your global settings. Available in every task in this workspace unless replaced by a same-named server above.</span>
                           </div>
                         </div>
                         <div class="capability-list">
@@ -1242,7 +1242,7 @@ export default function Settings() {
               </Show>
               <Show when={capabilityTab() === "hooks"}>
                 <Group title="Lifecycle automation"><div class="settings-callout"><Icon name="shield" /><div><strong>Hooks run commands at controlled lifecycle points.</strong><span>Use closed failure handling for guards where a timeout or unavailable script must stop the operation.</span></div></div><Show when={hooks().length > 0} fallback={<div class="capability-empty"><Icon name="tune" /><strong>{scope() === "user" ? "No shared hooks configured" : (inheritedHooks().length > 0 ? "No project-specific hooks" : "No hooks configured")}</strong><span>{scope() === "user" ? "Add a hook to run a safe, repeatable action at session or tool lifecycle events across all projects." : (inheritedHooks().length > 0 ? "This project is using the shared hooks listed below. Add a hook here to run project-specific actions." : "Add a hook to run a safe, repeatable action at session or tool lifecycle events.")}</span></div>}><div class="hook-editor"><For each={hooks()}>{(hook, index) => <div class="hook-row"><div class="hook-row-head"><span class="capability-state" classList={{ ready: hook.enabled !== false, muted: hook.enabled === false }}>{hook.enabled === false ? "Disabled" : "Enabled"}</span><Switch checked={hook.enabled !== false} label={`Enable hook ${index() + 1}`} onChange={(v) => updateHook(index(), { enabled: v })} /><button class="settings-button danger" onClick={() => removeHook(index())}><Icon name="trash" /></button></div><label>Lifecycle event<select value={hook.event} onChange={(e) => updateHook(index(), { event: e.currentTarget.value })}><option value="session_start">Session start</option><option value="pre_tool_use">Before a tool runs</option><option value="post_tool_use">After a tool runs</option><option value="stop">Task stop</option></select></label><label>Tool matcher <span class="label-hint">optional</span><input value={hook.matcher ?? ""} placeholder="bash, write, or leave blank" onInput={(e) => updateHook(index(), { matcher: e.currentTarget.value })} /></label><label>Command<input class="hook-command" value={hook.command} placeholder="e.g. cargo fmt --all --check" onInput={(e) => updateHook(index(), { command: e.currentTarget.value })} /></label><label>Timeout (ms)<input type="number" min="100" max="120000" value={hook.timeout_ms ?? 10000} onInput={(e) => updateHook(index(), { timeout_ms: Number(e.currentTarget.value) || 10000 })} /></label><label>On hook failure<select value={hook.failure_mode ?? "open"} onChange={(e) => updateHook(index(), { failure_mode: e.currentTarget.value as "open" | "closed" })}><option value="open">Continue and report</option><option value="closed">Block the operation</option></select></label></div>}</For></div></Show><div class="settings-actions"><button class="btn" onClick={addHook}><Icon name="add" /> Add hook</button><button class="btn primary" disabled={!hooksDirty() || hooksSaving()} onClick={() => void saveHooks()}>{hooksSaving() ? "Saving…" : "Save hooks"}</button><Show when={hooksDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
-                <Show when={scope() === "project" && inheritedHooks().length > 0}>
+                <Show when={scope() === "workspace" && inheritedHooks().length > 0}>
                   <div class="inherited-capabilities-group">
                     <div class="inherited-capabilities-head">
                       <Icon name="layers" />
@@ -1287,7 +1287,7 @@ export default function Settings() {
                   <Show when={plugins().length > 0} fallback={<div class="capability-empty"><Icon name="grid" /><strong>{scope() === "user" ? "No shared plugins installed" : (inheritedPlugins().length > 0 ? "No project-specific plugins installed" : "No plugins installed")}</strong><span>{scope() === "user" ? "Install a reviewed package to make its skills, commands, and integrations available everywhere." : (inheritedPlugins().length > 0 ? "This project inherits the shared plugins listed below. Install a project-specific package below if needed." : "Install a reviewed local package to make its skills, commands, and integrations available.")}</span></div>}>
                     <div class="capability-list"><For each={plugins()}>{(plugin) => <details class="capability-item"><summary><span><strong>{plugin.name}</strong><small>v{plugin.version} · {plugin.scope} · {plugin.format}</small></span><span class="capability-state" classList={{ ready: plugin.enabled, muted: !plugin.enabled }}>{plugin.enabled ? "Enabled" : "Disabled"}</span></summary><div class="capability-detail"><p>{plugin.description || "No description provided."}</p><code title={plugin.digest}>sha256:{plugin.digest.slice(0, 16)}</code><code>{plugin.trace_id}</code><div class="settings-actions"><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, plugin.enabled ? "disable" : "enable")}>{plugin.enabled ? "Disable" : "Enable"}</button><button class="settings-button" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "rollback")}>Rollback</button><button class="settings-button danger" disabled={pluginBusy()} onClick={() => void mutatePlugin(plugin.name, "remove")}>Remove</button></div></div></details>}</For></div>
                   </Show>
-                  <Show when={scope() === "project" && inheritedPlugins().length > 0}>
+                  <Show when={scope() === "workspace" && inheritedPlugins().length > 0}>
                     <div class="inherited-capabilities-group">
                       <div class="inherited-capabilities-head">
                         <Icon name="layers" />
@@ -1393,7 +1393,7 @@ export default function Settings() {
                 <Row title="Maximum output" description="Provider output-token ceiling."><span class="metric">{fmt(config()?.max_tokens ?? 0)} tokens</span></Row>
               </Group>
               <Group title="Paths">
-                <Row title="Project config" description={config()?.paths.project_config ?? ""}><button class="settings-button" onClick={() => void openProjectConfig()}>Open</button></Row>
+                <Row title="Project config" description={config()?.paths.project_config ?? ""}><button class="settings-button" onClick={() => void openWorkspaceConfig()}>Open</button></Row>
                 <Row title="Global config" description={config()?.paths.global_config ?? "Not configured"}><button class="settings-button" onClick={() => void navigator.clipboard.writeText(config()?.paths.global_config ?? "")}>Copy path</button></Row>
                 <Row title="Session store" description={config()?.paths.sessions_home ?? ""}><button class="settings-button" onClick={() => void navigator.clipboard.writeText(config()?.paths.sessions_home ?? "")}>Copy path</button></Row>
               </Group>

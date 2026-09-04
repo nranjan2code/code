@@ -192,16 +192,16 @@ export default function WorkspaceGate() {
                   <div class="gate-err">{error() ?? backend().boot_error}</div>
                 </Show>
                 <button class="btn primary lg" disabled={busy()} onClick={() => void pick()}>
-                  <Icon name="folder" /> {busy() ? "Opening workspace…" : "Open a project"}
+                  <Icon name="folder" /> {busy() ? "Opening workspace…" : "Open a workspace"}
                 </button>
                 <p class="gate-note">
-                  Shared defaults stay global and are inherited here; project settings
+                  Shared defaults stay global and are inherited here; workspace settings
                   override only that folder. Configuration and secrets stay on this device.
                 </p>
               </>
             }>
               <>
-                <h1>Open a project</h1>
+                <h1>Open a workspace</h1>
                 <p class="gate-lead">
                   Folders on the machine running Vak
                   <Show when={backend().cwd}>{" "}— currently {backend().cwd}</Show>.

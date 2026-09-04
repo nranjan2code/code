@@ -497,6 +497,11 @@ async fn main() {
             provider,
             model,
         }) => run_eval(report, live, provider, model).await,
+        Some(Command::Open {
+            surface,
+            port,
+            print,
+        }) => run_open(surface, port, print),
         Some(Command::Serve {
             port,
             host,
@@ -1868,6 +1873,76 @@ async fn run_eval(
     if passed == total { 0 } else { 1 }
 }
 
+/// Open a running server's web surface, already signed in.
+///
+/// The point is that nobody should have to go and find this machine's
+/// access token to reach a server on this machine. The token is read from
+/// the pinned user `.env` and handed over as a one-shot `?token=`, which
+/// the client immediately exchanges for a session cookie and erases from
+/// the address bar.
+///
+/// LOOPBACK ONLY, and not by convention: the server refuses `?token=` from
+/// any non-loopback host (invariant 33), so this URL authenticates nothing
+/// if it leaves the machine. That is why the convenience is safe to offer
+/// at all.
+fn run_open(surface: cli::OpenSurface, port: Option<u16>, print_only: bool) -> i32 {
+    let path = match surface {
+        cli::OpenSurface::App => "/app",
+        cli::OpenSurface::Admin => "/admin",
+    };
+    let port = port.unwrap_or_else(|| vak_ops::OpsConfig::detect().port);
+    let base = format!("http://127.0.0.1:{port}{path}");
+
+    // No token pinned is not an error: the server then mints one per boot,
+    // and the sign-in screen is the honest answer.
+    let url = match vak_config::get_var("VAK_GATEWAY_TOKEN").filter(|t| !t.trim().is_empty()) {
+        Some(token) => format!(
+            "{base}?token={}",
+            percent_encoding::utf8_percent_encode(token.trim(), percent_encoding::NON_ALPHANUMERIC)
+        ),
+        None => {
+            eprintln!(
+                "note: no VAK_GATEWAY_TOKEN pinned, so this link cannot sign you in.\n\
+                 Run `vak self services-sync` to pin one."
+            );
+            base.clone()
+        }
+    };
+
+    if print_only {
+        println!("{url}");
+        return 0;
+    }
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    match std::process::Command::new(opener).arg(&url).spawn() {
+        Ok(_) => {
+            // The token is deliberately NOT echoed here; the browser has it.
+            println!("opening {base}");
+            0
+        }
+        Err(e) => {
+            eprintln!("could not launch a browser ({e}); open this yourself:\n{url}");
+            1
+        }
+    }
+}
+
+/// Whether this process is running inside a container.
+///
+/// `/.dockerenv` is Docker's own marker; `VAK_CONTAINER` is set by our
+/// image so the check also holds under runtimes that do not create it
+/// (Podman, containerd). This is a USABILITY guard, not a privilege
+/// boundary — anyone who can set the variable can already pass any flag
+/// they like — so detecting it loosely is fine.
+fn in_container() -> bool {
+    std::path::Path::new("/.dockerenv").exists()
+        || std::env::var("VAK_CONTAINER").is_ok_and(|v| v == "1")
+}
+
 async fn run_serve(
     cwd: PathBuf,
     port: u16,
@@ -1902,7 +1977,23 @@ async fn run_serve(
     // start and then answer nothing, which is the worst of both outcomes.
     // Failing here says exactly which setting is missing while the operator
     // is still looking at the terminal.
-    if publicly && server.trusted_hosts.is_empty() {
+    //
+    // EXCEPT in a container, where 0.0.0.0 is the only address that can be
+    // reached at all and the access control is `docker run -p` — an
+    // explicit, deliberate act by the operator, which is exactly what this
+    // refusal exists to require. Refusing here would mean every container
+    // needs `trusted_hosts` before it can serve its own published port, so
+    // the guard would be worked around rather than obeyed.
+    //
+    // What does NOT relax is the `Host` check itself (invariant 33): DNS
+    // rebinding is defended identically inside a container, because that
+    // attack does not care where the process runs.
+    if publicly && server.trusted_hosts.is_empty() && in_container() {
+        eprintln!(
+            "note: binding {bind} inside a container; reachability is governed by\n\
+             the published port. Add [server] trusted_hosts to serve a real hostname."
+        );
+    } else if publicly && server.trusted_hosts.is_empty() {
         eprintln!(
             "error: refusing to bind {bind} with no [server] trusted_hosts.\n\
              \n\

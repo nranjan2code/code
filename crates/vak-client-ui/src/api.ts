@@ -319,17 +319,17 @@ export interface PromptLayerContent {
 
 export interface PromptLayerDescriptor {
   block: PromptBlock;
-  layer: "seed" | "shared" | "project" | "surface" | "bot" | "chat" | "agent";
+  layer: "seed" | "shared" | "workspace" | "surface" | "bot" | "chat" | "agent";
   source?: string | null;
   digest: string;
   bytes: number;
 }
 
-export function getPromptLayer(scope: "user" | "project"): Promise<{ scope: string; path: string; layer: PromptLayerContent }> {
+export function getPromptLayer(scope: "user" | "workspace"): Promise<{ scope: string; path: string; layer: PromptLayerContent }> {
   return req(`/config/prompts?scope=${scope}`);
 }
 
-export function putPromptBlock(scope: "user" | "project", block: PromptBlock, text: string | null): Promise<unknown> {
+export function putPromptBlock(scope: "user" | "workspace", block: PromptBlock, text: string | null): Promise<unknown> {
   return req("/config/prompts", { method: "PUT", body: JSON.stringify({ scope, block, text }) });
 }
 
@@ -730,6 +730,18 @@ export function readFile(path: string): Promise<FileResponse> {
 
 export function writeFile(path: string, content: string): Promise<unknown> {
   return req("/fs/file", { method: "PUT", body: JSON.stringify({ path, content }) });
+}
+
+/**
+ * Stop listing a workspace. Sessions, memory, checkpoints, and the
+ * project's own settings all survive — re-opening the folder restores it
+ * exactly, which is what makes this safe to offer as one click.
+ */
+export function forgetWorkspace(path: string): Promise<{ forgotten: string }> {
+  return req("/workspaces/forget", {
+    method: "POST",
+    body: JSON.stringify({ path }),
+  });
 }
 
 /**

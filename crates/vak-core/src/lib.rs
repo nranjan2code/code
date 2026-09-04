@@ -64,6 +64,7 @@ pub mod tools_commitments;
 pub mod tools_tasks;
 pub mod transcript_md;
 pub mod trust;
+pub mod workspaces;
 pub mod worktree;
 
 use std::collections::HashMap;
@@ -2326,7 +2327,7 @@ impl Core {
             }
             if !project.is_empty() {
                 layers.push(prompts::LayerInput::new(
-                    prompts::PromptLayer::Project,
+                    prompts::PromptLayer::Workspace,
                     Some(project_dir.display().to_string()),
                     project,
                 ));
@@ -5101,7 +5102,11 @@ mod channel_mcp_network_tests {
             .iter()
             .find(|d| d.block == "identity")
             .expect("identity descriptor");
-        assert_eq!(identity.layer, "project");
+        // One vocabulary: the layer a workspace contributes is named
+        // "workspace", matching `[server] workspace_roots`, `/workspaces`,
+        // and the settings scope. It was "project" while everything around
+        // it said workspace.
+        assert_eq!(identity.layer, "workspace");
         assert!(identity.source.as_deref().unwrap().ends_with("prompts"));
         assert_eq!(identity.digest.len(), 64);
     }

@@ -89,7 +89,7 @@ impl PromptBlock {
 pub enum PromptLayer {
     Seed,
     Shared,
-    Project,
+    Workspace,
     Surface,
     Bot,
     Chat,
@@ -103,7 +103,7 @@ impl PromptLayer {
         match self {
             PromptLayer::Seed => "shipped default",
             PromptLayer::Shared => "Shared",
-            PromptLayer::Project => "This project",
+            PromptLayer::Workspace => "This workspace",
             PromptLayer::Surface => "surface",
             PromptLayer::Bot => "bot",
             PromptLayer::Chat => "chat",
@@ -118,7 +118,7 @@ impl PromptLayer {
         match self {
             PromptLayer::Seed => "seed",
             PromptLayer::Shared => "shared",
-            PromptLayer::Project => "project",
+            PromptLayer::Workspace => "workspace",
             PromptLayer::Surface => "surface",
             PromptLayer::Bot => "bot",
             PromptLayer::Chat => "chat",
@@ -133,7 +133,7 @@ impl PromptLayer {
         [
             PromptLayer::Seed,
             PromptLayer::Shared,
-            PromptLayer::Project,
+            PromptLayer::Workspace,
             PromptLayer::Surface,
             PromptLayer::Bot,
             PromptLayer::Chat,
@@ -146,7 +146,7 @@ impl PromptLayer {
     /// Whether a layer's identity/rules may be dropped for lack of trust.
     /// Guardrails are never dropped — see `LayerContent::demote_untrusted`.
     pub fn is_project_scoped(self) -> bool {
-        matches!(self, PromptLayer::Project)
+        matches!(self, PromptLayer::Workspace)
     }
 }
 
@@ -767,7 +767,7 @@ mod tests {
             &[
                 LayerInput::new(PromptLayer::Seed, None, seed_content()),
                 LayerInput::new(
-                    PromptLayer::Project,
+                    PromptLayer::Workspace,
                     Some("proj".into()),
                     LayerContent {
                         identity: Some("You are Bob.".into()),
@@ -784,7 +784,7 @@ mod tests {
             .iter()
             .find(|d| d.block == PromptBlock::Identity.slug())
             .unwrap();
-        assert_eq!(identity.layer, PromptLayer::Project.wire_name());
+        assert_eq!(identity.layer, PromptLayer::Workspace.wire_name());
         assert_eq!(
             out.descriptors
                 .iter()
@@ -804,7 +804,7 @@ mod tests {
             &[
                 LayerInput::new(PromptLayer::Seed, None, seed_content()),
                 LayerInput::new(
-                    PromptLayer::Project,
+                    PromptLayer::Workspace,
                     None,
                     LayerContent {
                         // An attempt to blank them out is simply a narrower
@@ -852,7 +852,7 @@ mod tests {
             &[
                 LayerInput::new(PromptLayer::Seed, None, seed_content()),
                 LayerInput::new(
-                    PromptLayer::Project,
+                    PromptLayer::Workspace,
                     None,
                     LayerContent {
                         surface_notes: vec!["replies are archived to Zendesk".into()],
@@ -895,7 +895,7 @@ mod tests {
             .filter(|d| d.block == "surface-note")
             .map(|d| d.layer.as_str())
             .collect();
-        assert_eq!(layers, ["project", "chat"]);
+        assert_eq!(layers, ["workspace", "chat"]);
     }
 
     /// A note is not a guardrail: it is free-form context, so an untrusted
@@ -966,7 +966,7 @@ mod tests {
             &[
                 LayerInput::new(PromptLayer::Seed, None, seed_content()),
                 LayerInput::new(
-                    PromptLayer::Project,
+                    PromptLayer::Workspace,
                     Some("p".into()),
                     LayerContent {
                         identity: Some("You are Kavi.".into()),
@@ -986,7 +986,7 @@ mod tests {
             &[
                 LayerInput::new(PromptLayer::Seed, None, seed_content()),
                 LayerInput::new(
-                    PromptLayer::Project,
+                    PromptLayer::Workspace,
                     Some("p".into()),
                     LayerContent {
                         // identity edited, guardrail dropped
@@ -1009,7 +1009,7 @@ mod tests {
         assert_eq!(d.changed.len(), 1, "{:?}", d.changed);
         assert_eq!(d.changed[0].1.block, "identity");
         assert!(d.added.iter().any(|a| a.layer == "chat"));
-        assert!(d.removed.iter().any(|r| r.layer == "project"));
+        assert!(d.removed.iter().any(|r| r.layer == "workspace"));
         let lines = d.lines().join("\n");
         assert!(lines.contains("~ identity"), "{lines}");
         assert!(lines.contains("+ guardrails"), "{lines}");
@@ -1026,7 +1026,7 @@ mod tests {
             &[
                 LayerInput::new(PromptLayer::Seed, None, seed_content()),
                 LayerInput::new(
-                    PromptLayer::Project,
+                    PromptLayer::Workspace,
                     None,
                     LayerContent {
                         guardrails: vec!["one more".into()],

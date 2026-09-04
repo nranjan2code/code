@@ -1,0 +1,27 @@
+# Build context hygiene. `target/` alone is tens of gigabytes; sending it to
+# the daemon would dominate the build and is never an input — the image
+# compiles from source.
+target/
+**/node_modules/
+
+# Host state that must never leak into an image.
+.env
+.env.*
+!.env.example
+.git/
+.vak/sessions/
+.claude/
+.poolside/
+.DS_Store
+**/.DS_Store
+
+# The Tauri bundle is gitignored, desktop-only, and needs npm. The image is
+# headless and builds none of it. `crates/vak-client-ui/dist-web` and
+# `crates/vak-admin-ui/dist` ARE committed and ARE required — vak-server
+# embeds both — which is precisely what lets this image build with no node
+# in it at all.
+crates/vak-client-ui/dist/
+
+# Local scratch.
+dist/
+video/

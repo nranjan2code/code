@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Vak</title>
+<meta name="description" content="An agent you can inspect, constrain, and extend." />
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f1ea" />
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171714" />
+<link rel="icon" type="image/png" href="/app/vak-icon.png" />
+<style>
+/* The Auditor's Desk (DESIGN.md), reproduced inline.
+   Inline because this page must render before, and independently of, any
+   bundle — it is the front door, and a front door that needs the building
+   to already be open is not a door. The token VALUES are the same ones
+   :root and html[data-theme="light"] carry in the client. */
+:root {
+  color-scheme: dark;
+  --bg: #171714; --surface: #1c1c19; --surface-raised: #22221f;
+  --surface-hover: #292925; --border: #34342f; --border-soft: #2a2a26;
+  --text: #eeeae2; --text-soft: #c4c0b8; --muted: #918e86; --faint: #8b8880;
+  --accent: #df795f; --accent-bright: #ee9278; --accent-wash: rgba(223,121,95,.13);
+  --on-accent: #201713;
+  --mono: "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f4f1ea; --surface: #faf8f3; --surface-raised: #fffdf9;
+    --surface-hover: #efebe1; --border: #d9d3c6; --border-soft: #e6e1d6;
+    --text: #23211c; --text-soft: #4a463d; --muted: #635f54; --faint: #6c675b;
+    --accent: #a8462a; --accent-bright: #8d3921; --accent-wash: rgba(168,70,42,.1);
+    --on-accent: #faf8f3;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh;
+  display: grid; place-items: center; padding: 32px 20px;
+  background: var(--bg); color: var(--text);
+  font-family: var(--sans); font-size: 13px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+main { width: 100%; max-width: 560px; }
+
+.mark {
+  display: grid; place-items: center; width: 54px; height: 54px;
+  margin: 0 auto 18px; border-radius: 15px;
+  background: var(--accent-wash); overflow: hidden;
+}
+.mark img { width: 34px; height: 34px; }
+
+h1 {
+  margin: 0; text-align: center;
+  font-size: 27px; font-weight: 620; letter-spacing: -.02em; line-height: 1.15;
+}
+.lead {
+  margin: 8px 0 30px; text-align: center;
+  color: var(--muted); font-size: 14px;
+}
+
+.doors { display: grid; gap: 12px; }
+@media (min-width: 560px) { .doors { grid-template-columns: 1fr 1fr; } }
+
+/* Flat at rest, tonal depth only — shadow means "floating" here as
+   everywhere else in the system. */
+.door {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 18px 18px 16px;
+  border: 1px solid var(--border); border-radius: 14px;
+  background: var(--surface);
+  color: inherit; text-decoration: none;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.door:hover { background: var(--surface-hover); border-color: var(--accent); }
+.door:focus-visible {
+  outline: 2px solid var(--accent-bright); outline-offset: 3px;
+}
+.door-top { display: flex; align-items: center; gap: 9px; }
+.door-icon { color: var(--accent); display: inline-flex; }
+.door-name { font-size: 15px; font-weight: 620; letter-spacing: -.01em; }
+.door-desc { color: var(--muted); font-size: 12.5px; }
+.door-go { margin-top: 6px; color: var(--faint); font-size: 11px; font-family: var(--mono); }
+
+.note {
+  margin: 26px 0 0; padding-top: 18px; border-top: 1px solid var(--border-soft);
+  color: var(--faint); font-size: 11.5px; text-align: center;
+}
+.note code {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--text-soft);
+}
+.build { margin-top: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  .door { transition: none; }
+}
+</style>
+</head>
+<body>
+<main>
+  <div class="mark"><img src="/app/vak-icon.png" alt="" /></div>
+  <h1>Vak</h1>
+  <p class="lead">An agent you can inspect, constrain, and extend.</p>
+
+  <nav class="doors" aria-label="Surfaces">
+    <a class="door" href="/app">
+      <span class="door-top">
+        <span class="door-icon" aria-hidden="true">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 15a3 3 0 0 1-3 3H9l-5 3v-6a3 3 0 0 1-1-2V7a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3Z"/>
+          </svg>
+        </span>
+        <span class="door-name">Workspace</span>
+      </span>
+      <span class="door-desc">Run tasks, review diffs, answer approvals, steer a run.</span>
+      <span class="door-go">/app</span>
+    </a>
+
+    <a class="door" href="/admin">
+      <span class="door-top">
+        <span class="door-icon" aria-hidden="true">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6Z"/>
+          </svg>
+        </span>
+        <span class="door-name">Operations</span>
+      </span>
+      <span class="door-desc">Sessions, receipts, commitments, services, incidents.</span>
+      <span class="door-go">/admin</span>
+    </a>
+  </nav>
+
+  <p class="note">
+    Both surfaces ask for this server's access token — the one it printed on
+    startup, or the <code>VAK_GATEWAY_TOKEN</code> in its environment.
+    <span class="build" id="build"></span>
+  </p>
+</main>
+<script>
+// The build is fetched rather than templated in, so this file stays a
+// static asset with no server-side rendering: one fewer thing that can be
+// wrong, and the page still renders if the request fails.
+fetch("/version", { credentials: "same-origin" })
+  .then((r) => (r.ok ? r.json() : null))
+  .then((v) => {
+    if (v && v.version) {
+      document.getElementById("build").textContent =
+        "vak " + v.version + (v.git_sha && v.git_sha !== "unknown" ? " · " + v.git_sha : "");
+    }
+  })
+  .catch(() => {});
+</script>
+</body>
+</html>

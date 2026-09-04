@@ -1,0 +1,42 @@
+# A headless vak on this machine, reachable in a browser at
+# http://127.0.0.1:8901/app  (docs/design/48-web-client.md, docs/hosting.md)
+#
+#   docker compose -f docker/compose.yaml up --build
+#
+# Published to 127.0.0.1 ON PURPOSE. `ports: "8901:8901"` would bind every
+# interface and hand an agent — which can run commands — to anyone who can
+# reach this host. Serving a real hostname is a separate, deliberate step:
+# put a TLS-terminating proxy in front and set `[server] trusted_hosts`.
+
+services:
+  vak:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        # Stamps `--version` and install.json with the commit, so a running
+        # container can say which build it is.
+        VAK_GIT_SHA: ${VAK_GIT_SHA:-unknown}
+    image: vak:local
+    ports:
+      - "127.0.0.1:8901:8901"
+    environment:
+      # The access token the web client signs in with. Generate one:
+      #   openssl rand -hex 32
+      # Without it the server mints a fresh token every restart, which is
+      # fine for a scratch container and useless for one you keep.
+      VAK_GATEWAY_TOKEN: ${VAK_GATEWAY_TOKEN:?set VAK_GATEWAY_TOKEN, e.g. in a .env beside this file}
+      # Provider credentials. Supply whichever you actually use.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      # The project the agent works on. Point this at real code.
+      - ${VAK_WORKSPACE:-./workspace}:/workspace
+      # Sessions, memory, tasks, commitments, audit logs. A named volume so
+      # the ledger survives `docker compose down` — it is append-only
+      # history, not a cache, and losing it loses the receipts.
+      - vak-data:/home/vak/.local/share
+    restart: unless-stopped
+
+volumes:
+  vak-data:

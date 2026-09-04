@@ -441,14 +441,14 @@ struct BackendInfo {
     /// so a silent launch failure never traps the user on the project gate.
     #[serde(skip_serializing_if = "Option::is_none")]
     boot_error: Option<String>,
-    recent_projects: Vec<String>,
+    recent_workspaces: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize, Default)]
 #[serde(default)]
 struct DesktopPrefs {
     last_project: Option<String>,
-    recent_projects: Vec<String>,
+    recent_workspaces: Vec<String>,
 }
 
 /// The same canonical data home the CLI, TUI, and wizard use
@@ -484,26 +484,43 @@ fn last_project() -> Option<PathBuf> {
     cwd.is_dir().then_some(cwd)
 }
 
-fn recent_projects() -> Vec<String> {
-    desktop_prefs()
-        .recent_projects
-        .into_iter()
-        .filter(|path| PathBuf::from(path).is_dir())
-        .collect()
+/// The workspaces this shell offers, from the ONE store every surface
+/// shares (`vak_core::workspaces`).
+///
+/// The desktop used to keep its own list in `desktop.json`, so a workspace
+/// removed in the browser stayed in the desktop's sidebar and vice versa —
+/// two lists of the same thing, guaranteed to disagree. `desktop.json`
+/// still holds `last_project` (which workspace to reopen at launch), which
+/// is genuinely this shell's own business.
+fn recent_workspaces() -> Vec<String> {
+    vak_core::workspaces::visible(
+        desktop_prefs()
+            .recent_workspaces
+            .into_iter()
+            .map(PathBuf::from),
+    )
+    .into_iter()
+    .map(|p| p.to_string_lossy().into_owned())
+    .collect()
 }
 
 fn save_project(cwd: &str) {
+    // The shared store is what every surface reads; this also un-forgets a
+    // workspace, so reopening one is how it comes back anywhere.
+    if let Err(e) = vak_core::workspaces::remember(std::path::Path::new(cwd)) {
+        eprintln!("warning: could not record the workspace: {e}");
+    }
     let mut prefs = desktop_prefs();
     let previous = prefs.last_project.clone();
     prefs.last_project = Some(cwd.to_string());
     prefs
-        .recent_projects
+        .recent_workspaces
         .retain(|path| path != cwd && previous.as_deref() != Some(path));
-    prefs.recent_projects.insert(0, cwd.to_string());
+    prefs.recent_workspaces.insert(0, cwd.to_string());
     if let Some(previous) = previous.filter(|path| path != cwd && PathBuf::from(path).is_dir()) {
-        prefs.recent_projects.insert(1, previous);
+        prefs.recent_workspaces.insert(1, previous);
     }
-    prefs.recent_projects.truncate(8);
+    prefs.recent_workspaces.truncate(8);
     let _ = std::fs::create_dir_all(vak_home());
     if let Ok(json) = serde_json::to_string(&prefs) {
         let _ = std::fs::write(prefs_path(), json);
@@ -564,7 +581,7 @@ async fn boot_backend(cwd: PathBuf, trusted: bool) -> Result<Running, String> {
         token: Some(token),
         cwd: Some(cwd.to_string_lossy().into_owned()),
         boot_error: None,
-        recent_projects: Vec::new(),
+        recent_workspaces: Vec::new(),
     };
     Ok(Running {
         info,
@@ -584,7 +601,7 @@ fn install_backend(
     if persist {
         save_project(&cwd);
     }
-    running.info.recent_projects = recent_projects();
+    running.info.recent_workspaces = recent_workspaces();
     let info = running.info.clone();
     let previous = state
         .running
@@ -763,7 +780,7 @@ fn backend_info(state: State<'_, BackendState>) -> BackendInfo {
     let mut info = guard
         .as_ref()
         .map_or_else(BackendInfo::default, |running| running.info.clone());
-    info.recent_projects = recent_projects();
+    info.recent_workspaces = recent_workspaces();
     info
 }
 

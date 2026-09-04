@@ -41,6 +41,23 @@ SHORTHAND = re.compile(r"`(vak-[a-z0-9-]+/[^`\s]*)`")
 MAP_ENTRY = re.compile(r"^((?:crates|docs|scripts)/[A-Za-z0-9_./-]*) +\S")
 FENCE = re.compile(r"^```")
 
+# Build outputs: legitimately absent from a fresh checkout, so their absence
+# is not drift. Docs still need to name them — "which directory ships" is
+# the whole point of docs/design/32 — and a fresh clone is exactly what CI
+# checks out, so without this the gate fails on every CI run while passing
+# on any machine that had built the UI once. That is the leftover-state
+# dependency the release doc itself warns about, reproduced in its checker.
+#
+# `git check-ignore` cannot decide this: `dist/` matches DIRECTORIES only,
+# so git reports a missing `dist/` as *not* ignored — precisely backwards
+# for this use. An explicit list is duller and actually correct.
+#
+# `crates/vak-client-ui/dist-web` is deliberately NOT here: it is committed,
+# so if it goes missing that IS drift and should fail.
+BUILD_OUTPUTS = {
+    "crates/vak-client-ui/dist",  # Tauri bundle; gitignored, `npm run build`
+}
+
 
 def documents():
     """Every doc to check, without visiting a directory twice."""
@@ -96,8 +113,10 @@ for rel, path in documents():
             if any(ch in cite for ch in "*?["):
                 continue
             # strip trailing punctuation commonly inside code spans
-            full = os.path.join(ROOT, target.rstrip(".:,;"))
-            if not os.path.exists(full):
+            target = target.rstrip(".:,;").rstrip("/")
+            if target in BUILD_OUTPUTS:
+                continue
+            if not os.path.exists(os.path.join(ROOT, target)):
                 missing.append(f"{rel}:{line_no}: {cite}")
 
 if missing:

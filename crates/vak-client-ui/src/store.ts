@@ -40,7 +40,7 @@ export type Item =
   | { kind: "subagent"; label: string; lines: string[]; open: boolean; isError: boolean }
   | { kind: "system"; text: string };
 
-export const [backend, setBackend] = createSignal<BackendInfo>({ ready: false, recent_projects: [] });
+export const [backend, setBackend] = createSignal<BackendInfo>({ ready: false, recent_workspaces: [] });
 export const [workspaceSwitching, setWorkspaceSwitching] = createSignal(false);
 
 /**
@@ -103,7 +103,7 @@ export const [showShortcuts, setShowShortcuts] = createSignal(false);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 /** Left navigation manages user-wide defaults; the workspace header manages
  * the active project's overlay. The server remains the single source of truth. */
-export const [settingsScope, setSettingsScope] = createSignal<"user" | "project">("user");
+export const [settingsScope, setSettingsScope] = createSignal<"user" | "workspace">("user");
 export const [hydratingId, setHydratingId] = createSignal<string | null>(null);
 /** Viewport narrow enough that the sidebar and dock are overlays rather
  *  than columns (docs/design/48-web-client.md §7.2). Kept as a signal, not

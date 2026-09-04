@@ -25,7 +25,7 @@ function EmptyChat(props: { hasSession: boolean }) {
       <p class="chat-empty-hint">
         {props.hasSession
           ? "This task has no visible activity at the current transcript detail. Switch to \"balanced\" or \"audit\" in the composer to see more."
-          : "Ask Vak to build, fix, or explain something — it starts a task with this project's files and history."}
+          : "Ask Vak to build, fix, or explain something — it starts a task with this workspace's files and history."}
       </p>
     </div>
   );

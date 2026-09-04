@@ -643,7 +643,7 @@ fn router_with_state(state: AppState) -> Router {
             "/config/global",
             get(get_global_config_layer).patch(patch_global_config),
         )
-        .route("/config/project", get(get_project_config_layer))
+        .route("/config/workspace", get(get_workspace_config_layer))
         .route("/config/mode", post(set_permission_mode))
         .route(
             "/agent-network/capabilities",
@@ -764,8 +764,11 @@ fn router_with_state(state: AppState) -> Router {
         .route("/host/events", get(web::host_events))
         .route("/workspaces", get(web::list_workspaces))
         .route("/workspaces/open", post(web::open_workspace))
+        .route("/workspaces/forget", post(web::forget_workspace))
         .route("/fs/dirs", get(web::list_dirs))
         .route("/pty", get(web::pty_socket))
+        .route("/", get(web::landing))
+        .route("/version", get(web::version))
         .route("/backup/export", post(backup_export))
         .route("/backup/import", post(backup_import))
         .route("/digest", get(digest_report))
@@ -2350,6 +2353,11 @@ fn auth_exempt_path(path: &str) -> bool {
         // "server unreachable".
         || path == "/auth/login"
         || path == "/auth/session"
+        // The front door and its build stamp: a signpost to /app and
+        // /admin, carrying nothing an unauthenticated visitor should not
+        // see. A blank 401 here told a visitor nothing at all.
+        || path == "/"
+        || path == "/version"
         || path == "/favicon.ico"
         || path == "/favicon.svg"
 }
@@ -6136,7 +6144,7 @@ async fn put_gateway_approvals(
         return bad("timeout must be between 5 and 86400 seconds");
     }
 
-    let scope = body.scope.unwrap_or(ConfigScope::Project);
+    let scope = body.scope.unwrap_or(ConfigScope::Workspace);
     let path = match scope.config_path(&state.core) {
         Ok(path) => path,
         Err(error) => {
@@ -6221,7 +6229,7 @@ async fn get_permission_rules(
     axum::extract::Query(q): axum::extract::Query<OptionalScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let scope = q.scope.unwrap_or(ConfigScope::Project);
+    let scope = q.scope.unwrap_or(ConfigScope::Workspace);
     let (allow, ask, deny) = state.core.effective_permission_rules();
     let layer = match scope
         .config_path(&state.core)
@@ -6294,7 +6302,7 @@ async fn put_permission_rules(
             }
         }
     }
-    let scope = body.scope.unwrap_or(ConfigScope::Project);
+    let scope = body.scope.unwrap_or(ConfigScope::Workspace);
     let path = match scope.config_path(&state.core) {
         Ok(path) => path,
         Err(error) => {
@@ -6489,7 +6497,7 @@ async fn delete_provider_key(
     let scope = body.scope.unwrap_or(ConfigScope::User);
     match state
         .core
-        .remove_provider_key_scoped(&body.provider, scope.is_project())
+        .remove_provider_key_scoped(&body.provider, scope.is_workspace())
     {
         Ok(removed) => {
             vak_core::security_events::record(
@@ -6588,7 +6596,7 @@ async fn put_provider_key(
     let scope = body.scope.unwrap_or(ConfigScope::User);
     match state
         .core
-        .set_provider_key_scoped(&body.provider, &body.key, scope.is_project())
+        .set_provider_key_scoped(&body.provider, &body.key, scope.is_workspace())
     {
         Ok(env_var) => {
             vak_core::security_events::record(
@@ -7052,9 +7060,9 @@ async fn get_global_config_layer(State(state): State<AppState>) -> axum::respons
     }
 }
 
-async fn get_project_config_layer(State(state): State<AppState>) -> axum::response::Response {
+async fn get_workspace_config_layer(State(state): State<AppState>) -> axum::response::Response {
     use axum::response::IntoResponse;
-    match config_layer_response(&state, ConfigScope::Project) {
+    match config_layer_response(&state, ConfigScope::Workspace) {
         Ok(layer) => Json(layer).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -8239,22 +8247,28 @@ fn read_mcp_config(path: &std::path::Path) -> Result<vak_config::McpConfig, Stri
         .map_err(|error| error.to_string())
 }
 
+/// Which layer a setting belongs to.
+///
+/// One word for one concept: the config section is `workspace_roots`, the
+/// path helper is `default_workspace`, the API is `/workspaces` — and this
+/// said "project". Two names for the same thing is how a UI ends up
+/// labelling one panel "This project" and its own store `workspace`.
 #[derive(Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum ConfigScope {
     User,
-    Project,
+    Workspace,
 }
 
 impl ConfigScope {
-    fn is_project(self) -> bool {
-        matches!(self, Self::Project)
+    fn is_workspace(self) -> bool {
+        matches!(self, Self::Workspace)
     }
 
     fn label(self) -> &'static str {
         match self {
             Self::User => "user",
-            Self::Project => "project",
+            Self::Workspace => "project",
         }
     }
 
@@ -8262,14 +8276,14 @@ impl ConfigScope {
     fn prompt_root(self, core: &vak_core::Core) -> std::path::PathBuf {
         match self {
             Self::User => vak_config::paths::default_workspace(),
-            Self::Project => core.cwd().clone(),
+            Self::Workspace => core.cwd().clone(),
         }
     }
 
     fn config_path(self, core: &vak_core::Core) -> Result<std::path::PathBuf, String> {
         match self {
             Self::User => vak_config::global_path().ok_or_else(|| "user home unavailable".into()),
-            Self::Project => Ok(vak_config::project_path(core.cwd())),
+            Self::Workspace => Ok(vak_config::project_path(core.cwd())),
         }
     }
 }
@@ -8279,7 +8293,7 @@ struct ScopeQuery {
     scope: ConfigScope,
 }
 
-/// A scope query where omitting the parameter is legal and means "project".
+/// A scope query where omitting the parameter is legal and means "workspace".
 /// Kept separate from [`ScopeQuery`] so the endpoints that genuinely
 /// require an explicit scope keep rejecting a request without one.
 #[derive(serde::Deserialize)]
@@ -8383,12 +8397,12 @@ fn integration_status(
         None => vak_config::McpConfig::default(),
     };
     let configured_here = selected.servers.contains_key(entry.id);
-    let inherited = scope.is_project() && !configured_here && user.servers.contains_key(entry.id);
+    let inherited = scope.is_workspace() && !configured_here && user.servers.contains_key(entry.id);
     let effective = core.effective_mcp().servers.contains_key(entry.id);
     let key_here = entry
         .env_var
-        .is_some_and(|name| core.mcp_secret_at_scope(name, scope.is_project()));
-    let key_inherited = scope.is_project()
+        .is_some_and(|name| core.mcp_secret_at_scope(name, scope.is_workspace()));
+    let key_inherited = scope.is_workspace()
         && !key_here
         && entry
             .env_var
@@ -8499,7 +8513,7 @@ async fn put_scoped_integration(
         && let Err(error) = state.core.set_mcp_secret_scoped(
             entry.env_var.unwrap_or_default(),
             key,
-            body.scope.is_project(),
+            body.scope.is_workspace(),
         )
     {
         return (
@@ -8555,7 +8569,7 @@ async fn delete_scoped_integration(
     if let Some(env_var) = entry.env_var
         && let Err(error) = state
             .core
-            .remove_mcp_secret_scoped(env_var, query.scope.is_project())
+            .remove_mcp_secret_scoped(env_var, query.scope.is_workspace())
     {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,

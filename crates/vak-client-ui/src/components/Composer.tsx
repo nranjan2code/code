@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { activeId, armedGoal, density, health, isRunning, itemsOf, setArmedGoal, setDensity, usageOf, workspaceSwitching } from "../store";
 import type { Density } from "../store";
-import { loadHealth, sendPrompt, stopRun, switchProject } from "../App";
+import { loadHealth, sendPrompt, stopRun, switchWorkspace } from "../App";
 import * as api from "../api";
 import type { SkillInfo } from "../types";
 import Icon from "./Icon";
@@ -457,8 +457,8 @@ export default function Composer(props: { cwd: string }) {
           <div class="composer-lead">
             <button
               class="composer-project"
-              title={`${props.cwd} — click to switch project`}
-              onClick={() => void switchProject()}
+              title={`${props.cwd} — click to switch workspace`}
+              onClick={() => void switchWorkspace()}
             >
               <Icon name="folder" size={14} />
               <span>{workspaceSwitching() ? "Opening…" : props.cwd.split("/").pop()}</span>

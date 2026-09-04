@@ -5832,6 +5832,7 @@ dependencies = [
  "clap",
  "futures",
  "hex",
+ "percent-encoding",
  "reqwest 0.12.28",
  "semver",
  "serde",

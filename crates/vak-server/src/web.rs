@@ -143,6 +143,40 @@ pub(crate) async fn session_status(
     Json(serde_json::json!({ "authenticated": authenticated })).into_response()
 }
 
+// ---- the front door --------------------------------------------------------
+
+/// The landing page at `/`.
+///
+/// `/` used to answer a bare **401 with an empty body**: someone opening
+/// `http://box:8901/` learned nothing — not that the product has two
+/// surfaces, not where they are, not even that anything was listening.
+/// This is a signpost to `/app` and `/admin`, and deliberately nothing
+/// more: it is auth-exempt, so it must not disclose workspace names,
+/// session counts, or configuration to an unauthenticated visitor.
+pub(crate) async fn landing() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        include_str!("../assets/landing.html"),
+    )
+        .into_response()
+}
+
+/// Build identity, for the landing page's footer.
+///
+/// Version and commit only. `/health` already answers unauthenticated (it
+/// is a liveness probe) but reports provider, model, sandbox and permission
+/// mode with it — detail a public front door has no business handing out.
+pub(crate) async fn version() -> Response {
+    Json(serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "git_sha": option_env!("VAK_GIT_SHA").unwrap_or("unknown"),
+    }))
+    .into_response()
+}
+
 // ---- host descriptor -------------------------------------------------------
 
 /// What `backend_info` is on the desktop: everything the client needs to
@@ -163,7 +197,7 @@ fn host_payload(state: &AppState) -> serde_json::Value {
     serde_json::json!({
         "ready": true,
         "cwd": core.cwd().to_string_lossy(),
-        "recent_projects": recent_workspaces(state),
+        "recent_workspaces": recent_workspaces(state),
         "terminal": terminal,
     })
 }
@@ -201,10 +235,13 @@ pub(crate) async fn host_events(
 /// thing that has to stay true forever (invariant 30). The hash is one-way,
 /// hence reading a header rather than reversing a directory name.
 fn recent_workspaces(state: &AppState) -> Vec<String> {
-    let mut seen: Vec<String> = vec![state.active_core().cwd().to_string_lossy().into_owned()];
+    let mut discovered: Vec<PathBuf> = vec![state.active_core().cwd().clone()];
     let root = state.core.sessions_home().join("sessions");
     let Ok(read) = std::fs::read_dir(&root) else {
-        return seen;
+        return vak_core::workspaces::visible(discovered)
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
     };
     // Most recently touched project directory first, which is what makes
     // this a "recents" list rather than an arbitrary one.
@@ -224,17 +261,18 @@ fn recent_workspaces(state: &AppState) -> Vec<String> {
     dirs.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
 
     for (_, dir) in dirs.into_iter().take(24) {
-        let Some(cwd) = workspace_of_ledger_dir(&dir) else {
-            continue;
-        };
-        if !seen.contains(&cwd) && Path::new(&cwd).is_dir() {
-            seen.push(cwd);
-        }
-        if seen.len() >= 12 {
-            break;
+        if let Some(cwd) = workspace_of_ledger_dir(&dir) {
+            discovered.push(PathBuf::from(cwd));
         }
     }
-    seen
+    // `visible` applies the operator's own removals and drops folders that
+    // no longer exist. Filtering here rather than in each surface is what
+    // stops a ledger rescan from resurrecting something someone removed.
+    vak_core::workspaces::visible(discovered)
+        .into_iter()
+        .take(12)
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect()
 }
 
 /// The cwd recorded in the first readable ledger header under `dir`.
@@ -351,11 +389,55 @@ pub(crate) async fn open_workspace(
                 .into_response();
         }
     };
+    // Opening is also how a removed workspace comes back — there is no
+    // separate "restore" verb, because the action a person takes is to
+    // open it again.
+    if let Err(e) = vak_core::workspaces::remember(&path) {
+        eprintln!("warning: could not record the workspace: {e}");
+    }
     *state
         .active_core
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(core);
     Json(host_payload(&state)).into_response()
+}
+
+/// Stop listing a workspace. Its sessions, memory, and settings survive.
+///
+/// Deliberately NOT a delete: removing a project from a list is a thing
+/// people do casually, and it must therefore be a thing that costs nothing
+/// to undo. Erasing an append-only ledger is a different operation with
+/// different consequences, and it does not live behind this button.
+pub(crate) async fn forget_workspace(
+    State(state): State<AppState>,
+    Json(body): Json<OpenWorkspaceBody>,
+) -> Response {
+    let path = PathBuf::from(body.path.trim());
+    // Refusing to remove the workspace currently in use avoids the state
+    // where the active project is not in its own list.
+    if canonical_eq(&path, state.active_core().cwd()) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "that workspace is currently open; switch to another first",
+            })),
+        )
+            .into_response();
+    }
+    match vak_core::workspaces::forget(&path) {
+        Ok(()) => Json(serde_json::json!({ "forgotten": body.path })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Same folder, allowing for symlinks.
+fn canonical_eq(a: &Path, b: &Path) -> bool {
+    let resolve = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    resolve(a) == resolve(b)
 }
 
 // ---- directory browser -----------------------------------------------------

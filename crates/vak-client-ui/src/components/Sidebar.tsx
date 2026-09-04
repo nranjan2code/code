@@ -16,7 +16,7 @@ import {
   setTasksOpen,
   workspaceSwitching,
 } from "../store";
-import { activate, newSession, refreshSessions, switchProject } from "../App";
+import { activate, newSession, refreshBackend, refreshSessions, switchWorkspace } from "../App";
 import { host } from "../host";
 import * as api from "../api";
 import type { SessionSummary } from "../types";
@@ -53,7 +53,7 @@ export default function Sidebar() {
   const groups = createMemo<WorkspaceGroup[]>(() => {
     const grouped = new Map<string, SessionSummary[]>();
     if (filter() !== "archived") {
-      const projects = [backend().cwd, ...(backend().recent_projects ?? [])].filter(
+      const projects = [backend().cwd, ...(backend().recent_workspaces ?? [])].filter(
         (cwd, index, items): cwd is string => !!cwd && items.indexOf(cwd) === index,
       );
       const needle = query().trim().toLowerCase();
@@ -79,6 +79,23 @@ export default function Sidebar() {
       sessions: items,
     }));
   });
+
+  /// Remove a project from the list. Its history is untouched.
+  const forgetWorkspace = async (cwd: string, name: string) => {
+    try {
+      await api.forgetWorkspace(cwd);
+      await refreshBackend();
+      setNotice({
+        kind: "info",
+        text: `Removed ${name} from the list. Its tasks and settings are kept — open the folder again to restore it.`,
+      });
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        text: `Could not remove that workspace: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  };
 
   const toggleArchive = async (session: SessionSummary, next: boolean) => {
     try {
@@ -153,25 +170,43 @@ export default function Sidebar() {
       </Show>
 
       <div class="sb-section-row">
-        <span class="sb-section-title">{filter() === "archived" ? "Archived" : "Projects"}</span>
+        <span class="sb-section-title">{filter() === "archived" ? "Archived" : "Workspaces"}</span>
         <Show when={filter() === "archived"}>
           <button class="sb-section-action" onClick={() => setFilter("all")}>Done</button>
         </Show>
         <Show when={filter() !== "archived"}>
-          <button class="sb-section-add has-tooltip" data-tooltip="Open project" aria-label="Open project" disabled={workspaceSwitching()} onClick={() => void switchProject()}><Icon name="add" size={14} /></button>
+          <button class="sb-section-add has-tooltip" data-tooltip="Open workspace" aria-label="Open workspace" disabled={workspaceSwitching()} onClick={() => void switchWorkspace()}><Icon name="add" size={14} /></button>
         </Show>
       </div>
 
       <div class="sb-list">
-        <Show when={groups().length} fallback={<div class="sb-empty"><Icon name="folder" size={20} /><span>{filter() === "archived" ? "Nothing archived" : "No projects yet"}</span><small>{filter() === "archived" ? "Archived tasks stay in the ledger and can be restored anytime." : "Open a project to start a task with its files and history."}</small></div>}>
+        <Show when={groups().length} fallback={<div class="sb-empty"><Icon name="folder" size={20} /><span>{filter() === "archived" ? "Nothing archived" : "No workspaces yet"}</span><small>{filter() === "archived" ? "Archived tasks stay in the ledger and can be restored anytime." : "Open a workspace to start a task with its files and history."}</small></div>}>
           <For each={groups()}>
             {(group) => (
               <section class="workspace-group">
-                <button class="workspace-group-head" classList={{ active: backend().cwd === group.cwd && filter() !== "archived" }} title={group.cwd} disabled={workspaceSwitching()} onClick={() => void switchProject(group.cwd)}>
-                  <Icon name="folder" size={14} />
-                  <span>{group.name}</span>
-                  <Show when={group.sessions.length}><small>{group.sessions.length}</small></Show>
-                </button>
+                <div class="workspace-group-row" classList={{ active: backend().cwd === group.cwd && filter() !== "archived" }}>
+                  <button class="workspace-group-head" title={group.cwd} disabled={workspaceSwitching()} onClick={() => void switchWorkspace(group.cwd)}>
+                    <Icon name="folder" size={14} />
+                    <span>{group.name}</span>
+                    <Show when={group.sessions.length}><small>{group.sessions.length}</small></Show>
+                  </button>
+                  {/* Removing a project is a LIST decision, not a delete:
+                      its sessions, memory, and settings all survive, and
+                      re-opening the folder restores it. The active project
+                      has no remove control — removing the thing you are
+                      looking at leaves the list disagreeing with the view. */}
+                  <Show when={backend().cwd !== group.cwd && filter() !== "archived"}>
+                    <button
+                      class="workspace-forget has-tooltip"
+                      data-tooltip="Remove from this list (keeps its history)"
+                      aria-label={`Remove ${group.name} from the workspace list`}
+                      disabled={workspaceSwitching()}
+                      onClick={(e) => { e.stopPropagation(); void forgetWorkspace(group.cwd, group.name); }}
+                    >
+                      <Icon name="close" size={12} />
+                    </button>
+                  </Show>
+                </div>
                 <For each={group.sessions}>
                   {(session: SessionSummary) => (
                     // A single interactive element cannot nest others — the

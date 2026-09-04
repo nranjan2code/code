@@ -57,7 +57,7 @@ export const activeHost: Host = {
   },
 
   async pickWorkspace(): Promise<string | null> {
-    const dir = await openDialog({ directory: true, multiple: false, title: "Open a project" });
+    const dir = await openDialog({ directory: true, multiple: false, title: "Open a workspace" });
     return typeof dir === "string" ? dir : null;
   },
 

@@ -121,6 +121,40 @@ Sign in with the server's token — the one it prints on startup, or your
 `VAK_GATEWAY_TOKEN`. It is exchanged once for an HttpOnly cookie and is
 never stored in the page.
 
+## Docker (the headless Linux image)
+
+```bash
+export VAK_GATEWAY_TOKEN="$(openssl rand -hex 32)"
+export VAK_WORKSPACE=/path/to/your/project
+docker compose -f docker/compose.yaml up --build
+# then open http://127.0.0.1:8901/app
+```
+
+The image is `vak serve` and nothing else: the web client at `/app`, the
+operations console at `/admin`, one port. It runs as a non-root user, the
+binaries stay root-owned (a compromised agent must not be able to rewrite
+its own executable), and it contains **no Node.js** — the admin and client
+bundles are committed precisely so a headless host builds the server
+without a JavaScript toolchain.
+
+Two volumes matter:
+
+- `/workspace` — the project the agent acts on. Bind-mount real code here.
+- `/home/vak/.local/share` — sessions, memory, tasks, commitments, audit
+  logs. A **named volume**, because this is append-only history rather than
+  a cache: losing it loses the receipts.
+
+The compose file publishes to `127.0.0.1` deliberately. `"8901:8901"` would
+bind every interface and hand an agent that can run commands to anyone who
+can reach the host. Serving a real hostname is the separate, deliberate step
+below.
+
+Inside a container `vak serve` binds `0.0.0.0`, because that is the only
+address the published port can reach — and unlike on a host, it does not
+demand `trusted_hosts` first, since `docker run -p` is already the explicit
+act that decides reachability. The `Host` check itself does not relax: DNS
+rebinding is defended identically inside a container.
+
 ## Security posture
 
 1. Bearer token on every route except `/health` and the client shell.

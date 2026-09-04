@@ -612,7 +612,35 @@ export async function refreshBackend(knownInfo?: import("./types").BackendInfo):
   }
 }
 
+/**
+ * Exchange a one-shot `?token=` in the URL for a session, then erase it.
+ *
+ * `vak open` puts it there so nobody has to find and paste the server's
+ * token to reach their own local machine. It is removed from the URL before
+ * anything else runs — a credential in an address bar reaches history, the
+ * `Referer` of every subsequent request, and whatever is sharing the screen.
+ *
+ * Loopback only in practice: the server refuses `?token=` from any
+ * non-loopback host (invariant 33), so a link like this pasted at a remote
+ * deployment authenticates nothing.
+ */
+async function consumeTokenFromUrl(): Promise<void> {
+  if (!host.authenticate) return;
+  const url = new URL(window.location.href);
+  const token = url.searchParams.get("token");
+  if (!token) return;
+  url.searchParams.delete("token");
+  window.history.replaceState({}, "", url.toString());
+  try {
+    await host.authenticate(token);
+  } catch {
+    // Wrong or stale token: fall through to the normal login screen
+    // rather than dead-ending on an error the user cannot act on.
+  }
+}
+
 async function init() {
+  await consumeTokenFromUrl();
   // A session that expires mid-use must return the client to the gate,
   // not bury the reason under repeated request failures. Only hosts that
   // have sessions can lose one; the desktop holds its token for the life
@@ -622,7 +650,7 @@ async function init() {
       if (!backend().ready) return; // already at the gate
       closeAllStreams();
       closeAllSideStreams();
-      setBackend({ ready: false, recent_projects: [] });
+      setBackend({ ready: false, recent_workspaces: [] });
       setNotice({ kind: "info", text: "Your session expired — sign in to continue." });
     });
   }
@@ -670,7 +698,7 @@ function diffCoversPath(diff: string, path: string): boolean {
  * workspace gate's own directory browser instead, which always passes an
  * explicit `cwd` here.
  */
-export async function switchProject(cwd?: string) {
+export async function switchWorkspace(cwd?: string) {
   if (workspaceSwitching()) return;
   try {
     const dir = cwd ?? (await host.pickWorkspace());
@@ -683,7 +711,7 @@ export async function switchProject(cwd?: string) {
   } catch (error) {
     setNotice({
       kind: "error",
-      text: `Could not open that project: ${error instanceof Error ? error.message : String(error)}`,
+      text: `Could not open that workspace: ${error instanceof Error ? error.message : String(error)}`,
     });
   } finally {
     setWorkspaceSwitching(false);

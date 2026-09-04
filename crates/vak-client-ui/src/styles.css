@@ -245,8 +245,21 @@ code, pre, kbd { font-family: var(--mono); }
 .sb-section-add:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
 .sb-list { flex: 1; display: flex; flex-direction: column; overflow-y: auto; min-height: 0; padding: 0 8px 12px; }
 .workspace-group { margin: 0 0 10px; }
-.workspace-group-head { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 34px; padding: 6px 9px; border-radius: 9px; color: var(--text-soft); font-size: 12.5px; font-weight: 580; text-align: left; }
-.workspace-group-head.active { color: var(--text); background: var(--surface-active); }
+.workspace-group-row { display: flex; align-items: center; gap: 2px; border-radius: 9px; }
+.workspace-group-row.active { color: var(--text); background: var(--surface-active); }
+.workspace-group-head { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; min-height: 34px; padding: 6px 9px; border-radius: 9px; color: var(--text-soft); font-size: 12.5px; font-weight: 580; text-align: left; }
+.workspace-group-row.active .workspace-group-head { color: var(--text); }
+/* Revealed on hover/focus, like the session row's own actions: a destructive-
+   looking control on every row at rest reads as clutter, and this one is not
+   even destructive. */
+.workspace-forget {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none; width: 22px; height: 22px; margin-right: 5px;
+  border-radius: 6px; color: var(--faint); opacity: 0; transition: opacity .12s ease;
+}
+.workspace-group-row:hover .workspace-forget,
+.workspace-forget:focus-visible { opacity: 1; }
+.workspace-forget:hover { color: var(--text); background: var(--surface-hover); }
 .workspace-group-head .icon { color: var(--muted); }
 .workspace-group-head.active .icon { color: var(--text-soft); }
 .workspace-group-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

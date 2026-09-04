@@ -227,8 +227,8 @@ export default function WorkspaceHeader() {
         <button
           class="icon-button has-tooltip"
           data-tooltip="Project settings"
-          aria-label="Open project settings"
-          onClick={() => { setSettingsScope("project"); setSettingsOpen(true); }}
+          aria-label="Open workspace settings"
+          onClick={() => { setSettingsScope("workspace"); setSettingsOpen(true); }}
         >
           <Icon name="gear" />
         </button>

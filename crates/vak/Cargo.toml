@@ -9,6 +9,7 @@ name = "vak"
 path = "src/main.rs"
 
 [dependencies]
+percent-encoding = "2"
 vak-agent = { workspace = true }
 vak-config = { workspace = true }
 vak-commit = { workspace = true }

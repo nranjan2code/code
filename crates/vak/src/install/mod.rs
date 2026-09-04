@@ -192,6 +192,38 @@ fn install_into(root: &InstallRoot, force: bool) -> Result<Manifest, String> {
     Ok(m)
 }
 
+/// Directories a `vak` symlink plausibly lives in, most-preferred first.
+///
+/// `/usr/local/bin` is NOT the answer on Apple Silicon: Homebrew moved to
+/// `/opt/homebrew/bin` there, and `/usr/local/bin` is frequently absent
+/// from PATH entirely. Advising it unconditionally sent ARM Mac users to
+/// create a link their shell would never find.
+///
+/// Shared with [`remove_dangling_cli_symlink`] so uninstall cleans up
+/// exactly the places install can send someone — the two used to disagree,
+/// which is how a `vak` that fails with "no such file" survived an
+/// uninstall.
+fn cli_link_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(home) = std::env::var_os("HOME") {
+        dirs.push(PathBuf::from(home).join(".local/bin"));
+    }
+    dirs.push(PathBuf::from("/opt/homebrew/bin"));
+    dirs.push(PathBuf::from("/usr/local/bin"));
+    dirs
+}
+
+/// The best place to suggest linking the CLI: a directory that already
+/// exists AND is already on this user's PATH, so the advice works when
+/// followed rather than being technically true.
+fn suggested_link_dir() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    let on_path: Vec<PathBuf> = std::env::split_paths(&path).collect();
+    cli_link_dirs()
+        .into_iter()
+        .find(|dir| dir.is_dir() && on_path.contains(dir))
+}
+
 fn report_next_steps(root: &InstallRoot) {
     let cli = root.bin_dir().join("vak");
     let on_path = std::env::var_os("PATH")
@@ -202,10 +234,35 @@ fn report_next_steps(root: &InstallRoot) {
         println!("the CLI is not on PATH; either add it:");
         println!("  export PATH=\"{}:$PATH\"", root.bin_dir().display());
         println!("or link it:");
-        println!("  ln -sf {} /usr/local/bin/vak", cli.display());
+        match suggested_link_dir() {
+            Some(dir) => {
+                let link = dir.join("vak");
+                // No `sudo` when the directory is already writable; asking
+                // for root to write a directory the user owns teaches people
+                // to sudo things that do not need it.
+                let sudo = if is_writable_dir(&dir) { "" } else { "sudo " };
+                println!("  {sudo}ln -sf {} {}", cli.display(), link.display());
+            }
+            None => {
+                println!("  sudo ln -sf {} /usr/local/bin/vak", cli.display());
+                println!("  (then make sure /usr/local/bin is on your PATH)");
+            }
+        }
     }
     println!();
     println!("next: vak setup   (choose a workspace, connect a model, activate services)");
+}
+
+/// Whether this process could create a file in `dir`.
+fn is_writable_dir(dir: &Path) -> bool {
+    let probe = dir.join(".vak-write-probe");
+    match std::fs::File::create(&probe) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 // ----------------------------------------------------------------- verify
@@ -396,6 +453,21 @@ pub fn run_services_sync(prefix: Option<PathBuf>, names: Vec<String>) -> i32 {
         );
         return 1;
     }
+
+    // Shared skills, plugins, and the global hook table — the capabilities a
+    // workspace is expected to have before anyone asks for one.
+    //
+    // This used to run ONLY from `vak setup` and `POST /onboarding/seed`, so
+    // the documented build-and-install path (`scripts/build.sh`, which calls
+    // `self install` then `services-sync`) produced a live, service-managed
+    // deployment with zero skills, zero plugins, and no hook table — and
+    // nothing said so. `doctor` reported "0 skills · 0 hooks" as though that
+    // were a normal steady state rather than an install that never finished.
+    //
+    // Idempotent by construction: a skill already on disk is left alone, and
+    // the hook table is only written when empty. Safe to run on every sync,
+    // which is what makes it safe to put here rather than behind a flag.
+    vak_core::seed::seed_shared_capabilities();
 
     let requested: Vec<&str> = if names.is_empty() {
         vak_ops::services::default_service_names(&cli)
@@ -667,32 +739,39 @@ pub fn run_uninstall(prefix: Option<PathBuf>, yes: bool, purge: bool) -> i32 {
     0
 }
 
-/// Remove a `/usr/local/bin/vak` symlink that points into the prefix we
-/// just deleted.
+/// Remove any `vak` symlink that points into the prefix we just deleted.
 ///
 /// Only ever a symlink, and only when it resolves into this prefix: a real
 /// binary someone else installed there is theirs, not ours to remove.
+///
+/// Every directory `report_next_steps` can send someone to is checked, not
+/// just `/usr/local/bin`. That single hardcoded path was the bug: on Apple
+/// Silicon the link lands in `/opt/homebrew/bin`, so an uninstall left a
+/// dangling `vak` on PATH that failed with "no such file or directory" —
+/// which reads like a broken install rather than a removed one.
 fn remove_dangling_cli_symlink(prefix: &Path) {
-    let link = Path::new("/usr/local/bin/vak");
-    let Ok(meta) = std::fs::symlink_metadata(link) else {
-        return;
-    };
-    if !meta.file_type().is_symlink() {
-        return;
-    }
-    let Ok(target) = std::fs::read_link(link) else {
-        return;
-    };
-    if !target.starts_with(prefix) {
-        return;
-    }
-    match std::fs::remove_file(link) {
-        Ok(()) => println!("removed the {} symlink", link.display()),
-        Err(e) => eprintln!(
-            "note: {} points into the removed prefix; remove it with: sudo rm {} ({e})",
-            link.display(),
-            link.display()
-        ),
+    for dir in cli_link_dirs() {
+        let link = dir.join("vak");
+        let Ok(meta) = std::fs::symlink_metadata(&link) else {
+            continue;
+        };
+        if !meta.file_type().is_symlink() {
+            continue;
+        }
+        let Ok(target) = std::fs::read_link(&link) else {
+            continue;
+        };
+        if !target.starts_with(prefix) {
+            continue;
+        }
+        match std::fs::remove_file(&link) {
+            Ok(()) => println!("removed the {} symlink", link.display()),
+            Err(e) => eprintln!(
+                "note: {} points into the removed prefix; remove it with: sudo rm {} ({e})",
+                link.display(),
+                link.display()
+            ),
+        }
     }
 }
 

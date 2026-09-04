@@ -253,7 +253,7 @@ export interface BackendInfo {
   token?: string;
   cwd?: string;
   boot_error?: string;
-  recent_projects: string[];
+  recent_workspaces: string[];
   /** Web host only: whether a real PTY is reachable ([server.web] terminal). */
   terminal?: boolean;
 }
