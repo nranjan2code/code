@@ -71,7 +71,14 @@ fn confirm(prompt: &str, yes: bool) -> bool {
 /// Install the running binary and its siblings into `prefix`.
 pub fn run_install(prefix: Option<PathBuf>, force: bool) -> i32 {
     let root = InstallRoot::resolve(prefix);
-    match install_into(&root, force) {
+    install_and_report(&root, force, None)
+}
+
+/// `source` is where the component binaries live, when that is not beside
+/// the running executable — `run_reinstall` passes a staged copy, because
+/// by the time it installs, the directory it was running from is gone.
+fn install_and_report(root: &InstallRoot, force: bool, source: Option<&Path>) -> i32 {
+    match install_into(root, force, source) {
         Ok(m) => {
             println!(
                 "installed {} ({}) → {}",
@@ -87,7 +94,7 @@ pub fn run_install(prefix: Option<PathBuf>, force: bool) -> i32 {
                 .ok()
                 .map(|cli| report_stale_services(&cli))
                 .unwrap_or(false);
-            report_next_steps(&root, stale);
+            report_next_steps(root, stale);
             0
         }
         Err(e) => {
@@ -111,6 +118,26 @@ pub fn run_reinstall(prefix: Option<PathBuf>, yes: bool) -> i32 {
         println!("aborted");
         return 0;
     }
+
+    // Take a copy of the build BEFORE clearing, when we are running from
+    // inside the prefix we are about to delete.
+    //
+    // `vak self reinstall` is what a person on a broken install reaches
+    // for, and the `vak` on their PATH is the installed one — so the
+    // overwhelmingly common invocation is the one where the source of the
+    // reinstall lives inside its own target. Clearing first deleted that
+    // source, the reinstall then failed with "required component vak not
+    // found", and the prefix was left EMPTY. A repair command that
+    // destroys the thing it repairs is worse than no repair command.
+    let staged = match stage_sources(&root) {
+        Ok(staged) => staged,
+        Err(e) => {
+            eprintln!("error: {e}");
+            eprintln!("nothing was removed.");
+            return 1;
+        }
+    };
+
     if root.is_installed() {
         // Services keep running against the old inode until sync; the
         // data home is untouched, so this is not destructive to state.
@@ -119,14 +146,74 @@ pub fn run_reinstall(prefix: Option<PathBuf>, yes: bool) -> i32 {
             return 1;
         }
     }
-    run_install(Some(root.prefix().to_path_buf()), true)
+
+    let source = staged.as_ref().map(|d| d.path().to_path_buf());
+    let result = install_and_report(&root, true, source.as_deref());
+    // `staged` drops here, taking the temporary copy with it.
+    drop(staged);
+    result
 }
 
-fn install_into(root: &InstallRoot, force: bool) -> Result<Manifest, String> {
+/// A temporary copy of the component binaries, when the running executable
+/// lives inside `root`.
+///
+/// `None` means the build is somewhere else (a dev tree, a release
+/// tarball) and can be installed from where it already is.
+fn stage_sources(root: &InstallRoot) -> Result<Option<tempfile::TempDir>, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot locate running binary: {e}"))?;
-    let build_dir = exe
+    let prefix = root
+        .prefix()
+        .canonicalize()
+        .unwrap_or_else(|_| root.prefix().to_path_buf());
+    let exe_real = exe.canonicalize().unwrap_or_else(|_| exe.clone());
+    if !exe_real.starts_with(&prefix) {
+        return Ok(None);
+    }
+
+    let build_dir = exe_real
         .parent()
         .ok_or_else(|| "running binary has no parent directory".to_string())?;
+    let staged = tempfile::tempdir().map_err(|e| format!("stage a copy of the build: {e}"))?;
+    for spec in COMPONENTS {
+        let source = build_dir.join(spec.name);
+        if !source.exists() {
+            if spec.required {
+                return Err(format!(
+                    "required component {} not found at {}",
+                    spec.name,
+                    source.display()
+                ));
+            }
+            continue;
+        }
+        let destination = staged.path().join(spec.name);
+        std::fs::copy(&source, &destination)
+            .map_err(|e| format!("stage {}: {e}", source.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let _ = std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+    Ok(Some(staged))
+}
+
+fn install_into(
+    root: &InstallRoot,
+    force: bool,
+    source: Option<&Path>,
+) -> Result<Manifest, String> {
+    let exe = match source {
+        Some(dir) => dir.join("vak"),
+        None => {
+            std::env::current_exe().map_err(|e| format!("cannot locate running binary: {e}"))?
+        }
+    };
+    let build_dir = exe
+        .parent()
+        .ok_or_else(|| "running binary has no parent directory".to_string())?
+        .to_path_buf();
+    let build_dir = build_dir.as_path();
 
     if root.is_installed() && !force {
         let existing = Manifest::read(root)?;
