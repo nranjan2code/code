@@ -6,6 +6,8 @@
 //! certain. That invisibility is why these are integration tests rather than
 //! notes in a changelog.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::collections::BTreeSet;
 
 use vak_core::capability::registry::{CapabilityProvider, Declaration, ProbeFailure, ProbeReport};

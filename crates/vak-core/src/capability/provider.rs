@@ -373,6 +373,7 @@ pub fn required_domains(act: vak_intent::Act, evidence_is_external: bool) -> BTr
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use vak_intent::Act;
