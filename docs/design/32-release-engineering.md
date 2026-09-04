@@ -50,6 +50,41 @@ no plists pointing into build trees, no spot-fixing deploys.
    verifies, renames over the installed binary, re-syncs services —
    never in-place writes, never auto-run.
 
+14. **A release proves the artifact is the build it gated.** Every gate
+    before this one verifies the *tree* — versions agree, bundles match
+    their sources, tests pass — and none of them touches the binary. So
+    `release.json` could assert a version the artifact had never been asked
+    about, and did. `scripts/release.sh` now executes the collected `vak
+    --version` and refuses to publish unless it reports both this version
+    and this commit. Two consequences: `--no-build` cannot quietly publish
+    whatever binaries were lying in the developer's `target/release` (it
+    now requires an explicit `VAK_RELEASE_BIN_DIR` and still faces this
+    gate), and a cross-published artifact that cannot be executed here is
+    reported as unverified rather than silently trusted.
+15. **Every build is `--locked`.** Release, CI, Docker, the linux and macOS
+    verification stacks, and every smoke script pin to `Cargo.lock`. Only
+    the Docker image did before, which meant the shipped binaries and the
+    container could be built from different dependency graphs with nothing
+    anywhere to say so. A build that would need to re-resolve fails instead.
+16. **A gate that cannot see the tag it was asked to build is not a gate.**
+    `release.yml` fires on `push: tags: v*` and `actions/checkout`
+    materialises that tag, so the "this version has not shipped" check
+    refused the exact tag it was invoked for and every automated release
+    failed there. The check now refuses only a tag pointing at a
+    *different* commit, which is the condition it was written for: this
+    version already shipped from other code.
+17. **A staleness guard may fail open locally and never at release.**
+    `scripts/ui_bundle_check.rs` accepts a missing `.src-manifest` so a
+    checkout predating the manifest still builds — correct for a local
+    build, and a hole at release time, where deleting one file would
+    silently disarm every bundle check at once. `release.sh` requires all
+    three manifests to exist before it trusts any of them.
+18. **A shipped artifact that is never built in CI is not shipped, it is
+    hoped for.** The Linux container image is built, served, and probed on
+    every CI run — `/health` for liveness and `/app` because a 200 there is
+    what proves the committed bundles actually reached the binary — and
+    asserted to carry a real commit stamp.
+
 13. **2.0.0 is the supported baseline.** An install manifest, data home,
     or config written by an earlier version is refused whole by the one
     shared message in `vak_core::baseline`, which names the artifact, the
