@@ -243,7 +243,6 @@ pub fn blocked_skills(standings: &[Standing]) -> Vec<String> {
         .collect()
 }
 
-
 /// The model-visible section. Stating this is the point: a model that
 /// knows a capability is configured but unreachable can say so, and say
 /// what would fix it, instead of spending the turn discovering it one

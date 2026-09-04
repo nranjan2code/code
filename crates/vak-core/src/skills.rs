@@ -539,8 +539,8 @@ mod tests {
     }
 
     #[test]
-    fn discover_with_diagnostics_reports_parse_failures()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn discover_with_diagnostics_reports_parse_failures() -> Result<(), Box<dyn std::error::Error>>
+    {
         let dir = tempfile::tempdir()?;
         let good = dir.path().join(".vak/skills/good-skill");
         let bad = dir.path().join(".vak/skills/Bad_Skill");
@@ -560,7 +560,11 @@ mod tests {
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].name, "good-skill");
         assert_eq!(diagnostics.len(), 1);
-        assert!(diagnostics[0].reason.contains("not valid lowercase kebab-case"));
+        assert!(
+            diagnostics[0]
+                .reason
+                .contains("not valid lowercase kebab-case")
+        );
         Ok(())
     }
 

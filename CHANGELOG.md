@@ -5,7 +5,7 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
-## Unreleased
+## 2.1.0 — 2026-09-04
 
 The web client: the workspace surface stops being desktop-only.
 
@@ -87,9 +87,9 @@ can reach is permission-gated, and a shell is not.
   switch**; sidebar row actions were mouse-only; no modal trapped focus; and
   one render exception blanked the entire application.
 
-## Previously unreleased
+### The commitment kernel (docs/design/47-commitment-kernel.md)
 
-The commitment kernel: vak learns what it was asked, and what "done" means.
+Vak learns what it was asked, and what "done" means.
 
 ### The intent kernel (`docs/design/47-commitment-kernel.md`)
 

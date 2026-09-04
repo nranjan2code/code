@@ -1819,8 +1819,7 @@ impl Core {
 
     /// Whether headless browse is available right now — live-effective.
     pub fn effective_browse(&self) -> bool {
-        Self::read_override(&self.inner.browse_override)
-            .unwrap_or(self.inner.config.tools.browse)
+        Self::read_override(&self.inner.browse_override).unwrap_or(self.inner.config.tools.browse)
     }
 
     /// Live override setter for tools (web_fetch, browse).
@@ -1839,7 +1838,6 @@ impl Core {
     pub fn apply_persisted_commitment(&self, enabled: bool) {
         Self::write_override(&self.inner.commitment_override, Some(enabled));
     }
-
 
     /// The `[finops]` config, with any live cap override substituted in —
     /// pass this to [`finops::CoreSpendGate::new`] instead of
@@ -2340,7 +2338,10 @@ impl Core {
                 );
             }
             for diag in extra_diags {
-                standing.push_str(&format!("- {} `{}`: {}.", diag.kind, diag.name, diag.reason));
+                standing.push_str(&format!(
+                    "- {} `{}`: {}.",
+                    diag.kind, diag.name, diag.reason
+                ));
                 if !diag.remedy.is_empty() {
                     standing.push_str(&format!(" Fix: {}.", diag.remedy));
                 }
