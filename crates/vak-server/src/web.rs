@@ -124,7 +124,7 @@ pub(crate) async fn session_status(
     headers: header::HeaderMap,
 ) -> Response {
     use subtle::ConstantTimeEq;
-    let authenticated = headers
+    let held = headers
         .get(header::COOKIE)
         .and_then(|v| v.to_str().ok())
         .and_then(|cookies| {
@@ -140,7 +140,34 @@ pub(crate) async fn session_status(
             ok
         })
         .unwrap_or(false);
-    Json(serde_json::json!({ "authenticated": authenticated })).into_response()
+    if held {
+        return Json(serde_json::json!({ "authenticated": true })).into_response();
+    }
+
+    // No session yet. On THIS machine, hand one over rather than asking
+    // someone to go and find a token to reach their own computer.
+    //
+    // The probe doubles as the sign-in deliberately: the client already
+    // calls it before deciding whether to show a login form, so there is no
+    // second endpoint to discover and no extra round trip. Scope is exactly
+    // what `[server] loopback_auto_login` describes — loopback only, off if
+    // an operator says so, and never reachable from a real hostname.
+    let cfg = state.core.config();
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok());
+    if cfg.server.loopback_auto_login && crate::host_is_loopback(host) {
+        let attributes = cookie_attributes(&state, forwarded_proto(&headers));
+        return (
+            [(
+                header::SET_COOKIE,
+                format!("{SESSION_COOKIE}={}; {attributes}", state.auth_token),
+            )],
+            Json(serde_json::json!({ "authenticated": true, "granted": "loopback" })),
+        )
+            .into_response();
+    }
+    Json(serde_json::json!({ "authenticated": false })).into_response()
 }
 
 // ---- the front door --------------------------------------------------------

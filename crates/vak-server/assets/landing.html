@@ -3,156 +3,1304 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Vak</title>
-<meta name="description" content="An agent you can inspect, constrain, and extend." />
+<title>vak — an agent you can inspect, constrain, and extend</title>
+<meta name="description" content="vak is a local-first Rust harness for running serious general-purpose agents without giving up the receipts. Append-only ledgers, permission before every effect, a receipt for every dispatch." />
+<meta property="og:title" content="vak — an agent you can inspect, constrain, and extend" />
+<meta property="og:description" content="A local-first Rust harness for running serious agents without giving up the receipts." />
+<meta property="og:type" content="website" />
+<meta name="color-scheme" content="dark light" />
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f1ea" />
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171714" />
 <link rel="icon" type="image/png" href="/app/vak-icon.png" />
+<script>
+  // Before first paint: adopt the stored theme so the page never flashes
+  // the wrong ground, and mark that script is available so the reveal
+  // styles may hide what they are about to animate. Without this class
+  // every section renders visible — the no-JS default is the finished
+  // page, not an empty one.
+  try {
+    var t = localStorage.getItem("vak-theme");
+    if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+  } catch (e) {}
+  document.documentElement.className += " js";
+</script>
 <style>
-/* The Auditor's Desk (DESIGN.md), reproduced inline.
+/* ==========================================================================
+   The Auditor's Desk (DESIGN.md), reproduced inline.
+
    Inline because this page must render before, and independently of, any
    bundle — it is the front door, and a front door that needs the building
    to already be open is not a door. The token VALUES are the same ones
-   :root and html[data-theme="light"] carry in the client. */
+   :root and html[data-theme="light"] carry in the client; the sizes are a
+   marketing surface's, not app chrome's, while the weights stay on the
+   system's odd scale.
+   ========================================================================== */
+
 :root {
   color-scheme: dark;
   --bg: #171714; --surface: #1c1c19; --surface-raised: #22221f;
-  --surface-hover: #292925; --border: #34342f; --border-soft: #2a2a26;
+  --surface-hover: #292925; --surface-active: #30302b;
+  --border: #34342f; --border-soft: #2a2a26;
   --text: #eeeae2; --text-soft: #c4c0b8; --muted: #918e86; --faint: #8b8880;
   --accent: #df795f; --accent-bright: #ee9278; --accent-wash: rgba(223,121,95,.13);
   --on-accent: #201713;
+  --green: #73a982; --yellow: #d4a85d; --red: #d86f72; --blue: #7c9fc9;
+  --shadow-lg: 0 24px 70px rgba(0,0,0,.42), 0 2px 10px rgba(0,0,0,.22);
+
   --mono: "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+  --radius-sm: 7px; --radius: 10px; --radius-lg: 14px;
+
+  --page: 1180px;
+  --rail-h: 54px;
+  --row-h: 27px;
+  --ease: cubic-bezier(.16, 1, .3, 1);
 }
+
+/* Light is warm paper, not an inversion, and the accent DARKENS: burnt
+   terracotta is 2.4:1 on white, so a button label on it fails outright. */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
     color-scheme: light;
     --bg: #f4f1ea; --surface: #faf8f3; --surface-raised: #fffdf9;
-    --surface-hover: #efebe1; --border: #d9d3c6; --border-soft: #e6e1d6;
+    --surface-hover: #efebe1; --surface-active: #e7e2d6;
+    --border: #d9d3c6; --border-soft: #e6e1d6;
     --text: #23211c; --text-soft: #4a463d; --muted: #635f54; --faint: #6c675b;
     --accent: #a8462a; --accent-bright: #8d3921; --accent-wash: rgba(168,70,42,.1);
     --on-accent: #faf8f3;
+    --green: #46795a; --yellow: #8a6420; --red: #a33f43; --blue: #3f628f;
+    --shadow-lg: 0 24px 70px rgba(60,50,35,.14), 0 2px 10px rgba(60,50,35,.08);
   }
 }
-* { box-sizing: border-box; }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f1ea; --surface: #faf8f3; --surface-raised: #fffdf9;
+  --surface-hover: #efebe1; --surface-active: #e7e2d6;
+  --border: #d9d3c6; --border-soft: #e6e1d6;
+  --text: #23211c; --text-soft: #4a463d; --muted: #635f54; --faint: #6c675b;
+  --accent: #a8462a; --accent-bright: #8d3921; --accent-wash: rgba(168,70,42,.1);
+  --on-accent: #faf8f3;
+  --green: #46795a; --yellow: #8a6420; --red: #a33f43; --blue: #3f628f;
+  --shadow-lg: 0 24px 70px rgba(60,50,35,.14), 0 2px 10px rgba(60,50,35,.08);
+}
+
+/* ---- reset + browser surfaces --------------------------------------------
+   The parts nobody draws still carry the design: selection, caret, focus
+   ring, scrollbar, and the numerals in a readout column. */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 body {
-  margin: 0; min-height: 100vh;
-  display: grid; place-items: center; padding: 32px 20px;
+  margin: 0;
   background: var(--bg); color: var(--text);
-  font-family: var(--sans); font-size: 13px; line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
+  font-family: var(--sans); font-size: 15px; font-weight: 500; line-height: 1.55;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
 }
-main { width: 100%; max-width: 560px; }
+::selection { background: var(--accent-wash); color: var(--text); }
+:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 3px; border-radius: 3px; }
+* { scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; border: 3px solid var(--bg); }
+*::-webkit-scrollbar-thumb:hover { background: var(--surface-active); }
+*::-webkit-scrollbar-track { background: transparent; }
+img { max-width: 100%; display: block; }
+a { color: inherit; }
 
-.mark {
-  display: grid; place-items: center; width: 54px; height: 54px;
-  margin: 0 auto 18px; border-radius: 15px;
-  background: var(--accent-wash); overflow: hidden;
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+p { margin: 0; }
+ul, ol { margin: 0; padding: 0; list-style: none; }
+
+.wrap { width: 100%; max-width: var(--page); margin: 0 auto; padding: 0 26px; }
+[id] { scroll-margin-top: calc(var(--rail-h) + 20px); }
+.skip {
+  position: absolute; left: -9999px; top: 0; z-index: 60;
+  background: var(--surface-raised); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 9px 14px; font-size: 13px; font-weight: 560;
 }
-.mark img { width: 34px; height: 34px; }
+.skip:focus { left: 12px; top: 12px; }
+.vh {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
 
+/* ---- rail ---------------------------------------------------------------- */
+.rail {
+  position: sticky; top: 0; z-index: 50; height: var(--rail-h);
+  display: flex; align-items: center;
+  background: var(--bg);
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  -webkit-backdrop-filter: saturate(160%) blur(14px);
+  backdrop-filter: saturate(160%) blur(14px);
+  border-bottom: 1px solid transparent;
+  transition: border-color 180ms ease, background 180ms ease;
+}
+.rail.scrolled { border-bottom-color: var(--border-soft); }
+.rail .wrap { display: flex; align-items: center; gap: 18px; }
+
+.brand { display: flex; align-items: center; gap: 9px; text-decoration: none; margin-right: auto; }
+.brand-mark {
+  display: grid; place-items: center; width: 27px; height: 27px;
+  border-radius: var(--radius-sm); background: var(--accent-wash); overflow: hidden; flex: none;
+}
+.brand-mark img { width: 18px; height: 18px; }
+.brand-name { font-size: 15px; font-weight: 620; letter-spacing: -.015em; }
+
+.rail-nav { display: flex; align-items: center; gap: 2px; }
+.rail-nav a {
+  position: relative; padding: 6px 11px; border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 540; color: var(--muted); text-decoration: none;
+  transition: color 130ms ease, background 130ms ease;
+}
+.rail-nav a:hover { color: var(--text-soft); background: var(--surface-hover); }
+.rail-nav a.on { color: var(--text); }
+.rail-nav a.on::after {
+  content: ""; position: absolute; left: 11px; right: 11px; bottom: 1px;
+  height: 1.5px; border-radius: 2px; background: var(--accent);
+}
+.rail-actions { display: flex; align-items: center; gap: 8px; }
+
+/* ---- controls ------------------------------------------------------------ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 30px; padding: 6px 13px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-raised); color: var(--text-soft);
+  font-family: inherit; font-size: 13px; font-weight: 560; letter-spacing: -.005em;
+  text-decoration: none; cursor: pointer;
+  transition: background 130ms ease, color 130ms ease, border-color 130ms ease;
+}
+.btn:hover { background: var(--surface-hover); color: var(--text); border-color: var(--surface-active); }
+.btn:active { transform: translateY(1px); }
+.btn.primary {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 580;
+}
+.btn.primary:hover { background: var(--accent-bright); border-color: var(--accent-bright); color: var(--on-accent); }
+.btn.lg { min-height: 42px; padding: 10px 20px; font-size: 14.5px; border-radius: var(--radius); }
+.btn.sm { min-height: 25px; padding: 3px 9px; font-size: 12px; }
+.btn.icon { width: 30px; min-height: 30px; padding: 0; color: var(--muted); }
+.btn.icon:hover { color: var(--text); }
+.btn svg { flex: none; }
+
+/* ---- hero ---------------------------------------------------------------- */
+.hero { padding: 68px 0 0; }
+.hero-top {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  gap: 40px; align-items: start;
+}
 h1 {
-  margin: 0; text-align: center;
-  font-size: 27px; font-weight: 620; letter-spacing: -.02em; line-height: 1.15;
+  font-size: clamp(35px, 6vw, 60px); font-weight: 620;
+  line-height: 1.04; letter-spacing: -.035em;
+  max-width: 15ch;
 }
+h1 .soft { color: var(--muted); }
 .lead {
-  margin: 8px 0 30px; text-align: center;
-  color: var(--muted); font-size: 14px;
+  margin-top: 20px; max-width: 58ch;
+  font-size: clamp(15.5px, 1.5vw, 18px); font-weight: 500; line-height: 1.5;
+  color: var(--text-soft);
+}
+.hero-actions { margin-top: 26px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.hero-note { margin-top: 14px; font-size: 12.5px; color: var(--faint); }
+.hero-note code { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+/* The build readout. Version and commit only: `/` is auth-exempt, so this
+   page must not disclose bind address, permission mode, or anything else
+   about the machine it is served from. It stays hidden until /version
+   answers, so a statically-served copy simply has no readout rather than
+   an empty frame — and because it lives in its own grid column, its
+   absence shifts nothing. */
+.build-card {
+  border: 1px solid var(--border-soft); border-radius: var(--radius);
+  background: var(--surface); padding: 13px 15px; min-width: 232px;
+  font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.build-card[hidden] { display: none; }
+.build-card dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; }
+.build-card dt { color: var(--faint); }
+.build-card dd { margin: 0; color: var(--text-soft); text-align: right; }
+.build-card .head {
+  margin: 0 0 10px; padding-bottom: 9px; border-bottom: 1px solid var(--border-soft);
+  font-family: var(--sans); font-size: 11px; font-weight: 550; color: var(--muted);
 }
 
-.doors { display: grid; gap: 12px; }
-@media (min-width: 560px) { .doors { grid-template-columns: 1fr 1fr; } }
+/* ---- the console --------------------------------------------------------- */
+.panel {
+  margin-top: 44px;
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--surface); overflow: hidden;
+}
+.panel-head {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 11px 16px; border-bottom: 1px solid var(--border-soft);
+  background: var(--surface-raised);
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.panel-head .sid { color: var(--text-soft); }
+.panel-head .mode { margin-left: auto; }
+.state { display: inline-flex; align-items: center; gap: 7px; }
+.dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  border: 1.5px solid var(--faint); background: transparent;
+}
+.dot.run { border-color: var(--green); background: var(--green); box-shadow: 0 0 0 0 var(--green); animation: pulse 2.1s ease-out infinite; }
+.dot.wait { border-color: var(--yellow); background: transparent; box-shadow: 0 0 0 2px color-mix(in srgb, var(--yellow) 22%, transparent); }
+.dot.done { border-color: var(--green); background: var(--green); }
+.dot.stop { border-color: var(--red); background: transparent; }
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 55%, transparent); }
+  70% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--green) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 0%, transparent); }
+}
 
-/* Flat at rest, tonal depth only — shadow means "floating" here as
-   everywhere else in the system. */
+.tape {
+  padding: 12px 16px 14px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.row {
+  display: grid; grid-template-columns: 66px 62px minmax(0, 1fr) auto;
+  gap: 0 14px; align-items: baseline; min-height: var(--row-h);
+  padding: 2px 0;
+}
+.row .t { color: var(--faint); }
+.row .k { font-weight: 550; }
+.row .v { color: var(--text-soft); min-width: 0; overflow-wrap: anywhere; }
+.row .v .path { color: var(--text); }
+.row .m { color: var(--faint); white-space: nowrap; }
+.k-turn { color: var(--text); }
+.k-reading, .k-ledger { color: var(--blue); }
+.k-gate { color: var(--yellow); }
+.k-tool { color: var(--muted); }
+.k-receipt { color: var(--green); }
+.k-run { color: var(--red); }
+.verdict { font-weight: 560; }
+.verdict.allow { color: var(--green); }
+.verdict.ask { color: var(--yellow); }
+.verdict.deny { color: var(--red); }
+
+/* The gate. This is the page's argument: the visitor answers it. */
+.gate {
+  margin: 8px 0 8px 80px; max-width: 560px;
+  border: 1px solid var(--yellow); border-radius: var(--radius);
+  background: var(--surface-raised);
+  background: color-mix(in srgb, var(--yellow) 8%, var(--surface-raised));
+  padding: 13px 15px;
+}
+.gate-title { font-family: var(--sans); font-size: 12.5px; font-weight: 580; color: var(--text); }
+.gate-facts { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 5px 14px; color: var(--text-soft); font-size: 12px; }
+.gate-facts b { font-weight: 550; color: var(--text); }
+.gate-actions { margin-top: 12px; min-height: 30px; display: flex; align-items: center; gap: 9px; }
+.gate-actions .danger {
+  background: transparent; border-color: var(--red); color: var(--red);
+  background: color-mix(in srgb, var(--red) 9%, transparent);
+  border-color: color-mix(in srgb, var(--red) 42%, transparent);
+  /* --red is 3.75:1 as a label on this tinted card. Mixed toward the
+     foreground it still reads as the danger colour and clears AA. */
+  color: color-mix(in srgb, var(--red) 70%, var(--text));
+}
+.gate-actions .danger:hover {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  color: color-mix(in srgb, var(--red) 55%, var(--text));
+}
+.gate-resolved { font-family: var(--mono); font-size: 12.5px; color: var(--text-soft); }
+.gate-hint { font-family: var(--sans); font-size: 12px; color: var(--text-soft); margin-left: auto; }
+
+.panel-foot {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 16px; border-top: 1px solid var(--border-soft);
+  background: var(--surface-raised);
+  font-size: 12.5px; color: var(--faint);
+}
+.panel-foot .grow { margin-left: auto; }
+
+/* Pending rows keep their box and only fade, so nothing on this page ever
+   reflows while the tape plays. */
+html.js .tape .step { opacity: 0; transform: translateY(3px); }
+html.js .tape .step.played {
+  opacity: 1; transform: none;
+  transition: opacity 320ms var(--ease), transform 320ms var(--ease);
+}
+/* The outcome is NOT reserved. Reserving it held a blank block the height
+   of three ledger rows — 81px on a desktop and half a phone screen — for
+   output that has not happened yet. A console that grows when the run
+   continues is the honest behaviour, and the growth follows a click the
+   reader just made, in the region they are already looking at. */
+.outcome > * { display: none; }
+.outcome > .shown { display: block; }
+
+/* ---- section furniture --------------------------------------------------- */
+main > section { padding: 104px 0; border-top: 1px solid var(--border-soft); }
+h2 {
+  font-size: clamp(24px, 3.1vw, 34px); font-weight: 620;
+  letter-spacing: -.028em; line-height: 1.14; max-width: 22ch;
+}
+.section-head {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: 20px 48px; align-items: end;
+}
+.section-lead { max-width: 62ch; color: var(--text-soft); font-size: 16px; }
+
+/* ---- instruments --------------------------------------------------------- */
+.instruments { margin-top: 52px; }
+.instrument {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 36px; align-items: start;
+  padding: 34px 0; border-top: 1px solid var(--border-soft);
+}
+.instrument:first-child { border-top: 0; padding-top: 0; }
+.instrument h3 { font-size: 19px; font-weight: 600; letter-spacing: -.018em; }
+.instrument p { margin-top: 10px; color: var(--text-soft); max-width: 62ch; }
+.instrument p + p { margin-top: 10px; }
+.instrument .cmd {
+  margin-top: 14px; font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+}
+.readout {
+  border: 1px solid var(--border-soft); border-radius: var(--radius);
+  background: var(--surface); padding: 14px 16px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.62;
+  color: var(--text-soft); font-variant-numeric: tabular-nums;
+  overflow-x: auto;
+}
+.readout .dim { color: var(--faint); }
+.readout .key { color: var(--muted); }
+.readout .hit { color: var(--text); }
+.readout .ok { color: var(--green); }
+.readout .warn { color: var(--yellow); }
+.readout .no { color: var(--red); }
+.readout .strike { text-decoration: line-through; text-decoration-color: var(--red); color: var(--faint); }
+.readout hr { border: 0; border-top: 1px solid var(--border-soft); margin: 9px 0; }
+.readout .kv { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 2px 12px; }
+
+/* the seven axes, as a meter rather than a list of adjectives */
+.axes { display: grid; gap: 6px; }
+.axis { display: grid; grid-template-columns: 96px 1fr auto; gap: 12px; align-items: center; }
+.axis .name { color: var(--faint); }
+.axis .track { display: flex; gap: 3px; }
+.axis .seg {
+  height: 7px; flex: 1 1 0; min-width: 0; border-radius: 2px;
+  border: 1px solid var(--border); background: transparent;
+}
+.axis .seg.fill { background: var(--muted); border-color: var(--muted); }
+.axis .val { color: var(--text-soft); }
+
+/* ---- surfaces bus -------------------------------------------------------- */
+.bus { margin-top: 52px; }
+.taps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
+.tap { position: relative; padding-bottom: 30px; }
+.tap::after {
+  content: ""; position: absolute; left: 50%; bottom: 0; width: 1px; height: 30px;
+  background: var(--border);
+}
+.tap-name {
+  display: block; font-size: 14px; font-weight: 580; letter-spacing: -.01em;
+  padding-bottom: 5px;
+}
+.tap-desc { display: block; font-size: 13px; color: var(--muted); }
+.bus-line { height: 1px; background: var(--border); }
+.bus-drop { width: 1px; height: 30px; margin: 0 auto; background: var(--border); }
+.core {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); padding: 20px 22px; text-align: center;
+}
+.core-title { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.core-parts {
+  margin-top: 9px; display: flex; justify-content: center; flex-wrap: wrap; gap: 6px 10px;
+  font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+}
+.core-parts span { padding: 2px 9px; border: 1px solid var(--border-soft); border-radius: 999px; }
+.bus-note { margin-top: 20px; color: var(--faint); font-size: 13px; max-width: 74ch; }
+
+/* ---- posture ------------------------------------------------------------- */
+.posture { margin-top: 46px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; align-items: start; }
+.modes {
+  display: inline-flex; padding: 3px; gap: 3px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface-raised);
+}
+.modes button {
+  border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  font-family: var(--mono); font-size: 12.5px; font-weight: 500;
+  padding: 5px 13px; border-radius: 999px;
+  transition: background 130ms ease, color 130ms ease;
+}
+.modes button:hover { color: var(--text-soft); background: var(--surface-hover); }
+.modes button[aria-selected="true"] { background: var(--surface-active); color: var(--text); font-weight: 550; }
+.mode-body { margin-top: 18px; }
+.mode-body h3 { font-size: 16px; font-weight: 600; letter-spacing: -.012em; }
+.mode-body p { margin-top: 8px; color: var(--text-soft); max-width: 56ch; }
+.mode-rules { margin-top: 18px; }
+.mode-rules .verb { display: inline-block; min-width: 46px; font-weight: 550; }
+.mode-rules .verb.a { color: var(--green); }
+.mode-rules .verb.k { color: var(--yellow); }
+.mode-rules .verb.d { color: var(--red); }
+.guards { display: grid; gap: 1px; background: var(--border-soft); border: 1px solid var(--border-soft); border-radius: var(--radius); overflow: hidden; }
+.guard { background: var(--surface); padding: 14px 16px; }
+.guard b { display: block; font-size: 13.5px; font-weight: 570; }
+.guard span { display: block; margin-top: 4px; font-size: 13px; color: var(--muted); max-width: 60ch; }
+.guard code { font-family: var(--mono); font-size: 12px; }
+
+/* ---- start --------------------------------------------------------------- */
+.steps { margin-top: 46px; display: grid; gap: 1px; background: var(--border-soft); border: 1px solid var(--border-soft); border-radius: var(--radius); overflow: hidden; }
+.step-row { background: var(--surface); padding: 18px 20px; display: grid; grid-template-columns: 26px minmax(0, 300px) minmax(0, 1fr) auto; gap: 18px; align-items: center; }
+.step-n { font-family: var(--mono); font-size: 12.5px; color: var(--faint); }
+.step-what b { display: block; font-size: 14.5px; font-weight: 570; }
+.step-what span { display: block; margin-top: 3px; font-size: 13px; color: var(--muted); }
+.step-cmd {
+  font-family: var(--mono); font-size: 12.5px; color: var(--text-soft);
+  background: var(--bg); border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
+  padding: 7px 11px; overflow-x: auto; white-space: nowrap;
+}
+.doors { margin-top: 26px; display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
 .door {
-  display: flex; flex-direction: column; gap: 5px;
-  padding: 18px 18px 16px;
-  border: 1px solid var(--border); border-radius: 14px;
-  background: var(--surface);
-  color: inherit; text-decoration: none;
+  display: flex; flex-direction: column; gap: 5px; padding: 18px 18px 16px;
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--surface); color: inherit; text-decoration: none;
   transition: background 140ms ease, border-color 140ms ease;
 }
 .door:hover { background: var(--surface-hover); border-color: var(--accent); }
-.door:focus-visible {
-  outline: 2px solid var(--accent-bright); outline-offset: 3px;
-}
 .door-top { display: flex; align-items: center; gap: 9px; }
 .door-icon { color: var(--accent); display: inline-flex; }
 .door-name { font-size: 15px; font-weight: 620; letter-spacing: -.01em; }
-.door-desc { color: var(--muted); font-size: 12.5px; }
-.door-go { margin-top: 6px; color: var(--faint); font-size: 11px; font-family: var(--mono); }
+.door-desc { color: var(--muted); font-size: 13px; }
+.door-go { margin-top: 6px; color: var(--faint); font-size: 11.5px; font-family: var(--mono); }
+.start-note { margin-top: 18px; font-size: 13px; color: var(--faint); max-width: 72ch; }
+.start-note code { font-family: var(--mono); font-size: 12px; color: var(--muted); }
 
-.note {
-  margin: 26px 0 0; padding-top: 18px; border-top: 1px solid var(--border-soft);
-  color: var(--faint); font-size: 11.5px; text-align: center;
+/* ---- footer -------------------------------------------------------------- */
+footer { border-top: 1px solid var(--border-soft); padding: 34px 0 46px; }
+.foot { display: flex; flex-wrap: wrap; gap: 14px 26px; align-items: center; }
+.foot .stamp { font-family: var(--mono); font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.foot nav { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-left: auto; font-size: 13px; }
+.foot nav a { color: var(--muted); text-decoration: none; }
+.foot nav a:hover { color: var(--text); }
+
+/* ---- reveal --------------------------------------------------------------
+   Default is the finished page. Script opts elements into an entrance, so
+   a reader with no JS gets everything, immediately. */
+html.js .reveal { opacity: 0; transform: translateY(12px); }
+html.js .reveal.in {
+  opacity: 1; transform: none;
+  transition: opacity 620ms var(--ease), transform 720ms var(--ease);
+  transition-delay: var(--d, 0ms);
 }
-.note code {
-  font-family: var(--mono); font-size: 11px;
-  color: var(--text-soft);
+
+/* ---- responsive ---------------------------------------------------------- */
+@media (max-width: 1000px) {
+  .section-head { grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
+  .hero-top { grid-template-columns: minmax(0, 1fr); gap: 26px; }
+  .build-card { min-width: 0; }
+  .instrument { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .posture { grid-template-columns: minmax(0, 1fr); gap: 30px; }
+  .step-row { grid-template-columns: 22px minmax(0, 1fr); grid-auto-flow: row; gap: 12px 14px; }
+  .step-cmd { grid-column: 2; }
+  .step-row .btn { grid-column: 2; justify-self: start; }
 }
-.build { margin-top: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+@media (max-width: 860px) {
+  .rail-nav { display: none; }
+  .taps { grid-template-columns: minmax(0, 1fr); gap: 0; border-left: 1px solid var(--border); padding-left: 18px; }
+  .tap { padding: 11px 0; }
+  .tap::after { display: none; }
+  .bus-line, .bus-drop { display: none; }
+  .core { margin-top: 22px; }
+}
+@media (max-width: 720px) {
+  main > section { padding: 74px 0; }
+  .hero { padding: 44px 0 0; }
+  .wrap { padding: 0 18px; }
+  /* A four-child row in a two-track grid auto-placed `.v` into the 56px
+     timestamp column, where a file path wrapped one character per line.
+     Flex instead: the kind keeps its gutter, the value takes the rest, the
+     meta sits right and drops to its own line only when it has to. */
+  .row {
+    display: flex; flex-wrap: wrap; align-items: baseline;
+    gap: 0 10px; padding: 3px 0;
+  }
+  .row .t { display: none; }
+  .row .k { flex: 0 0 auto; min-width: 48px; }
+  .row .v { flex: 1 1 auto; }
+  .row .m { flex: 0 0 auto; margin-left: auto; }
+  .gate-actions { flex-wrap: wrap; }
+  .gate-hint { margin-left: 0; flex-basis: 100%; }
+  .tape { font-size: 12px; }
+  .gate { margin-left: 0; }
+  .doors { grid-template-columns: 1fr; }
+  .rail-actions .label { display: none; }
+  .btn.wide-only { display: none; }
+  /* Three mono labels will not sit side by side on a phone; side by side
+     they broke mid-word ("workspace-\nwrite"). Stack them full width. */
+  .modes { display: grid; grid-template-columns: 1fr; width: 100%; border-radius: var(--radius); }
+  .modes button { border-radius: var(--radius-sm); text-align: left; padding: 8px 12px; }
+}
+@media (max-width: 480px) {
+  /* Three columns at this width left "blast radius" wrapping in a 84px
+     gutter and stranded the value on a line of its own. Name and value
+     read as one line; the meter sits under them. */
+  .axes { gap: 13px; }
+  .axis { grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; }
+  .axis .name { grid-column: 1; grid-row: 1; }
+  .axis .val { grid-column: 2; grid-row: 1; }
+  .axis .track { grid-column: 1 / -1; grid-row: 2; }
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .door { transition: none; }
+  html.js .reveal, html.js .tape .step { opacity: 1; transform: none; transition: none; }
+  .dot.run { animation: none; }
+  .btn, .door, .rail, .rail-nav a, .modes button { transition: none; }
 }
 </style>
 </head>
 <body>
-<main>
-  <div class="mark"><img src="/app/vak-icon.png" alt="" /></div>
-  <h1>Vak</h1>
-  <p class="lead">An agent you can inspect, constrain, and extend.</p>
+<!--
+  DIRECTION CONTRACT — surface concept seed bdd3f44f
 
-  <nav class="doors" aria-label="Surfaces">
-    <a class="door" href="/app">
-      <span class="door-top">
-        <span class="door-icon" aria-hidden="true">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M20 15a3 3 0 0 1-3 3H9l-5 3v-6a3 3 0 0 1-1-2V7a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3Z"/>
-          </svg>
-        </span>
-        <span class="door-name">Workspace</span>
-      </span>
-      <span class="door-desc">Run tasks, review diffs, answer approvals, steer a run.</span>
-      <span class="door-go">/app</span>
+  THESIS: A runtime you can audit proves it in the first viewport, not in a
+  feature list. This page refuses the screenshot-and-three-cards landing:
+  the hero is the instrument itself, and the visitor works its controls.
+
+  OWN-WORLD: The Auditor's Desk. Warm near-black, one burnt-terracotta
+  accent spent only on primary and active, fixed green/yellow/red status
+  roles, flat surfaces layered by tone, 1px rules, system sans on odd
+  weights against SF Mono readouts.
+
+  STORY: Every effect is gated, every dispatch leaves a receipt, every
+  session replays from an append-only ledger — and the same core drives
+  every surface. The visitor opens the workspace or installs it.
+
+  FIRST VIEWPORT: Tagline left at 60px/620 with the live build readout
+  right; beneath it a full-width session console that plays itself and
+  stops on a real approval gate the visitor must answer — Approve or Deny,
+  each with its honest consequence. Primary action sits under the console.
+
+  FORM: The instrument panel — fifth of seven derived structures, dealt
+  lead, locked by the user with no steer.
+
+  FINISH: unreviewed and undocumented is unfinished; this build ends with
+  the finish review, the verdict, DESIGN.md, and every shipping raster
+  carrying its provenance.
+-->
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="rail" id="rail">
+  <div class="wrap">
+    <a class="brand" href="#top">
+      <span class="brand-mark"><img src="/app/vak-icon.png" alt="" /></span>
+      <span class="brand-name">vak</span>
     </a>
+    <nav class="rail-nav" id="railnav" aria-label="Sections">
+      <a href="#run">The run</a>
+      <a href="#surfaces">Surfaces</a>
+      <a href="#posture">Posture</a>
+      <a href="#start">Start</a>
+    </nav>
+    <div class="rail-actions">
+      <button class="btn icon" id="theme" type="button" aria-label="Switch theme">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4.2"/>
+          <path d="M12 2.6v2.2M12 19.2v2.2M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M2.6 12h2.2M19.2 12h2.2M4.2 19.8l1.6-1.6M18.2 5.8l1.6-1.6"/>
+        </svg>
+      </button>
+      <a class="btn wide-only" href="/admin">Operations</a>
+      <a class="btn primary" href="/app">Open workspace</a>
+    </div>
+  </div>
+</header>
 
-    <a class="door" href="/admin">
-      <span class="door-top">
-        <span class="door-icon" aria-hidden="true">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6Z"/>
-          </svg>
+<main id="main">
+<div id="top"></div>
+
+<!-- ================= hero: the instrument ================= -->
+<div class="hero">
+  <div class="wrap">
+    <div class="hero-top">
+      <div>
+        <h1>An agent you can inspect, constrain,<span class="soft"> and extend.</span></h1>
+        <p class="lead">
+          vak is a local-first Rust harness for running serious general-purpose
+          agents without giving up the receipts. Every session replays from an
+          append-only ledger, every effect passes one policy gate before it
+          happens, and every model dispatch leaves a receipt.
+        </p>
+      </div>
+      <aside class="build-card" id="buildcard" hidden aria-label="This build">
+        <p class="head">This build</p>
+        <dl>
+          <dt>version</dt><dd id="bv">—</dd>
+          <dt>commit</dt><dd id="bc">—</dd>
+          <dt>surfaces</dt><dd>/app · /admin</dd>
+          <dt>status</dt><dd><span class="state"><span class="dot done" aria-hidden="true"></span>responding</span></dd>
+        </dl>
+      </aside>
+    </div>
+
+    <!-- The console. Rendered complete; script rewinds and plays it. -->
+    <section class="panel" id="run" aria-label="A vak session, replayed">
+      <div class="panel-head">
+        <span class="sid">session&nbsp; s_01K7Q4WCE2</span>
+        <span class="state" id="runstate">
+          <span class="dot run" aria-hidden="true"></span>
+          <span id="runword">running</span>
         </span>
-        <span class="door-name">Operations</span>
-      </span>
-      <span class="door-desc">Sessions, receipts, commitments, services, incidents.</span>
-      <span class="door-go">/admin</span>
-    </a>
-  </nav>
+        <span class="mode">workspace-write</span>
+      </div>
 
-  <p class="note">
-    Both surfaces ask for this server's access token — the one it printed on
-    startup, or the <code>VAK_GATEWAY_TOKEN</code> in its environment.
-    <span class="build" id="build"></span>
-  </p>
+      <div class="tape" id="tape">
+        <div class="row step" data-step="1">
+          <span class="t">14:02:11</span><span class="k k-turn">turn</span>
+          <span class="v">“fix the failing parser test”</span><span class="m">from /app</span>
+        </div>
+        <div class="row step" data-step="2">
+          <span class="t"></span><span class="k k-reading">reading</span>
+          <span class="v">engineering · session-scoped · reversible · proof: cited</span>
+          <span class="m">narrows to 6 tools</span>
+        </div>
+        <div class="row step" data-step="3">
+          <span class="t">14:02:11</span><span class="k k-gate">gate</span>
+          <span class="v">read <span class="path">crates/vak-parser/src/lib.rs</span></span>
+          <span class="m"><span class="verdict allow">allow</span></span>
+        </div>
+        <div class="row step" data-step="4">
+          <span class="t">14:02:12</span><span class="k k-tool">tool</span>
+          <span class="v">read <span class="path">crates/vak-parser/src/lib.rs</span></span>
+          <span class="m">2.1 KiB</span>
+        </div>
+        <div class="row step" data-step="5">
+          <span class="t">14:02:19</span><span class="k k-gate">gate</span>
+          <span class="v">edit <span class="path">crates/vak-parser/src/lib.rs</span></span>
+          <span class="m"><span class="verdict allow">allow</span></span>
+        </div>
+        <div class="row step" data-step="6">
+          <span class="t">14:02:19</span><span class="k k-tool">tool</span>
+          <span class="v">edit <span class="path">crates/vak-parser/src/lib.rs</span></span>
+          <span class="m">+6 −2</span>
+        </div>
+        <div class="row step" data-step="7">
+          <span class="t">14:02:20</span><span class="k k-gate">gate</span>
+          <span class="v">bash <span class="path">cargo test -p vak-parser</span></span>
+          <span class="m"><span class="verdict ask" id="gateverdict">ask</span></span>
+        </div>
+
+        <div class="gate step" data-step="8" id="gatecard">
+          <p class="gate-title">This run has stopped and is waiting on you.</p>
+          <div class="gate-facts">
+            <span><b>bash</b> cargo test -p vak-parser</span>
+            <span><b>mode</b> workspace-write</span>
+            <span><b>network</b> none</span>
+            <span><b>reversible</b> yes</span>
+          </div>
+          <div class="gate-actions" id="gateactions">
+            <button class="btn primary" type="button" id="approve">Approve</button>
+            <button class="btn danger" type="button" id="deny">Deny</button>
+            <span class="gate-hint">Nothing has run yet.</span>
+          </div>
+        </div>
+
+        <div class="outcome" id="outcome">
+          <div id="approved">
+            <div class="row">
+              <span class="t">14:02:41</span><span class="k k-tool">tool</span>
+              <span class="v">bash <span class="path">cargo test -p vak-parser</span></span>
+              <span class="m"><span class="verdict allow">27 passed</span></span>
+            </div>
+            <div class="row">
+              <span class="t">14:02:42</span><span class="k k-receipt">receipt</span>
+              <span class="v">anthropic · purpose: turn · settled</span>
+              <span class="m">6 118 in / 412 out</span>
+            </div>
+            <div class="row">
+              <span class="t">14:02:42</span><span class="k k-ledger">ledger</span>
+              <span class="v">12 entries appended · nothing rewritten</span>
+              <span class="m">replayable</span>
+            </div>
+          </div>
+          <div id="denied">
+            <div class="row">
+              <span class="t">14:02:31</span><span class="k k-gate">gate</span>
+              <span class="v">bash <span class="path">cargo test -p vak-parser</span></span>
+              <span class="m"><span class="verdict deny">denied by you</span></span>
+            </div>
+            <div class="row">
+              <span class="t">14:02:31</span><span class="k k-run">run</span>
+              <span class="v">stopped · the edit it had already made is kept</span>
+              <span class="m">partial work preserved</span>
+            </div>
+            <div class="row">
+              <span class="t">14:02:31</span><span class="k k-ledger">ledger</span>
+              <span class="v">10 entries appended · the denial is one of them</span>
+              <span class="m">replayable</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-foot">
+        <span id="footnote">A real session, replayed. The gate is yours to answer.</span>
+        <span class="grow"></span>
+        <button class="btn sm" type="button" id="replay">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 2.6-6.4"/><path d="M3 4.5V10h5.5"/>
+          </svg>
+          Replay
+        </button>
+      </div>
+    </section>
+
+    <div class="hero-actions">
+      <a class="btn primary lg" href="/app">Open the workspace</a>
+      <a class="btn lg" href="/admin">Operations console</a>
+    </div>
+    <p class="hero-note">
+      Both open directly on this machine. Reaching them from another device is
+      an explicit opt-in — see <code>Start</code>, below.
+    </p>
+  </div>
+</div>
+
+<!-- ================= instruments ================= -->
+<section aria-labelledby="reads">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="reads" class="reveal">Four readings, on every surface</h2>
+      <p class="section-lead reveal" style="--d:60ms">
+        The console above is not a viewer bolted onto an agent. It is the record
+        the runtime keeps anyway, rendered. These are the four things it always
+        has to say, whether the run came from a terminal, a browser, or a chat
+        message.
+      </p>
+    </div>
+
+    <div class="instruments">
+      <article class="instrument reveal">
+        <div class="readout">
+          <span class="dim">sessions/…/ledger.jsonl</span><hr />
+          <span class="key">0009</span> {"kind":"tool_call","name":<span class="hit">"edit"</span>,…}<br />
+          <span class="key">0010</span> {"kind":"gate","verdict":<span class="warn">"ask"</span>,…}<br />
+          <span class="key">0011</span> {"kind":"gate","verdict":<span class="ok">"allow"</span>,"by":"user"}<br />
+          <span class="key">0012</span> {"kind":"receipt","settlement":<span class="ok">"settled"</span>,…}<hr />
+          <span class="strike">rewrite entry 0010</span> &nbsp;<span class="dim">— there is no such verb</span>
+        </div>
+        <div>
+          <h3>The ledger is append-only</h3>
+          <p>
+            Every session is a JSONL tree on disk, written as it happens. Anything
+            the model could see can be reconstructed from it, in order.
+          </p>
+          <p>
+            Branching and compaction <em>append</em> — they create entries rather
+            than editing them, so history has no writable past. A record you can
+            quietly correct is not evidence.
+          </p>
+          <p class="cmd">~/…/sessions/&lt;id&gt;/ledger.jsonl</p>
+        </div>
+      </article>
+
+      <article class="instrument reveal">
+        <div class="readout">
+          <span class="dim">effective policy</span><hr />
+          <span class="no">deny</span>&nbsp;&nbsp; bash(<span class="hit">rm -rf *</span>)<br />
+          <span class="no">deny</span>&nbsp;&nbsp; write(<span class="hit">**/.env</span>)<br />
+          <span class="warn">ask</span>&nbsp;&nbsp;&nbsp; bash(<span class="hit">*</span>)<br />
+          <span class="ok">allow</span>&nbsp; read(<span class="hit">&lt;workspace&gt;/**</span>)<hr />
+          <span class="dim">deny wins · then ask · then allow · then the mode</span>
+        </div>
+        <div>
+          <h3>Permission comes before dispatch</h3>
+          <p>
+            Agent turns, tools, subagents, flows, plans, evals, server runs and
+            desktop runs all pass through the same policy engine before anything
+            happens. There is no second path that skips it.
+          </p>
+          <p>
+            Rules compose as <b>allow</b>, <b>ask</b> and <b>deny</b>, and deny
+            takes precedence. Changing the policy cancels work already in flight
+            and rejects approvals granted under the old one.
+          </p>
+          <p class="cmd">read-only · workspace-write · full-access</p>
+        </div>
+      </article>
+
+      <article class="instrument reveal">
+        <div class="readout">
+          <div class="kv">
+            <span class="key">purpose</span><span>turn</span>
+            <span class="key">provider</span><span>anthropic</span>
+            <span class="key">model</span><span class="hit">claude-…</span>
+            <span class="key">failure domain</span><span>provider</span>
+            <span class="key">settlement</span><span class="ok">settled</span>
+            <span class="key">usage</span><span>6 118 in / 412 out</span>
+          </div>
+        </div>
+        <div>
+          <h3>Every dispatch leaves a receipt</h3>
+          <p>
+            A receipt records what a call to a model was <em>for</em>, which model
+            answered, where a failure would belong, whether the exchange settled,
+            and what it cost.
+          </p>
+          <p>
+            It is written for the dispatch that failed as readily as the one that
+            worked — typed errors, bounded retries and preserved partial output
+            are part of the contract, not an edge case to hide.
+          </p>
+          <p class="cmd">purpose · model · failure domain · settlement · usage</p>
+        </div>
+      </article>
+
+      <article class="instrument reveal">
+        <div class="readout">
+          <div class="axes">
+            <div class="axis"><span class="name">kind</span><span class="track"><i class="seg fill"></i><i class="seg fill"></i><i class="seg"></i><i class="seg"></i></span><span class="val">engineering</span></div>
+            <div class="axis"><span class="name">horizon</span><span class="track"><i class="seg fill"></i><i class="seg"></i><i class="seg"></i><i class="seg"></i></span><span class="val">session</span></div>
+            <div class="axis"><span class="name">blast radius</span><span class="track"><i class="seg fill"></i><i class="seg fill"></i><i class="seg"></i><i class="seg"></i></span><span class="val">reversible</span></div>
+            <div class="axis"><span class="name">proof owed</span><span class="track"><i class="seg fill"></i><i class="seg fill"></i><i class="seg"></i><i class="seg"></i></span><span class="val">cited</span></div>
+            <div class="axis"><span class="name">clarity</span><span class="track"><i class="seg fill"></i><i class="seg fill"></i><i class="seg fill"></i><i class="seg"></i></span><span class="val">clear</span></div>
+            <div class="axis"><span class="name">modality</span><span class="track"><i class="seg fill"></i><i class="seg"></i><i class="seg"></i><i class="seg"></i></span><span class="val">text</span></div>
+            <div class="axis"><span class="name">attendance</span><span class="track"><i class="seg fill"></i><i class="seg fill"></i><i class="seg fill"></i><i class="seg fill"></i></span><span class="val">watched</span></div>
+          </div>
+        </div>
+        <div>
+          <h3>The run knows what it was asked</h3>
+          <p>
+            Every turn is read on seven behavioural axes — what kind of work, how
+            long it lives, what it can break, what standard of proof it owes, how
+            clear it is, what it needs, and whether anyone is watching.
+          </p>
+          <p>
+            That reading only ever <em>narrows</em> the run: fewer tools when fewer
+            will do, a higher approval floor for anything irreversible. A misreading
+            can make vak more cautious; it can never grant a tool or skip a gate.
+          </p>
+          <p class="cmd">vak intent explain "deploy the billing service"</p>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ================= surfaces ================= -->
+<section id="surfaces" aria-labelledby="surfaces-h">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="surfaces-h" class="reveal">One core, many surfaces</h2>
+      <p class="section-lead reveal" style="--d:60ms">
+        The surface you happen to be using is a way in, not a different product.
+        Each speaks the same session contract to the same core, so behaviour and
+        auditability do not change when you switch.
+      </p>
+    </div>
+
+    <div class="bus reveal" style="--d:120ms">
+      <ul class="taps">
+        <li class="tap"><span class="tap-name">CLI</span><span class="tap-desc"><code>exec</code>, <code>plan</code>, goal mode — for scripts and CI.</span></li>
+        <li class="tap"><span class="tap-name">Desktop</span><span class="tap-desc">Tauri 2 app: worktrees, diffs, editor, terminal.</span></li>
+        <li class="tap"><span class="tap-name">Browser</span><span class="tap-desc">The same client at <code>/app</code>, against a headless box.</span></li>
+        <li class="tap"><span class="tap-name">Server</span><span class="tap-desc">HTTP + SSE for clients of your own.</span></li>
+        <li class="tap"><span class="tap-name">Gateways</span><span class="tap-desc">Telegram, Discord, Slack, outbound webhooks.</span></li>
+      </ul>
+      <div class="bus-line" aria-hidden="true"></div>
+      <div class="bus-drop" aria-hidden="true"></div>
+      <div class="core">
+        <p class="core-title">One core</p>
+        <div class="core-parts">
+          <span>append-only ledger</span>
+          <span>policy gate</span>
+          <span>receipts</span>
+          <span>intent reading</span>
+          <span>commitments</span>
+        </div>
+      </div>
+      <p class="bus-note">
+        Where a host genuinely cannot do something — a native file dialog, a real
+        shell — the capability is absent rather than broken.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= posture ================= -->
+<section id="posture" aria-labelledby="posture-h">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="posture-h" class="reveal">Safety that is architectural</h2>
+      <p class="section-lead reveal" style="--d:60ms">
+        The posture is a setting, not a promise. Pick how much the agent may do,
+        and the containment underneath it is the same either way.
+      </p>
+    </div>
+
+    <div class="posture">
+      <div class="reveal" style="--d:120ms">
+        <div class="modes" role="tablist" aria-label="Permission mode">
+          <button role="tab" type="button" id="tab-ro" aria-selected="true" aria-controls="mode-body" data-mode="ro">read-only</button>
+          <button role="tab" type="button" id="tab-ww" aria-selected="false" aria-controls="mode-body" data-mode="ww">workspace-write</button>
+          <button role="tab" type="button" id="tab-fa" aria-selected="false" aria-controls="mode-body" data-mode="fa">full-access</button>
+        </div>
+        <div class="mode-body" id="mode-body" role="tabpanel" tabindex="0" aria-live="polite">
+          <h3 id="mode-title">Read what is there, change nothing</h3>
+          <p id="mode-text">
+            The agent may read the workspace and answer about it. Writes and
+            shell commands are denied outright — not queued for approval,
+            denied. Use it on a repository you have not decided to trust yet.
+          </p>
+          <div class="readout mode-rules" id="mode-rules">
+            <span class="verb a">allow</span> read(<span class="hit">&lt;workspace&gt;/**</span>)<br />
+            <span class="verb d">deny</span> read(<span class="hit">outside the workspace</span>)<br />
+            <span class="verb k">ask</span> anything that reaches the network<br />
+            <span class="verb d">deny</span> write · bash · everything else<hr />
+            <span class="dim">your own rules are evaluated first, and deny still wins</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="guards reveal" style="--d:180ms">
+        <div class="guard">
+          <b>Sandboxed at the operating system</b>
+          <span>Seatbelt on macOS, Landlock on Linux, and an opt-in Docker backend for Bash with no network at all.</span>
+        </div>
+        <div class="guard">
+          <b>Restricted tools run across a broker boundary</b>
+          <span>Built-in tool workers are disposable and MCP servers are sandboxed separately again, so a tool cannot reach the process that called it.</span>
+        </div>
+        <div class="guard">
+          <b>The workspace is a real boundary</b>
+          <span>Canonical path confinement with symlink-escape protection, so “inside the project” means inside the project.</span>
+        </div>
+        <div class="guard">
+          <b>Secrets stay out of the agent’s air</b>
+          <span>Never forwarded as ambient shell or MCP subprocess state, and a project <code>.env</code> loads only after you have trusted that workspace.</span>
+        </div>
+        <div class="guard">
+          <b>A policy change stops work already running</b>
+          <span>Tightening the rules cancels in-flight effects and rejects approvals granted under the old policy, rather than letting them land.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= start ================= -->
+<section id="start" aria-labelledby="start-h">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="start-h" class="reveal">Start in three commands</h2>
+      <p class="section-lead reveal" style="--d:60ms">
+        macOS and Linux. No toolchain to install, nothing to compile, and setup
+        runs once — afterwards it shows a review rather than a wizard.
+      </p>
+    </div>
+
+    <ol class="steps reveal" style="--d:120ms">
+      <li class="step-row">
+        <span class="step-n">1</span>
+        <span class="step-what"><b>Install</b><span>Download and place the release. Re-running it is an update.</span></span>
+        <code class="step-cmd" id="cmd1">curl -fsSL https://get.vak.dev/install.sh | sh</code>
+        <button class="btn sm copy" type="button" data-copy="cmd1">Copy</button>
+      </li>
+      <li class="step-row">
+        <span class="step-n">2</span>
+        <span class="step-what"><b>Set up</b><span>Pick a workspace, connect a provider, verify a model, choose a posture.</span></span>
+        <code class="step-cmd" id="cmd2">vak setup</code>
+        <button class="btn sm copy" type="button" data-copy="cmd2">Copy</button>
+      </li>
+      <li class="step-row">
+        <span class="step-n">3</span>
+        <span class="step-what"><b>Work</b><span>Or open the workspace below and type it there instead.</span></span>
+        <code class="step-cmd" id="cmd3">vak exec "fix the failing test"</code>
+        <button class="btn sm copy" type="button" data-copy="cmd3">Copy</button>
+      </li>
+    </ol>
+
+    <nav class="doors" aria-label="Surfaces on this server">
+      <a class="door" href="/app">
+        <span class="door-top">
+          <span class="door-icon" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 15a3 3 0 0 1-3 3H9l-5 3v-6a3 3 0 0 1-1-2V7a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3Z"/>
+            </svg>
+          </span>
+          <span class="door-name">Workspace</span>
+        </span>
+        <span class="door-desc">Run tasks, review diffs, answer approvals, steer a run.</span>
+        <span class="door-go">/app</span>
+      </a>
+      <a class="door" href="/admin">
+        <span class="door-top">
+          <span class="door-icon" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6Z"/>
+            </svg>
+          </span>
+          <span class="door-name">Operations</span>
+        </span>
+        <span class="door-desc">Sessions, receipts, commitments, services, incidents.</span>
+        <span class="door-go">/admin</span>
+      </a>
+    </nav>
+
+    <p class="start-note">
+      On this machine both surfaces open without a prompt. The server binds
+      loopback by default; reaching it by a real hostname is an explicit opt-in
+      (<code>[server] trusted_hosts</code>) that it refuses to start without, and
+      from there a browser signs in once with the access token the server printed.
+    </p>
+  </div>
+</section>
 </main>
+
+<footer>
+  <div class="wrap foot">
+    <span class="stamp" id="stamp">vak</span>
+    <nav aria-label="Elsewhere">
+      <a href="/app">Workspace</a>
+      <a href="/admin">Operations</a>
+      <a href="/health">Health</a>
+      <a href="/version">Build</a>
+    </nav>
+  </div>
+</footer>
+
 <script>
-// The build is fetched rather than templated in, so this file stays a
-// static asset with no server-side rendering: one fewer thing that can be
-// wrong, and the page still renders if the request fails.
-fetch("/version", { credentials: "same-origin" })
-  .then((r) => (r.ok ? r.json() : null))
-  .then((v) => {
-    if (v && v.version) {
-      document.getElementById("build").textContent =
-        "vak " + v.version + (v.git_sha && v.git_sha !== "unknown" ? " · " + v.git_sha : "");
+(function () {
+  "use strict";
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* ---- build stamp -------------------------------------------------------
+     Fetched rather than templated in, so this file stays a static asset with
+     no server-side rendering. If it fails, the readout simply never appears. */
+  fetch("/version", { credentials: "same-origin" })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (v) {
+      if (!v || !v.version) return;
+      var sha = v.git_sha && v.git_sha !== "unknown" ? v.git_sha : null;
+      $("bv").textContent = v.version;
+      $("bc").textContent = sha || "—";
+      $("buildcard").hidden = false;
+      $("stamp").textContent = "vak " + v.version + (sha ? " · " + sha : "");
+    })
+    .catch(function () {});
+
+  /* ---- theme -------------------------------------------------------------
+     Three states, the same as the app: system (no attribute), light, dark. */
+  var order = ["system", "light", "dark"];
+  var stored = "system";
+  try { stored = localStorage.getItem("vak-theme") || "system"; } catch (e) {}
+  var themeBtn = $("theme");
+  function applyTheme(next) {
+    if (next === "system") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("vak-theme", next); } catch (e) {}
+    themeBtn.setAttribute("aria-label", "Theme: " + next + ". Switch theme.");
+    themeBtn.title = "Theme: " + next;
+  }
+  applyTheme(order.indexOf(stored) >= 0 ? stored : "system");
+  themeBtn.addEventListener("click", function () {
+    var now = document.documentElement.dataset.theme || "system";
+    applyTheme(order[(order.indexOf(now) + 1) % order.length]);
+  });
+
+  /* ---- rail ------------------------------------------------------------- */
+  var rail = $("rail");
+  var onScroll = function () { rail.classList.toggle("scrolled", window.scrollY > 8); };
+  onScroll();
+  window.addEventListener("scroll", onScroll, { passive: true });
+
+  var links = Array.prototype.slice.call(document.querySelectorAll("#railnav a"));
+  var sections = links
+    .map(function (a) { return document.querySelector(a.getAttribute("href")); })
+    .filter(Boolean);
+  if ("IntersectionObserver" in window && sections.length) {
+    var spy = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        links.forEach(function (a) {
+          a.classList.toggle("on", a.getAttribute("href") === "#" + e.target.id);
+        });
+      });
+    }, { rootMargin: "-45% 0px -50% 0px" });
+    sections.forEach(function (s) { spy.observe(s); });
+  }
+
+  /* ---- reveal ----------------------------------------------------------- */
+  var revealables = document.querySelectorAll(".reveal");
+  if (reduce.matches || !("IntersectionObserver" in window)) {
+    Array.prototype.forEach.call(revealables, function (el) { el.classList.add("in"); });
+  } else {
+    var io = new IntersectionObserver(function (entries, obs) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        e.target.classList.add("in");
+        obs.unobserve(e.target);
+      });
+    }, { rootMargin: "0px 0px -12% 0px", threshold: 0.08 });
+    Array.prototype.forEach.call(revealables, function (el) { io.observe(el); });
+  }
+
+  /* ---- the console -------------------------------------------------------
+     The page's one authored moment. Rows never leave the flow — they only
+     fade — so playing the tape cannot reflow anything below it. */
+  var tape = $("tape");
+  var steps = Array.prototype.slice.call(tape.querySelectorAll(".step"));
+  var outcome = $("outcome");
+  var approved = $("approved");
+  var denied = $("denied");
+  var gateActions = $("gateactions");
+  var gateVerdict = $("gateverdict");
+  var runword = $("runword");
+  var runstate = $("runstate");
+  var footnote = $("footnote");
+  var timers = [];
+  var settled = false;
+
+  function dot(kind, word) {
+    runstate.firstElementChild.className = "dot " + kind;
+    runword.textContent = word;
+  }
+  function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+
+  function show(el) { el.classList.add("shown"); }
+  function hideOutcomes() {
+    approved.classList.remove("shown");
+    denied.classList.remove("shown");
+  }
+
+  function resolve(choice) {
+    if (settled) return;
+    settled = true;
+    hideOutcomes();
+    if (choice === "allow") {
+      gateVerdict.textContent = "allow";
+      gateVerdict.className = "verdict allow";
+      gateActions.innerHTML =
+        '<span class="gate-resolved">approved by you · 14:02:21 · recorded in the ledger</span>';
+      show(approved);
+      dot("done", "finished");
+      footnote.textContent = "Approved. The command ran, and the approval is an entry like any other.";
+    } else {
+      gateVerdict.textContent = "deny";
+      gateVerdict.className = "verdict deny";
+      gateActions.innerHTML =
+        '<span class="gate-resolved">denied by you · 14:02:31 · recorded in the ledger</span>';
+      show(denied);
+      dot("stop", "stopped");
+      footnote.textContent = "Denied. The run stops, the work it had already done is kept, and the denial is recorded.";
     }
-  })
-  .catch(() => {});
+  }
+
+  function bindGate() {
+    var a = $("approve");
+    var d = $("deny");
+    if (a) a.addEventListener("click", function () { resolve("allow"); });
+    if (d) d.addEventListener("click", function () { resolve("deny"); });
+  }
+
+  function play(instant) {
+    clearTimers();
+    settled = false;
+    hideOutcomes();
+    gateVerdict.textContent = "ask";
+    gateVerdict.className = "verdict ask";
+    gateActions.innerHTML =
+      '<button class="btn primary" type="button" id="approve">Approve</button>' +
+      '<button class="btn danger" type="button" id="deny">Deny</button>' +
+      '<span class="gate-hint">Nothing has run yet.</span>';
+    bindGate();
+    footnote.textContent = "A real session, replayed. The gate is yours to answer.";
+
+    if (instant) {
+      steps.forEach(function (s) { s.classList.add("played"); });
+      dot("wait", "awaiting you");
+      return;
+    }
+    steps.forEach(function (s) { s.classList.remove("played"); });
+    dot("run", "running");
+    steps.forEach(function (s, i) {
+      timers.push(setTimeout(function () {
+        s.classList.add("played");
+        if (i === steps.length - 1) dot("wait", "awaiting you");
+      }, 220 + i * 320));
+    });
+  }
+
+  bindGate();
+  if (reduce.matches) {
+    play(true);
+  } else if ("IntersectionObserver" in window) {
+    var once = new IntersectionObserver(function (entries, obs) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        obs.disconnect();
+        play(false);
+      });
+    }, { threshold: 0.25 });
+    once.observe(tape);
+  } else {
+    play(true);
+  }
+  $("replay").addEventListener("click", function () { play(reduce.matches); });
+
+  /* ---- permission modes -------------------------------------------------- */
+  var A = '<span class="verb a">allow</span> ';
+  var K = '<span class="verb k">ask</span> ';
+  var D = '<span class="verb d">deny</span> ';
+  var TAIL = '<hr /><span class="dim">your own rules are evaluated first, and deny still wins</span>';
+  var copy = {
+    ro: ["Read what is there, change nothing",
+      "The agent may read the workspace and answer about it. Writes and shell commands are denied outright — not queued for approval, denied. Use it on a repository you have not decided to trust yet.",
+      A + 'read(<span class="hit">&lt;workspace&gt;/**</span>)<br />' +
+      D + 'read(<span class="hit">outside the workspace</span>)<br />' +
+      K + 'anything that reaches the network<br />' +
+      D + 'write · bash · everything else' + TAIL],
+    ww: ["Change this workspace, ask before anything else",
+      "The default. Reads and writes inside the canonical workspace path go through; a shell command, or a path outside the boundary, stops and asks — the gate you answered above. A symlink pointing out of the workspace does not count as inside it.",
+      A + 'read · write(<span class="hit">&lt;workspace&gt;/**</span>)<br />' +
+      K + 'write(<span class="hit">outside the workspace</span>)<br />' +
+      K + 'bash(<span class="hit">*</span>)<br />' +
+      K + 'everything else, by default' + TAIL],
+    fa: ["Everything, and you said so out loud",
+      "No implicit boundary — which is why it cannot be reached by accident. It is named explicitly, and your own rules still sit on top of it, so this is the mode’s default and not the last word.",
+      A + 'every tool, on every path<br />' +
+      D + '<span class="hit">your deny rules</span>, which still win<br />' +
+      K + '<span class="hit">your ask rules</span>, which still stop the run<br />' +
+      '<span class="dim">and a policy change still cancels work in flight</span>' + TAIL]
+  };
+  var tabs = Array.prototype.slice.call(document.querySelectorAll(".modes button"));
+  tabs.forEach(function (t, i) {
+    t.addEventListener("click", function () {
+      tabs.forEach(function (o) { o.setAttribute("aria-selected", String(o === t)); });
+      var c = copy[t.dataset.mode];
+      $("mode-title").textContent = c[0];
+      $("mode-text").textContent = c[1];
+      $("mode-rules").innerHTML = c[2];
+    });
+    t.addEventListener("keydown", function (e) {
+      var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (!d) return;
+      e.preventDefault();
+      var next = tabs[(i + d + tabs.length) % tabs.length];
+      next.focus();
+      next.click();
+    });
+  });
+
+  /* ---- copy buttons ------------------------------------------------------ */
+  Array.prototype.forEach.call(document.querySelectorAll(".copy"), function (b) {
+    b.addEventListener("click", function () {
+      var text = $(b.dataset.copy).textContent;
+      var done = function () {
+        var was = b.textContent;
+        b.textContent = "Copied";
+        setTimeout(function () { b.textContent = was; }, 1400);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () {});
+      }
+    });
+  });
+})();
 </script>
 </body>
 </html>

@@ -191,6 +191,21 @@ violation waiting for one bad load order.
 - **Item Label** (540–580, 12–12.5px): sidebar items, nav items, form labels.
 - **Micro Label** (500–550, 10–11.5px): timestamps, hints, badges, hotkey glyphs, tooltips — always paired with `--muted` or `--faint` color, never `--text`.
 
+### The landing surface's ramp
+
+`/` is the one surface that is not app chrome, and it carries its own,
+larger ramp: display `clamp(35px, 6vw, 60px)` at 620, section headings
+`clamp(24px, 3.1vw, 34px)` at 620, body 15–16px at 500, and mono readouts
+at 12–12.5px. The 13px body of the desktop and admin clients is tuned for a
+dense working panel read at arm's length all day; a page someone lands on
+once needs a first viewport that reads across a room.
+
+Everything else is unchanged: the same token set, the same odd weights, the
+same one-accent rule, the same flat-by-default surfaces. Only the sizes
+scale, and only on this one file. A design-system scan of
+`crates/vak-server/assets/landing.html` therefore reports type-ramp drift
+by construction; that is this paragraph, not a defect.
+
 ### Named Rules
 **The Odd-Weight Rule.** Font-weights are tuned in single-digit steps (500, 540, 550, 560, 570, 580, 600, 620, 650) rather than snapped to round hundreds. Treat existing weights as calibrated values to reuse, not round to the nearest 100.
 
@@ -278,6 +293,23 @@ An earlier revision marked the required level with a 1px tick *above* a 13px
 segment. It was invisible at real sizes, and it is the half of the meter that
 says how demanding the work is — the rule below the track replaced it because
 there is room there and it never collides with the fill state.
+
+### Approval Gate (landing surface)
+
+The one component the front door adds. A yellow-bordered card on a
+yellow-tinted raised surface, stating the pending effect and its facts
+(tool, mode, network, reversibility), with **Approve** as the primary
+button and **Deny** as the danger button, and a resolved state that
+replaces both with the verdict and its timestamp.
+
+Its tint is why every text token on the card steps up one level —
+`--faint` is calibrated to exactly 4.50:1 on `--surface-raised`, so mixing
+8% yellow into that ground puts it under AA, and `--red` as a *label*
+lands at 3.75:1 there. The card therefore uses `--text-soft` where the
+rest of the system would use `--muted`, and mixes the danger label toward
+the foreground (`color-mix(in srgb, var(--red) 70%, var(--text))`) so it
+still reads as red and still clears AA. **Tinting a ground invalidates the
+contrast calibration of every token measured against the untinted one.**
 
 ### Connection State (status bar)
 

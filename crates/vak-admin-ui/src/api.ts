@@ -111,8 +111,16 @@ async function handleBlob(res: Response): Promise<Blob> {
 }
 
 export const api = {
+  /** ONE login exchange for every browser surface.
+   *
+   * `/admin/login` was removed when the workspace client arrived — two
+   * endpoints setting one cookie is two contracts that must agree forever
+   * (AGENTS.md invariant 30). This file kept posting to the dead path, so
+   * the console rendered a token form that could never succeed; the
+   * middleware 401s an unexempt path before routing, which is why it
+   * looked like a wrong token rather than a missing route. */
   async login(token: string): Promise<void> {
-    const res = await fetch("/admin/login", {
+    const res = await fetch("/auth/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ token }),
@@ -121,8 +129,18 @@ export const api = {
   },
 
   async logout(): Promise<void> {
-    await fetch("/admin/logout", { method: "POST" });
+    await fetch("/auth/logout", { method: "POST" });
   },
+
+  /** Is there a session, and — on loopback — may we simply be handed one?
+   *
+   * The probe doubles as the sign-in on this machine: asking someone to
+   * go and find a token to reach their own computer is a prompt with no
+   * security value. `[server] loopback_auto_login` scopes it. */
+  session: () =>
+    fetch("/auth/session", { credentials: "same-origin" }).then((r) =>
+      handle<{ authenticated: boolean; granted?: string }>(r),
+    ),
 
   health: () => fetch("/health").then((r) => handle<HealthInfo>(r)),
 

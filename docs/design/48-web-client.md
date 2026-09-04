@@ -302,6 +302,24 @@ Cookie only. No token in a query string, on any surface, after this lands.
   connection none do. On anything reachable by a hostname all three might,
   and the web client does not need the channel at all because it is
   same-origin. One channel per host, each the only one that works there.
+- **On loopback the probe is the sign-in.** `GET /auth/session` answers
+  `{authenticated}` so a client can tell "no session" from "server
+  unreachable" — and when the request's own `Host` is loopback and
+  `[server] loopback_auto_login` is on (the default), it *hands over* the
+  cookie instead of reporting `false`. Asking someone to go and find a
+  token to reach the machine they are sitting at is a prompt with no
+  security value: anything that can reach loopback can already read the
+  token off disk. A real hostname still gets `421` from the host check
+  before this ever runs.
+- **One login exchange, and only one.** `/admin/login` and `/admin/logout`
+  were removed when this landed, because two endpoints setting one cookie
+  is two contracts that must agree forever (AGENTS.md invariant 30). The
+  admin console kept posting to the dead path for a release: the auth
+  middleware 401s an unexempt path *before* routing, so the console showed
+  a token form that could never succeed and read as a wrong token rather
+  than a missing route. It now uses `/auth/login`, and probes with
+  `/auth/session` so it gets the loopback grant like every other browser
+  surface.
 - **CSRF**: `SameSite=Strict` plus an `Origin` check on every
   state-changing method. A request with an `Origin` that is neither
   same-origin nor in `trusted_hosts` is rejected before routing. Requests
@@ -337,6 +355,25 @@ approval, and commitment event originating from a browser says so.
 even more than for a local one.
 
 ---
+
+### 4.6 The front door at `/`
+
+`/` used to answer a bare 401 with an empty body: someone opening
+`http://box:8901/` learned nothing — not that the product had two
+surfaces, not where they were, not even that anything was listening. It is
+now a public page (`crates/vak-server/assets/landing.html`), auth-exempt,
+`include_str!`-embedded, with its CSS and JS inline and no bundle: the
+front door must render before, and independently of, anything else being
+up.
+
+What it may say is bounded by being auth-exempt. It shows the product, the
+mechanism, and `/version` — version and commit, which that endpoint
+already publishes. It must never show bind address, permission mode,
+workspace names, or session counts; `/health` reports several of those and
+is deliberately not what this page reads.
+
+Its design is recorded in DESIGN.md ("the landing surface's ramp",
+"Approval Gate") and `.impeccable/surfaces/`.
 
 ## 5. Workspaces in a browser
 

@@ -192,6 +192,9 @@ pub struct ServerSettings {
     /// Session cookie lifetime. Default 168 (one week); a public
     /// deployment should shorten it considerably.
     pub session_ttl_hours: Option<u64>,
+    /// Hand a browser on THIS machine a session without asking for the
+    /// token. Default true. See `ServerResolved::loopback_auto_login`.
+    pub loopback_auto_login: Option<bool>,
     /// Directories the workspace picker may browse. Default: the user's
     /// home directory.
     pub workspace_roots: Option<Vec<String>>,
@@ -215,6 +218,20 @@ pub struct WebSettings {
 #[derive(Debug, Clone)]
 pub struct ServerResolved {
     pub bind: String,
+    /// Whether a loopback browser is signed in automatically.
+    ///
+    /// The token exists to stop OTHER local processes driving the agent.
+    /// Against a process running as *you* it was never much of a boundary —
+    /// that process can read the 0600 `.env` the token is pinned in. What it
+    /// does protect is a machine with other human users on it, who can reach
+    /// 127.0.0.1 but cannot read your files.
+    ///
+    /// So: on by default, because a single-user laptop is the overwhelming
+    /// case and making someone hunt for a token to reach their own machine
+    /// is friction with nothing on the other side of it. Turn it off on a
+    /// shared box. It NEVER applies beyond loopback — a remote deployment
+    /// always asks, whatever this says.
+    pub loopback_auto_login: bool,
     pub trusted_hosts: Vec<String>,
     pub public_url: Option<String>,
     pub session_ttl_hours: u64,
@@ -1241,6 +1258,7 @@ impl Default for Config {
                 trusted_hosts: Vec::new(),
                 public_url: None,
                 session_ttl_hours: 168,
+                loopback_auto_login: true,
                 workspace_roots: Vec::new(),
                 web_terminal: false,
                 web_terminal_requires_loopback: true,
@@ -2697,6 +2715,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         .map(|u| u.trim().trim_end_matches('/').to_string())
         .filter(|u| !u.is_empty());
     cfg.server.session_ttl_hours = sv.session_ttl_hours.filter(|h| *h > 0).unwrap_or(168);
+    cfg.server.loopback_auto_login = sv.loopback_auto_login.unwrap_or(true);
     cfg.server.workspace_roots = sv
         .workspace_roots
         .clone()

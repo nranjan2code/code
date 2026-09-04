@@ -6671,11 +6671,18 @@ function FeedWizard(props: { onClose: () => void; onAdded: () => void }) {
 }
 
 export default function App() {
+  /** Ask the canonical endpoint, not a data route.
+   *
+   * This used to probe by calling `api.config()` and reading the 401,
+   * which works but cannot be *granted* a session — so on loopback the
+   * console showed a token form to reach the machine the operator was
+   * already sitting at. `/auth/session` answers the same question and,
+   * on loopback, hands over the cookie instead of asking for it. */
   const probeAuth = () => {
-    api.config()
-      .then(() => {
-        setAuthed(true);
-        connectEvents();
+    api.session()
+      .then((s) => {
+        setAuthed(s.authenticated);
+        if (s.authenticated) connectEvents();
       })
       .catch(() => setAuthed(false));
   };
