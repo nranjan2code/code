@@ -358,8 +358,19 @@ fn act_capabilities(act: Act) -> Vec<&'static str> {
         // A greeting needs nothing at all. This is the case where slicing
         // pays for itself most obviously.
         Act::Converse => &[],
-        Act::Answer => &[],
-        Act::Locate => &["webfetch"],
+        // An ordinary question is the act most likely to need a fact the
+        // model does not carry — today's weather, today's market, anything
+        // past the training cut. Slicing lookup away here does not make the
+        // agent careful, it makes it confidently stale: the turn cannot
+        // reach a source, so it answers from memory or apologises. Lookup
+        // is read-only and costs a little context, which is exactly the
+        // trade this table says it wants to make.
+        Act::Answer => &["webfetch", "mcp"],
+        // Locating something is a search, and a configured search provider
+        // (Tavily, an internal index) arrives as an MCP server, never as a
+        // built-in. `webfetch` alone can only follow a URL the turn already
+        // knows, which is not what "find me" asks for.
+        Act::Locate => &["webfetch", "browse", "mcp"],
         Act::Analyze => &["webfetch", "browse", "bash", "mcp"],
         Act::Author => &["write", "edit", "webfetch"],
         Act::Modify => &["write", "edit", "bash"],
@@ -736,6 +747,26 @@ mod tests {
                 assert!(
                     engagement.limits.capabilities.allows(tool),
                     "{act:?} lost `{tool}` and cannot orient itself"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn asking_and_searching_can_still_reach_a_live_source() {
+        // Regression: `answer` and `locate` were sliced to the orientation
+        // floor and `webfetch`. A configured search MCP server (Tavily) was
+        // therefore unreachable for exactly the two acts that ask for a
+        // fact, and "how is the weather today" came back as "I do not have
+        // access to real-time information" with the tool sitting right
+        // there, connected and admitted.
+        for act in [Act::Answer, Act::Locate] {
+            let r = reading(act, Horizon::Turn, Stakes::Inert, Evidence::None);
+            let engagement = derive(&r, &Authority::default(), true);
+            for tool in ["webfetch", "mcp"] {
+                assert!(
+                    engagement.limits.capabilities.allows(tool),
+                    "{act:?} cannot reach a live source: `{tool}` sliced away"
                 );
             }
         }
