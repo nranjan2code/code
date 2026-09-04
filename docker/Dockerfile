@@ -31,8 +31,9 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY scripts ./scripts
 
-# The commit this image was built from, so `--version` and `install.json`
-# can name it. Passed by docker/build.sh; "unknown" is honest when absent.
+# The commit this image was built from, so `--version`, `/version` and
+# `install.json` can name it. `docker/build.sh` derives and passes it;
+# "unknown" is honest when absent, and is what a bare `docker build` gets.
 ARG VAK_GIT_SHA=unknown
 ENV VAK_GIT_SHA=${VAK_GIT_SHA}
 

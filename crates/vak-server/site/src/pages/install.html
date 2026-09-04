@@ -129,8 +129,8 @@
       </li>
       <li class="step-row">
         <span class="step-n">·</span>
-        <span class="step-what"><b>Docker</b><span>Multi-stage, non-root, root-owned binaries, health-checked. No Node in the image.</span></span>
-        <code class="step-cmd" id="h3">docker compose -f docker/compose.yaml up -d</code>
+        <span class="step-what"><b>Docker</b><span>Multi-stage, non-root, root-owned binaries, health-checked. No Node and no Python in the image — every embedded bundle is committed.</span></span>
+        <code class="step-cmd" id="h3">docker/build.sh --up</code>
         <button class="btn sm copy" type="button" data-copy="h3">Copy</button>
       </li>
     </ol>

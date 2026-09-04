@@ -14,8 +14,14 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
       args:
-        # Stamps `--version` and install.json with the commit, so a running
-        # container can say which build it is.
+        # Stamps `--version`, `/version` and install.json with the commit,
+        # so a running container can say which build it is.
+        #
+        # Compose cannot run `git rev-parse` itself, so this is only real if
+        # the variable is already set — which nobody remembers to do, and
+        # every image built the obvious way was stamped "unknown".
+        # `docker/build.sh` derives it; use that, or set it yourself:
+        #   VAK_GIT_SHA=$(git rev-parse --short HEAD) docker compose ... build
         VAK_GIT_SHA: ${VAK_GIT_SHA:-unknown}
     image: vak:local
     ports:
