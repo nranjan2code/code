@@ -584,6 +584,13 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      cron engine, health report, backup export/import,
                      digest, shared transcript_md renderer
                      (docs/design/29-personal-os.md)
+crates/vak-server/site
+                     The public website at `/`, `/surfaces`, `/security`,
+                     `/install` — src/ built by build.py into a COMMITTED
+                     dist/ embedded with include_dir!. motion.dev vendored,
+                     not CDN-loaded: the box may have no public route
+                     (crates/vak-server/site/README.md,
+                     docs/design/48-web-client.md)
 crates/vak-server    HTTP+SSE wrapper (sessions/runs/approvals/transcripts/
                      subagent steer-stop/MCP management/memory
                      CRUD/search-all/transcript.md/doctor/backup/
@@ -709,21 +716,26 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 scripts/check-version.sh && python3 scripts/check_doc_paths.py
 ```
 
-**Touched a frontend? Rebuild it, or the binary ships the previous one.**
+**Touched a frontend or the public site? Rebuild it, or the binary ships
+the previous one.**
 
 ```
 cd crates/vak-client-ui && npm run build   # BOTH bundles: dist/ + dist-web/
 cd crates/vak-admin-ui  && npm run build
+python3 crates/vak-server/site/build.py    # the public site at /
 ```
 
 `vak-client-ui` builds twice from one source — `dist/` for the Tauri shell
 and `dist-web/` for the copy `vak-server` embeds at `/app` — and only
 `dist-web/` and the admin bundle are committed, because a headless box must
-build the server without node. Both build scripts refuse to compile against
-a bundle whose `.src-manifest` no longer matches `src/`, so this is a build
-error rather than a silently stale UI; `scripts/release.sh` and CI
+build the server without node. The public site is the third embedded bundle
+and the only one needing no npm; its `dist/` is committed for the same
+reason, so a clone needs no Python either. All three refuse to compile
+against a bundle whose `.src-manifest` no longer matches `src/`, so this is
+a build error rather than a silently stale UI; `scripts/release.sh` and CI
 additionally fail on a committed-bundle diff, which a local build cannot
-see.
+see. `.gitignore` has to keep negating each of them out of the blanket
+`dist/` rule, or a whole bundle silently stops being committed.
 
 **A test that builds a `Core` must isolate its home first.** Call
 `vak_config::paths::isolate_home_for_tests()` (or pin a specific one with
