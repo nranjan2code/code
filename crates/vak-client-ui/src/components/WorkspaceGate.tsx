@@ -50,7 +50,11 @@ export default function WorkspaceGate() {
   onMount(() => {
     let stop = false;
     const tick = async () => {
-      if (stop || backend().ready || authed() === false) return;
+      // Never probe before we know a session exists: on a host that
+      // authenticates, `authed()` starts `null` (unknown), and polling
+      // through that window just fires 401s at a server that is behaving
+      // correctly.
+      if (stop || backend().ready || authed() !== true) return;
       await refreshBackend();
     };
     const t = setInterval(() => void tick(), 800);

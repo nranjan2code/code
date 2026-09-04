@@ -144,7 +144,10 @@ async fn the_login_cookie_authenticates_subsequent_requests() {
         .unwrap()
         .to_string();
     assert!(cookie.starts_with("vak_session="));
-    assert!(cookie.contains("HttpOnly"), "script must not be able to read it");
+    assert!(
+        cookie.contains("HttpOnly"),
+        "script must not be able to read it"
+    );
     assert!(cookie.contains("SameSite=Strict"));
     // Plain http: a `Secure` cookie here would be silently discarded by the
     // browser and the session would never persist.
@@ -312,14 +315,20 @@ async fn the_terminal_is_refused_until_it_is_enabled() {
         .header(reqwest::header::CONNECTION, "Upgrade")
         .header(reqwest::header::UPGRADE, "websocket")
         .header(reqwest::header::SEC_WEBSOCKET_VERSION, "13")
-        .header(reqwest::header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==")
+        .header(
+            reqwest::header::SEC_WEBSOCKET_KEY,
+            "dGhlIHNhbXBsZSBub25jZQ==",
+        )
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
     let body: serde_json::Value = response.json().await.unwrap();
     assert!(
-        body["error"].as_str().unwrap_or_default().contains("terminal"),
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("terminal"),
         "the refusal must name what is disabled: {body}"
     );
 }

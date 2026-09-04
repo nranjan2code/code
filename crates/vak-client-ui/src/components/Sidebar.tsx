@@ -17,6 +17,7 @@ import {
   workspaceSwitching,
 } from "../store";
 import { activate, newSession, refreshSessions, switchProject } from "../App";
+import { host } from "../host";
 import * as api from "../api";
 import type { SessionSummary } from "../types";
 import { relTime } from "../time";
@@ -216,6 +217,24 @@ export default function Sidebar() {
 
       <div class="sidebar-footer">
         <button class="sidebar-settings" onClick={() => { setSettingsScope("user"); setSettingsOpen(true); }}><Icon name="gear" /><span>Settings</span><kbd>⌘,</kbd></button>
+        {/* Only where a session is a thing that exists. A session you
+            cannot end is a problem on any machine someone else can reach,
+            and the desktop has none to end. */}
+        <Show when={host.logout}>
+          <button
+            class="sidebar-help has-tooltip"
+            data-tooltip="Sign out"
+            aria-label="Sign out"
+            onClick={() => {
+              // Called ON `host`, not through a detached reference: the
+              // implementation happens not to use `this` today, and that
+              // is not a property worth depending on.
+              void host.logout?.().then(() => window.location.reload());
+            }}
+          >
+            <Icon name="shield" size={13} />
+          </button>
+        </Show>
         <button class="sidebar-help has-tooltip" data-tooltip="Keyboard shortcuts" aria-label="Keyboard shortcuts" onClick={() => setShowShortcuts(true)}><span>?</span></button>
       </div>
     </aside>

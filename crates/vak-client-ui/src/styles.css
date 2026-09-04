@@ -125,12 +125,18 @@ code, pre, kbd { font-family: var(--mono); }
   position: relative;
   display: grid;
   grid-template-columns: var(--sidebar-width, 278px) minmax(420px, 1fr) auto;
-  grid-template-rows: minmax(0, 1fr) 30px;
-  grid-template-areas: "sidebar main dock" "status status status";
+  /* `auto` collapses to zero height when no banner is rendered, so a
+     configured install has no gap — and when one IS rendered it reserves
+     exactly its own height instead of floating over the composer. A fixed
+     banner cannot reserve space, which is why guessing a padding for it
+     failed at the first width where the text wrapped. */
+  grid-template-rows: minmax(0, 1fr) auto 30px;
+  grid-template-areas: "sidebar main dock" "banner banner banner" "status status status";
   height: 100%;
   background: var(--bg);
 }
 .app.sidebar-collapsed { grid-template-columns: 0 minmax(420px, 1fr) auto; }
+.setup-banner { grid-area: banner; }
 .app.sidebar-collapsed .sidebar { visibility: hidden; pointer-events: none; }
 
 :where(button, input, textarea, select, summary):focus-visible {
@@ -1125,13 +1131,6 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
   .diff-file-sidebar { width: 100%; max-height: 120px; border-right: none; border-bottom: 1px solid var(--border-soft); }
 }
 
-@media (max-width: 860px) {
-  .app, .app.sidebar-collapsed { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "status"; }
-  .sidebar { display: none; }
-  .dock { position: fixed; z-index: 40; inset: 0 0 30px auto; width: min(520px, 100vw); max-width: none; }
-  .workspace-head { padding-inline: 14px; }
-  .chat { padding-inline: 20px; }
-}
 .ap-head { margin-bottom: 4px; color: var(--yellow); font-weight: 620; }
 .ap-reason { color: var(--muted); font-size: 12px; }
 .ap-args { max-height: 180px; margin: 9px 0; padding: 9px 10px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); background: var(--bg); font-size: 10.5px; }
@@ -1679,7 +1678,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   .app,
   .app.sidebar-collapsed {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "main" "status";
+    grid-template-areas: "main" "banner" "status";
   }
   /* Both panels leave the flow and float, so `main` gets the full width
      whether or not either is open. */
@@ -1707,6 +1706,8 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   /* Dragging a column edge is meaningless once the columns are overlays. */
   .resize-handle { display: none; }
   .dock-tabs { overflow-x: auto; }
+  .workspace-head { padding-inline: 14px; }
+  .chat { padding-inline: 20px; }
 }
 
 @media (max-width: 600px) {
@@ -1721,7 +1722,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   /* The keyboard's inset, so the composer is not underneath it. */
   .composer-wrap { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
   .composer-lead .composer-hint { display: none; }
-  .composer-tokens, .ring { display: none; }
+  .composer-tokens, .ring, .composer-density { display: none; }
   .dock-tab span { display: none; }
   .split-divider, .main-stack.split { display: revert; }
   /* Two sessions side by side needs two sessions' worth of width. */
@@ -2630,6 +2631,13 @@ body.is-resizing .split-divider {
   word-break: break-all;
 }
 
+/* Its own full-width row above the status bar (see `.app`).
+ *
+ * As a plain child of the `.app` grid with no `grid-area`, this used to be
+ * auto-placed into the `dock` TRACK: an unconfigured install rendered a
+ * ~540px banner column that squeezed the whole workspace into what was
+ * left. Only visible before setup is finished — which is exactly the one
+ * time a new user is looking at it. */
 .setup-banner {
   display: flex;
   align-items: center;
@@ -2807,6 +2815,42 @@ body.is-resizing .split-divider {
 .ev-short .ev-required::after { background: var(--accent); }
 .ev-label { font-size: 10.5px; font-weight: 540; color: var(--muted); white-space: nowrap; }
 .ev-label-short { color: var(--accent); }
+
+/* Sign-in (web host only). The token field matches the primary button's
+   width so the two read as one control pair rather than a stray input. */
+.gate-token {
+  width: 100%; margin: 4px 0 12px; padding: 9px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); background: var(--surface-active);
+  font-family: var(--mono); font-size: 13px;
+}
+.gate-token::placeholder { color: var(--faint); font-family: var(--sans); }
+.gate-token:focus { outline: none; border-color: var(--accent); background: var(--surface-hover); }
+
+/* The workspace picker fills a wider card than the marketing gate does. */
+.gate-card.wide { width: min(560px, calc(100vw - 32px)); }
+.dirpick { margin: 6px 0 12px; text-align: left; }
+.dirpick-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.dirpick-path {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  direction: rtl; text-align: left;
+  color: var(--muted); font-family: var(--mono); font-size: 11px;
+}
+.dirpick-list {
+  max-height: 300px; overflow-y: auto;
+  border: 1px solid var(--border-soft); border-radius: var(--radius);
+  background: var(--surface);
+}
+.dirpick-row { display: flex; align-items: center; gap: 6px; padding: 3px 6px 3px 8px; }
+.dirpick-row:hover { background: var(--surface-hover); }
+.dirpick-enter {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px;
+  padding: 4px 0; color: var(--text-soft); font-size: 12.5px; text-align: left;
+}
+.dirpick-enter span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dirpick-enter:hover { color: var(--text); }
+.dirpick-empty { padding: 18px; color: var(--faint); text-align: center; font-size: 12px; }
+.dirpick-here { width: 100%; }
 
 /* ---- connection state (StatusBar) ----------------------------------
    Never hue alone: each state also changes the dot's fill and carries its

@@ -84,11 +84,29 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     parsed = text;
   }
   if (!res.ok) {
+    if (res.status === 401) onUnauthorized?.();
     const msg =
       (parsed as { error?: string })?.error ?? `${res.status} ${res.statusText}`;
     throw new Error(msg);
   }
   return parsed as T;
+}
+
+/**
+ * Called when the server says this client is no longer authenticated.
+ *
+ * Sessions expire on purpose (`[server] session_ttl_hours`, deliberately
+ * short on a public deployment), and without this the expiry surfaces as
+ * an unending drip of "401 Unauthorized" toasts from whatever happened to
+ * poll next — with no way for the reader to learn that the fix is to sign
+ * in again. Registered by App rather than acted on here, because what to
+ * DO about it (return to the gate) is the app's decision, not the
+ * transport's.
+ */
+let onUnauthorized: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: () => void): void {
+  onUnauthorized = handler;
 }
 
 /**

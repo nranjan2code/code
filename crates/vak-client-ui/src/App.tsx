@@ -613,6 +613,19 @@ export async function refreshBackend(knownInfo?: import("./types").BackendInfo):
 }
 
 async function init() {
+  // A session that expires mid-use must return the client to the gate,
+  // not bury the reason under repeated request failures. Only hosts that
+  // have sessions can lose one; the desktop holds its token for the life
+  // of the process.
+  if (host.sessionStatus) {
+    api.setUnauthorizedHandler(() => {
+      if (!backend().ready) return; // already at the gate
+      closeAllStreams();
+      closeAllSideStreams();
+      setBackend({ ready: false, recent_projects: [] });
+      setNotice({ kind: "info", text: "Your session expired — sign in to continue." });
+    });
+  }
   await refreshBackend();
 }
 

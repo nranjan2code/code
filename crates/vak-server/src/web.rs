@@ -517,6 +517,57 @@ mod tests {
     fn an_empty_root_list_enforces_nothing() {
         assert!(path_within(&[], Path::new("/anywhere")));
     }
+
+    /// The recents list reads a workspace back out of a real ledger header.
+    ///
+    /// Written against the actual `Entry`/`SessionHeader` types rather than
+    /// a hand-rolled JSON string, because the thing that could break this
+    /// is precisely the ledger's serialization shape changing — and a test
+    /// that hardcodes today's shape would keep passing through exactly the
+    /// change it exists to catch.
+    #[test]
+    fn a_workspace_is_recovered_from_its_ledger_header() {
+        use vak_session::types::{Entry, EntryPayload, FrozenContract, SessionHeader};
+
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("some-project");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let ledger_dir = dir.path().join("ledger");
+        std::fs::create_dir_all(&ledger_dir).unwrap();
+
+        let header = SessionHeader {
+            session_id: "s1".into(),
+            created_at: chrono::Utc::now(),
+            cwd: workspace.clone(),
+            parent_session_id: None,
+            contract_id: None,
+            work_item_id: None,
+            contract: FrozenContract {
+                app_version: "test".into(),
+                provider: "p".into(),
+                model: "m".into(),
+                route_ladder: Vec::new(),
+                route_objective: String::new(),
+                route_annotations: Vec::new(),
+                system_prompt: String::new(),
+                permission_mode: "read-only".into(),
+                capabilities: Vec::new(),
+                prompt_layers: Vec::new(),
+            },
+        };
+        let entry = Entry::new(None, EntryPayload::Header(header));
+        std::fs::write(
+            ledger_dir.join("s1.jsonl"),
+            format!("{}\n", serde_json::to_string(&entry).unwrap()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            workspace_of_ledger_dir(&ledger_dir).as_deref(),
+            Some(workspace.to_string_lossy().as_ref()),
+            "the recents list could not read a workspace out of a real header"
+        );
+    }
 }
 
 // ---- terminal over WebSocket (docs/design/48-web-client.md §6) -------------
