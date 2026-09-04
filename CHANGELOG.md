@@ -5,6 +5,65 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 2.2.1 — 2026-09-04
+
+2.2.0 rebuilt the capability subsystem and still answered "I do not have a
+tool that can provide real-time weather information" on the desktop, with a
+connected, admitted Tavily server attached. This is that fix.
+
+### Admission decides when a prompt may freeze, not each surface
+
+The admitted packet was correct all along — 26 capabilities, `mcp` present,
+`tavily` present, the per-turn slice removing nothing. What was wrong was the
+**prompt**: it froze the name-only MCP line with no catalog behind it, and a
+model handed a server name and no tools reasonably concludes it cannot reach
+anything.
+
+The cause was that "when may a prompt be frozen?" was answered in each
+surface's startup code, three different ways:
+
+| Surface | Waited for discovery? |
+| --- | --- |
+| CLI (`exec`, `flow exec`, `plan`) | `warm_mcp_bounded(2s)` — yes |
+| `vak serve` (gateway, web `/app`) | `warm_mcp()` — fired, never waited |
+| Desktop | nothing at all |
+
+So the same question produced a different packet depending on where it was
+asked, and on the desktop it was not a race but a certainty: every session
+froze name-only, permanently, because nothing re-renders a frozen contract.
+
+Three changes, each **removing** a second way to do one thing rather than
+adding a fourth (invariant 30):
+
+- **`Core::admitted_capabilities` is the only wait.** All three per-surface
+  warm calls are deleted. Bounded by `ADMISSION_BUDGET`, so an optional
+  integration still cannot block a turn indefinitely.
+- **The catalog renders from the admitted packet**, where the registry's
+  probe puts it, instead of from a parallel `mcp_cache` inventory that could
+  — and did — disagree with the packet beside it.
+- **`rebound_capabilities` re-renders a live session's admitted set** at each
+  turn boundary, matching on typed `(kind, name)` identity. Admission is
+  unchanged; only the description of an already-admitted capability is
+  refreshed. This is doc 41 invariant 6 in practice: no restart, no rotation,
+  and a session admitted during discovery stops being degraded for life.
+
+`capability_descriptors` also stopped hand-building descriptors a second
+time. The two constructions had already drifted — the same built-in tool came
+out stamped `"vak-core"` one way and `"builtin"` the other — which a gateway
+test caught as a contract mismatch. It now projects from
+`CapabilityProvider::declare`, like the registry does.
+
+### `doctor` no longer cries wolf
+
+The `capability health` check added in 2.2.0 reported every diagnostic as a
+failure, and on a real machine the first thing it did was go red for a hook
+the operator had deliberately disabled. "Configured but not usable" covers
+two different things, and reporting a chosen state as a failure trains people
+to scroll past the check — which costs more than the noise saves, because a
+silently unreachable MCP server is exactly what it exists to surface.
+Diagnostics now carry `deliberate`, and the check fails only on breakage
+while still counting the rest.
+
 ## 2.2.0 — 2026-09-04
 
 Capabilities become a live subsystem, and the release pipeline starts proving
