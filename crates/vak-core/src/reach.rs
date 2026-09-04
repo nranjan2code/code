@@ -88,6 +88,8 @@ pub struct Probe<'a> {
     pub mcp_servers: &'a [String],
     /// Registered network tools, after channel filtering.
     pub network_tools: &'a [String],
+    /// Discovered skills, after channel filtering.
+    pub skills: &'a [String],
 }
 
 /// Compute one standing per advertised capability.
@@ -120,6 +122,17 @@ pub fn standings(probe: &Probe<'_>) -> Vec<Standing> {
             tool: tool.clone(),
             label: format!("`{tool}`"),
             remedy: remedy_for(probe, tool, reach),
+            reach,
+            reason,
+        });
+    }
+    for skill in probe.skills {
+        let args = json!({ "name": skill });
+        let (reach, reason) = resolve(probe, "skill", &args);
+        out.push(Standing {
+            tool: "skill".into(),
+            label: format!("skill `{skill}`"),
+            remedy: remedy_for(probe, "skill", reach),
             reach,
             reason,
         });
@@ -213,6 +226,23 @@ pub fn blocked_mcp_servers(standings: &[Standing]) -> Vec<String> {
         })
         .collect()
 }
+
+/// Skills that cannot be loaded, so the prompt's skills section and
+/// admitted capabilities can exclude them rather than advertising them as usable.
+pub fn blocked_skills(standings: &[Standing]) -> Vec<String> {
+    standings
+        .iter()
+        .filter(|standing| standing.tool == "skill" && standing.reach.is_blocked())
+        .filter_map(|standing| {
+            standing
+                .label
+                .strip_prefix("skill `")
+                .and_then(|rest| rest.strip_suffix('`'))
+                .map(str::to_string)
+        })
+        .collect()
+}
+
 
 /// The model-visible section. Stating this is the point: a model that
 /// knows a capability is configured but unreachable can say so, and say

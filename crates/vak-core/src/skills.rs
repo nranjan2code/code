@@ -18,6 +18,20 @@ pub struct Skill {
     pub shadowed: bool,
 }
 
+/// A skill candidate that was found on disk but failed to parse.
+/// Returned by [`discover_with_diagnostics`] so inspection surfaces
+/// can explain *why* a skill is missing rather than leaving the
+/// operator to guess.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillDiagnostic {
+    /// Absolute path to the SKILL.md that failed.
+    pub path: PathBuf,
+    /// Human-readable reason the parse failed.
+    pub reason: String,
+    /// Provenance label if the root was a plugin.
+    pub provenance: Option<String>,
+}
+
 impl Skill {
     pub fn digest(&self) -> Result<String, std::io::Error> {
         let bytes = std::fs::read(&self.path)?;
@@ -208,6 +222,55 @@ pub fn discover_with_plugins(cwd: &Path, home: &Path, plugins: &[(PathBuf, Strin
         .into_iter()
         .filter(|skill| !skill.shadowed)
         .collect()
+}
+
+/// Like [`discover_with_plugins`] but also returns diagnostics for every
+/// skill candidate that was found on disk but failed validation.
+pub fn discover_with_diagnostics(
+    cwd: &Path,
+    home: &Path,
+    plugins: &[(PathBuf, String)],
+) -> (Vec<Skill>, Vec<SkillDiagnostic>) {
+    let mut roots = vec![(cwd.join(".vak/skills"), None), (home.join("skills"), None)];
+    roots.extend(
+        plugins
+            .iter()
+            .map(|(root, provenance)| (root.join("skills"), Some(provenance.clone()))),
+    );
+    roots.dedup_by(|a, b| a.0 == b.0);
+    let mut skills = Vec::new();
+    let mut diagnostics = Vec::new();
+    for (root, provenance) in roots {
+        let Ok(entries) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let skill_path = entry.path().join("SKILL.md");
+            if !skill_path.is_file() {
+                continue;
+            }
+            match validate(&skill_path) {
+                Ok((mut skill, _warnings)) => {
+                    skill.provenance = provenance.clone();
+                    skills.push(skill);
+                }
+                Err(reason) => {
+                    diagnostics.push(SkillDiagnostic {
+                        path: skill_path,
+                        reason,
+                        provenance: provenance.clone(),
+                    });
+                }
+            }
+        }
+    }
+    skills.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut seen = std::collections::HashSet::new();
+    for skill in &mut skills {
+        skill.shadowed = !seen.insert(skill.name.clone());
+    }
+    skills.retain(|skill| !skill.shadowed);
+    (skills, diagnostics)
 }
 
 /// Discovers every valid skill, retaining lower-precedence entries so
@@ -472,6 +535,32 @@ mod tests {
             .await;
         assert!(stale.is_error);
         assert!(stale.content.contains("capability_stale"));
+        Ok(())
+    }
+
+    #[test]
+    fn discover_with_diagnostics_reports_parse_failures()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let good = dir.path().join(".vak/skills/good-skill");
+        let bad = dir.path().join(".vak/skills/Bad_Skill");
+        std::fs::create_dir_all(&good)?;
+        std::fs::create_dir_all(&bad)?;
+        std::fs::write(
+            good.join("SKILL.md"),
+            "---\nname: good-skill\ndescription: useful\n---\nbody",
+        )?;
+        std::fs::write(
+            bad.join("SKILL.md"),
+            "---\nname: Bad_Skill\ndescription: bad\n---\nbody",
+        )?;
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home)?;
+        let (skills, diagnostics) = discover_with_diagnostics(dir.path(), &home, &[]);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "good-skill");
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].reason.contains("not valid lowercase kebab-case"));
         Ok(())
     }
 

@@ -328,6 +328,24 @@ pub struct ChatSurface {
     pub label: &'static str,
 }
 
+/// A capability that was found during discovery but excluded from the
+/// admitted set. Returned by [`Core::capability_diagnostics`] so inspection
+/// surfaces (`doctor`, admin console, desktop) can explain what was silently
+/// dropped and why.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CapabilityDiagnostic {
+    /// What kind of capability this was.
+    pub kind: String,
+    /// Human-readable name/label.
+    pub name: String,
+    /// Why it was excluded.
+    pub reason: String,
+    /// Where it came from (path, config layer, plugin name).
+    pub source: Option<String>,
+    /// What the operator can do to fix it.
+    pub remedy: String,
+}
+
 impl Core {
     /// Today's estimated spend (local midnight window), USD 0.0 when the
     /// ledger is absent or unpriced rows dominate — absent is zero here
@@ -427,6 +445,14 @@ struct CoreInner {
     capabilities_override: std::sync::Mutex<Option<vak_config::CapabilityInheritanceResolved>>,
     /// Restrictive overlay applied only to a gateway channel Core.
     channel_policy: std::sync::Mutex<Option<vak_config::ChannelPolicy>>,
+    /// Live overrides for `[tools]` toggles. Same no-pin, always-take-latest
+    /// shape as the memory overrides — `refresh_persisted_preferences` writes
+    /// them on every re-read so a live `PUT /config` takes effect on the
+    /// next turn without a restart.
+    web_fetch_override: std::sync::Mutex<Option<bool>>,
+    browse_override: std::sync::Mutex<Option<bool>>,
+    /// Live override for `[commitment]` enabled toggle.
+    commitment_override: std::sync::Mutex<Option<bool>>,
     /// Session-scoped domain-weighted doubt per (provider, model) leg
     /// (Phase R). Fed from work receipts at run end; read at ladder
     /// admission.
@@ -794,6 +820,9 @@ impl Core {
                 hooks_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
                 capabilities_override: std::sync::Mutex::new(None),
                 channel_policy: std::sync::Mutex::new(None),
+                web_fetch_override: std::sync::Mutex::new(None),
+                browse_override: std::sync::Mutex::new(None),
+                commitment_override: std::sync::Mutex::new(None),
                 beliefs: Arc::new(routing::BeliefState::new()),
                 spend_gates: std::sync::Mutex::new(HashMap::new()),
                 day_budget: Arc::new(std::sync::Mutex::new(finops::DayBudget::new())),
@@ -1782,6 +1811,36 @@ impl Core {
         Self::write_override(&self.inner.subagents_override, Some(enabled));
     }
 
+    /// Whether bounded web fetch is available right now — live-effective.
+    pub fn effective_web_fetch(&self) -> bool {
+        Self::read_override(&self.inner.web_fetch_override)
+            .unwrap_or(self.inner.config.tools.web_fetch)
+    }
+
+    /// Whether headless browse is available right now — live-effective.
+    pub fn effective_browse(&self) -> bool {
+        Self::read_override(&self.inner.browse_override)
+            .unwrap_or(self.inner.config.tools.browse)
+    }
+
+    /// Live override setter for tools (web_fetch, browse).
+    pub fn apply_persisted_tools(&self, web_fetch: bool, browse: bool) {
+        Self::write_override(&self.inner.web_fetch_override, Some(web_fetch));
+        Self::write_override(&self.inner.browse_override, Some(browse));
+    }
+
+    /// Whether commitments are enabled right now — live-effective.
+    pub fn effective_commitment(&self) -> bool {
+        Self::read_override(&self.inner.commitment_override)
+            .unwrap_or(self.inner.config.commitment.enabled)
+    }
+
+    /// Live override setter for commitment enabled toggle.
+    pub fn apply_persisted_commitment(&self, enabled: bool) {
+        Self::write_override(&self.inner.commitment_override, Some(enabled));
+    }
+
+
     /// The `[finops]` config, with any live cap override substituted in —
     /// pass this to [`finops::CoreSpendGate::new`] instead of
     /// `self.config().finops` directly, or a PATCH-set cap would never
@@ -1922,6 +1981,8 @@ impl Core {
             Some(config.finops.max_day_usd),
         );
         self.apply_persisted_work(config.work.clone());
+        self.apply_persisted_tools(config.tools.web_fetch, config.tools.browse);
+        self.apply_persisted_commitment(config.commitment.enabled);
         self.apply_persisted_approval_mode(config.approval_mode);
         Ok(config.permission_mode)
     }
@@ -2149,6 +2210,7 @@ impl Core {
             .filter(|tool| registered.iter().any(|name| name == *tool))
             .map(|tool| (*tool).to_string())
             .collect();
+        let skills: Vec<String> = self.skills().into_iter().map(|s| s.name).collect();
         reach::standings(&reach::Probe {
             engine: &engine,
             mode,
@@ -2158,6 +2220,7 @@ impl Core {
             approver_answerable: self.approver_answerable,
             mcp_servers: &servers,
             network_tools: &network,
+            skills: &skills,
         })
     }
 
@@ -2260,12 +2323,36 @@ impl Core {
             .into_iter()
             .filter(|server| !blocked_servers.contains(server))
             .collect::<Vec<_>>();
+        let mut standing = reach::prompt_section(&standings);
+        let extra_diags: Vec<_> = self
+            .capability_diagnostics()
+            .into_iter()
+            .filter(|d| d.source.is_some() || d.kind == "hook")
+            .collect();
+        if !extra_diags.is_empty() {
+            if standing.is_empty() {
+                standing = String::from(
+                    "\nConfigured but NOT usable on this turn. These are not in your tool \
+                     schemas and calling them will fail. If the request needs one, say so \
+                     plainly, name the capability, and give the operator the fix — do not \
+                     substitute a different tool and do not answer as though you had the \
+                     data:\n",
+                );
+            }
+            for diag in extra_diags {
+                standing.push_str(&format!("- {} `{}`: {}.", diag.kind, diag.name, diag.reason));
+                if !diag.remedy.is_empty() {
+                    standing.push_str(&format!(" Fix: {}.", diag.remedy));
+                }
+                standing.push('\n');
+            }
+        }
         let runtime = prompts::RuntimeSections {
             capability_contract,
             surface: self.surface.prompt_section(),
             skills: skills::prompt_section_from_capabilities(capabilities),
             mcp: mcp_config_section(&servers, inventory.as_ref()),
-            standing: reach::prompt_section(&standings),
+            standing,
         };
         prompts::resolve(&self.prompt_layers(seed), &runtime)
     }
@@ -2498,17 +2585,17 @@ impl Core {
         if !self.effective_mcp().servers.is_empty() {
             names.push("mcp".into());
         }
-        if self.inner.config.tools.web_fetch {
+        if self.effective_web_fetch() {
             names.push("webfetch".into());
         }
-        if self.inner.config.tools.browse {
+        if self.effective_browse() {
             names.push("browse".into());
         }
 
         if self.effective_memory_search_enabled() {
             names.push("session_search".into());
         }
-        if self.inner.config.commitment.enabled {
+        if self.effective_commitment() {
             names.push("commitments".into());
         }
         if self.effective_memory_write_enabled() {
@@ -2630,6 +2717,7 @@ impl Core {
         let standings = self.capability_standings();
         let unreachable_tools = reach::fully_blocked_tools(&standings);
         let unreachable_servers = reach::blocked_mcp_servers(&standings);
+        let unreachable_skills = reach::blocked_skills(&standings);
         out.retain(|capability| match capability.kind {
             CapabilityKind::Tool => !unreachable_tools
                 .iter()
@@ -2637,11 +2725,102 @@ impl Core {
             CapabilityKind::McpServer => !unreachable_servers
                 .iter()
                 .any(|name| name == &capability.name),
+            CapabilityKind::Skill => !unreachable_skills
+                .iter()
+                .any(|name| name == &capability.name),
             _ => true,
         });
         out.sort_by(|a, b| {
             format!("{:?}:{}", a.kind, a.name).cmp(&format!("{:?}:{}", b.kind, b.name))
         });
+        out
+    }
+
+    /// Every capability that was configured/discovered but excluded from
+    /// [`capability_descriptors`] — skill parse failures, reach-blocked
+    /// tools, channel-policy-filtered capabilities. The observability
+    /// counterpart: `capability_descriptors` says what a turn CAN do;
+    /// this says what it configured but CANNOT do, and why.
+    pub fn capability_diagnostics(&self) -> Vec<CapabilityDiagnostic> {
+        let mut out = Vec::new();
+
+        // 1. Skill parse failures.
+        let shared_root = self.shared_capability_root();
+        let plugin_roots = self.enabled_plugin_skill_roots();
+        let (_skills, skill_diags) =
+            skills::discover_with_diagnostics(&self.inner.cwd, &shared_root, &plugin_roots);
+        for diag in skill_diags {
+            out.push(CapabilityDiagnostic {
+                kind: "skill".into(),
+                name: diag
+                    .path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| diag.path.display().to_string()),
+                reason: diag.reason,
+                source: Some(diag.path.display().to_string()),
+                remedy: "fix the SKILL.md frontmatter (name must be lowercase kebab-case, \
+                         description must be present and non-empty)"
+                    .into(),
+            });
+        }
+
+        // 2. Reach-blocked capabilities (MCP servers, network tools).
+        let standings = self.capability_standings();
+        for standing in &standings {
+            if standing.reach.is_blocked() {
+                out.push(CapabilityDiagnostic {
+                    kind: if standing.tool == "mcp" {
+                        "mcp-server".into()
+                    } else if standing.tool == "skill" {
+                        "skill".into()
+                    } else {
+                        "tool".into()
+                    },
+                    name: standing.label.clone(),
+                    reason: standing.reason.clone(),
+                    source: None,
+                    remedy: standing.remedy.clone(),
+                });
+            }
+        }
+
+        // 3. Skills filtered by channel policy.
+        if let Some(policy) = self.channel_policy() {
+            let all_skills =
+                skills::discover_with_plugins(&self.inner.cwd, &shared_root, &plugin_roots);
+            for skill in &all_skills {
+                if !Self::allowed_by(&policy.skills_allow, &policy.skills_deny, &skill.name) {
+                    out.push(CapabilityDiagnostic {
+                        kind: "skill".into(),
+                        name: skill.name.clone(),
+                        reason: "blocked by channel policy (skills_deny or not in skills_allow)"
+                            .into(),
+                        source: Some(skill.path.display().to_string()),
+                        remedy: "adjust the channel's skills_allow/skills_deny in the \
+                                 gateway allowlist"
+                            .into(),
+                    });
+                }
+            }
+        }
+
+        // 4. Disabled hooks (present in config but enabled=false).
+        for hook in self
+            .effective_hooks()
+            .into_iter()
+            .filter(|hook| !hook.enabled)
+        {
+            out.push(CapabilityDiagnostic {
+                kind: "hook".into(),
+                name: format!("{}/{}", hook.event, hook.command),
+                reason: "hook is disabled (enabled = false)".into(),
+                source: None,
+                remedy: "set enabled = true in .vak/config.toml or the admin console".into(),
+            });
+        }
+
         out
     }
 
@@ -3710,7 +3889,7 @@ impl Core {
         commitment_id: Option<&str>,
     ) -> vak_intent::Authority {
         let mut authority = self.turn_authority_for(surface);
-        if !self.inner.config.commitment.enabled {
+        if !self.effective_commitment() {
             return authority;
         }
         if let Some(id) = commitment_id
@@ -4090,7 +4269,7 @@ impl Core {
         // Read-only self-knowledge, next to the other recall tool: "what am I
         // working on" reaches every surface as a capability rather than as a
         // slash command one transport would have to reimplement.
-        if self.inner.config.commitment.enabled {
+        if self.effective_commitment() {
             tools.push(Arc::new(tools_commitments::CommitmentsTool {
                 sessions_home: self.sessions_home(),
             }));
@@ -4144,13 +4323,13 @@ impl Core {
         // Bounded web fetch (docs/design/29-personal-os.md P4): registered
         // like the other broker-owned narrow tools; every dispatch crosses
         // the permission engine, where it is classified network-capable.
-        if self.inner.config.tools.web_fetch {
+        if self.effective_web_fetch() {
             tools.push(Arc::new(vak_tools::WebFetchTool));
         }
         // Headless-browser DOM render: same narrow broker-owned shape as
         // webfetch — the child Chromium process is spawned from wherever the
         // tool executes, never holding policy or credentials.
-        if self.inner.config.tools.browse {
+        if self.effective_browse() {
             tools.push(Arc::new(vak_tools::WebBrowseTool));
         }
         if self.effective_subagents()
@@ -6637,6 +6816,92 @@ mod capability_reach_tests {
             blocked("mcp", "mcp server `b`"),
         ];
         assert_eq!(reach::fully_blocked_tools(&all), vec!["mcp"]);
+    }
+
+    #[test]
+    fn denied_skill_is_blocked_and_dropped_from_descriptors() {
+        let dir = workspace("deny = [\"-skill(blocked-skill)\"]");
+        let skill_dir = dir.path().join(".vak/skills/blocked-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: blocked-skill\ndescription: test blocked skill\n---\nbody",
+        )
+        .unwrap();
+
+        let core = core_for(&dir, true);
+        let standings = core.capability_standings();
+        let standing = standing_for(&standings, "skill `blocked-skill`");
+        assert_eq!(standing.reach, Reach::Blocked);
+
+        let descriptors = core.capability_descriptors();
+        assert!(
+            !descriptors.iter().any(|d| d.name == "blocked-skill"),
+            "blocked skill must not be in admitted capability descriptors"
+        );
+
+        let prompt = core.system_prompt();
+        assert!(
+            prompt.contains("skill `blocked-skill`"),
+            "prompt should report blocked skill in standing section"
+        );
+    }
+
+    #[test]
+    fn capability_diagnostics_reports_parse_failure_and_prompt_includes_it() {
+        let dir = workspace("");
+        let bad_skill_dir = dir.path().join(".vak/skills/Bad_Skill");
+        std::fs::create_dir_all(&bad_skill_dir).unwrap();
+        std::fs::write(
+            bad_skill_dir.join("SKILL.md"),
+            "---\nname: Bad_Skill\ndescription: bad format\n---\nbody",
+        )
+        .unwrap();
+
+        let core = core_for(&dir, true);
+        let diags = core.capability_diagnostics();
+        let bad_diag = diags.iter().find(|d| d.name == "Bad_Skill");
+        assert!(bad_diag.is_some(), "diagnostic must report Bad_Skill");
+        assert!(bad_diag.unwrap().reason.contains("lowercase kebab-case"));
+
+        let prompt = core.system_prompt();
+        assert!(prompt.contains("skill `Bad_Skill`"));
+        assert!(prompt.contains("Fix: fix the SKILL.md frontmatter"));
+    }
+
+    #[test]
+    fn tools_and_commitment_overrides_are_dynamic() {
+        let dir = workspace("");
+        let core = core_for(&dir, true);
+
+        // web_fetch and browse default to true
+        assert!(core.effective_web_fetch());
+        assert!(core.effective_browse());
+        assert!(core.tool_names().contains(&"webfetch".to_string()));
+        assert!(core.tool_names().contains(&"browse".to_string()));
+
+        // Apply dynamic tool toggle: disable both
+        core.apply_persisted_tools(false, false);
+        assert!(!core.effective_web_fetch());
+        assert!(!core.effective_browse());
+        assert!(!core.tool_names().contains(&"webfetch".to_string()));
+        assert!(!core.tool_names().contains(&"browse".to_string()));
+
+        // Toggle back
+        core.apply_persisted_tools(true, true);
+        assert!(core.effective_web_fetch());
+        assert!(core.effective_browse());
+        assert!(core.tool_names().contains(&"webfetch".to_string()));
+        assert!(core.tool_names().contains(&"browse".to_string()));
+
+        // Toggle commitment
+        core.apply_persisted_commitment(true);
+        assert!(core.effective_commitment());
+        assert!(core.tool_names().contains(&"commitments".to_string()));
+
+        core.apply_persisted_commitment(false);
+        assert!(!core.effective_commitment());
+        assert!(!core.tool_names().contains(&"commitments".to_string()));
     }
 }
 
