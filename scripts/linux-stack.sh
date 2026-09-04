@@ -54,6 +54,30 @@ case "$CMD" in
 status)
     docker ps --filter "name=$NAME" --format '  {{.Names}}  {{.Status}}  {{.Ports}}' \
         || true
+    # Which commit is this container actually running?
+    #
+    # `up` binds /src to a `git archive HEAD` SNAPSHOT, deliberately, so an
+    # in-flight editing session cannot race the container's build. The cost
+    # is that the snapshot is frozen at the commit `up` ran on — and
+    # `docker restart` faithfully rebuilds *that*, so a restart looks like a
+    # refresh and is not one. A container quietly serving day-old code while
+    # reporting healthy is exactly the failure this repository keeps
+    # finding; here is where it becomes visible.
+    RUNNING_SHA="$(docker inspect "$NAME" \
+        --format '{{range .Config.Env}}{{if eq (index (split . "=") 0) "VAK_STACK_SRC_SHA"}}{{index (split . "=") 1}}{{end}}{{end}}' \
+        2>/dev/null || true)"
+    HEAD_SHA="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    if [[ -z "$RUNNING_SHA" ]]; then
+        printf '\n  source:  unknown — this container predates source stamping.\n'
+        printf '           Re-create it to find out: scripts/linux-stack.sh up\n'
+    elif [[ "$RUNNING_SHA" == "$HEAD_SHA" ]]; then
+        printf '\n  source:  %s (current)\n' "$RUNNING_SHA"
+    else
+        printf '\n  source:  %s — STALE. HEAD is %s.\n' "$RUNNING_SHA" "$HEAD_SHA"
+        printf '           `docker restart` will NOT pick this up: the container builds\n'
+        printf '           from a snapshot taken when `up` ran. Re-create it:\n'
+        printf '             scripts/linux-stack.sh up\n'
+    fi
     if docker exec "$NAME" test -f /root/vak-home/.env 2>/dev/null; then
         TOKEN="$(docker exec "$NAME" sh -c 'grep "^VAK_GATEWAY_TOKEN=" /root/vak-home/.env | cut -d= -f2-' 2>/dev/null || true)"
         [[ -n "$TOKEN" ]] && printf '\n  http://127.0.0.1:%s/admin?token=%s#/overview\n' "$PORT" "$TOKEN"
@@ -82,7 +106,8 @@ docker rm -f "$NAME" >/dev/null 2>&1 || true
 # touched or rebuilt.
 SRC_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vak-stack-src.XXXXXX")"
 git -C "$ROOT_DIR" archive HEAD | tar -x -C "$SRC_DIR"
-printf 'source:    committed HEAD (%s)\n' "$(git -C "$ROOT_DIR" rev-parse --short HEAD)"
+SRC_SHA="$(git -C "$ROOT_DIR" rev-parse --short HEAD)"
+printf 'source:    committed HEAD (%s)\n' "$SRC_SHA"
 
 printf '== bringing up a Linux stack ==\n'
 printf 'container: %s\n' "$NAME"
@@ -174,6 +199,8 @@ docker run -d --name "$NAME" \
     -v "$SRC_DIR:/src" \
     -w /src \
     -e CARGO_TARGET_DIR=/tmp/target \
+    -e VAK_STACK_SRC_SHA="$SRC_SHA" \
+    -e VAK_GIT_SHA="$SRC_SHA" \
     -e STACK_MODEL="$MODEL" \
     -e STACK_BOT_TOKEN="${VAK_CHECK_BOT_TOKEN:-}" \
     -e STACK_TAVILY_KEY="${VAK_CHECK_TAVILY_KEY:-}" \
