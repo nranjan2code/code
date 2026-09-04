@@ -160,7 +160,12 @@ if [[ "$SERVICES" == true ]]; then
     printf '\n== services ==\n'
     status_args=(self status)
     [[ -n "$PREFIX" ]] && status_args+=(--prefix "$PREFIX")
-    if "$BIN_DIR/vak" "${status_args[@]}" 2>/dev/null | grep -q '^service '; then
+    # Captured, not piped. `self status` exits 1 when it finds drift, and
+    # under `pipefail` that fails the whole pipeline however well grep did —
+    # so the check took the "nothing registered" branch in exactly the case
+    # it exists for: services present and stale.
+    service_report="$("$BIN_DIR/vak" "${status_args[@]}" 2>/dev/null || true)"
+    if grep -q '^service ' <<<"$service_report"; then
         sync_args=(self services-sync)
         [[ -n "$PREFIX" ]] && sync_args+=(--prefix "$PREFIX")
         "$BIN_DIR/vak" "${sync_args[@]}"
