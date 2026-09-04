@@ -776,10 +776,7 @@ mod tests {
             let engagement = derive(&r, &Authority::default(), true);
             for domain in FLOOR_DOMAINS {
                 assert!(
-                    engagement
-                        .limits
-                        .required_domains
-                        .contains(*domain),
+                    engagement.limits.required_domains.contains(*domain),
                     "{act:?} lost `{domain}` and cannot orient itself"
                 );
             }
@@ -798,10 +795,7 @@ mod tests {
             let r = reading(act, Horizon::Turn, Stakes::Inert, Evidence::None);
             let engagement = derive(&r, &Authority::default(), true);
             assert!(
-                engagement
-                    .limits
-                    .required_domains
-                    .contains("live-data"),
+                engagement.limits.required_domains.contains("live-data"),
                 "{act:?} cannot reach a live source"
             );
         }
@@ -813,12 +807,7 @@ mod tests {
         // `Answer`. A turn obliged to cite cannot satisfy that from memory.
         let r = reading(Act::Verify, Horizon::Turn, Stakes::Inert, Evidence::Cited);
         let engagement = derive(&r, &Authority::default(), true);
-        assert!(
-            engagement
-                .limits
-                .required_domains
-                .contains("live-data")
-        );
+        assert!(engagement.limits.required_domains.contains("live-data"));
     }
 
     #[test]
