@@ -52,8 +52,8 @@ product than this one claims to be.
 
 | Platform | Artifact |
 |---|---|
-| macOS | `Vak-2.0.0-<arch>.dmg` — drag `Vak.app` to Applications |
-| Linux | `vak-2.0.0-<arch>.tar.gz`, or the bootstrap script below |
+| macOS | `Vak-<version>-<arch>.dmg` — drag `Vak.app` to Applications |
+| Linux | `vak-<version>-<arch>.tar.gz`, or the bootstrap script below |
 
 The macOS build is not yet signed, so the first launch needs a right-click
 → Open rather than a double-click. Every launch after that is normal.

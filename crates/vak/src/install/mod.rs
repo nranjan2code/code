@@ -169,10 +169,39 @@ fn install_into(root: &InstallRoot, force: bool) -> Result<Manifest, String> {
         });
     }
 
+    // Before anything is placed. A bundle that cannot launch is not an
+    // install, and refusing after the commit would leave binaries with no
+    // manifest beside them — worse than either finishing or not starting.
+    let desktop = components.iter().any(|c| c.name == "vak-desktop");
+    let frontend = bundle::locate_frontend_assets();
+    bundle::require_frontend(root, frontend.as_deref(), desktop)?;
+
     tx.commit()?;
 
     let version = manifest::build_version().to_string();
-    bundle::write_metadata(root, &version, bundle::locate_frontend_assets().as_deref())?;
+    bundle::write_metadata(root, &version, frontend.as_deref(), desktop)?;
+
+    // Record the frontend as an installed asset, not just as a side effect.
+    //
+    // `verify` checks the manifest and nothing else, so anything the
+    // manifest does not describe is, as far as every check in this product
+    // is concerned, not installed. That is how a bundle could ship with a
+    // blank window and still verify clean. The digest is over the whole
+    // tree because the failure that happens is the shell arriving without
+    // the assets it names, and `index.html` alone would not notice.
+    if desktop && root.is_bundle() {
+        let resources = root.resources_dir();
+        // The manifest itself lands in this directory (a bundle keeps
+        // `install.json` under Contents/Resources), and it cannot be inside
+        // the digest it is about to carry.
+        let manifest_path = root.manifest_path();
+        components.push(Component {
+            name: "desktop-frontend".to_string(),
+            sha256: digest::of_tree_excluding(&resources, &[manifest_path.as_path()])?,
+            path: resources,
+            required: true,
+        });
+    }
 
     let m = Manifest::new(version, root.prefix().to_path_buf(), components);
     m.write(root)?;
@@ -598,6 +627,27 @@ fn update(
     let key = feed::platform_key();
     let artifacts = feed.artifacts_for(&key)?;
 
+    // A release feed ships executables and nothing else (scripts/release.sh:
+    // REQUIRED/OPTIONAL are all binaries). Inside a macOS bundle the desktop
+    // app's UI is a *separate tree* under Contents/Resources, so replacing
+    // `vak-desktop` here would leave a new binary driving the previous
+    // version's frontend — the same binary/bundle skew that shipped a blank
+    // admin console twice, and one `verify` cannot see, because the files it
+    // digests did not change.
+    //
+    // Refusing is the honest answer. An update that knowingly produces a
+    // mismatched app is worse than one that says it cannot do this.
+    if root.is_bundle() && artifacts.iter().any(|a| a.name == "vak-desktop") {
+        return Err(format!(
+            "this install is a macOS application bundle at {}, and the release feed carries \
+             executables only — updating `vak-desktop` here would leave it driving the \
+             previous version's frontend.\nInstall the {} disk image instead, or update a \
+             non-bundle prefix with `--prefix`.",
+            root.prefix().display(),
+            feed.version()?,
+        ));
+    }
+
     // Download and verify every artifact before touching the install.
     let mut tx = Transaction::begin(root)?;
     let mut next_components = Vec::new();
@@ -648,7 +698,11 @@ fn update(
     installed.components = next_components;
     installed.write(root)?;
 
-    bundle::write_metadata(root, &installed.version, None)?;
+    // `desktop: false` — the refusal above guarantees this update carried
+    // no `vak-desktop`, so there is no frontend requirement to enforce and
+    // nothing under Resources to replace. All this call still does is
+    // restamp Info.plist with the new version.
+    bundle::write_metadata(root, &installed.version, None, false)?;
     Ok(Some(installed.version.clone()))
 }
 

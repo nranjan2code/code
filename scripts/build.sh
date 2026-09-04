@@ -80,6 +80,18 @@ else
     printf '\nnpm not found — leaving crates/vak-admin-ui/dist as committed\n' >&2
 fi
 
+# The public site at `/` is the third bundle vak-server embeds, and the only
+# one that needs no npm — so unlike the two frontends it is never skipped.
+# vak-server's build.rs refuses to compile against a site/dist that no longer
+# matches site/src, so building it here is what keeps an ordinary build
+# working after a site edit instead of failing with an instruction.
+if command -v python3 >/dev/null; then
+    printf '\n== site ==\n'
+    python3 "$ROOT_DIR/crates/vak-server/site/build.py"
+else
+    printf '\npython3 not found — leaving crates/vak-server/site/dist as committed\n' >&2
+fi
+
 # The desktop frontend is embedded into the bundle's Resources by the
 # installer, so it has to exist before `self install` runs.
 if [[ "$DESKTOP" == true ]]; then

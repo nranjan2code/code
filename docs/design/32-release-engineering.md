@@ -95,6 +95,29 @@ updated, or removed.
    every component against its digest, so tampering and truncation are
    detected rather than assumed absent. Schema 1 manifests are migrated
    on read.
+
+   A component may be a **tree**, not only a file: on macOS the desktop
+   frontend is recorded as `desktop-frontend`, path `Contents/Resources`,
+   digested over every file it contains including their relative paths, so
+   a deleted, added or renamed asset all move the digest. Digesting only
+   `index.html` would miss the failure that actually happens — the shell
+   arrives and the JS it names does not, and the app opens a blank window
+   with nothing in the console to say why.
+
+   The manifest is **excluded from a tree it lives inside**. In a bundle
+   `install.json` sits in `Contents/Resources`, and a manifest cannot carry
+   a digest of a tree that contains the manifest: the value changes the
+   moment it is written, and every fresh install verifies as corrupt.
+
+7a. **Anything the manifest does not describe is not installed.** `verify`
+   reads the manifest and nothing else, so a component absent from it is
+   invisible to every check in the product. That is how a macOS bundle
+   could ship with no frontend at all, report success, and verify clean:
+   `write_metadata` skipped the copy silently when
+   `crates/vak-client-ui/dist` was missing, and nothing described the copy
+   afterwards. Installing the desktop app into a bundle now **requires**
+   its frontend, checked before the transaction commits so a refusal
+   leaves nothing behind, and records it as a component afterwards.
 8. **Every mutation is a transaction.** Install and update stage all
    files first, verify the whole set, then move them into place, keeping
    what they displaced until the last move succeeds. Any failure restores
@@ -243,6 +266,23 @@ Three layers now, innermost first:
 3. `scripts/build.sh` builds the admin frontend (it already built the desktop
    one); `scripts/release.sh` rebuilds both and additionally fails on a
    *committed* `dist/` diff, which a local build cannot see.
+
+**The public site is the third such bundle** (docs/design/48-web-client.md
+§4.6). `crates/vak-server/site/dist` is committed and embedded with
+`include_dir!`, and has the identical trap minus npm: it is built by
+`site/build.py`, which writes the same `.src-manifest` format, so
+`vak-server`'s `build.rs` refuses to compile against a stale one. It runs
+unconditionally in `scripts/build.sh` (no npm needed), `--check` in CI, and
+rebuild-and-diff in `scripts/release.sh`. `.gitignore`'s blanket `dist/`
+rule has to keep negating it, or the whole bundle silently stops being
+committed.
+
+**A release feed carries executables only.** So `self update` refuses to
+touch a macOS bundle that would have its `vak-desktop` replaced: the
+frontend under `Contents/Resources` is not in the feed, and updating the
+binary alone leaves it driving the previous version's UI — a skew `verify`
+cannot see, because the files it digests did not change. The remedy the
+error names is the disk image.
 
 ## Release discipline
 

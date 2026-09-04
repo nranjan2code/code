@@ -53,12 +53,50 @@ pub fn info_plist(version: &str) -> String {
     )
 }
 
+/// Refuse a bundle install that would produce an unlaunchable app.
+///
+/// Separate from [`write_metadata`] so it can run **before** the install
+/// transaction commits. Failing after the commit left the binaries in place
+/// with no manifest beside them — a half-install that `status` reads as
+/// broken and `verify` cannot even find, which is a worse outcome than
+/// either finishing or not starting.
+pub fn require_frontend(
+    root: &InstallRoot,
+    assets: Option<&Path>,
+    desktop: bool,
+) -> Result<(), String> {
+    if !root.is_bundle() || !desktop || assets.is_some_and(Path::exists) {
+        return Ok(());
+    }
+    Err(
+        "the desktop app is being installed into a bundle, but its frontend was not found at \
+         crates/vak-client-ui/dist. The installed app would open a blank window. Build it \
+         first:\n    cd crates/vak-client-ui && npm ci && npm run build\n(or install without \
+         the desktop app: scripts/build.sh --no-desktop)"
+            .to_string(),
+    )
+}
+
 /// Write `Info.plist` and copy the desktop frontend assets into
 /// `Contents/Resources`, so a bundle install is launchable from Finder.
+///
+/// `desktop` says whether the `vak-desktop` binary is part of this install.
+/// When it is, the frontend is **required**: `tauri.conf.json` points
+/// `frontendDist` at `crates/vak-client-ui/dist`, and the installed app
+/// loads that copy out of `Contents/Resources`. Without it the app opens a
+/// blank window with nothing in the console to explain why.
+///
+/// This used to be a silent skip — `if let Some(dist) = assets.filter(...)`
+/// with no else — so `vak self install` into the default macOS prefix with
+/// no built frontend reported success, wrote a manifest, and produced an
+/// app that did not work. `verify` then passed, because it only looked at
+/// the binaries. An install that cannot run is a failed install, and it has
+/// to say so at the moment it happens.
 pub fn write_metadata(
     root: &InstallRoot,
     version: &str,
     assets: Option<&Path>,
+    desktop: bool,
 ) -> Result<(), String> {
     if !root.is_bundle() {
         return Ok(());
@@ -68,7 +106,9 @@ pub fn write_metadata(
         .map_err(|e| format!("mkdir {}: {e}", contents.display()))?;
     // Plist first: a bundle without one is not launchable as an app.
     atomic::write(&contents.join("Info.plist"), info_plist(version).as_bytes())?;
-    if let Some(dist) = assets.filter(|p| p.exists()) {
+    require_frontend(root, assets, desktop)?;
+    let dist = assets.filter(|p| p.exists());
+    if let Some(dist) = dist {
         // Every frontend rebuild produces new content-hashed filenames
         // (Vite), and copy_dir only ever adds files, never removes ones
         // absent from the source. Without clearing the destination
@@ -155,7 +195,7 @@ mod tests {
     fn metadata_is_a_no_op_for_a_plain_prefix() {
         let d = tempfile::tempdir().unwrap();
         let root = InstallRoot::at(d.path().to_path_buf());
-        write_metadata(&root, "1.0.0", None).unwrap();
+        write_metadata(&root, "1.0.0", None, false).unwrap();
         assert!(!d.path().join("Contents").exists());
     }
 
@@ -163,7 +203,7 @@ mod tests {
     fn bundle_metadata_writes_a_launchable_plist() {
         let d = tempfile::tempdir().unwrap();
         let root = InstallRoot::at(d.path().join("Vak.app"));
-        write_metadata(&root, "0.8.0", None).unwrap();
+        write_metadata(&root, "0.8.0", None, false).unwrap();
         let plist = std::fs::read_to_string(root.prefix().join("Contents/Info.plist")).unwrap();
         assert!(plist.contains("0.8.0"));
         assert!(
@@ -180,7 +220,7 @@ mod tests {
         // not just that the plist names a file that isn't there.
         let d = tempfile::tempdir().unwrap();
         let root = InstallRoot::at(d.path().join("Vak.app"));
-        write_metadata(&root, "0.8.0", None).unwrap();
+        write_metadata(&root, "0.8.0", None, false).unwrap();
         if locate_icon().is_some() {
             let copied = root.prefix().join("Contents/Resources/icon.icns");
             assert!(copied.is_file(), "icon.icns must be copied into the bundle");
@@ -205,7 +245,7 @@ mod tests {
             b"<script src=assets/index-OLDHASH.js>",
         )
         .unwrap();
-        write_metadata(&root, "1.0.0", Some(&first_dist)).unwrap();
+        write_metadata(&root, "1.0.0", Some(&first_dist), true).unwrap();
         assert!(
             root.resources_dir()
                 .join("assets/index-OLDHASH.js")
@@ -220,7 +260,7 @@ mod tests {
             b"<script src=assets/index-NEWHASH.js>",
         )
         .unwrap();
-        write_metadata(&root, "1.0.1", Some(&second_dist)).unwrap();
+        write_metadata(&root, "1.0.1", Some(&second_dist), true).unwrap();
 
         assert!(
             !root
@@ -234,5 +274,40 @@ mod tests {
                 .join("assets/index-NEWHASH.js")
                 .exists()
         );
+    }
+
+    /// The regression this whole change exists for: a bundle install that
+    /// carries the desktop app but no frontend used to succeed, and the
+    /// installed app opened a blank window.
+    #[test]
+    fn a_bundle_with_the_desktop_app_and_no_frontend_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().join("Vak.app");
+        std::fs::create_dir_all(prefix.join("Contents/MacOS")).unwrap();
+        let root = InstallRoot::resolve(Some(prefix));
+
+        let err = write_metadata(&root, "1.0.0", None, true)
+            .expect_err("a desktop bundle with no frontend must not install");
+        assert!(
+            err.contains("blank window") && err.contains("npm run build"),
+            "the error must name the consequence and the fix, got: {err}"
+        );
+
+        // Without the desktop app there is no frontend to require.
+        write_metadata(&root, "1.0.0", None, false).expect("a CLI-only bundle needs no frontend");
+    }
+
+    /// An assets path that is recorded but absent is the same failure as
+    /// no path at all, and was the likelier of the two: a stale
+    /// `locate_frontend_assets` hit after someone deleted `dist/`.
+    #[test]
+    fn a_frontend_path_that_does_not_exist_is_refused_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().join("Vak.app");
+        std::fs::create_dir_all(prefix.join("Contents/MacOS")).unwrap();
+        let root = InstallRoot::resolve(Some(prefix));
+
+        let gone = dir.path().join("was-here");
+        assert!(write_metadata(&root, "1.0.0", Some(&gone), true).is_err());
     }
 }

@@ -139,6 +139,7 @@ impl Manifest {
     /// Check every recorded component against the filesystem. An empty
     /// result means the install is exactly what the manifest claims.
     pub fn verify(&self) -> Vec<Defect> {
+        let manifest_path = vak_core::install::manifest_path_for_prefix(&self.prefix);
         let mut defects = Vec::new();
         for c in &self.components {
             if !c.path.exists() {
@@ -156,7 +157,17 @@ impl Manifest {
             if c.sha256.is_empty() {
                 continue;
             }
-            match digest::of_file(&c.path) {
+            // A component may be a tree — the desktop frontend is one —
+            // and `of_file` on a directory fails with an IO error that
+            // would read as corruption rather than as the wrong check.
+            let computed = if c.path.is_dir() {
+                // Same exclusion the install used: in a bundle this
+                // manifest lives inside the tree it describes.
+                digest::of_tree_excluding(&c.path, &[manifest_path.as_path()])
+            } else {
+                digest::of_file(&c.path)
+            };
+            match computed {
                 Ok(actual) if actual == c.sha256 => {}
                 Ok(_) => defects.push(Defect::Corrupt {
                     name: c.name.clone(),
