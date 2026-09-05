@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub mod adapters;
 pub mod client;
 pub mod discord;
 pub mod outbox;
@@ -17,6 +18,9 @@ pub mod slack;
 pub mod telegram;
 pub mod templates;
 
+pub use adapters::{
+    AdapterRegistry, ResultAdapter, built_in_adapters, structured_outputs_from_tool_result,
+};
 pub use presentation::{
     ArtifactRef, CalloutTone, Citation, DocumentBlock, DocumentCoverage,
     DocumentCoverageDisposition, InlineNode, OutputContent, OutputItem, OutputKind,

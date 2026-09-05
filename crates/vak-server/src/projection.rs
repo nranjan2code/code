@@ -3,9 +3,10 @@ use std::collections::{BTreeMap, HashMap};
 use vak_agent::AgentEvent;
 use vak_delivery::{
     ArtifactRef, DeliveryAction, OutputContent, OutputItem, OutputKind, OutputProvenance,
-    OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline, SignalContext, built_in_recipes,
-    built_in_skill_registry, compile_markdown, link_previews_from_text, signals_from_context,
-    structured_markdown, structured_outputs_from_text,
+    OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline, SignalContext, built_in_adapters,
+    built_in_recipes, built_in_skill_registry, compile_markdown, link_previews_from_text,
+    signals_from_context, structured_markdown, structured_outputs_from_text,
+    structured_outputs_from_tool_result,
 };
 use vak_llm::{ContentBlock, Role};
 use vak_session::{ActivityKind, ActivityStatus, EntryPayload, SessionLog};
@@ -252,18 +253,27 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                                     .clone()
                                     .unwrap_or_else(|| format!("{name} completed")),
                             });
-                            // A tool renders richly by tagging its own result with a
-                            // `semantic_type`, the same self-declared contract a model
-                            // uses inline (`structured_outputs_from_text` +
-                            // `SkillRegistry::validate`). No tool is named here: any
-                            // tool, present or future, gets this for free by emitting
-                            // a ```vak fence the registry recognizes, and nothing
-                            // renders when it doesn't — no shape is guessed from a
-                            // tool's name or its raw JSON.
+                            // A tool renders richly one of two ways, neither of
+                            // which names the tool: it self-declares a
+                            // `semantic_type` in its own result (fenced or bare —
+                            // `structured_outputs_from_text`), or — since most
+                            // tools are third-party and cannot be asked to adopt
+                            // our envelope — a registered `ResultAdapter`
+                            // recognizes its specific, known response shape
+                            // (`built_in_adapters`). Either way the candidate
+                            // still has to pass `SkillRegistry::validate` before
+                            // anything renders from it, and the tool's own
+                            // stored result is read, never rewritten.
                             if !failed {
                                 for (structured_index, output) in detail
                                     .as_deref()
-                                    .map(structured_outputs_from_text)
+                                    .map(|text| {
+                                        structured_outputs_from_tool_result(
+                                            text,
+                                            "desktop",
+                                            &built_in_adapters(),
+                                        )
+                                    })
                                     .unwrap_or_default()
                                     .into_iter()
                                     .enumerate()
