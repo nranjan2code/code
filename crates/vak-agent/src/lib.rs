@@ -330,7 +330,7 @@ pub struct AgentConfig {
 }
 
 pub type HookRecorder = Arc<dyn Fn(&vak_hooks::HookDef, bool, u64) + Send + Sync>;
-pub type ToolActivityRecorder = Arc<dyn Fn(&str, bool, u64) + Send + Sync>;
+pub type ToolActivityRecorder = Arc<dyn Fn(&str, &serde_json::Value, bool, u64) + Send + Sync>;
 pub type RevocationCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
 
 impl AgentConfig {
@@ -3291,6 +3291,7 @@ async fn execute_one(
     events: &mpsc::Sender<AgentEvent>,
 ) -> (String, ToolRunOutput) {
     let started = std::time::Instant::now();
+    let activity_input = call.input.clone();
     let _ = events
         .send(AgentEvent::ToolCallStart {
             id: call.id.clone(),
@@ -3412,6 +3413,7 @@ async fn execute_one(
     if let Some(recorder) = tool_activity_recorder {
         recorder(
             &call.name,
+            &activity_input,
             matches!(output, ToolRunOutput::Ok(_)),
             started.elapsed().as_millis() as u64,
         );

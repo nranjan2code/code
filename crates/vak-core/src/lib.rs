@@ -4870,12 +4870,25 @@ impl Core {
         let tool_activity_ledger = finops::ActivityLedger::new(&self.sessions_home());
         let tool_activity_session = session.header().map(|h| h.session_id.clone());
         cfg.tool_activity_recorder = Some(Arc::new(
-            move |name: &str, success: bool, duration_ms: u64| {
-                let plugin = name.strip_prefix("plugin.").and_then(|rest| rest.split('.').next()).map(str::to_owned);
+            move |name: &str, args: &serde_json::Value, success: bool, duration_ms: u64| {
+                let plugin = name
+                    .strip_prefix("plugin.")
+                    .and_then(|rest| rest.split('.').next())
+                    .map(str::to_owned);
+                let activity_name = if name == "skill" {
+                    args.get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .map_or_else(
+                            || "skill/(unknown)".into(),
+                            |skill| format!("skill/{skill}"),
+                        )
+                } else {
+                    name.to_owned()
+                };
                 let _ = tool_activity_ledger.append(&finops::ActivityRow {
                     ts: chrono::Utc::now(),
                     kind: if name == "skill" { "skill" } else { "tool" }.into(),
-                    name: name.into(),
+                    name: activity_name,
                     success,
                     duration_ms: Some(duration_ms),
                     session_id: tool_activity_session.clone(),

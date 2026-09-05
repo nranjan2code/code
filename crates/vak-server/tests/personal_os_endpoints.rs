@@ -674,3 +674,50 @@ async fn digest_reports_window_math_and_clamps_days() {
     let body: serde_json::Value = res.json().await.unwrap();
     assert_eq!(body["days"], 1, "clamped low");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn finops_projects_observed_tokens_and_activity_without_zeroing_unknown_cost() {
+    let srv = spawn_server("").await;
+    let cost = vak_core::finops::FinOpsLedger::new(&srv.home);
+    cost.append(&vak_core::finops::CostRow {
+        ts: chrono::Utc::now(),
+        model: "unpriced-model".into(),
+        provider: "counting".into(),
+        input_tokens: 12,
+        output_tokens: 7,
+        cache_read_input_tokens: Some(3),
+        usd: None,
+        source: "estimated".into(),
+        session_id: "s-finops".into(),
+    })
+    .unwrap();
+    let activity = vak_core::finops::ActivityLedger::new(&srv.home);
+    activity
+        .append(&vak_core::finops::ActivityRow {
+            ts: chrono::Utc::now(),
+            kind: "mcp".into(),
+            name: "plugin.demo/search".into(),
+            success: true,
+            duration_ms: Some(19),
+            session_id: Some("s-finops".into()),
+            plugin: Some("demo".into()),
+        })
+        .unwrap();
+
+    let body: serde_json::Value = srv
+        .client
+        .get(format!("{}/finops", srv.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["day_input_tokens"], 12);
+    assert_eq!(body["day_output_tokens"], 7);
+    assert_eq!(body["unknown_rows"], 1);
+    assert_eq!(body["day_usd"], 0.0);
+    assert_eq!(body["activity"][0]["kind"], "mcp");
+    assert_eq!(body["activity"][0]["plugin"], "demo");
+    assert_eq!(body["activity"][0]["duration_ms"], 19);
+}
