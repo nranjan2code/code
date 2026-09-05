@@ -152,6 +152,7 @@ export async function refreshSessions() {
           }
         }
       }
+      pruneStreams();
     }
   } catch {
     /* backend restarting */
@@ -182,6 +183,42 @@ async function hydrate(id: string) {
 }
 
 const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * Disconnect streams for sessions that are no longer visible and not running.
+ *
+ * Browsers and WebKit enforce an operating-system standard limit of 6 concurrent
+ * HTTP/1.1 connections per host. Each session openStream creates 2 persistent
+ * EventSource connections (events + presentation). Keeping streams open across
+ * sessions quickly exhausts the 6-connection pool, stalling all subsequent
+ * fetch() calls (transcript, attach, create) indefinitely.
+ */
+function pruneStreams() {
+  const visible = new Set([activeId(), splitId()].filter((x): x is string => !!x));
+  for (const [id, es] of streams) {
+    if (!visible.has(id) && !isRunning(id)) {
+      es.close();
+      streams.delete(id);
+      const timer = reconnectTimers.get(id);
+      if (timer) {
+        clearTimeout(timer);
+        reconnectTimers.delete(id);
+      }
+    }
+  }
+  for (const [id, es] of presentationStreams) {
+    if (!visible.has(id)) {
+      es.close();
+      presentationStreams.delete(id);
+    }
+  }
+  for (const [id, es] of sideStreams) {
+    if (!visible.has(id)) {
+      es.close();
+      sideStreams.delete(id);
+    }
+  }
+}
 
 function openStream(id: string) {
   if (streams.has(id)) return;
@@ -215,7 +252,10 @@ function openStream(id: string) {
         id,
         setTimeout(() => {
           reconnectTimers.delete(id);
-          openStream(id);
+          const visible = new Set([activeId(), splitId()].filter((x): x is string => !!x));
+          if (visible.has(id) || isRunning(id)) {
+            openStream(id);
+          }
         }, 2000),
       );
     },
@@ -320,6 +360,7 @@ function onFinished(id: string, summary: string) {
   // settled snapshot cannot flash over the just-finished live transcript.
   setHydratingId(id);
   markRunning(id, false);
+  pruneStreams();
   void Promise.all([refreshSessions(), hydrate(id)]);
   if (document.hidden && id === activeId()) {
     const s = sessions().find((x) => x.session_id === id);
@@ -343,6 +384,7 @@ export async function activate(id: string) {
   if (sessions().find((session) => session.session_id === id)?.running) {
     markRunning(id, true);
   }
+  pruneStreams();
   // Persisted sessions must be attached server-side before they can accept
   // runs; for live sessions the server keeps the existing handle (idempotent).
   try {
@@ -355,6 +397,7 @@ export async function activate(id: string) {
 }
 
 export async function newSession() {
+  pruneStreams();
   try {
     const res = await api.createSession();
     resetSessionView(res.session_id);
@@ -393,6 +436,7 @@ export async function toggleSplit(candidate?: string) {
 export function closeSplit() {
   setSplitId(null);
   setSplitFocused(false);
+  pruneStreams();
 }
 
 /** Swap pane contents so the clicked side becomes the focused one. */
@@ -722,6 +766,8 @@ export async function switchWorkspace(cwd?: string) {
 function closeAllStreams() {
   streams.forEach((es) => es.close());
   streams.clear();
+  reconnectTimers.forEach((timer) => clearTimeout(timer));
+  reconnectTimers.clear();
   presentationStreams.forEach((es) => es.close());
   presentationStreams.clear();
 }
