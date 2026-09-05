@@ -5,6 +5,14 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.6 — 2026-09-05
+
+### Enhanced renderer visualization and canvas harmony
+
+- Integrate native Mermaid SVG diagram generation into Markdown and presentation views.
+- Expand multi-theme syntax highlighting support across code canvas blocks.
+- Refine canvas harmony and layout transitions for rich outcome-first desktop and web presentations.
+
 ## 3.0.5 — 2026-09-05
 
 ### Capability-driven presentation planning
