@@ -24,6 +24,7 @@ pub mod registry;
 pub mod report;
 pub mod resolution;
 pub mod snapshot;
+pub mod turn;
 
 pub use domain::{Domain, Serves};
 pub use provider::required_domains;
@@ -36,3 +37,7 @@ pub use resolution::{Failure, Resolution};
 pub use snapshot::{
     Binding, Capability, CapabilityDelta, CapabilityId, CapabilitySet, Epoch, Origin,
 };
+pub use turn::{TurnCapabilities, TurnProbe};
+
+/// The MCP inventory: a list of (server name, discovered tools).
+pub type McpInventory = Vec<(String, Vec<vak_mcp::McpToolInfo>)>;

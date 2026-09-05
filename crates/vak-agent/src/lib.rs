@@ -538,7 +538,13 @@ impl Agent {
             .tool_definitions
             .clone()
             .unwrap_or_else(|| vak_tools::definitions(&self.config.tools));
-        if self.config.work_mode == WorkMode::Managed
+        // The `work` tool definition is admitted iff the `flow` capability
+        // survived the full four-stage pipeline in vak-core (channel →
+        // reach → contract → domain slice). `flow_dispatcher` is None when
+        // the pipeline rejected `flow` — so we check that, not just
+        // `work_mode == Managed`, which would append `work` even when the
+        // domain slice correctly withheld it.
+        if self.config.flow_dispatcher.is_some()
             && !definitions
                 .iter()
                 .any(|definition| definition.name == "work")

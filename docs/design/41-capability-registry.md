@@ -233,6 +233,9 @@ crates/vak-core/src/capability/
   registry.rs    CapabilityRegistry, the reconcile loop, revocation channel
   provider.rs    Core as CapabilityProvider; five kinds → one declaration set
   report.rs      CapabilityReport and the model's standing section
+  turn.rs        TurnCapabilities, TurnProbe, and the single build() pipeline
+                  covering channel → reach → contract → domain slice for
+                  ALL four kinds (tool, MCP, skill, hook) in one place
 ```
 
 Tests: `crates/vak-core/tests/capability_lifecycle.rs` pins the behaviours
@@ -240,3 +243,31 @@ that failed silently — a down server is named and never faked, a recovered
 server becomes usable with no restart, capabilities can be added, edited and
 removed while running, a quiet world never churns the epoch, and an
 undeclared capability survives every slice.
+
+### Turn capabilities (`turn.rs`)
+
+`TurnCapabilities` is the single assembly point for every capability kind
+that crosses the broker boundary into `Agent::tool_definitions()` or the
+MCP catalog observer. It runs four stages in order:
+
+1. **Channel policy** — `ChannelPolicy` allow/deny globs for tools, MCP,
+   skills, and hooks.
+2. **Reach standings** — per-capability availability based on live
+   resolution state (a down MCP server is named and skipped, not faked).
+3. **Frozen contract** — only capabilities present in the session's
+   `FrozenContract.capabilities` are retained.
+4. **Domain slice** — the intent-derived `required_domains` set is
+   intersected against each capability's `Serves` declaration; undeclared
+   capabilities fail open.
+
+Outputs: `mcp_aliases` (aliased tool definitions scoped to surviving
+servers), `mcp_server_names` (for the catalog observer's `GET /mcp/tools`
+prune), `hooks` (already filtered through all four stages),
+`frozen_skills` (constructed from the surviving set, never assembled
+separately), and `flow_admitted` (a bool that replaces the post-hoc
+`work` tool append in `Agent::tool_definitions()`).
+
+The 19 unit tests in `turn.rs` cover each kind individually (survive +
+blocked), both domain-slice paths, channel-deny blocking, contract
+filtering, and two combined cases that exercise all four kinds through
+a single `TurnCapabilities::build()` call.

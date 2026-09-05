@@ -586,6 +586,9 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      Core's five discovery paths into one declaration set,
                      report.rs is the single projection the model, doctor and
                      the console all render),
+                     capability/turn.rs (TurnCapabilities: the single four-stage
+                     pipeline for all capability kinds at turn admission:
+                     channel → reach → contract → domain slice),
                      intent.rs (the seam: gathers facts, runs the cascade,
                      projects the engagement onto runtime knobs -- every
                      function takes a baseline and returns something no

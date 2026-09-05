@@ -7,6 +7,35 @@ for those releases were removed from this file; `git log` holds them.
 
 ## 2.3.2 — Unreleased
 
+### Capability assembly consolidation
+
+- **Root cause fix:** MCP aliases, hooks, skills, and `flow`/`work` tool
+  admission previously assembled through four divergent code paths in
+  `vak-agent` and `vak-core`, each skipping different filter stages.
+  MCP aliases bypassed reach + domain-slice entirely; the `work` tool
+  definition was appended *after* all filters had already run; hooks from
+  plugin capabilities were never filtered by domain slice.
+
+  A single `TurnCapabilities::build()` pipeline in `crates/vak-core/src/
+  capability/turn.rs` is now the **only** assembly point for all four
+  capability kinds. Every kind passes through the same four stages —
+  channel policy → reach standings → frozen contract → domain slice —
+  before reaching the agent or the model.
+
+- `Agent::tool_definitions()` in `vak-agent` no longer appends `work`
+  unconditionally when `work_mode == Managed`; it now checks
+  `flow_dispatcher.is_some()`, which is only set when the `flow`
+  capability survived the domain slice.
+
+- Removed dead code: `Core::mcp_aliases_for_session`, the old
+  `mcp_aliases_from_inventory` free function, and
+  `Core::hooks_from_capabilities`. These are superseded by
+  `turn::mcp_aliases_from_inventory` and `TurnCapabilities::build`.
+
+- Added 10 end-to-end tests covering all four capability kinds through
+  the full pipeline (tool, MCP, skill, hook) — both survive and blocked
+  cases, plus a combined greeting test and a live-data query test.
+
 ### Rendering system fix
 
 Structured ```vak fences in assistant answers and tool results are now

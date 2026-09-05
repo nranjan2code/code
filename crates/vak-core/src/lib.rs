@@ -4199,6 +4199,38 @@ impl Core {
             "a derived engagement widened the baseline"
         );
 
+        // ---- turn-capability assembly (docs/design/41-capability-registry.md § Turn) ----
+        // One pipeline for all five kinds. MCP aliases, hooks, frozen skills,
+        // and flow-tool admission are all computed here, from the reconciled
+        // CapabilitySet, through the same four-stage filter (channel → reach →
+        // contract → domain slice). Previously each kind had its own assembly
+        // path, and MCP aliases bypassed the domain slice entirely.
+        let required_domains: std::collections::BTreeSet<capability::Domain> =
+            if self.inner.config.intent.enabled && !engagement.limits.required_domains.is_empty() {
+                engagement
+                    .limits
+                    .required_domains
+                    .iter()
+                    .map(|d| capability::Domain::parse(d))
+                    .collect()
+            } else {
+                std::collections::BTreeSet::new()
+            };
+        let cap_set = self.capability_registry().current().await;
+        let reach_standings = self.capability_standings();
+        let channel_policy = self.channel_policy().unwrap_or_default();
+        let mcp_inventory = self.cached_mcp_inventory();
+        let mut turn_capabilities = capability::TurnCapabilities::build(&capability::TurnProbe {
+            capabilities: cap_set.as_ref(),
+            session_contract: session_contract.as_ref(),
+            channel_policy: &channel_policy,
+            reach_standings: &reach_standings,
+            required_domains: &required_domains,
+            mcp_inventory: mcp_inventory.as_deref(),
+            orientation_floor: vak_intent::ORIENTATION_FLOOR,
+            builtin_names: self.tool_names(),
+        });
+
         let work_config = self.effective_work();
         // Managed-ness follows from the reading's horizon rather than from a
         // keyword scan. The old `is_managed_work_request` fired on any two of
@@ -4221,14 +4253,7 @@ impl Core {
         cfg.work_enabled = work_config.enabled;
         cfg.max_work_items = work_config.max_items;
         cfg.max_work_revisions = work_config.max_revisions;
-        if cfg.work_mode == WorkMode::Managed
-            && self.channel_tool_allowed("flow")
-            && session_contract.as_ref().is_none_or(|contract| {
-                contract.capabilities.iter().any(|capability| {
-                    capability.kind == CapabilityKind::Tool && capability.name == "flow"
-                })
-            })
-        {
+        if cfg.work_mode == WorkMode::Managed && turn_capabilities.flow_admitted {
             cfg.flow_dispatcher = Some(Arc::new(CoreFlowDispatcher { core: self.clone() }));
         }
         if let Some(contract) = &session_contract {
@@ -4358,10 +4383,12 @@ impl Core {
         }
 
         let mut tools = self.agent_tools();
-        let frozen_skills = session_contract
-            .as_ref()
-            .map(|contract| skills::frozen_from_capabilities(&contract.capabilities))
-            .unwrap_or_default();
+        // Frozen skills come from TurnCapabilities (channel + reach + contract
+        // + domain-slice, unified). The SkillTool wrapper is still a tool
+        // object in the `tools` Vec so it gets filtered by name in the
+        // pipeline below, but which skill *instances* it carries is
+        // determined here.
+        let frozen_skills = std::mem::take(&mut turn_capabilities.frozen_skills);
         let skill_tool = (!frozen_skills.is_empty())
             .then(|| Arc::new(skills::SkillTool::new(frozen_skills)) as Arc<dyn vak_tools::Tool>);
         if let Some(skill_tool) = &skill_tool {
@@ -4376,14 +4403,6 @@ impl Core {
             // once `spawn_mcp_inventory_warm` has a result, or by name
             // only until then.
             let policy = self.channel_policy().unwrap_or_default();
-            let admitted_mcp = session_contract.as_ref().map(|contract| {
-                contract
-                    .capabilities
-                    .iter()
-                    .filter(|capability| capability.kind == CapabilityKind::McpServer)
-                    .map(|capability| format!("{}/*", capability.name))
-                    .collect::<Vec<_>>()
-            });
             let context = self.plugin_mcp_invocation_context();
             let recorder = Arc::new(move |server: &str, tool: &str, success: bool| {
                 for (store, plugin, trace_id) in &context {
@@ -4398,26 +4417,29 @@ impl Core {
                     }
                 }
             });
-            let aliases = Arc::new(std::sync::Mutex::new(
-                self.mcp_aliases_for_session(session_contract.as_ref()),
-            ));
+            // MCP aliases are now computed by TurnCapabilities::build(),
+            // which applies all four filter stages including the domain
+            // slice. The catalog observer below re-filters live discoveries
+            // against the same admitted server set, so runtime discoveries
+            // never bypass the slice.
+            let admitted_servers = turn_capabilities.mcp_server_names;
+            let aliases = Arc::new(std::sync::Mutex::new(turn_capabilities.mcp_aliases.clone()));
             let aliases_for_catalog = aliases.clone();
-            let policy_for_catalog = policy.clone();
-            let admitted_for_catalog = admitted_mcp.clone();
+            let admitted_for_catalog = admitted_servers.clone();
             let builtins_for_catalog = self.tool_names();
             let mcp_tool = vak_mcp::McpTool::with_policy_and_recorder(
                 manager,
-                admitted_mcp.or(policy.mcp_allow),
-                policy.mcp_deny,
+                Some(admitted_servers.iter().map(|s| format!("{s}/*")).collect()),
+                policy.mcp_deny.clone(),
                 recorder,
             )
             .with_catalog_observer(Arc::new(move |catalog| {
-                let resolved = mcp_aliases_from_inventory(
-                    catalog,
-                    &policy_for_catalog,
-                    admitted_for_catalog.as_deref(),
-                    &builtins_for_catalog,
-                );
+                let admitted: std::collections::BTreeSet<String> =
+                    admitted_for_catalog.iter().cloned().collect();
+                let builtins: std::collections::BTreeSet<String> =
+                    builtins_for_catalog.iter().cloned().collect();
+                let resolved =
+                    capability::turn::mcp_aliases_from_inventory(catalog, &admitted, &builtins);
                 let mut current = aliases_for_catalog
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -4597,35 +4619,30 @@ impl Core {
         // someone reported a confidently wrong answer. A tool that declares
         // nothing is never sliced away, because slicing saves context and
         // does not enforce policy; `reach` and the permission engine do that.
-        if self.inner.config.intent.enabled && !engagement.limits.required_domains.is_empty() {
+        if self.inner.config.intent.enabled && !required_domains.is_empty() {
             let declared_serves = self.declared_tool_domains();
             let before = tools.len();
-            let required: std::collections::BTreeSet<capability::Domain> = engagement
-                .limits
-                .required_domains
-                .iter()
-                .map(|name| capability::Domain::parse(name))
-                .collect();
             tools.retain(|tool| {
                 if vak_intent::ORIENTATION_FLOOR.contains(&tool.name()) {
                     return true;
                 }
                 match declared_serves.get(tool.name()) {
                     None => true,
-                    Some(serves) => serves.intersection(&required).next().is_some(),
+                    Some(serves) => serves.intersection(&required_domains).next().is_some(),
                 }
             });
             debug_assert!(tools.len() <= before, "the intent slice added a tool");
         }
         cfg.tool_definitions = Some(vak_tools::definitions(&tools));
         cfg.tools = tools;
-        let hook_configs = session_contract
-            .as_ref()
-            .map(|contract| hooks_from_capabilities(&contract.capabilities))
-            .unwrap_or_else(|| self.effective_hooks());
-        let hooks: Option<std::sync::Arc<Vec<vak_hooks::HookDef>>> =
-            Some(std::sync::Arc::new(build_hooks_from(&hook_configs)?));
-        cfg.hooks = hooks.clone();
+        // Hooks come from TurnCapabilities — the same four-stage pipeline
+        // that filtered tools and MCP aliases applies to hooks. Previously
+        // hooks were assembled from PluginStore with no contract or domain-
+        // slice awareness, so a hook could fire under a session whose
+        // contract never admitted it.
+        let hooks: std::sync::Arc<Vec<vak_hooks::HookDef>> =
+            std::sync::Arc::new(turn_capabilities.hooks);
+        cfg.hooks = Some(hooks.clone());
         let shared_root = self.shared_capability_root();
         let plugin_hooks: Vec<_> = self
             .capability_roots()
@@ -4658,17 +4675,16 @@ impl Core {
 
         // session-start hooks fire once per run, before any tool or
         // checkpoint activity. A block aborts the run before it starts.
-        if let Some(hook_defs) = &hooks
-            && hook_defs
-                .iter()
-                .any(|h| h.event == vak_hooks::HookEvent::SessionStart)
+        if hooks
+            .iter()
+            .any(|h| h.event == vak_hooks::HookEvent::SessionStart)
         {
             let session_id = session
                 .header()
                 .map(|h| h.session_id.clone())
                 .unwrap_or_default();
             let outcome = vak_hooks::run_hooks_with_recorder(
-                hook_defs.clone(),
+                hooks.clone(),
                 vak_hooks::HookEvent::SessionStart,
                 &session_id,
                 &self.inner.cwd,
@@ -5863,32 +5879,6 @@ fn uuid_like() -> String {
     uuid::Uuid::now_v7().to_string()
 }
 
-fn hooks_from_capabilities(capabilities: &[CapabilityDescriptor]) -> Vec<vak_config::HookConfig> {
-    capabilities
-        .iter()
-        .filter(|capability| capability.kind == CapabilityKind::Hook)
-        .filter_map(|capability| {
-            let configuration = capability.configuration.as_object()?;
-            Some(vak_config::HookConfig {
-                event: configuration.get("event")?.as_str()?.to_string(),
-                matcher: configuration
-                    .get("matcher")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string),
-                command: configuration.get("command")?.as_str()?.to_string(),
-                timeout_ms: configuration
-                    .get("timeout_ms")
-                    .and_then(serde_json::Value::as_u64),
-                enabled: true,
-                failure_mode: configuration
-                    .get("failure_mode")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string),
-            })
-        })
-        .collect()
-}
-
 pub fn build_hooks(config: &vak_config::Config) -> Result<Vec<vak_hooks::HookDef>, CoreError> {
     build_hooks_from(&config.hooks)
 }
@@ -6186,7 +6176,7 @@ fn interpolate_env_var_with(
 /// warm-up has produced for it so far.
 /// server name -> (tool name, description) pairs, as returned by
 /// `McpManager::inventory()`.
-type McpInventory = Vec<(String, Vec<vak_mcp::McpToolInfo>)>;
+use capability::McpInventory;
 
 /// A whole discovery pass: every configured server with the outcome of its
 /// probe. A failure is `Err(reason)` and never a synthesised catalog entry.
@@ -6294,67 +6284,6 @@ fn mcp_config_section(servers: &[&CapabilityDescriptor]) -> String {
         section.push_str(&catalog);
     }
     section
-}
-
-impl Core {
-    fn mcp_aliases_for_session(
-        &self,
-        session_contract: Option<&vak_session::types::FrozenContract>,
-    ) -> std::collections::HashMap<String, vak_agent::McpToolAlias> {
-        let Some(inventory) = self.cached_mcp_inventory() else {
-            return std::collections::HashMap::new();
-        };
-        let policy = self.channel_policy().unwrap_or_default();
-        let admitted = session_contract.map(|contract| {
-            contract
-                .capabilities
-                .iter()
-                .filter(|capability| capability.kind == CapabilityKind::McpServer)
-                .map(|capability| capability.name.clone())
-                .collect::<Vec<_>>()
-        });
-        mcp_aliases_from_inventory(&inventory, &policy, admitted.as_deref(), &self.tool_names())
-    }
-}
-
-fn mcp_aliases_from_inventory(
-    inventory: &[(String, Vec<vak_mcp::McpToolInfo>)],
-    policy: &vak_config::ChannelPolicy,
-    admitted: Option<&[String]>,
-    builtins: &[String],
-) -> std::collections::HashMap<String, vak_agent::McpToolAlias> {
-    let mut aliases = std::collections::HashMap::new();
-    let mut ambiguous = std::collections::HashSet::new();
-    for (server, tools) in inventory {
-        if admitted.is_some_and(|servers| !servers.iter().any(|name| name == server)) {
-            continue;
-        }
-        for tool in tools {
-            let qualified = format!("{server}/{}", tool.name);
-            if !Core::allowed_by(&policy.mcp_allow, &policy.mcp_deny, &qualified)
-                || builtins.iter().any(|name| name == &tool.name)
-            {
-                continue;
-            }
-            if aliases.contains_key(&tool.name) {
-                ambiguous.insert(tool.name.clone());
-                continue;
-            }
-            aliases.insert(
-                tool.name.clone(),
-                vak_agent::McpToolAlias {
-                    server: server.clone(),
-                    tool: tool.name.clone(),
-                    description: tool.description.clone(),
-                    schema: tool.input_schema.clone(),
-                },
-            );
-        }
-    }
-    for name in ambiguous {
-        aliases.remove(&name);
-    }
-    aliases
 }
 
 /// Phase H MEA provider: diff the run-start checkpoint against disk.
