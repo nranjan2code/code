@@ -41,7 +41,14 @@ createEffect(() => {
 
 // Unread inbox badge: polled lightly while signed in.
 const [unread, setUnread] = createSignal(0);
-const [configScope, setConfigScope] = createSignal<ConfigScope>("user");
+const [configScope, setConfigScope] = createSignal<ConfigScope>(
+  (localStorage.getItem("vak_admin_config_scope") as ConfigScope) || "user",
+);
+
+function setConfigScopePersisted(scope: ConfigScope) {
+  setConfigScope(scope);
+  localStorage.setItem("vak_admin_config_scope", scope);
+}
 
 function PromptsPage() {
   return (
@@ -50,7 +57,6 @@ function PromptsPage() {
         title="Prompts"
         description="What the agent is told before every turn. Edit a layer; narrower layers inherit it."
       />
-      <ScopeControl />
       <PromptsSection scope={configScope} pushToast={pushToast} />
     </>
   );
@@ -59,10 +65,10 @@ function PromptsPage() {
 function ScopeControl() {
   return (
     <div class="scope-control" role="group" aria-label="Configuration scope">
-      <button classList={{ active: configScope() === "user" }} onClick={() => setConfigScope("user")}>
-        Shared
+      <button classList={{ active: configScope() === "user" }} onClick={() => setConfigScopePersisted("user")}>
+        Shared · global
       </button>
-      <button classList={{ active: configScope() === "project" }} onClick={() => setConfigScope("project")}>
+      <button classList={{ active: configScope() === "project" }} onClick={() => setConfigScopePersisted("project")}>
         This project
       </button>
       <span>
@@ -70,6 +76,31 @@ function ScopeControl() {
           ? "Baseline inherited by every project"
           : "Overrides for this workspace only"}
       </span>
+    </div>
+  );
+}
+
+function AdminContextBar() {
+  const current = () => route().split("?", 1)[0] || "#/overview";
+  const scope = () => routeScope(current());
+  const layered = () => scope() === "layered";
+  return (
+    <div class="admin-context-bar" aria-label="Admin viewing context">
+      <span class="admin-context-kicker">VIEWING</span>
+      <Show when={layered()} fallback={<>
+        <span class={`scope-mark scope-mark-${scope()}`} aria-hidden="true" />
+        <strong>{scope() === "global" ? "All projects" : scope() === "switchable" ? "Workspace filter" : "This project"}</strong>
+        <span class="admin-context-detail">
+          {scope() === "global" ? "system-wide evidence and controls" : scope() === "switchable" ? "filtered projection; mutations keep their own authority" : "the server-attached workspace"}
+        </span>
+        <Show when={scope() === "switchable"}>
+          <button class="ghost small context-action" onClick={() => navigate("#/operations")}>Open workspace filter</button>
+        </Show>
+      </>}>
+        <strong>{configScope() === "user" ? "Shared baseline" : "This project"}</strong>
+        <span class="admin-context-detail">{configScope() === "user" ? "inherited by every project" : "project-only override"}</span>
+        <ScopeControl />
+      </Show>
     </div>
   );
 }
@@ -2298,7 +2329,6 @@ function ExtensionsSection() {
       <PageHeader
         title="Extensions"
         description="Give vak better ways to work — with clear boundaries, visible provenance, and one place to manage every capability."
-        actions={<ScopeControl />}
       />
       <div class="extension-overview" aria-label="Extension summary">
         <div><span class="extension-overline">CAPABILITY HUB</span><strong>Everything vak can reach</strong><span>Connected apps, instructions, automations, and background work.</span></div>
@@ -2682,13 +2712,15 @@ function FinOpsRollupTable(props: { title: string; rows: FinOpsRollupEntry[] }) 
       <span class="eyebrow">{props.title}</span>
       <Show when={props.rows.length > 0} fallback={<p class="dim">No dispatches today.</p>}>
         <table class="table">
-          <thead><tr><th>{props.title === "By provider" ? "provider" : "model"}</th><th>calls</th><th>usd</th><th>share</th></tr></thead>
+          <thead><tr><th>{props.title === "By provider" ? "provider" : "model"}</th><th>calls</th><th>input</th><th>output</th><th>usd</th><th>share</th></tr></thead>
           <tbody>
             <For each={[...props.rows].sort((a, b) => b.usd - a.usd)}>
               {(r) => (
                 <tr>
                   <td class="mono">{r.name || "(unknown)"}</td>
                   <td>{r.calls}</td>
+                  <td class="mono">{r.input_tokens.toLocaleString()}</td>
+                  <td class="mono">{r.output_tokens.toLocaleString()}</td>
                   <td class="mono">${r.usd.toFixed(4)}</td>
                   <td class="dim">{total() > 0 ? `${((r.usd / total()) * 100).toFixed(0)}%` : "—"}</td>
                 </tr>
@@ -2774,6 +2806,11 @@ function FinOpsView() {
               label="Dispatches today"
               value={(data()?.by_provider ?? []).reduce((a, p) => a + p.calls, 0)}
               sub={`${data()?.total_rows ?? 0} total in the ledger`}
+            />
+            <StatCard
+              label="Tokens today"
+              value={`${((data()?.day_input_tokens ?? 0) + (data()?.day_output_tokens ?? 0)).toLocaleString()}`}
+              sub={`↑ ${(data()?.day_input_tokens ?? 0).toLocaleString()} in · ↓ ${(data()?.day_output_tokens ?? 0).toLocaleString()} out`}
             />
             <StatCard
               label="Unpriced dispatches"
@@ -6000,6 +6037,7 @@ interface NavItem {
   label: string;
   icon: string;
   group: "Home" | "Work" | "Operations" | "Governance" | "Knowledge" | "Settings";
+  scope: "global" | "project" | "switchable" | "layered";
   badge?: () => string;
   /// Sub-destinations, rendered in the sidebar while the section is open.
   children?: readonly { readonly hash: string; readonly label: string }[];
@@ -6033,16 +6071,17 @@ function navHref(hash: string): string {
 }
 
 const NAV: NavItem[] = [
-  { group: "Home", hash: "#/setup", label: "Setup", icon: ICONS.overview },
-  { group: "Home", hash: "#/overview", label: "Home", icon: ICONS.overview },
-  { group: "Work", hash: "#/sessions", label: "Sessions", icon: ICONS.sessions },
-  { group: "Work", hash: "#/commitments", label: "Commitments", icon: ICONS.commitments },
-  { group: "Work", hash: "#/inbox", label: "Approvals", icon: ICONS.inbox, badge: () => unread().toString() || "" },
+  { group: "Home", hash: "#/setup", label: "Setup", icon: ICONS.overview, scope: "project" },
+  { group: "Home", hash: "#/overview", label: "Home", icon: ICONS.overview, scope: "global" },
+  { group: "Work", hash: "#/sessions", label: "Sessions", icon: ICONS.sessions, scope: "global" },
+  { group: "Work", hash: "#/commitments", label: "Commitments", icon: ICONS.commitments, scope: "project" },
+  { group: "Work", hash: "#/inbox", label: "Approvals", icon: ICONS.inbox, scope: "global", badge: () => unread().toString() || "" },
   {
     group: "Operations",
     hash: "#/operations",
     label: "Operations",
     icon: ICONS.operations,
+    scope: "switchable",
     children: OPERATIONS_TABS,
     activeChild: operationsTab,
   },
@@ -6055,6 +6094,7 @@ const NAV: NavItem[] = [
     hash: "#/integrations",
     label: "Extensions",
     icon: ICONS.integrations,
+    scope: "layered",
     children: EXTENSION_TABS,
     activeChild: extensionsTab,
   },
@@ -6068,17 +6108,23 @@ const NAV: NavItem[] = [
     hash: "#/gateway",
     label: "Channels",
     icon: ICONS.gateway,
+    scope: "global",
     children: GATEWAY_TABS,
     activeChild: gatewayTab,
   },
-  { group: "Governance", hash: "#/security", label: "Security", icon: ICONS.security },
-  { group: "Knowledge", hash: "#/memory", label: "Memory", icon: ICONS.memory },
-  { group: "Knowledge", hash: "#/feeds", label: "Feeds", icon: ICONS.feeds },
-  { group: "Knowledge", hash: "#/search", label: "Search", icon: ICONS.search },
-  { group: "Settings", hash: "#/finops", label: "FinOps", icon: ICONS.finops },
-  { group: "Settings", hash: "#/prompts", label: "Prompts", icon: ICONS.prompts },
-  { group: "Settings", hash: "#/settings", label: "Settings", icon: ICONS.settings },
+  { group: "Governance", hash: "#/security", label: "Security", icon: ICONS.security, scope: "global" },
+  { group: "Knowledge", hash: "#/memory", label: "Memory", icon: ICONS.memory, scope: "project" },
+  { group: "Knowledge", hash: "#/feeds", label: "Feeds", icon: ICONS.feeds, scope: "project" },
+  { group: "Knowledge", hash: "#/search", label: "Search", icon: ICONS.search, scope: "global" },
+  { group: "Settings", hash: "#/finops", label: "FinOps", icon: ICONS.finops, scope: "project" },
+  { group: "Settings", hash: "#/prompts", label: "Prompts", icon: ICONS.prompts, scope: "layered" },
+  { group: "Settings", hash: "#/settings", label: "Settings", icon: ICONS.settings, scope: "layered" },
 ];
+
+function routeScope(current: string): NavItem["scope"] {
+  if (current === "#/sessions" || current.startsWith("#/sessions/")) return "global";
+  return NAV.find((item) => current === item.hash || current.startsWith(`${item.hash}/`))?.scope ?? "global";
+}
 
 /// Source types arrive as the registry's own ids. Print the name people use.
 const FEED_TYPE_LABELS: Record<string, string> = {
@@ -6825,6 +6871,9 @@ export default function App() {
                     <a href={navHref(item.hash)} classList={{ active: currentRoute() === item.hash }}>
                       <Icon d={item.icon} />
                       {item.label}
+                      <span class={`nav-scope nav-scope-${item.scope}`} title={item.scope === "layered" ? "Shared or This project" : item.scope === "project" ? "This project" : item.scope === "switchable" ? "Workspace filter" : "All projects"}>
+                        {item.scope === "layered" ? "layers" : item.scope === "project" ? "project" : item.scope === "switchable" ? "filter" : "global"}
+                      </span>
                       <Show when={"badge" in item && item.badge?.() && Number(item.badge!()) > 0}>
                         <span class="nav-badge">{item.badge!()}</span>
                       </Show>
@@ -6854,6 +6903,7 @@ export default function App() {
             </div>
           </aside>
           <main class="main">
+            <AdminContextBar />
             <Switch>
               <Match when={currentRoute() === "#/setup"}><SetupWizard /></Match>
               <Match when={currentRoute() === "#/overview"}><Home /></Match>

@@ -236,6 +236,12 @@ html, body {
 .sidebar nav a:hover { background: var(--surface-hover); color: var(--text); }
 .sidebar nav a.active { background: var(--surface-active); color: var(--text); font-weight: 600; }
 .sidebar nav a.active svg { color: var(--accent-bright); }
+.nav-scope { margin-left: auto; color: var(--faint); font-size: 9px; font-weight: 600; letter-spacing: .02em; opacity: .72; }
+.sidebar nav a.active .nav-scope { color: var(--text-soft); opacity: 1; }
+.nav-scope-global { color: var(--blue); }
+.nav-scope-switchable { color: var(--yellow); }
+.nav-scope-project { color: var(--accent); }
+.nav-scope-layered { color: var(--green); }
 .sidebar-foot {
   margin-top: auto;
   display: flex;
@@ -267,6 +273,35 @@ html, body {
   overscroll-behavior: contain;
   padding: 20px 24px 40px;
   background: var(--bg);
+}
+
+.admin-context-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 38px;
+  margin: -4px 0 18px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-raised) 88%, var(--accent-wash));
+  color: var(--text-soft);
+  font-size: 12px;
+}
+.admin-context-kicker { color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .1em; }
+.admin-context-bar strong { color: var(--text); font-weight: 650; }
+.admin-context-detail { color: var(--muted); }
+.scope-mark { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--accent); }
+.scope-mark-global { background: var(--blue); }
+.scope-mark-switchable { background: var(--yellow); }
+.scope-mark-project { background: var(--accent); }
+.admin-context-bar .scope-control { margin-left: auto; }
+.admin-context-bar .context-action { margin-left: auto; }
+.admin-context-bar .scope-control span { display: none; }
+.admin-context-bar .scope-control button { min-height: 26px; padding: 3px 8px; font-size: 11px; }
+@media (max-width: 780px) {
+  .admin-context-bar { align-items: flex-start; flex-wrap: wrap; }
+  .admin-context-bar .scope-control { width: 100%; margin-left: 0; }
 }
 
 /* ---- shared view pieces ---- */
