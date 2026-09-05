@@ -27,6 +27,10 @@ pub struct PresentationRecipe {
     pub optional: Vec<String>,
     #[serde(default)]
     pub fallback: BTreeMap<String, String>,
+    #[serde(default)]
+    pub requires_typed_output: bool,
+    #[serde(default)]
+    pub typed_output_types: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,6 +40,10 @@ pub struct PresentationDecision {
     pub matched_signals: Vec<String>,
     pub renderer: String,
     pub disposition: DecisionDisposition,
+    #[serde(default)]
+    pub requires_typed_output: bool,
+    #[serde(default)]
+    pub typed_output_types: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,6 +198,8 @@ impl RecipeCatalog {
                     } else {
                         DecisionDisposition::Fallback
                     },
+                    requires_typed_output: recipe.requires_typed_output,
+                    typed_output_types: recipe.typed_output_types.clone(),
                 })
             })
             .max_by_key(|decision| decision.matched_signals.len())
@@ -303,6 +313,12 @@ pub fn built_in_recipes() -> RecipeCatalog {
             primary: recipe.2.into_iter().map(String::from).collect(),
             optional: Vec::new(),
             fallback,
+            requires_typed_output: matches!(recipe.0, "answer.research" | "research.synthesis"),
+            typed_output_types: if matches!(recipe.0, "answer.research" | "research.synthesis") {
+                vec!["research.synthesis".into()]
+            } else {
+                Vec::new()
+            },
         });
     }
     catalog
@@ -1001,15 +1017,18 @@ fn validate_payload(
     if payload.to_string().len() > 1_000_000 {
         return Err(SkillError::InvalidPayload("payload exceeds 1 MB".into()));
     }
+    let object = payload.as_object();
+    if let Some(object) = object {
+        validate_context(object)?;
+    }
     // Plugin-declared schema takes precedence: if the skill ships a JSON
     // Schema, validate against it. If not, fall through to the built-in
     // type-by-type validators for known core types.
     if let Some(schema) = schema {
         return validate_against_schema(payload, schema);
     }
-    let object = payload
-        .as_object()
-        .ok_or_else(|| SkillError::InvalidPayload("payload must be an object".into()))?;
+    let object =
+        object.ok_or_else(|| SkillError::InvalidPayload("payload must be an object".into()))?;
     let strings = |value: &Value, keys: &[&str]| keys.iter().all(|key| value[*key].is_string());
     fn array<'a>(value: &'a Value, key: &str) -> Option<&'a Vec<Value>> {
         value[key].as_array().filter(|items| items.len() <= 10_000)
@@ -1052,16 +1071,16 @@ fn validate_payload(
             sources.iter().all(|s| strings(s, &["title", "url"]))
                 && array(payload, "takeaways").is_some_and(|items| {
                     items.iter().all(|item| {
-                        item.is_string()
-                            || (strings(item, &["text"])
-                                && item.get("citation_indices").is_none_or(|indices| {
-                                    indices.as_array().is_some_and(|indices| {
-                                        indices.iter().all(|i| {
+                        strings(item, &["text"])
+                            && item.get("citation_indices").is_some_and(|indices| {
+                                indices.as_array().is_some_and(|indices| {
+                                    !indices.is_empty()
+                                        && indices.iter().all(|i| {
                                             i.as_u64()
                                                 .is_some_and(|i| i > 0 && i <= sources.len() as u64)
                                         })
-                                    })
-                                }))
+                                })
+                            })
                     })
                 })
         }),
@@ -1150,6 +1169,64 @@ fn validate_payload(
     }
 }
 
+/// Validate the optional, semantic context shared by typed outputs. The
+/// context is data-driven so temporal, coding, research, and data skills can
+/// use the same evidence boundary without the renderer inferring meaning from
+/// incidental payload field names.
+fn validate_context(object: &serde_json::Map<String, Value>) -> Result<(), SkillError> {
+    let Some(context) = object.get("context") else {
+        return Ok(());
+    };
+    let Some(context) = context.as_object() else {
+        return Err(SkillError::InvalidPayload(
+            "context must be an object".into(),
+        ));
+    };
+    for key in ["domain", "as_of", "comparison_basis"] {
+        if context.get(key).is_some_and(|value| !value.is_string()) {
+            return Err(SkillError::InvalidPayload(format!(
+                "context.{key} must be a string"
+            )));
+        }
+    }
+    if let Some(period) = context.get("period") {
+        let Some(period) = period.as_object() else {
+            return Err(SkillError::InvalidPayload(
+                "context.period must be an object".into(),
+            ));
+        };
+        for key in ["start", "end", "timezone"] {
+            if !period.get(key).is_some_and(Value::is_string) {
+                return Err(SkillError::InvalidPayload(format!(
+                    "context.period.{key} is required"
+                )));
+            }
+        }
+    }
+    if let Some(evidence) = context.get("evidence") {
+        let Some(evidence) = evidence.as_array() else {
+            return Err(SkillError::InvalidPayload(
+                "context.evidence must be an array".into(),
+            ));
+        };
+        if evidence.iter().any(|item| {
+            !item.is_object()
+                || !item.get("id").is_some_and(Value::is_string)
+                || !item.get("kind").is_some_and(Value::is_string)
+        }) {
+            return Err(SkillError::InvalidPayload(
+                "each context.evidence item requires string id and kind".into(),
+            ));
+        }
+    }
+    if context.get("comparison_basis").is_some() && context.get("period").is_none() {
+        return Err(SkillError::InvalidPayload(
+            "context.comparison_basis requires context.period".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
@@ -1212,6 +1289,8 @@ mod tests {
                     primary: vec!["metric.group".into()],
                     optional: vec!["chart.line".into()],
                     fallback,
+                    requires_typed_output: false,
+                    typed_output_types: Vec::new(),
                 })
                 .is_ok()
         );
@@ -1258,6 +1337,8 @@ mod tests {
                     primary: vec!["chart".into()],
                     optional: vec![],
                     fallback: BTreeMap::new(),
+                    requires_typed_output: false,
+                    typed_output_types: Vec::new(),
                 })
                 .is_ok()
         );
@@ -1288,6 +1369,18 @@ mod tests {
         assert!(structured_outputs_from_text("```vak\nnot-json\n```").is_empty());
     }
 
+    #[test]
+    fn semantic_context_requires_complete_periods_and_evidence_shape() {
+        let valid = r#"{"semantic_type":"metric","payload":{"label":"Close","value":10,"context":{"domain":"market","as_of":"2026-09-04T16:00:00+05:30","period":{"start":"2026-08-31","end":"2026-09-04","timezone":"Asia/Kolkata"},"comparison_basis":"prior_close_to_period_close","evidence":[{"id":"source-1","kind":"cited"}]}}}"#;
+        assert_eq!(structured_outputs_from_text(valid).len(), 1);
+
+        let missing_period_end = r#"{"semantic_type":"metric","payload":{"label":"Close","value":10,"context":{"comparison_basis":"weekly" ,"period":{"start":"2026-08-31","timezone":"Asia/Kolkata"}}}}"#;
+        assert!(structured_outputs_from_text(missing_period_end).is_empty());
+
+        let invalid_evidence = r#"{"semantic_type":"metric","payload":{"label":"Close","value":10,"context":{"evidence":[{"id":"source-1"}]}}}"#;
+        assert!(structured_outputs_from_text(invalid_evidence).is_empty());
+    }
+
     /// A tool result is almost never Markdown — it's a bare JSON envelope.
     /// One structural rule ("is the whole text a valid envelope?") has to
     /// serve every persona's tools without knowing any of them by name:
@@ -1312,7 +1405,7 @@ mod tests {
 
         // Knowledge worker — a research/aggregation tool's raw JSON reply.
         let research = structured_outputs_from_text(
-            r#"{"semantic_type":"research.synthesis","payload":{"sources":[{"title":"Report","url":"https://example.com"}],"takeaways":["Adoption is rising"]}}"#,
+            r#"{"semantic_type":"research.synthesis","payload":{"sources":[{"title":"Report","url":"https://example.com"}],"takeaways":[{"text":"Adoption is rising","citation_indices":[1]}]}}"#,
         );
         assert_eq!(research.len(), 1);
         assert_eq!(research[0].semantic_type, "research.synthesis");

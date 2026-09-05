@@ -179,6 +179,22 @@ fn snapshot_inner(
                                                 format!("{}: {}", item.semantic_type, item.reason)
                                             },
                                         ));
+                                        if assistant
+                                            && plan.recipe.as_ref().is_some_and(|decision| {
+                                                decision.requires_typed_output
+                                            })
+                                            && !plan.accepted.iter().any(|candidate| {
+                                                plan.recipe.as_ref().is_some_and(|decision| {
+                                                    decision.typed_output_types.iter().any(|kind| {
+                                                        candidate.semantic_type == *kind
+                                                    })
+                                                })
+                                            })
+                                        {
+                                            document.diagnostics.push(
+                                                "research-shaped prose has no typed evidence contract; rendered as an unverified document".into(),
+                                            );
+                                        }
                                         document
                                     },
                                 },
@@ -1312,7 +1328,7 @@ mod tests {
             (
                 "aggregate_research",
                 "knowledge worker",
-                r#"{"semantic_type":"research.synthesis","payload":{"sources":[{"title":"Report","url":"https://example.com"}],"takeaways":["Adoption is rising"]}}"#,
+                r#"{"semantic_type":"research.synthesis","payload":{"sources":[{"title":"Report","url":"https://example.com"}],"takeaways":[{"text":"Adoption is rising","citation_indices":[1]}]}}"#,
                 "research.synthesis",
             ),
             (

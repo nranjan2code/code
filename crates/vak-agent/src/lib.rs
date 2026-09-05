@@ -2142,6 +2142,7 @@ impl Agent {
             },
             &cwd,
             &self.run_call_counts,
+            &self.config.tools,
         )
         .await?;
         let Some(sandbox) = self
@@ -2692,7 +2693,16 @@ impl Agent {
 
         let mut authz: Vec<Result<(), String>> = Vec::with_capacity(n);
         for call in &calls {
-            authz.push(authorize(&self.config, call, &cwd, &self.run_call_counts).await);
+            authz.push(
+                authorize(
+                    &self.config,
+                    call,
+                    &cwd,
+                    &self.run_call_counts,
+                    &self.config.tools,
+                )
+                .await,
+            );
         }
         let ids: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
 
@@ -3381,6 +3391,7 @@ async fn authorize(
     call: &PendingToolCall,
     cwd: &std::path::Path,
     run_call_counts: &std::sync::Mutex<HashMap<String, u32>>,
+    tools: &[Arc<dyn Tool>],
 ) -> Result<(), String> {
     let input_chars = serde_json::to_string(&call.input)
         .map(|input| input.chars().count())
@@ -3391,11 +3402,8 @@ async fn authorize(
             MAX_TOOL_INPUT_CHARS
         ));
     }
-    if call.name == "mcp" && call.input.get("action").and_then(Value::as_str).is_none() {
-        return Err(
-            "invalid mcp call: required parameter `action` was omitted; do not retry this call"
-                .into(),
-        );
+    if let Some(tool) = tools.iter().find(|tool| tool.name() == call.name) {
+        vak_tools::validate_input(&tool.schema(), &call.input)?;
     }
     if config
         .revocation_check

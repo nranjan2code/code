@@ -389,6 +389,38 @@ async fn tool_roundtrip_executes_and_feeds_result_back() {
 }
 
 #[tokio::test]
+async fn malformed_tool_input_is_rejected_by_the_admitted_schema() {
+    let h = harness(
+        vec![
+            ScriptedResponse::Message(tool_call_msg("t-schema", "write", serde_json::json!({}))),
+            ScriptedResponse::Message(assistant_text("recovered")),
+        ],
+        vec![Arc::new(WriteTool)],
+    );
+    let mut agent = h.agent;
+    let outcome = agent
+        .run(
+            "write it",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    let session = agent.session.lock().await;
+    let result = session
+        .derive_messages()
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .find_map(|block| match block {
+            ContentBlock::ToolResult { content, .. } => Some(content.clone()),
+            _ => None,
+        })
+        .expect("schema rejection must be recorded as a tool result");
+    assert!(result.contains("required parameter `path` was omitted"));
+}
+
+#[tokio::test]
 async fn unknown_tool_becomes_error_value_not_crash() {
     let h = harness(
         vec![

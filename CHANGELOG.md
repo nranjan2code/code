@@ -5,6 +5,15 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## Unreleased
+
+### Universal call-contract admission
+
+- Validate every model-proposed tool call against its admitted schema before
+  authorization and dispatch, independent of tool or domain.
+- Record malformed calls as non-dispatching error values rather than treating
+  them as provider or network failures.
+
 ## 3.0.3 — 2026-09-05
 
 ### Bounded tool context and MCP artifacts

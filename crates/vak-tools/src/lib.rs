@@ -6,6 +6,7 @@
 pub mod bash;
 pub mod broker;
 pub mod context;
+pub mod contract;
 pub mod edit;
 pub mod glob;
 pub mod grep;
@@ -21,6 +22,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 pub use context::{OutputLimits, ToolContext};
+pub use contract::validate_input;
 pub use webbrowse::WebBrowseTool;
 pub use webfetch::WebFetchTool;
 
