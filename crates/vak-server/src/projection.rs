@@ -1229,7 +1229,10 @@ mod tests {
         };
         assert_eq!(output.semantic_type, "metric");
         assert_eq!(
-            structured.provenance.as_ref().and_then(|p| p.tool_call_id.as_deref()),
+            structured
+                .provenance
+                .as_ref()
+                .and_then(|p| p.tool_call_id.as_deref()),
             Some("tool-any")
         );
     }
@@ -1300,8 +1303,7 @@ mod tests {
             ),
         ];
 
-        for (index, (tool_name, _persona, result_json, _expected_type)) in
-            calls.iter().enumerate()
+        for (index, (tool_name, _persona, result_json, _expected_type)) in calls.iter().enumerate()
         {
             let call_id = format!("call-{index}");
             log.append_message(MessageRecord {
@@ -1328,8 +1330,7 @@ mod tests {
         }
 
         let timeline = snapshot("session-personas", &log);
-        for (index, (_tool_name, persona, _result_json, expected_type)) in
-            calls.iter().enumerate()
+        for (index, (_tool_name, persona, _result_json, expected_type)) in calls.iter().enumerate()
         {
             let call_id = format!("call-{index}");
             let found = timeline.items.iter().any(|item| {
@@ -1341,7 +1342,10 @@ mod tests {
                         .and_then(|p| p.tool_call_id.as_deref())
                         == Some(call_id.as_str())
             });
-            assert!(found, "expected a rendered {expected_type} item for the {persona} scenario");
+            assert!(
+                found,
+                "expected a rendered {expected_type} item for the {persona} scenario"
+            );
         }
     }
 }

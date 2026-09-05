@@ -1184,7 +1184,10 @@ mod tests {
         // semantic_type, must not have a type guessed for it.
         assert!(structured_outputs_from_text("It is 25C and sunny in Austin.").is_empty());
         assert!(structured_outputs_from_text(r#"{"temp": 25, "condition": "sunny"}"#).is_empty());
-        assert!(structured_outputs_from_text(r#"{"semantic_type":"metric","payload":{"label":"x"}}"#).is_empty());
+        assert!(
+            structured_outputs_from_text(r#"{"semantic_type":"metric","payload":{"label":"x"}}"#)
+                .is_empty()
+        );
     }
 
     #[test]
