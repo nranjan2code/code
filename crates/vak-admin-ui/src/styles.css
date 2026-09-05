@@ -1769,6 +1769,10 @@ a.tab-btn {
 .extension-shell .plugin-stack > .panel:nth-child(-n + 2) { grid-column: 1 / -1; }
 .extension-shell .plugin-stack > .panel:nth-child(n + 3) { min-height: 214px; display: flex; flex-direction: column; }
 .extension-shell .plugin-stack > .panel:nth-child(n + 3) .row-gap { margin-top: auto; }
+.extension-shell .skill-table tbody tr { transition: background .15s ease; }
+.extension-shell .skill-table tbody tr td { padding-top: 12px; padding-bottom: 12px; }
+.extension-shell .skill-table tbody tr td:first-child { min-width: 150px; }
+.extension-shell .skill-table .col-path { max-width: 280px; }
 
 @media (max-width: 780px) {
   .extension-overview { grid-template-columns: 1fr 1fr; }

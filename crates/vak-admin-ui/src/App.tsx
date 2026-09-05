@@ -1614,7 +1614,7 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
 
         <Switch>
           <Match when={props.ctx.skillsLoading()}>
-            <table class="table">
+            <table class="table skill-table">
               <thead><tr><th>skill</th><th>available in</th><th>what it does</th><th>file</th></tr></thead>
               <tbody><SkeletonRows cols={4} /></tbody>
             </table>
@@ -1631,7 +1631,7 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
           </Match>
 
           <Match when={props.ctx.skills().length > 0}>
-            <table class="table">
+            <table class="table skill-table">
               <thead><tr><th>skill</th><th>available in</th><th>what it does</th><th>file</th></tr></thead>
               <tbody>
               <For each={visibleSkills()}>
