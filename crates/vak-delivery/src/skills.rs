@@ -562,7 +562,20 @@ pub fn link_previews_from_text(text: &str) -> Vec<StructuredOutput> {
 /// Extracts explicitly typed `vak` fragments from model/tool text. This is
 /// intentionally domain-neutral: the registry, not this parser, decides what
 /// semantic types exist and whether a surface may render them.
+///
+/// A tool result is usually not Markdown at all — it's just the JSON its
+/// implementation returned. Requiring a ```vak fence around it would force
+/// every tool wrapper to know about Markdown just to be found here, which is
+/// its own kind of special-casing. So the *whole* text is tried as one bare
+/// `{"semantic_type": ..., "payload": ...}` envelope first — the identical
+/// two-field contract a fenced fragment uses, just without the fence. Any
+/// tool, or any future one, opts in the same way a model does: declare what
+/// it produced. Nothing here inspects a tool's name or its payload's field
+/// names to guess a type.
 pub fn structured_outputs_from_text(text: &str) -> Vec<StructuredOutput> {
+    if let Ok(output) = parse_fragment(text.trim()) {
+        return vec![output];
+    }
     let mut outputs = Vec::new();
     let mut remainder = text;
     while let Some(start) = remainder.find("```vak") {
@@ -1122,6 +1135,56 @@ mod tests {
         assert_eq!(outputs.len(), 1);
         assert_eq!(outputs[0].semantic_type, "metric");
         assert!(structured_outputs_from_text("```vak\nnot-json\n```").is_empty());
+    }
+
+    /// A tool result is almost never Markdown — it's a bare JSON envelope.
+    /// One structural rule ("is the whole text a valid envelope?") has to
+    /// serve every persona's tools without knowing any of them by name:
+    /// a general user's weather lookup, a developer's CI runner, a knowledge
+    /// worker's research aggregator, and a data analyst's dataset query all
+    /// go through the identical unnamed code path.
+    #[test]
+    fn bare_json_tool_results_are_recognized_without_a_fence_or_any_tool_name() {
+        // General user — a weather tool's raw JSON reply.
+        let weather = structured_outputs_from_text(
+            r#"{"semantic_type":"metric","payload":{"label":"Temperature","value":25,"unit":"C"}}"#,
+        );
+        assert_eq!(weather.len(), 1);
+        assert_eq!(weather[0].semantic_type, "metric");
+
+        // Developer — a CI/test runner's raw JSON reply.
+        let ci = structured_outputs_from_text(
+            r#"{"semantic_type":"test.report","payload":{"tests":[{"name":"it_compiles","status":"passed"}],"total":1,"passed":1,"failed":0,"skipped":0}}"#,
+        );
+        assert_eq!(ci.len(), 1);
+        assert_eq!(ci[0].semantic_type, "test.report");
+
+        // Knowledge worker — a research/aggregation tool's raw JSON reply.
+        let research = structured_outputs_from_text(
+            r#"{"semantic_type":"research.synthesis","payload":{"sources":[{"title":"Report","url":"https://example.com"}],"takeaways":["Adoption is rising"]}}"#,
+        );
+        assert_eq!(research.len(), 1);
+        assert_eq!(research[0].semantic_type, "research.synthesis");
+
+        // Data analyst — a query/BI tool's raw JSON reply.
+        let grid = structured_outputs_from_text(
+            r#"{"semantic_type":"data.grid","payload":{"columns":[{"key":"region","label":"Region"}],"rows":[{"region":"APAC"}]}}"#,
+        );
+        assert_eq!(grid.len(), 1);
+        assert_eq!(grid[0].semantic_type, "data.grid");
+
+        // Data/telemetry consumer — a metrics tool's raw JSON reply.
+        let chart = structured_outputs_from_text(
+            r#"{"semantic_type":"chart","payload":{"chart_type":"line","series":[{"name":"p99","points":[{"x":1,"y":42.0}]}],"accessible_summary":"p99 latency over time"}}"#,
+        );
+        assert_eq!(chart.len(), 1);
+        assert_eq!(chart[0].semantic_type, "chart");
+
+        // A tool that just returns plain prose, or JSON with no declared
+        // semantic_type, must not have a type guessed for it.
+        assert!(structured_outputs_from_text("It is 25C and sunny in Austin.").is_empty());
+        assert!(structured_outputs_from_text(r#"{"temp": 25, "condition": "sunny"}"#).is_empty());
+        assert!(structured_outputs_from_text(r#"{"semantic_type":"metric","payload":{"label":"x"}}"#).is_empty());
     }
 
     #[test]

@@ -1223,4 +1223,115 @@ mod tests {
             Some("tool-any")
         );
     }
+
+    /// One end-to-end pass across four unrelated personas' tools, each
+    /// returning bare JSON with no Markdown fence — the shape a real tool
+    /// implementation naturally produces. No persona, tool name, or domain
+    /// is known to `snapshot`; each renders solely because its own result
+    /// declared a `semantic_type` the registry recognizes.
+    #[test]
+    fn different_personas_tools_all_render_through_the_same_unnamed_path() {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let mut log = SessionLog::create(
+            dir.path().join("presentation.jsonl"),
+            SessionHeader {
+                session_id: "session-personas".into(),
+                created_at: chrono::Utc::now(),
+                cwd: PathBuf::from("/tmp/project"),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .expect("create session");
+        log.append_message(MessageRecord {
+            message: Message::user_text("Kick off a bunch of unrelated tools"),
+            meta: None,
+        })
+        .expect("append user");
+
+        // (tool name, persona it stands in for, bare-JSON result, expected semantic_type)
+        let calls: [(&str, &str, &str, &str); 4] = [
+            (
+                "get_local_weather",
+                "general user",
+                r#"{"semantic_type":"metric","payload":{"label":"Temperature","value":25,"unit":"C"}}"#,
+                "metric",
+            ),
+            (
+                "run_test_suite",
+                "developer",
+                r#"{"semantic_type":"test.report","payload":{"tests":[{"name":"it_compiles","status":"passed"}],"total":1,"passed":1,"failed":0,"skipped":0}}"#,
+                "test.report",
+            ),
+            (
+                "aggregate_research",
+                "knowledge worker",
+                r#"{"semantic_type":"research.synthesis","payload":{"sources":[{"title":"Report","url":"https://example.com"}],"takeaways":["Adoption is rising"]}}"#,
+                "research.synthesis",
+            ),
+            (
+                "query_warehouse",
+                "data analyst",
+                r#"{"semantic_type":"data.grid","payload":{"columns":[{"key":"region","label":"Region"}],"rows":[{"region":"APAC"}]}}"#,
+                "data.grid",
+            ),
+        ];
+
+        for (index, (tool_name, _persona, result_json, _expected_type)) in
+            calls.iter().enumerate()
+        {
+            let call_id = format!("call-{index}");
+            log.append_message(MessageRecord {
+                message: Message::assistant(vec![ContentBlock::ToolUse {
+                    id: call_id.clone(),
+                    name: (*tool_name).into(),
+                    input: serde_json::json!({}),
+                }]),
+                meta: None,
+            })
+            .expect("append call");
+            log.append_message(MessageRecord {
+                message: Message {
+                    role: Role::User,
+                    content: vec![ContentBlock::ToolResult {
+                        tool_use_id: call_id,
+                        content: (*result_json).into(),
+                        is_error: false,
+                    }],
+                },
+                meta: None,
+            })
+            .expect("append result");
+        }
+
+        let timeline = snapshot("session-personas", &log);
+        for (index, (_tool_name, persona, _result_json, expected_type)) in
+            calls.iter().enumerate()
+        {
+            let call_id = format!("call-{index}");
+            let found = timeline.items.iter().any(|item| {
+                matches!(&item.content, OutputContent::Structured { output }
+                    if output.semantic_type == *expected_type)
+                    && item
+                        .provenance
+                        .as_ref()
+                        .and_then(|p| p.tool_call_id.as_deref())
+                        == Some(call_id.as_str())
+            });
+            assert!(found, "expected a rendered {expected_type} item for the {persona} scenario");
+        }
+    }
 }
