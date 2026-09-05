@@ -2294,12 +2294,18 @@ function ExtensionsSection() {
   });
 
   return (
-    <div class="view">
+    <div class="view extension-shell">
       <PageHeader
         title="Extensions"
-        description="Configure the external processes, instructions, hooks, and unattended tasks available to vak."
+        description="Give vak better ways to work — with clear boundaries, visible provenance, and one place to manage every capability."
         actions={<ScopeControl />}
       />
+      <div class="extension-overview" aria-label="Extension summary">
+        <div><span class="extension-overline">CAPABILITY HUB</span><strong>Everything vak can reach</strong><span>Connected apps, instructions, automations, and background work.</span></div>
+        <div class="extension-stat"><strong>{Object.keys(ctx.mcp()).length}</strong><span>connected apps</span></div>
+        <div class="extension-stat"><strong>{ctx.skills().length}</strong><span>loaded skills</span></div>
+        <div class="extension-stat"><strong>{ctx.hooks().length + ctx.tasks().length}</strong><span>automations</span></div>
+      </div>
       <Show when={failure()}>
         <section class="panel panel-alert callout" style="margin-bottom:14px">
           <div>
@@ -2312,7 +2318,7 @@ function ExtensionsSection() {
         </section>
       </Show>
 
-      <div class="tab-bar">
+      <div class="tab-bar extension-tabs" aria-label="Extension types">
         <For each={EXTENSION_TABS}>
           {(t) => (
             <a class="tab-btn" href={t.hash} classList={{ active: extensionsTab() === t.hash }}>

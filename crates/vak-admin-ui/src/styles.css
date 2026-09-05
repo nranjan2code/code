@@ -1722,6 +1722,44 @@ a.tab-btn {
 .capability-inheritance-row span { display: grid; gap: 2px; }
 .capability-inheritance-row small { color: var(--muted); font-size: 11.5px; }
 
+/* Extensions is the capability shelf: a calmer, more editorial first
+   viewport makes the distinction between discovering and configuring feel
+   intentional without changing the underlying evidence or API contracts. */
+.extension-shell .page-header { margin-bottom: 12px; }
+.extension-overview {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) repeat(3, minmax(120px, .22fr));
+  gap: 1px;
+  margin: 0 0 18px;
+  overflow: hidden;
+  background: var(--border-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+}
+.extension-overview > div { min-height: 82px; display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 15px 17px; background: var(--surface); }
+.extension-overview > div:first-child { background: linear-gradient(110deg, var(--accent-wash), var(--surface) 58%); }
+.extension-overview strong { font-size: 14px; font-weight: 620; letter-spacing: -.01em; }
+.extension-overview span { color: var(--muted); font-size: 11.5px; }
+.extension-overline { color: var(--accent-bright) !important; font-size: 10px !important; font-weight: 650; letter-spacing: .12em; }
+.extension-stat { align-items: flex-start; }
+.extension-stat strong { font-size: 21px; line-height: 1; font-variant-numeric: tabular-nums; }
+.extension-tabs { gap: 5px; border: 0; margin: 0 0 18px; padding: 4px; background: var(--surface-raised); border: 1px solid var(--border-soft); border-radius: var(--radius); }
+.extension-tabs .tab-btn { border: 0; border-radius: var(--radius-sm); padding: 7px 12px; }
+.extension-tabs .tab-btn.active { background: var(--surface-active); color: var(--text); box-shadow: inset 0 -2px var(--accent); }
+.extension-tabs .tab-count { margin-left: 4px; }
+.extension-shell .panel { border-color: var(--border-soft); }
+.extension-shell .panel > .panel-title-row h2 { letter-spacing: -.015em; }
+.extension-shell .integration-catalog { grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 10px; }
+.extension-shell .integration-row { min-height: 150px; padding: 15px; transition: border-color .15s, background .15s, transform .15s; }
+.extension-shell .integration-row:hover { border-color: var(--border-strong); background: var(--surface-hover); transform: translateY(-1px); }
+
+@media (max-width: 780px) {
+  .extension-overview { grid-template-columns: 1fr 1fr; }
+  .extension-overview > div:first-child { grid-column: 1 / -1; }
+  .extension-tabs { overflow-x: auto; justify-content: flex-start; }
+  .extension-tabs .tab-btn { white-space: nowrap; }
+}
+
 /* Prompts (docs/design/45-prompt-layers.md). Two panes so the layer being
    edited and the assembled result are always visible together; the grid
    collapses on narrow viewports rather than scrolling the page sideways. */
