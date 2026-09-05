@@ -146,9 +146,6 @@ impl RecipeCatalog {
                 if matched_signals.is_empty() && !recipe.match_signals.is_empty() {
                     return None;
                 }
-                if available_types.is_empty() && !recipe.match_signals.is_empty() {
-                    return None;
-                }
                 if !available_types.is_empty()
                     && !recipe
                         .primary
