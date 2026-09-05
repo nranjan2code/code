@@ -5,6 +5,14 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.7 — 2026-09-05
+
+### Stream lifecycle management and multi-task scale
+
+- Prune inactive Server-Sent Events (SSE) connections when switching between tasks or dismissing panes.
+- Prevent HTTP/1.1 connection pool exhaustion in desktop WebKit and browser runtimes, allowing seamless navigation and creation across $N$ chats.
+- Reconcile background running streams and disconnect completion listeners on task completion.
+
 ## 3.0.6 — 2026-09-05
 
 ### Enhanced renderer visualization and canvas harmony
