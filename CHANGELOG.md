@@ -5,6 +5,15 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.9 — 2026-09-05
+
+### Scoped feed system
+
+- Add global and workspace feed scopes with stable source identities,
+  permission checks, provenance, quarantine, search, alerts, and delivery
+  receipts across the server, pipeline, MCP, scheduler, and UIs.
+- Rebuild shipped frontend bundles and add feed contract/concurrency coverage.
+
 ## 3.0.8 — 2026-09-05
 
 ### Harness lifecycle hardening
