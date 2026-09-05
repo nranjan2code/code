@@ -5,6 +5,16 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.2 — 2026-09-05
+
+### Endpoint capability routing
+
+- Frozen provider routes now include their API dialect. Agentic OpenAI and
+  OpenRouter turns select Responses before dispatch, so function tools and
+  reasoning do not accidentally travel through Chat Completions.
+- Primary and fallback legs preserve the admitted dialect, preventing retries
+  from silently changing request semantics.
+
 ## 3.0.1 — 2026-09-05
 
 ### Turn capability assembly
