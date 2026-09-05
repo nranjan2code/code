@@ -5,6 +5,7 @@ use vak_delivery::{
     ArtifactRef, DeliveryAction, OutputContent, OutputItem, OutputKind, OutputProvenance,
     OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline, SignalContext, built_in_recipes,
     built_in_skill_registry, compile_markdown, link_previews_from_text, signals_from_context,
+    structured_outputs_from_text,
 };
 use vak_llm::{ContentBlock, Role};
 use vak_session::{ActivityKind, ActivityStatus, EntryPayload, SessionLog};
@@ -88,11 +89,14 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                     match block {
                         ContentBlock::Text { text } if !text.trim().is_empty() => {
                             let assistant = record.message.role == Role::Assistant;
-                            let link_previews = if assistant {
-                                link_previews_from_text(text)
+                            let mut candidates = if assistant {
+                                structured_outputs_from_text(text)
                             } else {
                                 Vec::new()
                             };
+                            if assistant {
+                                candidates.extend(link_previews_from_text(text));
+                            }
                             let planner = vak_delivery::PresentationPlanner {
                                 skills: built_in_skill_registry(),
                                 recipes: built_in_recipes(),
@@ -112,7 +116,7 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                                 is_error,
                             };
                             let signals = signals_from_context(&ctx);
-                            let plan = planner.plan(&signals, "desktop", &[], &link_previews);
+                            let plan = planner.plan(&signals, "desktop", &[], &candidates);
                             timeline.items.push(OutputItem {
                                 id: format!("{}-text-{index}", entry.id),
                                 timestamp: entry.ts.to_rfc3339(),
@@ -166,7 +170,12 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                                 actions: Vec::new(),
                                 fallback_text: text.clone(),
                             });
-                            for (link_index, preview) in plan.accepted.into_iter().enumerate() {
+                            for (link_index, preview) in plan
+                                .accepted
+                                .into_iter()
+                                .filter(|candidate| candidate.semantic_type == "link.preview")
+                                .enumerate()
+                            {
                                 timeline.items.push(OutputItem {
                                     id: format!("{}-link-{link_index}", entry.id),
                                     timestamp: entry.ts.to_rfc3339(),

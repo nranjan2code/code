@@ -146,6 +146,9 @@ impl RecipeCatalog {
                 if matched_signals.is_empty() && !recipe.match_signals.is_empty() {
                     return None;
                 }
+                if available_types.is_empty() && !recipe.match_signals.is_empty() {
+                    return None;
+                }
                 if !available_types.is_empty()
                     && !recipe
                         .primary
@@ -557,6 +560,29 @@ pub fn link_previews_from_text(text: &str) -> Vec<StructuredOutput> {
             payload: serde_json::json!({"url": url, "title": "Open source link"}),
         })
         .collect()
+}
+
+/// Extracts explicitly typed `vak` fragments from model/tool text. This is
+/// intentionally domain-neutral: the registry, not this parser, decides what
+/// semantic types exist and whether a surface may render them.
+pub fn structured_outputs_from_text(text: &str) -> Vec<StructuredOutput> {
+    let mut outputs = Vec::new();
+    let mut remainder = text;
+    while let Some(start) = remainder.find("```vak") {
+        let after = &remainder[start + 6..];
+        let body = after.strip_prefix('\n').unwrap_or(after);
+        let Some(end) = body.find("```") else { break };
+        if let Ok(output) = parse_fragment(&body[..end]) {
+            if !outputs
+                .iter()
+                .any(|existing: &StructuredOutput| existing == &output)
+            {
+                outputs.push(output);
+            }
+        }
+        remainder = &body[end + 3..];
+    }
+    outputs
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1090,6 +1116,15 @@ mod tests {
         );
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].semantic_type, "link.preview");
+    }
+
+    #[test]
+    fn structured_extraction_is_domain_neutral_and_strict() {
+        let text = "before\n```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"Temperature\",\"value\":25,\"unit\":\"C\"}}\n```\nafter";
+        let outputs = structured_outputs_from_text(text);
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].semantic_type, "metric");
+        assert!(structured_outputs_from_text("```vak\nnot-json\n```").is_empty());
     }
 
     #[test]
