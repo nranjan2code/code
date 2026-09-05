@@ -331,6 +331,11 @@ for name in "${OPTIONAL[@]}"; do
     fi
 done
 
+# Feed ingestion is a Python subprocess runtime, not source-only tooling.
+# Ship it beside the binaries so managed installs and the Linux image work
+# even when the user's workspace is not a vak checkout.
+cp -R "$ROOT_DIR/scripts/feeds" "$OUT/feeds"
+
 # ---- provenance ------------------------------------------------------
 # Prove the artifact IS the build this run gated.
 #

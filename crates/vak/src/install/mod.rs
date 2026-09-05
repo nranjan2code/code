@@ -273,6 +273,22 @@ fn install_into(
     let version = manifest::build_version().to_string();
     bundle::write_metadata(root, &version, frontend.as_deref(), desktop)?;
 
+    if let Some(feed_assets) = bundle::locate_feed_assets() {
+        let resources = root.resources_dir();
+        std::fs::create_dir_all(&resources)
+            .map_err(|e| format!("create resources {}: {e}", resources.display()))?;
+        let installed_feeds = resources.join("feeds");
+        if installed_feeds.exists() {
+            std::fs::remove_dir_all(&installed_feeds).map_err(|e| {
+                format!(
+                    "clear stale feed runtime {}: {e}",
+                    installed_feeds.display()
+                )
+            })?;
+        }
+        atomic::copy_dir(&feed_assets, &installed_feeds)?;
+    }
+
     // Record the frontend as an installed asset, not just as a side effect.
     //
     // `verify` checks the manifest and nothing else, so anything the

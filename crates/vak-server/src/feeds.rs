@@ -51,7 +51,31 @@ fn authorize_feed_scope(scope: &str, mode: vak_config::PermissionMode) -> Result
 
 /// Feed pipeline Python script directory.
 fn feeds_dir(cwd: &std::path::Path) -> PathBuf {
-    cwd.join("scripts").join("feeds")
+    let workspace_dir = cwd.join("scripts").join("feeds");
+    if workspace_dir.join("feed_ingest.py").exists() {
+        return workspace_dir;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return workspace_dir;
+    };
+    let Some(bin_dir) = exe.parent() else {
+        return workspace_dir;
+    };
+    let candidates = [
+        bin_dir.join("feeds"),
+        bin_dir.join("..").join("Resources").join("feeds"),
+        bin_dir.join("..").join("share").join("vak").join("feeds"),
+        bin_dir
+            .join("..")
+            .join("..")
+            .join("share")
+            .join("vak")
+            .join("feeds"),
+    ];
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.join("feed_ingest.py").exists())
+        .unwrap_or(workspace_dir)
 }
 
 fn validate_source_url(raw: &str) -> Result<(), String> {

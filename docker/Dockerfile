@@ -69,6 +69,7 @@ RUN useradd --create-home --shell /bin/bash --uid 10001 vak \
 COPY --from=builder /src/target/release/vak /usr/local/bin/vak
 COPY --from=builder \
      /src/target/release/vak-delivery-worker /usr/local/bin/vak-delivery-worker
+COPY --from=builder /src/scripts/feeds /usr/local/share/vak/feeds
 RUN chmod 0755 /usr/local/bin/vak /usr/local/bin/vak-delivery-worker
 
 USER vak
