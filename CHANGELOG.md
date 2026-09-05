@@ -5,6 +5,16 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.3 — 2026-09-05
+
+### Bounded tool context and MCP artifacts
+
+- Bound model-visible tool input and output so oversized results cannot consume
+  the entire turn context.
+- Persist large MCP results as redacted, bounded artifacts with offset/limit
+  reads, allowing follow-up inspection without replaying the full payload.
+- Reject malformed MCP action requests before authorization and dispatch.
+
 ## 3.0.2 — 2026-09-05
 
 ### Endpoint capability routing
