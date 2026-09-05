@@ -383,7 +383,7 @@ export interface FinOpsStatus {
   day_input_tokens: number;
   day_output_tokens: number;
   day_cache_read_tokens: number;
-  activity: { kind: string; calls: number; successes: number; duration_ms: number }[];
+  activity: { kind: string; name: string; plugin?: string | null; calls: number; successes: number; duration_ms: number }[];
   run_cap_usd: number | null;
   day_cap_usd: number | null;
   unknown_rows: number;
@@ -429,6 +429,7 @@ export interface OperationsSnapshot {
   gateway: {
     enabled: boolean;
     approvals: { pending: number; mode: string; approver: string | null };
+    workspace_catalog?: Array<{ path: string; name: string }>;
     bindings: Array<{
       target: string;
       session_id: string | null;

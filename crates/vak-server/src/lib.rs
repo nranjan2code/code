@@ -1186,6 +1186,7 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
             "enabled": state.gateway.enabled,
             "approvals": { "pending": approvals, "mode": state.gateway.approvals_mode(), "approver": state.gateway.approver_target() },
             "bindings": bindings,
+            "workspace_catalog": crate::admin::workspace_catalog(&state),
         },
         "pool": {
             "max": state.core.config().gateway.core_pool_max,
@@ -1484,9 +1485,12 @@ async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value>
     let day_activity = activity
         .iter()
         .filter(|r| day_start.is_some_and(|start| r.ts >= start));
-    let mut activity_by_kind = std::collections::BTreeMap::<String, (u64, u64, u64)>::new();
+    let mut activity_by_name =
+        std::collections::BTreeMap::<(String, String, Option<String>), (u64, u64, u64)>::new();
     for row in day_activity {
-        let entry = activity_by_kind.entry(row.kind.clone()).or_default();
+        let entry = activity_by_name
+            .entry((row.kind.clone(), row.name.clone(), row.plugin.clone()))
+            .or_default();
         entry.0 += 1;
         entry.1 += u64::from(row.success);
         if let Some(duration) = row.duration_ms {
@@ -1529,7 +1533,7 @@ async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value>
         "day_input_tokens": day_rows.iter().map(|r| r.input_tokens).sum::<u64>(),
         "day_output_tokens": day_rows.iter().map(|r| r.output_tokens).sum::<u64>(),
         "day_cache_read_tokens": day_rows.iter().map(|r| r.cache_read_input_tokens.unwrap_or(0)).sum::<u64>(),
-        "activity": activity_by_kind.into_iter().map(|(kind, (calls, successes, duration_ms))| serde_json::json!({"kind": kind, "calls": calls, "successes": successes, "duration_ms": duration_ms})).collect::<Vec<_>>(),
+        "activity": activity_by_name.into_iter().map(|((kind, name, plugin), (calls, successes, duration_ms))| serde_json::json!({"kind": kind, "name": name, "plugin": plugin, "calls": calls, "successes": successes, "duration_ms": duration_ms})).collect::<Vec<_>>(),
         "by_provider": rollup(by_provider),
         "by_model": rollup(by_model),
         "daily": daily,

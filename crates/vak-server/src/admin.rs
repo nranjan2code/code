@@ -883,7 +883,7 @@ fn known_workspaces(state: &AppState) -> Vec<String> {
     seen
 }
 
-fn workspace_catalog(state: &AppState) -> Vec<serde_json::Value> {
+pub(crate) fn workspace_catalog(state: &AppState) -> Vec<serde_json::Value> {
     let names = read_workspace_names(state);
     known_workspaces(state)
         .into_iter()
