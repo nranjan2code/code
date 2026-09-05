@@ -24,6 +24,25 @@ pub enum LlmError {
 }
 
 impl LlmError {
+    /// Preserve the provider's rejection while adding endpoint-level guidance
+    /// when it explicitly identifies an unsupported tools/reasoning pairing.
+    ///
+    /// This deliberately keys off the provider's response rather than a model
+    /// name table: model capabilities change independently of this binary.
+    pub fn invalid_request_for_endpoint(endpoint: &str, message: impl Into<String>) -> Self {
+        let message = message.into();
+        let normalized = message.to_ascii_lowercase();
+        let tool_reasoning_conflict = normalized.contains("reasoning_effort")
+            && (normalized.contains("function tool") || normalized.contains("function calling"))
+            && normalized.contains("response");
+        if endpoint == "/v1/chat/completions" && tool_reasoning_conflict {
+            return Self::InvalidRequest(format!(
+                "{message}\n\nThe selected route uses {endpoint}, which the provider reports cannot combine this model's current reasoning effort with function tools. Use a Responses-capable route for this model (vak's native OpenAI route is `openai-responses`), or select a Chat Completions-compatible model/configuration with reasoning effort disabled. This is an endpoint capability mismatch, not a transient failure."
+            ));
+        }
+        Self::InvalidRequest(message)
+    }
+
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
@@ -86,5 +105,23 @@ mod tests {
         };
         assert!(!error.is_terminal_quota());
         assert!(error.is_retryable());
+    }
+
+    #[test]
+    fn chat_completions_tool_reasoning_rejection_explains_the_route_fix() {
+        let error = LlmError::invalid_request_for_endpoint(
+            "/v1/chat/completions",
+            "Function tools with reasoning_effort are not supported for a model in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.",
+        );
+        let rendered = error.to_string();
+        assert!(rendered.contains("openai-responses"));
+        assert!(rendered.contains("endpoint capability mismatch"));
+    }
+
+    #[test]
+    fn unrelated_invalid_request_is_preserved_verbatim() {
+        let error =
+            LlmError::invalid_request_for_endpoint("/v1/chat/completions", "model does not exist");
+        assert_eq!(error.to_string(), "invalid request: model does not exist");
     }
 }

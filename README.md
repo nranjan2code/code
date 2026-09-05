@@ -212,9 +212,10 @@ vak commit list        # the portfolio, in the order it would be worked
 | Provider flag | API family |
 |---|---|
 | `anthropic` | Anthropic Messages |
-| `openai-responses` | OpenAI Responses |
-| `openai` | OpenAI-compatible Chat Completions |
+| `openai-responses` | Native OpenAI Responses (use for hosted GPT reasoning/tool routes) |
+| `openai` | OpenAI-compatible Chat Completions (only where that endpoint supports the chosen model/features) |
 | `openrouter` | OpenRouter |
+| `openrouter-responses` | OpenRouter Responses (for OpenRouter models/features that require the Responses dialect) |
 | `opencode-zen` | OpenCode Zen |
 | `google` | Gemini |
 | `ollama` | Local OpenAI-compatible Ollama endpoint |

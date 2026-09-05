@@ -3069,7 +3069,7 @@ impl Core {
             }
             // get_var (not raw env) so user-level and project .env files
             // authenticate these providers exactly like every other one.
-            "openai" | "openrouter" => {
+            "openai" | "openrouter" | "openrouter-responses" => {
                 let (env, default_base, override_env) = if provider == "openai" {
                     (
                         "OPENAI_API_KEY",
@@ -3129,7 +3129,7 @@ impl Core {
             "anthropic" => Some("ANTHROPIC_API_KEYS"),
             "google" => Some("GEMINI_API_KEYS"),
             "openai" | "openai-responses" => Some("OPENAI_API_KEYS"),
-            "openrouter" => Some("OPENROUTER_API_KEYS"),
+            "openrouter" | "openrouter-responses" => Some("OPENROUTER_API_KEYS"),
             "opencode-zen" => Some("OPENCODE_API_KEYS"),
             "ollama" => None,
             _ => None,
@@ -3227,7 +3227,7 @@ impl Core {
             "anthropic" => Some("ANTHROPIC_API_KEY"),
             "google" => Some("GEMINI_API_KEY"),
             "openai" | "openai-responses" => Some("OPENAI_API_KEY"),
-            "openrouter" => Some("OPENROUTER_API_KEY"),
+            "openrouter" | "openrouter-responses" => Some("OPENROUTER_API_KEY"),
             "opencode-zen" => Some("OPENCODE_API_KEY"),
             _ => None,
         }

@@ -432,6 +432,7 @@ pub async fn run_terminal(cwd: PathBuf, non_interactive: bool) -> i32 {
                 return None;
             }
             println!("Available services: {}", core.provider_names().join(", "));
+            println!("For hosted OpenAI GPT models with tools or reasoning, choose openai-responses; openai is the Chat Completions compatibility adapter.");
             ask("Which service should answer? ")
         }) {
             Some(p) if !p.is_empty() => p,

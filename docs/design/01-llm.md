@@ -39,17 +39,30 @@ blocks: `Text | Thinking{signature} | ToolUse{id,name,input} | ToolResult{tool_u
 | family | adapter | covers |
 |---|---|---|
 | anthropic-messages | `anthropic.rs` | Anthropic |
-| openai-completions | `openai.rs` | OpenRouter, Ollama, Groq, Together, vLLM, any `/v1/chat/completions` endpoint |
-| openai-responses | `openai_responses.rs` | OpenAI native (`/v1/responses`, GPT-5.x-class) |
+| openai-completions | `openai.rs` | OpenRouter, Ollama, Groq, Together, vLLM, any `/v1/chat/completions` endpoint that supports the requested feature set |
+| openai-responses | `openai_responses.rs` | OpenAI and OpenRouter (`/v1/responses`, for models/features that require the Responses dialect) |
 | google-generative-ai | `google.rs` | Gemini (`streamGenerateContent?alt=sse`) |
 | openai-completions (zen) | `openai.rs` | OpenCode Zen (`opencode.ai/zen/v1`) |
 
 Registry names: `anthropic`, `openai`, `openai-responses`, `openrouter`,
-`opencode-zen`, `ollama`, `google` (lazy-built, cached). Auth via
+`openrouter-responses`, `opencode-zen`, `ollama`, `google` (lazy-built,
+cached). Auth via
 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` /
 `GEMINI_API_KEY` / `OPENCODE_API_KEY`; Ollama needs no key. Base-URL
 overrides: `VAK_{ANTHROPIC,OPENAI,OPENROUTER,OLLAMA,GOOGLE,
 OPENCODE_ZEN}_BASE_URL`.
+
+The adapters intentionally implement these API dialects, rather than infer
+features from a model-name prefix:
+
+| Route | Contract | Tooling compatibility rule |
+|---|---|---|
+| `anthropic` | Anthropic Messages + SSE | Native tool-use blocks. |
+| `openai-responses` | OpenAI Responses + named SSE events | Preferred for native OpenAI reasoning/tool combinations. |
+| `openai` | OpenAI-compatible Chat Completions + delta SSE | The endpoint must accept the requested model and features. |
+| `openrouter-responses` | OpenRouter Responses | Use when OpenRouter's selected model/feature combination requires Responses. |
+| `openrouter`, `opencode-zen`, `ollama` | OpenAI-compatible Chat Completions | Compatibility is endpoint- and model-specific; reject live mismatches rather than assuming support. |
+| `google` | Gemini `streamGenerateContent` + SSE | Client function declarations/results are supported; Google recommends its newer Interactions API for new agent integrations, but this route remains a distinct supported wire contract. |
 
 ## Model discovery
 
@@ -60,7 +73,7 @@ whenever a key is stored or revoked).
 
 | shape | providers | request | response |
 |---|---|---|---|
-| OpenAI listing | `openai`, `openai-responses`, `openrouter`, `opencode-zen`, `ollama` | `GET {base}/models`, bearer | `{ data: [{ id }] }` |
+| OpenAI listing | `openai`, `openai-responses`, `openrouter`, `openrouter-responses`, `opencode-zen`, `ollama` | `GET {base}/models`, bearer | `{ data: [{ id }] }` |
 | Anthropic | `anthropic` | `GET {base}/v1/models`, `x-api-key` + `anthropic-version` | `{ data: [{ id }], has_more, last_id }` |
 | Google | `google` | `GET {base}/models?key=…` | `{ models: [{ name: "models/x" }], nextPageToken }` |
 
@@ -82,6 +95,20 @@ runtime override and the loaded-dotenv copy, and reports `shadowed_by_env`
 when the variable is *also* exported in the real environment — that copy
 cannot be unset from inside the app, and the provider stays authenticated.
 Both paths drop the cached provider client and the discovered-model cache.
+
+### Endpoint capability mismatches
+
+A provider/model route is an API dialect plus a model, not merely a model id.
+Model discovery establishes that a key can see an id; it cannot safely infer
+that every endpoint accepts every optional feature for that id. In particular,
+when a provider rejects function tools plus a non-disabled reasoning effort on
+`/v1/chat/completions` and directs the caller to `/v1/responses`, vak reports
+that as a permanent endpoint-capability mismatch and preserves the provider's
+message. It does not retry or silently change the frozen route. Select the
+Responses adapter (`openai-responses` for native OpenAI or
+`openrouter-responses` for OpenRouter) or a configuration the selected Chat
+Completions endpoint explicitly supports. This diagnostic is based on the
+provider's live rejection, never a baked-in model-name list.
 
 Providers may also expose a pool through a plural environment variable:
 `ANTHROPIC_API_KEYS`, `GEMINI_API_KEYS`, `OPENAI_API_KEYS`,

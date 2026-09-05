@@ -122,18 +122,20 @@ pub fn default_registry() -> ProviderRegistry {
     use crate::openai_responses::{
         OPENAI_RESPONSES_DEFAULT_BASE_URL, OpenAiResponsesConfig, OpenAiResponsesProvider,
     };
-    let responses_factory = |auth: &ProviderAuth| {
-        Ok(
-            Arc::new(OpenAiResponsesProvider::new(OpenAiResponsesConfig {
-                api_key: auth.api_key.clone(),
-                base_url: auth
-                    .base_url
-                    .clone()
-                    .unwrap_or_else(|| OPENAI_RESPONSES_DEFAULT_BASE_URL.into()),
-            })?) as Arc<dyn Provider>,
-        )
+    let responses = |default_base: &'static str| {
+        move |auth: &ProviderAuth| {
+            Ok(
+                Arc::new(OpenAiResponsesProvider::new(OpenAiResponsesConfig {
+                    api_key: auth.api_key.clone(),
+                    base_url: auth.base_url.clone().unwrap_or_else(|| default_base.into()),
+                })?) as Arc<dyn Provider>,
+            )
+        }
     };
-    registry.register("openai-responses", responses_factory);
+    registry.register(
+        "openai-responses",
+        responses(OPENAI_RESPONSES_DEFAULT_BASE_URL),
+    );
 
     use crate::google::{GOOGLE_DEFAULT_BASE_URL, GoogleConfig, GoogleProvider};
     registry.register("google", |auth| {
@@ -146,6 +148,10 @@ pub fn default_registry() -> ProviderRegistry {
         })?) as Arc<dyn Provider>)
     });
     registry.register("openrouter", openai_compat("https://openrouter.ai/api/v1"));
+    registry.register(
+        "openrouter-responses",
+        responses("https://openrouter.ai/api/v1"),
+    );
     registry.register("opencode-zen", openai_compat("https://opencode.ai/zen/v1"));
     registry.register("ollama", openai_compat("http://localhost:11434/v1"));
     registry

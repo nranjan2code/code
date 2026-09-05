@@ -4,7 +4,8 @@
 //!
 //! Three response shapes cover every provider we speak to:
 //!   - OpenAI-compatible (`openai`, `openai-responses`, `openrouter`,
-//!     `opencode-zen`, `ollama`): `GET {base}/models` → `{ "data": [{ "id" }] }`
+//!     `openrouter-responses`, `opencode-zen`, `ollama`): `GET {base}/models`
+//!     → `{ "data": [{ "id" }] }`
 //!   - Anthropic: same path but `x-api-key` + `anthropic-version` headers.
 //!   - Google: `GET {base}/models?key=…` → `{ "models": [{ "name": "models/x" }] }`
 
@@ -227,6 +228,7 @@ fn default_base_url(provider: &str) -> Option<&'static str> {
         "openai-responses" => Some(crate::openai_responses::OPENAI_RESPONSES_DEFAULT_BASE_URL),
         "google" => Some(crate::google::GOOGLE_DEFAULT_BASE_URL),
         "openrouter" => Some("https://openrouter.ai/api/v1"),
+        "openrouter-responses" => Some("https://openrouter.ai/api/v1"),
         "opencode-zen" => Some("https://opencode.ai/zen/v1"),
         "ollama" => Some("http://localhost:11434/v1"),
         _ => None,
@@ -302,6 +304,7 @@ mod tests {
             "openai-responses",
             "google",
             "openrouter",
+            "openrouter-responses",
             "opencode-zen",
             "ollama",
         ] {
