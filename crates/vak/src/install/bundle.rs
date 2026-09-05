@@ -158,12 +158,20 @@ pub fn locate_icon() -> Option<std::path::PathBuf> {
 pub fn locate_feed_assets() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let bin_dir = exe.parent()?;
-    let candidates = [
+    let mut candidates = vec![
         bin_dir.join("feeds"),
         bin_dir.join("..").join("Resources").join("feeds"),
         bin_dir.join("..").join("share").join("vak").join("feeds"),
-        locate_repo_relative("scripts/feeds")?,
+        bin_dir
+            .join("..")
+            .join("..")
+            .join("share")
+            .join("vak")
+            .join("feeds"),
     ];
+    if let Some(repo_assets) = locate_repo_relative("scripts/feeds") {
+        candidates.push(repo_assets);
+    }
     candidates
         .into_iter()
         .find(|candidate| candidate.join("feed_ingest.py").exists())
