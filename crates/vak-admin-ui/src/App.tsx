@@ -421,7 +421,7 @@ function Sessions() {
             <div>
               <h2>Drafts waiting to be picked ({bestofn()!.runs.length})</h2>
               <p class="dim">
-                Vak tried the same task several ways, each in its own copy of the project. Keep the
+                Vak tried the same task several ways, each in its own isolated workspace copy. Keep the
                 one you want and the rest are thrown away.
               </p>
             </div>
@@ -505,8 +505,8 @@ Showing the {sessions()!.sessions.length} most recent of {sessions()!.total} ses
                       <td title={s.first_ts}>{timeAgo(s.first_ts)}</td>
                       <td title={s.last_ts}>{timeAgo(s.last_ts)}</td>
                       <td>
-                        <Show when={local()} fallback={<span class="dim" title="This session belongs to a different project than the one this console is attached to, so it can only be read from here.">another project</span>}>
-                          <span class="chip chip-tone-success">this project</span>
+                        <Show when={local()} fallback={<span class="dim" title="This session belongs to a different workspace than the one this console is attached to, so it can only be read from here.">another workspace</span>}>
+                          <span class="chip chip-tone-success">this workspace</span>
                         </Show>
                       </td>
                       <td onClick={(e) => e.stopPropagation()}>
@@ -871,7 +871,7 @@ function Transcript(props: { sessionId: string }) {
           <div class="composer">
             <select
               class="n-stepper"
-              title="How many attempts to make. 1 answers once; 2\u20134 try the same task separately, in their own copies of the project, so you can pick the best."
+              title="How many attempts to make. 1 answers once; 2\u20134 try the same task separately, in isolated workspace copies, so you can pick the best."
               value={nCandidates()}
               onChange={(e) => setNCandidates(Number(e.currentTarget.value))}
               disabled={running()}
@@ -1375,7 +1375,7 @@ A connected app hands vak extra tools — a GitHub client, a database, a browser
                                   <Show when={!props.ctx.rulesKnown()}>
                                     <p class="dim">
 This version of the server doesn’t report its rules, so what governs calls
-                                      to <code>{name}</code> can’t be shown here. Open the project’s{" "}
+                                      to <code>{name}</code> can’t be shown here. Open the workspace’s{" "}
                                       <code>config.toml</code> to read them, or update vak.
                                     </p>
                                   </Show>
@@ -2156,7 +2156,7 @@ A scheduled task is something you ask vak to do on a repeating schedule — a ni
                       <td class="dim" title={t.schedule ?? ""}>
                         {t.schedule ? describeSchedule(t.schedule) : `Every ${describeDuration(t.interval_secs ?? 3600)}`}
                       </td>
-                      <td class="dim">{t.model_pin ?? "Project default"}</td>
+                      <td class="dim">{t.model_pin ?? "Workspace default"}</td>
                       <td class="dim" title={t.last_run_at ?? ""}>{t.last_run_at ? timeAgo(t.last_run_at) : "never"}</td>
                       <td>
                         <span class={t.enabled ? "chip chip-tone-success" : "chip"}>
@@ -3344,10 +3344,10 @@ function GatewayBindingEditor(props: {
             <strong>{modeLabel(props.allowlistEntry!.effective_permission_mode)}</strong>
             <span class="binding-meta">
               {props.allowlistEntry!.permission_capped
-                ? `reduced — you asked for "${modeLabel(props.allowlistEntry!.permission_mode)}", which is more than this project allows`
+                ? `reduced — you asked for "${modeLabel(props.allowlistEntry!.permission_mode)}", which is more than this workspace allows`
                 : props.allowlistEntry!.permission_mode
                   ? "set for this chat"
-                  : "follows the project"}
+                  : "follows the workspace"}
             </span>
           </div>
         </Show>
@@ -3367,7 +3367,7 @@ function GatewayBindingEditor(props: {
 
       <label class="inherit-toggle">
         <input type="checkbox" checked={inherit()} onChange={(e) => setInherit(e.currentTarget.checked)} />
-        Use the project's model (untick to choose one for this chat)
+        Use the workspace’s model (untick to choose one for this chat)
       </label>
       <Show when={!inherit()}>
         <div class="binding-controls">
@@ -3480,7 +3480,7 @@ function ChannelPermissionPicker(props: {
           checked={props.pinned}
           onChange={(e) => props.setPinned(e.currentTarget.checked)}
         />
-        Give this {props.subject ?? "channel"} its own limits (otherwise it follows the project)
+        Give this {props.subject ?? "channel"} its own limits (otherwise it follows the workspace)
       </label>
       <Show when={props.pinned}>
         <div class="mode-grid">
@@ -3820,7 +3820,7 @@ function ChannelAccessEditor(props: {
         <Show when={botId()}>
           <label class="inherit-toggle">
             <input type="checkbox" checked={inheritBot()} onChange={(e) => setInheritBot(e.currentTarget.checked)} />
-            Inherit this bot's policy, permission mode, and model (uncheck to resolve against the project only)
+            Inherit this bot's policy, permission mode, and model (uncheck to resolve against the workspace only)
           </label>
         </Show>
       </Show>
@@ -3835,7 +3835,7 @@ function ChannelAccessEditor(props: {
       />
       <label class="inherit-toggle">
         <input type="checkbox" checked={pinRoute()} onChange={(e) => setPinRoute(e.currentTarget.checked)} />
-        Give this channel its own model (otherwise it follows the project)
+        Give this channel its own model (otherwise it follows the workspace)
       </label>
       <Show when={pinRoute()}>
         <div class="binding-controls">
@@ -3919,10 +3919,10 @@ function PendingChannelCard(props: {
       if (entry.permission_capped) {
         pushToast(
           "alert",
-          `${props.entry.key}: "${modeLabel(entry.permission_mode)}" is more than that project allows, so it was reduced to "${modeLabel(entry.effective_permission_mode)}".`,
+          `${props.entry.key}: "${modeLabel(entry.permission_mode)}" is more than that workspace allows, so it was reduced to "${modeLabel(entry.effective_permission_mode)}".`,
         );
       }
-      pushToast("info", `Approved ${props.entry.key}${entry.workspace ? ` — working in ${entry.workspace}` : ", but no project folder was set"}`);
+      pushToast("info", `Approved ${props.entry.key}${entry.workspace ? ` — working in ${entry.workspace}` : ", but no workspace was set"}`);
       props.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
@@ -3970,7 +3970,7 @@ function PendingChannelCard(props: {
 
       <label class="inherit-toggle">
         <input type="checkbox" checked={pinRoute()} onChange={(e) => setPinRoute(e.currentTarget.checked)} />
-        Give this channel its own model (otherwise it follows the project)
+        Give this channel its own model (otherwise it follows the workspace)
       </label>
       <Show when={pinRoute()}>
         <div class="binding-controls">
@@ -4092,7 +4092,7 @@ function BotAccessEditor(props: {
       />
       <label class="inherit-toggle">
         <input type="checkbox" checked={pinRoute()} onChange={(e) => setPinRoute(e.currentTarget.checked)} />
-        Give this bot its own model (otherwise it follows the project)
+        Give this bot its own model (otherwise it follows the workspace)
       </label>
       <Show when={pinRoute()}>
         <div class="binding-controls">
@@ -4422,7 +4422,7 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
     try {
       await api.patchGatewayBinding(key, {});
       setManualKey("");
-      pushToast("info", `Added ${key}. It uses the project defaults until you change them.`);
+      pushToast("info", `Added ${key}. It uses the workspace defaults until you change them.`);
       props.ctx.refresh();
     } catch (err) {
       pushToast("alert", `${err}`);
@@ -4537,7 +4537,7 @@ A connected chat — a Telegram group, a Discord channel, a Slack conversation �
                             <Show when={entry()?.effective_permission_mode} fallback={<span class="dim">—</span>}>
                               <span class="chip chip-phrase chip-kind">{modeLabel(entry()!.effective_permission_mode)}</span>
                               <Show when={entry()!.permission_capped}>
-                                <span class="chip chip-tone-warning" style="margin-left:6px" title="You asked for more than the project allows, so it was reduced to this.">reduced</span>
+                                <span class="chip chip-tone-warning" style="margin-left:6px" title="You asked for more than the workspace allows, so it was reduced to this.">reduced</span>
                               </Show>
                             </Show>
                           </td>
@@ -4678,8 +4678,8 @@ The first message is turned away on purpose. Vak notes the chat down instead of 
           <div class="step-body">
             <h3>Review and approve</h3>
             <p class="dim">
-Approving connects the chat to a project, and lets you give it its own model and its own
-              limits if you want to. Anything you leave alone follows the project, and all of it can
+Approving connects the chat to a workspace, and lets you give it its own model and its own
+              limits if you want to. Anything you leave alone follows the workspace, and all of it can
               be changed later from Channels.
             </p>
             <Show
@@ -5197,7 +5197,7 @@ function GatewaySection() {
         <div class="panel-title-row">
           <div>
             <h2>Inheritance chain</h2>
-            <p class="dim">Shared defaults are edited under Settings and inherited by each project. Inside this page, bot settings inherit the project; an individual chat inherits its bot unless you explicitly pin or break that link.</p>
+            <p class="dim">Shared defaults are edited under Settings and inherited by each workspace. Inside this page, bot settings inherit the workspace; an individual chat inherits its bot unless you explicitly pin or break that link.</p>
           </div>
           <span class="chip chip-tone-success">restrictive only</span>
         </div>
@@ -5255,7 +5255,7 @@ const RULE_SECTIONS: { decision: RuleDecision; title: string; empty: string }[] 
 const MODE_COPY: Record<string, string> = {
   ReadOnly: "It can read and search this project, and nothing else. Every change is refused.",
   WorkspaceWrite: "It can change files inside this project on its own. Anything outside asks you first.",
-  FullAccess: "Nothing is checked with you first. Only for a project you trust completely.",
+  FullAccess: "Nothing is checked with you first. Only for a workspace you trust completely.",
 };
 
 const APPROVAL_MODES: { value: "ask" | "approve-safe" | "auto-approve"; label: string; desc: string }[] = [
@@ -5784,7 +5784,7 @@ function Settings() {
                             event.currentTarget.checked ? `${label} now inherit Shared` : `${label} inheritance disabled`,
                           )}
                         />
-                        <span><strong>{label}</strong><small>{inherited() ? "Inherited from Shared" : "Project-only"}</small></span>
+                        <span><strong>{label}</strong><small>{inherited() ? "Inherited from Shared" : "Workspace-only"}</small></span>
                       </label>
                     );
                   }}

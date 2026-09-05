@@ -767,24 +767,49 @@ async fn patch_workspace_name(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let path = std::path::PathBuf::from(body.path.trim());
     if !path.is_absolute() || !path.is_dir() {
-        return Err((StatusCode::BAD_REQUEST, "workspace must be an existing absolute directory".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "workspace must be an existing absolute directory".into(),
+        ));
     }
     let name = body.name.trim();
     if name.is_empty() || name.len() > 80 {
-        return Err((StatusCode::BAD_REQUEST, "workspace name must be 1–80 characters".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "workspace name must be 1–80 characters".into(),
+        ));
     }
     let key = path.to_string_lossy().to_string();
     let mut names = read_workspace_names(&state);
     names.insert(key.clone(), name.to_string());
     let destination = workspace_names_path(&state);
     let temp = destination.with_extension("json.tmp");
-    let content = serde_json::to_vec_pretty(&names)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("could not encode workspace names: {e}")))?;
+    let content = serde_json::to_vec_pretty(&names).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("could not encode workspace names: {e}"),
+        )
+    })?;
     if let Some(parent) = destination.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("could not create workspace registry: {e}")))?;
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("could not create workspace registry: {e}"),
+            )
+        })?;
     }
-    tokio::fs::write(&temp, content).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("could not write workspace registry: {e}")))?;
-    tokio::fs::rename(&temp, &destination).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("could not commit workspace registry: {e}")))?;
+    tokio::fs::write(&temp, content).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("could not write workspace registry: {e}"),
+        )
+    })?;
+    tokio::fs::rename(&temp, &destination).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("could not commit workspace registry: {e}"),
+        )
+    })?;
     Ok(Json(serde_json::json!({ "path": key, "name": name })))
 }
 
