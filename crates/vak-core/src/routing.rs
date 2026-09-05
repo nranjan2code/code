@@ -455,11 +455,13 @@ mod tests {
         let primary = RouteLeg {
             provider: "anthropic".into(),
             model: "claude-x".into(),
+            dialect: vak_llm::EndpointDialect::AnthropicMessages,
             credential_id: None,
         };
         let mk = |m: &str| RouteLeg {
             provider: "openai".into(),
             model: m.into(),
+            dialect: vak_llm::EndpointDialect::Responses,
             credential_id: None,
         };
         let ranked = vec![
@@ -468,6 +470,7 @@ mod tests {
             RouteLeg {
                 provider: "google".into(),
                 model: "gemini-a".into(),
+                dialect: vak_llm::EndpointDialect::GoogleGenerateContent,
                 credential_id: None,
             },
         ];
@@ -505,6 +508,7 @@ mod tests {
         let primary = RouteLeg {
             provider: "anthropic".into(),
             model: "claude-x".into(),
+            dialect: vak_llm::EndpointDialect::AnthropicMessages,
             credential_id: None,
         };
         let (legs, annotations) = assemble_ladder(&primary, vec![], 4, false);
@@ -516,6 +520,7 @@ mod tests {
             vec![RouteLeg {
                 provider: "anthropic".into(),
                 model: "claude-y".into(),
+                dialect: vak_llm::EndpointDialect::AnthropicMessages,
                 credential_id: None,
             }],
             4,
@@ -537,6 +542,7 @@ mod tests {
         let primary = RouteLeg {
             provider: "anthropic".into(),
             model: "claude-x".into(),
+            dialect: vak_llm::EndpointDialect::AnthropicMessages,
             credential_id: None,
         };
         let ranked = vec![
@@ -544,6 +550,7 @@ mod tests {
             RouteLeg {
                 provider: "openai".into(),
                 model: "gpt".into(),
+                dialect: vak_llm::EndpointDialect::Responses,
                 credential_id: None,
             },
         ];

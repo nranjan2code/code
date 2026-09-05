@@ -777,11 +777,13 @@ mod tests {
                     vak_llm::RouteLeg {
                         provider: "anthropic".into(),
                         model: "claude-sonnet-4-5".into(),
+                        dialect: vak_llm::EndpointDialect::AnthropicMessages,
                         credential_id: None,
                     },
                     vak_llm::RouteLeg {
                         provider: "openai".into(),
                         model: "gpt-fallback".into(),
+                        dialect: vak_llm::EndpointDialect::Responses,
                         credential_id: None,
                     },
                 ],

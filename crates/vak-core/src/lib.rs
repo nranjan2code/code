@@ -712,6 +712,18 @@ pub struct RouteSelection {
     runtime_pinned: bool,
 }
 
+/// Provider identity owns credentials and model discovery; the adapter name
+/// owns a concrete wire dialect. Keeping the conversion here prevents a
+/// route selected at admission from being silently sent through whichever
+/// adapter happened to share the provider's credential.
+fn adapter_name_for_leg(leg: &vak_llm::RouteLeg) -> String {
+    match (&*leg.provider, leg.dialect) {
+        ("openai", vak_llm::EndpointDialect::Responses) => "openai-responses".into(),
+        ("openrouter", vak_llm::EndpointDialect::Responses) => "openrouter-responses".into(),
+        _ => leg.provider.clone(),
+    }
+}
+
 fn route_selection(
     provider: String,
     model: String,
@@ -3708,6 +3720,10 @@ impl Core {
                     candidates.push(vak_llm::RouteLeg {
                         provider: p.clone(),
                         model: primary.model.clone(),
+                        dialect: vak_llm::EndpointDialect::for_provider(
+                            p,
+                            !self.tool_names().is_empty(),
+                        ),
                         credential_id: Some(credential_id.clone()),
                     });
                 }
@@ -3737,6 +3753,10 @@ impl Core {
                         candidates.push(vak_llm::RouteLeg {
                             provider: p.clone(),
                             model: m.clone(),
+                            dialect: vak_llm::EndpointDialect::for_provider(
+                                p,
+                                !self.tool_names().is_empty(),
+                            ),
                             credential_id: Some(credential_id.clone()),
                         });
                     }
@@ -3861,10 +3881,16 @@ impl Core {
             .provider_auth_for_leg(&provider, None)
             .ok()
             .and_then(|auth| auth.credential_id);
+        let needs_tools_or_reasoning =
+            demand.is_some_and(|hint| hint.reasoning_required) || !self.tool_names().is_empty();
         let plan = self.plan_route_ladder(
             vak_llm::RouteLeg {
                 provider: provider.clone(),
                 model: model.clone(),
+                dialect: vak_llm::EndpointDialect::for_provider(
+                    &provider,
+                    needs_tools_or_reasoning,
+                ),
                 credential_id: primary_credential_id,
             },
             demand,
@@ -4228,7 +4254,17 @@ impl Core {
                             .first()
                             .and_then(|leg| leg.credential_id.as_deref()),
                     )?;
-                    self.inner.registry.get(&contract.provider, &auth)?
+                    let leg = contract.route_ladder.first().cloned().unwrap_or_else(|| {
+                        vak_llm::RouteLeg {
+                            provider: contract.provider.clone(),
+                            model: contract.model.clone(),
+                            dialect: vak_llm::EndpointDialect::default(),
+                            credential_id: None,
+                        }
+                    });
+                    self.inner
+                        .registry
+                        .get(&adapter_name_for_leg(&leg), &auth)?
                 };
                 (provider, contract.model.clone())
             }
@@ -4373,6 +4409,7 @@ impl Core {
             .unwrap_or_else(|| vak_llm::RouteLeg {
                 provider: provider.name().to_string(),
                 model: model.clone(),
+                dialect: vak_llm::EndpointDialect::default(),
                 credential_id: None,
             });
         let (context_window, max_output) =
@@ -4461,7 +4498,7 @@ impl Core {
             for leg in contract.route_ladder.iter().skip(1) {
                 if let Ok(auth) =
                     self.provider_auth_for_leg(&leg.provider, leg.credential_id.as_deref())
-                    && let Ok(p) = self.inner.registry.get(&leg.provider, &auth)
+                    && let Ok(p) = self.inner.registry.get(&adapter_name_for_leg(leg), &auth)
                 {
                     cfg.ladder.push((p, leg.model.clone()));
                 }

@@ -22,10 +22,42 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Wire contract selected for a model route. A provider credential is not a
+/// wire contract: one provider can expose multiple endpoint dialects whose
+/// feature combinations differ. This is frozen with the model so replay and
+/// fallback cannot silently change the request semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EndpointDialect {
+    #[default]
+    ChatCompletions,
+    Responses,
+    AnthropicMessages,
+    GoogleGenerateContent,
+}
+
+impl EndpointDialect {
+    /// Select the native wire contract from provider identity and the turn's
+    /// declared requirements. This deliberately contains no model-name
+    /// knowledge; model-specific support comes from live catalogues/probes.
+    pub fn for_provider(provider: &str, needs_tools_or_reasoning: bool) -> Self {
+        match provider {
+            "anthropic" => Self::AnthropicMessages,
+            "google" => Self::GoogleGenerateContent,
+            "openai" | "openai-responses" if needs_tools_or_reasoning => Self::Responses,
+            "openrouter" | "openrouter-responses" if needs_tools_or_reasoning => Self::Responses,
+            "openai-responses" | "openrouter-responses" => Self::Responses,
+            _ => Self::ChatCompletions,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct RouteLeg {
     pub provider: String,
     pub model: String,
+    #[serde(default)]
+    pub dialect: EndpointDialect,
     /// Non-secret credential fingerprint selected at admission. `None` is
     /// the legacy/default credential for callers that do not use a pool.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -361,6 +393,7 @@ mod tests {
         RouteLeg {
             provider: p.into(),
             model: m.into(),
+            dialect: EndpointDialect::default(),
             credential_id: None,
         }
     }
@@ -483,6 +516,7 @@ mod tests {
         let scoped = RouteLeg {
             provider: "openrouter".into(),
             model: "model-a".into(),
+            dialect: EndpointDialect::Responses,
             credential_id: Some("deadbeef".into()),
         };
         let encoded = serde_json::to_string(&scoped).unwrap();
@@ -491,7 +525,24 @@ mod tests {
 
         let legacy: RouteLeg =
             serde_json::from_str(r#"{"provider":"ollama","model":"local-model"}"#).unwrap();
+        assert_eq!(legacy.dialect, EndpointDialect::ChatCompletions);
         assert_eq!(legacy.credential_id, None);
+    }
+
+    #[test]
+    fn agentic_openai_routes_use_responses_without_model_name_knowledge() {
+        assert_eq!(
+            EndpointDialect::for_provider("openai", true),
+            EndpointDialect::Responses
+        );
+        assert_eq!(
+            EndpointDialect::for_provider("openrouter", true),
+            EndpointDialect::Responses
+        );
+        assert_eq!(
+            EndpointDialect::for_provider("ollama", true),
+            EndpointDialect::ChatCompletions
+        );
     }
 
     #[test]

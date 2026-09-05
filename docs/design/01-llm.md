@@ -96,19 +96,24 @@ when the variable is *also* exported in the real environment — that copy
 cannot be unset from inside the app, and the provider stays authenticated.
 Both paths drop the cached provider client and the discovered-model cache.
 
-### Endpoint capability mismatches
+### Endpoint capability negotiation
 
-A provider/model route is an API dialect plus a model, not merely a model id.
-Model discovery establishes that a key can see an id; it cannot safely infer
-that every endpoint accepts every optional feature for that id. In particular,
-when a provider rejects function tools plus a non-disabled reasoning effort on
-`/v1/chat/completions` and directs the caller to `/v1/responses`, vak reports
-that as a permanent endpoint-capability mismatch and preserves the provider's
-message. It does not retry or silently change the frozen route. Select the
-Responses adapter (`openai-responses` for native OpenAI or
-`openrouter-responses` for OpenRouter) or a configuration the selected Chat
-Completions endpoint explicitly supports. This diagnostic is based on the
-provider's live rejection, never a baked-in model-name list.
+A usable route is `credential + provider + endpoint dialect + model +
+requested capabilities`, not merely a provider/model pair. `RouteLeg` freezes
+the dialect as well as the credential and model. This means a later retry or
+fallback cannot accidentally change a request from a native Messages,
+Responses, GenerateContent, or Chat Completions contract.
+
+The admission selector owns provider-to-dialect choice and contains no model
+name table. Native Anthropic and Google routes use their native contracts;
+agentic OpenAI and OpenRouter routes choose Responses, while local and generic
+OpenAI-compatible routes retain Chat Completions unless their endpoint has an
+explicit Responses contract. A provider/model catalogue is still live data:
+where a provider publishes feature metadata it must be retained and checked at
+admission; where it does not, an explicit bounded compatibility probe or a
+live rejection is evidence. Unknown is not compatibility. A rejection is a
+permanent endpoint-capability mismatch, never a transient retry and never an
+unannounced post-admission route switch.
 
 Providers may also expose a pool through a plural environment variable:
 `ANTHROPIC_API_KEYS`, `GEMINI_API_KEYS`, `OPENAI_API_KEYS`,

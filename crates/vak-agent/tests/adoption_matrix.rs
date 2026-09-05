@@ -128,11 +128,13 @@ fn setup(provider: Arc<MatrixProvider>, cfg_tweaks: impl FnOnce(&mut AgentConfig
                 vak_llm::RouteLeg {
                     provider: "matrix".into(),
                     model: "primary-model".into(),
+                    dialect: vak_llm::EndpointDialect::ChatCompletions,
                     credential_id: None,
                 },
                 vak_llm::RouteLeg {
                     provider: "matrix".into(),
                     model: "fallback-model".into(),
+                    dialect: vak_llm::EndpointDialect::ChatCompletions,
                     credential_id: None,
                 },
             ],

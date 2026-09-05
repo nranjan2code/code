@@ -25,8 +25,8 @@ pub use error::LlmError;
 pub use gate::credential_id;
 pub use registry::{ProviderAuth, ProviderRegistry};
 pub use route::{
-    BELIEF_FLOOR, BeliefMap, Demand, DemandBand, DemandInput, EvidenceSnapshot, ModelEvidence,
-    QualityObjective, RouteLeg, order_ladder_v1, order_ladder_v2, score_demand,
+    BELIEF_FLOOR, BeliefMap, Demand, DemandBand, DemandInput, EndpointDialect, EvidenceSnapshot,
+    ModelEvidence, QualityObjective, RouteLeg, order_ladder_v1, order_ladder_v2, score_demand,
 };
 pub use stream::{EventSink, EventStream, StreamEvent};
 pub use types::{
