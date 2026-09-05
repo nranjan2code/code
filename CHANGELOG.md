@@ -5,6 +5,69 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 2.3.1 — 2026-09-05
+
+A review of the schema-v2 rendering pipeline (2.3.0) turned out to be
+auditing an earlier snapshot of it — its five findings about AST
+flattening, recipe validation, chart integrity, and delivery-surface
+formatting no longer matched what shipped in 2.3.0. Verifying that
+surfaced one real, currently-failing regression, plus the actual gap
+behind "rendering doesn't do enough": nothing connected a tool's own
+result to the recipe/renderer vocabulary that already existed.
+
+### Recipe selection was rejecting almost everything
+
+`RecipeCatalog::choose_for_types` had a guard that rejected every
+signal-matched recipe whenever no structured candidates had already
+been validated — exactly the state of plain-text classification (no
+`\`\`\`vak` fence, no tool JSON). That silently broke selection of
+`research.synthesis`, `weather.forecast`, `coding.diff_inspector`,
+`coding.test_report`, `terminal.session`, `lifestyle.culinary_recipe`,
+`data.spreadsheet_grid`, and `data.multi_chart` for most plain-text
+answers, falling back to `answer.basic` instead. Two existing unit
+tests were already red on `main` because of it; the redundant guard is
+removed.
+
+### A tool's own result can now render richly, with nothing hardcoded to it
+
+Only an assistant's final text was ever scanned for structured data
+(inline `\`\`\`vak` fences, bare URLs). A tool's raw result — the thing
+most likely to actually carry a chart, a metric, a grid, a test report
+— was only ever shown as opaque progress text, except for
+`write`/`edit`/`apply_patch`/`imagegen`, matched by literal tool name
+for artifacts. Extending that per-name pattern to every domain would
+mean a hardcoded branch per tool, forever.
+
+Instead, `structured_outputs_from_text` — the same self-declared,
+schema-validated contract a model already uses inline — now also
+recognizes a tool result that is itself a bare
+`{"semantic_type": ..., "payload": ...}` envelope, with no Markdown
+fence required (a tool's result is rarely Markdown to begin with).
+Nothing here inspects a tool's name, and no type is ever guessed from
+a payload's field names; a result with no declared `semantic_type`
+still renders as plain text, same as before.
+
+For the much larger set of tools we don't control — a weather API, a
+ticketing system, any third-party MCP server — nothing can make them
+adopt our envelope, and rewriting their actual output to force it
+would reach past our own boundary into the same value the ledger
+records and a later turn's model reads. So a new `ResultAdapter` /
+`AdapterRegistry` (`vak-delivery::adapters`) puts provider-shape
+translation at render composition instead: an adapter recognizes one
+provider's specific, known response shape and projects a candidate for
+that one rendering pass only, still subject to the same
+`SkillRegistry::validate` as everything else. `built_in_adapters()`
+ships empty — no real third-party provider is wired into this
+codebase yet, and inventing one to demo would fabricate a shape
+nothing actually returns.
+
+Covered end-to-end across five personas' tools — a general user's
+weather metric, a developer's test report, a knowledge worker's
+research synthesis, a data analyst's grid, and a chart consumer's
+telemetry — run through `snapshot()` with tool names the pipeline has
+never seen, proving the mechanism is domain-neutral rather than
+demonstrating it only at the unit level.
+
 ## 2.3.0 — 2026-09-05
 
 - Rebuilt rendering and delivery around the schema-v2 semantic AST.
