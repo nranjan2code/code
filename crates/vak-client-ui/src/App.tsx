@@ -483,8 +483,9 @@ export async function sendPrompt(
 ///
 /// Remembering never blocks the answer — the run is already paused waiting
 /// on it. A call that cannot be narrowed safely (opaque shell, a one-off
-/// URL) is approved and simply not remembered, and says so in the
-/// transcript rather than failing silently or turning into a refusal.
+/// URL) is approved and simply not remembered. That is control-plane
+/// feedback, not an assistant message, so it belongs in the transient notice
+/// surface rather than being appended to the transcript on every call.
 export async function approve(
   requestId: string,
   ok: boolean,
@@ -499,7 +500,7 @@ export async function approve(
     if (result.learned_rule) {
       appendSystem(id, `won't ask again for ${result.learned_rule}`);
     } else if (result.learn_error) {
-      appendSystem(id, `allowed, but not remembered: ${result.learn_error}`);
+      setNotice({ kind: "error", text: `Allowed for this call; not remembered: ${result.learn_error}` });
     }
   } catch (e) {
     appendSystem(id, `approval failed: ${e instanceof Error ? e.message : String(e)}`);
