@@ -5,7 +5,7 @@ use vak_delivery::{
     ArtifactRef, DeliveryAction, OutputContent, OutputItem, OutputKind, OutputProvenance,
     OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline, SignalContext, built_in_recipes,
     built_in_skill_registry, compile_markdown, link_previews_from_text, signals_from_context,
-    structured_outputs_from_text,
+    structured_markdown, structured_outputs_from_text,
 };
 use vak_llm::{ContentBlock, Role};
 use vak_session::{ActivityKind, ActivityStatus, EntryPayload, SessionLog};
@@ -249,8 +249,44 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                                 }),
                                 actions: Vec::new(),
                                 fallback_text: detail
+                                    .clone()
                                     .unwrap_or_else(|| format!("{name} completed")),
                             });
+                            // A tool renders richly by tagging its own result with a
+                            // `semantic_type`, the same self-declared contract a model
+                            // uses inline (`structured_outputs_from_text` +
+                            // `SkillRegistry::validate`). No tool is named here: any
+                            // tool, present or future, gets this for free by emitting
+                            // a ```vak fence the registry recognizes, and nothing
+                            // renders when it doesn't — no shape is guessed from a
+                            // tool's name or its raw JSON.
+                            if !failed {
+                                for (structured_index, output) in detail
+                                    .as_deref()
+                                    .map(structured_outputs_from_text)
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .enumerate()
+                                {
+                                    timeline.items.push(OutputItem {
+                                        id: format!("{id}-structured-{structured_index}"),
+                                        timestamp: entry.ts.to_rfc3339(),
+                                        turn_id: turn_id.clone(),
+                                        role: OutputRole::Tool,
+                                        kind: OutputKind::Information,
+                                        status: OutputStatus::Succeeded,
+                                        fallback_text: structured_markdown(&output),
+                                        content: OutputContent::Structured { output },
+                                        provenance: Some(OutputProvenance {
+                                            session_id: Some(session_id.into()),
+                                            entry_id: Some(entry.id.clone()),
+                                            tool_call_id: Some(id.clone()),
+                                            source: Some(name.clone()),
+                                        }),
+                                        actions: Vec::new(),
+                                    });
+                                }
+                            }
                             if !failed && let Some(artifact) = artifact_from_tool(name, input) {
                                 let mut data = BTreeMap::new();
                                 if let Some(path) = &artifact.path {
@@ -1112,5 +1148,79 @@ mod tests {
         assert_eq!(recovered.kind, OutputKind::Progress);
         assert_eq!(recovered.status, OutputStatus::Failed);
         assert!(recovered.fallback_text.contains("Unknown tool"));
+    }
+
+    #[test]
+    fn a_tool_self_declaring_its_own_result_renders_structured_with_no_special_casing() {
+        // Any tool — not just ones this file knows by name — gets a rich
+        // render for free by tagging its own result with a semantic_type the
+        // registry recognizes. This models an arbitrary MCP tool doing that;
+        // nothing here mentions "weather" and nothing should have to.
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let mut log = SessionLog::create(
+            dir.path().join("presentation.jsonl"),
+            SessionHeader {
+                session_id: "session-3".into(),
+                created_at: chrono::Utc::now(),
+                cwd: PathBuf::from("/tmp/project"),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .expect("create session");
+        log.append_message(MessageRecord {
+            message: Message::user_text("What's the weather?"),
+            meta: None,
+        })
+        .expect("append user");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::ToolUse {
+                id: "tool-any".into(),
+                name: "some_third_party_mcp_tool".into(),
+                input: serde_json::json!({}),
+            }]),
+            meta: None,
+        })
+        .expect("append call");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "tool-any".into(),
+                    content: "```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"Temperature\",\"value\":25,\"unit\":\"C\"}}\n```".into(),
+                    is_error: false,
+                }],
+            },
+            meta: None,
+        })
+        .expect("append result");
+
+        let timeline = snapshot("session-3", &log);
+        let structured = timeline
+            .items
+            .iter()
+            .find(|item| matches!(item.content, OutputContent::Structured { .. }))
+            .expect("tool result should have produced a structured item");
+        let OutputContent::Structured { output } = &structured.content else {
+            unreachable!()
+        };
+        assert_eq!(output.semantic_type, "metric");
+        assert_eq!(
+            structured.provenance.as_ref().and_then(|p| p.tool_call_id.as_deref()),
+            Some("tool-any")
+        );
     }
 }
