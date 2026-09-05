@@ -206,6 +206,17 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::Intent(Box::new(record))))
     }
 
+    pub fn append_turn_capabilities(
+        &mut self,
+        bound: crate::types::TurnCapabilitiesBound,
+    ) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(
+            parent,
+            EntryPayload::TurnCapabilitiesBound(bound),
+        ))
+    }
+
     pub fn append_work(&mut self, event: WorkEvent) -> Result<Entry, SessionError> {
         let parent = self.tail_id.clone();
         let candidate = Entry::new(parent, EntryPayload::Work(event));
@@ -615,7 +626,8 @@ impl SessionLog {
                 | EntryPayload::Receipt(_)
                 | EntryPayload::Goal(_)
                 | EntryPayload::Activity(_)
-                | EntryPayload::Work(_) => {}
+                | EntryPayload::Work(_)
+                | EntryPayload::TurnCapabilitiesBound(_) => {}
             }
         }
         if let Ok(Some(work)) = self.work_projection()

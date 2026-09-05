@@ -254,9 +254,10 @@ async fn run_case_with_tools(
         }
     };
 
-    let mut cfg = AgentConfig::new("eval");
+    let prepared = vak_core::PreparedTurn::from_parts("eval", tools, Vec::new());
+    let mut cfg = AgentConfig::new(prepared.system_prompt);
     cfg.model = model.to_string();
-    cfg.tools = tools;
+    cfg.tools = prepared.tools;
     cfg.max_turns = 12;
     if deterministic {
         cfg.max_retries = 0;

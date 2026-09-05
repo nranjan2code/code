@@ -146,6 +146,7 @@ pub struct CapabilityRegistry {
     resolutions: RwLock<BTreeMap<CapabilityId, Resolution>>,
     /// The immediate channel. Checked at dispatch, independent of any epoch.
     revoked: RwLock<BTreeMap<CapabilityId, String>>,
+    revoked_fast: std::sync::RwLock<BTreeMap<CapabilityId, String>>,
     status: RwLock<ReconcileStatus>,
     hints: mpsc::UnboundedSender<Hint>,
 }
@@ -161,6 +162,7 @@ impl CapabilityRegistry {
             next_epoch: AtomicU64::new(1),
             resolutions: RwLock::new(BTreeMap::new()),
             revoked: RwLock::new(BTreeMap::new()),
+            revoked_fast: std::sync::RwLock::new(BTreeMap::new()),
             status: RwLock::new(ReconcileStatus::default()),
             hints: tx,
         });
@@ -188,13 +190,30 @@ impl CapabilityRegistry {
     /// callable now, not when the current turn happens to finish. This only
     /// ever narrows, which is why it is safe to apply without admission.
     pub async fn revoke(&self, id: CapabilityId, reason: impl Into<String>) {
-        self.revoked.write().await.insert(id, reason.into());
+        let reason = reason.into();
+        self.revoked
+            .write()
+            .await
+            .insert(id.clone(), reason.clone());
+        if let Ok(mut revoked) = self.revoked_fast.write() {
+            revoked.insert(id, reason);
+        }
         self.hint(Hint::ConfigChanged);
     }
 
     pub async fn restore(&self, id: &CapabilityId) {
         self.revoked.write().await.remove(id);
+        if let Ok(mut revoked) = self.revoked_fast.write() {
+            revoked.remove(id);
+        }
         self.hint(Hint::ConfigChanged);
+    }
+
+    pub fn revoked_now(&self, id: &CapabilityId) -> bool {
+        self.revoked_fast
+            .read()
+            .ok()
+            .is_some_and(|revoked| revoked.contains_key(id))
     }
 
     /// Force `id` to be probed on the next pass, discarding any backoff.
@@ -303,6 +322,7 @@ impl CapabilityRegistry {
         //    always refuse.
         let revoked = self.revoked.read().await.clone();
         let resolutions = self.resolutions.read().await;
+        let previous = self.current.read().await.clone();
         let capabilities: Vec<Capability> = declarations
             .into_iter()
             .map(|declaration| {
@@ -320,7 +340,11 @@ impl CapabilityRegistry {
                 };
                 let configuration = match probed.get(&declaration.id) {
                     Some((_, config)) if !config.is_null() => config.clone(),
-                    _ => declaration.configuration,
+                    _ => previous
+                        .get(&declaration.id)
+                        .map(|capability| capability.configuration.clone())
+                        .filter(|config| !config.is_null())
+                        .unwrap_or(declaration.configuration),
                 };
                 Capability {
                     id: declaration.id,
@@ -336,7 +360,6 @@ impl CapabilityRegistry {
             .collect();
         drop(resolutions);
 
-        let previous = self.current.read().await.clone();
         let candidate = CapabilitySet::new(previous.epoch, capabilities);
 
         let mut status = self.status.write().await;
@@ -475,6 +498,23 @@ mod tests {
         assert!(registry.reconcile().await.is_none(), "idempotent");
         assert!(registry.reconcile().await.is_none());
         assert_eq!(registry.current().await.epoch, first, "no epoch churn");
+    }
+
+    #[tokio::test]
+    async fn a_non_due_reconcile_preserves_the_last_mcp_catalog() {
+        let provider = Fake::new(vec![decl("search", CapabilityKind::McpServer, true)]);
+        let (registry, _) = CapabilityRegistry::new(provider);
+        registry.reconcile().await;
+        let first = registry.current().await;
+        let first_config = first
+            .get(&CapabilityId::new(CapabilityKind::McpServer, "search"))
+            .map(|capability| capability.configuration.clone());
+        registry.reconcile().await;
+        let second = registry.current().await;
+        let second_config = second
+            .get(&CapabilityId::new(CapabilityKind::McpServer, "search"))
+            .map(|capability| capability.configuration.clone());
+        assert_eq!(first_config, second_config);
     }
 
     #[tokio::test]

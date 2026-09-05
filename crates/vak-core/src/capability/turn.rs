@@ -51,6 +51,10 @@ use super::snapshot::{Capability, CapabilityId, CapabilitySet};
 /// that used to produce them.
 #[derive(Debug, Clone, Default)]
 pub struct TurnCapabilities {
+    /// Built-in and broker tool identities admitted for this turn.
+    pub tool_names: BTreeSet<String>,
+    /// Descriptor projection used to render the model-facing prompt.
+    pub descriptors: Vec<vak_session::types::CapabilityDescriptor>,
     /// Final MCP compatibility aliases, restricted to servers that survived
     /// all four filter stages *including* the domain slice.
     pub mcp_aliases: HashMap<String, McpToolAlias>,
@@ -78,6 +82,11 @@ pub struct TurnCapabilities {
 pub struct TurnProbe<'a> {
     /// The reconciled, versioned capability set the turn binds to.
     pub capabilities: &'a CapabilitySet,
+    /// Published registry epoch. A session contract is a baseline; a later
+    /// epoch may add newly discovered capabilities at the next turn boundary.
+    pub capability_epoch: u64,
+    /// Immediate revocations, applied even before the next published epoch.
+    pub revoked_ids: BTreeSet<CapabilityId>,
     /// The session's frozen contract (if any), for contract filtering.
     /// When `None`, stage 3 is a no-op.
     pub session_contract: Option<&'a FrozenContract>,
@@ -107,18 +116,34 @@ pub struct TurnProbe<'a> {
 fn blocked_ids(standings: &[crate::reach::Standing]) -> BTreeSet<CapabilityId> {
     let mut blocked = BTreeSet::new();
     for standing in standings {
-        let tool = &standing.tool;
-        let all_blocked = standings
-            .iter()
-            .filter(|s| &s.tool == tool)
-            .all(|s| s.reach.is_blocked());
-        if all_blocked {
-            let kind = match tool.as_str() {
-                "mcp" => CapabilityKind::McpServer,
-                "skill" => CapabilityKind::Skill,
-                _ => CapabilityKind::Tool,
-            };
-            blocked.insert(CapabilityId::new(kind, tool.clone()));
+        if !standing.reach.is_blocked() {
+            continue;
+        }
+        let (kind, name) = match standing.tool.as_str() {
+            "mcp" => (
+                CapabilityKind::McpServer,
+                standing
+                    .label
+                    .strip_prefix("mcp server `")
+                    .and_then(|value| value.strip_suffix('`')),
+            ),
+            "skill" => (
+                CapabilityKind::Skill,
+                standing
+                    .label
+                    .strip_prefix("skill `")
+                    .and_then(|value| value.strip_suffix('`')),
+            ),
+            _ => (
+                CapabilityKind::Tool,
+                standing
+                    .label
+                    .strip_prefix('`')
+                    .and_then(|value| value.strip_suffix('`')),
+            ),
+        };
+        if let Some(name) = name {
+            blocked.insert(CapabilityId::new(kind, name));
         }
     }
     blocked
@@ -137,14 +162,32 @@ fn passes_channel_reach_contract(
         // MCP server policies use qualified `server/tool` globs. Check the
         // server against `server/*` so a deny of `blocked_server/*` correctly
         // blocks the whole server.
-        CapabilityKind::McpServer => format!("{}/tool", id.name),
+        CapabilityKind::McpServer => format!("{}/*", id.name),
         _ => id.name.clone(),
     };
-    if !crate::Core::allowed_by(allow, deny, &channel_value) {
+    let visible = if id.kind == CapabilityKind::McpServer {
+        let server = &id.name;
+        let denied = deny.iter().any(|pattern| {
+            crate::Core::policy_matches(std::slice::from_ref(pattern), &format!("{server}/*"))
+        });
+        let allowed = allow.as_ref().is_none_or(|patterns| {
+            patterns.is_empty()
+                || patterns.iter().any(|pattern| {
+                    crate::Core::policy_matches(
+                        std::slice::from_ref(pattern),
+                        &format!("{server}/*"),
+                    ) || pattern.starts_with(&format!("{server}/"))
+                })
+        });
+        !denied && allowed
+    } else {
+        crate::Core::allowed_by(allow, deny, &channel_value)
+    };
+    if !visible {
         return false;
     }
     // Stage 2: reach
-    if blocked.contains(id) {
+    if blocked.contains(id) || probe.revoked_ids.contains(id) {
         return false;
     }
     // Stage 3: frozen contract
@@ -153,7 +196,7 @@ fn passes_channel_reach_contract(
             .capabilities
             .iter()
             .any(|c| c.kind == id.kind && c.name == id.name);
-        if !in_contract {
+        if !in_contract && probe.capability_epoch <= 1 {
             return false;
         }
     }
@@ -237,10 +280,16 @@ fn build_hook_def(cap: &Capability) -> Option<HookDef> {
     let cfg = cap.configuration.as_object()?;
     let event_str = cfg.get("event")?.as_str()?;
     let command = cfg.get("command")?.as_str()?.to_string();
-    let event: HookEvent = serde_json::from_str(&format!("\"{event_str}\"")).ok()?;
+    let event = match event_str {
+        "session-start" | "session_start" | "start" => HookEvent::SessionStart,
+        "pre-tool-use" | "pre_tool_use" => HookEvent::PreToolUse,
+        "post-tool-use" | "post_tool_use" => HookEvent::PostToolUse,
+        "stop" => HookEvent::Stop,
+        _ => return None,
+    };
     let matcher_str = cfg.get("matcher").and_then(|v| v.as_str());
     let matcher = match matcher_str {
-        Some(m) if !m.trim().is_empty() => Rule::parse(m).ok(),
+        Some(m) if !m.trim().is_empty() => Some(Rule::parse(m).ok()?),
         _ => None,
     };
     let timeout_ms = cfg
@@ -348,7 +397,21 @@ impl TurnCapabilities {
                 && passes_domain_slice(c, probe)
         });
 
+        let tool_names = surviving
+            .iter()
+            .filter(|c| c.id.kind == CapabilityKind::Tool)
+            .filter(|c| passes_domain_slice(c, probe))
+            .map(|c| c.id.name.clone())
+            .collect();
+        let descriptors = surviving
+            .iter()
+            .filter(|c| passes_domain_slice(c, probe))
+            .map(|c| c.to_descriptor())
+            .collect();
+
         TurnCapabilities {
+            tool_names,
+            descriptors,
             mcp_aliases,
             mcp_server_names,
             hooks,
@@ -454,6 +517,8 @@ mod tests {
     ) -> TurnProbe<'a> {
         TurnProbe {
             capabilities: set,
+            capability_epoch: set.epoch,
+            revoked_ids: BTreeSet::new(),
             session_contract: contract,
             channel_policy: policy,
             reach_standings: standings,
@@ -611,6 +676,59 @@ mod tests {
         let probe = make_probe(&set, None, &policy, &[], &required, Some(&inventory));
         let tc = TurnCapabilities::build(&probe);
         assert!(!tc.mcp_aliases.contains_key("secret_tool"));
+    }
+
+    #[test]
+    fn tool_specific_mcp_allow_keeps_server_admitted() {
+        let mut policy = empty_policy();
+        policy.mcp_allow = Some(vec!["search/query".into()]);
+        let set = CapabilitySet::new(
+            1,
+            vec![make_cap(
+                "search",
+                CapabilityKind::McpServer,
+                Serves::Undeclared,
+            )],
+        );
+        let inventory = vec![(
+            "search".to_string(),
+            vec![vak_mcp::McpToolInfo {
+                name: "query".into(),
+                description: "query".into(),
+                input_schema: serde_json::json!({}),
+            }],
+        )];
+        let required = BTreeSet::new();
+        let probe = make_probe(&set, None, &policy, &[], &required, Some(&inventory));
+        assert!(
+            TurnCapabilities::build(&probe)
+                .mcp_aliases
+                .contains_key("query")
+        );
+    }
+
+    #[test]
+    fn blocked_mcp_standing_is_instance_scoped() {
+        let set = CapabilitySet::new(
+            1,
+            vec![make_cap(
+                "search",
+                CapabilityKind::McpServer,
+                Serves::Undeclared,
+            )],
+        );
+        let standing = crate::reach::Standing {
+            tool: "mcp".into(),
+            label: "mcp server `search`".into(),
+            reach: crate::reach::Reach::Blocked,
+            reason: "denied".into(),
+            remedy: String::new(),
+        };
+        let policy = empty_policy();
+        let required = BTreeSet::new();
+        let standings = [standing];
+        let probe = make_probe(&set, None, &policy, &standings, &required, None);
+        assert!(TurnCapabilities::build(&probe).mcp_server_names.is_empty());
     }
 
     #[test]

@@ -18,7 +18,9 @@ use vak_session::{SessionLog, SessionPath};
 use vak_tools::sandbox::Sandbox;
 use vak_tools::{Tool, ToolContext, ToolOutput};
 
-use crate::{Agent, AgentConfig, ApprovalMode, Approver, InputNormalizer, SteeringQueues};
+use crate::{
+    Agent, AgentConfig, ApprovalMode, Approver, InputNormalizer, McpToolAlias, SteeringQueues,
+};
 
 pub struct TaskDeps {
     /// Prompts for named roles, admitted up front by the host exactly like
@@ -31,6 +33,9 @@ pub struct TaskDeps {
     pub model: String,
     pub tools: Vec<Arc<dyn Tool>>,
     pub capabilities: Vec<CapabilityDescriptor>,
+    pub hooks: Option<Arc<Vec<vak_hooks::HookDef>>>,
+    pub revocation_check: Option<crate::RevocationCheck>,
+    pub mcp_aliases: Option<Arc<std::sync::Mutex<std::collections::HashMap<String, McpToolAlias>>>>,
     pub input_normalizer: Option<InputNormalizer>,
     /// Read-only subset (read/glob/grep) used when a task declares
     /// `readonly: true`; children get these plus ReadOnly permission mode.
@@ -412,6 +417,12 @@ impl TaskTool {
         cfg.model = self.deps.model.clone();
         cfg.tool_definitions = Some(vak_tools::definitions(&child_tools));
         cfg.tools = child_tools;
+        cfg.hooks = self.deps.hooks.clone();
+        cfg.revocation_check = self.deps.revocation_check.clone();
+        cfg.mcp_aliases =
+            self.deps.mcp_aliases.clone().unwrap_or_else(|| {
+                Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()))
+            });
         cfg.input_normalizer = self.deps.input_normalizer.clone();
         cfg.max_turns = self.deps.max_turns;
         cfg.parallel_tools = true;

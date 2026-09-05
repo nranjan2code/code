@@ -3263,7 +3263,21 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     // but a hand-edited config with a genuine duplicate should not compound
     // either.
     for h in over.hooks {
-        if !base.hooks.contains(&h) {
+        let key = |hook: &HookConfig| {
+            (
+                hook.event.clone(),
+                hook.matcher.clone(),
+                hook.command.clone(),
+            )
+        };
+        let incoming = key(&h);
+        if let Some(existing) = base
+            .hooks
+            .iter_mut()
+            .find(|candidate| key(candidate) == incoming)
+        {
+            *existing = h;
+        } else {
             base.hooks.push(h);
         }
     }
@@ -4253,8 +4267,8 @@ mod tests {
         );
     }
 
-    /// A hook that differs only in `enabled` is a real edit, not a
-    /// duplicate — the dedup must key on the whole value, not just command.
+    /// A project hook with the same identity replaces the inherited hook,
+    /// including when the edit only changes `enabled`.
     #[test]
     fn merge_into_keeps_a_hook_whose_enabled_state_changed() {
         let mut base = FileConfig {
@@ -4266,10 +4280,7 @@ mod tests {
             ..FileConfig::default()
         };
         merge_into(&mut base, over);
-        assert_eq!(
-            base.hooks,
-            vec![hook("audit.sh", true), hook("audit.sh", false)]
-        );
+        assert_eq!(base.hooks, vec![hook("audit.sh", false)]);
     }
 
     /// A `[[hooks]]` entry written before `enabled` existed has no such key

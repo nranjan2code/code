@@ -908,12 +908,13 @@ async fn run_flow_exec(
 
     let mut state = load_state(&state_path, &name, &toml_str);
 
+    let prepared = core.prepare_turn().await;
     let deps = vak_flow::ExecutorDeps {
         provider,
-        system_prompt: core.system_prompt(),
+        system_prompt: prepared.system_prompt,
         model: core.effective_model(),
-        tools: core.agent_tools(),
-        read_only_tools: core.agent_read_only_tools(),
+        tools: prepared.tools,
+        read_only_tools: prepared.read_only_tools,
         max_turns: core.effective_max_turns(),
         permission: Some(std::sync::Arc::new(engine)),
         mode: match core.effective_permission_mode() {
@@ -1655,12 +1656,13 @@ async fn run_plan(
         }
     };
 
+    let prepared = core.prepare_turn().await;
     let deps = vak_flow::ExecutorDeps {
         provider,
-        system_prompt: core.system_prompt(),
+        system_prompt: prepared.system_prompt,
         model: core.effective_model(),
-        tools: core.agent_tools(),
-        read_only_tools: core.agent_read_only_tools(),
+        tools: prepared.tools,
+        read_only_tools: prepared.read_only_tools,
         max_turns: core.effective_max_turns(),
         permission: Some(std::sync::Arc::new(engine)),
         mode: match core.effective_permission_mode() {

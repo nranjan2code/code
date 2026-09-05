@@ -1,0 +1,86 @@
+   Compiling vak-core v3.0.0 (/Users/nisheethranjan/Projects/vakcoder/crates/vak-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.25s
+     Running tests/audit_turn_capabilities.rs (target/debug/deps/audit_turn_capabilities-80d18e64f247181e)
+
+running 9 tests
+test accepted_hook_event_reaches_turn ... FAILED
+test blocked_mcp_instance_is_removed ... FAILED
+test disabled_project_hook_shadows_shared_hook ... FAILED
+test existing_session_receives_new_skill_schema ... FAILED
+test project_command_wins_over_enabled_plugin_command ... FAILED
+test removed_skill_disappears_from_actual_model_prompt ... FAILED
+test specific_mcp_allow_retains_server ... FAILED
+test unchanged_reconcile_preserves_catalog ... FAILED
+test unmanaged_plugin_directory_is_not_enabled_command_source ... FAILED
+
+failures:
+
+---- accepted_hook_event_reaches_turn stdout ----
+
+thread 'accepted_hook_event_reaches_turn' (8823670) panicked at crates/vak-core/tests/audit_turn_capabilities.rs:33:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- blocked_mcp_instance_is_removed stdout ----
+
+thread 'blocked_mcp_instance_is_removed' (8823671) panicked at crates/vak-core/tests/audit_turn_capabilities.rs:26:5:
+assertion failed: project(&set, &Default::default(), &[standing]).mcp_server_names.is_empty()
+
+---- disabled_project_hook_shadows_shared_hook stdout ----
+
+thread 'disabled_project_hook_shadows_shared_hook' (8823672) panicked at crates/vak-core/tests/audit_turn_capabilities.rs:66:5:
+assertion failed: !core.effective_hooks().iter().any(|h| h.enabled)
+
+---- existing_session_receives_new_skill_schema stdout ----
+
+thread 'existing_session_receives_new_skill_schema' (8823673) panicked at crates/vak-core/tests/audit_turn_capabilities.rs:126:5:
+assertion failed: request.tools.iter().any(|t| t.name == "skill")
+
+---- project_command_wins_over_enabled_plugin_command stdout ----
+
+thread 'project_command_wins_over_enabled_plugin_command' (8823674) panicked at crates/vak-core/tests/audit_turn_capabilities.rs:87:5:
+assertion `left == right` failed
+  left: "plugin:project:p:commands"
+ right: "project"
+
+---- removed_skill_disappears_from_actual_model_prompt stdout ----
+
+thread 'removed_skill_disappears_from_actual_model_prompt' (8823675) panicked at crates/vak-core/tests/audit_turn_capabilities.rs:131:5:
+assertion failed: !request.system.unwrap_or_default().contains("audit-skill")
+
+---- specific_mcp_allow_retains_server stdout ----
+
+thread 'specific_mcp_allow_retains_server' (8823676) panicked at crates/vak-core/tests/audit_turn_capabilities.rs:20:5:
+assertion `left == right` failed
+  left: []
+ right: ["search"]
+
+---- unchanged_reconcile_preserves_catalog stdout ----
+
+thread 'unchanged_reconcile_preserves_catalog' (8823677) panicked at crates/vak-core/tests/audit_turn_capabilities.rs:52:5:
+assertion `left == right` failed
+  left: [CapabilityDescriptor { name: "search", kind: McpServer, invocation: ModelTool, description: "", source: None, digest: None, provenance: Some("workspace"), configuration: Object {"tools": Array [Object {"name": String("query")}]} }]
+ right: [CapabilityDescriptor { name: "search", kind: McpServer, invocation: ModelTool, description: "", source: None, digest: None, provenance: Some("workspace"), configuration: Null }]
+
+---- unmanaged_plugin_directory_is_not_enabled_command_source stdout ----
+
+thread 'unmanaged_plugin_directory_is_not_enabled_command_source' (8823678) panicked at crates/vak-core/tests/audit_turn_capabilities.rs:75:5:
+assertion failed: found.is_empty()
+
+
+failures:
+    accepted_hook_event_reaches_turn
+    blocked_mcp_instance_is_removed
+    disabled_project_hook_shadows_shared_hook
+    existing_session_receives_new_skill_schema
+    project_command_wins_over_enabled_plugin_command
+    removed_skill_disappears_from_actual_model_prompt
+    specific_mcp_allow_retains_server
+    unchanged_reconcile_preserves_catalog
+    unmanaged_plugin_directory_is_not_enabled_command_source
+
+test result: FAILED. 0 passed; 9 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+error: test failed, to rerun pass `-p vak-core --test audit_turn_capabilities`

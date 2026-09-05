@@ -83,6 +83,19 @@ pub struct FrozenContract {
     pub prompt_layers: Vec<PromptLayerDescriptor>,
 }
 
+/// The exact capability interface bound for one model turn. This is
+/// append-only audit data: it is not projected into model messages, but it
+/// makes the provider request reconstructable after live capabilities move.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnCapabilitiesBound {
+    pub epoch: u64,
+    pub capability_ids: Vec<String>,
+    pub excluded_ids: Vec<String>,
+    pub system_prompt: String,
+    #[serde(default)]
+    pub tool_schemas: Vec<serde_json::Value>,
+}
+
 /// One layer's contribution to the assembled system prompt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromptLayerDescriptor {
@@ -492,6 +505,8 @@ pub enum EntryPayload {
     Work(WorkEvent),
     /// This turn's resolved intent. Model-visible via `model_visible`.
     Intent(Box<IntentRecord>),
+    /// Exact capability interface used by one provider turn.
+    TurnCapabilitiesBound(TurnCapabilitiesBound),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

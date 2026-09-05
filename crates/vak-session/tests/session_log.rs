@@ -7,8 +7,8 @@ use tempfile::tempdir;
 
 use vak_llm::{ContentBlock, Message, Role, Usage};
 use vak_session::types::{
-    EntryPayload, FrozenContract, MessageMeta, MessageRecord, SessionHeader, WorkContract,
-    WorkEvent, WorkEventKind, WorkItemDefinition, WorkOwner,
+    EntryPayload, FrozenContract, MessageMeta, MessageRecord, SessionHeader, TurnCapabilitiesBound,
+    WorkContract, WorkEvent, WorkEventKind, WorkItemDefinition, WorkOwner,
 };
 use vak_session::{ActivityKind, ActivityRecord, ActivityStatus, SessionLog};
 
@@ -561,4 +561,28 @@ fn total_usage_counts_active_chain_only() {
     let u = log.total_usage();
     assert_eq!(u.input_tokens, 200);
     assert_eq!(u.output_tokens, 60);
+}
+
+#[test]
+fn turn_capability_binding_roundtrips_without_entering_context() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let mut log = SessionLog::create(path.clone(), header()).unwrap();
+    log.append_turn_capabilities(TurnCapabilitiesBound {
+        epoch: 7,
+        capability_ids: vec!["Tool:read".into()],
+        excluded_ids: vec!["Tool:bash".into()],
+        system_prompt: "system".into(),
+        tool_schemas: vec![serde_json::json!({"name":"read"})],
+    })
+    .unwrap();
+    assert!(log.derive_messages().is_empty());
+    drop(log);
+    let reopened = SessionLog::open(path).unwrap();
+    assert!(
+        reopened
+            .chain_to_root()
+            .iter()
+            .any(|entry| matches!(entry.payload, EntryPayload::TurnCapabilitiesBound(_)))
+    );
 }

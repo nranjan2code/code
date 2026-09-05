@@ -283,6 +283,7 @@ pub struct AgentConfig {
     pub approval_mode: ApprovalMode,
     pub sandbox: Option<Arc<dyn vak_tools::sandbox::Sandbox>>,
     pub hooks: Option<Arc<Vec<vak_hooks::HookDef>>>,
+    pub revocation_check: Option<RevocationCheck>,
     pub hook_recorder: Option<HookRecorder>,
     /// Retries for transient provider errors (429/529/network) per step.
     pub max_retries: u32,
@@ -328,6 +329,7 @@ pub struct AgentConfig {
 }
 
 pub type HookRecorder = Arc<dyn Fn(&vak_hooks::HookDef, bool) + Send + Sync>;
+pub type RevocationCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
 
 impl AgentConfig {
     pub fn new(system_prompt: impl Into<String>) -> Self {
@@ -351,6 +353,7 @@ impl AgentConfig {
             approval_mode: ApprovalMode::Ask,
             sandbox: None,
             hooks: None,
+            revocation_check: None,
             hook_recorder: None,
             max_retries: 3,
             retry_base_backoff_ms: 500,
@@ -3375,6 +3378,16 @@ async fn authorize(
     cwd: &std::path::Path,
     run_call_counts: &std::sync::Mutex<HashMap<String, u32>>,
 ) -> Result<(), String> {
+    if config
+        .revocation_check
+        .as_ref()
+        .is_some_and(|check| check(&call.name, &call.input))
+    {
+        return Err(format!(
+            "capability `{}` was revoked during this turn",
+            call.name
+        ));
+    }
     let Some(engine) = &config.permission else {
         return Ok(());
     };
@@ -3410,6 +3423,16 @@ async fn authorize(
                 config.sandbox.is_some(),
                 cwd,
             ) {
+                if config
+                    .revocation_check
+                    .as_ref()
+                    .is_some_and(|check| check(&call.name, &call.input))
+                {
+                    return Err(format!(
+                        "capability `{}` was revoked during this turn",
+                        call.name
+                    ));
+                }
                 return Ok(());
             }
             match &config.approver {
@@ -3417,7 +3440,18 @@ async fn authorize(
                     if a.approve(&call.name, &args_preview(&call.input), &reason)
                         .await =>
                 {
-                    Ok(())
+                    if config
+                        .revocation_check
+                        .as_ref()
+                        .is_some_and(|check| check(&call.name, &call.input))
+                    {
+                        Err(format!(
+                            "capability `{}` was revoked while approval was pending",
+                            call.name
+                        ))
+                    } else {
+                        Ok(())
+                    }
                 }
                 // Say who actually refused. On an unattended surface the
                 // gate was never put to a person, and reporting it as

@@ -1,0 +1,24 @@
+   Compiling vak-core v3.0.0 (/Users/nisheethranjan/Projects/vakcoder/crates/vak-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.62s
+     Running tests/capability_lifecycle.rs (target/debug/deps/capability_lifecycle-5498be80eb002625)
+
+running 9 tests
+test an_unknown_domain_survives_and_matches ... ok
+test an_undeclared_capability_survives_every_slice ... ok
+test a_server_that_is_down_is_named_and_never_faked ... ok
+test a_configured_server_that_answers_is_usable ... ok
+test a_server_recovers_without_a_restart ... ok
+test capabilities_can_be_added_edited_and_removed_while_running ... ok
+test a_persistently_failing_server_does_not_churn_the_epoch ... ok
+test revocation_applies_immediately_and_restoration_republishes ... ok
+test a_quiet_world_never_churns_the_epoch ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/capability_scopes.rs (target/debug/deps/capability_scopes-92c158c9c246f7d8)
+
+running 1 test
+test every_capability_resolves_at_both_scopes_and_every_switch_isolates ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

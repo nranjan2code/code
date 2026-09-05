@@ -15,7 +15,25 @@ pub struct CustomCommand {
 }
 
 pub fn discover(cwd: &Path, home: &Path) -> Vec<CustomCommand> {
-    discover_with_plugins(cwd, home, &[])
+    let mut commands = discover_with_plugins(cwd, home, &[]);
+    // Standalone inspection preserves the historical local plugin view. Core
+    // turn admission never uses this convenience path; it supplies only
+    // package roots returned by the enabled-plugin store.
+    if let Ok(entries) = std::fs::read_dir(cwd.join(".vak/plugins")) {
+        for entry in entries.flatten().filter(|entry| entry.path().is_dir()) {
+            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            collect_dir(
+                &entry.path().join("commands"),
+                &format!("plugin:{name}"),
+                &mut commands,
+            );
+        }
+    }
+    commands.sort_by(|a, b| a.name.cmp(&b.name).then(a.source.cmp(&b.source)));
+    commands.dedup_by(|a, b| a.name == b.name);
+    commands
 }
 
 pub fn discover_with_plugins(
@@ -30,25 +48,9 @@ pub fn discover_with_plugins(
         (home.join("commands"), "user".to_string()),
     ];
     roots.dedup();
-    // Plugin namespaces first so project/user layers can shadow them.
-    if let Ok(entries) = std::fs::read_dir(&roots[0].0) {
-        let mut plugins: Vec<std::path::PathBuf> = entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.is_dir())
-            .collect();
-        plugins.sort();
-        for plugin in plugins {
-            let Some(name) = plugin.file_name().map(|n| n.to_string_lossy().into_owned()) else {
-                continue;
-            };
-            collect_dir(
-                &plugin.join("commands"),
-                &format!("plugin:{name}"),
-                &mut out,
-            );
-        }
-    }
+    // Plugin roots are supplied by the enabled-plugin resolver. Never scan
+    // `.vak/plugins` directly: an unpacked or disabled package is not a
+    // capability source.
     for (root, provenance) in plugins {
         collect_dir(
             &root.join("commands"),
@@ -56,10 +58,23 @@ pub fn discover_with_plugins(
             &mut out,
         );
     }
-    for (root, label) in roots.iter().skip(1) {
+    for (root, label) in roots.iter().skip(1).rev() {
         collect_dir(root, label, &mut out);
     }
-    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out.sort_by(|a, b| {
+        let rank = |source: &str| {
+            if source == "project" {
+                0
+            } else if source.starts_with("plugin:") {
+                1
+            } else {
+                2
+            }
+        };
+        a.name
+            .cmp(&b.name)
+            .then(rank(&a.source).cmp(&rank(&b.source)))
+    });
     out.dedup_by(|a, b| a.name == b.name);
     out
 }
@@ -233,5 +248,40 @@ mod tests {
             expand_capability_invocation(&commands, "/unknown hello"),
             None
         );
+    }
+
+    #[test]
+    fn turn_discovery_ignores_unmanaged_plugin_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin = dir.path().join(".vak/plugins/ghost/commands");
+        std::fs::create_dir_all(&plugin).unwrap();
+        std::fs::write(plugin.join("ghost.md"), "# Ghost\nBody").unwrap();
+        let commands = discover_with_plugins(dir.path(), &dir.path().join("home"), &[]);
+        assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn project_command_wins_over_enabled_plugin_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join(".vak/commands");
+        let package = dir.path().join("package");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(package.join("commands")).unwrap();
+        std::fs::write(
+            project.join("review.md"),
+            "---\ndescription: Project\n---\nProject",
+        )
+        .unwrap();
+        std::fs::write(
+            package.join("commands/review.md"),
+            "---\ndescription: Plugin\n---\nPlugin",
+        )
+        .unwrap();
+        let commands = discover_with_plugins(
+            dir.path(),
+            &dir.path().join("home"),
+            &[(package, "plugin:acme:trace".into())],
+        );
+        assert_eq!(commands[0].source, "project");
     }
 }

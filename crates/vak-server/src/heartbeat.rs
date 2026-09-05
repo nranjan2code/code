@@ -234,11 +234,12 @@ async fn run_heartbeat_turn(
 async fn take_persistent_session(core: &Core) -> Result<SessionLog, String> {
     match core.open_session(HEARTBEAT_SESSION_ID).await {
         Ok(log) => Ok(log),
-        Err(_) => create_persistent_session(core),
+        Err(_) => create_persistent_session(core).await,
     }
 }
 
-fn create_persistent_session(core: &Core) -> Result<SessionLog, String> {
+async fn create_persistent_session(core: &Core) -> Result<SessionLog, String> {
+    let prepared = core.prepare_turn().await;
     let path = vak_session::SessionPath::new_session_file(
         &core.sessions_home(),
         core.cwd(),
@@ -260,7 +261,7 @@ fn create_persistent_session(core: &Core) -> Result<SessionLog, String> {
             route_ladder: Vec::new(),
             route_objective: String::new(),
             route_annotations: Vec::new(),
-            system_prompt: core.system_prompt(),
+            system_prompt: prepared.system_prompt,
             permission_mode: permission_mode_tag(core.effective_permission_mode()).to_string(),
             capabilities: core.capability_descriptors(),
             prompt_layers: Vec::new(),

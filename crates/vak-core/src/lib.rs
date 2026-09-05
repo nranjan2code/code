@@ -89,6 +89,8 @@ use vak_tools::sandbox::SandboxMode;
 
 struct CoreFlowDispatcher {
     core: Core,
+    tools: Vec<Arc<dyn vak_tools::Tool>>,
+    system_prompt: String,
 }
 
 #[async_trait::async_trait]
@@ -188,10 +190,15 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
                 Ok(provider) => provider,
                 Err(error) => return vak_tools::ToolOutput::error(error.to_string()),
             },
-            system_prompt: self.core.system_prompt(),
+            system_prompt: self.system_prompt.clone(),
             model: self.core.effective_model(),
-            tools: self.core.agent_tools(),
-            read_only_tools: self.core.agent_read_only_tools(),
+            tools: self.tools.clone(),
+            read_only_tools: self
+                .tools
+                .iter()
+                .filter(|tool| matches!(tool.name(), "read" | "glob" | "grep"))
+                .cloned()
+                .collect(),
             max_turns: self.core.effective_max_turns(),
             permission: Some(permission),
             mode: match self.core.effective_permission_mode() {
@@ -566,6 +573,30 @@ pub struct Core {
     /// attended. Unattended surfaces (the gateway without forward mode,
     /// the heartbeat) set it false, matching the `AutoDeny` they install.
     approver_answerable: bool,
+}
+
+/// The complete executable surface handed to a standalone flow or agent.
+/// Callers must construct their executor from this value instead of reading
+/// prompt text and tool factories independently.
+#[derive(Clone)]
+pub struct PreparedTurn {
+    pub system_prompt: String,
+    pub tools: Vec<Arc<dyn vak_tools::Tool>>,
+    pub read_only_tools: Vec<Arc<dyn vak_tools::Tool>>,
+}
+
+impl PreparedTurn {
+    pub fn from_parts(
+        system_prompt: impl Into<String>,
+        tools: Vec<Arc<dyn vak_tools::Tool>>,
+        read_only_tools: Vec<Arc<dyn vak_tools::Tool>>,
+    ) -> Self {
+        Self {
+            system_prompt: system_prompt.into(),
+            tools,
+            read_only_tools,
+        }
+    }
 }
 
 /// Which product surface a turn is running on.
@@ -1037,6 +1068,33 @@ impl Core {
         self.filter_builtin_tools(tools)
     }
 
+    /// Prepare the current effective capability surface for a standalone
+    /// flow. The prompt and both tool views are derived together so callers
+    /// cannot accidentally advertise one surface while executing another.
+    pub async fn prepare_turn(&self) -> PreparedTurn {
+        let descriptors = self.admitted_capabilities().await;
+        let admitted: std::collections::BTreeSet<String> = descriptors
+            .iter()
+            .filter(|descriptor| descriptor.kind == CapabilityKind::Tool)
+            .map(|descriptor| descriptor.name.clone())
+            .collect();
+        let tools: Vec<_> = self
+            .agent_tools()
+            .into_iter()
+            .filter(|tool| admitted.contains(tool.name()))
+            .collect();
+        let read_only_tools: Vec<_> = self
+            .agent_read_only_tools()
+            .into_iter()
+            .filter(|tool| admitted.contains(tool.name()))
+            .collect();
+        PreparedTurn::from_parts(
+            self.resolve_prompt(&descriptors).text,
+            tools,
+            read_only_tools,
+        )
+    }
+
     pub fn agent_read_only_tools(&self) -> Vec<Arc<dyn vak_tools::Tool>> {
         let worker = self
             .inner
@@ -1319,12 +1377,11 @@ impl Core {
         contract
             .capabilities
             .iter()
-            .map(|frozen| {
+            .filter_map(|frozen| {
                 current
                     .iter()
                     .find(|live| live.kind == frozen.kind && live.name == frozen.name)
                     .cloned()
-                    .unwrap_or_else(|| frozen.clone())
             })
             .collect()
     }
@@ -1736,8 +1793,14 @@ impl Core {
                             {
                                 c.inventory = None;
                             }
-                            core.capability_registry()
-                                .hint(capability::Hint::ServerAnnounced(server));
+                            let registry = core.capability_registry();
+                            registry
+                                .mark_due(&capability::CapabilityId::new(
+                                    vak_session::types::CapabilityKind::McpServer,
+                                    &server,
+                                ))
+                                .await;
+                            registry.hint(capability::Hint::ServerAnnounced(server));
                         }
                     }
                 });
@@ -3241,6 +3304,7 @@ impl Core {
                 | "openai"
                 | "openai-responses"
                 | "openrouter"
+                | "openrouter-responses"
                 | "opencode-zen"
                 | "ollama"
         )
@@ -4217,11 +4281,15 @@ impl Core {
                 std::collections::BTreeSet::new()
             };
         let cap_set = self.capability_registry().current().await;
+        let registry = self.capability_registry();
+        let revoked_ids = registry.revoked_ids().await;
         let reach_standings = self.capability_standings();
         let channel_policy = self.channel_policy().unwrap_or_default();
         let mcp_inventory = self.cached_mcp_inventory();
         let mut turn_capabilities = capability::TurnCapabilities::build(&capability::TurnProbe {
             capabilities: cap_set.as_ref(),
+            capability_epoch: cap_set.epoch,
+            revoked_ids,
             session_contract: session_contract.as_ref(),
             channel_policy: &channel_policy,
             reach_standings: &reach_standings,
@@ -4230,6 +4298,27 @@ impl Core {
             orientation_floor: vak_intent::ORIENTATION_FLOOR,
             builtin_names: self.tool_names(),
         });
+        let revoke_registry = registry.clone();
+        cfg.revocation_check = Some(Arc::new(move |name, input| {
+            let id = if name == "mcp" {
+                input
+                    .get("server")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|server| capability::CapabilityId::new(CapabilityKind::McpServer, server))
+            } else if name == "skill" {
+                input
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|skill| capability::CapabilityId::new(CapabilityKind::Skill, skill))
+            } else {
+                Some(capability::CapabilityId::new(CapabilityKind::Tool, name))
+            };
+            id.is_some_and(|id| revoke_registry.revoked_now(&id))
+        }));
+        // Prompt text is a projection of the same selected descriptor set as
+        // the schemas. This is deliberately after intent/policy filtering so
+        // a removed or withheld capability cannot remain in prose.
+        cfg.system_prompt = self.resolve_prompt(&turn_capabilities.descriptors).text;
 
         let work_config = self.effective_work();
         // Managed-ness follows from the reading's horizon rather than from a
@@ -4253,9 +4342,6 @@ impl Core {
         cfg.work_enabled = work_config.enabled;
         cfg.max_work_items = work_config.max_items;
         cfg.max_work_revisions = work_config.max_revisions;
-        if cfg.work_mode == WorkMode::Managed && turn_capabilities.flow_admitted {
-            cfg.flow_dispatcher = Some(Arc::new(CoreFlowDispatcher { core: self.clone() }));
-        }
         if let Some(contract) = &session_contract {
             let capabilities = contract.capabilities.clone();
             cfg.input_normalizer = Some(Arc::new(move |message| {
@@ -4429,7 +4515,9 @@ impl Core {
             let builtins_for_catalog = self.tool_names();
             let mcp_tool = vak_mcp::McpTool::with_policy_and_recorder(
                 manager,
-                Some(admitted_servers.iter().map(|s| format!("{s}/*")).collect()),
+                Some(policy.mcp_allow.clone().unwrap_or_else(|| {
+                    admitted_servers.iter().map(|s| format!("{s}/*")).collect()
+                })),
                 policy.mcp_deny.clone(),
                 recorder,
             )
@@ -4549,6 +4637,9 @@ impl Core {
                     .as_ref()
                     .map(|contract| contract.capabilities.clone())
                     .unwrap_or_default(),
+                hooks: cfg.hooks.clone(),
+                revocation_check: cfg.revocation_check.clone(),
+                mcp_aliases: Some(cfg.mcp_aliases.clone()),
                 input_normalizer: cfg.input_normalizer.clone(),
                 read_only_tools,
                 max_turns: self.effective_max_turns(),
@@ -4567,74 +4658,58 @@ impl Core {
                 registry: Some(self.inner.subagents.clone()),
             })));
         }
-        // Apply channel visibility after every tool has been assembled. Memory
-        // and optional tools are added below the base registry, so filtering
-        // only the initial built-in vector would leak capabilities through an
-        // explicit channel allowlist.
-        tools.retain(|tool| self.channel_tool_allowed(tool.name()));
-        // Then drop what the composed policy will refuse every time. The
-        // capability contract in the system prompt promises that the
-        // attached schemas ARE the callable interface; a tool whose every
-        // use is a foregone denial makes that promise false, and the model
-        // pays for it in wasted turns before reporting a capability it was
-        // told it had as simply missing. `reach` never adds a tool — this
-        // can only ever shorten the list.
+        // The authoritative turn plan owns all filtering. Tool factories may
+        // add objects here, but they cannot widen the plan.
+        tools.retain(|tool| turn_capabilities.tool_names.contains(tool.name()));
         let turn_standings = self.capability_standings();
-        let unreachable = reach::fully_blocked_tools(&turn_standings);
-        if !unreachable.is_empty() {
-            tools.retain(|tool| !unreachable.iter().any(|name| name == tool.name()));
-            for detail in reach::audit_details(&turn_standings) {
-                security_events::record(
-                    &self.sessions_home(),
-                    security_events::EventKind::CapabilityUnreachable,
-                    "capability_unreachable",
-                    &detail,
-                    None,
-                );
-            }
-        }
-        if let Some(contract) = &session_contract {
-            tools.retain(|tool| {
-                contract.capabilities.iter().any(|capability| {
-                    capability.kind == CapabilityKind::Tool && capability.name == tool.name()
-                })
-            });
-        }
-        // Finally, progressive disclosure: show this turn only the tools its
-        // reading plausibly needs. Sits here deliberately, beside `reach` and
-        // the frozen-contract filter, because it has the same shape — a
-        // `retain` over an already-admitted list that can only shorten it.
-        //
-        // Published measurements put tool-selection accuracy near 94% at 50
-        // tools and 14% at 741; a greeting that carries the whole toolbox pays
-        // for it in both context and wrong calls. Slicing only happens when
-        // the reading cleared the acceptance threshold, so an uncertain turn
-        // keeps everything.
-        //
-        // Matching is by *declared domain*, never by a list of tool names.
-        // The name-list shape is what produced the original defect: a static
-        // table said `Act::Answer` meant `["webfetch", "mcp"]`, so a
-        // capability the operator had installed could not be matched at all
-        // and every integration needed a harness edit — granted only after
-        // someone reported a confidently wrong answer. A tool that declares
-        // nothing is never sliced away, because slicing saves context and
-        // does not enforce policy; `reach` and the permission engine do that.
-        if self.inner.config.intent.enabled && !required_domains.is_empty() {
-            let declared_serves = self.declared_tool_domains();
-            let before = tools.len();
-            tools.retain(|tool| {
-                if vak_intent::ORIENTATION_FLOOR.contains(&tool.name()) {
-                    return true;
-                }
-                match declared_serves.get(tool.name()) {
-                    None => true,
-                    Some(serves) => serves.intersection(&required_domains).next().is_some(),
-                }
-            });
-            debug_assert!(tools.len() <= before, "the intent slice added a tool");
+        for detail in reach::audit_details(&turn_standings) {
+            security_events::record(
+                &self.sessions_home(),
+                security_events::EventKind::CapabilityUnreachable,
+                "capability_unreachable",
+                &detail,
+                None,
+            );
         }
         cfg.tool_definitions = Some(vak_tools::definitions(&tools));
         cfg.tools = tools;
+        if cfg.work_mode == WorkMode::Managed && turn_capabilities.flow_admitted {
+            cfg.flow_dispatcher = Some(Arc::new(CoreFlowDispatcher {
+                core: self.clone(),
+                tools: cfg.tools.clone(),
+                system_prompt: cfg.system_prompt.clone(),
+            }));
+        }
+        let selected_ids: std::collections::BTreeSet<String> = turn_capabilities
+            .descriptors
+            .iter()
+            .map(|descriptor| format!("{:?}:{}", descriptor.kind, descriptor.name))
+            .collect();
+        let all_ids: std::collections::BTreeSet<String> = cap_set
+            .all()
+            .map(|capability| format!("{:?}:{}", capability.id.kind, capability.id.name))
+            .collect();
+        let tool_schemas = cfg
+            .tool_definitions
+            .as_ref()
+            .map(|definitions| {
+                definitions
+                    .iter()
+                    .filter_map(|definition| serde_json::to_value(definition).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if let Err(error) =
+            session.append_turn_capabilities(vak_session::types::TurnCapabilitiesBound {
+                epoch: cap_set.epoch,
+                capability_ids: selected_ids.iter().cloned().collect(),
+                excluded_ids: all_ids.difference(&selected_ids).cloned().collect(),
+                system_prompt: cfg.system_prompt.clone(),
+                tool_schemas,
+            })
+        {
+            eprintln!("[capabilities] could not record turn binding: {error}");
+        }
         // Hooks come from TurnCapabilities — the same four-stage pipeline
         // that filtered tools and MCP aliases applies to hooks. Previously
         // hooks were assembled from PluginStore with no contract or domain-

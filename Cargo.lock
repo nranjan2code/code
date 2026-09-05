@@ -6024,6 +6024,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "vak-agent",
+ "vak-core",
  "vak-llm",
  "vak-permission",
  "vak-session",
