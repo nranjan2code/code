@@ -142,7 +142,7 @@ function OperationsContextBar(props: {
   return <section class="ops-context-bar" aria-label="Operational context">
     <div class="ops-context-group">
       <label class="ops-context-field"><span>Scope</span><select value={props.workspace || "all"} onChange={(event) => operationNavigate(operationPath(), { workspace: event.currentTarget.value })}>
-        <option value="all">All workspaces</option>
+        <option value="all">Global</option>
         <For each={workspaceOptions(props.data)}>{(workspace) => <option value={workspace}>{workspaceLabel(workspace, props.data)} · {workspace}</option>}</For>
       </select></label>
       <label class="ops-context-field"><span>Time</span><select value={props.timeWindow} onChange={(event) => operationNavigate(operationPath(), { time: event.currentTarget.value })}>

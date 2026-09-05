@@ -5686,7 +5686,6 @@ function Settings() {
       <PageHeader
         title="Settings"
         description="Choose the model, permissions, defaults, and inheritance boundary for vak."
-        actions={<ScopeControl />}
       />
       <div class="two-col">
         <div class="stack">
@@ -6623,7 +6622,7 @@ function AlertForm(props: { onClose: () => void; onAdded: () => void }) {
         <label>Availability</label>
         <select value={scope()} onChange={(e) => setScope(e.currentTarget.value)}>
           <option value="workspace">Workspace</option>
-          <option value="global">All workspaces</option>
+          <option value="global">Global</option>
         </select>
       </div>
       <div style={{ display: "flex", gap: "8px", "margin-top": "8px" }}>
@@ -6781,7 +6780,7 @@ function FeedWizard(props: { onClose: () => void; onAdded: () => void }) {
               <label>Availability</label>
               <select value={scope()} onChange={(e) => setScope(e.currentTarget.value as "workspace" | "global")}>
                 <option value="workspace">Workspace</option>
-                <option value="global">All workspaces</option>
+                <option value="global">Global</option>
               </select>
             </div>
             <div class="form-row">
