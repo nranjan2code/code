@@ -1,5 +1,21 @@
 # 15 — Reliability: QoS, crash, recovery, start/stop/resume
 
+## Tool and MCP error recovery
+
+Tool and MCP failures are append-only, model-visible values rather than
+terminal exceptions. When a failure is plausibly correctable, Vak appends a
+recovery hint to that result so the next LLM turn can inspect the failure and
+retry with corrected arguments or choose an alternative capability. This is a
+bounded repair loop, not blind replay: the model must produce the new call,
+identical arguments must not be repeated, and every new call is authorized and
+executed through the normal broker.
+
+Recovery hints are deliberately omitted for user cancellation, permission or
+approval denial, revocation, authentication, and rate-limit failures. Those
+conditions require an external state change or human decision. Existing turn
+limits, doom-loop detection, provider dispatch ceilings, and append-only
+session recording remain the upper bounds for the repair loop.
+
 The standard failure matrix and where each case is handled.
 
 ## Transient failures (QoS)

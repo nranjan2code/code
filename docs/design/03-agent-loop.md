@@ -24,6 +24,14 @@ No panics; session-write failures become `Failed`.
 
 - **Errors are values** end to end: unknown tools and tool panics become
   `is_error` ToolResults the model can self-correct from; a single tool failure
+  is not an automatic blind replay. For correctable failures (malformed
+  arguments, unknown capability names, schema mismatches, and recoverable
+  tool/MCP transport faults), the result includes a logged recovery contract:
+  inspect the error and admitted inventory, issue at most one corrected or
+  alternative call, and do not repeat identical arguments. Cancellation,
+  permission/approval denial, revocation, authentication, and rate limiting
+  do not receive recovery advice. The corrected call still passes the normal
+  authorization, sandbox, hook, doom-loop, turn, and dispatch-ceiling checks.
   never kills the run.
 - **Parallel by default**, results re-ordered into assistant source order.
 - **Steering + follow-up are two queues**: steering drains before the next

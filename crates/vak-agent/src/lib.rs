@@ -3366,6 +3366,17 @@ async fn execute_one(
         }
     }
 
+    // Tool failures are values, but a terse error alone makes weaker models
+    // stop instead of repairing the call. Keep the original error intact and
+    // attach a bounded, non-authorizing recovery contract. The next model
+    // turn is the retry loop; permission, cancellation, and policy failures
+    // deliberately do not receive a retry suggestion.
+    if let ToolRunOutput::Err(content) = &mut output
+        && let Some(hint) = tool_recovery_hint(content)
+    {
+        content.push_str(hint);
+    }
+
     let result_content = match &output {
         ToolRunOutput::Ok(content) | ToolRunOutput::Err(content) => content.as_str(),
     };
@@ -3379,6 +3390,56 @@ async fn execute_one(
         .await;
 
     (call.id, output)
+}
+
+fn tool_recovery_hint(error: &str) -> Option<&'static str> {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("cancel")
+        || lower.contains("denied")
+        || lower.contains("revoked")
+        || lower.contains("approval")
+        || lower.contains("rate limit")
+        || lower.contains("429")
+        || lower.contains("unauthorized")
+        || lower.contains("forbidden")
+    {
+        return None;
+    }
+    if lower.contains("unknown_capability")
+        || lower.contains("invalid")
+        || lower.contains("missing required")
+        || lower.contains("schema")
+        || lower.contains("timed out")
+        || lower.contains("connection closed")
+        || lower.contains("spawn failed")
+        || lower.contains("protocol error")
+        || lower.contains("tool task failed")
+    {
+        return Some(
+            "\n[recovery] Treat this as a failed attempt. Inspect the error and the admitted tool/schema inventory, then make at most one corrected or alternative call. Do not repeat identical arguments. If the failure is environmental or the corrected call is unsafe, explain the blocker instead.",
+        );
+    }
+    None
+}
+
+#[cfg(test)]
+mod tool_recovery_tests {
+    use super::tool_recovery_hint;
+
+    #[test]
+    fn repairable_failures_get_a_model_recovery_contract() {
+        assert!(
+            tool_recovery_hint(r#"{"type":"unknown_capability","name":"tavily_search"}"#).is_some()
+        );
+        assert!(tool_recovery_hint("mcp protocol error: invalid arguments").is_some());
+    }
+
+    #[test]
+    fn authorization_and_user_control_failures_never_get_retry_advice() {
+        assert!(tool_recovery_hint("capability denied by channel policy").is_none());
+        assert!(tool_recovery_hint("cancelled").is_none());
+        assert!(tool_recovery_hint("429 rate limit").is_none());
+    }
 }
 
 /// Doom-loop threshold: the Nth identical (tool, args) call in one run is
