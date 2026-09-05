@@ -229,17 +229,25 @@ pub struct SignalContext {
 pub struct PresentationRecipe {
     pub id: String,
     pub version: String,
-    pub match_signals: Vec<String>,          // all must be present
-    pub primary_types: Vec<String>,          // what structured types this expects
-    pub renderers: BTreeMap<String, String>, // surface → renderer binding
+    pub match_signals: Vec<String>, // every declared signal must be present
+    pub primary_types: Vec<String>, // required semantic types for this composition
+    pub surfaces: Vec<String>,      // eligible targets; never renderer bindings
 }
 ```
 
+Renderer resolution is a separate per-block operation. A recipe chooses
+composition intent; the validated skill registry chooses a renderer for each
+structured block against the target surface. The persisted plan therefore
+contains one `RendererDecision` per block plus a summary (`markdown:native`, a
+single renderer id, or `mixed`). `builtin:generic` is an explicit surface
+fallback, never a recipe default.
+
 **Plugin extension point:** `RecipeCatalog::register(plugin_recipe)` allows
-any installed plugin to contribute recipes. Matching uses longest-signal-
-prefix priority: a recipe matching `["diff", "files_changed", "test_report"]`
-shadows the generic `["diff", "files_changed"]` if both fire. The built-in
-catalog is the default register; plugin recipes are additive.
+any installed plugin to contribute recipes. Matching requires every declared
+signal and every required primary type, then ranks candidates by an explicit
+specificity/priority tuple with stable id/version tie-breaking. Renderer
+bindings are never supplied by a recipe. The built-in catalog is the default
+register; plugin recipes are additive.
 
 **Signal extensibility:** Plugins contribute signal definitions (keyword
 patterns, tool-name mappings) to the `SignalRegistry`. The core `signals_from_text()`

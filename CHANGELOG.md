@@ -5,6 +5,15 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.5 — 2026-09-05
+
+### Capability-driven presentation planning
+
+- Separate recipe composition intent from per-output renderer resolution.
+- Record surface-aware renderer decisions and mixed-output audit details.
+- Make recipe signal/type matching deterministic and reject ambiguous semantic
+  type ownership.
+
 ## 3.0.4 — 2026-09-05
 
 ### Universal call-contract admission

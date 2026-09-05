@@ -21,12 +21,20 @@ pub struct PresentationRecipe {
     pub id: String,
     pub version: String,
     #[serde(default)]
+    pub priority: i32,
+    #[serde(default)]
     pub match_signals: Vec<String>,
     pub primary: Vec<String>,
     #[serde(default)]
     pub optional: Vec<String>,
     #[serde(default)]
     pub fallback: BTreeMap<String, String>,
+    /// Surfaces on which this composition is eligible. This is deliberately
+    /// separate from renderer bindings; a recipe never chooses a renderer.
+    #[serde(default)]
+    pub surfaces: Vec<String>,
+    #[serde(default)]
+    pub default_recipe: bool,
     #[serde(default)]
     pub requires_typed_output: bool,
     #[serde(default)]
@@ -37,6 +45,8 @@ pub struct PresentationRecipe {
 pub struct PresentationDecision {
     pub recipe_id: String,
     pub recipe_version: String,
+    #[serde(default)]
+    pub priority: i32,
     pub matched_signals: Vec<String>,
     pub renderer: String,
     pub disposition: DecisionDisposition,
@@ -49,10 +59,12 @@ pub struct PresentationDecision {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionDisposition {
+    Unresolved,
     Native,
     Sandboxed,
     Fallback,
     Rejected,
+    Mixed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +72,21 @@ pub struct PresentationPlan {
     pub recipe: Option<PresentationDecision>,
     pub accepted: Vec<StructuredOutput>,
     pub rejected: Vec<PlanDiagnostic>,
+    /// Renderer resolution is per structured output, never per recipe. A
+    /// document may contain several semantic types with different renderers.
+    #[serde(default)]
+    pub renderers: Vec<RendererDecision>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RendererDecision {
+    pub semantic_type: String,
+    pub skill_id: String,
+    pub skill_version: String,
+    pub renderer: String,
+    pub disposition: DecisionDisposition,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,9 +112,20 @@ impl PresentationPlanner {
     ) -> PresentationPlan {
         let mut accepted = Vec::new();
         let mut rejected = Vec::new();
+        let mut renderers = Vec::new();
         for candidate in candidates {
             match self.skills.validate(candidate, surface, capabilities) {
-                Ok(_) => accepted.push(candidate.clone()),
+                Ok(binding) => {
+                    accepted.push(candidate.clone());
+                    renderers.push(RendererDecision {
+                        semantic_type: candidate.semantic_type.clone(),
+                        skill_id: candidate.skill_id.clone(),
+                        skill_version: candidate.skill_version.clone(),
+                        renderer: binding.renderer.clone(),
+                        disposition: renderer_disposition(&binding.renderer),
+                        diagnostic: None,
+                    });
+                }
                 Err(error) => rejected.push(PlanDiagnostic {
                     semantic_type: candidate.semantic_type.clone(),
                     disposition: DecisionDisposition::Fallback,
@@ -99,12 +137,55 @@ impl PresentationPlanner {
             .iter()
             .map(|candidate| candidate.semantic_type.clone())
             .collect();
-        let recipe = self.recipes.choose_for_types(signals, surface, &available);
+        let mut recipe = self.recipes.choose_for_types(signals, surface, &available);
+        if let Some(decision) = recipe.as_mut() {
+            decision.renderer = renderer_summary(&renderers);
+            decision.disposition = renderer_summary_disposition(&renderers);
+        }
         PresentationPlan {
             recipe,
             accepted,
             rejected,
+            renderers,
         }
+    }
+}
+
+fn renderer_disposition(renderer: &str) -> DecisionDisposition {
+    if renderer.starts_with("native:") {
+        DecisionDisposition::Native
+    } else if renderer.starts_with("sandbox:") {
+        DecisionDisposition::Sandboxed
+    } else {
+        DecisionDisposition::Fallback
+    }
+}
+
+fn renderer_summary(renderers: &[RendererDecision]) -> String {
+    let mut ids = renderers
+        .iter()
+        .map(|decision| decision.renderer.as_str())
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.dedup();
+    match ids.as_slice() {
+        [] => "markdown:native".into(),
+        [renderer] => (*renderer).into(),
+        _ => "mixed".into(),
+    }
+}
+
+fn renderer_summary_disposition(renderers: &[RendererDecision]) -> DecisionDisposition {
+    let Some(first) = renderers.first().map(|decision| decision.disposition) else {
+        return DecisionDisposition::Native;
+    };
+    if renderers
+        .iter()
+        .all(|decision| decision.disposition == first)
+    {
+        first
+    } else {
+        DecisionDisposition::Mixed
     }
 }
 
@@ -171,38 +252,54 @@ impl RecipeCatalog {
                     .filter(|signal| signals.iter().any(|candidate| candidate == *signal))
                     .cloned()
                     .collect();
-                if matched_signals.is_empty() && !recipe.match_signals.is_empty() {
-                    return None;
-                }
-                if !available_types.is_empty()
-                    && !recipe
-                        .primary
-                        .iter()
-                        .chain(recipe.optional.iter())
-                        .any(|required| type_matches(required, available_types))
+                if matched_signals.len() != recipe.match_signals.len()
+                    && !recipe.match_signals.is_empty()
                 {
                     return None;
                 }
-                let renderer = recipe
-                    .fallback
-                    .get(surface)
-                    .cloned()
-                    .unwrap_or_else(|| "builtin:generic".into());
+                let supported_surface = recipe.surfaces.iter().any(|item| item == surface)
+                    || (recipe.surfaces.is_empty()
+                        && recipe.fallback.keys().any(|item| item == surface));
+                if !supported_surface {
+                    return None;
+                }
+                if !recipe.default_recipe
+                    && !available_types.is_empty()
+                    && !recipe
+                        .primary
+                        .iter()
+                        .all(|required| type_matches(required, available_types))
+                {
+                    return None;
+                }
                 Some(PresentationDecision {
                     recipe_id: recipe.id.clone(),
                     recipe_version: recipe.version.clone(),
+                    priority: recipe.priority,
                     matched_signals,
-                    renderer,
-                    disposition: if recipe.fallback.contains_key(surface) {
-                        DecisionDisposition::Native
-                    } else {
-                        DecisionDisposition::Fallback
-                    },
+                    // Renderer selection is performed by PresentationPlanner
+                    // from validated skill bindings. Recipes only select
+                    // composition intent.
+                    renderer: "unresolved".into(),
+                    disposition: DecisionDisposition::Unresolved,
                     requires_typed_output: recipe.requires_typed_output,
                     typed_output_types: recipe.typed_output_types.clone(),
                 })
             })
-            .max_by_key(|decision| decision.matched_signals.len())
+            .max_by(|left, right| {
+                (
+                    left.priority,
+                    left.matched_signals.len(),
+                    left.recipe_id.as_str(),
+                    left.recipe_version.as_str(),
+                )
+                    .cmp(&(
+                        right.priority,
+                        right.matched_signals.len(),
+                        right.recipe_id.as_str(),
+                        right.recipe_version.as_str(),
+                    ))
+            })
     }
 }
 
@@ -231,37 +328,37 @@ pub fn built_in_recipes() -> RecipeCatalog {
         (
             "answer.research",
             vec!["citations", "multiple_sources"],
-            vec!["outcome", "source.card"],
+            vec!["research.synthesis"],
             vec!["desktop", "terminal"],
         ),
         (
             "research.synthesis",
             vec!["research", "synthesis", "takeaways"],
-            vec!["research.card", "citations"],
+            vec!["research.synthesis"],
             vec!["desktop", "terminal"],
         ),
         (
             "weather.forecast",
             vec!["temperature", "forecast"],
-            vec!["metric.group", "chart.line"],
+            vec!["metric"],
             vec!["desktop", "terminal", "telegram"],
         ),
         (
             "coding.change_summary",
             vec!["files_changed"],
-            vec!["outcome", "artifact.collection"],
+            vec!["outcome"],
             vec!["desktop", "terminal"],
         ),
         (
             "coding.diff_inspector",
             vec!["diff", "files_changed"],
-            vec!["coding.diff", "artifact.collection"],
+            vec!["coding.diff"],
             vec!["desktop", "terminal"],
         ),
         (
             "coding.test_report",
             vec!["tests", "pass_fail"],
-            vec!["status", "table"],
+            vec!["test.report"],
             vec!["desktop", "terminal", "telegram"],
         ),
         (
@@ -273,19 +370,19 @@ pub fn built_in_recipes() -> RecipeCatalog {
         (
             "data.multi_chart",
             vec!["chart", "telemetry"],
-            vec!["chart", "metric.group"],
+            vec!["chart"],
             vec!["desktop", "terminal"],
         ),
         (
             "data.spreadsheet_grid",
             vec!["table_data", "tabular"],
-            vec!["data.grid", "table"],
+            vec!["data.grid"],
             vec!["desktop", "terminal"],
         ),
         (
             "lifestyle.culinary_recipe",
             vec!["recipe", "ingredients"],
-            vec!["recipe.card", "timer"],
+            vec!["recipe.card"],
             vec!["desktop"],
         ),
         (
@@ -301,18 +398,16 @@ pub fn built_in_recipes() -> RecipeCatalog {
             vec!["desktop", "terminal", "telegram"],
         ),
     ] {
-        let fallback = recipe
-            .3
-            .into_iter()
-            .map(|surface| (surface.into(), "builtin:generic".into()))
-            .collect();
         let _ = catalog.register(PresentationRecipe {
             id: recipe.0.into(),
             version: "1.0.0".into(),
+            priority: 0,
             match_signals: recipe.1.into_iter().map(String::from).collect(),
             primary: recipe.2.into_iter().map(String::from).collect(),
             optional: Vec::new(),
-            fallback,
+            fallback: BTreeMap::new(),
+            surfaces: recipe.3.into_iter().map(String::from).collect(),
+            default_recipe: recipe.0 == "answer.basic",
             requires_typed_output: matches!(recipe.0, "answer.research" | "research.synthesis"),
             typed_output_types: if matches!(recipe.0, "answer.research" | "research.synthesis") {
                 vec!["research.synthesis".into()]
@@ -893,6 +988,17 @@ impl SkillRegistry {
         if manifest.provides.iter().any(|kind| kind.trim().is_empty()) {
             return Err(SkillError::InvalidManifest("empty semantic type".into()));
         }
+        if self.skills.iter().any(|(id, existing)| {
+            id != &manifest.id
+                && manifest
+                    .provides
+                    .iter()
+                    .any(|kind| existing.provides.iter().any(|owned| owned == kind))
+        }) {
+            return Err(SkillError::InvalidManifest(
+                "semantic type is already owned by another skill".into(),
+            ));
+        }
         self.skills.insert(manifest.id.clone(), manifest);
         Ok(())
     }
@@ -1276,6 +1382,22 @@ mod tests {
     }
 
     #[test]
+    fn registry_rejects_ambiguous_semantic_type_ownership() {
+        let mut registry = built_in_skill_registry();
+        let result = registry.register(PresentationSkillManifest {
+            id: "other-skill".into(),
+            version: "1.0.0".into(),
+            api: PRESENTATION_SKILL_API.into(),
+            provides: vec!["data.grid".into()],
+            renderers: BTreeMap::new(),
+            schema: None,
+        });
+        assert!(
+            matches!(result, Err(SkillError::InvalidManifest(reason)) if reason.contains("already owned"))
+        );
+    }
+
+    #[test]
     fn recipe_selection_is_deterministic_and_surface_aware() {
         let mut catalog = RecipeCatalog::default();
         let mut fallback = BTreeMap::new();
@@ -1285,10 +1407,13 @@ mod tests {
                 .register(PresentationRecipe {
                     id: "weather.forecast".into(),
                     version: "1.0.0".into(),
+                    priority: 0,
                     match_signals: vec!["temperature".into(), "forecast".into()],
                     primary: vec!["metric.group".into()],
                     optional: vec!["chart.line".into()],
                     fallback,
+                    surfaces: Vec::new(),
+                    default_recipe: false,
                     requires_typed_output: false,
                     typed_output_types: Vec::new(),
                 })
@@ -1299,7 +1424,7 @@ mod tests {
         if let Some(decision) = decision {
             assert_eq!(decision.recipe_id, "weather.forecast");
             assert_eq!(decision.matched_signals.len(), 2);
-            assert_eq!(decision.disposition, DecisionDisposition::Native);
+            assert_eq!(decision.disposition, DecisionDisposition::Unresolved);
         }
     }
 
@@ -1333,10 +1458,13 @@ mod tests {
                 .register(PresentationRecipe {
                     id: "answer.basic".into(),
                     version: "1.0.0".into(),
+                    priority: 0,
                     match_signals: vec![],
                     primary: vec!["chart".into()],
                     optional: vec![],
                     fallback: BTreeMap::new(),
+                    surfaces: vec!["desktop".into()],
+                    default_recipe: false,
                     requires_typed_output: false,
                     typed_output_types: Vec::new(),
                 })
@@ -1349,6 +1477,48 @@ mod tests {
         }]);
         assert!(plan.accepted.is_empty());
         assert_eq!(plan.rejected.len(), 1);
+    }
+
+    #[test]
+    fn planner_reports_surface_renderer_bindings_not_recipe_defaults() {
+        let output = StructuredOutput {
+            semantic_type: "data.grid".into(),
+            schema_version: crate::PRESENTATION_SCHEMA_VERSION,
+            skill_id: "core".into(),
+            skill_version: "1.0.0".into(),
+            payload: serde_json::json!({
+                "columns": [{"key": "region", "label": "Region"}],
+                "rows": [{"region": "APAC"}]
+            }),
+        };
+        let planner = PresentationPlanner {
+            skills: built_in_skill_registry(),
+            recipes: built_in_recipes(),
+        };
+
+        let desktop = planner.plan(
+            &["table_data".into(), "tabular".into()],
+            "desktop",
+            &[],
+            std::slice::from_ref(&output),
+        );
+        let desktop_recipe = desktop.recipe.expect("desktop recipe");
+        assert_eq!(desktop_recipe.recipe_id, "data.spreadsheet_grid");
+        assert_eq!(desktop_recipe.renderer, "native:structured");
+        assert_eq!(desktop_recipe.disposition, DecisionDisposition::Native);
+        assert_eq!(desktop.renderers.len(), 1);
+        assert_eq!(desktop.renderers[0].renderer, "native:structured");
+
+        let terminal = planner.plan(
+            &["table_data".into(), "tabular".into()],
+            "terminal",
+            &[],
+            std::slice::from_ref(&output),
+        );
+        let terminal_recipe = terminal.recipe.expect("terminal recipe");
+        assert_eq!(terminal_recipe.renderer, "builtin:generic");
+        assert_eq!(terminal_recipe.disposition, DecisionDisposition::Fallback);
+        assert_eq!(terminal.renderers[0].renderer, "builtin:generic");
     }
 
     #[test]

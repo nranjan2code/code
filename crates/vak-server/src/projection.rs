@@ -173,6 +173,21 @@ fn snapshot_inner(
                                                 "renderer".into(),
                                                 decision.renderer.clone(),
                                             );
+                                            document.metadata.insert(
+                                                "renderer_blocks".into(),
+                                                plan.renderers
+                                                    .iter()
+                                                    .map(|render| {
+                                                        format!(
+                                                            "{}={} ({:?})",
+                                                            render.semantic_type,
+                                                            render.renderer,
+                                                            render.disposition
+                                                        )
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                                    .join(", "),
+                                            );
                                         }
                                         document.diagnostics.extend(plan.rejected.iter().map(
                                             |item| {
@@ -1096,11 +1111,11 @@ mod tests {
         );
         assert_eq!(
             document.metadata.get("recipe_id").map(String::as_str),
-            Some("answer.research")
+            Some("answer.basic")
         );
         assert_eq!(
             document.metadata.get("renderer").map(String::as_str),
-            Some("builtin:generic")
+            Some("native:structured")
         );
         assert!(first.items.iter().any(|item| matches!(
             item.content,
