@@ -10,6 +10,7 @@ use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tokio_stream::StreamExt;
 
 use crate::AppState;
@@ -674,6 +675,7 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
         // text — a typo'd path is caught at entry time by offering
         // known-good options first.
         "known_workspaces": known_workspaces(&state),
+        "workspace_catalog": workspace_catalog(&state),
     }))
 }
 
@@ -739,6 +741,51 @@ pub(crate) async fn patch_gateway_workspace(
         "restart_required": effective.as_path() != state.core.cwd().as_path(),
     }))
     .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkspaceNamePatch {
+    pub path: String,
+    pub name: String,
+}
+
+fn workspace_names_path(state: &AppState) -> PathBuf {
+    state.core.sessions_home().join("workspace-names.json")
+}
+
+fn read_workspace_names(state: &AppState) -> HashMap<String, String> {
+    let path = workspace_names_path(state);
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+async fn patch_workspace_name(
+    State(state): State<AppState>,
+    Json(body): Json<WorkspaceNamePatch>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let path = std::path::PathBuf::from(body.path.trim());
+    if !path.is_absolute() || !path.is_dir() {
+        return Err((StatusCode::BAD_REQUEST, "workspace must be an existing absolute directory".into()));
+    }
+    let name = body.name.trim();
+    if name.is_empty() || name.len() > 80 {
+        return Err((StatusCode::BAD_REQUEST, "workspace name must be 1–80 characters".into()));
+    }
+    let key = path.to_string_lossy().to_string();
+    let mut names = read_workspace_names(&state);
+    names.insert(key.clone(), name.to_string());
+    let destination = workspace_names_path(&state);
+    let temp = destination.with_extension("json.tmp");
+    let content = serde_json::to_vec_pretty(&names)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("could not encode workspace names: {e}")))?;
+    if let Some(parent) = destination.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("could not create workspace registry: {e}")))?;
+    }
+    tokio::fs::write(&temp, content).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("could not write workspace registry: {e}")))?;
+    tokio::fs::rename(&temp, &destination).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("could not commit workspace registry: {e}")))?;
+    Ok(Json(serde_json::json!({ "path": key, "name": name })))
 }
 
 /// Workspaces vak has session ledgers for, newest-first, plus the
@@ -809,6 +856,23 @@ fn known_workspaces(state: &AppState) -> Vec<String> {
         }
     }
     seen
+}
+
+fn workspace_catalog(state: &AppState) -> Vec<serde_json::Value> {
+    let names = read_workspace_names(state);
+    known_workspaces(state)
+        .into_iter()
+        .map(|path| {
+            let fallback = std::path::Path::new(&path)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or(&path);
+            serde_json::json!({
+                "path": path,
+                "name": names.get(&path).cloned().unwrap_or_else(|| fallback.to_string()),
+            })
+        })
+        .collect()
 }
 
 /// True for a path that's almost certainly test/build scratch rather than
@@ -1397,6 +1461,7 @@ pub(crate) fn routes() -> axum::Router<AppState> {
             "/admin/api/gateway/workspace",
             axum::routing::patch(patch_gateway_workspace),
         )
+        .route("/admin/api/workspaces/name", patch(patch_workspace_name))
         .route(
             "/admin/api/gateway/bindings/{key}",
             patch(patch_gateway_binding).delete(delete_gateway_binding_admin),

@@ -1753,6 +1753,13 @@ a.tab-btn {
 .scope-control button { min-height: 30px; padding: 5px 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text-soft); border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
 .scope-control button.active { border-color: var(--accent); background: var(--accent-wash); color: var(--text); }
 .scope-control span { color: var(--muted); font-size: 11.5px; margin-left: 6px; }
+.workspace-names { display: grid; gap: 10px; }
+.workspace-name-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border-soft); }
+.workspace-name-row > div:first-child { display: grid; gap: 3px; min-width: 0; }
+.workspace-name-row .mono { overflow-wrap: anywhere; }
+.workspace-name-edit { display: flex; gap: 6px; align-items: center; }
+.workspace-name-edit input { min-width: 180px; }
+@media (max-width: 680px) { .workspace-name-row, .workspace-name-edit { align-items: stretch; flex-direction: column; } .workspace-name-edit input { min-width: 0; } }
 .integration-catalog { display: grid; gap: 9px; margin-top: 12px; }
 .integration-row { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--surface-raised); }
 .integration-summary { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }

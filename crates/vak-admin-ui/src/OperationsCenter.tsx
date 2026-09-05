@@ -86,6 +86,11 @@ function workspaceOptions(data: OperationsSnapshot): string[] {
   return [...values].filter(Boolean).sort((a, b) => a.localeCompare(b));
 }
 
+function workspaceLabel(path: string): string {
+  const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
+  return parts.at(-1) || path;
+}
+
 function scopeOperations(data: OperationsSnapshot, workspace: string, windowName: TimeWindow): OperationsSnapshot {
   const cutoff = cutoffFor(windowName);
   const inWorkspace = (value: string | null | undefined) => !workspace || workspace === "all" || value === workspace;
@@ -136,7 +141,7 @@ function OperationsContextBar(props: {
     <div class="ops-context-group">
       <label class="ops-context-field"><span>Scope</span><select value={props.workspace || "all"} onChange={(event) => operationNavigate(operationPath(), { workspace: event.currentTarget.value })}>
         <option value="all">All workspaces</option>
-        <For each={workspaceOptions(props.data)}>{(workspace) => <option value={workspace}>{workspace}</option>}</For>
+        <For each={workspaceOptions(props.data)}>{(workspace) => <option value={workspace}>{workspaceLabel(workspace)} · {workspace}</option>}</For>
       </select></label>
       <label class="ops-context-field"><span>Time</span><select value={props.timeWindow} onChange={(event) => operationNavigate(operationPath(), { time: event.currentTarget.value })}>
         <For each={Object.entries(timeWindowLabels)}>{([value, label]) => <option value={value}>{label}</option>}</For>

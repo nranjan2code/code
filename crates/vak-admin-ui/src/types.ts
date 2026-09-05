@@ -222,6 +222,7 @@ export interface GatewayStatus {
   /// Workspaces vak has session ledgers for, plus the gateway's own cwd —
   /// the options the workspace picker offers before free text.
   known_workspaces: string[];
+  workspace_catalog: Array<{ path: string; name: string }>;
 }
 
 export type AllowlistStatus = "pending" | "allowed" | "denied";

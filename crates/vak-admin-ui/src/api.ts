@@ -240,6 +240,13 @@ export const api = {
       body: JSON.stringify({ workspace }),
     }).then((r) => handle(r)),
 
+  patchWorkspaceName: (path: string, name: string): Promise<{ path: string; name: string }> =>
+    fetch("/admin/api/workspaces/name", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path, name }),
+    }).then((r) => handle(r)),
+
   patchGatewayBinding: (target: string, route: { provider?: string; model?: string }): Promise<void> =>
     fetch(`/admin/api/gateway/bindings/${encodeURIComponent(target)}`, {
       method: "PATCH",

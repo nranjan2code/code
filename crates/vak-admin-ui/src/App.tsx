@@ -3195,7 +3195,7 @@ function WorkspacePicker(props: {
   return (
     <div style="margin-bottom:8px">
       <label class="inherit-toggle" style="margin-top:2px">
-        Project folder
+        Workspace
         <span class="chip chip-phrase" data-on={warm()} style="margin-left:6px">
           {warm() ? "loaded and ready" : "loads on the next message"}
         </span>
@@ -3222,7 +3222,7 @@ function WorkspacePicker(props: {
           class="mono"
           value={props.value}
           onInput={(e) => props.onChange(e.currentTarget.value)}
-          placeholder="/full/path/to/the/folder"
+          placeholder="/full/path/to/the/workspace"
           style="width:100%;margin-top:6px"
         />
         <div class="binding-meta">
@@ -3232,6 +3232,33 @@ Nothing has run here yet, so this path isn’t checked until the first message a
       </Show>
     </div>
   );
+}
+
+function WorkspaceNames(props: { ctx: GatewayCtx }) {
+  const [editing, setEditing] = createSignal<string | null>(null);
+  const [draft, setDraft] = createSignal("");
+  const [saving, setSaving] = createSignal(false);
+  const entries = () => props.ctx.status()?.workspace_catalog ?? [];
+  const begin = (entry: { path: string; name: string }) => { setEditing(entry.path); setDraft(entry.name); };
+  const save = async () => {
+    const path = editing();
+    const name = draft().trim();
+    if (!path || !name || saving()) return;
+    setSaving(true);
+    try {
+      await api.patchWorkspaceName(path, name);
+      pushToast("info", `Workspace renamed to “${name}”`);
+      setEditing(null);
+      props.ctx.refresh();
+    } catch (error) { pushToast("alert", `Could not rename workspace: ${error}`); }
+    finally { setSaving(false); }
+  };
+  return <section class="workspace-names">
+    <div class="panel-title-row"><div><h3>Workspace names</h3><p class="dim">Names are shared across the account. The canonical path remains the security identity.</p></div></div>
+    <Show when={entries().length > 0} fallback={<p class="dim">No workspaces have been discovered yet.</p>}>
+      <For each={entries()}>{(entry) => <div class="workspace-name-row"><div><strong>{entry.name}</strong><span class="mono dim">{entry.path}</span></div><Show when={editing() !== entry.path} fallback={<div class="workspace-name-edit"><input value={draft()} onInput={(e) => setDraft(e.currentTarget.value)} /><button class="small" disabled={!draft().trim() || saving()} onClick={() => void save()}>{saving() ? "Saving…" : "Save"}</button><button class="ghost small" onClick={() => setEditing(null)}>Cancel</button></div>}><button class="ghost small" onClick={() => begin(entry)}>Rename</button></Show></div>}</For>
+    </Show>
+  </section>;
 }
 
 function GatewayBindingEditor(props: {
@@ -4438,7 +4465,7 @@ function ChannelsView(props: { ctx: GatewayCtx }) {
             <h2>Connected chats</h2>
             <Show when={(props.ctx.status()?.bindings.length ?? 0) > 0}>
               <p class="dim">
-One row per approved chat: which project it works in, which model answers, and what it
+One row per approved chat: which workspace it works in, which model answers, and what it
                 is allowed to do. Click a row to change any of that, or to disconnect it.
               </p>
             </Show>
@@ -4449,7 +4476,7 @@ One row per approved chat: which project it works in, which model answers, and w
           <Match when={props.ctx.statusLoading()}>
             <table class="table">
               <thead>
-                <tr><th>chat</th><th>app</th><th>bot</th><th>project</th><th>model</th><th>can do</th><th>status</th><th /></tr>
+                <tr><th>chat</th><th>app</th><th>bot</th><th>workspace</th><th>model</th><th>can do</th><th>status</th><th /></tr>
               </thead>
               <tbody><SkeletonRows cols={8} /></tbody>
             </table>
@@ -4477,7 +4504,7 @@ A connected chat — a Telegram group, a Discord channel, a Slack conversation �
           <Match when={rows().length > 0}>
             <table class="table">
               <thead>
-                <tr><th>chat</th><th>app</th><th>bot</th><th>project</th><th>model</th><th>can do</th><th>status</th><th /></tr>
+                <tr><th>chat</th><th>app</th><th>bot</th><th>workspace</th><th>model</th><th>can do</th><th>status</th><th /></tr>
               </thead>
               <tbody>
                 <For each={rows()}>
@@ -4760,7 +4787,7 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
         >
           <div class="route-summary-grid">
             <div><span class="eyebrow">Gateway</span><strong>{props.ctx.status()?.enabled ? "Enabled" : "Disabled"}</strong></div>
-            <div><span class="eyebrow">Project</span><PathCell path={props.ctx.status()?.workspace ?? ""} budget={46} /></div>
+            <div><span class="eyebrow">Workspace</span><PathCell path={props.ctx.status()?.workspace ?? ""} budget={46} /></div>
             <div><span class="eyebrow">Default model</span><strong>{providerLabel(props.ctx.status()?.default_route.provider ?? "")}</strong><code>{props.ctx.status()?.default_route.model}</code></div>
             <div>
               <span class="eyebrow">Where that comes from</span>
@@ -4774,7 +4801,7 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
         <div class="panel-subsection" style="margin-top:14px">
           <div class="panel-title-row">
             <div>
-              <h3>Default project folder</h3>
+              <h3>Default workspace</h3>
               <p class="dim">New gateway chats start at the canonical <code>~/vak-home</code> unless you choose another folder. Bot and chat overrides remain independent below.</p>
             </div>
             <button disabled={!workspaceDirty()} onClick={() => void saveWorkspace()}>Save folder</button>
@@ -4791,12 +4818,14 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
         </div>
       </section>
 
+      <section class="panel" style="margin-top:14px"><WorkspaceNames ctx={props.ctx} /></section>
+
       <section class="panel" style="margin-top:14px">
         <div class="panel-title-row">
           <div>
-            <h2>Projects loaded right now</h2>
+            <h2>Workspaces loaded right now</h2>
             <p class="dim">
-              A project stays loaded and ready after it is used. One that isn’t listed simply loads
+              A workspace stays loaded and ready after it is used. One that isn’t listed simply loads
               on the next message — nothing is lost either way. Up to {pool()?.max ?? "—"} stay
               loaded, and one drops off after{" "}
               {pool()?.idle_secs == null ? "—" : describeDuration(pool()!.idle_secs)} with nothing to
@@ -4812,7 +4841,7 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
             <div class="empty empty-teach">
               <strong>Nothing is loaded at the moment.</strong>
               <p>
-                Nothing is wrong. A project loads on the first message to one of its chats and stays
+                Nothing is wrong. A workspace loads on the first message to one of its chats and stays
                 ready here until it has been idle for{" "}
                 {pool()?.idle_secs == null ? "—" : describeDuration(pool()!.idle_secs)}.
               </p>
@@ -4821,7 +4850,7 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
           <Match when={(pool()?.entries.length ?? 0) > 0}>
             <table class="table">
               <thead>
-                <tr><th>project</th><th>can do</th><th>idle for</th><th /></tr>
+                <tr><th>workspace</th><th>can do</th><th>idle for</th><th /></tr>
               </thead>
               <tbody>
                 <For each={pool()?.entries}>
