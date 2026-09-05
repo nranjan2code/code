@@ -19,29 +19,29 @@ const BLOCKS: { id: PromptBlock; label: string; help: string }[] = [
   {
     id: "identity",
     label: "Identity",
-    help: "Who the agent is. The narrowest layer that sets this wins.",
+    help: "Who the agent is. The narrowest setting that defines this wins.",
   },
   {
     id: "operating-rules",
     label: "Operating rules",
-    help: "How it works. The narrowest layer that sets this wins.",
+    help: "How it works. The narrowest setting that defines this wins.",
   },
   {
     id: "guardrails",
     label: "Guardrails",
-    help: "Every layer's guardrails apply together. Nothing narrower can remove one.",
+    help: "Guardrails from every scope apply together. A narrower scope cannot remove one.",
   },
   {
     id: "surface-note",
     label: "Surface note",
-    help: "Appended after the generated Surface line — what this deployment knows about where the reply lands. Accumulates across layers.",
+    help: "Appended after the generated Surface line — what this deployment knows about where the reply lands. Accumulates across scopes.",
   },
 ];
 
 const LAYER_LABELS: Record<PromptLayerDescriptor["layer"], string> = {
   seed: "shipped default",
-  shared: "Shared",
-  project: "This workspace",
+  shared: "Global",
+  project: "Workspace",
   surface: "surface",
   bot: "bot",
   chat: "chat",
@@ -51,7 +51,7 @@ const LAYER_LABELS: Record<PromptLayerDescriptor["layer"], string> = {
 const SURFACES = ["cli", "desktop", "server", "background", "subagent", "telegram"];
 
 function scopeLabel(scope: ConfigScope): string {
-  return scope === "user" ? "Shared" : "This workspace";
+  return scope === "user" ? "Global" : "Workspace";
 }
 
 export function PromptsSection(props: {
@@ -136,11 +136,11 @@ export function PromptsSection(props: {
       </p>
 
       <div class="prompts-grid">
-        {/* ---------------------------------------------- editable layer -- */}
+        {/* ------------------------------------------ editable settings -- */}
         <div class="panel">
           <div class="panel-title-row">
             <div>
-              <h2>Editing this layer</h2>
+              <h2>Editing {scopeLabel(props.scope())} settings</h2>
               <p>Only what {scopeLabel(props.scope())} sets. Everything else is inherited.</p>
             </div>
           </div>

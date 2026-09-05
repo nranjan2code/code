@@ -55,7 +55,7 @@ function PromptsPage() {
     <>
       <PageHeader
         title="Prompts"
-        description="What the agent is told before every turn. Edit a layer; narrower layers inherit it."
+        description="What the agent is told before every turn. Edit Global or Workspace settings; narrower settings inherit them."
       />
       <PromptsSection scope={configScope} pushToast={pushToast} />
     </>
@@ -88,9 +88,9 @@ function AdminContextBar() {
       <span class="admin-context-kicker">VIEWING</span>
       <Show when={layered()} fallback={<>
         <span class={`scope-mark scope-mark-${scope()}`} aria-hidden="true" />
-        <strong>{scope() === "global" ? "All workspaces" : scope() === "switchable" ? "Workspace filter" : "This workspace"}</strong>
+        <strong>{scope() === "global" ? "Global" : scope() === "switchable" ? "Workspace filter" : "Workspace"}</strong>
         <span class="admin-context-detail">
-          {scope() === "global" ? "system-wide evidence and controls" : scope() === "switchable" ? "filtered projection; mutations keep their own authority" : "the current workspace"}
+          {scope() === "global" ? "system-wide evidence and controls" : scope() === "switchable" ? "filtered projection; mutations keep their own authority" : "the selected workspace"}
         </span>
         <Show when={scope() === "switchable"}>
           <button class="ghost small context-action" onClick={() => navigate("#/operations")}>Open workspace filter</button>
@@ -504,14 +504,14 @@ Showing the {sessions()!.sessions.length} most recent of {sessions()!.total} ses
                       <td title={s.last_ts}>{timeAgo(s.last_ts)}</td>
                       <td>
                         <Show when={local()} fallback={<span class="dim" title="This session belongs to a different workspace than the one this console is attached to, so it can only be read from here.">another workspace</span>}>
-                          <span class="chip chip-tone-success">this workspace</span>
+                          <span class="chip chip-tone-success">Workspace</span>
                         </Show>
                       </td>
                       <td onClick={(e) => e.stopPropagation()}>
                         <Show
                           when={local()}
                           fallback={
-                            <span class="dim" title="Only sessions in this console's own project can be archived, deleted, or exported here.">
+                            <span class="dim" title="Only sessions in this console's own workspace can be archived, deleted, or exported here.">
                               —
                             </span>
                           }
@@ -1173,7 +1173,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     try {
       await api.enableIntegration(entry.id, props.ctx.scope(), key);
       setIntegrationKeys((current) => ({ ...current, [entry.id]: "" }));
-      pushToast("info", `${entry.label} enabled in ${props.ctx.scope() === "user" ? "Shared" : "this workspace"}`);
+      pushToast("info", `${entry.label} enabled in ${props.ctx.scope() === "user" ? "Global" : "Workspace"}`);
       await catalogActions.refetch();
       props.ctx.refetchMcp();
     } catch (err) {
@@ -1191,7 +1191,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
       await api.removeIntegration(entry.id, props.ctx.scope());
       pushToast("info", props.ctx.scope() === "project" && entry.inherited
         ? `${entry.label} workspace override cleared`
-        : `${entry.label} removed from ${props.ctx.scope() === "user" ? "Shared" : "this workspace"}`);
+        : `${entry.label} removed from ${props.ctx.scope() === "user" ? "Global" : "Workspace"}`);
       await catalogActions.refetch();
       props.ctx.refetchMcp();
     } catch (err) {
@@ -1256,7 +1256,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
                     </button>
                     <Show when={entry.configured_here}>
                       <button class="danger small" disabled={!!integrationBusy()} onClick={() => void removeCatalogEntry(entry)}>
-                        {props.ctx.scope() === "project" ? "Reset to Shared" : "Remove"}
+                        {props.ctx.scope() === "project" ? "Reset to Global" : "Remove"}
                       </button>
                     </Show>
                     <a class="ghost small button-link" href={entry.documentation_url} target="_blank" rel="noreferrer noopener">Upstream docs</a>
@@ -1278,7 +1278,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
               <a href="#/settings">Settings</a>, and where no rule reaches it, from the setting that
               decides everything else.
             </p>
-            <p class="dim">This list is the selected layer only. Switch scope above to inspect or edit the other layer.</p>
+            <p class="dim">This list shows only the selected scope. Use the Global/Workspace selector to inspect or edit the other scope.</p>
           </div>
         </div>
 
@@ -1531,7 +1531,7 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
   };
   return <section class="stack plugin-stack">
     <div class="panel">
-      <div class="panel-title-row"><div><h2>Install a reviewed package</h2><p>Packages are inspected, content-addressed, and installed disabled in {props.ctx.scope() === "user" ? "Shared" : "this workspace"} until you enable them.</p></div></div>
+      <div class="panel-title-row"><div><h2>Install a reviewed package</h2><p>Packages are inspected, content-addressed, and installed disabled in {props.ctx.scope() === "user" ? "Global" : "Workspace"} until you enable them.</p></div></div>
       <div class="form-row"><label>Local package directory</label><input class="mono" placeholder="/path/to/plugin" value={path()} onInput={(e) => setPath(e.currentTarget.value)} /></div>
       <div class="row-gap"><button disabled={busy() || !path().trim()} onClick={() => void install(false)}>Install disabled</button><button class="ghost" disabled={busy() || !path().trim()} onClick={() => void install(true)}>Stage update</button></div>
     </div>
@@ -1633,7 +1633,7 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
           <div>
             <h2>Loaded skills</h2>
             <p class="dim">
-              This is the {props.ctx.scope() === "user" ? "Shared" : "project"} skill layer. A skill is instructions, not capability: it tells the agent how to approach a job, and
+              This is the {props.ctx.scope() === "user" ? "Global" : "Workspace"} skill set. A skill is instructions, not capability: it tells the agent how to approach a job, and
               every tool it then reaches for is gated the same as any other call. What it changes is
               which files the agent is told to read — so where a skill comes from is the thing worth
               watching.
@@ -1654,7 +1654,7 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
               <strong>No skills are loaded.</strong>
               <p>
                 Skills are discovered from <code>.vak/skills/</code> in this workspace and from the
-                Shared skills directory (<code>~/vak-home/.vak/skills</code>). Each is a folder with a <code>SKILL.md</code> inside.
+                Global skills directory (<code>~/vak-home/.vak/skills</code>). Each is a folder with a <code>SKILL.md</code> inside.
               </p>
             </div>
           </Match>
@@ -1669,7 +1669,7 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
                       <td class="mono bold">{s.name}{s.shadowed ? <span class="chip chip-tone-ask" style={{ "margin-left": "6px" }}>shadowed</span> : null}</td>
                       <td>
                         <span class={`chip ${s.scope === "workspace" ? "chip-tool" : "chip-mode"}`} title={s.scope ?? "user"}>
-                          {s.scope === "workspace" ? "this workspace" : "every workspace"}
+                          {s.scope === "workspace" ? "Workspace" : "Global"}
                         </span>
                       </td>
                       <td class="dim">{s.description || "No description written for this skill."}</td>
@@ -2613,7 +2613,7 @@ function MemoryView() {
           <div class="form-row">
             <label>Applies to</label>
             <select value={scope()} onChange={(e) => setScope(e.currentTarget.value as "profile" | "project")}>
-              <option value="project">This workspace</option>
+              <option value="project">Workspace</option>
               <option value="profile">Me, in every workspace</option>
             </select>
           </div>
@@ -5198,12 +5198,12 @@ function GatewaySection() {
         <div class="panel-title-row">
           <div>
             <h2>Inheritance chain</h2>
-              <p class="dim">Shared defaults are edited under Settings and inherited by each workspace. Inside this page, bot settings inherit the workspace; an individual chat inherits its bot unless you explicitly pin or break that link.</p>
+              <p class="dim">Global defaults are edited under Settings and inherited by each workspace. Inside this page, bot settings inherit the workspace; an individual chat inherits its bot unless you explicitly pin or break that link.</p>
           </div>
           <span class="chip chip-tone-success">restrictive only</span>
         </div>
-        <div class="inheritance-chain" aria-label="Shared to project to bot to chat">
-          <span>Shared</span><span aria-hidden="true">→</span><span>This workspace</span><span aria-hidden="true">→</span><span>Bot</span><span aria-hidden="true">→</span><span>Chat</span>
+        <div class="inheritance-chain" aria-label="Global to workspace to bot to chat">
+          <span>Global</span><span aria-hidden="true">→</span><span>Workspace</span><span aria-hidden="true">→</span><span>Bot</span><span aria-hidden="true">→</span><span>Chat</span>
         </div>
       </section>
       <div class="tab-bar">
@@ -5460,7 +5460,7 @@ function RuleEditor(props: { scope: ConfigScope; onSaved: () => void }) {
     if (!spec) return;
     const d = decision();
     if (listFor(d).includes(spec)) {
-      pushToast("alert", "That rule is already in this layer");
+      pushToast("alert", "That rule is already set in this scope");
       return;
     }
     void write(d, [...listFor(d), spec], `Added ${d} rule ${spec}`).then(() => setPattern(""));
@@ -5473,7 +5473,7 @@ function RuleEditor(props: { scope: ConfigScope; onSaved: () => void }) {
           {open() ? "Done editing" : "Edit rules"}
         </button>
         <span class="dim">
-          Editing the {props.scope === "user" ? "Shared" : "project"} layer.
+          Editing the {props.scope === "user" ? "Global" : "Workspace"} settings.
         </span>
       </div>
 
@@ -5511,7 +5511,7 @@ function RuleEditor(props: { scope: ConfigScope; onSaved: () => void }) {
             <For each={RULE_SECTIONS}>
               {({ decision: d, title }) => (
                 <div>
-                  <span class="eyebrow">{title} — set in this layer</span>
+          <span class="eyebrow">{title} — set in this scope</span>
                   <Show
                     when={listFor(d).length > 0}
                     fallback={<p class="dim">Nothing set here.</p>}
@@ -5626,7 +5626,7 @@ function Settings() {
     setSavingKey(true);
     try {
       await api.setProviderKey(selectedProvider(), providerKeyInput().trim(), configScope());
-      pushToast("info", `Key saved for ${providerLabel(selectedProvider())} in ${configScope() === "user" ? "Shared" : "this workspace"}`);
+      pushToast("info", `Key saved for ${providerLabel(selectedProvider())} in ${configScope() === "user" ? "Global" : "Workspace"}`);
       setProviderKeyInput("");
       refetchProviders();
       await discover(selectedProvider());
@@ -5763,7 +5763,7 @@ function Settings() {
               <div class="panel-title-row">
                 <div>
                   <h2>Inherited capabilities</h2>
-                  <p class="dim">This workspace starts with Shared capabilities. Turn a category off to break that inheritance; add workspace entries under Extensions.</p>
+                  <p class="dim">Workspace starts with Global capabilities. Turn a category off to break that inheritance; add Workspace entries under Extensions.</p>
                 </div>
               </div>
               <div class="capability-inheritance-list">
@@ -5782,10 +5782,10 @@ function Settings() {
                           checked={inherited()}
                           onChange={(event) => void guard(
                             () => api.patchConfigScope("project", { [key]: event.currentTarget.checked }),
-                            event.currentTarget.checked ? `${label} now inherit Shared` : `${label} inheritance disabled`,
+                            event.currentTarget.checked ? `${label} now inherit Global` : `${label} inheritance disabled`,
                           )}
                         />
-                        <span><strong>{label}</strong><small>{inherited() ? "Inherited from Shared" : "Workspace-only"}</small></span>
+                        <span><strong>{label}</strong><small>{inherited() ? "Inherited from Global" : "Workspace-only"}</small></span>
                       </label>
                     );
                   }}
@@ -5962,7 +5962,7 @@ function Settings() {
                     <p class="dim">
                       This version of the server doesn’t report its specific rules, so they can’t be
                       listed here. The setting above still applies. To see the rules, open the
-                      project’s <code>config.toml</code>, or update vak.
+                      workspace’s <code>config.toml</code>, or update vak.
                     </p>
                   </div>
                 </Show>
@@ -6030,7 +6030,7 @@ function Settings() {
             <div class="panel-title-row">
               <div>
                 <h2>Housekeeping</h2>
-                <p class="dim">Safe to run any time. Both can take a moment on a big project.</p>
+                <p class="dim">Safe to run any time. Both can take a moment in a large workspace.</p>
               </div>
             </div>
             <div class="row-gap">
@@ -6622,7 +6622,7 @@ function AlertForm(props: { onClose: () => void; onAdded: () => void }) {
       <div class="form-row">
         <label>Availability</label>
         <select value={scope()} onChange={(e) => setScope(e.currentTarget.value)}>
-          <option value="workspace">This workspace</option>
+          <option value="workspace">Workspace</option>
           <option value="global">All workspaces</option>
         </select>
       </div>
@@ -6780,7 +6780,7 @@ function FeedWizard(props: { onClose: () => void; onAdded: () => void }) {
             <div class="form-row">
               <label>Availability</label>
               <select value={scope()} onChange={(e) => setScope(e.currentTarget.value as "workspace" | "global")}>
-                <option value="workspace">This workspace</option>
+                <option value="workspace">Workspace</option>
                 <option value="global">All workspaces</option>
               </select>
             </div>
