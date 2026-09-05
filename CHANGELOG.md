@@ -5,7 +5,18 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
-## 3.0.0 — Unreleased
+## 3.0.1 — 2026-09-05
+
+### Turn capability assembly
+
+- Unified live capability selection, prompt projection, tool schemas, hooks,
+  MCP, skills, plugins, and child execution around one turn contract.
+- Added append-only per-turn capability bindings and immediate revocation
+  checks across authorization and approval waits.
+- Routed standalone CLI flows, eval runs, and heartbeat admission through the
+  public prepared-turn API.
+
+## 3.0.0 — 2026-09-05
 
 ### Capability assembly consolidation
 
