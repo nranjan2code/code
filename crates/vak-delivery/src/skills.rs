@@ -582,13 +582,12 @@ pub fn structured_outputs_from_text(text: &str) -> Vec<StructuredOutput> {
         let after = &remainder[start + 6..];
         let body = after.strip_prefix('\n').unwrap_or(after);
         let Some(end) = body.find("```") else { break };
-        if let Ok(output) = parse_fragment(&body[..end]) {
-            if !outputs
+        if let Ok(output) = parse_fragment(&body[..end])
+            && !outputs
                 .iter()
                 .any(|existing: &StructuredOutput| existing == &output)
-            {
-                outputs.push(output);
-            }
+        {
+            outputs.push(output);
         }
         remainder = &body[end + 3..];
     }

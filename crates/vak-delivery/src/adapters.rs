@@ -116,6 +116,7 @@ pub fn built_in_adapters() -> AdapterRegistry {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
     use super::*;
     use serde_json::json;
 
