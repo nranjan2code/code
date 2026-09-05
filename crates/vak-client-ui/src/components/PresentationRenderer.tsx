@@ -165,6 +165,8 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string }): JSX.Elem
             return <DiffInspector rawDiff={block.content} />;
           case "structured":
             return <StructuredView output={block.output} fallback={block.fallback_markdown} />;
+          case "diagram":
+            return <details class="semantic-diagram"><summary>Diagram source</summary><pre>{block.source}</pre><small>Interactive diagram rendering is unavailable; source is preserved exactly.</small></details>;
           case "callout":
             return <section class={`semantic-callout ${block.tone}`}><Show when={block.title}><strong>{block.title}</strong></Show><Blocks blocks={block.blocks} recipeId={props.recipeId} /></section>;
           case "citations":

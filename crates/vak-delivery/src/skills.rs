@@ -69,7 +69,6 @@ impl PresentationPlanner {
         capabilities: &[String],
         candidates: &[StructuredOutput],
     ) -> PresentationPlan {
-        let recipe = self.recipes.choose(signals, surface);
         let mut accepted = Vec::new();
         let mut rejected = Vec::new();
         for candidate in candidates {
@@ -82,6 +81,11 @@ impl PresentationPlanner {
                 }),
             }
         }
+        let available: Vec<String> = accepted
+            .iter()
+            .map(|candidate| candidate.semantic_type.clone())
+            .collect();
+        let recipe = self.recipes.choose_for_types(signals, surface, &available);
         PresentationPlan {
             recipe,
             accepted,
@@ -121,6 +125,15 @@ impl RecipeCatalog {
     }
 
     pub fn choose(&self, signals: &[String], surface: &str) -> Option<PresentationDecision> {
+        self.choose_for_types(signals, surface, &[])
+    }
+
+    pub fn choose_for_types(
+        &self,
+        signals: &[String],
+        surface: &str,
+        available_types: &[String],
+    ) -> Option<PresentationDecision> {
         self.recipes
             .iter()
             .filter_map(|recipe| {
@@ -131,6 +144,16 @@ impl RecipeCatalog {
                     .cloned()
                     .collect();
                 if matched_signals.is_empty() && !recipe.match_signals.is_empty() {
+                    return None;
+                }
+                if !available_types.is_empty()
+                    && !recipe.primary.iter().any(|primary| {
+                        let base = primary.split('.').next().unwrap_or(primary);
+                        available_types
+                            .iter()
+                            .any(|candidate| candidate == primary || candidate == base)
+                    })
+                {
                     return None;
                 }
                 let renderer = recipe

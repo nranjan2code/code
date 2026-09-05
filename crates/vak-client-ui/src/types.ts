@@ -89,6 +89,7 @@ export type DocumentBlock =
   | { type: "callout"; id: string; tone: string; title?: string | null; blocks: DocumentBlock[] }
   | { type: "diff"; id: string; content: string }
   | { type: "structured"; id: string; output: StructuredOutput; fallback_markdown: string }
+  | { type: "diagram"; id: string; source: string; fallback_markdown: string }
   | { type: "citations"; id: string; items: { label: string; url: string; title?: string | null }[] }
   | { type: "media"; id: string; source: string; alt: string; media_type?: string | null }
   | { type: "artifact_ref"; id: string; artifact: ArtifactRef }
@@ -151,7 +152,6 @@ export interface OutputTimeline {
 }
 
 export type PresentationDelta =
-  | { type: "snapshot"; timeline: OutputTimeline }
   | { type: "item_started"; item: OutputItem }
   | { type: "text_delta"; item_id: string; delta: string; text: string }
   | { type: "item_replaced"; item: OutputItem }

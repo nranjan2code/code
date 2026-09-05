@@ -263,6 +263,11 @@ pub enum DocumentBlock {
         output: crate::skills::StructuredOutput,
         fallback_markdown: String,
     },
+    Diagram {
+        id: String,
+        source: String,
+        fallback_markdown: String,
+    },
     Callout {
         id: String,
         tone: CalloutTone,
@@ -479,6 +484,7 @@ fn collect_coverage(blocks: &[DocumentBlock], coverage: &mut Vec<DocumentCoverag
             | DocumentBlock::Table { id, .. }
             | DocumentBlock::Code { id, .. }
             | DocumentBlock::Structured { id, .. }
+            | DocumentBlock::Diagram { id, .. }
             | DocumentBlock::Diff { id, .. }
             | DocumentBlock::Citations { id, .. }
             | DocumentBlock::Media { id, .. }
@@ -685,6 +691,14 @@ fn nodes_to_blocks(
                             diagnostics.push(format!("Structured block preserved as code: {error}"))
                         }
                     }
+                }
+                if language.as_deref() == Some("mermaid") {
+                    blocks.push(DocumentBlock::Diagram {
+                        id: ids.next(),
+                        fallback_markdown: content.clone(),
+                        source: content,
+                    });
+                    continue;
                 }
                 let is_diff = language.as_deref() == Some("diff");
                 blocks.push(if is_diff {
@@ -935,6 +949,18 @@ mod tests {
     fn fenced_diff_receives_a_native_block() {
         let document = compile_markdown("```diff\n-old\n+new\n```");
         assert!(matches!(document.blocks[0], DocumentBlock::Diff { .. }));
+    }
+
+    #[test]
+    fn mermaid_is_preserved_as_a_safe_diagram_source() {
+        let document = compile_markdown("```mermaid\ngraph TD; A-->B;\n```");
+        assert!(
+            matches!(document.blocks[0], DocumentBlock::Diagram { ref source, .. } if source.contains("A-->B"))
+        );
+        assert_eq!(
+            document.source_markdown,
+            "```mermaid\ngraph TD; A-->B;\n```"
+        );
     }
 
     #[test]
