@@ -1398,7 +1398,7 @@ impl Core {
     /// capability lookup goes through here: this resolution was copied into
     /// six call sites, one of which had already drifted to the opposite
     /// ordering, and a shared-scope bug in one copy is invisible in the rest.
-    fn capability_roots(&self) -> Vec<CapabilityRoot> {
+    pub fn capability_roots(&self) -> Vec<CapabilityRoot> {
         let shared = self.shared_capability_root();
         let workspace = self.inner.cwd.join(".vak");
         let mut roots = vec![CapabilityRoot {

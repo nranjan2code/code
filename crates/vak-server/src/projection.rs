@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, HashMap};
 use vak_agent::AgentEvent;
 use vak_delivery::{
     ArtifactRef, DeliveryAction, OutputContent, OutputItem, OutputKind, OutputProvenance,
-    OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline, SignalContext, built_in_adapters,
-    built_in_recipes, built_in_skill_registry, compile_markdown, link_previews_from_text,
+    OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline, PresentationPlanner,
+    SignalContext, built_in_adapters, compile_markdown, link_previews_from_text,
     signals_from_context, structured_markdown, structured_outputs_from_text,
     structured_outputs_from_tool_result,
 };
@@ -17,6 +17,30 @@ use vak_session::{ActivityKind, ActivityStatus, EntryPayload, SessionLog};
 type TurnTool = (String, serde_json::Value, Option<String>, bool);
 
 pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline {
+    let builtin = PresentationPlanner {
+        skills: vak_delivery::built_in_skill_registry(),
+        recipes: vak_delivery::built_in_recipes(),
+    };
+    snapshot_inner(session_id, session, &builtin)
+}
+
+/// Like [`snapshot`] but uses a plugin-merged `PresentationPlanner` so that
+/// domain-specific recipes and semantic types are recognized during
+/// live projection. Callers with Core access should use this for SSE and
+/// live session handles; historical views without Core can use `snapshot`.
+pub(crate) fn snapshot_with_planner(
+    session_id: &str,
+    session: &SessionLog,
+    planner: &PresentationPlanner,
+) -> OutputTimeline {
+    snapshot_inner(session_id, session, planner)
+}
+
+fn snapshot_inner(
+    session_id: &str,
+    session: &SessionLog,
+    planner: &PresentationPlanner,
+) -> OutputTimeline {
     let chain = session.chain_to_root();
     let mut tool_results: HashMap<String, (String, bool)> = HashMap::new();
     let mut tool_inputs: HashMap<String, (String, serde_json::Value)> = HashMap::new();
@@ -98,10 +122,6 @@ pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline
                             if assistant {
                                 candidates.extend(link_previews_from_text(text));
                             }
-                            let planner = vak_delivery::PresentationPlanner {
-                                skills: built_in_skill_registry(),
-                                recipes: built_in_recipes(),
-                            };
                             let (tool_name, tool_input, tool_output, is_error) = turn_tools
                                 .get(&turn)
                                 .and_then(|tools| tools.last())

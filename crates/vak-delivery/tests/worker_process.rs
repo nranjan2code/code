@@ -3,7 +3,8 @@
 use std::time::Duration;
 use vak_delivery::client::WorkerClient;
 use vak_delivery::{
-    AnswerDraft, DeliveryContent, DeliveryJob, DeliveryKind, DeliveryProfile, Markup,
+    AnswerDraft, DeliveryContent, DeliveryJob, DeliveryKind, DeliveryPosture, DeliveryProfile,
+    Markup,
 };
 
 fn job(id: &str, markdown: &str) -> DeliveryJob {
@@ -21,7 +22,9 @@ fn job(id: &str, markdown: &str) -> DeliveryJob {
             supports_links: true,
             supports_actions: false,
             template: None,
+            posture: DeliveryPosture::default(),
         },
+        skill_registry: None,
     }
 }
 

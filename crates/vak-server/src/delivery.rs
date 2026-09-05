@@ -16,6 +16,48 @@ use vak_delivery::{
 const WORKER_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_CHANNEL_CHARS: usize = 100_000;
 
+/// Build a plugin-merged `PresentationPlanner` (skills + recipes) from all
+/// enabled plugins across the Core's capability roots. Starts with built-in
+/// skills and recipes and layers in any `PresentationSkillManifest` and
+/// `PresentationRecipe` files that plugins declare in their
+/// `components.presentation` list.
+pub(crate) fn merged_presentation_planner(core: &Core) -> vak_delivery::PresentationPlanner {
+    let mut skills = vak_delivery::built_in_skill_registry();
+    let mut recipes = vak_delivery::built_in_recipes();
+    for root in core.capability_roots() {
+        let Ok(plugins) = vak_plugin::PluginStore::new(&root.path).enabled() else {
+            continue;
+        };
+        for plugin in plugins {
+            for relative in &plugin.capabilities.presentation {
+                let path = plugin.package_path.join(relative);
+                let Ok(bytes) = std::fs::read(&path) else {
+                    continue;
+                };
+                if let Ok(json) = std::str::from_utf8(&bytes) {
+                    if let Ok(manifest) =
+                        serde_json::from_str::<vak_delivery::PresentationSkillManifest>(json)
+                    {
+                        let _ = skills.register(manifest);
+                    } else if let Ok(recipe) =
+                        serde_json::from_str::<vak_delivery::PresentationRecipe>(json)
+                    {
+                        let _ = recipes.register(recipe);
+                    }
+                }
+            }
+        }
+    }
+    vak_delivery::PresentationPlanner { skills, recipes }
+}
+
+/// Build a plugin-merged `SkillRegistry` for the worker's structured-fence
+/// projection. Equivalent to `merged_presentation_planner(core).skills`
+/// but avoids constructing a full planner.
+fn merged_presentation_skills(core: &Core) -> vak_delivery::SkillRegistry {
+    merged_presentation_planner(core).skills
+}
+
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct RequestedCapabilities {
@@ -305,6 +347,7 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
             supports_links: true,
             supports_actions: false,
             template: None,
+            posture: vak_delivery::DeliveryPosture::default(),
         },
         "discord" => DeliveryProfile {
             surface: surface.into(),
@@ -315,6 +358,7 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
             supports_links: true,
             supports_actions: false,
             template: None,
+            posture: vak_delivery::DeliveryPosture::default(),
         },
         "slack" => DeliveryProfile {
             surface: surface.into(),
@@ -325,6 +369,7 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
             supports_links: true,
             supports_actions: false,
             template: None,
+            posture: vak_delivery::DeliveryPosture::default(),
         },
         "desktop" | "tui" => DeliveryProfile {
             surface: surface.into(),
@@ -335,6 +380,7 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
             supports_links: true,
             supports_actions: true,
             template: None,
+            posture: vak_delivery::DeliveryPosture::default(),
         },
         _ => DeliveryProfile {
             surface: surface.into(),
@@ -345,6 +391,7 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
             supports_links: false,
             supports_actions: false,
             template: None,
+            posture: vak_delivery::DeliveryPosture::default(),
         },
     }
 }
@@ -405,6 +452,7 @@ pub(crate) async fn render_response(
         kind: DeliveryKind::Assistant,
         content: DeliveryContent::Answer(AnswerDraft::from_markdown(markdown)),
         profile: profile_for_surface(core, surface, requested),
+        skill_registry: Some(merged_presentation_skills(core)),
     };
     runtime.render(&job).await
 }
@@ -419,23 +467,48 @@ pub(crate) async fn deliver(
     let _serial = runtime.serial.lock().await;
     let (adapter, _) = runtime.adapters.resolve(target)?;
     let profile = apply_preferences(core, adapter.profile());
+    // Posture decides WHEN a packet goes out, never what it says.
+    // Held packets (HoldUntilComplete / HoldForDigest) are enqueued to the
+    // outbox and delivered later by the replay loop or turn-completion flush.
+    let disposition = profile.posture.disposition(kind);
     let job = DeliveryJob {
         job_id: uuid::Uuid::now_v7().to_string(),
         target: target.into(),
         kind,
         content,
-        profile,
+        profile: profile.clone(),
+        skill_registry: Some(merged_presentation_skills(core)),
     };
     let record = runtime
         .outbox
         .enqueue(job)
         .map_err(|error| error.to_string())?;
-    match runtime.deliver_record(core, record.clone()).await {
-        Ok(packet) => Ok(packet),
-        Err(error) => {
-            let _ = runtime.outbox.mark_failed(&record.job.job_id, &error);
-            Err(error)
+    if disposition == vak_delivery::Disposition::Send {
+        match runtime.deliver_record(core, record.clone()).await {
+            Ok(packet) => Ok(packet),
+            Err(error) => {
+                let _ = runtime.outbox.mark_failed(&record.job.job_id, &error);
+                Err(error)
+            }
         }
+    } else {
+        Ok(vak_delivery::DeliveryPacket {
+            schema_version: vak_delivery::DELIVERY_SCHEMA_VERSION,
+            job_id: record.job.job_id.clone(),
+            target: record.job.target.clone(),
+            surface: record.job.profile.surface.clone(),
+            kind: record.job.kind,
+            payload: vak_delivery::DeliveryPayload::Text(String::new()),
+            fallback_markdown: String::new(),
+            chunks: Vec::new(),
+            actions: Vec::new(),
+            coverage: Vec::new(),
+            diagnostics: vec![format!(
+                "delivery held: disposition={:?}, will retry via outbox",
+                disposition
+            )],
+            presentation: None,
+        })
     }
 }
 
@@ -462,6 +535,16 @@ pub(crate) fn start_replay(core: &Core) {
                     eprintln!(
                         "[delivery] {} moved to dead letter after {} attempts",
                         record.job.job_id, record.attempts
+                    );
+                    continue;
+                }
+                // Respect held postures: a packet held for completion or
+                // digest stays in the outbox until its posture changes.
+                let disposition = record.job.profile.posture.disposition(record.job.kind);
+                if disposition != vak_delivery::Disposition::Send {
+                    eprintln!(
+                        "[delivery] {} held (disposition={:?}); skipping replay",
+                        record.job.job_id, disposition
                     );
                     continue;
                 }
@@ -524,6 +607,7 @@ impl ChannelAdapter for LogAdapter {
             supports_links: true,
             supports_actions: false,
             template: None,
+            posture: vak_delivery::DeliveryPosture::default(),
         }
     }
 
@@ -574,6 +658,7 @@ impl ChannelAdapter for WebhookAdapter {
             supports_links: true,
             supports_actions: true,
             template: None,
+            posture: vak_delivery::DeliveryPosture::default(),
         }
     }
 
@@ -636,6 +721,7 @@ impl ChannelAdapter for TelegramAdapter {
             // renders `packet.actions` as inline-keyboard buttons below.
             supports_actions: true,
             template: None,
+            posture: vak_delivery::DeliveryPosture::default(),
         }
     }
 

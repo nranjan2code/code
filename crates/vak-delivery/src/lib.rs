@@ -33,8 +33,10 @@ pub use skills::{
     PRESENTATION_SKILL_API, PlanDiagnostic, PresentationDecision, PresentationPlan,
     PresentationPlanner, PresentationRecipe, PresentationSkillManifest, RecipeCatalog,
     RendererBinding, SignalContext, SkillError, SkillRegistry, StructuredOutput, built_in_recipes,
-    built_in_skill_registry, link_previews_from_text, signals_from_context, signals_from_text,
-    structured_markdown, structured_outputs_from_text,
+    built_in_skill_registry, link_previews_from_text, parse_fragment, parse_fragment_with,
+    project_structured_fences, project_structured_fences_with, signals_from_context,
+    signals_from_text, structured_markdown, structured_outputs_from_text,
+    structured_outputs_from_text_with,
 };
 
 pub const DELIVERY_SCHEMA_VERSION: u16 = 2;
@@ -227,6 +229,12 @@ pub struct DeliveryProfile {
     /// Optional declarative layout. `None` means the channel default.
     #[serde(default)]
     pub template: Option<TemplateSpec>,
+    /// When this packet should reach its reader and how hard it may push.
+    /// The posture is set by the caller (session/task config); it decides
+    /// whether a packet goes out now, waits for completion, or rolls into
+    /// a digest. It never changes the content or the renderer.
+    #[serde(default)]
+    pub posture: DeliveryPosture,
 }
 
 impl DeliveryProfile {
@@ -240,6 +248,7 @@ impl DeliveryProfile {
             supports_links: true,
             supports_actions: false,
             template: None,
+            posture: DeliveryPosture::default(),
         }
     }
 
@@ -400,9 +409,14 @@ impl TemplateSpec {
         validate_nodes(&self.nodes, 0)
     }
 
-    fn render(&self, answer: &AnswerDraft) -> Result<String, DeliveryError> {
+    fn render(
+        &self,
+        answer: &AnswerDraft,
+        project_structured: bool,
+        skills: &SkillRegistry,
+    ) -> Result<String, DeliveryError> {
         self.validate()?;
-        render_nodes(&self.nodes, answer, 0)
+        render_nodes(&self.nodes, answer, 0, project_structured, skills)
     }
 }
 
@@ -437,6 +451,8 @@ fn render_nodes(
     nodes: &[TemplateNode],
     answer: &AnswerDraft,
     depth: usize,
+    project_structured: bool,
+    skills: &SkillRegistry,
 ) -> Result<String, DeliveryError> {
     if depth > 8 {
         return Err(DeliveryError::InvalidTemplate(
@@ -447,25 +463,38 @@ fn render_nodes(
     for node in nodes {
         match node {
             TemplateNode::Literal { text } => out.push_str(text),
-            TemplateNode::Slot { slot } => out.push_str(&slot_value(slot, answer)),
+            TemplateNode::Slot { slot } => {
+                out.push_str(&slot_value(slot, answer, project_structured, skills))
+            }
             TemplateNode::IfPresent {
                 slot,
                 then_nodes,
                 else_nodes,
             } => {
-                let selected = if slot_value(slot, answer).is_empty() {
+                let selected = if slot_value(slot, answer, project_structured, skills).is_empty() {
                     else_nodes
                 } else {
                     then_nodes
                 };
-                out.push_str(&render_nodes(selected, answer, depth + 1)?);
+                out.push_str(&render_nodes(
+                    selected,
+                    answer,
+                    depth + 1,
+                    project_structured,
+                    skills,
+                )?);
             }
         }
     }
     Ok(out)
 }
 
-fn slot_value(slot: &TemplateSlot, answer: &AnswerDraft) -> String {
+fn slot_value(
+    slot: &TemplateSlot,
+    answer: &AnswerDraft,
+    project_structured: bool,
+    skills: &SkillRegistry,
+) -> String {
     match slot {
         TemplateSlot::Title => answer
             .blocks
@@ -476,7 +505,7 @@ fn slot_value(slot: &TemplateSlot, answer: &AnswerDraft) -> String {
             })
             .or_else(|| answer.metadata.get("title").cloned())
             .unwrap_or_default(),
-        TemplateSlot::Body => render_plain(answer),
+        TemplateSlot::Body => render_plain(answer, project_structured, skills),
         TemplateSlot::SourceMarkdown => answer.source_markdown.clone(),
         TemplateSlot::BlockCount => answer.blocks.len().to_string(),
         TemplateSlot::Metadata { key } => answer.metadata.get(key).cloned().unwrap_or_default(),
@@ -490,6 +519,13 @@ pub struct DeliveryJob {
     pub kind: DeliveryKind,
     pub content: DeliveryContent,
     pub profile: DeliveryProfile,
+    /// Plugin-merged skill registry for structured-fence validation. When
+    /// `None`, the worker falls back to `built_in_skill_registry()`. The Core
+    /// populates this from its capability snapshot so that plugin-declared
+    /// semantic types are recognized during rendering without the worker
+    /// having filesystem or network access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_registry: Option<SkillRegistry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -655,14 +691,38 @@ fn presentation_for_job(job: &DeliveryJob) -> Option<OutputTimeline> {
     })
 }
 
+/// Whether the markup type cannot render semantic AST blocks natively and
+/// therefore needs ```vak fences projected to readable text before markup
+/// conversion. Native surfaces (desktop, tui, admin) and JSON payloads handle
+/// structured blocks through the semantic path; all chat and plain-text
+/// surfaces need projection.
+fn needs_structured_projection(markup: Markup) -> bool {
+    !matches!(markup, Markup::Json)
+}
+
 fn render_content(
     job: &DeliveryJob,
 ) -> Result<(String, String, Vec<DeliveryAction>, Vec<Coverage>), DeliveryError> {
+    let project_structured = needs_structured_projection(job.profile.markup);
+    let skills = job
+        .skill_registry
+        .as_ref()
+        .map(std::borrow::Cow::Borrowed)
+        .unwrap_or_else(|| std::borrow::Cow::Owned(built_in_skill_registry()));
+    let skills_ref = &*skills;
     match &job.content {
         DeliveryContent::Answer(answer) => {
             let rendered = match job.profile.template.as_ref() {
-                Some(template) => render_text(&template.render(answer)?, job.profile.markup),
-                None => render_answer(answer, job.profile.markup),
+                Some(template) => {
+                    let text = template.render(answer, project_structured, skills_ref)?;
+                    let text = if project_structured {
+                        project_structured_fences_with(&text, skills_ref)
+                    } else {
+                        text
+                    };
+                    render_text(&text, job.profile.markup)
+                }
+                None => render_answer(answer, job.profile.markup, project_structured, skills_ref),
             };
             let coverage = answer
                 .blocks
@@ -686,23 +746,30 @@ fn render_content(
             Vec::new(),
         )),
         DeliveryContent::Progress(progress) => Ok((
-            format!("{}: {}", progress.label, progress.state),
+            render_progress(progress, job.profile.markup),
             format!("{}: {}", progress.label, progress.state),
             Vec::new(),
             Vec::new(),
         )),
         DeliveryContent::ToolResult(result) => Ok((
-            format_tool_result(result),
+            render_tool_result(result, job.profile.markup, project_structured, skills_ref),
             result.output.clone(),
             Vec::new(),
             Vec::new(),
         )),
-        DeliveryContent::Text { markdown } => Ok((
-            render_text(markdown, job.profile.markup),
-            markdown.clone(),
-            Vec::new(),
-            Vec::new(),
-        )),
+        DeliveryContent::Text { markdown } => {
+            let projected = if project_structured {
+                project_structured_fences_with(markdown, skills_ref)
+            } else {
+                markdown.clone()
+            };
+            Ok((
+                render_text(&projected, job.profile.markup),
+                markdown.clone(),
+                Vec::new(),
+                Vec::new(),
+            ))
+        }
     }
 }
 
@@ -737,23 +804,69 @@ fn format_kind(kind: DeliveryKind) -> &'static str {
     }
 }
 
-fn render_answer(answer: &AnswerDraft, markup: Markup) -> String {
+fn render_answer(
+    answer: &AnswerDraft,
+    markup: Markup,
+    project_structured: bool,
+    skills: &SkillRegistry,
+) -> String {
+    let source = if project_structured {
+        project_structured_fences_with(&answer.source_markdown, skills)
+    } else {
+        answer.source_markdown.clone()
+    };
     match markup {
-        Markup::Plain => render_plain(answer),
-        Markup::Markdown => answer.source_markdown.clone(),
-        Markup::TelegramHtml => telegram::markdown_to_html(&answer.source_markdown),
-        Markup::SlackMrkdwn => slack::markdown_to_mrkdwn(&answer.source_markdown),
-        Markup::DiscordMarkdown => discord::markdown_to_discord(&answer.source_markdown),
+        Markup::Plain => render_plain(answer, project_structured, skills),
+        Markup::Markdown => source,
+        Markup::TelegramHtml => telegram::markdown_to_html(&source),
+        Markup::SlackMrkdwn => slack::markdown_to_mrkdwn(&source),
+        Markup::DiscordMarkdown => discord::markdown_to_discord(&source),
         Markup::Json => String::new(),
     }
 }
 
+/// Markup conversion only — does NOT project structured fences. Callers must
+/// project first via `project_structured_fences` when the surface doesn't
+/// support structured blocks natively.
 fn render_text(markdown: &str, markup: Markup) -> String {
     match markup {
         Markup::TelegramHtml => telegram::markdown_to_html(markdown),
         Markup::SlackMrkdwn => slack::markdown_to_mrkdwn(markdown),
         Markup::DiscordMarkdown => discord::markdown_to_discord(markdown),
         Markup::Plain | Markup::Markdown | Markup::Json => markdown.to_string(),
+    }
+}
+
+fn render_progress(progress: &ProgressPayload, markup: Markup) -> String {
+    let text = format!("{}: {}", progress.label, progress.state);
+    if matches!(markup, Markup::TelegramHtml) {
+        escape_html(&text)
+    } else {
+        text
+    }
+}
+
+fn render_tool_result(
+    result: &ToolResultPayload,
+    markup: Markup,
+    project_structured: bool,
+    skills: &SkillRegistry,
+) -> String {
+    let prefix = if result.is_error {
+        "Tool error"
+    } else {
+        "Tool result"
+    };
+    let formatted = format!("{prefix} ({}\n\n{}", result.tool, result.output);
+    let text = if project_structured {
+        project_structured_fences_with(&formatted, skills)
+    } else {
+        formatted
+    };
+    if matches!(markup, Markup::TelegramHtml) {
+        escape_html(&text)
+    } else {
+        text
     }
 }
 
@@ -778,15 +891,6 @@ fn render_approval(approval: &ApprovalPayload, markup: Markup) -> String {
     } else {
         text
     }
-}
-
-fn format_tool_result(result: &ToolResultPayload) -> String {
-    let prefix = if result.is_error {
-        "Tool error"
-    } else {
-        "Tool result"
-    };
-    format!("{prefix} ({})\n\n{}", result.tool, result.output)
 }
 
 fn parse_blocks(source: &str) -> Vec<Block> {
@@ -928,7 +1032,7 @@ fn list_item(line: &str) -> Option<(bool, &str)> {
     None
 }
 
-fn render_plain(answer: &AnswerDraft) -> String {
+fn render_plain(answer: &AnswerDraft, project_structured: bool, skills: &SkillRegistry) -> String {
     answer
         .blocks
         .iter()
@@ -948,6 +1052,13 @@ fn render_plain(answer: &AnswerDraft) -> String {
                 .collect::<Vec<_>>()
                 .join("\n"),
             Block::Quote { text, .. } => format!("> {text}"),
+            Block::Code {
+                content, language, ..
+            } if project_structured && language.as_deref() == Some("vak") => {
+                parse_fragment_with(content, skills)
+                    .map(|output| structured_markdown(&output))
+                    .unwrap_or_else(|_| content.clone())
+            }
             Block::Code { content, .. }
             | Block::RawMarkdown {
                 markdown: content, ..
@@ -1146,7 +1257,9 @@ mod tests {
                 supports_links: true,
                 supports_actions: false,
                 template: None,
+                posture: DeliveryPosture::default(),
             },
+            skill_registry: None,
         }
     }
 
@@ -1222,6 +1335,7 @@ mod tests {
                 max_chars: Some(4),
                 ..DeliveryProfile::plain("test")
             },
+            skill_registry: None,
         };
         let packet = render(&input).expect("valid delivery job");
         assert!(packet.chunks.iter().all(|chunk| chunk.chars().count() <= 4));
@@ -1299,6 +1413,7 @@ mod tests {
                 markdown: "system instruction".into(),
             },
             profile: DeliveryProfile::plain("test"),
+            skill_registry: None,
         };
         let error = render(&input).expect_err("system content must stay on event stream");
         assert!(error.to_string().contains("control-plane"));
@@ -1324,6 +1439,7 @@ mod tests {
                 actions: vec![action],
             }),
             profile: DeliveryProfile::plain("test"),
+            skill_registry: None,
         };
         let packet = render(&input).expect("approval should render");
         assert_eq!(packet.actions.len(), 1);
@@ -1339,6 +1455,255 @@ mod tests {
     fn worker_returns_values_for_bad_input() {
         let response = worker::process_line("not-json");
         assert!(response.contains("invalid delivery worker request"));
+    }
+
+    fn fallback_text(packet: &DeliveryPacket) -> String {
+        match &packet.payload {
+            DeliveryPayload::Text(text) => text.clone(),
+            DeliveryPayload::Structured(content) => match content {
+                DeliveryContent::Answer(answer) => answer.source_markdown.clone(),
+                DeliveryContent::Text { markdown } => markdown.clone(),
+                DeliveryContent::Progress(progress) => {
+                    format!("{}: {}", progress.label, progress.state)
+                }
+                DeliveryContent::ToolResult(payload) => payload.output.clone(),
+                _ => packet.fallback_markdown.clone(),
+            },
+        }
+    }
+
+    #[test]
+    fn structured_fence_projected_on_telegram_html() {
+        let source = "# Result\n\n```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"tokens\",\"value\":128}}\n```\n\nSummary text here.\n";
+        let input = DeliveryJob {
+            job_id: "struct-1".into(),
+            target: "test:one".into(),
+            kind: DeliveryKind::Assistant,
+            content: DeliveryContent::Answer(AnswerDraft::from_markdown(source)),
+            profile: DeliveryProfile {
+                surface: "telegram".into(),
+                markup: Markup::TelegramHtml,
+                max_chars: Some(4000),
+                supports_tables: false,
+                supports_code_blocks: true,
+                supports_links: true,
+                supports_actions: false,
+                template: None,
+                posture: DeliveryPosture::default(),
+            },
+            skill_registry: None,
+        };
+        let packet = render(&input).expect("valid delivery job");
+        let text = fallback_text(&packet);
+        assert!(
+            text.contains("tokens"),
+            "projected text should contain the metric label"
+        );
+        assert!(
+            text.contains("128"),
+            "projected text should contain the metric value"
+        );
+        assert!(
+            text.contains("Summary text here"),
+            "non-fence content preserved"
+        );
+        assert!(
+            !text.contains("```vak"),
+            "raw vak fence must be projected, not shown verbatim"
+        );
+    }
+
+    #[test]
+    fn structured_fence_projected_on_slack_mrkdwn() {
+        let source = "Done.\n\n```vak\n{\"semantic_type\":\"link.preview\",\"payload\":{\"url\":\"https://example.com\",\"title\":\"Example\"}}\n```\n";
+        let input = DeliveryJob {
+            job_id: "struct-2".into(),
+            target: "test:one".into(),
+            kind: DeliveryKind::Assistant,
+            content: DeliveryContent::Answer(AnswerDraft::from_markdown(source)),
+            profile: DeliveryProfile {
+                surface: "slack".into(),
+                markup: Markup::SlackMrkdwn,
+                max_chars: Some(3900),
+                supports_tables: false,
+                supports_code_blocks: true,
+                supports_links: true,
+                supports_actions: false,
+                template: None,
+                posture: DeliveryPosture::default(),
+            },
+            skill_registry: None,
+        };
+        let packet = render(&input).expect("valid delivery job");
+        let text = fallback_text(&packet);
+        assert!(text.contains("Example"), "link preview title should appear");
+        assert!(
+            text.contains("https://example.com"),
+            "link URL should appear"
+        );
+        assert!(!text.contains("```vak"), "raw fence must be projected");
+    }
+
+    #[test]
+    fn structured_fence_projected_on_discord_markdown() {
+        let source = "Done.\n\n```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"latency\",\"value\":42}}\n```\n";
+        let input = DeliveryJob {
+            job_id: "struct-3".into(),
+            target: "test:one".into(),
+            kind: DeliveryKind::Assistant,
+            content: DeliveryContent::Answer(AnswerDraft::from_markdown(source)),
+            profile: DeliveryProfile {
+                surface: "discord".into(),
+                markup: Markup::DiscordMarkdown,
+                max_chars: Some(1900),
+                supports_tables: false,
+                supports_code_blocks: true,
+                supports_links: true,
+                supports_actions: false,
+                template: None,
+                posture: DeliveryPosture::default(),
+            },
+            skill_registry: None,
+        };
+        let packet = render(&input).expect("valid delivery job");
+        let text = fallback_text(&packet);
+        assert!(text.contains("latency"), "metric label should appear");
+        assert!(text.contains("42"), "metric value should appear");
+        assert!(!text.contains("```vak"), "raw fence must be projected");
+    }
+
+    #[test]
+    fn structured_fence_passed_through_as_json_for_native_surface() {
+        let source = "Done.\n\n```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"tokens\",\"value\":128}}\n```\n";
+        let input = DeliveryJob {
+            job_id: "struct-4".into(),
+            target: "test:one".into(),
+            kind: DeliveryKind::Assistant,
+            content: DeliveryContent::Answer(AnswerDraft::from_markdown(source)),
+            profile: DeliveryProfile {
+                surface: "desktop".into(),
+                markup: Markup::Json,
+                max_chars: None,
+                supports_tables: true,
+                supports_code_blocks: true,
+                supports_links: true,
+                supports_actions: true,
+                template: None,
+                posture: DeliveryPosture::default(),
+            },
+            skill_registry: None,
+        };
+        let packet = render(&input).expect("valid delivery job");
+        // For Json markup, the structured fence should NOT be projected
+        // — it stays as a structured content block for the desktop renderer.
+        let text = fallback_text(&packet);
+        assert!(
+            text.contains("```vak"),
+            "Json surface must preserve raw fence for AST rendering"
+        );
+    }
+
+    #[test]
+    fn tool_result_with_vak_fence_is_projected() {
+        let tool_output = "Command completed.\n\n```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"exit_code\",\"value\":0}}\n```\n";
+        let content = DeliveryContent::ToolResult(ToolResultPayload {
+            tool: "bash".into(),
+            output: tool_output.into(),
+            is_error: false,
+        });
+        let input = DeliveryJob {
+            job_id: "tool-1".into(),
+            target: "test:one".into(),
+            kind: DeliveryKind::ToolResult,
+            content,
+            profile: DeliveryProfile {
+                surface: "test".into(),
+                markup: Markup::TelegramHtml,
+                max_chars: Some(4000),
+                supports_tables: false,
+                supports_code_blocks: true,
+                supports_links: true,
+                supports_actions: false,
+                template: None,
+                posture: DeliveryPosture::default(),
+            },
+            skill_registry: None,
+        };
+        let packet = render(&input).expect("valid tool result job");
+        let text = fallback_text(&packet);
+        assert!(
+            text.contains("exit_code"),
+            "tool result metric label should appear"
+        );
+        assert!(text.contains("0"), "tool result metric value should appear");
+        assert!(text.contains("bash"), "tool name should appear in header");
+    }
+
+    #[test]
+    fn malformed_vak_fence_is_preserved_as_code_block() {
+        let source = "Done.\n\n```vak\n{this is not json}\n```\n";
+        let input = DeliveryJob {
+            job_id: "struct-5".into(),
+            target: "test:one".into(),
+            kind: DeliveryKind::Assistant,
+            content: DeliveryContent::Answer(AnswerDraft::from_markdown(source)),
+            profile: DeliveryProfile {
+                surface: "test".into(),
+                markup: Markup::TelegramHtml,
+                max_chars: Some(4000),
+                supports_tables: false,
+                supports_code_blocks: true,
+                supports_links: true,
+                supports_actions: false,
+                template: None,
+                posture: DeliveryPosture::default(),
+            },
+            skill_registry: None,
+        };
+        let result = render(&input);
+        // Must not panic on malformed JSON inside the fence
+        assert!(
+            result.is_ok(),
+            "malformed fence should not crash the worker"
+        );
+    }
+
+    #[test]
+    fn plugin_contributed_skill_is_recognized() {
+        use std::collections::BTreeMap;
+        let mut registry = built_in_skill_registry();
+        let mut renderers = BTreeMap::new();
+        renderers.insert(
+            "desktop".to_string(),
+            RendererBinding {
+                renderer: "metric".into(),
+                interactive: false,
+                requires: vec![],
+            },
+        );
+        let plugin_manifest = PresentationSkillManifest {
+            id: "custom_metric".into(),
+            version: "1.0.0".into(),
+            api: PRESENTATION_SKILL_API.into(),
+            provides: vec!["custom.metric".into()],
+            renderers,
+            schema: None,
+        };
+        let files = vec![(
+            "custom_skill.json".to_string(),
+            serde_json::to_vec(&plugin_manifest).expect("plugin manifest must serialize"),
+        )];
+        registry.merge_plugin_files(&files);
+        assert!(registry.get("custom_metric").is_some());
+        // The plugin skill should be used when parsing its semantic type:
+        // skill_id is resolved from the registry, not hardcoded to "core".
+        let fence =
+            r#"{"semantic_type":"custom.metric","payload":{"label":"throughput","value":42}}"#;
+        let output = parse_fragment_with(fence, &registry)
+            .expect("plugin skill should parse with correct skill_id");
+        assert_eq!(output.skill_id, "custom_metric");
+        assert_eq!(output.skill_version, "1.0.0");
+        assert_eq!(output.semantic_type, "custom.metric");
     }
 }
 

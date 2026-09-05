@@ -5,10 +5,11 @@ universal recipe catalog (research, coding diffs/tests, telemetry charts,
 spreadsheet grids, terminal sessions, culinary recipes) and tool-provenance signal
 engine, desktop native presentation suite (ResearchCards, DiffInspector,
 TestMatrix, UniversalChart, DataGrid, TerminalConsole, RecipeCard),
-snapshot/SSE projection, isolated worker, trusted templates,
-Telegram/Slack/Discord projections, semantic webhook envelope,
-adapter registry, ordered multi-message output, and durable retry outbox
-implemented. TUI remains follow-up work.
+snapshot/SSE projection with merged planner, isolated worker, trusted templates,
+plugin-extensible skill registry, structured fence projection on all markup
+surfaces, engagement posture integration, Telegram/Slack/Discord projections,
+semantic webhook envelope, adapter registry, ordered multi-message output, and
+durable retry outbox implemented. TUI remains follow-up work.
 
 ## Problem
 
@@ -98,6 +99,25 @@ includes, tools, filesystem lookup, network access, or expression language.
 An untrusted project output file is ignored. Agent proposals remain inactive
 until explicitly activated.
 
+## Engagement posture
+
+`DeliveryProfile` carries a `DeliveryPosture` (cadence × urgency) that the
+session or task sets. The posture decides **when** a packet goes out, never
+**what** it says — the renderer, packet contents, and outbox are untouched.
+
+- `Disposition::Send` — render and deliver immediately (the pre-kernel default).
+- `Disposition::HoldUntilComplete` — enqueue to the outbox; the replay loop
+  skips held packets until the turn completes or the posture resolves to
+  `Send`.
+- `Disposition::HoldForDigest` — enqueue to the outbox; the digest flush
+  delivers it.
+
+Two rules override the cadence: an `Interrupt` urgency always sends (an
+irreversible step's confirmation must not wait), and any packet needing a
+person (`DeliveryKind::Approval`, `Alert`) always sends because a held gate is
+a stopped run. The outbox replay checks posture before attempting delivery,
+so held packets do not burn retry budget.
+
 Every block receives an ID and a coverage disposition. Unknown structures stay
 in the exact fallback even when the target cannot render them richly. Silent
 loss is a protocol error.
@@ -108,7 +128,31 @@ fallback is rendered. Progress and tool results retain their typed payloads.
 This prevents a template from accidentally turning a human-in-the-loop gate,
 system message, or tool event into ordinary prose.
 
-## Process boundary and load
+## Structured fence projection (schema-v2)
+
+Assistant answers and tool results may contain ```vak fenced blocks carrying
+provider-agnostic structured JSON instead of raw model output. Because models
+and providers switch turn-by-turn (OpenAI `choices[0].message.content`, Anthropic
+`content[0].text`, Google `candidates[0].content`), the raw JSON shape is never
+stable. Rather than per-provider adapters, the worker validates each fence's
+payload against a `SkillRegistry` and replaces it with a deterministic
+`structured_markdown()` projection: human-readable heading + typed body +
+inspectable JSON appendix. Ordinary Markdown and invalid/incomplete fences stay
+exact.
+
+```vak fences are projected on all markup-passing surfaces (TelegramHtml,
+SlackMrkdwn, DiscordMarkdown, Markdown, Plain). For `Markup::Json` (the desktop
+native AST path) the raw fence is preserved for the structured component
+registry.
+
+The skill registry is merged from builtins plus plugin-contributed
+`PresentationSkillManifest` files (declared in a plugin's
+`components.presentation` list). `parse_fragment_with` resolves the owning skill
+by `semantic_type` via `SkillRegistry::find_by_type`, attributing the output to
+its real `skill_id` rather than assuming `"core"`. Plugin manifests may declare
+an optional JSON Schema (`schema` field) for payload validation; without one,
+the plugin renderer owns shape correctness and the payload is accepted.
+
 
 Production CLI and desktop binaries host a private `__delivery_worker`
 subcommand. The server keeps one empty-environment child alive per sessions
@@ -117,6 +161,11 @@ keys, channel credentials, tools, session handles, or network access. A
 five-second watchdog restarts a broken process once; a deterministic in-process
 fallback adds a diagnostic rather than suppressing output. Rendering calls no
 LLM and has bounded payload/template work.
+
+The `DeliveryJob` carries an optional `skill_registry` field. The Core
+populates it with the merged registry (builtins + plugin-contributed
+presentation skills), which the worker uses for ```vak fence validation. When
+`None`, the worker falls back to `built_in_skill_registry()`.
 
 Before push, the server creates an append-only job-state JSONL under
 `<home>/delivery/jobs/`. It records pending, delivered, failed-attempt, and
@@ -143,8 +192,11 @@ The server exposes `GET /sessions/:id/presentation` for an idempotent snapshot
 and `GET /sessions/:id/presentation/events` for `Snapshot`, `ItemStarted`,
 `TextDelta`, `ItemReplaced`, and `ItemCompleted`. The first event on every SSE
 connection is a complete snapshot, so reconnect never depends on replaying a
-lost broadcast delta. Raw `AgentEvent` and Markdown transcript endpoints stay
-available for compatibility and forensic inspection.
+lost broadcast delta. The snapshot is built with the live Core's merged
+presentation planner (builtins + plugin recipes/signals); historical session
+views use the builtin-only planner since no Core is available. Raw
+`AgentEvent` and Markdown transcript endpoints stay available for
+compatibility and forensic inspection.
 
 ## Desktop projection
 

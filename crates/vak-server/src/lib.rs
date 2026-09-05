@@ -2756,7 +2756,10 @@ pub(crate) fn register_handle(
 ) -> Arc<SessionHandle> {
     let events_tx = events::EventBus::new();
     let side_events_tx = events::EventBus::new();
-    let presentation = Arc::new(Mutex::new(crate::projection::snapshot(&id, &session)));
+    let planner = delivery::merged_presentation_planner(&core);
+    let presentation = Arc::new(Mutex::new(crate::projection::snapshot_with_planner(
+        &id, &session, &planner,
+    )));
     let mut presentation_rx = events_tx.subscribe();
     let presentation_state = presentation.clone();
     let presentation_activities = Arc::new(Mutex::new(Vec::new()));
@@ -4282,7 +4285,11 @@ async fn presentation_snapshot(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(session) = guard.as_ref() {
-            return Json(crate::projection::snapshot(&id, session)).into_response();
+            let planner = delivery::merged_presentation_planner(&handle.core);
+            return Json(crate::projection::snapshot_with_planner(
+                &id, session, &planner,
+            ))
+            .into_response();
         }
         let mut timeline = handle
             .presentation

@@ -303,6 +303,7 @@ mod tests {
             kind: DeliveryKind::Assistant,
             content: DeliveryContent::Answer(AnswerDraft::from_markdown("exact **answer**")),
             profile: DeliveryProfile::plain("log"),
+            skill_registry: None,
         }
     }
 

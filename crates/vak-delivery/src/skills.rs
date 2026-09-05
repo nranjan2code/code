@@ -3,6 +3,12 @@
 //! Skills contribute typed data and renderer metadata. They never provide
 //! executable desktop code; a surface chooses a trusted renderer or falls
 //! back to the item's text representation.
+//!
+//! Skills are **data**, not code. A plugin-contributed skill ships a
+//! `PresentationSkillManifest` (semantic types it provides + per-surface
+//! renderer bindings) that is serialized into the `DeliveryJob.skill_registry`
+//! field and sent to the isolated worker. The worker validates ```vak fences
+//! against that registry without needing filesystem or network access.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -105,9 +111,9 @@ impl std::fmt::Display for SkillError {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecipeCatalog {
-    recipes: Vec<PresentationRecipe>,
+    pub recipes: Vec<PresentationRecipe>,
 }
 
 impl RecipeCatalog {
@@ -122,6 +128,20 @@ impl RecipeCatalog {
         }
         self.recipes.push(recipe);
         Ok(())
+    }
+
+    /// Merge plugin-contributed recipe definitions. Plugins declare
+    /// presentation files in their manifest `components.presentation` list.
+    /// Each file is a JSON-encoded `PresentationRecipe`. Unknown files are
+    /// silently skipped.
+    pub fn merge_recipe_files(&mut self, files: &[(String, Vec<u8>)]) {
+        for (_path, bytes) in files {
+            if let Ok(json) = std::str::from_utf8(bytes)
+                && let Ok(recipe) = serde_json::from_str::<PresentationRecipe>(json)
+            {
+                let _ = self.register(recipe);
+            }
+        }
     }
 
     pub fn choose(&self, signals: &[String], surface: &str) -> Option<PresentationDecision> {
@@ -337,6 +357,7 @@ pub fn built_in_skill_registry() -> SkillRegistry {
         .map(String::from)
         .collect(),
         renderers,
+        schema: None,
     });
     registry
 }
@@ -559,7 +580,7 @@ pub fn link_previews_from_text(text: &str) -> Vec<StructuredOutput> {
         .collect()
 }
 
-/// Extracts explicitly typed `vak` fragments from model/tool text. This is
+/// Extract explicitly typed `vak` fragments from model/tool text. This is
 /// intentionally domain-neutral: the registry, not this parser, decides what
 /// semantic types exist and whether a surface may render them.
 ///
@@ -573,7 +594,18 @@ pub fn link_previews_from_text(text: &str) -> Vec<StructuredOutput> {
 /// it produced. Nothing here inspects a tool's name or its payload's field
 /// names to guess a type.
 pub fn structured_outputs_from_text(text: &str) -> Vec<StructuredOutput> {
-    if let Ok(output) = parse_fragment(text.trim()) {
+    structured_outputs_from_text_with(text, &built_in_skill_registry())
+}
+
+/// Like [`structured_outputs_from_text`] but validates against a
+/// plugin-extended skill registry. The Core passes its merged registry
+/// (builtins + plugin skills) so that plugin-declared semantic types are
+/// recognized in model/tool text.
+pub fn structured_outputs_from_text_with(
+    text: &str,
+    skills: &SkillRegistry,
+) -> Vec<StructuredOutput> {
+    if let Ok(output) = parse_fragment_with(text.trim(), skills) {
         return vec![output];
     }
     let mut outputs = Vec::new();
@@ -582,7 +614,7 @@ pub fn structured_outputs_from_text(text: &str) -> Vec<StructuredOutput> {
         let after = &remainder[start + 6..];
         let body = after.strip_prefix('\n').unwrap_or(after);
         let Some(end) = body.find("```") else { break };
-        if let Ok(output) = parse_fragment(&body[..end])
+        if let Ok(output) = parse_fragment_with(&body[..end], skills)
             && !outputs
                 .iter()
                 .any(|existing: &StructuredOutput| existing == &output)
@@ -603,6 +635,12 @@ pub struct PresentationSkillManifest {
     pub provides: Vec<String>,
     #[serde(default)]
     pub renderers: BTreeMap<String, RendererBinding>,
+    /// Optional JSON Schema for payload validation. When present, payloads
+    /// are validated against it. When absent (plugin skills that don't
+    /// declare one), the payload shape is accepted as-is — the plugin's own
+    /// renderer owns correctness of its data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -625,7 +663,20 @@ pub struct StructuredOutput {
 
 /// The only model-authored rich block envelope. The host supplies versions
 /// and renderer identity; models supply data, never executable UI or receipts.
+///
+/// Uses the built-in skill registry for validation. For plugin-contributed
+/// semantic types, use [`parse_fragment_with`].
 pub fn parse_fragment(source: &str) -> Result<StructuredOutput, SkillError> {
+    parse_fragment_with(source, &built_in_skill_registry())
+}
+
+/// Like [`parse_fragment`] but validates against an arbitrary (possibly
+/// plugin-extended) skill registry. The worker receives the merged registry
+/// through the `DeliveryJob.skill_registry` field.
+pub fn parse_fragment_with(
+    source: &str,
+    skills: &SkillRegistry,
+) -> Result<StructuredOutput, SkillError> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Fragment {
@@ -634,14 +685,21 @@ pub fn parse_fragment(source: &str) -> Result<StructuredOutput, SkillError> {
     }
     let fragment: Fragment = serde_json::from_str(source)
         .map_err(|error| SkillError::InvalidPayload(error.to_string()))?;
+    // Resolve the owning skill by the semantic type it declares, rather than
+    // assuming "core" — plugin-contributed types are registered under their
+    // own skill id and must validate against their own manifest.
+    let (skill_id, skill_version) = skills
+        .find_by_type(&fragment.semantic_type)
+        .map(|(id, version)| (id.to_string(), version.to_string()))
+        .unwrap_or_else(|| ("core".to_string(), "1.0.0".to_string()));
     let output = StructuredOutput {
         semantic_type: fragment.semantic_type,
         payload: fragment.payload,
         schema_version: crate::PRESENTATION_SCHEMA_VERSION,
-        skill_id: "core".into(),
-        skill_version: "1.0.0".into(),
+        skill_id,
+        skill_version,
     };
-    built_in_skill_registry().validate(&output, "desktop", &[])?;
+    skills.validate(&output, "desktop", &[])?;
     Ok(output)
 }
 
@@ -691,7 +749,18 @@ pub fn structured_markdown(output: &StructuredOutput) -> String {
 
 /// Replace validated rich fences in-place with their deterministic text
 /// projection. Ordinary Markdown and invalid/incomplete fences stay exact.
+///
+/// Uses the built-in skill registry. For plugin-contributed semantic types,
+/// use [`project_structured_fences_with`].
 pub fn project_structured_fences(source: &str) -> String {
+    project_structured_fences_with(source, &built_in_skill_registry())
+}
+
+/// Like [`project_structured_fences`] but validates against an arbitrary
+/// (possibly plugin-extended) skill registry. Called by `render_content`
+/// with the `DeliveryJob.skill_registry` field (the Core's merged registry)
+/// when available, falling back to builtins in the worker.
+pub fn project_structured_fences_with(source: &str, skills: &SkillRegistry) -> String {
     use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
     let mut replacements = Vec::new();
     let mut pending: Option<(usize, String)> = None;
@@ -700,7 +769,7 @@ pub fn project_structured_fences(source: &str) -> String {
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(language)))
                 if language.as_ref() == "vak" =>
             {
-                pending = Some((range.start, String::new()))
+                pending = Some((range.start, String::new()));
             }
             Event::Text(text) => {
                 if let Some((_, content)) = &mut pending {
@@ -709,7 +778,7 @@ pub fn project_structured_fences(source: &str) -> String {
             }
             Event::End(TagEnd::CodeBlock) => {
                 if let Some((start, content)) = pending.take()
-                    && let Ok(output) = parse_fragment(&content)
+                    && let Ok(output) = parse_fragment_with(&content, skills)
                 {
                     replacements.push((start..range.end, structured_markdown(&output)));
                 }
@@ -787,9 +856,9 @@ pub enum SkillError {
     MissingCapability(String),
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillRegistry {
-    skills: BTreeMap<String, PresentationSkillManifest>,
+    pub skills: BTreeMap<String, PresentationSkillManifest>,
 }
 
 impl SkillRegistry {
@@ -812,8 +881,33 @@ impl SkillRegistry {
         Ok(())
     }
 
+    /// Merge plugin-contributed skill manifests into this registry.
+    /// Plugins declare presentation files in their manifest `components.presentation`
+    /// list. Each file is a JSON-encoded `PresentationSkillManifest` or
+    /// `PresentationRecipe`. Unknown files are silently skipped (a plugin
+    /// manifest can declare files for other systems).
+    pub fn merge_plugin_files(&mut self, files: &[(String, Vec<u8>)]) {
+        for (_path, bytes) in files {
+            if let Ok(json) = std::str::from_utf8(bytes)
+                && let Ok(manifest) = serde_json::from_str::<PresentationSkillManifest>(json)
+            {
+                let _ = self.register(manifest);
+            }
+        }
+    }
+
     pub fn get(&self, id: &str) -> Option<&PresentationSkillManifest> {
         self.skills.get(id)
+    }
+
+    /// Find the skill that declares a given semantic type. Returns the skill's
+    /// `(id, version)` so `parse_fragment_with` can attribute an output to
+    /// its real owner rather than the hardcoded `"core"` fallback.
+    pub fn find_by_type(&self, semantic_type: &str) -> Option<(&String, &String)> {
+        self.skills
+            .values()
+            .find(|skill| skill.provides.iter().any(|kind| kind == semantic_type))
+            .map(|skill| (&skill.id, &skill.version))
     }
 
     pub fn validate(
@@ -848,14 +942,70 @@ impl SkillRegistry {
                 return Err(SkillError::MissingCapability(required.clone()));
             }
         }
-        validate_payload(&output.semantic_type, &output.payload)?;
+        validate_payload(
+            &output.semantic_type,
+            &output.payload,
+            skill.schema.as_ref(),
+        )?;
         Ok(renderer)
     }
 }
 
-fn validate_payload(semantic_type: &str, payload: &Value) -> Result<(), SkillError> {
+/// Validate a payload value against a minimal JSON Schema subset
+/// (`type`, `required`). This avoids pulling in a schema crate; plugin
+/// manifests that need richer validation declare their own renderer.
+fn validate_against_schema(payload: &Value, schema: &Value) -> Result<(), SkillError> {
+    let Some(schema_obj) = schema.as_object() else {
+        return Err(SkillError::InvalidPayload(
+            "plugin schema must be a JSON object".into(),
+        ));
+    };
+    if let Some(expected) = schema_obj.get("type").and_then(|t| t.as_str()) {
+        let matches = match expected {
+            "object" => payload.is_object(),
+            "array" => payload.is_array(),
+            "string" => payload.is_string(),
+            "number" => payload.is_number(),
+            "boolean" => payload.is_boolean(),
+            "null" => payload.is_null(),
+            _ => true,
+        };
+        if !matches {
+            return Err(SkillError::InvalidPayload(format!(
+                "payload is not a {expected}"
+            )));
+        }
+    }
+    if let Some(required) = schema_obj.get("required").and_then(|r| r.as_array()) {
+        let Some(obj) = payload.as_object() else {
+            return Err(SkillError::InvalidPayload(
+                "payload must be an object for required check".into(),
+            ));
+        };
+        for key in required.iter().flat_map(|k| k.as_str()) {
+            if !obj.contains_key(key) {
+                return Err(SkillError::InvalidPayload(format!(
+                    "missing required field: {key}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_payload(
+    semantic_type: &str,
+    payload: &Value,
+    schema: Option<&Value>,
+) -> Result<(), SkillError> {
     if payload.to_string().len() > 1_000_000 {
         return Err(SkillError::InvalidPayload("payload exceeds 1 MB".into()));
+    }
+    // Plugin-declared schema takes precedence: if the skill ships a JSON
+    // Schema, validate against it. If not, fall through to the built-in
+    // type-by-type validators for known core types.
+    if let Some(schema) = schema {
+        return validate_against_schema(payload, schema);
     }
     let object = payload
         .as_object()
@@ -989,7 +1139,7 @@ fn validate_payload(semantic_type: &str, payload: &Value) -> Result<(), SkillErr
                     })
                 })
         }
-        _ => return Err(SkillError::UnknownType(semantic_type.into())),
+        _ => return Ok(()),
     };
     if valid {
         Ok(())
@@ -1026,6 +1176,7 @@ mod tests {
                     api: PRESENTATION_SKILL_API.into(),
                     provides: vec!["chart".into()],
                     renderers,
+                    schema: None,
                 })
                 .is_ok()
         );
@@ -1093,6 +1244,7 @@ mod tests {
                     api: PRESENTATION_SKILL_API.into(),
                     provides: vec!["chart".into()],
                     renderers,
+                    schema: None,
                 })
                 .is_ok()
         );
