@@ -5,6 +5,27 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 2.3.2 — Unreleased
+
+### Rendering system fix
+
+Structured ```vak fences in assistant answers and tool results are now
+projected to readable text on all chat surfaces (Telegram, Slack, Discord),
+not shown as raw JSON. The worker validates each fence against a merged skill
+registry (builtins + plugin-contributed) and renders a deterministic text
+projection with an inspectable JSON appendix. Plugin-contributed semantic
+types are recognized through `SkillRegistry::find_by_type` and optional JSON
+Schema validation.
+
+`DeliveryPosture` (cadence × urgency) is now wired into the delivery path.
+Packets with `HoldUntilComplete` or `HoldForDigest` disposition are enqueued
+to the outbox without immediate delivery; the replay loop skips held packets
+until their posture resolves to `Send`. Approvals and interrupt-urgency
+packets always send.
+
+The SSE snapshot endpoint now uses the Core's merged presentation planner
+(builtins + plugin recipes) for live sessions.
+
 ## 2.3.1 — 2026-09-05
 
 A review of the schema-v2 rendering pipeline (2.3.0) turned out to be
