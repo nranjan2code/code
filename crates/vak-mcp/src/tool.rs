@@ -106,10 +106,10 @@ impl Tool for McpTool {
         })
     }
 
-    async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
+    async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         match args.get("action").and_then(|a| a.as_str()) {
-            Some("list") => self.list().await,
-            Some("call") => self.call(args).await,
+            Some("list") => self.list(ctx).await,
+            Some("call") => self.call(args, ctx).await,
             Some(other) => ToolOutput::error(format!("unknown mcp action '{other}'")),
             None => ToolOutput::error("missing required parameter: action"),
         }
@@ -117,7 +117,7 @@ impl Tool for McpTool {
 }
 
 impl McpTool {
-    async fn list(&self) -> ToolOutput {
+    async fn list(&self, ctx: &ToolContext) -> ToolOutput {
         let mut out = String::new();
         let mut catalog = Vec::new();
         for server in self.manager.server_names() {
@@ -160,10 +160,10 @@ impl McpTool {
         if let Some(observer) = &self.catalog_observer {
             observer(&catalog);
         }
-        ToolOutput::ok(out)
+        ToolOutput::ok(ctx.truncate_output(out))
     }
 
-    async fn call(&self, args: &Value) -> ToolOutput {
+    async fn call(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(server) = args.get("server").and_then(|s| s.as_str()) else {
             return ToolOutput::error("missing required parameter: server");
         };
@@ -192,17 +192,29 @@ impl McpTool {
                 if text.is_empty() {
                     ToolOutput::ok("(empty result)")
                 } else {
-                    ToolOutput::ok(self.manager.redact(text))
+                    let redacted = self.manager.redact(text);
+                    let preview = ctx.truncate_output(redacted.clone());
+                    if preview == redacted {
+                        return ToolOutput::ok(preview);
+                    }
+                    let artifact = self.manager.store_artifact(server, tool, &redacted);
+                    match artifact {
+                        Some(path) => ToolOutput::ok(ctx.truncate_output(format!(
+                            "[full MCP result stored at {}. Use the read tool with this path and offset/limit for exact retrieval.]\n{redacted}",
+                            path.display()
+                        ))),
+                        None => ToolOutput::ok(preview),
+                    }
                 }
             }
             Err(e) => {
                 if let Some(record) = &self.invocation_recorder {
                     record(server, tool, false);
                 }
-                ToolOutput::error(format!(
+                ToolOutput::error(ctx.truncate_output(format!(
                     "mcp call failed: {}",
                     self.manager.redact(e.to_string())
-                ))
+                )))
             }
         }
     }

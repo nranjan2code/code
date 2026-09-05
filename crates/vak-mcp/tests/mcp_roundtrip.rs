@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use vak_mcp::{McpManager, McpTool};
-use vak_tools::{Tool, ToolContext};
+use vak_tools::{OutputLimits, Tool, ToolContext};
 
 fn server_script() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -66,6 +66,44 @@ async fn call_invokes_tool_and_returns_text() {
         .await;
     assert!(!out.is_error, "call failed: {}", out.content);
     assert_eq!(out.content.trim(), "echo: hello mcp");
+}
+
+#[tokio::test]
+async fn call_output_is_bounded_before_entering_the_session() {
+    let tool = McpTool::new(manager());
+    let ctx = ToolContext {
+        cwd: std::env::temp_dir(),
+        cancel: tokio_util::sync::CancellationToken::new(),
+        limits: OutputLimits {
+            max_bytes: 500,
+            max_line_chars: 2_000,
+            spill_to_disk: false,
+        },
+        sandbox: None,
+    };
+    let out = tool
+        .execute(
+            &json!({
+                "action": "call",
+                "server": "fake",
+                "tool": "echo",
+                "arguments": {"text": "x".repeat(5_000)}
+            }),
+            &ctx,
+        )
+        .await;
+    assert!(!out.is_error);
+    assert!(out.content.chars().count() <= 620);
+    assert!(out.content.contains("truncated"));
+    let artifact_path = out
+        .content
+        .lines()
+        .next()
+        .and_then(|line| line.split("stored at ").nth(1))
+        .and_then(|path| path.split(". Use the read").next())
+        .expect("artifact path");
+    let artifact = std::fs::read_to_string(artifact_path).expect("full MCP artifact");
+    assert!(artifact.contains(&"x".repeat(5_000)));
 }
 
 #[tokio::test]

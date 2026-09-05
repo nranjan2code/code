@@ -829,7 +829,7 @@ impl Agent {
                                 }
                                 Err(e) => {
                                     return TurnOutcome::Failed {
-                                        error: LlmError::Network(format!(
+                                        error: LlmError::Context(format!(
                                             "context over budget and handoff write failed: {e}"
                                         )),
                                     };
@@ -838,7 +838,7 @@ impl Agent {
                         }
                     }
                     return TurnOutcome::Failed {
-                        error: LlmError::Network(
+                        error: LlmError::Context(
                             "context over budget but too short to compact".into(),
                         ),
                     };
@@ -972,7 +972,7 @@ impl Agent {
                     };
                     if est >= tokens_before {
                         return TurnOutcome::Failed {
-                            error: LlmError::Network(format!(
+                            error: LlmError::Context(format!(
                                 "compaction made no progress (~{tokens_before} -> ~{est} tokens)"
                             )),
                         };
@@ -1005,7 +1005,7 @@ impl Agent {
                                     }
                                     Err(e) => {
                                         return TurnOutcome::Failed {
-                                            error: LlmError::Network(format!(
+                                            error: LlmError::Context(format!(
                                                 "context still over budget and handoff write failed: {e}"
                                             )),
                                         };
@@ -1014,7 +1014,7 @@ impl Agent {
                             }
                         }
                         return TurnOutcome::Failed {
-                            error: LlmError::Network(format!(
+                            error: LlmError::Context(format!(
                                 "context still over budget after compaction (~{est} > {} tokens)",
                                 self.config.context_policy.input_budget()
                             )),
@@ -3318,11 +3318,14 @@ async fn execute_one(
                 limits: Default::default(),
                 sandbox: sandbox.cloned(),
             };
+            let result_ctx = ctx.clone();
             let tool = tool.clone();
             let res = tokio::spawn(async move { tool.execute(&call.input, &ctx).await }).await;
             match res {
-                Ok(out) if out.is_error => ToolRunOutput::Err(out.content),
-                Ok(out) => ToolRunOutput::Ok(out.content),
+                Ok(out) if out.is_error => {
+                    ToolRunOutput::Err(result_ctx.truncate_output(out.content))
+                }
+                Ok(out) => ToolRunOutput::Ok(result_ctx.truncate_output(out.content)),
                 Err(join_err) => ToolRunOutput::Err(format!("tool task failed: {join_err}")),
             }
         }
@@ -3371,6 +3374,7 @@ async fn execute_one(
 /// Doom-loop threshold: the Nth identical (tool, args) call in one run is
 /// re-routed through approval instead of silently repeating.
 const DOOM_LOOP_THRESHOLD: u32 = 3;
+const MAX_TOOL_INPUT_CHARS: usize = 32_000;
 
 async fn authorize(
     config: &AgentConfig,
@@ -3378,6 +3382,21 @@ async fn authorize(
     cwd: &std::path::Path,
     run_call_counts: &std::sync::Mutex<HashMap<String, u32>>,
 ) -> Result<(), String> {
+    let input_chars = serde_json::to_string(&call.input)
+        .map(|input| input.chars().count())
+        .unwrap_or(MAX_TOOL_INPUT_CHARS.saturating_add(1));
+    if input_chars > MAX_TOOL_INPUT_CHARS {
+        return Err(format!(
+            "tool call arguments exceed the {}-character safety limit; reduce the arguments and retry",
+            MAX_TOOL_INPUT_CHARS
+        ));
+    }
+    if call.name == "mcp" && call.input.get("action").and_then(Value::as_str).is_none() {
+        return Err(
+            "invalid mcp call: required parameter `action` was omitted; do not retry this call"
+                .into(),
+        );
+    }
     if config
         .revocation_check
         .as_ref()

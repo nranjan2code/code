@@ -24,6 +24,7 @@ impl Default for OutputLimits {
 
 static SPILL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+#[derive(Clone)]
 pub struct ToolContext {
     pub cwd: PathBuf,
     pub cancel: CancellationToken,

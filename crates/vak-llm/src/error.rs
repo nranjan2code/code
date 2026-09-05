@@ -19,6 +19,8 @@ pub enum LlmError {
     Network(String),
     #[error("response parse error: {0}")]
     Parse(String),
+    #[error("context budget exceeded: {0}")]
+    Context(String),
     #[error("aborted before completion")]
     Aborted { partial: Option<AssistantMessage> },
 }

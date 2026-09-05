@@ -16,6 +16,19 @@ A prompt-budget protocol reduced to a coding-harness kernel.
 
 Input budget = window − output. Trigger = threshold × budget.
 
+Every tool result is bounded before it is appended to the session projection,
+including MCP results and custom tools. The default limit is 30,000 characters;
+larger output is retained in a protected spill file and the model receives a
+head/tail excerpt with an explicit truncation marker. This makes a tool result
+compaction-safe rather than allowing one result to consume the whole window.
+MCP additionally stores the complete redacted response as a workspace artifact
+under `.vak/mcp-artifacts/` and returns its path; the ordinary `read` tool is the
+explicit, paged retrieval mechanism for content omitted from the preview.
+Tool-call arguments are admitted under a 32,000-character bound. Oversized
+arguments are recorded as attempted calls but rejected before authorization or
+execution, so neither side of a tool exchange can consume an unbounded share
+of the next model request.
+
 ## Loop integration
 
 Before every model step:
@@ -32,7 +45,9 @@ Before every model step:
    model writes a structured shift-change summary and the projection
    becomes ONLY that summary (`reset_all` compaction entry). If the rescue
    is disabled or its write fails ⇒ **fail closed** with a
-   typed error (no silent truncation, no provider switch).
+   typed context error (no silent truncation, no provider switch). Context
+   failures are not network failures and are never retried by provider
+   endurance or the circuit breaker.
 
 The compaction entry is ledger data like any other: append-only, audited,
 and `derive_messages()` renders it as a `<context_summary>` user message.

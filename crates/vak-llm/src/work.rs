@@ -51,6 +51,8 @@ pub enum FailureDomain {
     Network,
     /// Watchdog deadline.
     Deadline,
+    /// Local context admission/compaction failure.
+    Context,
     /// Unclassified.
     Unknown,
 }
@@ -188,6 +190,7 @@ pub fn classify_error(e: &LlmError) -> (FailureDomain, Settlement) {
         LlmError::Api { .. } => (FailureDomain::Request, Settlement::Unknown),
         LlmError::Network(_) => (FailureDomain::Network, Settlement::Unknown),
         LlmError::Parse(_) => (FailureDomain::Model, Settlement::Unknown),
+        LlmError::Context(_) => (FailureDomain::Context, Settlement::Failed),
         LlmError::Aborted { .. } => (FailureDomain::Unknown, Settlement::Cancelled),
     }
 }
@@ -349,6 +352,10 @@ mod tests {
         assert_eq!(
             classify_error(&LlmError::Auth("bad key".into())),
             (FailureDomain::Account, Settlement::Failed)
+        );
+        assert_eq!(
+            classify_error(&LlmError::Context("over budget".into())),
+            (FailureDomain::Context, Settlement::Failed)
         );
     }
 
