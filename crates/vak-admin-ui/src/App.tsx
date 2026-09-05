@@ -2882,6 +2882,14 @@ function FinOpsView() {
             <section class="panel"><FinOpsRollupTable title="By provider" rows={data()?.by_provider ?? []} /></section>
             <section class="panel"><FinOpsRollupTable title="By model" rows={data()?.by_model ?? []} /></section>
           </div>
+          <section class="panel" style="margin-top:14px">
+            <div class="panel-title-row"><div><h2>Runtime activity today</h2><p class="dim">Only observed executions are counted. Duration is shown only when the execution boundary reports it.</p></div></div>
+            <Show when={(data()?.activity ?? []).length > 0} fallback={<p class="dim">No MCP or hook executions have been recorded today.</p>}>
+              <table class="table"><thead><tr><th>kind</th><th>calls</th><th>successes</th><th>duration</th></tr></thead><tbody>
+                <For each={data()?.activity ?? []}>{(row) => <tr><td class="mono">{row.kind}</td><td>{row.calls}</td><td>{row.successes}</td><td>{row.duration_ms > 0 ? `${row.duration_ms.toLocaleString()} ms` : "not measured"}</td></tr>}</For>
+              </tbody></table>
+            </Show>
+          </section>
         </Show>
       </Show>
     </div>
@@ -6218,10 +6226,11 @@ function FeedsSection() {
     }
   };
 
-  const removeAlert = async (name: string) => {
+  const removeAlert = async (alert: import("./types").FeedAlertRule) => {
+    const name = alert.name;
     if (!confirm(`Delete alert "${name}"?`)) return;
     try {
-      await api.feedDeleteAlert(name);
+      await api.feedDeleteAlert(name, alert.scope);
       pushToast("info", `Alert "${name}" deleted`);
       refetchAlerts();
     } catch (e) {
@@ -6484,7 +6493,7 @@ function FeedsSection() {
                   <span class={`chip ${alert.enabled ? "chip-tone-success" : "chip-tone-danger"}`}>
                     {alert.enabled ? "on" : "off"}
                   </span>
-                  <button class="ghost small" onClick={() => removeAlert(alert.name)}>Delete</button>
+                  <button class="ghost small" onClick={() => removeAlert(alert)}>Delete</button>
                 </div>
               </div>
             )}
@@ -6539,6 +6548,7 @@ function AlertForm(props: { onClose: () => void; onAdded: () => void }) {
   const [keywords, setKeywords] = createSignal("");
   const [tags, setTags] = createSignal("");
   const [deliverTo, setDeliverTo] = createSignal("");
+  const [scope, setScope] = createSignal("workspace");
   const [saving, setSaving] = createSignal(false);
 
   const canSubmit = () => name().trim() && (keywords().trim() || tags().trim());
@@ -6548,6 +6558,7 @@ function AlertForm(props: { onClose: () => void; onAdded: () => void }) {
     try {
       await api.feedAddAlert({
         name: name().trim(),
+        scope: scope(),
         keywords: keywords().trim() ? keywords().split(",").map((k) => k.trim()).filter(Boolean) : [],
         tags: tags().trim() ? tags().split(",").map((t) => t.trim()).filter(Boolean) : [],
         deliver_to: deliverTo().trim() || undefined,
@@ -6578,6 +6589,13 @@ function AlertForm(props: { onClose: () => void; onAdded: () => void }) {
         <label>Deliver to</label>
         <input value={deliverTo()} onInput={(e) => setDeliverTo(e.currentTarget.value)} placeholder="Chat key, webhook, or leave blank" />
       </div>
+      <div class="form-row">
+        <label>Availability</label>
+        <select value={scope()} onChange={(e) => setScope(e.currentTarget.value)}>
+          <option value="workspace">This workspace</option>
+          <option value="global">All workspaces</option>
+        </select>
+      </div>
       <div style={{ display: "flex", gap: "8px", "margin-top": "8px" }}>
         <button class="ghost" onClick={props.onClose}>Cancel</button>
         <button onClick={submit} disabled={!canSubmit() || saving()}>{saving() ? "Saving…" : "Create alert"}</button>
@@ -6589,14 +6607,16 @@ function AlertForm(props: { onClose: () => void; onAdded: () => void }) {
 function FeedReader() {
   const [items, setItems] = createSignal<import("./types").FeedItem[]>([]);
   const [loading, setLoading] = createSignal(true);
+  const [error, setError] = createSignal<string | null>(null);
 
   const loadItems = async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await api.feedItems({ limit: 50 });
       setItems(res.items || []);
     } catch (e) {
-      pushToast("alert", `Could not load items: ${e}`);
+      setError(String(e));
     }
     setLoading(false);
   };
@@ -6605,6 +6625,7 @@ function FeedReader() {
 
   return (
     <Show when={!loading()} fallback={<div class="empty">Loading…</div>}>
+      <Show when={!error()} fallback={<LoadError message={error()!} onRetry={loadItems} />}>
       <Show when={items().length === 0}>
         <div class="empty">Nothing collected yet. Add a source, then press “Check for new items”.</div>
       </Show>
@@ -6630,6 +6651,7 @@ function FeedReader() {
           </div>
         )}
       </For>
+      </Show>
     </Show>
   );
 }

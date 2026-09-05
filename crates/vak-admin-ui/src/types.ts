@@ -382,6 +382,7 @@ export interface FinOpsStatus {
   day_input_tokens: number;
   day_output_tokens: number;
   day_cache_read_tokens: number;
+  activity: { kind: string; calls: number; successes: number; duration_ms: number }[];
   run_cap_usd: number | null;
   day_cap_usd: number | null;
   unknown_rows: number;
@@ -843,6 +844,7 @@ export interface ConfiguredFeedSource {
 export interface FeedAlertRule {
   id: number;
   name: string;
+  scope?: string;
   match_config?: {
     keywords?: string[];
     tags?: string[];

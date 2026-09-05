@@ -886,6 +886,7 @@ export const api = {
 
   feedAddAlert: (alert: {
     name: string;
+    scope?: string;
     keywords?: string[];
     tags?: string[];
     sources?: string[];
