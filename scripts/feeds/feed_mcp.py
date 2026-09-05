@@ -322,7 +322,7 @@ def handle_feed_alerts(args: dict) -> dict:
 
 
 def main():
-    init_feed_system()
+    init_feed_system(os.environ.get("VAK_FEED_WORKSPACE") or None)
 
     for line in sys.stdin:
         line = line.strip()

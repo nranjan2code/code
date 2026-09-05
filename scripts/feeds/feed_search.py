@@ -227,6 +227,10 @@ def search(
 
         composite_score = (bm25 * 0.6) + (recency * 0.2) + (trust_score * 0.1) + (engagement * 0.1)
 
+        # Freshness and trust rank matches; they cannot create a match.
+        if bm25 <= 0:
+            continue
+
         highlights = _extract_highlights(content, query_tokens)
         evidence_excerpts = _extract_evidence_excerpts(content, query_tokens)
         corroboration = _count_corroboration(key_phrases, query_tokens)

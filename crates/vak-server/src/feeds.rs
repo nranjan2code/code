@@ -32,7 +32,7 @@ fn feeds_dir(cwd: &std::path::Path) -> PathBuf {
 /// `unwrap_or_default()`, so an unset `HOME` produced a *relative* path
 /// resolved against whatever directory the server happened to start in.
 fn feeds_config_path(_cwd: &std::path::Path) -> PathBuf {
-    vak_config::paths::data_home().join("feeds.toml")
+    _cwd.join(".vak").join("feeds.toml")
 }
 
 /// Run a Python feed script and return its JSON output.
@@ -56,6 +56,7 @@ async fn run_feed_script(
         .args(args)
         .current_dir(&dir)
         .env("PYTHONPATH", dir.to_string_lossy().to_string())
+        .env("VAK_FEED_WORKSPACE", cwd.to_string_lossy().to_string())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -112,6 +113,7 @@ async fn run_feed_admin_script(
         .args(args)
         .current_dir(&dir)
         .env("PYTHONPATH", dir.to_string_lossy().to_string())
+        .env("VAK_FEED_WORKSPACE", cwd.to_string_lossy().to_string())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -156,6 +158,7 @@ async fn run_feed_mcp_request(
         .arg(&script)
         .current_dir(&dir)
         .env("PYTHONPATH", dir.to_string_lossy().to_string())
+        .env("VAK_FEED_WORKSPACE", cwd.to_string_lossy().to_string())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

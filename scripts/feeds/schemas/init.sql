@@ -22,6 +22,14 @@ CREATE TABLE IF NOT EXISTS feeds (
     removed_at TIMESTAMP
 );
 
+ALTER TABLE feeds ADD COLUMN IF NOT EXISTS source_id VARCHAR;
+ALTER TABLE feeds ADD COLUMN IF NOT EXISTS scope VARCHAR DEFAULT 'global';
+ALTER TABLE feeds ADD COLUMN IF NOT EXISTS workspace_id VARCHAR DEFAULT '';
+ALTER TABLE feeds ADD COLUMN IF NOT EXISTS security_status VARCHAR DEFAULT 'accepted';
+ALTER TABLE feeds ADD COLUMN IF NOT EXISTS last_started_at TIMESTAMP;
+ALTER TABLE feeds ADD COLUMN IF NOT EXISTS next_due_at TIMESTAMP;
+UPDATE feeds SET source_id = lower(replace(name, ' ', '-')) WHERE source_id IS NULL;
+
 -- Existing databases created before removed_at existed need it added
 -- explicitly; CREATE TABLE IF NOT EXISTS above is a no-op for them.
 ALTER TABLE feeds ADD COLUMN IF NOT EXISTS removed_at TIMESTAMP;
@@ -47,6 +55,11 @@ CREATE TABLE IF NOT EXISTS items (
     search_match_count INTEGER DEFAULT 0,
     last_referenced_at TIMESTAMP
 );
+
+ALTER TABLE items ADD COLUMN IF NOT EXISTS scope VARCHAR DEFAULT 'global';
+ALTER TABLE items ADD COLUMN IF NOT EXISTS workspace_id VARCHAR DEFAULT '';
+ALTER TABLE items ADD COLUMN IF NOT EXISTS security_status VARCHAR DEFAULT 'accepted';
+ALTER TABLE items ADD COLUMN IF NOT EXISTS security_detail VARCHAR;
 
 CREATE TABLE IF NOT EXISTS search_index (
     item_id INTEGER REFERENCES items(id),
@@ -74,6 +87,9 @@ CREATE TABLE IF NOT EXISTS alerts (
     enabled BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT current_timestamp
 );
+
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS scope VARCHAR DEFAULT 'global';
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS workspace_id VARCHAR DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS alert_log (
     id INTEGER DEFAULT nextval('alert_log_id_seq') PRIMARY KEY,

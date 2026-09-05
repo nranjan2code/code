@@ -68,9 +68,11 @@ def ingest_source(source: FeedSourceConfig, max_items: int = 50) -> int:
         driver = get_driver(driver_name)
     except ValueError as e:
         logger.error("Driver error for %s: %s", source.name, e)
-        return 0
+        return -1
 
     fetch_kwargs = {}
+    if source.source_type == "youtube":
+        fetch_kwargs["channel_id"] = source.channel_id or source.url
     if source.source_type == "aggregator":
         fetch_kwargs["driver"] = source.driver
         fetch_kwargs["variant"] = source.variant
@@ -95,7 +97,7 @@ def ingest_source(source: FeedSourceConfig, max_items: int = 50) -> int:
         )
     except Exception as e:
         logger.error("Fetch error for %s: %s", source.name, e)
-        return 0
+        return -1
 
     if not items:
         logger.info("No items from %s", source.name)
@@ -128,7 +130,28 @@ def evaluate_alerts(config: FeedConfig) -> list[dict]:
         alert_row = con.execute(
             "SELECT id FROM alerts WHERE name = ?", (alert.name,)
         ).fetchone()
-        alert_id = alert_row[0] if alert_row else 0
+        if alert_row:
+            alert_id = alert_row[0]
+        else:
+            inserted = con.execute(
+                """INSERT INTO alerts (name, match_config, action, deliver_to,
+                   hook_command, cooldown_minutes, enabled)
+                   VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+                (
+                    alert.name,
+                    json.dumps({
+                        "keywords": alert.keywords,
+                        "tags": alert.tags,
+                        "sources": alert.sources,
+                    }),
+                    alert.action,
+                    alert.deliver_to,
+                    alert.hook_command,
+                    alert.cooldown_minutes,
+                    alert.enabled,
+                ),
+            ).fetchone()
+            alert_id = inserted[0]
 
         conditions = []
         params: list = []
@@ -418,8 +441,11 @@ def run_ingestion(workspace: str | None = None, source_name: str | None = None) 
 
         try:
             count = ingest_source(source)
-            total_new += count
             sources_ingested += 1
+            if count < 0:
+                errors += 1
+            else:
+                total_new += count
         except Exception as e:
             logger.error("Error ingesting %s: %s", source.name, e)
             errors += 1
