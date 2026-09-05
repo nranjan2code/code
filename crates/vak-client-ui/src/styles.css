@@ -33,7 +33,6 @@
      instead of quietly falling back to the browser's `unset` (no color,
      no border, no outline — see DESIGN.md audit notes on this). */
   --dim: var(--faint);
-  --text-dim: var(--faint);
   --line: var(--border-soft);
   --border-focus: var(--accent);
   --cyan: var(--blue);
@@ -45,7 +44,6 @@
   --accent-selection: color-mix(in srgb, var(--accent) 30%, transparent);
   --mono: "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
-  --font-mono: var(--mono);
   --radius-sm: 7px;
   --radius: 10px;
   --radius-lg: 14px;
