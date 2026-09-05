@@ -7967,7 +7967,9 @@ async fn get_hooks(State(state): State<AppState>) -> axum::response::Response {
             .and_then(|raw| toml::from_str::<vak_config::FileConfig>(&raw).ok())
         {
             Some(config) => config.hooks,
-            None => return (StatusCode::BAD_REQUEST, "project config is invalid").into_response(),
+            None => {
+                return (StatusCode::BAD_REQUEST, "workspace config is invalid").into_response();
+            }
         }
     } else {
         Vec::new()
@@ -8004,7 +8006,7 @@ async fn get_global_hooks() -> axum::response::Response {
     } else {
         Vec::new()
     };
-    Json(serde_json::json!({ "scope": "user", "hooks": hooks.into_iter().map(|h| serde_json::json!({ "event": h.event, "matcher": h.matcher, "command": h.command, "timeout_ms": h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS), "enabled": h.enabled, "failure_mode": h.failure_mode.as_deref().unwrap_or("open") })).collect::<Vec<_>>() })).into_response()
+    Json(serde_json::json!({ "scope": "global", "hooks": hooks.into_iter().map(|h| serde_json::json!({ "event": h.event, "matcher": h.matcher, "command": h.command, "timeout_ms": h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS), "enabled": h.enabled, "failure_mode": h.failure_mode.as_deref().unwrap_or("open") })).collect::<Vec<_>>() })).into_response()
 }
 
 async fn put_global_hooks(
@@ -8039,7 +8041,7 @@ async fn put_global_hooks(
         )
             .into_response();
     }
-    Json(serde_json::json!({ "saved": true, "scope": "user", "count": hooks.len() }))
+    Json(serde_json::json!({ "saved": true, "scope": "global", "count": hooks.len() }))
         .into_response()
 }
 
@@ -8195,7 +8197,7 @@ async fn put_hooks(
             None => {
                 return (
                     StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({ "error": "project config is invalid" })),
+                    Json(serde_json::json!({ "error": "workspace config is invalid" })),
                 )
                     .into_response();
             }
@@ -8385,7 +8387,7 @@ impl ConfigScope {
     fn label(self) -> &'static str {
         match self {
             Self::User => "user",
-            Self::Workspace => "project",
+            Self::Workspace => "workspace",
         }
     }
 
@@ -8726,7 +8728,7 @@ async fn get_global_mcp_servers() -> axum::response::Response {
     };
     match read_mcp_config(&path) {
         Ok(mcp) => {
-            Json(serde_json::json!({ "scope": "user", "path": path, "servers": mcp.servers }))
+            Json(serde_json::json!({ "scope": "global", "path": path, "servers": mcp.servers }))
                 .into_response()
         }
         Err(error) => (
@@ -8771,7 +8773,7 @@ async fn put_global_mcp_servers(
         "global_mcp_servers_updated",
         &format!("count={}", body.servers.len()),
     );
-    Json(serde_json::json!({ "saved": true, "scope": "user", "count": body.servers.len() }))
+    Json(serde_json::json!({ "saved": true, "scope": "global", "count": body.servers.len() }))
         .into_response()
 }
 
