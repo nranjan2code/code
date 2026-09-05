@@ -1825,7 +1825,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
 
         <Switch>
           <Match when={props.ctx.hooksLoading()}>
-            <table class="table">
+            <table class="table automation-table">
               <thead><tr><th>on</th><th>when</th><th>fires on</th><th>runs</th><th>give up after</th><th /></tr></thead>
               <tbody><SkeletonRows cols={6} /></tbody>
             </table>
@@ -1842,7 +1842,7 @@ Nothing runs alongside your turns. Add one to keep a record of what vak does, to
           </Match>
 
           <Match when={props.ctx.hooks().length > 0}>
-            <table class="table">
+            <table class="table automation-table">
               <thead><tr><th>on</th><th>when</th><th>fires on</th><th>runs</th><th>give up after</th><th /></tr></thead>
               <tbody>
                 <For each={props.ctx.hooks()}>

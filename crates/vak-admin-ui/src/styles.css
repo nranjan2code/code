@@ -1773,6 +1773,10 @@ a.tab-btn {
 .extension-shell .skill-table tbody tr td { padding-top: 12px; padding-bottom: 12px; }
 .extension-shell .skill-table tbody tr td:first-child { min-width: 150px; }
 .extension-shell .skill-table .col-path { max-width: 280px; }
+.extension-shell .automation-table tbody tr { transition: background .15s ease; }
+.extension-shell .automation-table tbody tr td { padding-top: 11px; padding-bottom: 11px; }
+.extension-shell .automation-table tbody tr.dim { opacity: .68; }
+.extension-shell .edit-form { border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); box-shadow: 0 12px 28px rgba(0,0,0,.16); }
 
 @media (max-width: 780px) {
   .extension-overview { grid-template-columns: 1fr 1fr; }
