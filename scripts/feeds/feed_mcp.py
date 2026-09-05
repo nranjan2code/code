@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -18,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from feed_security import sanitize_for_llm, sanitize_mcp_response
 from feed_search import get_latest, search
-from feed_utils import get_db, get_item, get_stats, init_feed_system
+from feed_utils import get_db, get_item, get_quarantined_items, get_stats, init_feed_system
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -133,6 +134,21 @@ TOOLS = [
             "type": "object",
             "properties": {}
         }
+    },
+    {
+        "name": "feed_runs",
+        "description": "List recent scoped ingestion run receipts and their outcomes.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "default": 20}
+            }
+        }
+    },
+    {
+        "name": "feed_quarantine",
+        "description": "List quarantined feed items visible in the active workspace.",
+        "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "default": 50}}}
     }
 ]
 
@@ -201,6 +217,10 @@ def handle_tool_call(req_id: Any, params: dict) -> dict:
             result = handle_feed_item(arguments)
         elif tool_name == "feed_alerts":
             result = handle_feed_alerts(arguments)
+        elif tool_name == "feed_runs":
+            result = handle_feed_runs(arguments)
+        elif tool_name == "feed_quarantine":
+            result = {"items": get_quarantined_items(arguments.get("limit", 50))}
         else:
             return {
                 "jsonrpc": "2.0",
@@ -263,17 +283,28 @@ def handle_feed_stats(args: dict) -> dict:
 
 def handle_feed_sources(args: dict) -> dict:
     con = get_db(read_only=True)
+    workspace = os.environ.get("VAK_FEED_WORKSPACE", "")
     rows = con.execute(
-        "SELECT id, name, source_type, url, trust, enabled, check_interval "
-        "FROM feeds WHERE removed_at IS NULL ORDER BY name"
+        """SELECT id, source_id, name, source_type, url, trust, enabled, check_interval,
+                  scope, workspace_id, security_status, last_started_at, next_due_at,
+                  last_status, last_error
+           FROM feeds
+           WHERE removed_at IS NULL
+             AND (scope = 'global' OR workspace_id = ?)
+           ORDER BY name""",
+        (workspace,),
     ).fetchall()
     con.close()
 
     sources = []
     for r in rows:
         sources.append({
-            "id": r[0], "name": r[1], "source_type": r[2], "url": r[3],
-            "trust": r[4], "enabled": r[5], "check_interval": r[6],
+            "id": r[1], "db_id": r[0], "name": r[2], "source_type": r[3], "url": r[4],
+            "trust": r[5], "enabled": r[6], "check_interval": r[7],
+            "scope": r[8], "workspace_id": r[9], "security_status": r[10],
+            "last_started_at": str(r[11]) if r[11] else None,
+            "next_due_at": str(r[12]) if r[12] else None,
+            "last_status": r[13], "last_error": r[14],
         })
 
     return {"sources": sources, "total": len(sources)}
@@ -293,8 +324,14 @@ def handle_feed_item(args: dict) -> dict:
 
 def handle_feed_alerts(args: dict) -> dict:
     con = get_db(read_only=True)
+    workspace = os.environ.get("VAK_FEED_WORKSPACE", "")
     rows = con.execute(
-        "SELECT id, name, match_config, action, deliver_to, hook_command, cooldown_minutes, enabled FROM alerts ORDER BY name"
+        """SELECT id, name, match_config, action, deliver_to, hook_command,
+                  cooldown_minutes, enabled, scope, workspace_id
+           FROM alerts
+           WHERE scope = 'global' OR workspace_id = ?
+           ORDER BY name""",
+        (workspace,),
     ).fetchall()
     con.close()
 
@@ -316,9 +353,36 @@ def handle_feed_alerts(args: dict) -> dict:
             "hook_command": r[5],
             "cooldown_minutes": r[6] or 30,
             "enabled": bool(r[7]),
+            "scope": r[8],
+            "workspace_id": r[9],
         })
 
     return {"alerts": alerts, "total": len(alerts)}
+
+
+def handle_feed_runs(args: dict) -> dict:
+    con = get_db(read_only=True)
+    workspace = os.environ.get("VAK_FEED_WORKSPACE", "")
+    limit = min(max(int(args.get("limit", 20)), 1), 100)
+    rows = con.execute(
+        """SELECT id, run_key, scope, workspace_id, source_id, status,
+                  started_at, finished_at, sources_seen, sources_succeeded,
+                  items_seen, items_added, items_quarantined, error
+           FROM ingestion_runs
+           WHERE scope = 'global' OR workspace_id = ?
+           ORDER BY started_at DESC LIMIT ?""",
+        (workspace, limit),
+    ).fetchall()
+    con.close()
+    fields = ("id", "run_key", "scope", "workspace_id", "source_id", "status",
+              "started_at", "finished_at", "sources_seen", "sources_succeeded",
+              "items_seen", "items_added", "items_quarantined", "error")
+    runs = [dict(zip(fields, row, strict=True)) for row in rows]
+    for run in runs:
+        for key in ("started_at", "finished_at"):
+            if run[key] is not None:
+                run[key] = str(run[key])
+    return {"runs": runs, "total": len(runs)}
 
 
 def main():

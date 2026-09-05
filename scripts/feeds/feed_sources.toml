@@ -1,5 +1,5 @@
 # Default source type registry for the feed pipeline.
-# Users can add custom source types in ~/.config/vak/feed_sources.toml.
+# Users can add custom source types in ~/vak-home/feed_sources.toml.
 
 [[source_types]]
 id = "rss"

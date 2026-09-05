@@ -13,7 +13,7 @@ import logging
 import re
 import socket
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -84,7 +84,7 @@ def validate_url(url: str) -> tuple[bool, str]:
                 return False, f"Blocked IP: {ip}"
 
         cache_key = hostname
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         if cache_key in DNS_REBIND_CACHE:
             cached_ip, cached_time = DNS_REBIND_CACHE[cache_key]
             if (now - cached_time).total_seconds() < DNS_CACHE_TTL_SECONDS:
@@ -306,7 +306,7 @@ def init_security_log(data_home: str | Path) -> None:
 
 def log_security_event(event_type: str, **context: Any) -> None:
     entry = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "event": event_type,
         **{k: str(v)[:500] for k, v in context.items()},
     }

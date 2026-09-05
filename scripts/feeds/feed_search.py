@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import re
 import time
 from collections import Counter
@@ -152,8 +153,24 @@ def search(
 
     con = get_db(read_only=True)
 
-    conditions = ["1=1"]
-    params: list[Any] = []
+    workspace = os.environ.get("VAK_FEED_WORKSPACE", "")
+    conditions = [
+        "f.removed_at IS NULL",
+        "i.security_status = 'accepted'",
+        "(f.scope = 'global' OR f.workspace_id = ?)",
+    ]
+    params: list[Any] = [workspace]
+
+    # Select by lexical evidence before ranking.  The previous implementation
+    # ranked only the newest 500 rows, which made an older exact match vanish
+    # behind unrelated fresh items.  BM25 remains the ranking function, but it
+    # must operate on the complete matching candidate set.
+    token_clauses = [
+        "lower(coalesce(i.title, '') || ' ' || coalesce(i.summary, '') || ' ' || coalesce(i.content, '')) LIKE ?"
+        for _ in query_tokens
+    ]
+    conditions.append("(" + " OR ".join(token_clauses) + ")")
+    params.extend(f"%{token}%" for token in query_tokens)
 
     if tags:
         conditions.append("i.tags && ?")
@@ -185,9 +202,7 @@ def search(
         LEFT JOIN feeds f ON i.feed_id = f.id
         WHERE {where}
         ORDER BY i.published_at DESC NULLS LAST
-        LIMIT ?
     """
-    params.append(min(limit * 5, 500))
     rows = con.execute(search_query, params).fetchall()
     con.close()
 

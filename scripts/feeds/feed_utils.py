@@ -56,6 +56,77 @@ def current_workspace_id() -> str:
     return os.environ.get("VAK_FEED_WORKSPACE", "")
 
 
+def begin_ingestion_run(source_id: str = "") -> int:
+    con = get_db()
+    try:
+        workspace = current_workspace_id()
+        scope = "workspace" if workspace else "global"
+        row = con.execute(
+            """INSERT INTO ingestion_runs (run_key, scope, workspace_id, source_id, status)
+               VALUES (?, ?, ?, ?, 'running') RETURNING id""",
+            (f"{scope}:{workspace}:{source_id}", scope, workspace, source_id or None),
+        ).fetchone()
+        return int(row[0])
+    finally:
+        con.close()
+
+
+def finish_ingestion_run(run_id: int, status: str, *, sources_seen: int = 0,
+                         sources_succeeded: int = 0, items_seen: int = 0,
+                         items_added: int = 0, error: str = "") -> None:
+    con = get_db()
+    try:
+        con.execute(
+            """UPDATE ingestion_runs SET status=?, finished_at=current_timestamp,
+               sources_seen=?, sources_succeeded=?, items_seen=?, items_added=?, error=?
+               WHERE id=?""",
+            (status, sources_seen, sources_succeeded, items_seen, items_added, error or None, run_id),
+        )
+    finally:
+        con.close()
+
+
+def source_is_due(source_id: str, scope: str, workspace_id: str) -> bool:
+    con = get_db(read_only=True)
+    try:
+        row = con.execute(
+            """SELECT next_due_at FROM feeds
+               WHERE source_id = ? AND scope = ? AND workspace_id = ?
+                 AND removed_at IS NULL AND enabled = true""",
+            (source_id, scope, workspace_id),
+        ).fetchone()
+        return row is None or row[0] is None or row[0] <= datetime.now(timezone.utc).replace(tzinfo=None)
+    finally:
+        con.close()
+
+
+def mark_source_checked(source: FeedSourceConfig) -> None:
+    con = get_db()
+    try:
+        seconds = parse_interval(source.interval)
+        con.execute(
+            """UPDATE feeds
+               SET last_started_at = current_timestamp,
+                   next_due_at = current_timestamp + (? * INTERVAL '1 second')
+               WHERE source_id = ? AND scope = ? AND workspace_id = ?""",
+            (seconds, source.id, source.scope, source.workspace_id),
+        )
+    finally:
+        con.close()
+
+
+def record_source_outcome(source: FeedSourceConfig, status: str, error: str = "") -> None:
+    con = get_db()
+    try:
+        con.execute(
+            """UPDATE feeds SET last_status=?, last_error=?
+               WHERE source_id=? AND scope=? AND workspace_id=?""",
+            (status, error or None, source.id, source.scope, source.workspace_id),
+        )
+    finally:
+        con.close()
+
+
 # ─── Config Types ───
 
 @dataclass
@@ -92,6 +163,8 @@ class AlertConfig:
     hook_command: str = ""
     cooldown_minutes: int = 30
     enabled: bool = True
+    scope: str = "global"
+    workspace_id: str = ""
 
 
 @dataclass
@@ -142,7 +215,13 @@ def load_feed_config(workspace: str | Path | None = None) -> FeedConfig:
         {**s, "scope": "workspace", "workspace_id": str(workspace or "")}
         for s in workspace_data.get("sources", [])
     ]
-    alerts_raw = global_data.get("alerts", []) + workspace_data.get("alerts", [])
+    alerts_raw = [
+        {**a, "scope": "global", "workspace_id": ""}
+        for a in global_data.get("alerts", [])
+    ] + [
+        {**a, "scope": "workspace", "workspace_id": str(workspace or "")}
+        for a in workspace_data.get("alerts", [])
+    ]
 
     sources = []
     seen_ids: set[str] = set()
@@ -196,6 +275,8 @@ def load_feed_config(workspace: str | Path | None = None) -> FeedConfig:
             hook_command=a.get("hook_command", ""),
             cooldown_minutes=a.get("cooldown_minutes", 30),
             enabled=a.get("enabled", True),
+            scope=a.get("scope", "global"),
+            workspace_id=a.get("workspace_id", ""),
         ))
 
     return FeedConfig(
@@ -299,6 +380,9 @@ def _schema_exists() -> bool:
         # before that migration must still take the init_db() write path
         # once so ALTER TABLE ... ADD COLUMN IF NOT EXISTS actually runs.
         con.execute("SELECT removed_at FROM feeds LIMIT 0")
+        con.execute("SELECT security_detail FROM items LIMIT 0")
+        con.execute("SELECT scope, workspace_id FROM alerts LIMIT 0")
+        con.execute("SELECT items_quarantined FROM ingestion_runs LIMIT 0")
         return True
     except duckdb.Error:
         return False
@@ -389,6 +473,22 @@ def store_item(feed_id: int, item: dict) -> int | None:
         tags = [normalize_unicode(t.lower().strip())[:50] for t in item.get("tags", [])[:20]]
         word_count = len(content_text.split()) if content_text else 0
 
+        injection_fields = []
+        for field, value in (("title", title), ("summary", summary), ("content", content_text)):
+            detected, _ = detect_injection(value)
+            if detected:
+                injection_fields.append(field)
+        security_status = "quarantined" if injection_fields else "accepted"
+        security_detail = (
+            "prompt-injection indicators in " + ", ".join(injection_fields)
+            if injection_fields else None
+        )
+        if injection_fields:
+            log_security_event(
+                "feed_item_quarantined", url=item.get("url", ""),
+                reason=security_detail or "prompt-injection indicators",
+            )
+
         ok, reason = validate_url(item.get("url", "https://example.com"))
         if not ok:
             log_security_event("invalid_item_url", url=item.get("url", ""), reason=reason)
@@ -396,15 +496,23 @@ def store_item(feed_id: int, item: dict) -> int | None:
 
         content_hash = content_fingerprint(title, item.get("url", ""))
         published_at = item.get("published_at") or datetime.now(timezone.utc).isoformat()
+        feed_scope = con.execute(
+            "SELECT scope, workspace_id FROM feeds WHERE id = ?",
+            (feed_id,),
+        ).fetchone()
+        if not feed_scope:
+            return None
 
         result = con.execute(
             """INSERT INTO items (feed_id, external_id, title, url, author, summary,
-               content, published_at, tags, content_hash, word_count, source_trust)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               content, published_at, tags, content_hash, word_count, source_trust,
+               security_status, security_detail, scope, workspace_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                RETURNING id""",
             (feed_id, item.get("external_id", ""), title, item.get("url", ""),
              item.get("author", ""), summary, content_text, published_at,
-             tags, content_hash, word_count, item.get("trust", "medium")),
+             tags, content_hash, word_count, item.get("trust", "medium"),
+             security_status, security_detail, feed_scope[0], feed_scope[1]),
         )
         item_id = result.fetchone()[0]
 
@@ -452,10 +560,16 @@ def prune_seen(days: int = 90) -> int:
 
 
 def get_feed_id_by_name(name: str) -> int | None:
+    """Resolve a source row by its stable ID (legacy function name)."""
     con = get_db(read_only=True)
     try:
         row = con.execute(
-            "SELECT id FROM feeds WHERE name = ? AND removed_at IS NULL", (name,)
+            """SELECT id FROM feeds
+               WHERE source_id = ? AND removed_at IS NULL
+                 AND (scope = 'global' OR workspace_id = ?)
+               ORDER BY CASE WHEN workspace_id = ? THEN 0 ELSE 1 END
+               LIMIT 1""",
+            (name, current_workspace_id(), current_workspace_id()),
         ).fetchone()
         return row[0] if row else None
     finally:
@@ -479,26 +593,20 @@ def get_all_feeds() -> list[dict]:
 
 # ─── Source CRUD (admin console) ───
 #
-# The admin UI's "Your sources" list reads directly from this `feeds`
-# table (see feed_mcp.py's handle_feed_sources) -- it does not read
-# feeds.toml. A source that was never round-tripped through
-# add_feed_source's TOML writer (e.g. seeded by an early/manual ingest,
-# as happened in production) has no feeds.toml entry at all, so the old
-# TOML-only update/delete handlers in crates/vak-server/src/feeds.rs
-# 404'd on every edit or remove of it -- the UI showed the source, but
-# every mutation silently failed. These operate on the actual displayed
-# row instead. `feeds` rows are never hard-deleted: items.feed_id is a
-# foreign key into them (DuckDB enforces it), so "remove" soft-deletes
-# via removed_at and get_all_feeds()/handle_feed_sources() both filter
-# it out, while ingested items and their source attribution survive.
+# The materialized `feeds` table is the read model used by the admin UI and
+# ingestion. Configuration remains the durable declaration for the selected
+# scope; mutations update the materialized row and reconcile that declaration.
+# Rows are never hard-deleted: items retain their source attribution and
+# removal is represented by `removed_at`.
 
 def update_feed_row(
-    name: str,
+    source_id: str,
     enabled: bool | None = None,
     interval: str | None = None,
     trust: str | None = None,
+    scope: str | None = None,
 ) -> bool:
-    """Update a feeds row by name. Returns False if no non-removed row matches."""
+    """Update a feeds row by stable source id."""
     sets: list[str] = []
     params: list[Any] = []
     if enabled is not None:
@@ -518,35 +626,41 @@ def update_feed_row(
         # DuckDB's cursor.rowcount is always -1 for UPDATE (unreliable for
         # existence checks, and -1 is truthy in Python besides), so check
         # separately rather than trust it.
+        scope = scope or ("workspace" if current_workspace_id() else "global")
+        workspace_id = current_workspace_id() if scope == "workspace" else ""
         exists = con.execute(
-            "SELECT 1 FROM feeds WHERE name = ? AND removed_at IS NULL", (name,)
+            """SELECT 1 FROM feeds WHERE source_id = ? AND scope = ? AND workspace_id = ?
+               AND removed_at IS NULL""", (source_id, scope, workspace_id),
         ).fetchone()
         if not exists:
             return False
-        params.append(name)
+        params.append(source_id)
         con.execute(
             f"UPDATE feeds SET {', '.join(sets)} "
-            f"WHERE name = ? AND removed_at IS NULL",
-            params,
+            "WHERE source_id = ? AND scope = ? AND workspace_id = ? AND removed_at IS NULL",
+            [*params, source_id, scope, workspace_id],
         )
         return True
     finally:
         con.close()
 
 
-def remove_feed_row(name: str) -> bool:
-    """Soft-delete a feeds row by name. Returns False if no live row matches."""
+def remove_feed_row(source_id: str, scope: str | None = None) -> bool:
+    """Soft-delete a feeds row by stable source id."""
     con = get_db()
     try:
+        scope = scope or ("workspace" if current_workspace_id() else "global")
+        workspace_id = current_workspace_id() if scope == "workspace" else ""
         exists = con.execute(
-            "SELECT 1 FROM feeds WHERE name = ? AND removed_at IS NULL", (name,)
+            """SELECT 1 FROM feeds WHERE source_id = ? AND scope = ? AND workspace_id = ?
+               AND removed_at IS NULL""", (source_id, scope, workspace_id),
         ).fetchone()
         if not exists:
             return False
         con.execute(
             "UPDATE feeds SET enabled = false, removed_at = current_timestamp "
-            "WHERE name = ? AND removed_at IS NULL",
-            (name,),
+            "WHERE source_id = ? AND scope = ? AND workspace_id = ? AND removed_at IS NULL",
+            (source_id, scope, workspace_id),
         )
         return True
     finally:
@@ -557,9 +671,15 @@ def get_item(item_id: int) -> dict | None:
     con = get_db(read_only=True)
     try:
         row = con.execute(
-            "SELECT id, feed_id, external_id, title, url, author, summary, content, "
-            "published_at, ingested_at, tags, source_trust, word_count FROM items WHERE id = ?",
-            (item_id,),
+            """SELECT i.id, i.feed_id, i.external_id, i.title, i.url, i.author,
+                       i.summary, i.content, i.published_at, i.ingested_at,
+                       i.tags, i.source_trust, i.word_count, i.scope, i.workspace_id,
+                       i.security_status, i.security_detail, f.source_id
+                FROM items i JOIN feeds f ON f.id = i.feed_id
+                WHERE i.id = ? AND i.security_status = 'accepted'
+                  AND f.removed_at IS NULL
+                  AND (f.scope = 'global' OR f.workspace_id = ?)""",
+            (item_id, current_workspace_id()),
         ).fetchone()
         if not row:
             return None
@@ -569,7 +689,74 @@ def get_item(item_id: int) -> dict | None:
             "published_at": str(row[8]) if row[8] else None,
             "ingested_at": str(row[9]) if row[9] else None,
             "tags": row[10] or [], "source_trust": row[11], "word_count": row[12],
+            "scope": row[13], "workspace_id": row[14],
+            "security_status": row[15], "security_detail": row[16], "source_id": row[17],
         }
+    finally:
+        con.close()
+
+
+def get_quarantined_items(limit: int = 50) -> list[dict]:
+    con = get_db(read_only=True)
+    try:
+        rows = con.execute(
+            """SELECT i.id, i.title, i.url, i.security_status, i.security_detail,
+                      i.ingested_at, f.name, f.scope, f.workspace_id
+               FROM items i JOIN feeds f ON f.id = i.feed_id
+               WHERE i.security_status = 'quarantined'
+                 AND f.removed_at IS NULL
+                 AND (f.scope = 'global' OR f.workspace_id = ?)
+               ORDER BY i.ingested_at DESC LIMIT ?""",
+            (current_workspace_id(), min(max(limit, 1), 100)),
+        ).fetchall()
+        return [
+            {"id": r[0], "title": r[1], "url": r[2], "security_status": r[3],
+             "security_detail": r[4], "ingested_at": str(r[5]) if r[5] else None,
+             "source_name": r[6], "scope": r[7], "workspace_id": r[8]}
+            for r in rows
+        ]
+    finally:
+        con.close()
+
+
+def set_item_security_status(item_id: int, status: str, detail: str = "") -> bool:
+    if status not in {"accepted", "quarantined", "blocked"}:
+        raise ValueError(f"invalid security status: {status}")
+    con = get_db()
+    try:
+        result = con.execute(
+            """UPDATE items SET security_status = ?, security_detail = ?
+               WHERE id = ? AND EXISTS (
+                 SELECT 1 FROM feeds f WHERE f.id = items.feed_id
+                   AND f.removed_at IS NULL
+                   AND (f.scope = 'global' OR f.workspace_id = ?)
+               ) RETURNING id""",
+            (status, detail or None, item_id, current_workspace_id()),
+        ).fetchone()
+        return result is not None
+    finally:
+        con.close()
+
+
+def mark_alert_delivered(alert_id: int, item_id: int, detail: str = "") -> bool:
+    con = get_db()
+    try:
+        row = con.execute(
+            """UPDATE alert_log SET success = true, detail = ?
+               WHERE id = (SELECT id FROM alert_log
+                           WHERE alert_id = ? AND item_id = ?
+                             AND EXISTS (SELECT 1 FROM alerts a
+                                         WHERE a.id = alert_log.alert_id
+                                           AND (a.scope = 'global' OR a.workspace_id = ?))
+                             AND EXISTS (SELECT 1 FROM items i
+                                         WHERE i.id = alert_log.item_id
+                                           AND (i.scope = 'global' OR i.workspace_id = ?))
+                           ORDER BY delivered_at DESC LIMIT 1)
+               RETURNING id""",
+            (detail or "delivered by host runtime", alert_id, item_id,
+             current_workspace_id(), current_workspace_id()),
+        ).fetchone()
+        return row is not None
     finally:
         con.close()
 
@@ -577,10 +764,14 @@ def get_item(item_id: int) -> dict | None:
 def get_items(limit: int = 50, source: str = "", tags: list[str] | None = None) -> list[dict]:
     con = get_db(read_only=True)
     try:
-        conditions = ["f.removed_at IS NULL", "(f.scope = 'global' OR f.workspace_id = ?)"]
+        conditions = [
+            "f.removed_at IS NULL",
+            "i.security_status = 'accepted'",
+            "(f.scope = 'global' OR f.workspace_id = ?)",
+        ]
         params: list[Any] = [current_workspace_id()]
         if source:
-            conditions.append("f.name = ?")
+            conditions.append("f.source_id = ?")
             params.append(source)
         if tags:
             conditions.append("i.tags && ?")
@@ -593,7 +784,8 @@ def get_items(limit: int = 50, source: str = "", tags: list[str] | None = None) 
         query = f"""
             SELECT i.id, i.feed_id, i.title, i.url, i.author, i.summary,
                    i.published_at, i.ingested_at, i.tags, i.source_trust, i.word_count,
-                   f.name as source_name, f.source_type
+                   f.name as source_name, f.source_type, i.scope, i.workspace_id,
+                   i.security_status, f.source_id
             FROM items i
             LEFT JOIN feeds f ON i.feed_id = f.id
             {where}
@@ -607,7 +799,8 @@ def get_items(limit: int = 50, source: str = "", tags: list[str] | None = None) 
                  "published_at": str(r[6]) if r[6] else None,
                  "ingested_at": str(r[7]) if r[7] else None,
                  "tags": r[8] or [], "source_trust": r[9], "word_count": r[10],
-                 "source_name": r[11], "source_type": r[12]} for r in rows]
+                 "source_name": r[11], "source_type": r[12], "scope": r[13],
+                 "workspace_id": r[14], "security_status": r[15], "source_id": r[16]} for r in rows]
     finally:
         con.close()
 
@@ -629,10 +822,26 @@ def get_stats() -> dict:
             "SELECT COUNT(*) FROM feeds WHERE enabled = true AND removed_at IS NULL "
             "AND (scope = 'global' OR workspace_id = ?)", (scope,)
         ).fetchone()[0]
-        total_alerts = con.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
-        last_ingest = con.execute("SELECT MAX(ingested_at) FROM items").fetchone()[0]
+        total_alerts = con.execute(
+            "SELECT COUNT(*) FROM alerts WHERE scope = 'global' OR workspace_id = ?",
+            (scope,),
+        ).fetchone()[0]
+        last_ingest = con.execute(
+            """SELECT MAX(i.ingested_at) FROM items i JOIN feeds f ON f.id = i.feed_id
+               WHERE f.removed_at IS NULL AND (f.scope = 'global' OR f.workspace_id = ?)""",
+            (scope,),
+        ).fetchone()[0]
         items_today = con.execute(
-            "SELECT COUNT(*) FROM items WHERE ingested_at >= CURRENT_DATE"
+            """SELECT COUNT(*) FROM items i JOIN feeds f ON f.id = i.feed_id
+               WHERE i.ingested_at >= CURRENT_DATE AND f.removed_at IS NULL
+                 AND (f.scope = 'global' OR f.workspace_id = ?)""",
+            (scope,),
+        ).fetchone()[0]
+        quarantined_items = con.execute(
+            """SELECT COUNT(*) FROM items i JOIN feeds f ON f.id = i.feed_id
+               WHERE i.security_status = 'quarantined' AND f.removed_at IS NULL
+                 AND (f.scope = 'global' OR f.workspace_id = ?)""",
+            (scope,),
         ).fetchone()[0]
 
         source_stats = con.execute("""
@@ -641,9 +850,10 @@ def get_stats() -> dict:
             FROM feeds f
             LEFT JOIN items i ON f.id = i.feed_id
             WHERE f.removed_at IS NULL
+              AND (f.scope = 'global' OR f.workspace_id = ?)
             GROUP BY f.id, f.name, f.source_type
             ORDER BY item_count DESC
-        """).fetchall()
+        """, (scope,)).fetchall()
 
         return {
             "total_items": total_items,
@@ -652,6 +862,7 @@ def get_stats() -> dict:
             "total_alerts": total_alerts,
             "last_ingest": str(last_ingest) if last_ingest else None,
             "items_today": items_today,
+            "quarantined_items": quarantined_items,
             "sources": [
                 {"name": r[0], "type": r[1], "item_count": r[2],
                  "last_item": str(r[3]) if r[3] else None}
@@ -669,12 +880,12 @@ def store_alert(alert: AlertConfig) -> int:
     try:
         result = con.execute(
             """INSERT INTO alerts (name, match_config, action, deliver_to, hook_command,
-               cooldown_minutes, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)
+               cooldown_minutes, enabled, scope, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                RETURNING id""",
             (alert.name, json.dumps({
                 "keywords": alert.keywords, "tags": alert.tags, "sources": alert.sources,
             }), alert.action, alert.deliver_to, alert.hook_command,
-             alert.cooldown_minutes, alert.enabled),
+             alert.cooldown_minutes, alert.enabled, alert.scope, alert.workspace_id),
         )
         alert_id = result.fetchone()[0]
         return alert_id
@@ -682,10 +893,52 @@ def store_alert(alert: AlertConfig) -> int:
         con.close()
 
 
+def sync_alerts(config: FeedConfig) -> int:
+    """Materialize configured alerts and disable rules removed from config."""
+    con = get_db()
+    try:
+        active = {(a.name, a.scope, a.workspace_id) for a in config.alerts}
+        for alert in config.alerts:
+            match_config = json.dumps({"keywords": alert.keywords, "tags": alert.tags, "sources": alert.sources})
+            row = con.execute(
+                "SELECT id FROM alerts WHERE name=? AND scope=? AND workspace_id=?",
+                (alert.name, alert.scope, alert.workspace_id),
+            ).fetchone()
+            if row:
+                con.execute(
+                    "UPDATE alerts SET match_config=?, action=?, deliver_to=?, hook_command=?, cooldown_minutes=?, enabled=? WHERE id=?",
+                    (match_config, alert.action, alert.deliver_to, alert.hook_command, alert.cooldown_minutes, alert.enabled, row[0]),
+                )
+            else:
+                con.execute(
+                    """INSERT INTO alerts (name, match_config, action, deliver_to, hook_command,
+                       cooldown_minutes, enabled, scope, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (alert.name, match_config, alert.action, alert.deliver_to, alert.hook_command,
+                     alert.cooldown_minutes, alert.enabled, alert.scope, alert.workspace_id),
+                )
+        rows = con.execute(
+            "SELECT id, name, scope, workspace_id FROM alerts WHERE scope='global' OR workspace_id=?",
+            (current_workspace_id(),),
+        ).fetchall()
+        for alert_id, name, scope, workspace_id in rows:
+            if (name, scope, workspace_id) not in active:
+                con.execute("UPDATE alerts SET enabled=false WHERE id=?", (alert_id,))
+        return len(config.alerts)
+    finally:
+        con.close()
+
+
 def get_alerts() -> list[dict]:
     con = get_db(read_only=True)
     try:
-        rows = con.execute("SELECT id, name, match_config, action, deliver_to, hook_command, cooldown_minutes, enabled FROM alerts").fetchall()
+        workspace = current_workspace_id()
+        rows = con.execute(
+            """SELECT id, name, match_config, action, deliver_to, hook_command,
+                      cooldown_minutes, enabled, scope, workspace_id
+               FROM alerts
+               WHERE scope = 'global' OR workspace_id = ?""",
+            (workspace,),
+        ).fetchall()
         result = []
         for r in rows:
             mc = json.loads(r[2]) if r[2] else {}
@@ -694,6 +947,7 @@ def get_alerts() -> list[dict]:
                 "tags": mc.get("tags", []), "sources": mc.get("sources", []),
                 "action": r[3], "deliver_to": r[4], "hook_command": r[5],
                 "cooldown_minutes": r[6], "enabled": r[7],
+                "scope": r[8], "workspace_id": r[9],
             })
         return result
     finally:

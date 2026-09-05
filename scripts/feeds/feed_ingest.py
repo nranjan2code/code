@@ -12,10 +12,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
 import logging
 import os
-import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -39,6 +40,15 @@ from feed_utils import (
     store_feed,
     store_item,
     update_feed_row,
+    current_workspace_id,
+    begin_ingestion_run,
+    finish_ingestion_run,
+    mark_source_checked,
+    source_is_due,
+    record_source_outcome,
+    set_item_security_status,
+    mark_alert_delivered,
+    sync_alerts,
 )
 from sources import get_driver
 
@@ -68,6 +78,7 @@ def ingest_source(source: FeedSourceConfig, max_items: int = 50) -> int:
         driver = get_driver(driver_name)
     except ValueError as e:
         logger.error("Driver error for %s: %s", source.name, e)
+        record_source_outcome(source, "failed", str(e))
         return -1
 
     fetch_kwargs = {}
@@ -97,13 +108,15 @@ def ingest_source(source: FeedSourceConfig, max_items: int = 50) -> int:
         )
     except Exception as e:
         logger.error("Fetch error for %s: %s", source.name, e)
+        record_source_outcome(source, "failed", str(e))
         return -1
 
     if not items:
         logger.info("No items from %s", source.name)
+        record_source_outcome(source, "empty")
         return 0
 
-    feed_id = get_feed_id_by_name(source.name)
+    feed_id = get_feed_id_by_name(source.id)
     if feed_id is None:
         feed_id = store_feed(source)
 
@@ -114,6 +127,7 @@ def ingest_source(source: FeedSourceConfig, max_items: int = 50) -> int:
             new_count += 1
 
     logger.info("Stored %d new items from %s (of %d fetched)", new_count, source.name, len(items))
+    record_source_outcome(source, "succeeded")
     return new_count
 
 
@@ -127,16 +141,19 @@ def evaluate_alerts(config: FeedConfig) -> list[dict]:
             continue
 
         # Look up the real alert ID from the database
+        workspace_id = alert.workspace_id
+        alert_scope = alert.scope
         alert_row = con.execute(
-            "SELECT id FROM alerts WHERE name = ?", (alert.name,)
+            """SELECT id FROM alerts WHERE name = ? AND scope = ? AND workspace_id = ?""",
+            (alert.name, alert_scope, workspace_id),
         ).fetchone()
         if alert_row:
             alert_id = alert_row[0]
         else:
             inserted = con.execute(
                 """INSERT INTO alerts (name, match_config, action, deliver_to,
-                   hook_command, cooldown_minutes, enabled)
-                   VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+                   hook_command, cooldown_minutes, enabled, scope, workspace_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
                 (
                     alert.name,
                     json.dumps({
@@ -149,6 +166,8 @@ def evaluate_alerts(config: FeedConfig) -> list[dict]:
                     alert.hook_command,
                     alert.cooldown_minutes,
                     alert.enabled,
+                    alert_scope,
+                    workspace_id,
                 ),
             ).fetchone()
             alert_id = inserted[0]
@@ -184,18 +203,27 @@ def evaluate_alerts(config: FeedConfig) -> list[dict]:
             FROM items i
             LEFT JOIN feeds f ON i.feed_id = f.id
             WHERE {where}
+              AND f.removed_at IS NULL
+              AND i.security_status = 'accepted'
+              AND (f.scope = 'global' OR f.workspace_id = ?)
             ORDER BY i.ingested_at DESC
             LIMIT 10
         """
 
         try:
-            rows = con.execute(query, params).fetchall()
+            rows = con.execute(query, [*params, workspace_id]).fetchall()
         except Exception as e:
             logger.error("Alert query error for %s: %s", alert.name, e)
             continue
 
         for row in rows:
             item_id = row[0]
+            already_seen = con.execute(
+                "SELECT 1 FROM alert_log WHERE alert_id = ? AND item_id = ? AND success = true LIMIT 1",
+                (alert_id, item_id),
+            ).fetchone()
+            if already_seen:
+                continue
             if not check_alert_cooldown_by_name(alert):
                 continue
 
@@ -204,7 +232,8 @@ def evaluate_alerts(config: FeedConfig) -> list[dict]:
 
             log_alert(
                 alert_id=alert_id, item_id=item_id, match_score=match_score,
-                match_reasons=match_reasons, action=alert.action, success=True,
+                match_reasons=match_reasons, action=alert.action, success=False,
+                detail="matched; awaiting host delivery",
             )
 
             fired.append({
@@ -298,137 +327,21 @@ def _compute_match_reasons(alert: AlertConfig, row: tuple) -> list[str]:
     return reasons
 
 
-def fire_alerts(fired_alerts: list[dict]) -> None:
-    """Deliver alerts and fire hooks."""
-    for alert in fired_alerts:
-        payload = json.dumps({
-            "event": "feed_item_matched",
-            "alert": {
-                "id": alert.get("alert_id", 0),
-                "name": alert["alert_name"],
-                "action": alert["action"],
-            },
-            "item": alert["item"],
-            "match": alert["match"],
-        }, indent=2)
-
-        if alert["action"] in ("deliver", "both") and alert["deliver_to"]:
-            deliver_to(alert["deliver_to"], alert)
-
-        if alert["action"] in ("hook", "both") and alert["hook_command"]:
-            fire_hook(alert["hook_command"], payload)
+def fire_alerts(fired_alerts: list[dict]) -> list[dict]:
+    """Return delivery intents for the host-owned delivery runtime."""
+    return [
+        alert for alert in fired_alerts
+        if alert["action"] in ("deliver", "both") and alert["deliver_to"]
+    ]
 
 
-def deliver_to(target: str, alert: dict) -> None:
-    """Deliver alert via gateway delivery outbox.
-
-    Writes an outbox record to <sessions_home>/delivery/jobs/ so the gateway
-    delivery runtime picks it up and sends to the configured surface.
-    """
-    logger.info("Delivering alert '%s' to %s", alert["alert_name"], target)
-    item = alert["item"]
-    message = (
-        f"**Feed Alert: {alert['alert_name']}**\n\n"
-        f"**{item.get('title', '')}**\n"
-        f"Source: {item.get('source_name', '')}\n"
-        f"URL: {item.get('url', '')}\n"
-        f"Match score: {alert['match']['score']:.2f}\n"
-        f"Reasons: {', '.join(alert['match']['reasons'])}"
-    )
-
-    # Determine sessions_home from environment or default
-    data_home = Path(os.environ.get("VAK_DATA_HOME", "")) or Path.home() / ".local" / "share" / "vak"
-    if os.name == "darwin":
-        data_home = Path(os.environ.get("XDG_DATA_HOME", "")) or Path.home() / "Library" / "Application Support" / "vak"
-    jobs_dir = data_home / "delivery" / "jobs"
-    jobs_dir.mkdir(parents=True, exist_ok=True)
-
-    # Generate a unique job ID
-    import hashlib
-    job_id = hashlib.sha256(
-        f"{alert['alert_name']}:{item.get('url', '')}:{datetime.now(timezone.utc).isoformat()}".encode()
-    ).hexdigest()[:32]
-
-    # Build the outbox record matching vak-delivery's OutboxRecord schema
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    record = {
-        "schema_version": 1,
-        "job": {
-            "job_id": job_id,
-            "target": target,
-            "kind": "alert",
-            "content": {
-                "type": "text",
-                "markdown": message,
-            },
-            "profile": {
-                "surface": target,
-                "markup": "markdown",
-                "max_chars": None,
-                "supports_tables": False,
-                "supports_code_blocks": True,
-                "supports_links": True,
-                "supports_actions": False,
-            },
-        },
-        "state": "pending",
-        "attempts": 0,
-        "created_at_ms": now_ms,
-        "updated_at_ms": now_ms,
-        "packet": None,
-        "last_error": None,
-    }
-
-    record_path = jobs_dir / f"{job_id}.json"
-    try:
-        with open(record_path, "w") as f:
-            json.dump(record, f)
-        logger.info("Alert '%s' enqueued to outbox: %s", alert["alert_name"], record_path)
-    except Exception as e:
-        logger.error("Failed to write outbox record for alert '%s': %s", alert["alert_name"], e)
-
-    # Also write to local log for audit trail
-    log_dir = data_home / "feeds" / "alerts"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / f"{datetime.now().strftime('%Y-%m-%d')}.log"
-
-    with open(log_file, "a") as f:
-        f.write(json.dumps({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "target": target,
-            "alert_name": alert["alert_name"],
-            "item_title": item.get("title", ""),
-            "item_url": item.get("url", ""),
-            "match_score": alert["match"]["score"],
-            "outbox_job_id": job_id,
-        }) + "\n")
-
-
-def fire_hook(command: str, payload: str) -> None:
-    """Execute a hook script with JSON payload on stdin."""
-    logger.info("Firing hook: %s", command)
-    try:
-        proc = subprocess.Popen(
-            ["sh", "-c", command],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        stdout, stderr = proc.communicate(input=payload.encode(), timeout=30)
-        if proc.returncode != 0:
-            logger.error("Hook failed (exit %d): %s", proc.returncode, stderr.decode()[:500])
-        else:
-            logger.info("Hook succeeded: %s", stdout.decode()[:200])
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        logger.error("Hook timed out: %s", command)
-    except Exception as e:
-        logger.error("Hook error: %s — %s", command, e)
-
-
-def run_ingestion(workspace: str | None = None, source_name: str | None = None) -> dict:
+def _run_ingestion(workspace: str | None = None, source_name: str | None = None) -> dict:
     """Main ingestion entry point. Returns summary stats."""
+    if workspace:
+        os.environ["VAK_FEED_WORKSPACE"] = workspace
     config = init_feed_system(workspace)
+    sync_alerts(config)
+    run_id = begin_ingestion_run(source_name or "")
 
     start_time = time.time()
     total_new = 0
@@ -438,8 +351,14 @@ def run_ingestion(workspace: str | None = None, source_name: str | None = None) 
     for source in config.sources:
         if source_name and source.name != source_name:
             continue
+        if not source_name and not source_is_due(
+            source.id, source.scope, source.workspace_id
+        ):
+            logger.info("Skipping source not due: %s", source.name)
+            continue
 
         try:
+            mark_source_checked(source)
             count = ingest_source(source)
             sources_ingested += 1
             if count < 0:
@@ -453,7 +372,15 @@ def run_ingestion(workspace: str | None = None, source_name: str | None = None) 
     fired = []
     try:
         fired = evaluate_alerts(config)
-        fire_alerts(fired)
+        delivery_intents = fire_alerts(fired)
+        unsupported = [alert for alert in fired if alert not in delivery_intents]
+        if unsupported:
+            errors += len(unsupported)
+            for alert in unsupported:
+                logger.error(
+                    "Alert '%s' matched but has no host delivery target; action=%s",
+                    alert.get("alert_name", ""), alert.get("action", ""),
+                )
     except Exception as e:
         logger.error("Error evaluating alerts: %s", e)
         errors += 1
@@ -461,16 +388,56 @@ def run_ingestion(workspace: str | None = None, source_name: str | None = None) 
     prune_seen(config.dedup_window_days)
 
     elapsed = time.time() - start_time
+    finish_ingestion_run(
+        run_id,
+        "failed" if errors else "succeeded",
+        sources_seen=sources_ingested,
+        sources_succeeded=sources_ingested - errors,
+        items_added=total_new,
+        error=f"{errors} source or alert operation(s) failed" if errors else "",
+    )
     summary = {
         "sources_ingested": sources_ingested,
         "new_items": total_new,
         "alerts_fired": len(fired),
         "errors": errors,
+        "delivery_intents": delivery_intents,
         "elapsed_seconds": round(elapsed, 2),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     logger.info("Ingestion complete: %s", json.dumps(summary))
     return summary
+
+
+@contextlib.contextmanager
+def _ingestion_lease(workspace: str | None):
+    """Serialize ingestion per workspace across scheduler and CLI processes."""
+    root = Path(workspace) if workspace else Path.cwd()
+    lock_path = root / ".vak" / "feeds.ingest.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError("another ingestion run is active") from error
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def run_ingestion(workspace: str | None = None, source_name: str | None = None) -> dict:
+    """Run one serialized ingestion and return an operational receipt."""
+    try:
+        with _ingestion_lease(workspace):
+            return _run_ingestion(workspace, source_name)
+    except RuntimeError as error:
+        logger.info("Ingestion skipped: %s", error)
+        return {
+            "sources_ingested": 0, "new_items": 0, "alerts_fired": 0,
+            "errors": 0, "delivery_intents": [], "skipped": True,
+            "reason": str(error), "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
 
 
 def main():
@@ -479,6 +446,7 @@ def main():
     parser.add_argument("--source", "-s", help="Ingest a specific source by name")
     parser.add_argument("--init", action="store_true", help="Initialize DB only")
     parser.add_argument("--stats", action="store_true", help="Print stats only")
+    parser.add_argument("--sync-alerts", action="store_true", help="Reconcile configured alerts into storage")
     # Admin-console CRUD against the live `feeds` table -- see
     # feed_utils.update_feed_row/remove_feed_row for why this operates on
     # the DB directly instead of feeds.toml (which is what the UI
@@ -486,8 +454,11 @@ def main():
     # crates/vak-server/src/feeds.rs call through to). Not exposed via
     # feed_mcp.py's tool list: that surface is reachable by LLM agents,
     # and source removal shouldn't be an agent-callable tool.
-    parser.add_argument("--remove-source", metavar="NAME", help="Soft-delete a source by name")
-    parser.add_argument("--update-source", metavar="NAME", help="Update a source by name")
+    parser.add_argument("--remove-source", metavar="SOURCE_ID", help="Soft-delete by stable source id")
+    parser.add_argument("--update-source", metavar="SOURCE_ID", help="Update by stable source id")
+    parser.add_argument("--scope", choices=["global", "workspace"], help="Source scope for admin operations")
+    parser.add_argument("--release-item", type=int, help="Release a quarantined item")
+    parser.add_argument("--mark-alert-delivered", nargs=2, metavar=("ALERT_ID", "ITEM_ID"))
     parser.add_argument("--set-enabled", choices=["true", "false"], help="With --update-source")
     parser.add_argument("--set-interval", help="With --update-source")
     parser.add_argument("--set-trust", choices=["high", "medium", "low"], help="With --update-source")
@@ -505,9 +476,15 @@ def main():
         print(json.dumps(stats, indent=2))
         return
 
+    if args.sync_alerts:
+        init_feed_system(args.workspace)
+        config = load_feed_config(args.workspace)
+        print(json.dumps({"status": "ok", "alerts": sync_alerts(config)}))
+        return
+
     if args.remove_source:
         init_feed_system(args.workspace)
-        ok = remove_feed_row(args.remove_source)
+        ok = remove_feed_row(args.remove_source, args.scope)
         print(json.dumps({"status": "ok" if ok else "not_found", "name": args.remove_source}))
         sys.exit(0 if ok else 1)
 
@@ -521,8 +498,22 @@ def main():
             enabled=enabled,
             interval=args.set_interval,
             trust=args.set_trust,
+            scope=args.scope,
         )
         print(json.dumps({"status": "ok" if ok else "not_found", "name": args.update_source}))
+        sys.exit(0 if ok else 1)
+
+    if args.release_item:
+        init_feed_system(args.workspace)
+        ok = set_item_security_status(args.release_item, "accepted", "released by operator")
+        print(json.dumps({"status": "ok" if ok else "not_found", "id": args.release_item}))
+        sys.exit(0 if ok else 1)
+
+    if args.mark_alert_delivered:
+        init_feed_system(args.workspace)
+        alert_id, item_id = (int(value) for value in args.mark_alert_delivered)
+        ok = mark_alert_delivered(alert_id, item_id)
+        print(json.dumps({"status": "ok" if ok else "not_found", "alert_id": alert_id, "item_id": item_id}))
         sys.exit(0 if ok else 1)
 
     summary = run_ingestion(args.workspace, args.source)

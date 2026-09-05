@@ -28,6 +28,8 @@ ALTER TABLE feeds ADD COLUMN IF NOT EXISTS workspace_id VARCHAR DEFAULT '';
 ALTER TABLE feeds ADD COLUMN IF NOT EXISTS security_status VARCHAR DEFAULT 'accepted';
 ALTER TABLE feeds ADD COLUMN IF NOT EXISTS last_started_at TIMESTAMP;
 ALTER TABLE feeds ADD COLUMN IF NOT EXISTS next_due_at TIMESTAMP;
+ALTER TABLE feeds ADD COLUMN IF NOT EXISTS last_status VARCHAR DEFAULT 'never_run';
+ALTER TABLE feeds ADD COLUMN IF NOT EXISTS last_error VARCHAR;
 UPDATE feeds SET source_id = lower(replace(name, ' ', '-')) WHERE source_id IS NULL;
 
 -- Existing databases created before removed_at existed need it added
@@ -60,6 +62,9 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS scope VARCHAR DEFAULT 'global';
 ALTER TABLE items ADD COLUMN IF NOT EXISTS workspace_id VARCHAR DEFAULT '';
 ALTER TABLE items ADD COLUMN IF NOT EXISTS security_status VARCHAR DEFAULT 'accepted';
 ALTER TABLE items ADD COLUMN IF NOT EXISTS security_detail VARCHAR;
+
+UPDATE items AS i SET scope = f.scope, workspace_id = f.workspace_id
+FROM feeds AS f WHERE i.feed_id = f.id;
 
 CREATE TABLE IF NOT EXISTS search_index (
     item_id INTEGER REFERENCES items(id),
@@ -112,3 +117,24 @@ CREATE INDEX IF NOT EXISTS idx_seen_feed ON seen(feed_id);
 CREATE INDEX IF NOT EXISTS idx_alert_log_alert ON alert_log(alert_id);
 CREATE INDEX IF NOT EXISTS idx_alert_log_time ON alert_log(delivered_at);
 CREATE INDEX IF NOT EXISTS idx_search_item ON search_index(item_id);
+
+CREATE SEQUENCE IF NOT EXISTS ingestion_runs_id_seq START 1;
+CREATE TABLE IF NOT EXISTS ingestion_runs (
+    id BIGINT DEFAULT nextval('ingestion_runs_id_seq') PRIMARY KEY,
+    run_key VARCHAR NOT NULL,
+    scope VARCHAR NOT NULL,
+    workspace_id VARCHAR DEFAULT '',
+    source_id VARCHAR,
+    status VARCHAR NOT NULL,
+    started_at TIMESTAMP DEFAULT current_timestamp,
+    finished_at TIMESTAMP,
+    sources_seen INTEGER DEFAULT 0,
+    sources_succeeded INTEGER DEFAULT 0,
+    items_seen INTEGER DEFAULT 0,
+    items_added INTEGER DEFAULT 0,
+    items_quarantined INTEGER DEFAULT 0,
+    error VARCHAR
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingestion_runs_scope ON ingestion_runs(scope, workspace_id);
+CREATE INDEX IF NOT EXISTS idx_ingestion_runs_started ON ingestion_runs(started_at);

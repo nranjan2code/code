@@ -6109,10 +6109,14 @@ function FeedsSection() {
   const [configuredSources, { refetch: refetchConfigured }] = createResource(() =>
     api.feedConfiguredSources(),
   );
+  const [runs, { refetch: refetchRuns }] = createResource(() => api.feedRuns());
+  const [quarantine, { refetch: refetchQuarantine }] = createResource(() => api.feedQuarantine());
 
   const refetchAll = () => {
     refetchStats();
     refetchConfigured();
+    refetchRuns();
+    refetchQuarantine();
   };
 
   const doSearch = async () => {
@@ -6130,7 +6134,7 @@ function FeedsSection() {
 
   const toggleSource = async (src: import("./types").ConfiguredFeedSource) => {
     try {
-      await api.feedUpdateSource(src.name, { enabled: !src.enabled });
+      await api.feedUpdateSource(src.id, { enabled: !src.enabled }, src.scope);
       pushToast("info", `${src.name} ${src.enabled ? "disabled" : "enabled"}`);
       refetchConfigured();
     } catch (e) {
@@ -6141,7 +6145,8 @@ function FeedsSection() {
   const removeSource = async (name: string) => {
     if (!confirm(`Remove source "${name}"? This stops it from being checked, but keeps items already collected.`)) return;
     try {
-      await api.feedDeleteSource(name);
+      const source = configuredSources()?.sources.find((candidate) => candidate.name === name);
+      await api.feedDeleteSource(source?.id ?? "", source?.scope);
       pushToast("info", `Source "${name}" removed`);
       refetchAll();
     } catch (e) {
@@ -6157,7 +6162,8 @@ function FeedsSection() {
 
   const saveEditSource = async (name: string) => {
     try {
-      await api.feedUpdateSource(name, { interval: editInterval(), trust: editTrust() });
+      const source = configuredSources()?.sources.find((candidate) => candidate.name === name);
+      await api.feedUpdateSource(source?.id ?? "", { interval: editInterval(), trust: editTrust() }, source?.scope);
       pushToast("info", `"${name}" updated`);
       setEditingSource(null);
       refetchConfigured();
@@ -6224,6 +6230,10 @@ function FeedsSection() {
               <div class="value">{stats()!.total_alerts}</div>
               <div class="label">Alerts set up</div>
             </div>
+            <div class="feed-stat">
+              <div class="value">{stats()!.quarantined_items ?? 0}</div>
+              <div class="label">Quarantined</div>
+            </div>
           </div>
           <Show when={stats()!.sources && stats()!.sources!.length > 0}>
             <section class="panel">
@@ -6286,6 +6296,14 @@ function FeedsSection() {
             </For>
           </Show>
         </section>
+        <section class="panel">
+          <div class="panel-title-row"><div><h2>Quarantine</h2><p class="dim">External content held from search and alerts until reviewed.</p></div></div>
+          <Show when={quarantine()} fallback={<div class="empty">No quarantined items.</div>}>
+            <For each={quarantine()!.items}>
+              {(item) => <div class="feed-source-card"><div class="info"><div class="name">{item.title}</div><div class="meta">{item.source_name} · {item.security_detail || "security review required"}</div></div><button class="small" onClick={async () => { try { await api.feedReleaseItem(item.id); refetchQuarantine(); pushToast("info", "Item released"); } catch (e) { pushToast("alert", `Could not release item: ${e}`); } }}>Release</button></div>}
+            </For>
+          </Show>
+        </section>
       </Show>
 
       <Show when={tab() === "sources"}>
@@ -6308,12 +6326,21 @@ function FeedsSection() {
                     <Show
                       when={editingSource() === src.name}
                       fallback={
-                        <div class="meta">
-                          {FEED_TYPE_LABELS[src.source_type] ?? src.source_type}
-                          <Show when={src.check_interval}> · every {src.check_interval}</Show>
-                          <Show when={src.trust}> · {src.trust} trust</Show>
-                          <Show when={src.url}> · <a href={src.url} target="_blank" rel="noreferrer noopener">{src.url}</a></Show>
-                        </div>
+                        <>
+                          <div class="meta">
+                            {FEED_TYPE_LABELS[src.source_type] ?? src.source_type}
+                            <Show when={src.check_interval}> · every {src.check_interval}</Show>
+                            <Show when={src.trust}> · {src.trust} trust</Show>
+                            <span> · {src.scope === "workspace" ? "workspace" : "global"}</span>
+                            <Show when={src.url}> · <a href={src.url} target="_blank" rel="noreferrer noopener">{src.url}</a></Show>
+                          </div>
+                          <Show when={src.next_due_at}>
+                            <div class="meta">Next check: {src.next_due_at!.slice(0, 19)}</div>
+                          </Show>
+                          <Show when={src.last_status && src.last_status !== "never_run"}>
+                            <div class="meta">Last check: {src.last_status}{src.last_error ? ` · ${src.last_error}` : ""}</div>
+                          </Show>
+                        </>
                       }
                     >
                       <div class="toolbar" style={{ "margin-top": "6px" }}>
@@ -6442,6 +6469,16 @@ function FeedsSection() {
             </pre>
           </Show>
         </section>
+        <section class="panel">
+          <div class="panel-title-row"><div><h2>Recent runs</h2><p class="dim">Durable ingestion receipts for this workspace.</p></div></div>
+          <Show when={runs.error} fallback={<Show when={runs()} fallback={<div class="empty">Loading…</div>}>
+            <For each={runs()!.runs}>
+              {(run) => <div class="feed-source-card"><div class="info"><div class="name">{run.status} · {run.started_at.slice(0, 19)}</div><div class="meta">{run.scope} · {run.sources_succeeded}/{run.sources_seen} sources · {run.items_added} new items</div><Show when={run.error}><div class="meta">{run.error}</div></Show></div></div>}
+            </For>
+          </Show>}>
+            <div class="empty">Could not load ingestion receipts.</div>
+          </Show>
+        </section>
       </Show>
 
       <Show when={wizardOpen()}>
@@ -6559,6 +6596,7 @@ function FeedWizard(props: { onClose: () => void; onAdded: () => void }) {
   const [interval, setInterval] = createSignal("1h");
   const [tags, setTags] = createSignal("");
   const [trust, setTrust] = createSignal("medium");
+  const [scope, setScope] = createSignal<"workspace" | "global">("workspace");
   const [sourceTypes] = createResource(() => api.feedSourceTypes());
 
   const typeOptions = () => {
@@ -6594,6 +6632,7 @@ function FeedWizard(props: { onClose: () => void; onAdded: () => void }) {
       interval: interval(),
       tags: tags() ? tags().split(",").map((t) => t.trim()) : [],
       trust: trust(),
+      scope: scope(),
     };
     try {
       await api.feedAddSource(source);
@@ -6639,6 +6678,13 @@ function FeedWizard(props: { onClose: () => void; onAdded: () => void }) {
                 <input value={url()} onInput={(e) => setUrl(e.currentTarget.value)} placeholder="https://example.com/feed.xml" />
               </div>
             </Show>
+            <div class="form-row">
+              <label>Availability</label>
+              <select value={scope()} onChange={(e) => setScope(e.currentTarget.value as "workspace" | "global")}>
+                <option value="workspace">This workspace</option>
+                <option value="global">All workspaces</option>
+              </select>
+            </div>
             <div class="form-row">
               <label>Check for new items</label>
               <select value={interval()} onChange={(e) => setInterval(e.currentTarget.value)}>

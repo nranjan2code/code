@@ -846,6 +846,15 @@ export const api = {
   feedAlerts: (): Promise<{ alerts: import("./types").FeedAlertRule[] }> =>
     fetch("/feeds/alerts").then((r) => handle(r)),
 
+  feedRuns: (): Promise<{ runs: import("./types").FeedRun[]; total: number }> =>
+    fetch("/feeds/runs").then((r) => handle(r)),
+
+  feedQuarantine: (): Promise<{ items: import("./types").FeedQuarantineItem[] }> =>
+    fetch("/feeds/quarantine").then((r) => handle(r)),
+
+  feedReleaseItem: (id: number): Promise<{ status: string; id: number }> =>
+    fetch(`/feeds/quarantine/${id}/release`, { method: "POST" }).then((r) => handle(r)),
+
   feedIngest: (): Promise<{ sources_ingested: number; new_items: number; alerts_fired: number; errors: number }> =>
     fetch("/feeds/ingest", { method: "POST" }).then((r) => handle(r)),
 
@@ -856,8 +865,8 @@ export const api = {
       body: JSON.stringify(source),
     }).then((r) => handle(r)),
 
-  feedDeleteSource: (name: string): Promise<{ status: string }> =>
-    fetch(`/feeds/sources/${encodeURIComponent(name)}`, {
+  feedDeleteSource: (sourceId: string, scope?: string): Promise<{ status: string }> =>
+    fetch(`/feeds/sources/${encodeURIComponent(sourceId)}?scope=${encodeURIComponent(scope || "workspace")}`, {
       method: "DELETE",
     }).then((r) => handle(r)),
 
@@ -865,10 +874,11 @@ export const api = {
     fetch("/feeds/sources/configured").then((r) => handle(r)),
 
   feedUpdateSource: (
-    name: string,
+    sourceId: string,
     patch: { enabled?: boolean; interval?: string; trust?: string; tags?: string[] },
+    scope?: string,
   ): Promise<{ status: string }> =>
-    fetch(`/feeds/sources/${encodeURIComponent(name)}`, {
+    fetch(`/feeds/sources/${encodeURIComponent(sourceId)}?scope=${encodeURIComponent(scope || "workspace")}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(patch),
@@ -889,8 +899,8 @@ export const api = {
       body: JSON.stringify(alert),
     }).then((r) => handle(r)),
 
-  feedDeleteAlert: (name: string): Promise<{ status: string }> =>
-    fetch(`/feeds/alerts/${encodeURIComponent(name)}`, {
+  feedDeleteAlert: (name: string, scope?: string): Promise<{ status: string }> =>
+    fetch(`/feeds/alerts/${encodeURIComponent(name)}?scope=${encodeURIComponent(scope || "workspace")}`, {
       method: "DELETE",
     }).then((r) => handle(r)),
 

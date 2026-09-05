@@ -53,7 +53,7 @@ class AggregatorDriver:
             return []
 
         try:
-            resp = requests.get(url, timeout=FETCH_TIMEOUT)
+            resp = requests.get(url, timeout=FETCH_TIMEOUT, allow_redirects=False)
             resp.raise_for_status()
             story_ids = resp.json()[:max_items]
         except (requests.RequestException, ValueError) as e:
@@ -64,7 +64,7 @@ class AggregatorDriver:
         for story_id in story_ids:
             item_url = f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
             try:
-                resp = requests.get(item_url, timeout=FETCH_TIMEOUT)
+                resp = requests.get(item_url, timeout=FETCH_TIMEOUT, allow_redirects=False)
                 resp.raise_for_status()
                 story = resp.json()
             except (requests.RequestException, ValueError):
@@ -127,6 +127,7 @@ class AggregatorDriver:
             resp = requests.get(
                 url, timeout=FETCH_TIMEOUT,
                 headers={"User-Agent": "vak-feeds/1.0 (feed aggregation)"},
+                allow_redirects=False,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -187,7 +188,7 @@ class AggregatorDriver:
 
         try:
             resp = requests.get(url, timeout=FETCH_TIMEOUT,
-                                headers={"User-Agent": "vak-feeds/1.0"})
+                                headers={"User-Agent": "vak-feeds/1.0"}, allow_redirects=False)
             resp.raise_for_status()
             stories = resp.json()
         except (requests.RequestException, ValueError) as e:

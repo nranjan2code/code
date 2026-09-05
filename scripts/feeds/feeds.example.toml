@@ -1,5 +1,6 @@
 # Example global feed configuration
-# Place at ~/.config/vak/feeds.toml
+# Place at ~/vak-home/feeds.toml for global scope, or .vak/feeds.toml in a
+# workspace for workspace scope.
 
 [general]
 default_check_interval = "30m"

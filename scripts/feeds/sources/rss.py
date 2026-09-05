@@ -41,7 +41,7 @@ class RssDriver:
                 url,
                 timeout=FETCH_TIMEOUT,
                 headers={"User-Agent": "vak-feeds/1.0 (+https://github.com/vakcoder)"},
-                allow_redirects=True,
+                allow_redirects=False,
             )
             resp.raise_for_status()
 
@@ -111,6 +111,7 @@ class RssDriver:
             resp = requests.get(
                 url, timeout=FETCH_TIMEOUT,
                 headers={"User-Agent": "vak-feeds/1.0"},
+                allow_redirects=False,
             )
             resp.raise_for_status()
         except requests.RequestException:

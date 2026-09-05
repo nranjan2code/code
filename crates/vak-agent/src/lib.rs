@@ -3422,26 +3422,6 @@ fn tool_recovery_hint(error: &str) -> Option<&'static str> {
     None
 }
 
-#[cfg(test)]
-mod tool_recovery_tests {
-    use super::tool_recovery_hint;
-
-    #[test]
-    fn repairable_failures_get_a_model_recovery_contract() {
-        assert!(
-            tool_recovery_hint(r#"{"type":"unknown_capability","name":"tavily_search"}"#).is_some()
-        );
-        assert!(tool_recovery_hint("mcp protocol error: invalid arguments").is_some());
-    }
-
-    #[test]
-    fn authorization_and_user_control_failures_never_get_retry_advice() {
-        assert!(tool_recovery_hint("capability denied by channel policy").is_none());
-        assert!(tool_recovery_hint("cancelled").is_none());
-        assert!(tool_recovery_hint("429 rate limit").is_none());
-    }
-}
-
 /// Doom-loop threshold: the Nth identical (tool, args) call in one run is
 /// re-routed through approval instead of silently repeating.
 const DOOM_LOOP_THRESHOLD: u32 = 3;
@@ -3593,4 +3573,24 @@ fn rand_jitter(ms: u64) -> u64 {
         .fetch_add(0x9E3779B97F4A7C15, Ordering::Relaxed)
         .wrapping_add(0x9E3779B97F4A7C15);
     (x >> 33) % ms.max(2)
+}
+
+#[cfg(test)]
+mod tool_recovery_tests {
+    use super::tool_recovery_hint;
+
+    #[test]
+    fn repairable_failures_get_a_model_recovery_contract() {
+        assert!(
+            tool_recovery_hint(r#"{"type":"unknown_capability","name":"tavily_search"}"#).is_some()
+        );
+        assert!(tool_recovery_hint("mcp protocol error: invalid arguments").is_some());
+    }
+
+    #[test]
+    fn authorization_and_user_control_failures_never_get_retry_advice() {
+        assert!(tool_recovery_hint("capability denied by channel policy").is_none());
+        assert!(tool_recovery_hint("cancelled").is_none());
+        assert!(tool_recovery_hint("429 rate limit").is_none());
+    }
 }

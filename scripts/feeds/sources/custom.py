@@ -41,6 +41,7 @@ class CustomHttpDriver:
             resp = requests.get(
                 url, timeout=FETCH_TIMEOUT,
                 headers={"User-Agent": "vak-feeds/1.0"},
+                allow_redirects=False,
             )
             resp.raise_for_status()
         except requests.RequestException as e:
@@ -206,7 +207,7 @@ class CustomHttpDriver:
 
         try:
             resp = requests.get(url, timeout=FETCH_TIMEOUT,
-                                headers={"User-Agent": "vak-feeds/1.0"})
+                                headers={"User-Agent": "vak-feeds/1.0"}, allow_redirects=False)
             resp.raise_for_status()
         except requests.RequestException:
             return []
@@ -227,7 +228,7 @@ class CustomHttpDriver:
 
         try:
             resp = requests.get(url, timeout=FETCH_TIMEOUT,
-                                headers={"User-Agent": "vak-feeds/1.0"})
+                                headers={"User-Agent": "vak-feeds/1.0"}, allow_redirects=False)
             resp.raise_for_status()
         except requests.RequestException as e:
             return {"error": str(e)}

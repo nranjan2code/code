@@ -20,19 +20,74 @@ use tokio::process::Command;
 
 use crate::AppState;
 
+fn authorize_feed_mutation(state: &AppState, scope: &str) -> Result<(), (StatusCode, String)> {
+    let mode = state.core.effective_permission_mode();
+    if authorize_feed_scope(scope, mode).is_ok() {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "feed mutation requires permission for {scope} scope; current mode is {mode:?}"
+            ),
+        ))
+    }
+}
+
+fn authorize_feed_scope(scope: &str, mode: vak_config::PermissionMode) -> Result<(), ()> {
+    use vak_config::PermissionMode;
+    if matches!(
+        (scope, mode),
+        (
+            "workspace",
+            PermissionMode::WorkspaceWrite | PermissionMode::FullAccess
+        ) | ("global", PermissionMode::FullAccess)
+    ) {
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
 /// Feed pipeline Python script directory.
 fn feeds_dir(cwd: &std::path::Path) -> PathBuf {
     cwd.join("scripts").join("feeds")
 }
 
+fn validate_source_url(raw: &str) -> Result<(), String> {
+    let url = reqwest::Url::parse(raw).map_err(|_| "source URL is not valid".to_string())?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err("source URL must use http or https and include a host".into());
+    }
+    let host = url.host_str().unwrap_or_default();
+    let host_for_ip = host.trim_matches(|character| character == '[' || character == ']');
+    let private_ip = host_for_ip
+        .parse::<std::net::IpAddr>()
+        .ok()
+        .is_some_and(|ip| match ip {
+            std::net::IpAddr::V4(ip) => ip.is_private() || ip.is_loopback() || ip.is_link_local(),
+            std::net::IpAddr::V6(ip) => {
+                ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local()
+            }
+        });
+    if private_ip || host.eq_ignore_ascii_case("localhost") || host.ends_with(".localhost") {
+        return Err("source URL targets a local or private address".into());
+    }
+    Ok(())
+}
+
 /// Config file path for feed sources, in the canonical data home.
 ///
-/// This used to hand-roll `~/.config/vak/feeds.toml` — a fifth layout
+/// This used to hand-roll a second, unsupported feed configuration layout.
 /// convention nothing else in the tree used — and `HOME` was read with
 /// `unwrap_or_default()`, so an unset `HOME` produced a *relative* path
 /// resolved against whatever directory the server happened to start in.
 fn feeds_config_path(_cwd: &std::path::Path) -> PathBuf {
     _cwd.join(".vak").join("feeds.toml")
+}
+
+fn global_feeds_config_path() -> PathBuf {
+    vak_config::paths::data_home().join("feeds.toml")
 }
 
 /// Run a Python feed script and return its JSON output.
@@ -57,6 +112,10 @@ async fn run_feed_script(
         .current_dir(&dir)
         .env("PYTHONPATH", dir.to_string_lossy().to_string())
         .env("VAK_FEED_WORKSPACE", cwd.to_string_lossy().to_string())
+        .env(
+            "VAK_SESSIONS_HOME",
+            vak_config::paths::data_home().to_string_lossy().to_string(),
+        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -114,6 +173,10 @@ async fn run_feed_admin_script(
         .current_dir(&dir)
         .env("PYTHONPATH", dir.to_string_lossy().to_string())
         .env("VAK_FEED_WORKSPACE", cwd.to_string_lossy().to_string())
+        .env(
+            "VAK_SESSIONS_HOME",
+            vak_config::paths::data_home().to_string_lossy().to_string(),
+        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -159,6 +222,10 @@ async fn run_feed_mcp_request(
         .current_dir(&dir)
         .env("PYTHONPATH", dir.to_string_lossy().to_string())
         .env("VAK_FEED_WORKSPACE", cwd.to_string_lossy().to_string())
+        .env(
+            "VAK_SESSIONS_HOME",
+            vak_config::paths::data_home().to_string_lossy().to_string(),
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -262,41 +329,23 @@ pub async fn list_source_types() -> Result<impl IntoResponse, (StatusCode, Strin
     })))
 }
 
-/// GET /feeds/config — Get merged feed config as structured JSON.
+/// GET /feeds/config — Get the effective scoped feed projection.
 pub async fn get_feed_config(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let cwd = state.core.cwd();
-    let config_path = feeds_config_path(cwd);
-
-    if !config_path.exists() {
-        return Ok(Json(json!({
-            "general": {
-                "default_check_interval": "30m",
-                "max_items_per_feed": 500,
-                "dedup_window_days": 90
-            },
-            "sources": [],
-            "alerts": []
-        })));
-    }
-
-    // Use Python to parse TOML and return structured JSON
-    let result = run_feed_script(cwd, "feed_ingest.py", &["--stats"]).await?;
-
-    // Also read the config file for the full source list
-    let content = tokio::fs::read_to_string(&config_path).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to read config: {e}"),
-        )
-    })?;
-
-    Ok(Json(json!({
-        "config_path": config_path.to_string_lossy(),
-        "stats": result,
-        "raw_content": content
-    })))
+    let sources = run_feed_mcp_request(
+        cwd,
+        &json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"feed_sources","arguments":{}}}),
+    ).await?;
+    let alerts = run_feed_mcp_request(
+        cwd,
+        &json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"feed_alerts","arguments":{}}}),
+    ).await?;
+    let stats = run_feed_script(cwd, "feed_ingest.py", &["--stats"]).await?;
+    Ok(Json(
+        json!({"sources": sources, "alerts": alerts, "stats": stats}),
+    ))
 }
 
 /// GET /feeds/items — List ingested items via MCP.
@@ -417,6 +466,7 @@ pub async fn get_feed_alerts(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let cwd = state.core.cwd();
+    run_feed_script(cwd, "feed_ingest.py", &["--sync-alerts"]).await?;
     let request = json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -430,14 +480,126 @@ pub async fn get_feed_alerts(
     Ok(Json(result))
 }
 
+/// GET /feeds/runs — List recent ingestion receipts for the active workspace.
+pub async fn get_feed_runs(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let cwd = state.core.cwd();
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "feed_runs", "arguments": {"limit": 20}}
+    });
+    Ok(Json(run_feed_mcp_request(cwd, &request).await?))
+}
+
+pub async fn get_feed_quarantine(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let cwd = state.core.cwd();
+    let request = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "feed_quarantine", "arguments": {"limit": 50}}
+    });
+    Ok(Json(run_feed_mcp_request(cwd, &request).await?))
+}
+
+pub async fn release_feed_item(
+    Path(id): Path<i64>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    authorize_feed_mutation(&state, "workspace")?;
+    let cwd = state.core.cwd();
+    let id_text = id.to_string();
+    let result =
+        run_feed_admin_script(cwd, "feed_ingest.py", &["--release-item", &id_text]).await?;
+    if result.get("status").and_then(Value::as_str) != Some("ok") {
+        return Err((StatusCode::NOT_FOUND, format!("Item {id} not found")));
+    }
+    Ok(Json(result))
+}
+
 /// POST /feeds/ingest — Trigger manual ingestion.
 pub async fn trigger_ingestion(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    authorize_feed_mutation(&state, "workspace")?;
     let cwd = state.core.cwd();
     let workspace = cwd.to_string_lossy();
-    let result = run_feed_script(cwd, "feed_ingest.py", &["--workspace", &workspace]).await?;
+    let mut result = run_feed_script(cwd, "feed_ingest.py", &["--workspace", &workspace]).await?;
+    let intents = result
+        .get("delivery_intents")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if !intents.is_empty() {
+        let delivered = deliver_and_ack_alerts(&state, &intents)
+            .await
+            .map_err(|error| (StatusCode::BAD_GATEWAY, error))?;
+        result["alerts_delivered"] = json!(delivered);
+    }
     Ok(Json(result))
+}
+
+pub async fn scheduled_ingestion(state: &AppState) {
+    if !state.core.config().feeds.enabled {
+        return;
+    }
+    if matches!(
+        state.core.effective_permission_mode(),
+        vak_config::PermissionMode::ReadOnly
+    ) {
+        return;
+    }
+    let cwd = state.core.cwd();
+    let workspace = cwd.to_string_lossy();
+    let Ok(mut result) = run_feed_script(cwd, "feed_ingest.py", &["--workspace", &workspace]).await
+    else {
+        return;
+    };
+    let intents = result
+        .get("delivery_intents")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if intents.is_empty() {
+        return;
+    }
+    if let Ok(delivered) = deliver_and_ack_alerts(state, &intents).await {
+        result["alerts_delivered"] = json!(delivered);
+    }
+}
+
+async fn deliver_and_ack_alerts(state: &AppState, intents: &[Value]) -> Result<usize, String> {
+    let delivered = crate::delivery::deliver_feed_intents(&state.core, intents).await?;
+    for intent in intents {
+        let Some(alert_id) = intent.get("alert_id").and_then(Value::as_i64) else {
+            continue;
+        };
+        let Some(item_id) = intent
+            .get("item")
+            .and_then(|item| item.get("id"))
+            .and_then(Value::as_i64)
+        else {
+            continue;
+        };
+        let alert_text = alert_id.to_string();
+        let item_text = item_id.to_string();
+        let result = run_feed_admin_script(
+            state.core.cwd(),
+            "feed_ingest.py",
+            &["--mark-alert-delivered", &alert_text, &item_text],
+        )
+        .await
+        .map_err(|(_, error)| error)?;
+        if result.get("status").and_then(Value::as_str) != Some("ok") {
+            return Err(format!(
+                "could not acknowledge alert {alert_id} for item {item_id}"
+            ));
+        }
+    }
+    Ok(delivered)
 }
 
 /// POST /feeds/sources — Add a new source to feeds.toml.
@@ -446,7 +608,16 @@ pub async fn add_feed_source(
     Json(payload): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let cwd = state.core.cwd();
-    let config_path = feeds_config_path(cwd);
+    let scope = payload
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or("workspace");
+    authorize_feed_mutation(&state, scope)?;
+    let config_path = if scope == "global" {
+        global_feeds_config_path()
+    } else {
+        feeds_config_path(cwd)
+    };
 
     // Read existing config or create default
     let mut content = if config_path.exists() {
@@ -470,6 +641,9 @@ pub async fn add_feed_source(
         .and_then(|v| v.as_str())
         .unwrap_or("rss");
     let url = payload.get("url").and_then(|v| v.as_str()).unwrap_or("");
+    if !url.is_empty() {
+        validate_source_url(url).map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    }
     let interval = payload
         .get("interval")
         .and_then(|v| v.as_str())
@@ -485,9 +659,25 @@ pub async fn add_feed_source(
         .and_then(|v| v.as_str())
         .unwrap_or("medium");
 
+    let source_id = payload
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("src-{}", uuid::Uuid::now_v7().simple()));
+
+    let source_id_line = format!("id = \"{}\"", escape_toml(&source_id));
+    if content.lines().any(|line| line.trim() == source_id_line) {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("source id '{}' already exists in {scope} scope", source_id),
+        ));
+    }
+
     // Build the new source block
     let mut source_block = format!(
-        "\n[[sources]]\nname = \"{}\"\ntype = \"{}\"\n",
+        "\n[[sources]]\nid = \"{}\"\nname = \"{}\"\ntype = \"{}\"\n",
+        escape_toml(&source_id),
         escape_toml(name),
         escape_toml(source_type)
     );
@@ -570,7 +760,7 @@ fn find_array_table_block(lines: &[&str], table: &str, name: &str) -> Option<(us
         if lines[i].trim() == header {
             let start = i;
             let mut j = i + 1;
-            let mut block_name: Option<String> = None;
+            let mut block_key: Option<String> = None;
             while j < lines.len() {
                 let trimmed = lines[j].trim();
                 let is_boundary = trimmed.starts_with("[[")
@@ -578,16 +768,23 @@ fn find_array_table_block(lines: &[&str], table: &str, name: &str) -> Option<(us
                 if is_boundary {
                     break;
                 }
-                if let Some(rest) = trimmed.strip_prefix("name") {
+                if let Some(rest) = trimmed.strip_prefix("id") {
+                    let rest = rest.trim_start();
+                    if let Some(rest) = rest.strip_prefix('=') {
+                        block_key = Some(unescape_toml(rest.trim().trim_matches('"')));
+                    }
+                } else if block_key.is_none()
+                    && let Some(rest) = trimmed.strip_prefix("name")
+                {
                     let rest = rest.trim_start();
                     if let Some(rest) = rest.strip_prefix('=') {
                         let value = rest.trim().trim_matches('"');
-                        block_name = Some(unescape_toml(value));
+                        block_key = Some(unescape_toml(value));
                     }
                 }
                 j += 1;
             }
-            if block_name.as_deref() == Some(name) {
+            if block_key.as_deref() == Some(name) {
                 return Some((start, j));
             }
             i = j;
@@ -667,50 +864,56 @@ async fn write_config_atomically(
 /// DELETE /feeds/sources/{name} — Remove a feed source from config.
 /// DELETE /feeds/sources/{name} — Remove a feed source.
 ///
-/// The `feeds` DuckDB row is the actual source of truth for what "Your
-/// sources" displays (see feed_utils.remove_feed_row's doc comment for
-/// why deleting only from feeds.toml here used to 404 on every source
-/// that had no TOML entry to begin with — which, in practice, was all of
-/// them). Soft-deletes the DB row first and treats that as authoritative
-/// for success/404; a matching feeds.toml entry is then removed too on a
-/// best-effort basis, purely so scheduled ingestion doesn't recreate it.
+/// Soft-deletes the materialized source row and removes its declaration from
+/// the canonical scope-specific configuration.
 pub async fn delete_feed_source(
-    Path(name): Path<String>,
+    Path(source_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let cwd = state.core.cwd();
+    let scope = params
+        .get("scope")
+        .map(String::as_str)
+        .unwrap_or("workspace");
+    authorize_feed_mutation(&state, scope)?;
 
-    let removed = run_feed_admin_script(cwd, "feed_ingest.py", &["--remove-source", &name])
-        .await?
-        .get("status")
-        .and_then(|s| s.as_str())
+    let removed = run_feed_admin_script(
+        cwd,
+        "feed_ingest.py",
+        &["--remove-source", &source_id, "--scope", scope],
+    )
+    .await?
+    .get("status")
+    .and_then(|s| s.as_str())
         == Some("ok");
 
     if !removed {
         return Err((
             StatusCode::NOT_FOUND,
-            format!("Source '{}' not found", name),
+            format!("Source '{}' not found", source_id),
         ));
     }
 
-    let config_path = feeds_config_path(cwd);
+    let config_path = if scope == "global" {
+        global_feeds_config_path()
+    } else {
+        feeds_config_path(cwd)
+    };
     if config_path.exists()
         && let Ok(content) = tokio::fs::read_to_string(&config_path).await
-        && let Some(new_content) = remove_array_table_block(&content, "sources", &name)
+        && let Some(new_content) = remove_array_table_block(&content, "sources", &source_id)
     {
         let _ = write_config_atomically(&config_path, &new_content).await;
     }
 
     Ok(Json(json!({
         "status": "ok",
-        "message": format!("Source '{}' removed", name),
+        "message": format!("Source '{}' removed", source_id),
     })))
 }
 
 /// PATCH /feeds/sources/{name} — Update a source's enabled/interval/trust fields.
-///
-/// Same DB-primary, TOML-best-effort shape as `delete_feed_source` — see
-/// its doc comment.
 ///
 /// `tags` is **refused** here. The `feeds` table has no tags column, so a
 /// tag written on update reached feeds.toml and nothing else: the DB never
@@ -718,11 +921,17 @@ pub async fn delete_feed_source(
 /// is worse than one that says no, so the caller is told where tags are
 /// actually set instead (AGENTS.md invariant 30).
 pub async fn update_feed_source(
-    Path(name): Path<String>,
+    Path(source_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
     State(state): State<AppState>,
     Json(payload): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let cwd = state.core.cwd();
+    let scope = params
+        .get("scope")
+        .map(String::as_str)
+        .unwrap_or("workspace");
+    authorize_feed_mutation(&state, scope)?;
 
     let enabled = payload.get("enabled").and_then(|v| v.as_bool());
     let interval = payload.get("interval").and_then(|v| v.as_str());
@@ -745,7 +954,8 @@ pub async fn update_feed_source(
     }
 
     if enabled.is_some() || interval.is_some() || trust.is_some() {
-        let mut args: Vec<String> = vec!["--update-source".into(), name.clone()];
+        let mut args: Vec<String> = vec!["--update-source".into(), source_id.clone()];
+        args.extend(["--scope".into(), scope.into()]);
         if let Some(e) = enabled {
             args.push("--set-enabled".into());
             args.push(if e { "true" } else { "false" }.into());
@@ -767,15 +977,18 @@ pub async fn update_feed_source(
         if !updated {
             return Err((
                 StatusCode::NOT_FOUND,
-                format!("Source '{}' not found", name),
+                format!("Source '{}' not found", source_id),
             ));
         }
     }
 
-    // Best-effort mirror into feeds.toml: only applies fields to an
-    // entry that already exists there, and never turns a DB-only update
-    // into a hard failure if the source has no TOML entry at all.
-    let config_path = feeds_config_path(cwd);
+    // Reconcile the durable declaration when this source has one. The
+    // materialized row above remains authoritative for the current response.
+    let config_path = if scope == "global" {
+        global_feeds_config_path()
+    } else {
+        feeds_config_path(cwd)
+    };
     if config_path.exists()
         && let Ok(mut content) = tokio::fs::read_to_string(&config_path).await
     {
@@ -784,7 +997,7 @@ pub async fn update_feed_source(
             && let Some(next) = set_field_in_block(
                 &content,
                 "sources",
-                &name,
+                &source_id,
                 "enabled",
                 &format!("enabled = {}", e),
             )
@@ -796,7 +1009,7 @@ pub async fn update_feed_source(
             && let Some(next) = set_field_in_block(
                 &content,
                 "sources",
-                &name,
+                &source_id,
                 "interval",
                 &format!("interval = \"{}\"", escape_toml(i)),
             )
@@ -808,7 +1021,7 @@ pub async fn update_feed_source(
             && let Some(next) = set_field_in_block(
                 &content,
                 "sources",
-                &name,
+                &source_id,
                 "trust",
                 &format!("trust = \"{}\"", escape_toml(t)),
             )
@@ -823,7 +1036,7 @@ pub async fn update_feed_source(
 
     Ok(Json(json!({
         "status": "ok",
-        "message": format!("Source '{}' updated", name),
+        "message": format!("Source '{}' updated", source_id),
     })))
 }
 
@@ -852,7 +1065,16 @@ pub async fn add_feed_alert(
     Json(payload): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let cwd = state.core.cwd();
-    let config_path = feeds_config_path(cwd);
+    let scope = payload
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or("workspace");
+    authorize_feed_mutation(&state, scope)?;
+    let config_path = if scope == "global" {
+        global_feeds_config_path()
+    } else {
+        feeds_config_path(cwd)
+    };
 
     let mut content = if config_path.exists() {
         tokio::fs::read_to_string(&config_path).await.map_err(|e| {
@@ -898,10 +1120,22 @@ pub async fn add_feed_alert(
         .get("action")
         .and_then(|v| v.as_str())
         .unwrap_or("deliver");
+    if !matches!(action, "deliver" | "hook" | "both") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "action must be one of: deliver, hook, both".into(),
+        ));
+    }
     let deliver_to = payload
         .get("deliver_to")
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    if matches!(action, "deliver" | "both") && deliver_to.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "deliver_to is required for deliver and both alerts".into(),
+        ));
+    }
     let cooldown_minutes = payload
         .get("cooldown_minutes")
         .and_then(|v| v.as_i64())
@@ -950,6 +1184,7 @@ pub async fn add_feed_alert(
     }
 
     write_config_atomically(&config_path, &content).await?;
+    run_feed_script(cwd, "feed_ingest.py", &["--sync-alerts"]).await?;
 
     Ok(Json(json!({
         "status": "ok",
@@ -960,10 +1195,20 @@ pub async fn add_feed_alert(
 /// DELETE /feeds/alerts/{name} — Remove an alert rule from config.
 pub async fn delete_feed_alert(
     Path(name): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let cwd = state.core.cwd();
-    let config_path = feeds_config_path(cwd);
+    let scope = params
+        .get("scope")
+        .map(String::as_str)
+        .unwrap_or("workspace");
+    authorize_feed_mutation(&state, scope)?;
+    let config_path = if scope == "global" {
+        global_feeds_config_path()
+    } else {
+        feeds_config_path(cwd)
+    };
 
     if !config_path.exists() {
         return Err((StatusCode::NOT_FOUND, "Config file not found".into()));
@@ -980,6 +1225,7 @@ pub async fn delete_feed_alert(
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Alert '{}' not found", name)))?;
 
     write_config_atomically(&config_path, &new_content).await?;
+    run_feed_script(cwd, "feed_ingest.py", &["--sync-alerts"]).await?;
 
     Ok(Json(json!({
         "status": "ok",
@@ -1005,6 +1251,35 @@ pub fn routes() -> Router<AppState> {
         .route("/feeds/search", get(search_feed_items))
         .route("/feeds/stats", get(get_feed_stats))
         .route("/feeds/alerts", get(get_feed_alerts).post(add_feed_alert))
+        .route("/feeds/runs", get(get_feed_runs))
+        .route("/feeds/quarantine", get(get_feed_quarantine))
+        .route("/feeds/quarantine/{id}/release", post(release_feed_item))
         .route("/feeds/alerts/{name}", delete(delete_feed_alert))
         .route("/feeds/ingest", post(trigger_ingestion))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{authorize_feed_scope, validate_source_url};
+    use vak_config::PermissionMode;
+
+    #[test]
+    fn feed_scope_permissions_only_tighten() {
+        assert!(authorize_feed_scope("workspace", PermissionMode::WorkspaceWrite).is_ok());
+        assert!(authorize_feed_scope("workspace", PermissionMode::FullAccess).is_ok());
+        assert!(authorize_feed_scope("global", PermissionMode::FullAccess).is_ok());
+        assert!(authorize_feed_scope("global", PermissionMode::WorkspaceWrite).is_err());
+        assert!(authorize_feed_scope("workspace", PermissionMode::ReadOnly).is_err());
+        assert!(authorize_feed_scope("global", PermissionMode::ReadOnly).is_err());
+    }
+
+    #[test]
+    fn source_admission_rejects_private_and_malformed_targets() {
+        assert!(validate_source_url("https://example.com/feed").is_ok());
+        assert!(validate_source_url("not a url").is_err());
+        assert!(validate_source_url("file:///tmp/feed").is_err());
+        assert!(validate_source_url("http://127.0.0.1/feed").is_err());
+        assert!(validate_source_url("http://192.168.1.10/feed").is_err());
+        assert!(validate_source_url("http://[::1]/feed").is_err());
+    }
 }

@@ -44,7 +44,7 @@ class YouTubeDriver:
 
         try:
             resp = requests.get(url, timeout=FETCH_TIMEOUT,
-                                headers={"User-Agent": "vak-feeds/1.0"})
+                                headers={"User-Agent": "vak-feeds/1.0"}, allow_redirects=False)
             resp.raise_for_status()
             match = re.search(r'"externalId"\s*:\s*"(UC[a-zA-Z0-9_-]{22})"', resp.text)
             if match:
@@ -68,7 +68,7 @@ class YouTubeDriver:
 
         try:
             resp = requests.get(rss_url, timeout=FETCH_TIMEOUT,
-                                headers={"User-Agent": "vak-feeds/1.0"})
+                                headers={"User-Agent": "vak-feeds/1.0"}, allow_redirects=False)
             resp.raise_for_status()
         except requests.RequestException as e:
             logger.error("Failed to fetch YouTube RSS for %s: %s", resolved, e)
@@ -153,7 +153,7 @@ class YouTubeDriver:
 
         try:
             resp = requests.get(url, timeout=FETCH_TIMEOUT,
-                                headers={"User-Agent": "vak-feeds/1.0"})
+                                headers={"User-Agent": "vak-feeds/1.0"}, allow_redirects=False)
             resp.raise_for_status()
         except requests.RequestException:
             return []

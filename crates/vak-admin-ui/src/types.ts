@@ -733,6 +733,7 @@ export interface FeedSourceType {
 }
 
 export interface FeedSource {
+  id?: string;
   name: string;
   type: string;
   url?: string;
@@ -743,6 +744,7 @@ export interface FeedSource {
   trust?: string;
   enabled?: boolean;
   interval?: string;
+  scope?: "global" | "workspace";
 }
 
 export interface FeedItem {
@@ -760,6 +762,11 @@ export interface FeedItem {
   word_count?: number;
   source_name?: string;
   source_type?: string;
+  source_id?: string;
+  scope?: string;
+  workspace_id?: string;
+  security_status?: string;
+  security_detail?: string;
 }
 
 export interface FeedSearchResult {
@@ -801,6 +808,7 @@ export interface FeedStats {
   total_alerts: number;
   last_ingest?: string;
   items_today: number;
+  quarantined_items?: number;
   sources?: Array<{
     name: string;
     type: string;
@@ -817,6 +825,13 @@ export interface ConfiguredFeedSource {
   trust: string;
   enabled: boolean;
   check_interval?: string;
+  scope?: string;
+  workspace_id?: string;
+  security_status?: string;
+  last_started_at?: string;
+  next_due_at?: string;
+  last_status?: string;
+  last_error?: string;
 }
 
 export interface FeedAlertRule {
@@ -832,6 +847,35 @@ export interface FeedAlertRule {
   hook_command?: string;
   cooldown_minutes?: number;
   enabled?: boolean;
+}
+
+export interface FeedRun {
+  id: number;
+  run_key: string;
+  scope: string;
+  workspace_id: string;
+  source_id?: string;
+  status: string;
+  started_at: string;
+  finished_at?: string;
+  sources_seen: number;
+  sources_succeeded: number;
+  items_seen: number;
+  items_added: number;
+  items_quarantined: number;
+  error?: string;
+}
+
+export interface FeedQuarantineItem {
+  id: number;
+  title: string;
+  url: string;
+  security_status: string;
+  security_detail?: string;
+  ingested_at?: string;
+  source_name?: string;
+  scope?: string;
+  workspace_id?: string;
 }
 
 /// The derived setup projection (`GET /onboarding`). Mirrors
