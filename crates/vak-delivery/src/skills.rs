@@ -147,12 +147,11 @@ impl RecipeCatalog {
                     return None;
                 }
                 if !available_types.is_empty()
-                    && !recipe.primary.iter().any(|primary| {
-                        let base = primary.split('.').next().unwrap_or(primary);
-                        available_types
-                            .iter()
-                            .any(|candidate| candidate == primary || candidate == base)
-                    })
+                    && !recipe
+                        .primary
+                        .iter()
+                        .chain(recipe.optional.iter())
+                        .any(|required| type_matches(required, available_types))
                 {
                     return None;
                 }
@@ -175,6 +174,16 @@ impl RecipeCatalog {
             })
             .max_by_key(|decision| decision.matched_signals.len())
     }
+}
+
+fn type_matches(required: &str, available: &[String]) -> bool {
+    let base = required.split('.').next().unwrap_or(required);
+    available.iter().any(|candidate| {
+        candidate == required
+            || candidate == base
+            || (required == "source.card" && candidate == "link.preview")
+            || (required == "outcome" && candidate == "research.synthesis")
+    })
 }
 
 /// Built-in recipes are deliberately small and composable. Domain skills can
