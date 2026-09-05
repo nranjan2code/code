@@ -1765,12 +1765,18 @@ a.tab-btn {
 .extension-shell .capability-item { transition: border-color .15s ease, background .15s ease; }
 .extension-shell .capability-item:hover { border-color: var(--border-strong); background: var(--surface-hover); }
 .extension-shell .stack > .panel { box-shadow: 0 1px 0 color-mix(in srgb, var(--text) 2%, transparent); }
+.extension-shell .plugin-stack { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.extension-shell .plugin-stack > .panel:nth-child(-n + 2) { grid-column: 1 / -1; }
+.extension-shell .plugin-stack > .panel:nth-child(n + 3) { min-height: 214px; display: flex; flex-direction: column; }
+.extension-shell .plugin-stack > .panel:nth-child(n + 3) .row-gap { margin-top: auto; }
 
 @media (max-width: 780px) {
   .extension-overview { grid-template-columns: 1fr 1fr; }
   .extension-overview > div:first-child { grid-column: 1 / -1; }
   .extension-tabs { overflow-x: auto; justify-content: flex-start; }
   .extension-tabs .tab-btn { white-space: nowrap; }
+  .extension-shell .plugin-stack { grid-template-columns: 1fr; }
+  .extension-shell .plugin-stack > .panel:nth-child(n + 3) { grid-column: 1; }
 }
 
 /* Prompts (docs/design/45-prompt-layers.md). Two panes so the layer being

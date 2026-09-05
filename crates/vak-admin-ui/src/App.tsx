@@ -1500,7 +1500,7 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
       setBusy(false);
     }
   };
-  return <section class="stack">
+  return <section class="stack plugin-stack">
     <div class="panel">
       <div class="panel-title-row"><div><h2>Install a reviewed package</h2><p>Packages are inspected, content-addressed, and installed disabled in {props.ctx.scope() === "user" ? "Shared" : "this project"} until you enable them.</p></div></div>
       <div class="form-row"><label>Local package directory</label><input class="mono" placeholder="/path/to/plugin" value={path()} onInput={(e) => setPath(e.currentTarget.value)} /></div>
