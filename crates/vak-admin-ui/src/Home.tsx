@@ -1165,7 +1165,7 @@ export function Home() {
             <div>
               <span class="eyebrow">History</span>
               <h2>Recent sessions</h2>
-              <p class="dim">The latest conversations, across every project this store indexes.</p>
+              <p class="dim">The latest conversations, across every workspace this store indexes.</p>
             </div>
             <button class="ghost small" onClick={() => navigate("#/sessions")}>View all</button>
           </div>

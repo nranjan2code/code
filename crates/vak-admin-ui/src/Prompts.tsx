@@ -41,7 +41,7 @@ const BLOCKS: { id: PromptBlock; label: string; help: string }[] = [
 const LAYER_LABELS: Record<PromptLayerDescriptor["layer"], string> = {
   seed: "shipped default",
   shared: "Shared",
-  project: "This project",
+  project: "This workspace",
   surface: "surface",
   bot: "bot",
   chat: "chat",
@@ -51,7 +51,7 @@ const LAYER_LABELS: Record<PromptLayerDescriptor["layer"], string> = {
 const SURFACES = ["cli", "desktop", "server", "background", "subagent", "telegram"];
 
 function scopeLabel(scope: ConfigScope): string {
-  return scope === "user" ? "Shared" : "This project";
+  return scope === "user" ? "Shared" : "This workspace";
 }
 
 export function PromptsSection(props: {

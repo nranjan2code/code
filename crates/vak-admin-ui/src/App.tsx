@@ -66,14 +66,14 @@ function ScopeControl() {
   return (
     <div class="scope-control" role="group" aria-label="Configuration scope">
       <button aria-pressed={configScope() === "user"} classList={{ active: configScope() === "user" }} onClick={() => setConfigScopePersisted("user")}>
-        Shared · global
+        Shared (global)
       </button>
       <button aria-pressed={configScope() === "project"} classList={{ active: configScope() === "project" }} onClick={() => setConfigScopePersisted("project")}>
-        This project
+        This workspace
       </button>
       <span>
         {configScope() === "user"
-          ? "Baseline inherited by every project"
+          ? "Baseline inherited by every workspace"
           : "Overrides for this workspace only"}
       </span>
     </div>
@@ -89,16 +89,16 @@ function AdminContextBar() {
       <span class="admin-context-kicker">VIEWING</span>
       <Show when={layered()} fallback={<>
         <span class={`scope-mark scope-mark-${scope()}`} aria-hidden="true" />
-        <strong>{scope() === "global" ? "All projects" : scope() === "switchable" ? "Workspace filter" : "This project"}</strong>
+        <strong>{scope() === "global" ? "All workspaces" : scope() === "switchable" ? "Workspace filter" : "This workspace"}</strong>
         <span class="admin-context-detail">
-          {scope() === "global" ? "system-wide evidence and controls" : scope() === "switchable" ? "filtered projection; mutations keep their own authority" : "the server-attached workspace"}
+          {scope() === "global" ? "system-wide evidence and controls" : scope() === "switchable" ? "filtered projection; mutations keep their own authority" : "the current workspace"}
         </span>
         <Show when={scope() === "switchable"}>
           <button class="ghost small context-action" onClick={() => navigate("#/operations")}>Open workspace filter</button>
         </Show>
       </>}>
-        <strong>{configScope() === "user" ? "Shared baseline" : "This project"}</strong>
-        <span class="admin-context-detail">{configScope() === "user" ? "inherited by every project" : "project-only override"}</span>
+        <strong>{configScope() === "user" ? "Shared baseline" : "This workspace"}</strong>
+        <span class="admin-context-detail">{configScope() === "user" ? "inherited by every workspace" : "workspace-only override"}</span>
         <ScopeControl />
       </Show>
     </div>
@@ -1671,7 +1671,7 @@ function SkillsView(props: { ctx: ExtensionsCtx }) {
                       <td class="mono bold">{s.name}{s.shadowed ? <span class="chip chip-tone-ask" style={{ "margin-left": "6px" }}>shadowed</span> : null}</td>
                       <td>
                         <span class={`chip ${s.scope === "workspace" ? "chip-tool" : "chip-mode"}`} title={s.scope ?? "user"}>
-                          {s.scope === "workspace" ? "this project" : "every project"}
+                          {s.scope === "workspace" ? "this workspace" : "every workspace"}
                         </span>
                       </td>
                       <td class="dim">{s.description || "No description written for this skill."}</td>
@@ -2517,7 +2517,7 @@ function MemoryView() {
 
       <div class="stat-strip">
         <StatCard label="Total memories" value={notes().length} />
-        <StatCard label="About me" value={profileCount()} sub="carried across every project" />
+        <StatCard label="About me" value={profileCount()} sub="carried across every workspace" />
         <StatCard label="About this project" value={projectCount()} />
         <StatCard label="Oldest note" value={oldestAgo()} tone={staleCount() > 0 ? "warn" : undefined} sub={staleCount() > 0 ? `${staleCount()} unrevisited 30+ days` : undefined} />
       </div>
@@ -2555,7 +2555,7 @@ function MemoryView() {
             <div class="scope-tabs">
               <button classList={{ active: filterScope() === "all" }} onClick={() => setFilterScope("all")}>All</button>
               <button classList={{ active: filterScope() === "profile" }} onClick={() => setFilterScope("profile")}>About me</button>
-              <button classList={{ active: filterScope() === "workspace" }} onClick={() => setFilterScope("workspace")}>This project</button>
+              <button classList={{ active: filterScope() === "workspace" }} onClick={() => setFilterScope("workspace")}>This workspace</button>
             </div>
           </div>
           <Show when={!memoryData.loading} fallback={<div class="empty">Loading…</div>}>
@@ -2615,8 +2615,8 @@ function MemoryView() {
           <div class="form-row">
             <label>Applies to</label>
             <select value={scope()} onChange={(e) => setScope(e.currentTarget.value as "profile" | "project")}>
-              <option value="project">This project</option>
-              <option value="profile">Me, in every project</option>
+              <option value="project">This workspace</option>
+              <option value="profile">Me, in every workspace</option>
             </select>
           </div>
           <div class="form-row">
@@ -3473,7 +3473,7 @@ function ChannelPermissionPicker(props: {
         <Show when={capped()}>
           {(c) => (
             <div class="binding-meta">
-              This project is set to “{modeLabel(c())}”. A channel can match that or ask for less,
+              This workspace is set to “{modeLabel(c())}”. A channel can match that or ask for less,
               never more — so this choice will take effect as “{modeLabel(c())}”.
             </div>
           )}
@@ -5173,7 +5173,7 @@ function GatewaySection() {
           <span class="chip chip-tone-success">restrictive only</span>
         </div>
         <div class="inheritance-chain" aria-label="Shared to project to bot to chat">
-          <span>Shared</span><span aria-hidden="true">→</span><span>This project</span><span aria-hidden="true">→</span><span>Bot</span><span aria-hidden="true">→</span><span>Chat</span>
+          <span>Shared</span><span aria-hidden="true">→</span><span>This workspace</span><span aria-hidden="true">→</span><span>Bot</span><span aria-hidden="true">→</span><span>Chat</span>
         </div>
       </section>
       <div class="tab-bar">
@@ -5733,7 +5733,7 @@ function Settings() {
               <div class="panel-title-row">
                 <div>
                   <h2>Inherited capabilities</h2>
-                  <p class="dim">This project starts with Shared capabilities. Turn a category off to break that inheritance; add project entries under Extensions.</p>
+                  <p class="dim">This workspace starts with Shared capabilities. Turn a category off to break that inheritance; add workspace entries under Extensions.</p>
                 </div>
               </div>
               <div class="capability-inheritance-list">
