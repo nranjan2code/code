@@ -1482,20 +1482,25 @@ async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value>
         .collect();
     let day_usd: f64 = day_rows.iter().filter_map(|r| r.usd).sum();
     let unknown_rows = day_rows.iter().filter(|r| r.usd.is_none()).count();
-    let mut by_provider = std::collections::BTreeMap::<String, (f64, u64)>::new();
-    let mut by_model = std::collections::BTreeMap::<String, (f64, u64)>::new();
+    let mut by_provider = std::collections::BTreeMap::<String, (f64, u64, u64, u64, u64)>::new();
+    let mut by_model = std::collections::BTreeMap::<String, (f64, u64, u64, u64, u64)>::new();
     for row in &day_rows {
         let usd = row.usd.unwrap_or(0.0);
         let p = by_provider.entry(row.provider.clone()).or_default();
         p.0 += usd;
         p.1 += 1;
+        p.2 += row.input_tokens;
+        p.3 += row.output_tokens;
+        p.4 += row.cache_read_input_tokens.unwrap_or(0);
         let m = by_model.entry(row.model.clone()).or_default();
         m.0 += usd;
         m.1 += 1;
+        m.2 += row.input_tokens;
+        m.3 += row.output_tokens;
+        m.4 += row.cache_read_input_tokens.unwrap_or(0);
     }
-    let rollup =
-        |source: std::collections::BTreeMap<String, (f64, u64)>| -> Vec<serde_json::Value> {
-            source.into_iter().map(|(name, (usd, calls))| serde_json::json!({ "name": name, "usd": usd, "calls": calls })).collect()
+    let rollup = |source: std::collections::BTreeMap<String, (f64, u64, u64, u64, u64)>| -> Vec<serde_json::Value> {
+            source.into_iter().map(|(name, (usd, calls, input_tokens, output_tokens, cache_read_tokens))| serde_json::json!({ "name": name, "usd": usd, "calls": calls, "input_tokens": input_tokens, "output_tokens": output_tokens, "cache_read_tokens": cache_read_tokens })).collect()
         };
     let daily: Vec<serde_json::Value> = ledger
         .daily_totals(now, FINOPS_TREND_DAYS)
@@ -1508,6 +1513,9 @@ async fn finops_status(State(state): State<AppState>) -> Json<serde_json::Value>
         "day_cap_usd": state.core.effective_finops_max_day_usd(),
         "unknown_rows": unknown_rows,
         "total_rows": rows.len(),
+        "day_input_tokens": day_rows.iter().map(|r| r.input_tokens).sum::<u64>(),
+        "day_output_tokens": day_rows.iter().map(|r| r.output_tokens).sum::<u64>(),
+        "day_cache_read_tokens": day_rows.iter().map(|r| r.cache_read_input_tokens.unwrap_or(0)).sum::<u64>(),
         "by_provider": rollup(by_provider),
         "by_model": rollup(by_model),
         "daily": daily,

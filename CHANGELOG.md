@@ -5,6 +5,15 @@ unsupported and cannot be upgraded in place — see
 `docs/design/46-stabilization-install-and-onboarding.md` Part VII.1. Entries
 for those releases were removed from this file; `git log` holds them.
 
+## 3.0.10 — 2026-09-06
+
+### Admin feed workflow UX
+
+- Fix feed source add/edit/delete flows to use stable source identities and
+  responsive, keyboard-accessible controls.
+- Improve wizard hierarchy, field alignment, mobile behavior, and close/cancel
+  affordances.
+
 ## 3.0.9 — 2026-09-05
 
 ### Scoped feed system

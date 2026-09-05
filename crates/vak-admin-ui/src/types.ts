@@ -359,6 +359,9 @@ export interface FinOpsRollupEntry {
   name: string;
   usd: number;
   calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
 }
 
 export interface FinOpsDailyPoint {
@@ -376,6 +379,9 @@ export interface FinOpsAlertRow {
 
 export interface FinOpsStatus {
   day_usd: number;
+  day_input_tokens: number;
+  day_output_tokens: number;
+  day_cache_read_tokens: number;
   run_cap_usd: number | null;
   day_cap_usd: number | null;
   unknown_rows: number;

@@ -6188,11 +6188,11 @@ function FeedsSection() {
     }
   };
 
-  const removeSource = async (name: string) => {
+  const removeSource = async (source: import("./types").ConfiguredFeedSource) => {
+    const name = source.name;
     if (!confirm(`Remove source "${name}"? This stops it from being checked, but keeps items already collected.`)) return;
     try {
-      const source = configuredSources()?.sources.find((candidate) => candidate.name === name);
-      await api.feedDeleteSource(source?.id ?? "", source?.scope);
+      await api.feedDeleteSource(source.id, source.scope);
       pushToast("info", `Source "${name}" removed`);
       refetchAll();
     } catch (e) {
@@ -6201,15 +6201,15 @@ function FeedsSection() {
   };
 
   const startEditSource = (src: import("./types").ConfiguredFeedSource) => {
-    setEditingSource(src.name);
+    setEditingSource(src.id);
     setEditInterval(src.check_interval || "1h");
     setEditTrust(src.trust || "medium");
   };
 
-  const saveEditSource = async (name: string) => {
+  const saveEditSource = async (source: import("./types").ConfiguredFeedSource) => {
+    const name = source.name;
     try {
-      const source = configuredSources()?.sources.find((candidate) => candidate.name === name);
-      await api.feedUpdateSource(source?.id ?? "", { interval: editInterval(), trust: editTrust() }, source?.scope);
+      await api.feedUpdateSource(source.id, { interval: editInterval(), trust: editTrust() }, source.scope);
       pushToast("info", `"${name}" updated`);
       setEditingSource(null);
       refetchConfigured();
@@ -6370,7 +6370,7 @@ function FeedsSection() {
                   <div class="info">
                     <div class="name">{src.name}</div>
                     <Show
-                      when={editingSource() === src.name}
+                        when={editingSource() === src.id}
                       fallback={
                         <>
                           <div class="meta">
@@ -6403,7 +6403,7 @@ function FeedsSection() {
                           <option value="medium">Medium trust</option>
                           <option value="low">Low trust</option>
                         </select>
-                        <button class="small" onClick={() => saveEditSource(src.name)}>Save</button>
+                        <button class="small" onClick={() => saveEditSource(src)}>Save</button>
                         <button class="ghost small" onClick={() => setEditingSource(null)}>Cancel</button>
                       </div>
                     </Show>
@@ -6414,7 +6414,7 @@ function FeedsSection() {
                     </span>
                     <button class="ghost small" onClick={() => startEditSource(src)}>Edit</button>
                     <button class="ghost small" onClick={() => toggleSource(src)}>{src.enabled ? "Disable" : "Enable"}</button>
-                    <button class="ghost small" onClick={() => removeSource(src.name)}>Remove</button>
+                    <button class="ghost small" onClick={() => removeSource(src)}>Remove</button>
                   </div>
                 </div>
               )}
@@ -6690,22 +6690,23 @@ function FeedWizard(props: { onClose: () => void; onAdded: () => void }) {
   };
 
   return (
-    <div class="feed-wizard-overlay" onClick={props.onClose}>
-      <div class="feed-wizard" onClick={(e) => e.stopPropagation()}>
-        <h2>Add a source</h2>
+      <div class="feed-wizard-overlay" onClick={props.onClose}>
+        <div class="feed-wizard" onClick={(e) => e.stopPropagation()}>
+        <div class="feed-wizard-header"><div><h2>Add a source</h2><p class="dim">Choose a source, then set how it should be checked.</p></div><button class="icon-button" aria-label="Close" onClick={props.onClose}>×</button></div>
         <Show when={step() === 1}>
           <div class="step">
             <div class="step-label">What do you want to follow?</div>
             <div class="type-grid">
               <For each={typeOptions()}>
                 {(opt) => (
-                  <div
+                  <button
+                    type="button"
                     class={`type-option ${selectedType() === opt.id ? "selected" : ""}`}
                     onClick={() => { setSelectedType(opt.id); setStep(2); }}
                   >
                     <div class="label">{opt.label}</div>
                     <div class="desc">{opt.desc}</div>
-                  </div>
+                  </button>
                 )}
               </For>
             </div>
@@ -6756,7 +6757,7 @@ function FeedWizard(props: { onClose: () => void; onAdded: () => void }) {
             </div>
             <div style={{ "margin-top": "12px", display: "flex", gap: "8px" }}>
               <button class="ghost" onClick={() => setStep(1)}>Back</button>
-              <button onClick={submit} disabled={!canSubmit()}>Add source</button>
+              <button onClick={() => submit()} disabled={!canSubmit()}>Add source</button>
             </div>
           </div>
         </Show>
